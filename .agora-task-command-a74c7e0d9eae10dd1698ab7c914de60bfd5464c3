@@ -1,0 +1,93 @@
+export AGORA_SPOT_OUT=/cache/out
+'sh' '-c' 'pick=$1 tee=$2 home=$3 plan=$4 at=$5; shift 5
+target="${CARGO_BUILD_BUILD_DIR:-${TMPDIR:-/tmp}}/target"; [ -z "${TASK_WORKFLOW:-}" ] || target="${CARGO_TARGET_DIR:-${target}}"; export CARGO_TARGET_DIR="${target}"; drop="" past=""; for arg do shift; if [ -n "${drop}" ]; then drop=""; continue; fi; if [ -z "${past}" ]; then case "${arg}" in --) past=1 ;; --target-dir) drop=1; continue ;; --target-dir=*) continue ;; esac; fi; set -- "$@" "${arg}"; done; 
+build="${CARGO_BUILD_BUILD_DIR:-${target}}"
+fmt="" skip="" past="" caller="" i=0 prev="" triple=""
+form() {
+  case ",${fmt}" in
+    *,json*) caller=1 want="${fmt}" ;;
+    *) case ",${fmt}," in *,short,*) want=json-render-diagnostics,json-diagnostic-short ;; *) want=json-render-diagnostics ;; esac ;;
+  esac
+}
+if [ "${at}" != 0 ]; then
+  for arg do
+    [ "${arg}" != -- ] || break
+    case "${prev}" in --message-format) fmt="${fmt:+${fmt},}${arg}" ;; --target) triple="${arg}" ;; esac
+    case "${arg}" in --message-format=*) fmt="${fmt:+${fmt},}${arg#--message-format=}" ;; --target=*) triple="${arg#--target=}" ;; esac
+    prev="${arg}"
+  done
+  form
+fi
+for arg do
+  shift
+  i=$((i + 1))
+  if [ -n "${skip}" ]; then skip=""; [ "${at}" != 0 ] || fmt="${fmt:+${fmt},}${arg}"; continue; fi
+  if [ -z "${past}" ]; then
+    case "${arg}" in
+      --message-format) skip=1; continue ;;
+      --message-format=*) [ "${at}" != 0 ] || fmt="${fmt:+${fmt},}${arg#--message-format=}"; continue ;;
+      --) past=1; [ "${at}" != 0 ] || { form; set -- "$@" "--message-format=${want}"; } ;;
+    esac
+  fi
+  set -- "$@" "${arg}"
+  [ "${i}" != "${at}" ] || set -- "$@" "--message-format=${want}"
+done
+[ -n "${past}" ] || [ "${at}" != 0 ] || { form; set -- "$@" "--message-format=${want}"; }
+work="${TMPDIR:-/tmp}/cargo-spot-pack"
+mkdir -p "${work}" || exit 70
+rm -f "${work}/rc" "${work}/.cargo-spot-run"
+if [ "${at}" != 0 ]; then
+  [ -n "${triple}" ] || triple=$("$0" -vV | sed -n "s/^host: //p")
+  if [ -z "${triple}" ]; then echo "cargo(spot): host の triple を読めない — cargo run を組まない" >&2; exit 0; fi
+  printf "%s" "${plan}" > "${work}/run-plan.pl" || exit 0
+  export "CARGO_TARGET_$(printf "%s" "${triple}" | tr a-z.- A-Z__)_RUNNER=perl ${work}/run-plan.pl ${work}/.cargo-spot-run ${target} ${build}"
+fi
+{ "$0" "$@"; echo $? > "${work}/rc"; } | perl -ne "${tee}" "${caller}" "${target}" "${build}" "${home}" "${work}/messages" || exit 70
+read -r rc < "${work}/rc" || exit 70
+[ "${rc}" -eq 0 ] || exit "${rc}"
+if [ -z "${AGORA_SPOT_OUT:-}" ]; then echo "cargo(spot): 受け口が持ち帰りの path(AGORA_SPOT_OUT)を渡さない — 束ねない" >&2; exit 0; fi
+if [ "${at}" != 0 ] && [ ! -s "${work}/.cargo-spot-run" ]; then echo "cargo(spot): cargo run が実行 file の起こし方を書かなかった — 束ねない" >&2; exit 0; fi
+set -- -C "${target}" -T "${work}/in-target" -C "${build}" -T "${work}/in-build"
+[ "${at}" = 0 ] || set -- "$@" -C "${work}" .cargo-spot-run
+if perl -MJSON::PP -ne "${pick}" "${target}" "${build}" "${work}/in-target" "${work}/in-build" < "${work}/messages" \
+  && tar -I "gzip -1" -cf "${AGORA_SPOT_OUT}" "$@"; then
+  echo "cargo(spot): 成果物 $(cat "${work}/in-target" "${work}/in-build" | wc -l) 個を束ねた" >&2
+else
+  echo "cargo(spot): 成果物を束ねられない — 束を書かない" >&2
+  rm -f "${AGORA_SPOT_OUT}"
+fi
+exit 0' 'cargo' 'BEGIN { ($root_t, $root_b, $out_t, $out_b) = splice(@ARGV, 0, 4); $root_t .= "/"; $root_b .= "/";
+  open($fh_t, ">", $out_t) or die "$out_t: $!"; open($fh_b, ">", $out_b) or die "$out_b: $!"; }
+next unless /^\{/;
+my $m = eval { decode_json($_) } or next;
+next unless ($m->{reason} // "") eq "compiler-artifact";
+my @files = defined $m->{executable} ? ($m->{executable}) : ();
+push @files, grep { !m{/deps/} && /\.(?:so|dylib|dll|a|lib)$/ } @{$m->{filenames} || []}
+  if grep { /^(?:cdylib|dylib|staticlib)$/ } (@{$m->{target}{kind} || []}, @{$m->{target}{crate_types} || []});
+for my $f (@files) {
+  next unless -f $f;
+  if (index($f, $root_t) == 0) { my $r = substr($f, length $root_t); print $fh_t "$r\n" unless $seen{"t$r"}++; }
+  elsif (index($f, $root_b) == 0) { my $r = substr($f, length $root_b); print $fh_b "$r\n" unless $seen{"b$r"}++; }
+}
+END { close($fh_t) or die; close($fh_b) or die; }' 'BEGIN { ($caller, $root_t, $root_b, $home, $out) = splice(@ARGV, 0, 5); open($fh, ">", $out) or die "$out: $!"; $| = 1;
+  $from = qr{\Q$root_t/\E|\Q$root_b/\E}; }
+print $fh $_;
+if (!/^\{/) { print; } elsif ($caller) { s{$from}{$home/}g if length $home; print; }
+END { close($fh) or die; }' '/work/conv-tmp/ram/conv/a-P2CF6DK8TKMT1CMH2PG0KNRJ4B/doeff-cargo-target-3279061-kfbq0q_a' 'use Cwd;
+my ($out, $root_t, $root_b, $exe, @args) = @ARGV;
+my $s = chr 39;
+sub sq { my $v = shift; $v =~ s/$s/$s\\$s$s/g; "$s$v$s" }
+my $rel;
+for my $root ($root_t, $root_b) { if (index($exe, "$root/") == 0) { $rel = substr($exe, length($root) + 1); last } }
+if (!defined $rel || $rel =~ m{(?:^|/)\.\.(?:/|$)}) { warn "cargo(spot): 実行 file $exe が target の dir の外 — 起こし方を書かない\n"; exit 0 }
+my $cwd = getcwd();
+my $text = "exe=" . sq($rel) . "\nset --" . join("", map { " " . sq($_) } @args) . "\n";
+for my $name (sort grep { /^CARGO_(?:PKG_\w+|MANIFEST_DIR|MANIFEST_PATH|CRATE_NAME|BIN_NAME)$/ } keys %ENV) {
+  my $v = $ENV{$name};
+  if ($v eq $cwd || index($v, "$cwd/") == 0) { $text .= "export $name=\"\${PWD}\"" . sq(substr($v, length $cwd)) . "\n" }
+  else { $text .= "export $name=" . sq($v) . "\n" }
+}
+my $fh;
+open($fh, ">", "$out.part") && print($fh $text) && close($fh) && rename("$out.part", $out)
+  or warn "cargo(spot): 起こし方を $out に書けない: $!\n";
+exit 0;' '0' 'rustc' '--profile' 'release' '--message-format' 'json-render-diagnostics' '--manifest-path' 'Cargo.toml' '--bin' 'doeff-linter' '--' '-C' 'strip=symbols' 
