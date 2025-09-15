@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "doeff-openai"
+version = "0.1.0"
+description = "OpenAI integration for doeff with comprehensive observability via Graph and Log effects"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Kento Masui"},
+]
+keywords = ["openai", "effects", "monads", "functional", "observability", "cost-tracking"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "doeff>=0.1.0",
+    "openai>=1.0.0",
+    "tiktoken>=0.5.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "pyright>=1.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/CyberAgentAILab/doeff"
+Repository = "https://github.com/CyberAgentAILab/doeff"
+Issues = "https://github.com/CyberAgentAILab/doeff/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_openai"]
+
+[tool.uv.sources]
+doeff = {workspace = true}
