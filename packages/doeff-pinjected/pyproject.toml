@@ -1,0 +1,44 @@
+[project]
+name = "doeff-pinjected"
+version = "0.1.0"
+description = "Pinjected integration for doeff effects system"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Kento Masui", email = "nameissoap@gmail.com"}
+]
+keywords = ["monad", "effects", "pinjected", "dependency-injection"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+    "doeff>=0.1.0",
+    "pinjected>=0.3.0-beta",
+    "loguru>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/doeff_pinjected"]
+
+[tool.uv.sources]
+doeff = {workspace = true}
+pinjected = {git = "https://github.com/proboscis/pinjected.git"}
+
+[dependency-groups]
+dev = [
+    "pytest>=8.1.1",
+    "pytest-asyncio>=0.24.0",
+]
