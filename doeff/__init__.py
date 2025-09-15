@@ -16,19 +16,26 @@ Example:
     ...     return count + 1
 """
 
-# Core types
-from doeff.core import (
-    # Main types
-    Program,
-    ProgramInterpreter,
+# Core types from modular structure
+from doeff.types import (
     ExecutionContext,
     RunResult,
     Effect,
+    ListenResult,
+    # Vendored types
+    Ok,
+    Err,
+    Result,
+    TraceError,
+    trace_err,
+    WNode,
+    WStep,
+    WGraph,
+    FrozenDict,
+)
+
+from doeff.effects import (
     Effects,
-    # Decorator
-    do,
-    # Kleisli arrow support
-    KleisliProgram,
     # Effects - Reader
     Ask,
     Local,
@@ -40,7 +47,6 @@ from doeff.core import (
     Log,
     Tell,
     Listen,
-    ListenResult,
     # Effects - Future
     Await,
     Parallel,
@@ -76,41 +82,63 @@ from doeff.core import (
     annotate,
 )
 
+# Import from new modular structure
+from doeff.program import Program
+from doeff.interpreter import ProgramInterpreter
+from doeff.kleisli import KleisliProgram
+from doeff.do import do
+
 __version__ = "0.1.0"
 
 __all__ = [
+    # Core types
+    "Effect",
+    "Program",
+    "ExecutionContext",
+    "RunResult",
+    "ListenResult",
+    # Vendored types
+    "Ok",
+    "Err",
+    "Result",
+    "TraceError",
+    "trace_err",
+    "WNode",
+    "WStep",
+    "WGraph",
+    "FrozenDict",
+    # Core classes
+    "ProgramInterpreter",
+    "KleisliProgram",
+    # Decorator
+    "do",
+    # Effects API
+    "Effects",
+    # Effects - Uppercase
     "IO",
     "Annotate",
     "Ask",
     "Await",
     "Catch",
     "Dep",
-    "Effect",
-    "Effects",
-    "ExecutionContext",
     "Fail",
     "Gather",
     "GatherDict",
     "Get",
-    "KleisliProgram",
     "Listen",
-    "ListenResult",
     "Local",
     "Log",
     "Modify",
     "Parallel",
     "Print",
-    "Program",
-    "ProgramInterpreter",
     "Put",
-    "RunResult",
     "Step",
     "Tell",
+    # Effects - lowercase
     "annotate",
     "ask",
     "await_",
     "catch",
-    "do",
     "fail",
     "get",
     "io",
