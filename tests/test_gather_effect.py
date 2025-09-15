@@ -35,7 +35,7 @@ async def test_gather_list():
         programs = [make_value(1), make_value(2), make_value(3)]
 
         # Gather all their results at once
-        results = yield Gather(programs)
+        results = yield Gather(*programs)
 
         yield Log(f"Gathered results: {results}")
         return results
@@ -109,7 +109,7 @@ async def test_gather_with_state():
         programs = [increment_counter() for _ in range(3)]
 
         # Gather runs them in parallel - each starts with same initial state
-        results = yield Gather(programs)
+        results = yield Gather(*programs)
 
         final_counter = yield Get("counter")
         yield Log(f"Final counter: {final_counter}")
@@ -134,7 +134,7 @@ async def test_gather_empty():
 
     @do
     def empty_gather() -> Generator[Union[Effect, Program], Any, list]:
-        results = yield Gather([])
+        results = yield Gather()
         return results
 
     prog = empty_gather()
@@ -181,7 +181,7 @@ async def test_gather_with_async():
     @do
     def gather_async_test() -> Generator[Union[Effect, Program], Any, list]:
         programs = [async_prog(i) for i in range(3)]
-        results = yield Gather(programs)
+        results = yield Gather(*programs)
         return results
 
     prog = gather_async_test()
@@ -212,7 +212,7 @@ async def test_gather_error_propagation():
     @do
     def gather_with_error() -> Generator[Union[Effect, Program], Any, list]:
         programs = [good_prog(1), bad_prog(), good_prog(2)]
-        results = yield Gather(programs)  # Should fail here
+        results = yield Gather(*programs)  # Should fail here
         yield Log("This should not be logged")
         return results
 
@@ -239,7 +239,7 @@ async def test_gather_pure_programs():
             Program.pure(20),
             Program.pure(30),
         ]
-        results = yield Gather(programs)
+        results = yield Gather(*programs)
         return results
 
     prog = gather_pure()

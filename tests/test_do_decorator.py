@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Generator, Any
+import pytest
 
 from doeff import (
     ProgramInterpreter,
@@ -59,7 +60,7 @@ def complex_program(name: str) -> Generator[Effect, Any, dict]:
 
     # Error handling
     safe_result = yield catch(
-        risky_operation().generator_func, lambda e: safe_recovery(e).generator_func()
+        risky_operation(), lambda e: safe_recovery(e)
     )
 
     # Parallel async
@@ -69,7 +70,7 @@ def complex_program(name: str) -> Generator[Effect, Any, dict]:
     yield modify("counter", lambda x: x + sum(results))
 
     # Listen to sub-computation
-    value, log = yield listen(sub_computation().generator_func)
+    value, log = yield listen(sub_computation())
 
     # Final state
     final_counter = yield get("counter")
@@ -154,6 +155,7 @@ def deep_chain_program(depth: int) -> Generator[Effect, Any, int]:
     return final
 
 
+@pytest.mark.asyncio
 async def test_simple():
     """Test simple program with @do."""
     engine = ProgramInterpreter()
@@ -168,6 +170,7 @@ async def test_simple():
     print(f"✅ Simple program: {result.value}")
 
 
+@pytest.mark.asyncio
 async def test_complex():
     """Test complex program with all monad types."""
     engine = ProgramInterpreter()
@@ -189,6 +192,7 @@ async def test_complex():
     print(f"   Sub-computation value: {result.value['sub_value']}")
 
 
+@pytest.mark.asyncio
 async def test_deep_chain():
     """Test deep chains with @do decorator."""
     engine = ProgramInterpreter()
@@ -203,6 +207,7 @@ async def test_deep_chain():
     print(f"✅ Deep chain completed: {result.value} (no stack overflow!)")
 
 
+@pytest.mark.asyncio
 async def test_composition():
     """Test composing programs created with @do."""
 
@@ -220,15 +225,29 @@ async def test_composition():
     def composed_program(n: int) -> Generator[Effect, Any, int]:
         """Compose multiple @do programs."""
         # Run program_a
+        def a_error_handler(e):
+            @do
+            def handle() -> Generator[Effect, Any, int]:
+                yield tell(f"A failed: {e}")
+                return 0
+            return handle()
+        
         a_result = yield catch(
-            lambda: program_a(n).generator_func(),
-            lambda e: (yield tell(f"A failed: {e}")) or 0,
+            program_a(n),
+            a_error_handler,
         )
 
         # Run program_b with result from a
+        def b_error_handler(e):
+            @do
+            def handle() -> Generator[Effect, Any, int]:
+                yield tell(f"B failed: {e}")
+                return 0
+            return handle()
+        
         b_result = yield catch(
-            lambda: program_b(a_result).generator_func(),
-            lambda e: (yield tell(f"B failed: {e}")) or 0,
+            program_b(a_result),
+            b_error_handler,
         )
 
         return b_result

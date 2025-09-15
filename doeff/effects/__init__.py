@@ -124,9 +124,9 @@ class Effects:
             return Effect("graph.step", {"value": value, "meta": meta or {}})
 
         @staticmethod
-        def annotate(key: str, value: Any) -> Effect:
+        def annotate(meta: Dict[str, Any]) -> Effect:
             """Annotate the current step."""
-            return Effect("graph.annotate", {"key": key, "value": value})
+            return Effect("graph.annotate", meta)
 
     class dep:
         """Dependency injection (pinjected compatible)."""
@@ -229,9 +229,9 @@ def Step(value: Any, meta: Dict[str, Any] | None = None) -> Effect:
     return Effects.graph.step(value, meta)
 
 
-def Annotate(key: str, value: Any) -> Effect:
+def Annotate(meta: Dict[str, Any]) -> Effect:
     """Graph: Annotate the current step."""
-    return Effects.graph.annotate(key, value)
+    return Effects.graph.annotate(meta)
 
 
 def Dep(key: str) -> Effect:
