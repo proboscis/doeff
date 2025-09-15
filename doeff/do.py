@@ -7,9 +7,9 @@ into KleisliPrograms, enabling do-notation for monadic computations.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Generator, ParamSpec, TypeVar, Union
+from typing import Any, Callable, ParamSpec, TypeVar, Union, Generator
 
-from doeff.types import Effect
+from doeff.types import Effect, EffectGenerator
 from doeff.program import Program
 from doeff.kleisli import KleisliProgram
 
@@ -18,7 +18,7 @@ T = TypeVar("T")
 
 
 def do(
-    func: Callable[P, Generator[Union[Effect, Program], Any, T]],
+    func: Callable[P, EffectGenerator[T]],
 ) -> KleisliProgram[P, T]:
     """
     Decorator that converts a generator function into a KleisliProgram.
@@ -39,13 +39,13 @@ def do(
     execution time, achieving the laziness we need.
 
     TYPE SIGNATURE CHANGE:
-    @do changes: (args) -> Generator[Union[Effect, Program], Any, T]
+    @do changes: (args) -> EffectGenerator[T]
     into:        KleisliProgram[P, T] where P is the parameter spec
     This preserves type information and enables automatic Program unwrapping.
 
     Usage:
         @do
-        def my_program(x: int) -> Generator[Union[Effect, Program], Any, str]:
+        def my_program(x: int) -> EffectGenerator[str]:
             config = yield ask("config")
             result = yield await_(process(x))
             yield log(f"Processed {x}")

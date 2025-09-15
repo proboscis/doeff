@@ -13,6 +13,7 @@ from doeff import (
     Program,
     do,
     Effect,
+    EffectGenerator,
     Log,
     Step,
     Dep,
@@ -30,7 +31,7 @@ async def test_bridge_handles_yielded_program():  # noqa: PINJ040
     """Test that the bridge correctly handles when a Program yields another Program."""
 
     @do
-    def inner_program(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def inner_program(x: int) -> EffectGenerator[int]:
         """An inner program that will be yielded by another."""
         yield Log(f"Inner program processing {x}")
         result = x * 2
@@ -38,7 +39,7 @@ async def test_bridge_handles_yielded_program():  # noqa: PINJ040
         return result
 
     @do
-    def outer_program() -> Generator[Union[Effect, Program], Any, int]:
+    def outer_program() -> EffectGenerator[int]:
         """An outer program that yields another Program."""
         yield Log("Starting outer program")
 
@@ -78,19 +79,19 @@ async def test_bridge_handles_nested_program_yielding():  # noqa: PINJ040
     """Test deeply nested Program yielding."""
 
     @do
-    def level3(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def level3(x: int) -> EffectGenerator[int]:
         yield Log(f"Level 3: {x}")
         return x * 3
 
     @do
-    def level2(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def level2(x: int) -> EffectGenerator[int]:
         yield Log(f"Level 2: {x}")
         # Yield another Program
         result = yield level3(x)
         return result * 2
 
     @do
-    def level1() -> Generator[Union[Effect, Program], Any, int]:
+    def level1() -> EffectGenerator[int]:
         yield Log("Level 1")
         # Yield a Program that itself yields a Program
         result = yield level2(5)
@@ -110,14 +111,14 @@ async def test_bridge_handles_program_with_dependencies():  # noqa: PINJ040
     """Test that both Dep effects and yielded Programs work together."""
 
     @do
-    def compute_with_dep(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def compute_with_dep(x: int) -> EffectGenerator[int]:
         """A program that uses a dependency."""
         multiplier = yield Dep("multiplier")
         yield Log(f"Computing {x} * {multiplier}")
         return x * multiplier
 
     @do
-    def main_program() -> Generator[Union[Effect, Program], Any, int]:
+    def main_program() -> EffectGenerator[int]:
         """Main program that yields another Program that has dependencies."""
         yield Log("Main program starting")
 
@@ -152,12 +153,12 @@ async def test_bridge_handles_program_flat_map():  # noqa: PINJ040
     """Test that flat_map (monadic bind) works through the bridge."""
 
     @do
-    def get_value() -> Generator[Union[Effect, Program], Any, int]:
+    def get_value() -> EffectGenerator[int]:
         yield Log("Getting value")
         return 10
 
     @do
-    def process_value(x: int) -> Generator[Union[Effect, Program], Any, str]:
+    def process_value(x: int) -> EffectGenerator[str]:
         yield Log(f"Processing {x}")
         return f"Result: {x * 2}"
 
@@ -178,7 +179,7 @@ async def test_bridge_handles_pure_program():  # noqa: PINJ040
     """Test that pure Programs (created with Program.pure) work through the bridge."""
 
     @do
-    def program_with_pure() -> Generator[Union[Effect, Program], Any, int]:
+    def program_with_pure() -> EffectGenerator[int]:
         yield Log("Starting")
 
         # Yield a pure Program
@@ -201,13 +202,13 @@ async def test_bridge_handles_mixed_effects_and_programs():  # noqa: PINJ040
     """Test complex interaction of Effects and yielded Programs."""
 
     @do
-    def helper(name: str) -> Generator[Union[Effect, Program], Any, str]:
+    def helper(name: str) -> EffectGenerator[str]:
         config = yield Dep("config")
         yield Log(f"Helper {name} with config: {config}")
         return f"{name}-{config}"
 
     @do
-    def complex_program() -> Generator[Union[Effect, Program], Any, dict]:
+    def complex_program() -> EffectGenerator[dict]:
         yield Log("Starting complex program")
 
         # Mix Effects and Programs
@@ -253,13 +254,13 @@ async def test_bridge_error_propagation_with_programs():  # noqa: PINJ040
     """Test that errors in yielded Programs propagate correctly through the bridge."""
 
     @do
-    def failing_program() -> Generator[Union[Effect, Program], Any, int]:
+    def failing_program() -> EffectGenerator[int]:
         yield Log("About to fail")
         raise ValueError("Intentional error in nested Program")
         return 42  # Never reached
 
     @do
-    def outer_with_error() -> Generator[Union[Effect, Program], Any, int]:
+    def outer_with_error() -> EffectGenerator[int]:
         yield Log("Outer starting")
 
         # This should propagate the error
@@ -297,12 +298,12 @@ async def test_bridge_with_iproxy():  # noqa: PINJ040
     """Test that program_to_iproxy works correctly with yielded Programs."""
 
     @do
-    def inner(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def inner(x: int) -> EffectGenerator[int]:
         yield Log(f"Inner: {x}")
         return x * x
 
     @do
-    def outer() -> Generator[Union[Effect, Program], Any, int]:
+    def outer() -> EffectGenerator[int]:
         yield Log("Outer")
         result = yield inner(6)
         return result + 4

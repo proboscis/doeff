@@ -14,6 +14,7 @@ from doeff import (
     ProgramInterpreter,
     ExecutionContext,
     Effect,
+    EffectGenerator,
     do,
     # Organized Effects API
     Effects,
@@ -62,7 +63,7 @@ async def test_reader_ask_effect():  # noqa: PINJ040
     """Test Ask effect for reading from environment."""
 
     @do
-    def program() -> Generator[Effect, Any, str]:
+    def program() -> EffectGenerator[str]:
         # Test with Effects API
         api_key = yield Effects.reader.ask("api_key")
 
@@ -97,14 +98,14 @@ async def test_reader_local_effect():  # noqa: PINJ040
     """Test Local effect for scoped environment changes."""
 
     @do
-    def inner_program() -> Generator[Effect, Any, str]:
+    def inner_program() -> EffectGenerator[str]:
         # Should see modified environment
         mode = yield Ask("mode")
         debug = yield Ask("debug")
         return f"inner: mode={mode}, debug={debug}"
 
     @do
-    def outer_program() -> Generator[Effect, Any, tuple]:
+    def outer_program() -> EffectGenerator[tuple]:
         # Original environment
         original_mode = yield Ask("mode")
 
@@ -145,7 +146,7 @@ async def test_state_get_effect():  # noqa: PINJ040
     """Test Get effect for reading state."""
 
     @do
-    def program() -> Generator[Effect, Any, tuple]:
+    def program() -> EffectGenerator[tuple]:
         # Test with Effects API
         count1 = yield Effects.state.get("counter")
 
@@ -173,7 +174,7 @@ async def test_state_put_effect():  # noqa: PINJ040
     """Test Put effect for updating state."""
 
     @do
-    def program() -> Generator[Effect, Any, dict]:
+    def program() -> EffectGenerator[dict]:
         # Test with Effects API
         yield Effects.state.put("name", "Alice")
 
@@ -204,7 +205,7 @@ async def test_state_modify_effect():  # noqa: PINJ040
     """Test Modify effect for transforming state values."""
 
     @do
-    def program() -> Generator[Effect, Any, tuple]:
+    def program() -> EffectGenerator[tuple]:
         # Initial state
         yield Put("counter", 10)
         yield Put("names", ["Alice"])
@@ -240,7 +241,7 @@ async def test_writer_tell_effect():  # noqa: PINJ040
     """Test Tell/Log effect for logging."""
 
     @do
-    def program() -> Generator[Effect, Any, None]:
+    def program() -> EffectGenerator[None]:
         # Test with Effects API
         yield Effects.writer.tell("Starting process")
 
@@ -269,14 +270,14 @@ async def test_writer_listen_effect():  # noqa: PINJ040
     """Test Listen effect for capturing sub-computation logs."""
 
     @do
-    def sub_program() -> Generator[Effect, Any, int]:
+    def sub_program() -> EffectGenerator[int]:
         yield Log("Sub: step 1")
         yield Log("Sub: step 2")
         yield Log("Sub: step 3")
         return 42
 
     @do
-    def main_program() -> Generator[Effect, Any, tuple]:
+    def main_program() -> EffectGenerator[tuple]:
         yield Log("Main: starting")
 
         # Test with Effects API
@@ -315,7 +316,7 @@ async def test_future_await_effect():  # noqa: PINJ040
         return f"fetched: {value}"
 
     @do
-    def program() -> Generator[Effect, Any, tuple]:
+    def program() -> EffectGenerator[tuple]:
         # Test with Effects API
         result1 = yield Effects.future.await_(async_fetch("data1"))
 
@@ -344,7 +345,7 @@ async def test_future_parallel_effect():  # noqa: PINJ040
         return n * 2
 
     @do
-    def program() -> Generator[Effect, Any, tuple]:
+    def program() -> EffectGenerator[tuple]:
         # Test with Effects API
         results1 = yield Effects.future.parallel(
             async_process(1), async_process(2), async_process(3)
@@ -376,7 +377,7 @@ async def test_result_fail_effect():  # noqa: PINJ040
     """Test Fail effect for error signaling."""
 
     @do
-    def program() -> Generator[Effect, Any, str]:
+    def program() -> EffectGenerator[str]:
         # Test with Effects API
         yield Effects.result.fail(ValueError("Effects API error"))
         return "should not reach"
@@ -389,7 +390,7 @@ async def test_result_fail_effect():  # noqa: PINJ040
     assert "Effects API error" in str(result.result.error.exc)
 
     @do
-    def program2() -> Generator[Effect, Any, str]:
+    def program2() -> EffectGenerator[str]:
         # Test with capitalized alias
         yield Fail(RuntimeError("Capitalized error"))
         return "should not reach"
@@ -404,22 +405,22 @@ async def test_result_catch_effect():  # noqa: PINJ040
     """Test Catch effect for error handling."""
 
     @do
-    def failing_program() -> Generator[Effect, Any, str]:
+    def failing_program() -> EffectGenerator[str]:
         yield Fail(ValueError("intentional failure"))
         return "should not reach"
 
     @do
-    def success_program() -> Generator[Effect, Any, str]:
+    def success_program() -> EffectGenerator[str]:
         yield Log("Success program running")
         return "success"
 
     @do
-    def recovery_handler(error: Exception) -> Generator[Effect, Any, str]:
+    def recovery_handler(error: Exception) -> EffectGenerator[str]:
         yield Log(f"Caught error: {error}")
         return f"recovered from {type(error).__name__}"
 
     @do
-    def main_program() -> Generator[Effect, Any, tuple]:
+    def main_program() -> EffectGenerator[tuple]:
         # Test with Effects API
         result1 = yield Effects.result.catch(failing_program, recovery_handler)
 
@@ -461,7 +462,7 @@ async def test_io_run_effect():  # noqa: PINJ040
     side_effects = []
 
     @do
-    def program() -> Generator[Effect, Any, tuple]:
+    def program() -> EffectGenerator[tuple]:
         # Test with Effects API
         result1 = yield Effects.io.run(
             lambda: side_effects.append("effect1") or "done1"
@@ -489,7 +490,7 @@ async def test_io_print_effect(capsys):  # noqa: PINJ040
     """Test Print effect for console output."""
 
     @do
-    def program() -> Generator[Effect, Any, None]:
+    def program() -> EffectGenerator[None]:
         # Test with Effects API
         yield Effects.io.print("Message from Effects API")
 
@@ -516,7 +517,7 @@ async def test_io_not_allowed():  # noqa: PINJ040
     """Test that IO effects fail when io_allowed=False."""
 
     @do
-    def program() -> Generator[Effect, Any, None]:
+    def program() -> EffectGenerator[None]:
         yield Print("Should fail")
 
     engine = ProgramInterpreter()
@@ -537,7 +538,7 @@ async def test_graph_step_effect():  # noqa: PINJ040
     """Test Step effect for graph building."""
 
     @do
-    def program() -> Generator[Effect, Any, tuple]:
+    def program() -> EffectGenerator[tuple]:
         # Test with Effects API
         result1 = yield Effects.graph.step("value1", {"type": "api"})
 
@@ -582,7 +583,7 @@ async def test_graph_annotate_effect():  # noqa: PINJ040
     """Test Annotate effect for adding metadata to graph nodes."""
 
     @do
-    def program() -> Generator[Effect, Any, None]:
+    def program() -> EffectGenerator[None]:
         # Add initial step
         yield Step("initial")
 
@@ -625,7 +626,7 @@ async def test_all_effects_integration():  # noqa: PINJ040
     """Test using all effect types together."""
 
     @do
-    def comprehensive_program() -> Generator[Effect, Any, dict]:
+    def comprehensive_program() -> EffectGenerator[dict]:
         # Reader
         config = yield Ask("config")
 
@@ -660,14 +661,14 @@ async def test_all_effects_integration():  # noqa: PINJ040
 
         # Error handling
         @do
-        def maybe_fail() -> Generator[Effect, Any, str]:
+        def maybe_fail() -> EffectGenerator[str]:
             if config.get("fail"):
                 yield Fail(ValueError("Intentional"))
             return "ok"
 
         def catch_handler(e):
             @do
-            def handle() -> Generator[Effect, Any, str]:
+            def handle() -> EffectGenerator[str]:
                 yield Log(f"Caught: {e}")
                 return "recovered"
             return handle()
@@ -682,7 +683,7 @@ async def test_all_effects_integration():  # noqa: PINJ040
 
         # Listen to sub-computation
         @do
-        def sub() -> Generator[Effect, Any, int]:
+        def sub() -> EffectGenerator[int]:
             yield Log("sub1")
             yield Log("sub2")
             return 99

@@ -21,6 +21,7 @@ from doeff.types import (
     ExecutionContext,
     RunResult,
     Effect,
+    EffectGenerator,
     ListenResult,
     # Vendored types
     Ok,
@@ -93,6 +94,7 @@ __version__ = "0.1.0"
 __all__ = [
     # Core types
     "Effect",
+    "EffectGenerator",
     "Program",
     "ExecutionContext",
     "RunResult",

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Generator, Generic, ParamSpec, TypeVar, Union
 
-from doeff.types import Effect
+from doeff.types import Effect, EffectGenerator
 from doeff.program import Program
 from doeff.effects import Gather, GatherDict
 

@@ -7,7 +7,11 @@ This module contains the foundational types with zero internal dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Generator, List, TypeVar
+from typing import Any, Dict, Generator, List, TypeVar, Union, TYPE_CHECKING
+
+# Import Program for type alias, but avoid circular imports
+if TYPE_CHECKING:
+    from doeff.program import Program
 
 # Re-export vendored types for backward compatibility
 from doeff._vendor import (
@@ -41,6 +45,19 @@ class Effect:
 
     tag: str  # String discrimination instead of type-based
     payload: Any  # Untyped payload - Python can't express effect-specific types
+
+
+# ============================================
+# Effect Generator Type Alias
+# ============================================
+
+# Type alias for generators used in @do functions
+# This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
+if TYPE_CHECKING:
+    EffectGenerator = Generator[Union[Effect, "Program"], Any, T]
+else:
+    # Runtime version to avoid importing Program
+    EffectGenerator = Generator[Union[Effect, Any], Any, T]
 
 
 # ============================================
@@ -179,6 +196,7 @@ __all__ = [
     "FrozenDict",
     # Core types
     "Effect",
+    "EffectGenerator",
     "Program",
     "ExecutionContext",
     "RunResult",
