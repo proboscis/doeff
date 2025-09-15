@@ -562,17 +562,17 @@ async def test_graph_step_effect():  # noqa: PINJ040
 
     # Check metadata is preserved
     steps = list(result.graph.steps)
-    # FrozenDict can be accessed directly with items attribute
+    # FrozenDict items is a method, not an attribute
     assert any(
-        s.meta.items and any(k == "type" and v == "api" for k, v in s.meta.items)
+        s.meta.items() and any(k == "type" and v == "api" for k, v in s.meta.items())
         for s in steps
     )
     assert any(
-        s.meta.items and any(k == "type" and v == "alias" for k, v in s.meta.items)
+        s.meta.items() and any(k == "type" and v == "alias" for k, v in s.meta.items())
         for s in steps
     )
     assert any(
-        s.meta.items and any(k == "type" and v == "compat" for k, v in s.meta.items)
+        s.meta.items() and any(k == "type" and v == "compat" for k, v in s.meta.items())
         for s in steps
     )
 
@@ -610,9 +610,9 @@ async def test_graph_annotate_effect():  # noqa: PINJ040
 
     # The last step should have the final annotation
     last_step = result.graph.last
-    # FrozenDict doesn't have get method, access items directly
-    assert any(k == "stage" and v == "complete" for k, v in last_step.meta.items)
-    assert any(k == "version" and v == 3 for k, v in last_step.meta.items)
+    # FrozenDict items is a method
+    assert any(k == "stage" and v == "complete" for k, v in last_step.meta.items())
+    assert any(k == "version" and v == 3 for k, v in last_step.meta.items())
 
 
 # ============================================
@@ -719,9 +719,9 @@ async def test_all_effects_integration():  # noqa: PINJ040
 
     # Check graph
     assert len(result.graph.steps) > 0
-    # FrozenDict doesn't have get method, access items directly
+    # FrozenDict items is a method
     assert any(
-        k == "phase" and v == "complete" for k, v in result.graph.last.meta.items
+        k == "phase" and v == "complete" for k, v in result.graph.last.meta.items()
     )
 
 

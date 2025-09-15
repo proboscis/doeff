@@ -69,8 +69,18 @@ def do(
 
         def generator_wrapper() -> Generator[Union[Effect, Program], Any, T]:
             # Call the original generator function
-            gen = func(*args, **kwargs)
-            # Pass through the generator protocol
+            gen_or_value = func(*args, **kwargs)
+            
+            # Check if it's a generator or a direct value
+            if not hasattr(gen_or_value, '__next__'):
+                # Not a generator, must be a direct return value
+                # Create a generator that immediately returns
+                return gen_or_value
+                if False:
+                    yield  # Make this a generator function
+            
+            # It's a generator, pass through the generator protocol
+            gen = gen_or_value
             try:
                 current = next(gen)
                 while True:

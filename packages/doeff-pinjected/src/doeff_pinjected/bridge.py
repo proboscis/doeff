@@ -10,13 +10,10 @@ from typing import TypeVar, Generator
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff.core import (
-    ProgramInterpreter,
-    ExecutionContext,
-    Program,
-    Effects,
-    RunResult,
-)
+from doeff.program import Program
+from doeff.interpreter import ProgramInterpreter
+from doeff.types import ExecutionContext, RunResult
+from doeff.effects import Effects
 
 T = TypeVar("T")
 
@@ -51,12 +48,15 @@ def _create_dep_aware_generator(prog: Program, resolver: AsyncResolver) -> Gener
         while True:
             # Check if this is a Program (yielded Programs should be passed through)
             if isinstance(current, Program):
-                # Programs are handled by the interpreter directly
-                value = yield current
+                # Wrap the yielded Program to handle its dependencies too
+                wrapped_sub_program = Program(
+                    lambda: _create_dep_aware_generator(current, resolver)
+                )
+                value = yield wrapped_sub_program
                 current = gen.send(value)
             # Check if this is a Dep effect (reader.ask)
-            elif hasattr(current, "tag") and current.tag == "reader.ask":
-                # This is a dependency request
+            elif hasattr(current, "tag") and current.tag in ("reader.ask", "dep.inject"):
+                # This is a dependency request (either ask or Dep)
                 key = current.payload
                 logger.debug(f"Resolving dependency for key: {key}")
                 future = resolver.provide(key)

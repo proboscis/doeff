@@ -16,7 +16,9 @@ from doeff.types import ExecutionContext, ListenResult
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
-    from doeff.program import Program
+
+# Need Program at runtime for isinstance checks
+from doeff.program import Program
 
 
 class ReaderEffectHandler:
@@ -121,6 +123,7 @@ class ResultEffectHandler:
         """Handle result.catch effect."""
         # Import here to avoid circular import
         from doeff.program import Program
+        from doeff._vendor import TraceError
         
         # Check if payload["program"] is already a Program or a callable
         sub_program = payload["program"]
@@ -131,8 +134,13 @@ class ResultEffectHandler:
         try:
             pragmatic_result = await engine.run(sub_program, ctx)
             if isinstance(pragmatic_result.result, Err):
-                # Run error handler - handler should return a Program
-                handler_result = payload["handler"](pragmatic_result.result.error)
+                # Extract the actual exception from TraceError if present
+                error = pragmatic_result.result.error
+                if isinstance(error, TraceError):
+                    error = error.exc
+                
+                # Run error handler with the unwrapped exception
+                handler_result = payload["handler"](error)
                 
                 # If handler returned a Program, run it
                 if isinstance(handler_result, Program):
@@ -145,8 +153,11 @@ class ResultEffectHandler:
                 # Success - return the value
                 return pragmatic_result.value
         except Exception as e:
-            # Run error handler
-            handler_result = payload["handler"](e)
+            # Unwrap TraceError if present
+            actual_error = e.exc if isinstance(e, TraceError) else e
+            
+            # Run error handler with unwrapped exception
+            handler_result = payload["handler"](actual_error)
             
             # If handler returned a Program, run it
             if isinstance(handler_result, Program):

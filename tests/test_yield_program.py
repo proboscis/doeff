@@ -168,7 +168,7 @@ async def test_mixed_yields():
         if step.meta:
             meta_str = str(step.meta)
             # Check for index: 0 which corresponds to our step1
-            if "'index', 0" in meta_str or '"index": 0' in meta_str:
+            if "'index': 0" in meta_str or '"index": 0' in meta_str or "'index', 0" in meta_str:
                 has_index_0 = True
             if "multiply" in meta_str:
                 has_multiply = True
