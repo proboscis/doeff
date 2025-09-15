@@ -95,6 +95,18 @@ class WGraph:
         step = WStep((), node)
         return cls(last=step, steps=frozenset({step}))
     
+    def with_last_meta(self, meta: Dict[str, Any]) -> WGraph:
+        """Create a new graph with updated metadata on the last step."""
+        # Create a new last step with updated metadata
+        new_last = WStep(
+            inputs=self.last.inputs,
+            output=self.last.output,
+            meta=meta
+        )
+        # Update the steps set - remove old last, add new last
+        new_steps = (self.steps - {self.last}) | {new_last}
+        return WGraph(last=new_last, steps=new_steps)
+    
     def __hash__(self) -> int:
         return hash((self.last, self.steps))
 

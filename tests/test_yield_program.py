@@ -2,6 +2,7 @@
 
 import asyncio
 from typing import Generator, Any
+import pytest
 
 from doeff import (
     ProgramInterpreter,
@@ -106,6 +107,7 @@ def program_with_mixed_yields() -> Generator[Effect, Any, list]:
     return results
 
 
+@pytest.mark.asyncio
 async def test_basic_program_yield():
     """Test basic yielding of Programs."""
     engine = ProgramInterpreter()
@@ -131,6 +133,7 @@ async def test_basic_program_yield():
     print("✅ Basic program yield test passed")
 
 
+@pytest.mark.asyncio
 async def test_deeply_nested_yields():
     """Test deeply nested Program yields."""
     engine = ProgramInterpreter()
@@ -148,6 +151,7 @@ async def test_deeply_nested_yields():
     print("✅ Deeply nested yields test passed")
 
 
+@pytest.mark.asyncio
 async def test_mixed_yields():
     """Test mixing Effect and Program yields."""
     engine = ProgramInterpreter()
@@ -178,6 +182,7 @@ async def test_mixed_yields():
     print("✅ Mixed yields test passed")
 
 
+@pytest.mark.asyncio
 async def test_program_yield_with_error():
     """Test error handling when yielding Programs."""
 
@@ -215,6 +220,7 @@ async def test_program_yield_with_error():
     print("✅ Error handling test passed")
 
 
+@pytest.mark.asyncio
 async def test_state_threading_through_programs():
     """Test that state is properly threaded through yielded Programs."""
 

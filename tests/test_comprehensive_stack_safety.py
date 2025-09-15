@@ -9,6 +9,7 @@ from doeff import (
     ExecutionContext,
     Program,
     Effect,
+    do,
     ask,
     put,
     get,
@@ -64,11 +65,32 @@ async def test_deep_mixed_monad_chain():
 
             # Result (error handling)
             if i % 1500 == 0:
-                yield catch(lambda: maybe_fail(i), lambda e: recover_value(i))
+                def error_recovery(e):
+                    @do
+                    def recover() -> Generator[Effect, Any, int]:
+                        yield tell(f"Recovered from error at {i}: {e}")
+                        return -i
+                    return recover()
+                
+                yield catch(maybe_fail(i), error_recovery)
 
         # Final results
         final_total = yield get("total")
-        value, sub_log = yield listen(lambda: sub_computation())
+        
+        @do
+        def sub_program() -> Generator[Effect, Any, int]:
+            """Sub computation with logging."""
+            yield tell("Sub computation")
+            yield put("sub_state", 42)
+            return 42
+        
+        listen_result = yield listen(sub_program())
+        # Handle ListenResult object
+        if hasattr(listen_result, 'value') and hasattr(listen_result, 'log'):
+            value = listen_result.value
+            sub_log = listen_result.log
+        else:
+            value, sub_log = listen_result
 
         return {
             "iterations": 5000,
@@ -125,6 +147,7 @@ async def test_nested_monad_operations():
     def nested_program(depth: int) -> Generator[Effect, Any, int]:
         """Recursively nested program."""
         if depth == 0:
+            if False: yield  # Make it a generator
             return 1
 
         # Each level uses multiple monad types
@@ -132,9 +155,21 @@ async def test_nested_monad_operations():
         yield tell(f"At depth {depth}")
 
         # Nested catch for error handling
+        @do
+        def next_level() -> Generator[Effect, Any, int]:
+            return (yield from nested_program(depth - 1))
+        
+        def error_handler(e):
+            """Error handler that returns a Program."""
+            @do
+            def handle() -> Generator[Effect, Any, int]:
+                yield tell(f"Error at depth {depth}: {e}")
+                return 0
+            return handle()
+        
         result = yield catch(
-            lambda: nested_program(depth - 1),
-            lambda e: (yield tell(f"Error at depth {depth}: {e}")) or 0,
+            next_level(),
+            error_handler,
         )
 
         # State modification
@@ -223,12 +258,34 @@ async def test_monad_composition_patterns():
         yield tell("Async completed")
 
         # StateT over Result pattern
+        @do
+        def stateful_program() -> Generator[Effect, Any, int]:
+            yield put("computed", 42)
+            value = yield get("computed")
+            return value
+        
+        @do
+        def default_program() -> Generator[Effect, Any, int]:
+            yield put("computed", 0)
+            return 0
+        
         try_result = yield catch(
-            lambda: stateful_computation(), lambda e: default_state()
+            stateful_program(), lambda e: default_program()
         )
 
         # Listen + Local pattern (Writer + Reader)
-        value, log = yield listen(lambda: local_computation())
+        @do
+        def local_program() -> Generator[Effect, Any, str]:
+            yield tell("In local computation")
+            return "local_result"
+        
+        listen_result = yield listen(local_program())
+        # Handle ListenResult object
+        if hasattr(listen_result, 'value') and hasattr(listen_result, 'log'):
+            value = listen_result.value
+            log = listen_result.log
+        else:
+            value, log = listen_result
 
         results["try_result"] = try_result
         results["logged_value"] = value
@@ -236,18 +293,6 @@ async def test_monad_composition_patterns():
 
         return results
 
-    def stateful_computation() -> Generator[Effect, Any, int]:
-        yield put("computed", 42)
-        value = yield get("computed")
-        return value
-
-    def default_state() -> Generator[Effect, Any, int]:
-        yield put("computed", 0)
-        return 0
-
-    def local_computation() -> Generator[Effect, Any, str]:
-        yield tell("In local computation")
-        return "local_result"
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"config": {"key": "value"}})

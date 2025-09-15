@@ -110,12 +110,12 @@ async def test_reader_local_effect():  # noqa: PINJ040
 
         # Run with modified environment using Effects API
         inner1 = yield Effects.reader.local(
-            {"mode": "test", "debug": True}, inner_program().generator_func
+            {"mode": "test", "debug": True}, inner_program()
         )
 
         # Run with modified environment using capitalized alias
         inner2 = yield Local(
-            {"mode": "prod", "debug": False}, inner_program().generator_func
+            {"mode": "prod", "debug": False}, inner_program()
         )
 
         # Check original is unchanged
@@ -280,13 +280,13 @@ async def test_writer_listen_effect():  # noqa: PINJ040
         yield Log("Main: starting")
 
         # Test with Effects API
-        value1, log1 = yield Effects.writer.listen(sub_program().generator_func)
+        value1, log1 = yield Effects.writer.listen(sub_program())
 
         # Test with capitalized alias
-        value2, log2 = yield Listen(sub_program().generator_func)
+        value2, log2 = yield Listen(sub_program())
 
         # Test with lowercase (backwards compatibility)
-        value3, log3 = yield listen(sub_program().generator_func)
+        value3, log3 = yield listen(sub_program())
 
         yield Log("Main: done")
 
@@ -665,9 +665,16 @@ async def test_all_effects_integration():  # noqa: PINJ040
                 yield Fail(ValueError("Intentional"))
             return "ok"
 
+        def catch_handler(e):
+            @do
+            def handle() -> Generator[Effect, Any, str]:
+                yield Log(f"Caught: {e}")
+                return "recovered"
+            return handle()
+        
         status = yield Catch(
-            maybe_fail().generator_func,
-            lambda e: (yield Log(f"Caught: {e}")) or "recovered",
+            maybe_fail(),
+            catch_handler,
         )
 
         # Graph annotation
@@ -680,7 +687,7 @@ async def test_all_effects_integration():  # noqa: PINJ040
             yield Log("sub2")
             return 99
 
-        sub_value, sub_log = yield Listen(sub().generator_func)
+        sub_value, sub_log = yield Listen(sub())
 
         return {
             "data": data,

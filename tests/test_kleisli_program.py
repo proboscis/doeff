@@ -27,6 +27,7 @@ async def test_kleisli_basic():
 
     @do
     def add(x: int, y: int) -> Generator[Union[Effect, Program], Any, int]:
+        if False: yield  # Make it a generator
         return x + y
 
     # Check that add is a KleisliProgram
