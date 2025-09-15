@@ -228,39 +228,101 @@ class ProgramInterpreter:
 
     # Program dispatchers for Gather effects
     async def _dispatch_program_gather(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle program.gather and gather.gather effects."""
+        """Handle program.gather and gather.gather effects.
+        
+        Each program runs with an isolated copy of the context to simulate
+        parallel execution. State changes are merged at the end with 
+        last-write-wins semantics.
+        """
         programs = payload
         results = []
+        sub_contexts = []
+        
+        # Run all programs with isolated contexts
+        error_to_raise = None
         for prog in programs:
             # Check if it's a thunk
             if callable(prog) and not isinstance(prog, Program):
                 prog = prog()
-            # Run each program with the current context
-            sub_result = await self.run(prog, ctx)
+            # Run each program with a copy of the current context for isolation
+            # This simulates parallel execution where each program starts with
+            # the same initial state
+            ctx_copy = ExecutionContext(
+                env=ctx.env.copy() if ctx.env else {},
+                state=ctx.state.copy() if ctx.state else {},
+                log=[],  # Each parallel program starts with empty log
+                graph=ctx.graph,  # Graph is immutable
+                io_allowed=ctx.io_allowed,
+            )
+            sub_result = await self.run(prog, ctx_copy)
+            sub_contexts.append(sub_result.context)
             if isinstance(sub_result.result, Err):
-                # Propagate error
-                raise sub_result.result.error
-            results.append(sub_result.value)
-            # Update context with changes from sub-program
-            ctx = sub_result.context
+                # Store error to raise after merging logs
+                if error_to_raise is None:
+                    error_to_raise = sub_result.result.error
+                # Still collect the context even on error
+            else:
+                results.append(sub_result.value)
+        
+        # Merge all state changes and logs at the end
+        for sub_ctx in sub_contexts:
+            # Merge state changes with last-write-wins semantics
+            ctx.state.update(sub_ctx.state)
+            # Append sub-program logs
+            ctx.log.extend(sub_ctx.log)
+        
+        # Raise error after merging if one occurred
+        if error_to_raise is not None:
+            raise error_to_raise
+            
         return results
 
     async def _dispatch_program_gather_dict(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle program.gather_dict and gather.gather_dict effects."""
+        """Handle program.gather_dict and gather.gather_dict effects.
+        
+        Each program runs with an isolated copy of the context to simulate
+        parallel execution. State changes are merged at the end with 
+        last-write-wins semantics.
+        """
         programs_dict = payload
         results = {}
+        sub_contexts = []
+        
+        # Run all programs with isolated contexts
+        error_to_raise = None
         for key, prog in programs_dict.items():
             # Check if it's a thunk
             if callable(prog) and not isinstance(prog, Program):
                 prog = prog()
-            # Run each program with the current context
-            sub_result = await self.run(prog, ctx)
+            # Run each program with a copy of the current context for isolation
+            ctx_copy = ExecutionContext(
+                env=ctx.env.copy() if ctx.env else {},
+                state=ctx.state.copy() if ctx.state else {},
+                log=[],  # Each parallel program starts with empty log
+                graph=ctx.graph,  # Graph is immutable
+                io_allowed=ctx.io_allowed,
+            )
+            sub_result = await self.run(prog, ctx_copy)
+            sub_contexts.append(sub_result.context)
             if isinstance(sub_result.result, Err):
-                # Propagate error
-                raise sub_result.result.error
-            results[key] = sub_result.value
-            # Update context with changes from sub-program
-            ctx = sub_result.context
+                # Store error to raise after merging logs
+                if error_to_raise is None:
+                    error_to_raise = sub_result.result.error
+                # Still collect the context even on error
+            else:
+                results[key] = sub_result.value
+        
+        # Merge all state changes and logs at the end
+        for sub_ctx in sub_contexts:
+            # Merge state changes with last-write-wins semantics  
+            ctx.state.update(sub_ctx.state)
+            # Append sub-program logs
+            ctx.log.extend(sub_ctx.log)
+        
+        # Raise error after merging if one occurred
+        if error_to_raise is not None:
+            raise error_to_raise
+            
         return results
 
     # Dependency injection dispatcher

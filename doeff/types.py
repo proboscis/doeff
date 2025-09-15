@@ -160,6 +160,10 @@ class ListenResult:
 
     value: Any
     log: List[Any]
+    
+    def __iter__(self):
+        """Make ListenResult unpackable as a tuple (value, log)."""
+        return iter([self.value, self.log])
 
 
 __all__ = [

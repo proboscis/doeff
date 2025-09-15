@@ -97,11 +97,13 @@ class WGraph:
     
     def with_last_meta(self, meta: Dict[str, Any]) -> WGraph:
         """Create a new graph with updated metadata on the last step."""
-        # Create a new last step with updated metadata
+        # Merge new metadata with existing metadata instead of replacing
+        merged_meta = {**self.last.meta, **meta} if self.last.meta else meta
+        # Create a new last step with merged metadata
         new_last = WStep(
             inputs=self.last.inputs,
             output=self.last.output,
-            meta=meta
+            meta=merged_meta
         )
         # Update the steps set - remove old last, add new last
         new_steps = (self.steps - {self.last}) | {new_last}

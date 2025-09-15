@@ -273,9 +273,13 @@ async def test_bridge_error_propagation_with_programs():  # noqa: PINJ040
     test_design = design()
     resolver = AsyncResolver(test_design)  # pinjected: allow-async-resolver
 
-    # The error should propagate
-    with pytest.raises(ValueError, match="Intentional error in nested Program"):
+    # The error should propagate (wrapped in ExceptionGroup by pinjected's TaskGroup)
+    with pytest.raises(ExceptionGroup) as exc_info:
         await resolver.provide(injected)
+    # Check that the ValueError is in the exception group
+    assert len(exc_info.value.exceptions) == 1
+    assert isinstance(exc_info.value.exceptions[0], ValueError)
+    assert "Intentional error in nested Program" in str(exc_info.value.exceptions[0])
 
     # With program_to_injected_result, we should get an error result
     injected_result = program_to_injected_result(outer_with_error())
