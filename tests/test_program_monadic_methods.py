@@ -313,7 +313,12 @@ async def test_error_propagation_in_flat_map():
     result = await engine.run(prog)
 
     assert result.is_err
-    assert "Intentional error" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Intentional error" in str(error)
     assert len(result.log) == 1  # Only "About to fail"
     # "This should not run" should not be in the log
 

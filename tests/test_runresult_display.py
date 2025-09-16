@@ -62,16 +62,15 @@ async def test_display_error_with_traceback():
     # Test display output
     display_output = result.display()
     
-    # Verify error indicators
+    # Verify error indicators  
     assert "❌ Failure" in display_output
-    assert "Exception Type: ValueError" in display_output
-    assert "Exception Message: Something went wrong in the program" in display_output
+    assert "Error Chain (most recent first):" in display_output
+    assert "Effect 'result.fail' failed" in display_output
+    assert "Caused by: ValueError: Something went wrong in the program" in display_output
     
-    # Verify stack trace is shown
-    assert "📍 Stack Trace:" in display_output
-    assert "ValueError: Something went wrong in the program" in display_output
-    assert "Traceback" in display_output  # Traceback header
-    assert "handle_fail" in display_output  # Shows it went through the handler
+    # Verify creation location is shown
+    assert "📍 Created at:" in display_output
+    assert "failing_program" in display_output
     
     # Verify state and logs are still shown
     assert "step: \"before_error\"" in display_output
@@ -102,10 +101,9 @@ async def test_display_nested_error():
     display_output = result.display()
     
     # Should show the KeyError details
-    assert "Exception Type: KeyError" in display_output
-    assert "Exception Message: 'missing_key'" in display_output
-    assert "📍 Stack Trace:" in display_output
-    assert "KeyError: 'missing_key'" in display_output
+    assert "Error Chain (most recent first):" in display_output
+    assert "Effect 'result.fail' failed" in display_output
+    assert "Caused by: KeyError: 'missing_key'" in display_output
     
     # State should still be captured
     assert "outer_state: \"started\"" in display_output
@@ -197,8 +195,8 @@ async def test_display_error_types():
     result = await engine.run(type_error_program())
     display = result.display()
     
-    assert "Exception Type: TypeError" in display
-    assert "Expected int, got str" in display
+    assert "Effect 'result.fail' failed" in display
+    assert "Caused by: TypeError: Expected int, got str" in display
     
     # Test with custom exception
     class CustomError(Exception):
@@ -214,8 +212,8 @@ async def test_display_error_types():
     result2 = await engine.run(custom_error_program())
     display2 = result2.display()
     
-    assert "Exception Type: CustomError" in display2
-    assert "Not found" in display2
+    assert "Effect 'result.fail' failed" in display2
+    assert "Caused by: CustomError: Not found" in display2
 
 
 @pytest.mark.asyncio

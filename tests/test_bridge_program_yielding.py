@@ -288,7 +288,12 @@ async def test_bridge_error_propagation_with_programs():  # noqa: PINJ040
     run_result = await resolver.provide(injected_result)
 
     assert run_result.is_err
-    assert "Intentional error in nested Program" in str(run_result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = run_result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Intentional error in nested Program" in str(error)
     assert "Outer starting" in run_result.log
     assert "About to fail" in run_result.log
     assert "This should not be logged" not in run_result.log

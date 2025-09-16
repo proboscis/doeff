@@ -105,7 +105,12 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
 
         # Handle the result
         if result.is_err:
-            raise result.result.error.exc
+            error = result.result.error
+            # Unwrap EffectFailure to get the original cause
+            from doeff.types import EffectFailure
+            if isinstance(error, EffectFailure):
+                error = error.cause
+            raise error
 
         return result.value
 

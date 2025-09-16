@@ -271,7 +271,12 @@ async def test_kleisli_error_propagation():
     result = await engine.run(prog_result)
 
     assert result.is_err
-    assert "Intentional error" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Intentional error" in str(error)
     # Only the first log should be there, not "Using value"
     assert len(result.log) == 1
     assert result.log[0] == "About to fail"
