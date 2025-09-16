@@ -44,8 +44,8 @@ def Log(message: Any) -> Effect:
 
 
 __all__ = [
-    "writer",
-    "Tell",
     "Listen",
     "Log",
+    "Tell",
+    "writer",
 ]

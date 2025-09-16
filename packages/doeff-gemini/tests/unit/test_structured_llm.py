@@ -5,11 +5,6 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from google.genai import types as genai_types
-from pydantic import BaseModel
-
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
-
 from doeff_gemini import (
     build_contents,
     build_generation_config,
@@ -17,6 +12,10 @@ from doeff_gemini import (
     process_unstructured_response,
     structured_llm__gemini,
 )
+from google.genai import types as genai_types
+from pydantic import BaseModel
+
+from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
 
 
 class SimpleResponse(BaseModel):

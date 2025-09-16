@@ -4,7 +4,8 @@ State monad effects.
 This module provides State effects for managing mutable state.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .base import Effect, create_effect_with_trace
 
@@ -45,8 +46,8 @@ def Modify(key: str, f: Callable[[Any], Any]) -> Effect:
 
 
 __all__ = [
-    "state",
     "Get",
-    "Put",
     "Modify",
+    "Put",
+    "state",
 ]

@@ -1,27 +1,30 @@
-"""
-Cache decorator for doeff programs using cache effects.
+"""Cache decorator for doeff programs using cache effects."""
 
-This module provides the @cache decorator that automatically handles caching
-with CacheGet/CachePut effects and uses Recover for handling cache misses.
-"""
+from __future__ import annotations
 
-import functools
-from typing import Any, Callable, Optional, TypeVar
+import inspect
+from collections.abc import Callable, Mapping
+from typing import Any, TypeVar
 
-from doeff import (
-    do,
-    EffectGenerator,
-    CacheGet,
-    CachePut,
-    Recover,
-    Log,
-)
+from doeff.do import do
+from doeff.effects.cache import CacheGet, CachePut
+from doeff.effects.result import Recover
+from doeff.effects.writer import Log
+from doeff.types import EffectGenerator
 from doeff._vendor import FrozenDict
 
 T = TypeVar("T")
 
 
-def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
+def cache(
+    ttl: float | None = None,
+    key_func: Callable | None = None,
+    *,
+    lifecycle: CacheLifecycle | str | None = None,
+    storage: CacheStorage | str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    policy: CachePolicy | Mapping[str, Any] | None = None,
+):
     """
     Cache decorator that uses CacheGet/CachePut effects with Recover for misses.
     
@@ -36,6 +39,10 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
         ttl: Time-to-live for cache entries in seconds. None means no expiration.
         key_func: Optional function to transform cache keys. If not provided,
                  uses (func_name, args, FrozenDict(kwargs)) as key.
+        lifecycle: Hint describing expected lifetime of cached values.
+        storage: Explicit storage target hint (e.g., "memory", "disk").
+        metadata: Arbitrary metadata to attach to the cache policy.
+        policy: Pre-built CachePolicy or mapping describing cache behaviour.
     
     Example:
         >>> @cache(ttl=60)
@@ -50,33 +57,69 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
     def decorator(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
         # Check if func is a KleisliProgram (from @do decorator)
         from doeff.kleisli import KleisliProgram
-        
+
         # Store the function object for unique identification
         # This ensures different functions have different cache keys
         func_id = id(func)
-        
+
         if isinstance(func, KleisliProgram):
             # Get the actual function from KleisliProgram if possible
             # Use the object id as part of the cache key for uniqueness
             func_name = f"kleisli_{func_id}"
             wrapped_func = func
+            signature_source = func.func
         else:
-            func_name = getattr(func, '__name__', f"func_{func_id}")
+            func_name = getattr(func, "__name__", f"func_{func_id}")
             wrapped_func = func
-        
+            signature_source = func
+
+        try:
+            signature = inspect.signature(signature_source)
+        except (ValueError, TypeError):
+            signature = None
+
         @do
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
             # Create cache key as (func_name, args, frozen_kwargs)
             # The interpreter will handle serialization
-            frozen_kwargs = FrozenDict(kwargs) if kwargs else FrozenDict()
-            
-            if key_func:
-                cache_key = key_func(func_name, args, frozen_kwargs)
+            if signature is not None:
+                try:
+                    bound = signature.bind(*args, **kwargs)
+                except TypeError:
+                    args_for_key = args
+                    kwargs_for_key = dict(kwargs)
+                else:
+                    bound.apply_defaults()
+                    args_list: list[Any] = []
+                    kwargs_for_key: dict[str, Any] = {}
+                    for name, param in signature.parameters.items():
+                        value = bound.arguments.get(name)
+                        if param.kind in (
+                            inspect.Parameter.POSITIONAL_ONLY,
+                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                        ):
+                            args_list.append(value)
+                        elif param.kind is inspect.Parameter.VAR_POSITIONAL:
+                            args_list.extend(value or ())
+                        elif param.kind is inspect.Parameter.KEYWORD_ONLY:
+                            kwargs_for_key[name] = value
+                        elif param.kind is inspect.Parameter.VAR_KEYWORD:
+                            if value:
+                                kwargs_for_key.update(value)
+                    args_for_key = tuple(args_list)
             else:
-                cache_key = (func_name, args, frozen_kwargs)
-            
+                args_for_key = args
+                kwargs_for_key = dict(kwargs)
+
+            frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
+
+            if key_func:
+                cache_key = key_func(func_name, args_for_key, frozen_kwargs)
+            else:
+                cache_key = (func_name, args_for_key, frozen_kwargs)
+
             yield Log(f"Cache: checking key for {func_name}")
-            
+
             # Define the fallback computation
             @do
             def compute_and_cache() -> EffectGenerator[T]:
@@ -84,33 +127,41 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
                 # Execute the original function
                 result = yield wrapped_func(*args, **kwargs)
                 # Store in cache with the key
-                yield CachePut(cache_key, result, ttl)
+                yield CachePut(
+                    cache_key,
+                    result,
+                    ttl,
+                    lifecycle=lifecycle,
+                    storage=storage,
+                    metadata=metadata,
+                    policy=policy,
+                )
                 yield Log(f"Cache: stored result for {func_name}")
                 return result
-            
+
             # Create a program that tries to get from cache
             @do
             def try_cache_get() -> EffectGenerator[T]:
                 return (yield CacheGet(cache_key))
-            
+
             # Try to get from cache, recover with computation on miss
             result = yield Recover(try_cache_get, compute_and_cache)
-            
+
             # Log cache hit if we got here without computing
             # (The log will only appear if CacheGet succeeded)
-            
+
             return result
-        
+
         # Try to preserve some metadata if possible
         try:
-            wrapper.__name__ = getattr(func, '__name__', wrapper.__name__)
-            wrapper.__doc__ = getattr(func, '__doc__', wrapper.__doc__)
+            wrapper.__name__ = getattr(func, "__name__", wrapper.__name__)
+            wrapper.__doc__ = getattr(func, "__doc__", wrapper.__doc__)
         except (AttributeError, TypeError):
             # Can't set attributes on some objects like KleisliProgram
             pass
-        
+
         return wrapper
-    
+
     return decorator
 
 
@@ -133,16 +184,15 @@ def cache_key(*key_args: str) -> Callable:
         """Extract specified arguments for cache key."""
         # For simplicity, assume key_args refer to positional arguments
         # In a real implementation, you'd want to map parameter names properly
-        import inspect
-        
+
         # Create a simpler key using only specified arguments
         key_values = []
         for i, arg_name in enumerate(key_args):
             if i < len(args):
                 key_values.append(args[i])
-        
+
         return (func_name, tuple(key_values), FrozenDict())
-    
+
     return key_function
 
 
@@ -169,9 +219,9 @@ def cache_forever(func: Callable[..., EffectGenerator[T]]) -> Callable[..., Effe
 
 __all__ = [
     "cache",
-    "cache_key",
+    "cache_1hour",
     "cache_1min",
     "cache_5min",
-    "cache_1hour",
     "cache_forever",
+    "cache_key",
 ]

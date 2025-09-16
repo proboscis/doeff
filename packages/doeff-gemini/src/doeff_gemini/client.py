@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from doeff import (
     Ask,
@@ -26,12 +26,12 @@ class GeminiClient:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         vertexai: bool | None = None,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        credentials: Optional[Any] = None,
-        client_options: Optional[Dict[str, Any]] = None,
+        project: str | None = None,
+        location: str | None = None,
+        credentials: Any | None = None,
+        client_options: dict[str, Any] | None = None,
         **extra_client_kwargs: Any,
     ) -> None:
         self.api_key = api_key
@@ -52,8 +52,8 @@ class GeminiClient:
             self._genai_module = genai
         return self._genai_module
 
-    def _build_client_kwargs(self) -> Dict[str, Any]:
-        kwargs: Dict[str, Any] = dict(self._extra_client_kwargs)
+    def _build_client_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = dict(self._extra_client_kwargs)
         if self.api_key:
             kwargs.setdefault("api_key", self.api_key)
         if self.vertexai:
@@ -197,7 +197,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
     return client_instance
 
 
-def _extract_request_id(response: Any) -> Optional[str]:
+def _extract_request_id(response: Any) -> str | None:
     """Extract request identifier from a Gemini response if available."""
     if response is None:
         return None
@@ -213,7 +213,7 @@ def _extract_request_id(response: Any) -> Optional[str]:
     return None
 
 
-def _extract_usage(response: Any) -> Optional[TokenUsage]:
+def _extract_usage(response: Any) -> TokenUsage | None:
     """Extract textual token usage metadata from a Gemini response."""
     usage = getattr(response, "usage_metadata", None)
     if usage is None:
@@ -238,10 +238,10 @@ def _extract_usage(response: Any) -> Optional[TokenUsage]:
 def track_api_call(
     operation: str,
     model: str,
-    request_summary: Dict[str, Any],
+    request_summary: dict[str, Any],
     response: Any,
     start_time: float,
-    error: Optional[Exception] = None,
+    error: Exception | None = None,
 ) -> EffectGenerator[APICallMetadata]:
     """Log and persist observability metadata for a Gemini API invocation."""
     end_time = time.time()

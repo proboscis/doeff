@@ -4,7 +4,8 @@ Future/async effects.
 This module provides Future effects for async operations.
 """
 
-from typing import Any, Awaitable
+from collections.abc import Awaitable
+from typing import Any
 
 from .base import Effect, create_effect_with_trace
 
@@ -35,7 +36,7 @@ def Parallel(*awaitables: Awaitable[Any]) -> Effect:
 
 
 __all__ = [
-    "future",
     "Await",
     "Parallel",
+    "future",
 ]

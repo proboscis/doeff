@@ -2,7 +2,7 @@
 
 import json
 from typing import Any
-from unittest.mock import MagicMock, Mock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from doeff_openai import (

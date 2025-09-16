@@ -7,8 +7,9 @@ This module contains the Program wrapper class that represents a lazy computatio
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
-from typing import Any, Callable, Generator, Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar
 
 from doeff.types import Effect
 
@@ -27,7 +28,7 @@ class Program(Generic[T]):
     The type parameter T represents the return type of the program.
     """
 
-    generator_func: Callable[[], Generator[Union[Effect, "Program"], Any, T]]
+    generator_func: Callable[[], Generator[Effect | Program, Any, T]]
 
     def __iter__(self):
         """Allow iteration by returning a fresh generator."""
@@ -43,7 +44,7 @@ class Program(Generic[T]):
             func_repr = object.__repr__(func)
         return f"Program({func_repr})"
 
-    def map(self, f: Callable[[T], U]) -> "Program[U]":
+    def map(self, f: Callable[[T], U]) -> Program[U]:
         """Map a function over the result of this program (functor map)."""
 
         def mapped_generator():
@@ -67,7 +68,7 @@ class Program(Generic[T]):
 
         return Program(mapped_generator)
 
-    def flat_map(self, f: Callable[[T], "Program[U]"]) -> "Program[U]":
+    def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]:
         """Monadic bind operation."""
 
         def flat_mapped_generator():
@@ -99,12 +100,12 @@ class Program(Generic[T]):
 
         return Program(flat_mapped_generator)
 
-    def then(self, next_program: "Program[U]") -> "Program[U]":
+    def then(self, next_program: Program[U]) -> Program[U]:
         """Sequence this program with another, discarding this program's result."""
         return self.flat_map(lambda _: next_program)
 
     @staticmethod
-    def pure(value: T) -> "Program[T]":
+    def pure(value: T) -> Program[T]:
         """Create a program that returns the given value (monadic return)."""
 
         def pure_generator():
@@ -114,12 +115,12 @@ class Program(Generic[T]):
         return Program(pure_generator)
 
     @staticmethod
-    def of(value: T) -> "Program[T]":
+    def of(value: T) -> Program[T]:
         """Alias for pure."""
         return Program.pure(value)
 
     @staticmethod
-    def from_effect(effect: Effect) -> "Program[Any]":
+    def from_effect(effect: Effect) -> Program[Any]:
         """Create a program from a single effect."""
 
         def effect_generator():
@@ -129,7 +130,7 @@ class Program(Generic[T]):
         return Program(effect_generator)
 
     @staticmethod
-    def sequence(programs: list["Program[T]"]) -> "Program[list[T]]":
+    def sequence(programs: list[Program[T]]) -> Program[list[T]]:
         """Sequence a list of programs, collecting their results."""
 
         def sequence_generator():
@@ -148,7 +149,7 @@ class Program(Generic[T]):
         return Program(sequence_generator)
 
     @staticmethod
-    def traverse(items: list[T], f: Callable[[T], "Program[U]"]) -> "Program[list[U]]":
+    def traverse(items: list[T], f: Callable[[T], Program[U]]) -> Program[list[U]]:
         """Map a function returning Programs over a list and sequence the results."""
         programs = [f(item) for item in items]
         return Program.sequence(programs)

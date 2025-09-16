@@ -1,20 +1,22 @@
 """Test that the pragmatic engine can handle yielded Programs."""
 
 import asyncio
-from typing import Generator, Any
+from collections.abc import Generator
+from typing import Any
+
 import pytest
 
 from doeff import (
-    ProgramInterpreter,
-    ExecutionContext,
-    Effect,
-    do,
-    Step,
     Annotate,
-    Log,
+    Effect,
+    ExecutionContext,
     Get,
-    Put,
+    Log,
     Modify,
+    ProgramInterpreter,
+    Put,
+    Step,
+    do,
 )
 
 

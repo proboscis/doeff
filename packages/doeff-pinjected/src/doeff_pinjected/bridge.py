@@ -5,15 +5,16 @@ This module provides functions to convert Program[T] from the pragmatic
 implementation into pinjected's Injected[T] and IProxy[T] types.
 """
 
-from typing import TypeVar, Generator
+from collections.abc import Generator
+from typing import TypeVar
 
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff.program import Program
-from doeff.interpreter import ProgramInterpreter
-from doeff.types import ExecutionContext, RunResult
 from doeff.effects import Await
+from doeff.interpreter import ProgramInterpreter
+from doeff.program import Program
+from doeff.types import ExecutionContext, RunResult
 
 T = TypeVar("T")
 
@@ -34,7 +35,7 @@ def _create_dep_aware_generator(prog: Program, resolver: AsyncResolver) -> Gener
     # Get the generator from the Program
     if hasattr(prog, "generator_func") and callable(prog.generator_func):
         gen = prog.generator_func()
-    elif hasattr(prog, "__call__"):
+    elif callable(prog):
         gen = prog()
     else:
         # It might already be a generator

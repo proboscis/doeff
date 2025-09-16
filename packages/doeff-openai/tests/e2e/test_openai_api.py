@@ -5,28 +5,24 @@ They will be skipped if the key is not available.
 """
 
 import os  # noqa: PINJ050 - Required for e2e test environment detection
-import json
-from typing import List, Optional
-from pydantic import BaseModel, Field
+
 import pytest
 from PIL import Image
-import io
+from pydantic import BaseModel, Field
 
 # Mark all tests in this module as e2e
 pytestmark = pytest.mark.e2e
 
-from doeff import (
-    do,
-    EffectGenerator,
-    ProgramInterpreter,
-    ExecutionContext,
-)
-
 from doeff_openai import (
-    structured_llm__openai,
     gpt4o_structured,
     gpt5_nano_structured,
-    gpt5_structured,
+    structured_llm__openai,
+)
+
+from doeff import (
+    EffectGenerator,
+    ProgramInterpreter,
+    do,
 )
 
 
@@ -43,19 +39,19 @@ class CodeAnalysis(BaseModel):
     language: str
     purpose: str
     has_bugs: bool
-    suggestions: List[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
     complexity: str = Field(description="low, medium, or high")
 
 
 class ImageDescription(BaseModel):
     """Description of an image."""
-    main_subjects: List[str]
-    colors: List[str]
+    main_subjects: list[str]
+    colors: list[str]
     scene_type: str
     detailed_description: str
 
 
-def get_test_api_key() -> Optional[str]:
+def get_test_api_key() -> str | None:
     """Get API key from environment in a test context."""
     # For testing purposes, we need to check environment
     # This is only used to determine if tests should be skipped
@@ -65,11 +61,11 @@ def get_test_api_key() -> Optional[str]:
 def create_test_image():
     """Create a simple test image."""
     # Create a 100x100 red square image
-    img = Image.new('RGB', (100, 100), color='red')
+    img = Image.new("RGB", (100, 100), color="red")
     # Add a blue rectangle in the center
     from PIL import ImageDraw
     draw = ImageDraw.Draw(img)
-    draw.rectangle([25, 25, 75, 75], fill='blue')
+    draw.rectangle([25, 25, 75, 75], fill="blue")
     return img
 
 
@@ -92,16 +88,16 @@ async def test_unstructured_response():
             temperature=0.1,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
     print(result.display())
-    
+
     assert result.is_ok
     assert isinstance(result.value, str)
     # The answer should contain "4" or "four"
     assert "4" in result.value.lower() or "four" in result.value.lower()
-    
+
     # Check logs for API tracking
     assert any("OpenAI API call" in str(log) for log in result.log)
     assert any("gpt-4o-mini" in str(log) for log in result.log)
@@ -121,10 +117,10 @@ async def test_structured_response_math():
             temperature=0.1,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
     assert isinstance(result.value, MathAnswer)
     assert result.value.answer == 42
@@ -132,7 +128,7 @@ async def test_structured_response_math():
     assert 0 <= result.value.confidence <= 1
     # Should be very confident about simple math
     assert result.value.confidence > 0.9
-    
+
     # Check that structured output was requested
     assert any("structured output" in str(log) for log in result.log)
     assert any("MathAnswer" in str(log) for log in result.log)
@@ -156,7 +152,7 @@ def fibonacci(n):
             fib.append(fib[i-1] + fib[i-2])
         return fib
 """
-    
+
     @do
     def test_program() -> EffectGenerator[CodeAnalysis]:
         result = yield structured_llm__openai(
@@ -167,17 +163,17 @@ def fibonacci(n):
             temperature=0.3,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
     assert isinstance(result.value, CodeAnalysis)
     assert result.value.language.lower() == "python"
     assert "fibonacci" in result.value.purpose.lower()
     assert not result.value.has_bugs  # The code is correct
     assert result.value.complexity in ["low", "medium", "high"]
-    
+
     # Should identify this as relatively simple code
     assert result.value.complexity in ["low", "medium"]
 
@@ -187,7 +183,7 @@ def fibonacci(n):
 async def test_with_image():
     """Test vision capabilities with structured output."""
     test_image = create_test_image()
-    
+
     @do
     def test_program() -> EffectGenerator[ImageDescription]:
         result = yield structured_llm__openai(
@@ -199,21 +195,21 @@ async def test_with_image():
             temperature=0.5,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
     assert isinstance(result.value, ImageDescription)
-    
+
     # Should identify the colors
     colors_lower = [c.lower() for c in result.value.colors]
     assert "red" in colors_lower or "blue" in colors_lower
-    
+
     # Should identify it as a geometric/abstract scene
     assert len(result.value.main_subjects) > 0
     assert len(result.value.detailed_description) > 0
-    
+
     # Check logs for image processing
     assert any("Converting image" in str(log) for log in result.log)
     assert any("base64" in str(log) for log in result.log)
@@ -223,12 +219,12 @@ async def test_with_image():
 @pytest.mark.asyncio
 async def test_error_handling_invalid_json():
     """Test error handling when model returns invalid JSON."""
-    
+
     class StrictFormat(BaseModel):
         """Format that requires very specific structure."""
         exact_number: int = Field(description="Must be exactly 42")
         exact_string: str = Field(description="Must be exactly 'hello'")
-    
+
     @do
     def test_program() -> EffectGenerator[StrictFormat]:
         # Ask something that might confuse the model
@@ -240,10 +236,10 @@ async def test_error_handling_invalid_json():
             temperature=1.0,  # High temperature for more randomness
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     # This might succeed or fail depending on the model's response
     # But it should handle errors gracefully
     if result.is_err:
@@ -269,10 +265,10 @@ async def test_retry_on_failure():
             max_retries=2,  # Allow retries
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     # Should still succeed despite token limit
     assert result.is_ok
     assert isinstance(result.value, str)
@@ -291,10 +287,10 @@ async def test_gpt4o_convenience_function():
             temperature=0.1,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
     assert isinstance(result.value, MathAnswer)
     assert result.value.answer == 100
@@ -312,10 +308,10 @@ async def test_gpt5_with_reasoning():
             verbosity="low",
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     if result.is_ok:
         assert isinstance(result.value, str)
         assert "7" in result.value
@@ -340,10 +336,10 @@ async def test_service_tier_parameter():
             service_tier="auto",  # Let OpenAI choose
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
     # Check that service tier was set
     assert any("service_tier" in str(log) for log in result.log)
@@ -361,17 +357,17 @@ async def test_cost_tracking():
             max_tokens=10,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
-    
+
     # Check state for cost tracking
     assert "openai_api_calls" in result.state
     api_calls = result.state["openai_api_calls"]
     assert len(api_calls) > 0
-    
+
     # Check the tracked metadata
     last_call = api_calls[-1]
     assert "model" in last_call
@@ -387,8 +383,8 @@ async def test_multiple_images():
     """Test handling multiple images."""
     image1 = create_test_image()
     # Create a second image with different colors
-    image2 = Image.new('RGB', (100, 100), color='green')
-    
+    image2 = Image.new("RGB", (100, 100), color="green")
+
     @do
     def test_program() -> EffectGenerator[str]:
         result = yield structured_llm__openai(
@@ -399,10 +395,10 @@ async def test_multiple_images():
             temperature=0.3,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
     # Should mention seeing two images
     assert "two" in result.value.lower() or "2" in result.value
@@ -423,16 +419,16 @@ async def test_graph_tracking():
             max_tokens=10,
         )
         return result
-    
+
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
-    
+
     assert result.is_ok
-    
+
     # Check that graph steps were created
     assert result.graph is not None
     assert len(result.graph.steps) > 0
-    
+
     # Should have steps for LLM call
     steps_meta = [step.meta for step in result.graph.steps if step.meta]
     assert any(meta.get("type") == "llm_call" for meta in steps_meta)

@@ -2,28 +2,30 @@
 
 import asyncio
 import inspect
-from typing import Generator, Any, Union
+from collections.abc import Generator
+from typing import Any
+
 import pytest
 
 from doeff import (
-    ProgramInterpreter,
-    ExecutionContext,
     Effect,
+    ExecutionContext,
     Program,
-    do,
-    ask,
-    put,
-    get,
-    modify,
-    tell,
-    listen,
-    await_,
-    parallel,
-    fail,
-    catch,
-    print_,
-    step,
+    ProgramInterpreter,
     annotate,
+    ask,
+    await_,
+    catch,
+    do,
+    fail,
+    get,
+    listen,
+    modify,
+    parallel,
+    print_,
+    put,
+    step,
+    tell,
 )
 
 
@@ -233,7 +235,7 @@ async def test_composition():
                 yield tell(f"A failed: {e}")
                 return 0
             return handle()
-        
+
         a_result = yield catch(
             program_a(n),
             a_error_handler,
@@ -246,7 +248,7 @@ async def test_composition():
                 yield tell(f"B failed: {e}")
                 return 0
             return handle()
-        
+
         b_result = yield catch(
             program_b(a_result),
             b_error_handler,
@@ -270,7 +272,7 @@ async def test_composition():
 def test_do_preserves_metadata_and_program_repr():
     """Ensure @do preserves metadata and Program repr shows original function name."""
 
-    def metadata_program(x: int, y: int = 1) -> Generator[Union[Effect, Program], Any, int]:
+    def metadata_program(x: int, y: int = 1) -> Generator[Effect | Program, Any, int]:
         """Original generator for metadata preservation tests."""
 
         value = yield Program.pure(x + y)

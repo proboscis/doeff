@@ -5,60 +5,60 @@ This module re-exports the main components for backwards compatibility
 and convenience. All implementations have been moved to their respective modules.
 """
 
-from doeff.types import Effect, ExecutionContext, RunResult
-from doeff.program import Program
-from doeff.kleisli import KleisliProgram
 from doeff.do import do
-from doeff.interpreter import ProgramInterpreter, force_eval
-from doeff.handlers import (
-    ReaderEffectHandler,
-    StateEffectHandler,
-    WriterEffectHandler,
-    FutureEffectHandler,
-    ResultEffectHandler,
-    IOEffectHandler,
-    GraphEffectHandler,
-    ListenResult,
-)
 from doeff.effects import (
-    Effects,
+    IO,
+    Annotate,
     # Capitalized aliases
     Ask,
-    Local,
-    Get,
-    Put,
-    Modify,
-    Log,
-    Tell,
-    Listen,
     Await,
-    Parallel,
-    Fail,
     Catch,
-    IO,
-    Print,
-    Step,
-    Annotate,
+    Dep,
+    Effects,
+    Fail,
     Gather,
     GatherDict,
-    Dep,
+    Get,
+    Listen,
+    Local,
+    Log,
+    Modify,
+    Parallel,
+    Print,
+    Put,
+    Step,
+    Tell,
+    annotate,
     # Lowercase compatibility
     ask,
-    local,
-    get,
-    put,
-    modify,
-    tell,
-    listen,
     await_,
-    parallel,
-    fail,
     catch,
+    fail,
+    get,
     io,
+    listen,
+    local,
+    modify,
+    parallel,
     print_,
+    put,
     step,
-    annotate,
+    tell,
 )
+from doeff.handlers import (
+    FutureEffectHandler,
+    GraphEffectHandler,
+    IOEffectHandler,
+    ListenResult,
+    ReaderEffectHandler,
+    ResultEffectHandler,
+    StateEffectHandler,
+    WriterEffectHandler,
+)
+from doeff.interpreter import ProgramInterpreter, force_eval
+from doeff.kleisli import KleisliProgram
+from doeff.program import Program
+from doeff.types import Effect, ExecutionContext, RunResult
 
 __all__ = [
     # Types

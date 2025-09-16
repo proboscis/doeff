@@ -8,11 +8,12 @@ Each handler is responsible for interpreting specific effects.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from doeff._vendor import Ok, Err, WNode, WStep, WGraph
+from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.types import ExecutionContext, ListenResult
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class ReaderEffectHandler:
         return ctx.env[key]
 
     async def handle_local(
-        self, payload: Dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, payload: dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle reader.local effect."""
         sub_ctx = ctx.copy()
@@ -62,11 +63,11 @@ class StateEffectHandler:
         """Handle state.get effect."""
         return ctx.state.get(key)
 
-    async def handle_put(self, payload: Dict, ctx: ExecutionContext) -> None:
+    async def handle_put(self, payload: dict, ctx: ExecutionContext) -> None:
         """Handle state.put effect."""
         ctx.state[payload["key"]] = payload["value"]
 
-    async def handle_modify(self, payload: Dict, ctx: ExecutionContext) -> Any:
+    async def handle_modify(self, payload: dict, ctx: ExecutionContext) -> Any:
         """Handle state.modify effect."""
         key = payload["key"]
         old_value = ctx.state.get(key)
@@ -114,8 +115,8 @@ class FutureEffectHandler:
         return await awaitable
 
     async def handle_parallel(
-        self, awaitables: Tuple[Awaitable[Any], ...]
-    ) -> List[Any]:
+        self, awaitables: tuple[Awaitable[Any], ...]
+    ) -> list[Any]:
         """Handle future.parallel effect."""
         results = await asyncio.gather(*awaitables)
         return results
@@ -130,7 +131,7 @@ class ResultEffectHandler:
         raise exc
 
     async def handle_catch(
-        self, payload: Dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, payload: dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle result.catch effect."""
         # Import here to avoid circular import

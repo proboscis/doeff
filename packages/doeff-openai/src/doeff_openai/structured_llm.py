@@ -5,33 +5,27 @@ through Effects, supporting Pydantic models, GPT-5 thinking modes, and
 comprehensive cost/token tracking.
 """
 
-import asyncio
 import base64
 import io
 import json
 import time
-from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from doeff import (
-    do,
-    EffectGenerator,
-    Ask,
-    Get,
-    Put,
-    Log,
-    Step,
     Await,
-    Fail,
     Catch,
+    EffectGenerator,
+    Fail,
+    Log,
     Retry,
+    Step,
+    do,
 )
-
 from doeff_openai.client import (
     get_openai_client,
     track_api_call,
-    APICallMetadata,
 )
 
 if TYPE_CHECKING:
@@ -62,13 +56,13 @@ def convert_pil_to_base64(image: "PIL.Image.Image") -> str:
     buffered = io.BytesIO()
     image.save(buffered, format="PNG")
     img_bytes = buffered.getvalue()
-    
+
     # Encode to base64
     img_base64 = base64.b64encode(img_bytes).decode("utf-8")
     return f"data:image/png;base64,{img_base64}"
 
 
-def _collect_message_content_parts(content: Any) -> tuple[Optional[Any], List[str]]:
+def _collect_message_content_parts(content: Any) -> tuple[Any | None, list[str]]:
     """Extract JSON payload (if any) and text fragments from a message content."""
     if content is None:
         return None, []
@@ -76,8 +70,8 @@ def _collect_message_content_parts(content: Any) -> tuple[Optional[Any], List[st
     if isinstance(content, str):
         return None, [content]
 
-    json_payload: Optional[Any] = None
-    text_parts: List[str] = []
+    json_payload: Any | None = None
+    text_parts: list[str] = []
 
     if isinstance(content, list):
         for part in content:
@@ -159,14 +153,14 @@ def ensure_strict_schema(schema: dict) -> dict:
     """
     if not isinstance(schema, dict):
         return schema
-    
+
     # Create a copy to avoid mutation
     result = dict(schema)
-    
+
     # Set additionalProperties: false for this object
     if "type" in result and result["type"] == "object":
         result["additionalProperties"] = False
-    
+
     # Process nested schemas in properties
     if "properties" in result:
         new_properties = {}
@@ -184,33 +178,33 @@ def ensure_strict_schema(schema: dict) -> dict:
                     existing_required.append(name)
                     seen.add(name)
             result["required"] = existing_required
-    
+
     # Process items in arrays
     if "items" in result:
         result["items"] = ensure_strict_schema(result["items"])
-    
+
     # Process nested definitions/defs
     if "definitions" in result:
         new_definitions = {}
         for def_name, def_schema in result["definitions"].items():
             new_definitions[def_name] = ensure_strict_schema(def_schema)
         result["definitions"] = new_definitions
-    
+
     if "$defs" in result:
         new_defs = {}
         for def_name, def_schema in result["$defs"].items():
             new_defs[def_name] = ensure_strict_schema(def_schema)
         result["$defs"] = new_defs
-    
+
     return result
 
 
 @do
 def build_messages(
     text: str,
-    images: Optional[List["PIL.Image.Image"]] = None,
+    images: list["PIL.Image.Image"] | None = None,
     detail: str = "auto",
-) -> EffectGenerator[List[Dict[str, Any]]]:
+) -> EffectGenerator[list[dict[str, Any]]]:
     """
     Build the messages array for OpenAI API call.
     
@@ -223,12 +217,12 @@ def build_messages(
         List of message dictionaries for the API call
     """
     yield Log(f"Building messages with {len(images) if images else 0} images")
-    
+
     messages = []
-    
+
     # Build content for the user message
     content = [{"type": "text", "text": text}]
-    
+
     # Add images if provided
     if images:
         for i, img in enumerate(images):
@@ -243,29 +237,29 @@ def build_messages(
                     },
                 }
             )
-    
+
     messages.append(
         {
             "role": "user",
             "content": content if images else text,  # Use simple text if no images
         }
     )
-    
+
     return messages
 
 
 @do
 def build_api_parameters(
     model: str,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     temperature: float,
     max_tokens: int,
-    reasoning_effort: Optional[str],
-    verbosity: Optional[str],
-    service_tier: Optional[str],
-    response_format: Optional[type[BaseModel]],
+    reasoning_effort: str | None,
+    verbosity: str | None,
+    service_tier: str | None,
+    response_format: type[BaseModel] | None,
     **kwargs,
-) -> EffectGenerator[Dict[str, Any]]:
+) -> EffectGenerator[dict[str, Any]]:
     """
     Build API parameters for OpenAI API call with model-specific handling.
     
@@ -284,17 +278,17 @@ def build_api_parameters(
         Dictionary of API parameters ready for OpenAI API call
     """
     yield Log(f"Building API parameters for model={model}")
-    
+
     # Build the API call parameters
     api_params = {
         "model": model,
         "messages": messages,
         **kwargs,  # Pass through any additional parameters
     }
-    
+
     # Model-specific handling
     model_lower = model.lower()
-    
+
     # Handle temperature
     if (
         is_gpt5_model(model)
@@ -308,7 +302,7 @@ def build_api_parameters(
     else:
         # Other models support custom temperature
         api_params["temperature"] = temperature
-    
+
     # Handle token parameter based on model
     if requires_max_completion_tokens(model):
         # GPT-5, o1, o3, o4 models require max_completion_tokens
@@ -316,7 +310,7 @@ def build_api_parameters(
         token_value = max(max_tokens, 500)  # Minimum 500 for these models
         api_params["max_completion_tokens"] = token_value
         yield Log(f"Using max_completion_tokens={token_value} for model {model}")
-        
+
         # Add GPT-5 thinking mode parameters
         if reasoning_effort:
             valid_efforts = ["minimal", "low", "medium", "high"]
@@ -331,7 +325,7 @@ def build_api_parameters(
                     "high": "Deep reasoning for complex problems.",
                 }
                 yield Log(f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions[reasoning_effort]}")
-        
+
         if verbosity:
             valid_verbosity = ["low", "medium", "high"]
             if verbosity not in valid_verbosity:
@@ -343,13 +337,13 @@ def build_api_parameters(
         # Other models use max_tokens
         api_params["max_tokens"] = max_tokens
         yield Log(f"Using max_tokens={max_tokens} for model {model}")
-        
+
         # Warn if GPT-5 specific parameters are used with non-GPT-5 models
         if reasoning_effort:
             yield Log(f"reasoning_effort parameter is only supported for GPT-5 models, ignoring for {model}")
         if verbosity:
             yield Log(f"verbosity parameter is only supported for GPT-5 models, ignoring for {model}")
-    
+
     # Add service_tier if provided
     if service_tier is not None:
         valid_service_tiers = ["auto", "default", "flex", "priority"]
@@ -358,17 +352,17 @@ def build_api_parameters(
         else:
             api_params["service_tier"] = service_tier
             yield Log(f"Using service_tier='{service_tier}' for request prioritization")
-    
+
     # Handle structured output if requested
     if response_format is not None and issubclass(response_format, BaseModel):
         yield Log(f"Using structured output with {response_format.__name__}")
-        
+
         # Get the JSON schema
         schema = response_format.model_json_schema()
-        
+
         # Ensure strict mode compliance
         strict_schema = ensure_strict_schema(schema)
-        
+
         # Set up the response format for OpenAI
         api_params["response_format"] = {
             "type": "json_schema",
@@ -378,7 +372,7 @@ def build_api_parameters(
                 "strict": True,
             },
         }
-    
+
     return api_params
 
 
@@ -418,7 +412,7 @@ def process_structured_response(
     raw_content_for_log = _stringify_for_log(parse_source)
 
     # Parse the JSON response
-    from doeff import Catch, do, Fail
+    from doeff import Catch, Fail, do
 
     @do
     def parse_json():
@@ -474,13 +468,13 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
 def structured_llm__openai(
     text: str,
     model: str = "gpt-4o",
-    images: Optional[List["PIL.Image.Image"]] = None,
-    response_format: Optional[type[BaseModel]] = None,
+    images: list["PIL.Image.Image"] | None = None,
+    response_format: type[BaseModel] | None = None,
     max_tokens: int = 8192,
     temperature: float = 0.7,
-    reasoning_effort: Optional[str] = None,
-    verbosity: Optional[str] = None,
-    service_tier: Optional[str] = None,
+    reasoning_effort: str | None = None,
+    verbosity: str | None = None,
+    service_tier: str | None = None,
     detail: str = "auto",
     max_retries: int = 3,
     **kwargs,
@@ -541,16 +535,16 @@ def structured_llm__openai(
         - Catch: Handles parsing errors
     """
     yield Log(f"structured_llm__openai called with model={model}, response_format={response_format}")
-    
+
     # Track in graph
     yield Step(
         value={"operation": "structured_llm", "model": model},
         meta={"type": "llm_call", "has_images": images is not None, "structured": response_format is not None}
     )
-    
+
     # Phase 1: Build messages
     messages = yield build_messages(text, images, detail)
-    
+
     # Phase 2: Build API parameters
     api_params = yield build_api_parameters(
         model=model,
@@ -563,23 +557,23 @@ def structured_llm__openai(
         response_format=response_format,
         **kwargs,
     )
-    
+
     # Phase 3: Get OpenAI client
     client = yield get_openai_client()
-    
+
     # Phase 4: Make API call with retry
     @do
     def make_api_call():
         # Track start time for this specific attempt
         attempt_start_time = time.time()
         yield Log(f"Making OpenAI API call with model={model}")
-        
+
         # Use Catch to handle errors and track them
         @do
         def api_call_with_tracking():
             # Make the actual API call
             response = yield Await(client.async_client.chat.completions.create(**api_params))
-            
+
             # Track successful API call
             metadata = yield track_api_call(
                 operation="structured_llm",
@@ -590,8 +584,8 @@ def structured_llm__openai(
                 error=None,
             )
             return response
-        
-        @do 
+
+        @do
         def error_handler(error):
             # Track failed API call attempt (tracking will log the error)
             metadata = yield track_api_call(
@@ -604,33 +598,33 @@ def structured_llm__openai(
             )
             # Re-raise to trigger retry
             yield Fail(error)
-        
+
         # Use Catch to track both success and failure
         response = yield Catch(api_call_with_tracking(), error_handler)
         return response
-    
+
     # Use Retry effect for transient failures
     response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
-    
+
     # Log token usage details for GPT-5 models
     if is_gpt5_model(model) and hasattr(response.usage, "completion_tokens_details"):
         details = response.usage.completion_tokens_details
         if hasattr(details, "reasoning_tokens"):
             yield Log(f"GPT-5 reasoning tokens used: {details.reasoning_tokens}")
             yield Log(f"GPT-5 output tokens: {details.output_tokens if hasattr(details, 'output_tokens') else 'N/A'}")
-    
+
     # Phase 6: Process response based on format
     if response_format is not None and issubclass(response_format, BaseModel):
         result = yield process_structured_response(response, response_format)
     else:
         result = yield process_unstructured_response(response)
-    
+
     # Track result in graph
     yield Step(
         value={"result_type": type(result).__name__ if response_format else "str"},
         meta={"tokens_used": response.usage.total_tokens if response.usage else 0}
     )
-    
+
     return result
 
 
@@ -638,8 +632,8 @@ def structured_llm__openai(
 @do
 def gpt4o_structured(
     text: str,
-    images: Optional[List["PIL.Image.Image"]] = None,
-    response_format: Optional[type[BaseModel]] = None,
+    images: list["PIL.Image.Image"] | None = None,
+    response_format: type[BaseModel] | None = None,
     **kwargs,
 ) -> EffectGenerator[Any]:
     """Convenience function for GPT-4o with structured output."""
@@ -655,8 +649,8 @@ def gpt4o_structured(
 @do
 def gpt5_nano_structured(
     text: str,
-    images: Optional[List["PIL.Image.Image"]] = None,
-    response_format: Optional[type[BaseModel]] = None,
+    images: list["PIL.Image.Image"] | None = None,
+    response_format: type[BaseModel] | None = None,
     reasoning_effort: str = "minimal",
     **kwargs,
 ) -> EffectGenerator[Any]:
@@ -678,8 +672,8 @@ def gpt5_nano_structured(
 @do
 def gpt5_structured(
     text: str,
-    images: Optional[List["PIL.Image.Image"]] = None,
-    response_format: Optional[type[BaseModel]] = None,
+    images: list["PIL.Image.Image"] | None = None,
+    response_format: type[BaseModel] | None = None,
     reasoning_effort: str = "medium",
     **kwargs,
 ) -> EffectGenerator[Any]:
@@ -699,10 +693,10 @@ def gpt5_structured(
 
 
 __all__ = [
-    "structured_llm__openai",
     "gpt4o_structured",
     "gpt5_nano_structured",
     "gpt5_structured",
     "is_gpt5_model",
     "requires_max_completion_tokens",
+    "structured_llm__openai",
 ]

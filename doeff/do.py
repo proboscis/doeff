@@ -8,12 +8,13 @@ into KleisliPrograms, enabling do-notation for monadic computations.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable, Generator
 from functools import wraps
-from typing import Any, Callable, ParamSpec, TypeVar, Union, Generator
+from typing import Any, ParamSpec, TypeVar
 
-from doeff.types import Effect, EffectGenerator
-from doeff.program import Program
 from doeff.kleisli import KleisliProgram
+from doeff.program import Program
+from doeff.types import Effect, EffectGenerator
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -107,18 +108,18 @@ def do(
         """Create a Program from the generator function."""
 
         @wraps(func)
-        def generator_wrapper() -> Generator[Union[Effect, Program], Any, T]:
+        def generator_wrapper() -> Generator[Effect | Program, Any, T]:
             # Call the original generator function
             gen_or_value = func(*args, **kwargs)
-            
+
             # Check if it's a generator or a direct value
-            if not hasattr(gen_or_value, '__next__'):
+            if not hasattr(gen_or_value, "__next__"):
                 # Not a generator, must be a direct return value
                 # Create a generator that immediately returns
                 return gen_or_value
                 if False:
                     yield  # Make this a generator function
-            
+
             # It's a generator, pass through the generator protocol
             gen = gen_or_value
             try:

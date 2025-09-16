@@ -7,49 +7,47 @@ and the capitalized aliases.
 # pinjected-linter: ignore  # Testing free monad effects, not using pinjected DI
 
 import asyncio
-from typing import Generator, Any
+
 import pytest
 
 from doeff import (
-    ProgramInterpreter,
-    ExecutionContext,
-    Effect,
-    EffectGenerator,
-    do,
+    IO,
+    Annotate,
     # Capitalized aliases
     Ask,
-    Local,
-    Get,
-    Put,
-    Modify,
-    Log,
-    Tell,
-    Listen,
     Await,
-    Parallel,
-    Fail,
     Catch,
-    IO,
-    Print,
-    Step,
-    Annotate,
     Dep,
+    EffectGenerator,
+    ExecutionContext,
+    Fail,
+    Get,
+    Listen,
+    Local,
+    Log,
+    Modify,
+    Parallel,
+    Print,
+    ProgramInterpreter,
+    Put,
+    Step,
+    Tell,
+    annotate,
     # Backwards compatibility
     ask,
-    get,
-    put,
-    modify,
-    tell,
-    listen,
     await_,
-    parallel,
     catch,
+    do,
+    get,
     io,
+    listen,
+    modify,
+    parallel,
     print_,
+    put,
     step,
-    annotate,
+    tell,
 )
-
 
 # ============================================
 # Reader Effects Tests
@@ -685,7 +683,7 @@ async def test_all_effects_integration():  # noqa: PINJ040
                 yield Log(f"Caught: {e}")
                 return "recovered"
             return handle()
-        
+
         status = yield Catch(
             maybe_fail(),
             catch_handler,

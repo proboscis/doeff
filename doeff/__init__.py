@@ -109,7 +109,7 @@ from doeff.cache import (
 
 __version__ = "0.1.0"
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Core types
     "Effect",
     "EffectGenerator",

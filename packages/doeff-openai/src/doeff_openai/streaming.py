@@ -1,29 +1,27 @@
 """Streaming response handlers with observability."""
 
 import time
-from typing import Any, Dict, List, Optional, AsyncIterator
-from datetime import datetime
+from collections.abc import AsyncIterator
+from typing import Any
 
 from openai.types.chat import ChatCompletionChunk
 
 from doeff import (
-    do,
-    Effect,
-    EffectGenerator,
-    Log,
-    Step,
-    Put,
-    Get,
     Await,
+    EffectGenerator,
+    Get,
+    Log,
+    Put,
+    Step,
+    do,
 )
-
+from doeff_openai.costs import (
+    calculate_cost,
+    count_tokens,
+)
 from doeff_openai.types import (
     StreamChunk,
     TokenUsage,
-)
-from doeff_openai.costs import (
-    count_tokens,
-    calculate_cost,
 )
 
 
@@ -31,7 +29,7 @@ from doeff_openai.costs import (
 def process_stream(
     stream: AsyncIterator[ChatCompletionChunk],
     model: str,
-    callback: Optional[callable] = None,
+    callback: callable | None = None,
 ) -> EffectGenerator[tuple[str, TokenUsage, float]]:
     """
     Process a streaming response with full tracking.
@@ -45,71 +43,71 @@ def process_stream(
         Tuple of (full_content, token_usage, total_cost)
     """
     yield Log(f"Starting stream processing for model={model}")
-    
+
     # Initialize tracking
     full_content = ""
     total_chunks = 0
     start_time = time.time()
     role = None
     finish_reason = None
-    
+
     # Accumulate chunks
     async def process_chunks():
         nonlocal full_content, total_chunks, role, finish_reason
-        
+
         async for chunk in stream:
             total_chunks += 1
-            
+
             if chunk.choices:
                 choice = chunk.choices[0]
-                
+
                 # Extract role if present
                 if choice.delta and choice.delta.role:
                     role = choice.delta.role
-                
+
                 # Extract content
                 if choice.delta and choice.delta.content:
                     content = choice.delta.content
                     full_content += content
-                    
+
                     # Call callback if provided
                     if callback:
                         callback(content)
-                
+
                 # Extract finish reason
                 if choice.finish_reason:
                     finish_reason = choice.finish_reason
-        
+
         return finish_reason
-    
+
     # Process all chunks
     finish_reason = yield Await(process_chunks())
-    
+
     # Log progress every 10 chunks
     if total_chunks > 0 and total_chunks % 10 == 0:
         yield Log(f"Processed {total_chunks} chunks, content_length={len(full_content)}")
-    
+
     # Calculate final metrics
     end_time = time.time()
     latency_ms = (end_time - start_time) * 1000
-    
+
     # Count tokens
     output_tokens = count_tokens(full_content, model) if full_content else 0
-    
+
     # Get input tokens from state (should be set by chat_completion)
     input_tokens = yield Get(f"stream_input_tokens_{model}")
     if input_tokens is None:
         input_tokens = 0
-    
+
     token_usage = TokenUsage(
         prompt_tokens=input_tokens,
         completion_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
     )
-    
+
     # Calculate cost
     cost_info = calculate_cost(model, token_usage)
-    
+
     # Add completion graph step
     yield Step(
         {
@@ -129,17 +127,17 @@ def process_stream(
             "finish_reason": finish_reason,
         }
     )
-    
+
     # Update cumulative costs
     current_total = yield Get("total_openai_cost")
     new_total = (current_total or 0.0) + cost_info.total_cost
     yield Put("total_openai_cost", new_total)
-    
+
     yield Log(
         f"Stream complete: chunks={total_chunks}, tokens={token_usage.total_tokens}, "
         f"cost=${cost_info.total_cost:.6f}, latency={latency_ms:.0f}ms"
     )
-    
+
     return full_content, token_usage, cost_info.total_cost
 
 
@@ -147,20 +145,20 @@ def process_stream(
 def stream_to_chunks(
     stream: AsyncIterator[ChatCompletionChunk],
     model: str,
-) -> EffectGenerator[List[StreamChunk]]:
+) -> EffectGenerator[list[StreamChunk]]:
     """
     Convert a stream to a list of StreamChunk objects with tracking.
     """
     chunks = []
-    
+
     async def collect():
         nonlocal chunks
         index = 0
-        
+
         async for chunk in stream:
             if chunk.choices:
                 choice = chunk.choices[0]
-                
+
                 stream_chunk = StreamChunk(
                     content=choice.delta.content if choice.delta else None,
                     role=choice.delta.role if choice.delta else None,
@@ -168,16 +166,16 @@ def stream_to_chunks(
                     index=index,
                     model=model,
                 )
-                
+
                 chunks.append(stream_chunk)
                 index += 1
-        
+
         return chunks
-    
+
     chunks = yield Await(collect())
-    
+
     yield Log(f"Collected {len(chunks)} stream chunks")
-    
+
     return chunks
 
 
@@ -192,17 +190,17 @@ def stream_with_accumulator(
     Useful for UIs that want to show both the new chunk and the full text so far.
     """
     yield Log(f"Creating accumulator stream for model={model}")
-    
+
     async def accumulate():
         accumulated = ""
-        
+
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta:
                 content = chunk.choices[0].delta.content
                 if content:
                     accumulated += content
                     yield content, accumulated
-    
+
     return accumulate()
 
 
@@ -210,7 +208,7 @@ def stream_with_accumulator(
 def stream_with_metadata(
     stream: AsyncIterator[ChatCompletionChunk],
     model: str,
-) -> EffectGenerator[AsyncIterator[Dict[str, Any]]]:
+) -> EffectGenerator[AsyncIterator[dict[str, Any]]]:
     """
     Create a stream that yields chunks with full metadata.
     
@@ -222,27 +220,27 @@ def stream_with_metadata(
     - chunk_index: The chunk number
     """
     yield Log(f"Creating metadata stream for model={model}")
-    
+
     # Get input tokens from state
     input_tokens = yield Get(f"stream_input_tokens_{model}")
     if input_tokens is None:
         input_tokens = 0
-    
+
     async def with_metadata():
         accumulated = ""
         chunk_index = 0
-        
+
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta:
                 content = chunk.choices[0].delta.content
                 if content:
                     accumulated += content
                     chunk_index += 1
-                    
+
                     # Estimate tokens
                     output_tokens = count_tokens(accumulated, model)
                     total_tokens = input_tokens + output_tokens
-                    
+
                     # Calculate cost
                     token_usage = TokenUsage(
                         prompt_tokens=input_tokens,
@@ -250,7 +248,7 @@ def stream_with_metadata(
                         total_tokens=total_tokens,
                     )
                     cost_info = calculate_cost(model, token_usage)
-                    
+
                     yield {
                         "content": content,
                         "accumulated": accumulated,
@@ -259,7 +257,7 @@ def stream_with_metadata(
                         "chunk_index": chunk_index,
                         "finish_reason": chunk.choices[0].finish_reason,
                     }
-    
+
     return with_metadata()
 
 
@@ -276,30 +274,29 @@ def buffered_stream(
     Yields concatenated content from multiple chunks to reduce UI updates.
     """
     yield Log(f"Creating buffered stream: buffer_size={buffer_size}, buffer_time_ms={buffer_time_ms}ms")
-    
-    import asyncio
-    
+
+
     async def buffered():
         buffer = []
         last_yield_time = time.time()
-        
+
         async for chunk in stream:
             if chunk.choices and chunk.choices[0].delta:
                 content = chunk.choices[0].delta.content
                 if content:
                     buffer.append(content)
-                    
+
                     current_time = time.time()
                     time_since_yield = (current_time - last_yield_time) * 1000
-                    
+
                     # Yield if buffer is full or enough time has passed
                     if len(buffer) >= buffer_size or time_since_yield >= buffer_time_ms:
                         yield "".join(buffer)
                         buffer = []
                         last_yield_time = current_time
-        
+
         # Yield any remaining content
         if buffer:
             yield "".join(buffer)
-    
+
     return buffered()

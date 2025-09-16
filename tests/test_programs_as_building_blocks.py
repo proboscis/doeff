@@ -1,21 +1,23 @@
 """Test that Programs are the building blocks - no .generator_func access needed."""
 
-from typing import Generator, Any
+from collections.abc import Generator
+from typing import Any
+
 import pytest
 
 from doeff import (
-    ProgramInterpreter,
-    ExecutionContext,
-    Effect,
-    Program,
-    do,
-    Log,
-    Get,
-    Put,
     Catch,
-    Local,
+    Effect,
+    ExecutionContext,
+    Get,
     Listen,
     ListenResult,
+    Local,
+    Log,
+    Program,
+    ProgramInterpreter,
+    Put,
+    do,
 )
 
 
