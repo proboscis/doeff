@@ -8,9 +8,10 @@ by handling effects through the registered handlers.
 from __future__ import annotations
 
 import asyncio
+import traceback
 from typing import Any, Dict, Optional, TypeVar
 
-from doeff._vendor import Ok, Err, Result, trace_err, WGraph, WNode, WStep
+from doeff._vendor import Ok, Err, Result, WGraph, WNode, WStep
 from doeff.types import Effect, ExecutionContext, RunResult, EffectFailure
 from doeff.program import Program
 from doeff.handlers import (
@@ -167,13 +168,21 @@ class ProgramInterpreter:
                     try:
                         value = await self._handle_effect(current, ctx)
                     except Exception as exc:
-                        # Create an EffectFailure with creation context
+                        # Create an EffectFailure with both runtime and creation context
+                        # Capture the runtime traceback now while we have it
+                        runtime_tb = "".join(
+                            traceback.format_exception(
+                                exc.__class__, exc, exc.__traceback__
+                            )
+                        ) if hasattr(exc, '__traceback__') else None
+                        
                         effect_failure = EffectFailure(
-                            current.tag,
-                            current.created_at,
-                            exc
+                            effect_tag=current.tag,
+                            cause=exc,
+                            runtime_traceback=runtime_tb,
+                            creation_context=current.created_at
                         )
-                        return RunResult(ctx, Err(trace_err(effect_failure)))
+                        return RunResult(ctx, Err(effect_failure))
                     
                     # Send value back
                     try:
@@ -199,11 +208,11 @@ class ProgramInterpreter:
                     # Unknown yield type
                     return RunResult(
                         ctx,
-                        Err(trace_err(TypeError(f"Unknown yield type: {type(current)}")))
+                        Err(TypeError(f"Unknown yield type: {type(current)}"))
                     )
                     
         except Exception as exc:
-            return RunResult(ctx, Err(trace_err(exc)))
+            return RunResult(ctx, Err(exc))
 
     async def _handle_effect(self, effect: Effect, ctx: ExecutionContext) -> Any:
         """Dispatch effect to appropriate handler."""

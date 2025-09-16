@@ -385,7 +385,12 @@ async def test_result_fail_effect():  # noqa: PINJ040
 
     result = await engine.run(program(), context)
     assert result.is_err
-    assert "Effects API error" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Effects API error" in str(error)
 
     @do
     def program2() -> EffectGenerator[str]:
@@ -395,7 +400,12 @@ async def test_result_fail_effect():  # noqa: PINJ040
 
     result2 = await engine.run(program2(), context)
     assert result2.is_err
-    assert "Capitalized error" in str(result2.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error2 = result2.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error2, EffectFailure):
+        error2 = error2.cause
+    assert "Capitalized error" in str(error2)
 
 
 @pytest.mark.asyncio
@@ -523,7 +533,12 @@ async def test_io_not_allowed():  # noqa: PINJ040
 
     result = await engine.run(program(), context)
     assert result.is_err
-    assert "IO not allowed" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "IO not allowed" in str(error)
 
 
 # ============================================

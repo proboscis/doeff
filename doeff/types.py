@@ -94,22 +94,43 @@ class EffectCreationContext:
 # Effect Failure Exception
 # ============================================
 
-class EffectFailure(RuntimeError):
-    """Exception raised when an effect fails, carrying creation context."""
+@dataclass
+class EffectFailure(Exception):
+    """Complete error information for a failed effect.
     
-    def __init__(self, effect_tag: str, creation_context: Optional[EffectCreationContext], cause: Exception):
-        self.effect_tag = effect_tag
-        self.creation_context = creation_context
-        self.cause = cause
+    Combines both the runtime traceback (where error occurred) and 
+    creation context (where effect was created) into a single clean structure.
+    """
+    
+    effect_tag: str
+    cause: BaseException  # The original exception that caused the failure
+    runtime_traceback: str | None = None  # Runtime stack trace where error occurred
+    creation_context: Optional[EffectCreationContext] = None  # Where the effect was created
+    
+    def __str__(self) -> str:
+        """Format the error for display."""
+        lines = [f"Effect '{self.effect_tag}' failed"]
         
-        # Build the error message
-        msg_parts = [f"Effect '{effect_tag}' failed"]
-        if creation_context:
-            msg_parts.append(f"\n📍 Creation Location:\n{creation_context.format_full()}")
-        msg_parts.append(f"\n❌ Error: {cause}")
+        # Add creation location if available
+        if self.creation_context:
+            lines.append(f"Created at: {self.creation_context.format_location()}")
         
-        super().__init__("\n".join(msg_parts))
-        self.__cause__ = cause
+        # Add the cause
+        lines.append(f"Caused by: {self.cause.__class__.__name__}: {self.cause}")
+        
+        return "\n".join(lines)
+    
+    def __post_init__(self):
+        """Capture runtime traceback if not provided."""
+        if self.runtime_traceback is None and self.cause:
+            # Capture the runtime traceback from the cause
+            self.runtime_traceback = "".join(
+                traceback.format_exception(
+                    self.cause.__class__, 
+                    self.cause, 
+                    self.cause.__traceback__
+                )
+            )
 
 
 # ============================================
@@ -304,6 +325,187 @@ class RunResult[T]:
                 f"  log={len(self.log)} entries)"
             )
     
+    def _format_execution_traceback(self, traceback_text: str, verbose: bool = False) -> List[str]:
+        """Format execution traceback for display.
+        
+        Args:
+            traceback_text: Raw traceback text from TraceError
+            verbose: If True, show full traceback; if False, show condensed version
+            
+        Returns:
+            List of formatted lines to display
+        """
+        if not traceback_text:
+            return []
+        
+        tb_lines = traceback_text.strip().split("\n")
+        
+        # Clean up the traceback - remove duplicate headers and EffectFailure noise
+        cleaned_lines = []
+        seen_headers = 0
+        skip_remaining = False
+        i = 0
+        
+        while i < len(tb_lines):
+            line = tb_lines[i]
+            
+            # Handle duplicate traceback headers
+            if "Traceback (most recent call last):" in line:
+                seen_headers += 1
+                if seen_headers == 1:
+                    cleaned_lines.append(line)
+                i += 1
+                continue
+            
+            # Skip "Exception Traceback" dividers
+            if "----- Exception Traceback -----" in line:
+                i += 1
+                continue
+            
+            # Stop processing at EffectFailure (that's our wrapper, not the real error)
+            if "doeff.types.EffectFailure:" in line:
+                # But keep "The above exception was the direct cause" if present
+                if i > 0 and "The above exception was the direct cause" in tb_lines[i-1]:
+                    pass  # Already added
+                skip_remaining = True
+                i += 1
+                continue
+            
+            # Skip everything after EffectFailure
+            if skip_remaining:
+                i += 1
+                continue
+            
+            # Keep all other lines (frames, error messages, etc.)
+            cleaned_lines.append(line)
+            i += 1
+        
+        if not verbose:
+            # In non-verbose mode, show only the most relevant frames
+            result = []
+            
+            # Find where the actual frames start and end
+            frame_start = -1
+            frame_end = -1
+            for i, line in enumerate(cleaned_lines):
+                if line.strip().startswith("File "):
+                    if frame_start == -1:
+                        frame_start = i
+                    frame_end = i + 1  # Include the code line after File
+                    
+            # Include header
+            for line in cleaned_lines:
+                if "Traceback" in line:
+                    result.append(line)
+                    break
+            
+            # If we found frames, include the last few
+            if frame_start != -1:
+                # Count frame pairs (File line + code line)
+                frame_pairs = []
+                i = frame_start
+                while i < len(cleaned_lines):
+                    if cleaned_lines[i].strip().startswith("File "):
+                        # This is a frame, grab it and the next line (code)
+                        frame_pairs.append(cleaned_lines[i])
+                        if i + 1 < len(cleaned_lines) and not cleaned_lines[i + 1].strip().startswith("File "):
+                            frame_pairs.append(cleaned_lines[i + 1])
+                            i += 2
+                        else:
+                            i += 1
+                    else:
+                        # End of frames, keep the error message
+                        if cleaned_lines[i].strip():
+                            frame_pairs.append(cleaned_lines[i])
+                        i += 1
+                
+                # Take last 6 lines (3 frames) plus error message
+                result.extend(frame_pairs[-8:])
+            else:
+                # No frames found, just show what we have
+                result = cleaned_lines[-6:]
+                
+            return result
+        else:
+            # In verbose mode, show all cleaned frames
+            return cleaned_lines[:50]
+    
+    def _extract_error_chain(self, error: Any) -> tuple[List[Dict[str, Any]], Optional[str]]:
+        """Extract the chain of errors from nested exceptions."""
+        chain = []
+        seen = set()  # Track seen errors to avoid infinite loops
+        seen_effects = {}  # Track seen effects by (tag, location) to avoid duplicates
+        runtime_traceback = None  # Store the runtime traceback
+        
+        def extract(exc, depth=0):
+            nonlocal runtime_traceback
+            if depth > 10 or id(exc) in seen:  # Prevent infinite recursion
+                return
+            seen.add(id(exc))
+            
+            if isinstance(exc, EffectFailure):
+                # Preserve the runtime traceback from the first EffectFailure
+                if runtime_traceback is None and exc.runtime_traceback:
+                    runtime_traceback = exc.runtime_traceback
+                
+                # Create a key for this effect based on tag and location
+                if exc.creation_context:
+                    effect_key = (exc.effect_tag, exc.creation_context.format_location())
+                else:
+                    effect_key = (exc.effect_tag, id(exc))
+                
+                # Only add if we haven't seen this exact effect before
+                if effect_key not in seen_effects:
+                    seen_effects[effect_key] = True
+                    chain.append({
+                        'type': 'effect',
+                        'tag': exc.effect_tag,
+                        'context': exc.creation_context,
+                        'cause': exc.cause
+                    })
+                
+                # Continue with the cause to extract the full chain
+                if exc.cause:
+                    extract(exc.cause, depth + 1)
+            elif isinstance(exc, BaseException):
+                # Record regular exception only if it's not wrapped in an EffectFailure
+                # Check if this is a root cause (not already captured as an effect cause)
+                chain.append({
+                    'type': 'exception',
+                    'class': exc.__class__.__name__,
+                    'message': str(exc),
+                    'exc': exc
+                })
+                # Check for __cause__ chain
+                if hasattr(exc, '__cause__') and exc.__cause__:
+                    extract(exc.__cause__, depth + 1)
+        
+        extract(error)
+        
+        # Remove duplicate exceptions that are already shown as causes of effects
+        seen_exceptions = set()
+        filtered_chain = []
+        for item in chain:
+            if item['type'] == 'exception':
+                exc_key = (item['class'], item['message'])
+                # Check if this exception is already a cause of an effect
+                is_cause = False
+                for other in chain:
+                    if other['type'] == 'effect' and other['cause']:
+                        cause = other['cause']
+                        if cause.__class__.__name__ == item['class'] and str(cause) == item['message']:
+                            is_cause = True
+                            break
+                
+                # Only add if not already shown as a cause and not a duplicate
+                if not is_cause and exc_key not in seen_exceptions:
+                    seen_exceptions.add(exc_key)
+                    filtered_chain.append(item)
+            else:
+                filtered_chain.append(item)
+        
+        return filtered_chain, runtime_traceback
+    
     def display(self, verbose: bool = False, indent: int = 2) -> str:
         """
         Display internal data in a formatted text structure.
@@ -331,82 +533,75 @@ class RunResult[T]:
         else:
             lines.append(f"{ind}❌ Failure")
             
-            # Extract the actual error details
-            error = self.result.error
-            if isinstance(error, TraceError):
-                # Get the actual exception
-                actual_exc = error.exc
+            # Extract error chain and runtime traceback
+            error_chain, runtime_traceback = self._extract_error_chain(self.result.error)
+            
+            if error_chain:
+                # Show error chain from outermost to innermost
+                lines.append(f"\n{ind}Error Chain (most recent first):")
                 
-                # Check if this is an EffectFailure exception
-                if isinstance(actual_exc, EffectFailure):
-                    # Show which effect failed
-                    lines.append(f"{ind}Failed Effect: '{actual_exc.effect_tag}'")
+                for i, error_info in enumerate(error_chain):
+                    if error_info['type'] == 'effect':
+                        # Show effect failure
+                        lines.append(f"\n{ind}[{i+1}] Effect '{error_info['tag']}' failed")
+                        
+                        # Show creation location if available
+                        if error_info['context']:
+                            lines.append(f"{ind * 2}📍 Created at:")
+                            location = error_info['context'].format_location()
+                            lines.append(f"{ind * 3}{location}")
+                            if error_info['context'].code:
+                                lines.append(f"{ind * 3}{error_info['context'].code}")
+                        
+                        # Show the immediate cause if it's not another effect
+                        if error_info['cause'] and not isinstance(error_info['cause'], EffectFailure):
+                            cause = error_info['cause']
+                            lines.append(f"{ind * 2}Caused by: {cause.__class__.__name__}: {cause}")
                     
-                    # Show the original exception that caused the failure
-                    lines.append(f"\n{ind}❌ Execution Error:")
-                    lines.append(f"{ind * 2}Type: {actual_exc.cause.__class__.__name__}")
-                    lines.append(f"{ind * 2}Message: {actual_exc.cause}")
-                    
-                    # Show where the effect was created
-                    if actual_exc.creation_context:
-                        lines.append(f"\n{ind}📍 Effect Creation Stack Trace:")
-                        # Use the build_traceback method for proper stack trace format
-                        traceback_lines = actual_exc.creation_context.build_traceback().split("\n")
-                        for tb_line in traceback_lines:
-                            lines.append(f"{ind * 2}{tb_line}")
+                    elif error_info['type'] == 'exception':
+                        # Show regular exception
+                        lines.append(f"\n{ind}[{i+1}] {error_info['class']}: {error_info['message']}")
                 
-                # Check if this is a wrapped RuntimeError with effect creation context (legacy)
-                elif isinstance(actual_exc, RuntimeError) and "Effect created at" in str(actual_exc):
-                    # Legacy handling for old-style wrapped errors
-                    error_msg = str(actual_exc)
-                    parts = error_msg.split("\n\n")
-                    
-                    # Show the effect failure info
-                    for part in parts:
-                        if part.startswith("Effect "):
-                            lines.append(f"{ind}Error: {part}")
-                        elif "📍" in part or "Effect created at" in part:
-                            # Show creation context
-                            lines.append(f"\n{ind}📍 Effect Creation Context:")
-                            for line in part.split("\n"):
-                                if line.strip() and not line.startswith("📍"):
-                                    lines.append(f"{ind * 2}{line.strip()}")
-                        elif "❌" in part:
-                            # Show the actual error that occurred
-                            lines.append(f"\n{ind}❌ Execution Error:")
-                            error_part = part.replace("❌ Error: ", "")
-                            lines.append(f"{ind * 2}{error_part}")
-                    
-                    # Show the original cause if available
-                    if actual_exc.__cause__:
-                        lines.append(f"\n{ind}Original Exception:")
-                        lines.append(f"{ind * 2}Type: {actual_exc.__cause__.__class__.__name__}")
-                        lines.append(f"{ind * 2}Message: {actual_exc.__cause__}")
-                else:
-                    # Regular TraceError without effect context
-                    lines.append(f"{ind}Exception Type: {actual_exc.__class__.__name__}")
-                    lines.append(f"{ind}Exception Message: {actual_exc}")
-                
-                # Show the full traceback
-                lines.append(f"\n{ind}📍 Stack Trace:")
-                if error.tb:
-                    tb_lines = error.tb.strip().split("\n")
-                    # Always show the full traceback for errors (not just in verbose mode)
-                    for tb_line in tb_lines:
-                        if tb_line.strip():  # Skip empty lines
-                            lines.append(f"{ind * 2}{tb_line}")
-            else:
-                # Non-TraceError error
-                lines.append(f"{ind}Error Type: {error.__class__.__name__}")
-                lines.append(f"{ind}Error: {error}")
-                if hasattr(error, "__traceback__") and error.__traceback__ and verbose:
-                    lines.append(f"\n{ind}📍 Stack Trace:")
-                    tb_lines = traceback.format_exception(
-                        type(error), error, error.__traceback__
-                    )
-                    for tb_line in "".join(tb_lines).split("\n"):
+                # Always show execution stack trace if available (critical debugging info)
+                if runtime_traceback:
+                    lines.append(f"\n{ind}🔥 Execution Stack Trace (where error occurred):")
+                    # Use the dedicated formatter
+                    formatted_tb = self._format_execution_traceback(runtime_traceback, verbose)
+                    for tb_line in formatted_tb:
                         if tb_line.strip():
                             lines.append(f"{ind * 2}{tb_line}")
+                
+                # Show detailed creation stack traces if verbose
+                if verbose:
+                    
+                    # Show creation stack trace if available
+                    if error_chain:
+                        for error_info in error_chain:
+                            if error_info['type'] == 'effect' and error_info['context'] and error_info['context'].stack_trace:
+                                lines.append(f"\n{ind}📍 Effect Creation Stack Trace (where effect was created):")
+                                traceback_lines = error_info['context'].build_traceback().split("\n")
+                                for tb_line in traceback_lines[:20]:  # Limit lines
+                                    lines.append(f"{ind * 2}{tb_line}")
+                                break
+            else:
+                # No error chain extracted, show simple error info
+                lines.append(f"{ind}Exception Type: {self.result.error.__class__.__name__}")
+                lines.append(f"{ind}Exception Message: {self.result.error}")
+                # Always try to show execution trace
+                if runtime_traceback:
+                    lines.append(f"\n{ind}🔥 Execution Stack Trace:")
+                    formatted_tb = self._format_execution_traceback(runtime_traceback, verbose)
+                    for tb_line in formatted_tb:
+                        if tb_line.strip():
+                            lines.append(f"{ind * 2}{tb_line}")
+                elif verbose and hasattr(self.result.error, "__traceback__") and self.result.error.__traceback__:
+                        lines.append(f"\n{ind}📍 Stack Trace:")
+                        tb_lines = traceback.format_exception(
+                            type(self.result.error), self.result.error, self.result.error.__traceback__
+                        )
+                        for tb_line in "".join(tb_lines).split("\n"):
+                            if tb_line.strip():
+                                lines.append(f"{ind * 2}{tb_line}")
         
         # State
         lines.append("\n🗂️ State:")

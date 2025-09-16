@@ -362,7 +362,12 @@ async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
     # Error should be captured in result
     assert result.is_err
     assert not result.is_ok
-    assert "Test error" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Test error" in str(error)
     # Log should still be captured
     assert len(result.log) == 1
     assert "Before error" in str(result.log[0])
