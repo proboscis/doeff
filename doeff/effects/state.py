@@ -6,7 +6,7 @@ This module provides State effects for managing mutable state.
 
 from typing import Any, Callable
 
-from .base import Effect
+from .base import Effect, create_effect_with_trace
 
 
 class state:
@@ -15,33 +15,33 @@ class state:
     @staticmethod
     def get(key: str) -> Effect:
         """Get value from state."""
-        return Effect("state.get", key)
+        return create_effect_with_trace("state.get", key)
 
     @staticmethod
     def put(key: str, value: Any) -> Effect:
         """Update state value."""
-        return Effect("state.put", {"key": key, "value": value})
+        return create_effect_with_trace("state.put", {"key": key, "value": value})
 
     @staticmethod
     def modify(key: str, f: Callable[[Any], Any]) -> Effect:
         """Modify state value with function."""
-        return Effect("state.modify", {"key": key, "func": f})
+        return create_effect_with_trace("state.modify", {"key": key, "func": f})
 
 
 # Uppercase aliases
 def Get(key: str) -> Effect:
     """State: Get value from state."""
-    return state.get(key)
+    return create_effect_with_trace("state.get", key, skip_frames=3)
 
 
 def Put(key: str, value: Any) -> Effect:
     """State: Update state value."""
-    return state.put(key, value)
+    return create_effect_with_trace("state.put", {"key": key, "value": value}, skip_frames=3)
 
 
 def Modify(key: str, f: Callable[[Any], Any]) -> Effect:
     """State: Modify state value with function."""
-    return state.modify(key, f)
+    return create_effect_with_trace("state.modify", {"key": key, "func": f}, skip_frames=3)
 
 
 __all__ = [

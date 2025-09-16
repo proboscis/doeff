@@ -167,7 +167,19 @@ class ProgramInterpreter:
                     try:
                         value = await self._handle_effect(current, ctx)
                     except Exception as exc:
-                        return RunResult(ctx, Err(trace_err(exc)))
+                        # If the effect has creation context, include it in the error
+                        if current.created_at:
+                            # Create a more informative error message
+                            error_msg = f"Effect '{current.tag}' failed\n"
+                            error_msg += f"\n📍 {current.created_at.format_full()}\n"
+                            error_msg += f"\n❌ Error: {exc}"
+                            
+                            # Create a wrapped exception with the additional context
+                            wrapped_exc = RuntimeError(error_msg)
+                            wrapped_exc.__cause__ = exc
+                            return RunResult(ctx, Err(trace_err(wrapped_exc)))
+                        else:
+                            return RunResult(ctx, Err(trace_err(exc)))
                     
                     # Send value back
                     try:

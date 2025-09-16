@@ -6,7 +6,7 @@ This module provides Writer effects for logging and accumulating output.
 
 from typing import Any
 
-from .base import Effect
+from .base import Effect, create_effect_with_trace
 
 
 class writer:
@@ -15,7 +15,7 @@ class writer:
     @staticmethod
     def tell(message: Any) -> Effect:
         """Add to the log."""
-        return Effect("writer.tell", message)
+        return create_effect_with_trace("writer.tell", message)
 
     @staticmethod
     def listen(sub_program: Any) -> Effect:
@@ -24,23 +24,23 @@ class writer:
         Args:
             sub_program: A Program or a thunk that returns a Program
         """
-        return Effect("writer.listen", sub_program)
+        return create_effect_with_trace("writer.listen", sub_program)
 
 
 # Uppercase aliases
 def Tell(message: Any) -> Effect:
     """Writer: Add to the log."""
-    return writer.tell(message)
+    return create_effect_with_trace("writer.tell", message, skip_frames=3)
 
 
 def Listen(sub_program: Any) -> Effect:
     """Writer: Run sub-program and return its log."""
-    return writer.listen(sub_program)
+    return create_effect_with_trace("writer.listen", sub_program, skip_frames=3)
 
 
 def Log(message: Any) -> Effect:
     """Writer: Add to the log (alias for Tell)."""
-    return writer.tell(message)
+    return create_effect_with_trace("writer.tell", message, skip_frames=3)
 
 
 __all__ = [
