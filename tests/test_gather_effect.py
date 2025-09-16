@@ -222,7 +222,12 @@ async def test_gather_error_propagation():
     result = await engine.run(prog)
 
     assert result.is_err
-    assert "Intentional error" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Intentional error" in str(error)
     # With parallel execution, logs may vary depending on execution order
     # We should have at least 1 log (could be from good_prog(1), bad_prog, or good_prog(2))
     assert len(result.log) >= 1

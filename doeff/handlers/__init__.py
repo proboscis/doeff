@@ -135,7 +135,6 @@ class ResultEffectHandler:
         """Handle result.catch effect."""
         # Import here to avoid circular import
         from doeff.program import Program
-        from doeff._vendor import TraceError
         
         # Check if payload["program"] is already a Program or a callable
         sub_program = payload["program"]
@@ -146,10 +145,13 @@ class ResultEffectHandler:
         try:
             pragmatic_result = await engine.run(sub_program, ctx)
             if isinstance(pragmatic_result.result, Err):
-                # Extract the actual exception from TraceError if present
+                # Extract the actual exception
                 error = pragmatic_result.result.error
-                if isinstance(error, TraceError):
-                    error = error.exc
+                
+                # Unwrap EffectFailure to get the original cause
+                from doeff.types import EffectFailure
+                if isinstance(error, EffectFailure):
+                    error = error.cause
                 
                 # Run error handler with the unwrapped exception
                 handler_result = payload["handler"](error)
@@ -165,8 +167,11 @@ class ResultEffectHandler:
                 # Success - return the value
                 return pragmatic_result.value
         except Exception as e:
-            # Unwrap TraceError if present
-            actual_error = e.exc if isinstance(e, TraceError) else e
+            # Unwrap EffectFailure to get the original cause
+            from doeff.types import EffectFailure
+            actual_error = e
+            if isinstance(actual_error, EffectFailure):
+                actual_error = actual_error.cause
             
             # Run error handler with unwrapped exception
             handler_result = payload["handler"](actual_error)
@@ -185,7 +190,6 @@ class ResultEffectHandler:
         """Handle result.recover effect - try program, use fallback on error."""
         # Import here to avoid circular import
         from doeff.program import Program
-        from doeff._vendor import TraceError
         import inspect
         
         # Check if payload["program"] is already a Program or a callable
@@ -200,8 +204,11 @@ class ResultEffectHandler:
         if isinstance(pragmatic_result.result, Err):
             # Error occurred, extract the actual exception
             error = pragmatic_result.result.error
-            if isinstance(error, TraceError):
-                error = error.exc
+            
+            # Unwrap EffectFailure to get the original cause
+            from doeff.types import EffectFailure
+            if isinstance(error, EffectFailure):
+                error = error.cause
             
             # Get the fallback
             fallback = payload["fallback"]
@@ -227,9 +234,9 @@ class ResultEffectHandler:
                         if isinstance(try_result.result, Err):
                             # Check if the error is a TypeError about arguments
                             inner_error = try_result.result.error
-                            from doeff._vendor import TraceError
-                            if isinstance(inner_error, TraceError):
-                                inner_error = inner_error.exc
+                            from doeff.types import EffectFailure
+                            if isinstance(inner_error, EffectFailure):
+                                inner_error = inner_error.cause
                             if isinstance(inner_error, TypeError) and "positional argument" in str(inner_error):
                                 # It failed because it doesn't accept an error arg
                                 # Try as thunk instead
@@ -283,7 +290,7 @@ class ResultEffectHandler:
         """Handle result.retry effect - retry program on failure."""
         import asyncio
         from doeff.program import Program
-        from doeff._vendor import TraceError, Ok
+        from doeff._vendor import Ok
         
         max_attempts = payload.get("max_attempts", 3)
         delay_ms = payload.get("delay_ms", 0)

@@ -207,7 +207,12 @@ async def test_program_yield_with_error():
     # Test that error propagates through yielded Program
     result = await engine.run(failing_program(), context)
     assert result.is_err
-    assert "Intentional error" in str(result.result.error.exc)
+    # Unwrap EffectFailure if needed
+    error = result.result.error
+    from doeff.types import EffectFailure
+    if isinstance(error, EffectFailure):
+        error = error.cause
+    assert "Intentional error" in str(error)
 
     # Test error handling with yielded Program
     context2 = ExecutionContext()
