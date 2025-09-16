@@ -4,7 +4,7 @@ Gather effects for parallel programs.
 This module provides Gather effects for running multiple programs in parallel.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from .base import Effect, create_effect_with_trace
 
@@ -18,7 +18,7 @@ class gather:
         return create_effect_with_trace("gather.gather", programs)
 
     @staticmethod
-    def gather_dict(programs: Dict[str, Any]) -> Effect:
+    def gather_dict(programs: dict[str, Any]) -> Effect:
         """Gather results from a dict of programs."""
         return create_effect_with_trace("gather.gather_dict", programs)
 
@@ -29,7 +29,7 @@ def Gather(*programs: Any) -> Effect:
     return create_effect_with_trace("gather.gather", programs, skip_frames=3)
 
 
-def GatherDict(programs: Dict[str, Any]) -> Effect:
+def GatherDict(programs: dict[str, Any]) -> Effect:
     """Gather: Gather results from a dict of programs."""
     return create_effect_with_trace("gather.gather_dict", programs, skip_frames=3)
 
@@ -38,7 +38,7 @@ def GatherDict(programs: Dict[str, Any]) -> Effect:
 
 
 __all__ = [
-    "gather",
     "Gather",
     "GatherDict",
+    "gather",
 ]

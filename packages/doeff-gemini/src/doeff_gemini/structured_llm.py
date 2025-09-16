@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import json
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -44,7 +44,7 @@ def _stringify_for_log(content: Any, limit: int = 500) -> str:
     return text
 
 
-def _image_to_part(image: "PIL.Image.Image"):
+def _image_to_part(image: PIL.Image.Image):
     """Convert a PIL image into a Gemini content part."""
     from google.genai import types
 
@@ -62,7 +62,7 @@ def _extract_text_from_response(response: Any) -> str:
     text_attr = getattr(response, "text", None)
     if text_attr:
         return text_attr
-    fragments: List[str] = []
+    fragments: list[str] = []
     candidates = getattr(response, "candidates", None) or []
     for candidate in candidates:
         content = getattr(candidate, "content", None)
@@ -89,14 +89,14 @@ def _extract_text_from_response(response: Any) -> str:
 @do
 def build_contents(
     text: str,
-    images: Optional[List["PIL.Image.Image"]] = None,
-) -> EffectGenerator[List[Any]]:
+    images: list[PIL.Image.Image] | None = None,
+) -> EffectGenerator[list[Any]]:
     """Prepare the list of :mod:`google.genai` contents to feed into Gemini."""
     from google.genai import types
 
     image_count = len(images) if images else 0
     yield Log(f"Building Gemini prompt with {image_count} image(s)")
-    parts: List[Any] = []
+    parts: list[Any] = []
     if images:
         for idx, image in enumerate(images):
             yield Log(f"Embedding image {idx + 1}/{image_count}")
@@ -111,20 +111,20 @@ def build_generation_config(
     *,
     temperature: float,
     max_output_tokens: int,
-    top_p: Optional[float],
-    top_k: Optional[int],
+    top_p: float | None,
+    top_k: int | None,
     candidate_count: int,
-    system_instruction: Optional[str],
-    safety_settings: Optional[List[Dict[str, Any]]],
-    tools: Optional[List[Dict[str, Any]]],
-    tool_config: Optional[Dict[str, Any]],
-    response_format: Optional[type[BaseModel]],
-    generation_config_overrides: Optional[Dict[str, Any]],
+    system_instruction: str | None,
+    safety_settings: list[dict[str, Any]] | None,
+    tools: list[dict[str, Any]] | None,
+    tool_config: dict[str, Any] | None,
+    response_format: type[BaseModel] | None,
+    generation_config_overrides: dict[str, Any] | None,
 ) -> EffectGenerator[Any]:
     """Create the :class:`google.genai.types.GenerateContentConfig` payload."""
     from google.genai import types
 
-    config_data: Dict[str, Any] = {
+    config_data: dict[str, Any] = {
         "temperature": temperature,
         "max_output_tokens": max_output_tokens,
         "candidate_count": candidate_count,
@@ -219,18 +219,18 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
 def structured_llm__gemini(
     text: str,
     model: str = "gemini-1.5-pro-latest",
-    images: Optional[List["PIL.Image.Image"]] = None,
-    response_format: Optional[type[BaseModel]] = None,
+    images: list[PIL.Image.Image] | None = None,
+    response_format: type[BaseModel] | None = None,
     max_output_tokens: int = 2048,
     temperature: float = 0.7,
-    top_p: Optional[float] = None,
-    top_k: Optional[int] = None,
+    top_p: float | None = None,
+    top_k: int | None = None,
     candidate_count: int = 1,
-    system_instruction: Optional[str] = None,
-    safety_settings: Optional[List[Dict[str, Any]]] = None,
-    tools: Optional[List[Dict[str, Any]]] = None,
-    tool_config: Optional[Dict[str, Any]] = None,
-    generation_config_overrides: Optional[Dict[str, Any]] = None,
+    system_instruction: str | None = None,
+    safety_settings: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_config: dict[str, Any] | None = None,
+    generation_config_overrides: dict[str, Any] | None = None,
     max_retries: int = 3,
 ) -> EffectGenerator[Any]:
     """High level helper mirroring ``structured_llm__openai`` for Gemini models."""
@@ -318,9 +318,9 @@ def structured_llm__gemini(
 
 
 __all__ = [
-    "structured_llm__gemini",
     "build_contents",
     "build_generation_config",
     "process_structured_response",
     "process_unstructured_response",
+    "structured_llm__gemini",
 ]

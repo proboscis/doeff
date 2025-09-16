@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, FrozenSet, Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar
+
+from frozendict import frozendict
 
 # =========================================================
 # Type Vars
@@ -21,11 +23,11 @@ T = TypeVar("T")
 @dataclass(frozen=True)
 class TraceError(Exception):
     """Exception with formatted traceback and creation stack."""
-    
+
     exc: BaseException
     tb: str
     created_at: str | None = None
-    
+
     def __str__(self) -> str:
         lines: list[str] = []
         lines.append(f"[{self.exc.__class__.__name__}] {self.exc}")
@@ -56,7 +58,7 @@ class Err:
     error: TraceError
 
 
-Result = Union[Ok[T], Err]
+Result = Ok[T] | Err
 
 # =========================================================
 # Graph (Minimal Implementation)
@@ -65,7 +67,7 @@ Result = Union[Ok[T], Err]
 class WNode:
     """A node in the computation graph."""
     value: Any
-    
+
     def __hash__(self) -> int:
         # Simple hash for now, can be improved if needed
         return hash(id(self.value))
@@ -77,7 +79,7 @@ class WStep:
     inputs: tuple[WNode, ...]
     output: WNode
     meta: dict[str, Any] = field(default_factory=dict)
-    
+
     def __hash__(self) -> int:
         return hash((self.inputs, self.output))
 
@@ -86,16 +88,16 @@ class WStep:
 class WGraph:
     """Computation graph tracking dependencies."""
     last: WStep = field(default_factory=lambda: WStep((), WNode(None)))
-    steps: FrozenSet[WStep] = field(default_factory=frozenset)
-    
+    steps: frozenset[WStep] = field(default_factory=frozenset)
+
     @classmethod
     def single(cls, value: Any) -> WGraph:
         """Create a graph with a single node."""
         node = WNode(value)
         step = WStep((), node)
         return cls(last=step, steps=frozenset({step}))
-    
-    def with_last_meta(self, meta: Dict[str, Any]) -> WGraph:
+
+    def with_last_meta(self, meta: dict[str, Any]) -> WGraph:
         """Create a new graph with updated metadata on the last step."""
         # Merge new metadata with existing metadata instead of replacing
         merged_meta = {**self.last.meta, **meta} if self.last.meta else meta
@@ -108,7 +110,7 @@ class WGraph:
         # Update the steps set - remove old last, add new last
         new_steps = (self.steps - {self.last}) | {new_last}
         return WGraph(last=new_last, steps=new_steps)
-    
+
     def __hash__(self) -> int:
         return hash((self.last, self.steps))
 
@@ -116,16 +118,16 @@ class WGraph:
 # =========================================================
 # Frozen Dict (if needed)
 # =========================================================
-from frozendict import frozendict as FrozenDict
+FrozenDict = frozendict
 
 __all__ = [
-    "TraceError",
-    "trace_err", 
-    "Ok",
     "Err",
+    "FrozenDict",
+    "Ok",
     "Result",
+    "TraceError",
+    "WGraph",
     "WNode",
     "WStep",
-    "WGraph",
-    "FrozenDict",
+    "trace_err",
 ]

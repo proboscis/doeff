@@ -7,13 +7,14 @@ unwrapping of Program arguments for natural composition.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, Generator, Generic, ParamSpec, TypeVar, Union
+from typing import Any, Generic, ParamSpec, TypeVar
 
-from doeff.types import Effect, EffectGenerator
-from doeff.program import Program
 from doeff.effects import Gather, GatherDict
+from doeff.program import Program
+from doeff.types import Effect
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -40,9 +41,9 @@ class KleisliProgram(Generic[P, T]):
         result = add(x=prog_x, y=10)  # KleisliProgram unwraps prog_x automatically
     """
 
-    func: Callable[P, "Program[T]"]
+    func: Callable[P, Program[T]]
 
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> "Program[T]":
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Program[T]:
         """
         Call the Kleisli arrow, automatically unwrapping any Program arguments.
 
@@ -51,7 +52,7 @@ class KleisliProgram(Generic[P, T]):
         """
 
         @wraps(self.func)
-        def unwrapping_generator() -> Generator[Union[Effect, "Program"], Any, T]:
+        def unwrapping_generator() -> Generator[Effect | Program, Any, T]:
             # Collect Program arguments and their indices/keys
             program_args = []
             program_indices = []
@@ -80,7 +81,7 @@ class KleisliProgram(Generic[P, T]):
                 if program_args:
                     unwrapped_args = yield Gather(*program_args)
                     # Place unwrapped values back
-                    for idx, unwrapped_value in zip(program_indices, unwrapped_args):
+                    for idx, unwrapped_value in zip(program_indices, unwrapped_args, strict=False):
                         regular_args[idx] = unwrapped_value
 
                 # Unwrap keyword Program arguments

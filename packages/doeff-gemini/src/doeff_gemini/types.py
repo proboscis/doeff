@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
 class TokenUsage:
     """Token accounting returned by the Gemini API."""
 
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
-    total_tokens: Optional[int] = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 @dataclass(frozen=True)
@@ -23,13 +23,13 @@ class APICallMetadata:
     operation: str
     model: str
     timestamp: datetime
-    request_id: Optional[str]
-    latency_ms: Optional[float]
-    token_usage: Optional[TokenUsage]
-    error: Optional[str]
+    request_id: str | None
+    latency_ms: float | None
+    token_usage: TokenUsage | None
+    error: str | None
 
-    def to_graph_metadata(self) -> Dict[str, Any]:
-        metadata: Dict[str, Any] = {
+    def to_graph_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {
             "type": "gemini_api_call",
             "operation": self.operation,
             "model": self.model,
@@ -52,4 +52,4 @@ class APICallMetadata:
         return metadata
 
 
-__all__ = ["TokenUsage", "APICallMetadata"]
+__all__ = ["APICallMetadata", "TokenUsage"]

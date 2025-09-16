@@ -4,7 +4,8 @@ Result/error handling effects.
 This module provides Result effects for error handling.
 """
 
-from typing import Any, Callable, Union
+from collections.abc import Callable
+from typing import Any
 
 from .base import Effect, create_effect_with_trace
 
@@ -26,9 +27,9 @@ class result:
             handler: Function to handle exceptions
         """
         return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler})
-    
+
     @staticmethod
-    def recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) -> Effect:
+    def recover(sub_program: Any, fallback: Any | Callable[[Exception], Any]) -> Effect:
         """Try sub-program, use fallback value on error.
         
         Args:
@@ -39,7 +40,7 @@ class result:
                 - A function (Exception) -> value/Program to handle the error
         """
         return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback})
-    
+
     @staticmethod
     def retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
         """Retry sub-program on failure.
@@ -67,7 +68,7 @@ def Catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
     return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler}, skip_frames=3)
 
 
-def Recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) -> Effect:
+def Recover(sub_program: Any, fallback: Any | Callable[[Exception], Any]) -> Effect:
     """Result: Try sub-program, use fallback value on error.
     
     Args:
@@ -90,9 +91,9 @@ def Retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
 
 
 __all__ = [
-    "result",
-    "Fail",
     "Catch",
+    "Fail",
     "Recover",
     "Retry",
+    "result",
 ]

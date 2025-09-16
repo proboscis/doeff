@@ -7,24 +7,22 @@ by handling effects through the registered handlers.
 
 from __future__ import annotations
 
-import asyncio
 import traceback
-from typing import Any, Dict, Optional, TypeVar
+from typing import Any, TypeVar
 
-from doeff._vendor import Ok, Err, Result, WGraph, WNode, WStep
-from doeff.types import Effect, ExecutionContext, RunResult, EffectFailure
-from doeff.program import Program
+from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.handlers import (
-    HandlerScope,
+    CacheEffectHandler,
+    FutureEffectHandler,
+    GraphEffectHandler,
+    IOEffectHandler,
     ReaderEffectHandler,
+    ResultEffectHandler,
     StateEffectHandler,
     WriterEffectHandler,
-    FutureEffectHandler,
-    ResultEffectHandler,
-    IOEffectHandler,
-    GraphEffectHandler,
-    CacheEffectHandler,
 )
+from doeff.program import Program
+from doeff.types import Effect, EffectFailure, ExecutionContext, RunResult
 
 T = TypeVar("T")
 
@@ -48,7 +46,7 @@ def force_eval(prog: Program[T]) -> Program[T]:
                 current = gen.send(value)
         except StopIteration as e:
             return e.value
-    
+
     return Program(forced_generator)
 
 
@@ -62,7 +60,7 @@ class ProgramInterpreter:
     Effect handlers can be customized by passing custom handlers to __init__.
     """
 
-    def __init__(self, custom_handlers: Optional[Dict[str, Any]] = None):
+    def __init__(self, custom_handlers: dict[str, Any] | None = None):
         """Initialize effect handlers.
         
         Args:
@@ -73,29 +71,29 @@ class ProgramInterpreter:
         """
         # Initialize default handlers
         handlers = {
-            'reader': ReaderEffectHandler(),
-            'state': StateEffectHandler(),
-            'writer': WriterEffectHandler(),
-            'future': FutureEffectHandler(),
-            'result': ResultEffectHandler(),
-            'io': IOEffectHandler(),
-            'graph': GraphEffectHandler(),
-            'cache': CacheEffectHandler(),
+            "reader": ReaderEffectHandler(),
+            "state": StateEffectHandler(),
+            "writer": WriterEffectHandler(),
+            "future": FutureEffectHandler(),
+            "result": ResultEffectHandler(),
+            "io": IOEffectHandler(),
+            "graph": GraphEffectHandler(),
+            "cache": CacheEffectHandler(),
         }
-        
+
         # Override with custom handlers if provided
         if custom_handlers:
             handlers.update(custom_handlers)
-        
+
         # Set handlers as attributes for backward compatibility
-        self.reader_handler = handlers['reader']
-        self.state_handler = handlers['state']
-        self.writer_handler = handlers['writer']
-        self.future_handler = handlers['future']
-        self.result_handler = handlers['result']
-        self.io_handler = handlers['io']
-        self.graph_handler = handlers['graph']
-        self.cache_handler = handlers['cache']
+        self.reader_handler = handlers["reader"]
+        self.state_handler = handlers["state"]
+        self.writer_handler = handlers["writer"]
+        self.future_handler = handlers["future"]
+        self.result_handler = handlers["result"]
+        self.io_handler = handlers["io"]
+        self.graph_handler = handlers["graph"]
+        self.cache_handler = handlers["cache"]
 
         # Dispatch table
         self._dispatchers = {
@@ -127,7 +125,7 @@ class ProgramInterpreter:
         }
 
     async def run(
-        self, program: Program[T], context: Optional[ExecutionContext] = None
+        self, program: Program[T], context: ExecutionContext | None = None
     ) -> RunResult[T]:
         """
         Run a program with full monad support.
@@ -150,17 +148,17 @@ class ProgramInterpreter:
         try:
             # Force evaluate the program for stack safety
             #program = force_eval(program)
-            
+
             # Create generator
             gen = program.generator_func()
-            
+
             # Start the generator
             try:
                 current = next(gen)
             except StopIteration as e:
                 # Immediate return
                 return RunResult(ctx, Ok(e.value))
-            
+
             # Process effects
             from loguru import logger
             while True:
@@ -176,8 +174,8 @@ class ProgramInterpreter:
                             traceback.format_exception(
                                 exc.__class__, exc, exc.__traceback__
                             )
-                        ) if hasattr(exc, '__traceback__') else None
-                        
+                        ) if hasattr(exc, "__traceback__") else None
+
                         effect_failure = EffectFailure(
                             effect_tag=current.tag,
                             cause=exc,
@@ -185,22 +183,22 @@ class ProgramInterpreter:
                             creation_context=current.created_at
                         )
                         return RunResult(ctx, Err(effect_failure))
-                    
+
                     # Send value back
                     try:
                         current = gen.send(value)
                     except StopIteration as e:
                         return RunResult(ctx, Ok(e.value))
-                    
+
                 elif isinstance(current, Program):
                     # Sub-program - run it recursively
                     sub_result = await self.run(current, ctx)
                     if isinstance(sub_result.result, Err):
                         return sub_result
-                    
+
                     # Update context with sub-program changes
                     ctx = sub_result.context
-                    
+
                     # Send sub-program result back
                     try:
                         current = gen.send(sub_result.value)
@@ -212,7 +210,7 @@ class ProgramInterpreter:
                         ctx,
                         Err(TypeError(f"Unknown yield type: {type(current)}"))
                     )
-                    
+
         except Exception as exc:
             return RunResult(ctx, Err(exc))
 
@@ -221,8 +219,7 @@ class ProgramInterpreter:
         dispatcher = self._dispatchers.get(effect.tag)
         if dispatcher:
             return await dispatcher(effect.payload, ctx)
-        else:
-            raise ValueError(f"Unknown effect tag: {effect.tag}")
+        raise ValueError(f"Unknown effect tag: {effect.tag}")
 
     # Reader dispatchers
     async def _dispatch_reader_ask(self, payload: Any, ctx: ExecutionContext) -> Any:
@@ -261,10 +258,10 @@ class ProgramInterpreter:
 
     async def _dispatch_result_catch(self, payload: Any, ctx: ExecutionContext) -> Any:
         return await self.result_handler.handle_catch(payload, ctx, self)
-    
+
     async def _dispatch_result_recover(self, payload: Any, ctx: ExecutionContext) -> Any:
         return await self.result_handler.handle_recover(payload, ctx, self)
-    
+
     async def _dispatch_result_retry(self, payload: Any, ctx: ExecutionContext) -> Any:
         return await self.result_handler.handle_retry(payload, ctx, self)
 
@@ -293,7 +290,7 @@ class ProgramInterpreter:
         programs = payload
         results = []
         sub_contexts = []
-        
+
         # Run all programs with isolated contexts
         error_to_raise = None
         for prog in programs:
@@ -320,18 +317,18 @@ class ProgramInterpreter:
                 # Still collect the context even on error
             else:
                 results.append(sub_result.value)
-        
+
         # Merge all state changes and logs at the end
         for sub_ctx in sub_contexts:
             # Merge state changes with last-write-wins semantics
             ctx.state.update(sub_ctx.state)
             # Append sub-program logs
             ctx.log.extend(sub_ctx.log)
-        
+
         # Raise error after merging if one occurred
         if error_to_raise is not None:
             raise error_to_raise
-            
+
         return results
 
     async def _dispatch_program_gather_dict(self, payload: Any, ctx: ExecutionContext) -> Any:
@@ -344,7 +341,7 @@ class ProgramInterpreter:
         programs_dict = payload
         results = {}
         sub_contexts = []
-        
+
         # Run all programs with isolated contexts
         error_to_raise = None
         for key, prog in programs_dict.items():
@@ -369,18 +366,18 @@ class ProgramInterpreter:
                 # Still collect the context even on error
             else:
                 results[key] = sub_result.value
-        
+
         # Merge all state changes and logs at the end
         for sub_ctx in sub_contexts:
-            # Merge state changes with last-write-wins semantics  
+            # Merge state changes with last-write-wins semantics
             ctx.state.update(sub_ctx.state)
             # Append sub-program logs
             ctx.log.extend(sub_ctx.log)
-        
+
         # Raise error after merging if one occurred
         if error_to_raise is not None:
             raise error_to_raise
-            
+
         return results
 
     # Dependency injection dispatcher

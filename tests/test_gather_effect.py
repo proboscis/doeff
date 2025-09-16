@@ -2,21 +2,23 @@
 Test the Gather effect for collecting multiple Programs.
 """
 
-import pytest
 import asyncio
-from typing import Generator, Any, Union
+from collections.abc import Generator
+from typing import Any
+
+import pytest
 
 from doeff import (
-    Program,
-    do,
+    Await,
     Effect,
-    ProgramInterpreter,
     Gather,
     GatherDict,
-    Put,
     Get,
     Log,
-    Await,
+    Program,
+    ProgramInterpreter,
+    Put,
+    do,
 )
 
 
@@ -25,12 +27,12 @@ async def test_gather_list():
     """Test Gather effect with a list of Programs."""
 
     @do
-    def make_value(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def make_value(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Making value {x}")
         return x * 2
 
     @do
-    def gather_test() -> Generator[Union[Effect, Program], Any, list]:
+    def gather_test() -> Generator[Effect | Program, Any, list]:
         # Create multiple programs
         programs = [make_value(1), make_value(2), make_value(3)]
 
@@ -60,12 +62,12 @@ async def test_gather_dict():
     """Test GatherDict effect with a dict of Programs."""
 
     @do
-    def compute(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def compute(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Computing with {x}")
         return x**2
 
     @do
-    def gather_dict_test() -> Generator[Union[Effect, Program], Any, dict]:
+    def gather_dict_test() -> Generator[Effect | Program, Any, dict]:
         # Create a dict of programs
         programs = {
             "first": compute(2),
@@ -94,7 +96,7 @@ async def test_gather_with_state():
     """Test that Gather runs Programs in parallel with isolated initial state."""
 
     @do
-    def increment_counter() -> Generator[Union[Effect, Program], Any, int]:
+    def increment_counter() -> Generator[Effect | Program, Any, int]:
         counter = yield Get("counter")
         if counter is None:
             counter = 0
@@ -104,7 +106,7 @@ async def test_gather_with_state():
         return counter
 
     @do
-    def gather_state_test() -> Generator[Union[Effect, Program], Any, list]:
+    def gather_state_test() -> Generator[Effect | Program, Any, list]:
         # Create multiple programs that modify state
         programs = [increment_counter() for _ in range(3)]
 
@@ -133,7 +135,7 @@ async def test_gather_empty():
     """Test Gather with empty list."""
 
     @do
-    def empty_gather() -> Generator[Union[Effect, Program], Any, list]:
+    def empty_gather() -> Generator[Effect | Program, Any, list]:
         results = yield Gather()
         return results
 
@@ -151,7 +153,7 @@ async def test_gather_dict_empty():
     """Test GatherDict with empty dict."""
 
     @do
-    def empty_gather_dict() -> Generator[Union[Effect, Program], Any, dict]:
+    def empty_gather_dict() -> Generator[Effect | Program, Any, dict]:
         results = yield GatherDict({})
         return results
 
@@ -173,13 +175,13 @@ async def test_gather_with_async():
         return f"Data-{id}"
 
     @do
-    def async_prog(id: int) -> Generator[Union[Effect, Program], Any, str]:
+    def async_prog(id: int) -> Generator[Effect | Program, Any, str]:
         data = yield Await(fetch_data(id))
         yield Log(f"Fetched: {data}")
         return data
 
     @do
-    def gather_async_test() -> Generator[Union[Effect, Program], Any, list]:
+    def gather_async_test() -> Generator[Effect | Program, Any, list]:
         programs = [async_prog(i) for i in range(3)]
         results = yield Gather(*programs)
         return results
@@ -199,18 +201,18 @@ async def test_gather_error_propagation():
     """Test that errors in gathered Programs propagate correctly."""
 
     @do
-    def good_prog(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def good_prog(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Good prog {x}")
         return x
 
     @do
-    def bad_prog() -> Generator[Union[Effect, Program], Any, int]:
+    def bad_prog() -> Generator[Effect | Program, Any, int]:
         yield Log("About to fail")
         raise ValueError("Intentional error")
         return 42  # Never reached
 
     @do
-    def gather_with_error() -> Generator[Union[Effect, Program], Any, list]:
+    def gather_with_error() -> Generator[Effect | Program, Any, list]:
         programs = [good_prog(1), bad_prog(), good_prog(2)]
         results = yield Gather(*programs)  # Should fail here
         yield Log("This should not be logged")
@@ -238,7 +240,7 @@ async def test_gather_pure_programs():
     """Test Gather with pure Programs (no effects)."""
 
     @do
-    def gather_pure() -> Generator[Union[Effect, Program], Any, list]:
+    def gather_pure() -> Generator[Effect | Program, Any, list]:
         programs = [
             Program.pure(10),
             Program.pure(20),
@@ -262,13 +264,13 @@ async def test_gather_dict_mixed():
     """Test GatherDict with mixed Program types."""
 
     @do
-    def with_effect(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def with_effect(x: int) -> Generator[Effect | Program, Any, int]:
         yield Put(f"value_{x}", x)
         yield Log(f"Processing {x}")
         return x * 10
 
     @do
-    def gather_mixed() -> Generator[Union[Effect, Program], Any, dict]:
+    def gather_mixed() -> Generator[Effect | Program, Any, dict]:
         programs = {
             "pure": Program.pure(5),
             "effect": with_effect(3),

@@ -3,7 +3,7 @@ name = "doeff"
 version = "0.1.0"
 description = "Pragmatic do-notation and effects system for Python"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Masui", email = "nameissoap@gmail.com"}
@@ -28,6 +28,7 @@ dependencies = [
     "loguru>=0.7.0",
     "pinjected>=0.3.0b0",
     "numpy>=2.2.6",
+    "exceptiongroup>=1.2.0; python_version < '3.11'",
     "doeff-pinjected",
 ]
 
@@ -67,6 +68,7 @@ ignore = [
     "PLR2004",  # magic value comparison
     "PLR0913",  # too many arguments
 ]
+external = ["PINJ"]
 
 [dependency-groups]
 dev = [

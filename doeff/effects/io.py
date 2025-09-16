@@ -4,7 +4,8 @@ IO effects.
 This module provides IO effects for performing side effects.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .base import Effect, create_effect_with_trace
 
@@ -16,7 +17,7 @@ class io:
     def perform(action: Callable[[], Any]) -> Effect:
         """Perform an IO action."""
         return create_effect_with_trace("io.perform", action)
-    
+
     @staticmethod
     def run(action: Callable[[], Any]) -> Effect:
         """Perform an IO action (alias for perform)."""
@@ -40,7 +41,7 @@ def Print(message: str) -> Effect:
 
 
 __all__ = [
-    "io",
     "IO",
     "Print",
+    "io",
 ]

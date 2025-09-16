@@ -37,18 +37,6 @@ Example:
 __version__ = "0.1.0"
 
 # Client exports
-from doeff_openai.client import (
-    OpenAIClient,
-    ClientHolder,
-    get_openai_client,
-    get_total_cost,
-    get_model_cost,
-    reset_cost_tracking,
-    track_api_call,
-    extract_token_usage,
-    extract_request_id,
-)
-
 # Chat exports
 from doeff_openai.chat import (
     chat_completion,
@@ -56,70 +44,79 @@ from doeff_openai.chat import (
     process_stream_chunks,
     simple_chat,
 )
+from doeff_openai.client import (
+    ClientHolder,
+    OpenAIClient,
+    extract_request_id,
+    extract_token_usage,
+    get_model_cost,
+    get_openai_client,
+    get_total_cost,
+    reset_cost_tracking,
+    track_api_call,
+)
+
+# Cost calculation exports
+from doeff_openai.costs import (
+    calculate_cost,
+    count_embedding_tokens,
+    count_message_tokens,
+    count_tokens,
+    estimate_cost,
+    estimate_max_cost,
+    get_encoding,
+    get_model_pricing,
+)
 
 # Embedding exports
 from doeff_openai.embeddings import (
+    batch_embeddings,
+    cosine_similarity,
     create_embedding,
     create_embedding_async,
-    batch_embeddings,
     get_single_embedding,
-    cosine_similarity,
     semantic_search,
 )
 
 # Streaming exports
 from doeff_openai.streaming import (
+    buffered_stream,
     process_stream,
     stream_to_chunks,
     stream_with_accumulator,
     stream_with_metadata,
-    buffered_stream,
-)
-
-# Type exports
-from doeff_openai.types import (
-    # Enums
-    OpenAIModel,
-    
-    # Data classes
-    TokenUsage,
-    CostInfo,
-    APICallMetadata,
-    ModelPricing,
-    StreamChunk,
-    CompletionRequest,
-    EmbeddingRequest,
-    
-    # Constants
-    MODEL_PRICING,
-)
-
-# Cost calculation exports
-from doeff_openai.costs import (
-    get_encoding,
-    count_tokens,
-    count_message_tokens,
-    count_embedding_tokens,
-    calculate_cost,
-    estimate_cost,
-    get_model_pricing,
-    estimate_max_cost,
 )
 
 # Structured LLM exports
 from doeff_openai.structured_llm import (
-    structured_llm__openai,
     gpt4o_structured,
     gpt5_nano_structured,
     gpt5_structured,
     is_gpt5_model,
     requires_max_completion_tokens,
+    structured_llm__openai,
+)
+
+# Type exports
+from doeff_openai.types import (
+    # Constants
+    MODEL_PRICING,
+    APICallMetadata,
+    CompletionRequest,
+    CostInfo,
+    EmbeddingRequest,
+    ModelPricing,
+    # Enums
+    OpenAIModel,
+    StreamChunk,
+    # Data classes
+    TokenUsage,
 )
 
 __all__ = [
     # Version
     "__version__",
-    
+
     # Client
     "OpenAIClient",
     "ClientHolder",
@@ -130,13 +127,13 @@ __all__ = [
     "track_api_call",
     "extract_token_usage",
     "extract_request_id",
-    
+
     # Chat
     "chat_completion",
     "chat_completion_async",
     "process_stream_chunks",
     "simple_chat",
-    
+
     # Embeddings
     "create_embedding",
     "create_embedding_async",
@@ -144,14 +141,14 @@ __all__ = [
     "get_single_embedding",
     "cosine_similarity",
     "semantic_search",
-    
+
     # Streaming
     "process_stream",
     "stream_to_chunks",
     "stream_with_accumulator",
     "stream_with_metadata",
     "buffered_stream",
-    
+
     # Types
     "OpenAIModel",
     "TokenUsage",
@@ -162,7 +159,7 @@ __all__ = [
     "CompletionRequest",
     "EmbeddingRequest",
     "MODEL_PRICING",
-    
+
     # Cost calculation
     "get_encoding",
     "count_tokens",
@@ -172,7 +169,7 @@ __all__ = [
     "estimate_cost",
     "get_model_pricing",
     "estimate_max_cost",
-    
+
     # Structured LLM
     "structured_llm__openai",
     "gpt4o_structured",

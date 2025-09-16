@@ -1,28 +1,30 @@
 """Test stack safety of the comprehensive pragmatic approach."""
 
 import asyncio
+from collections.abc import Generator
+from typing import Any
+
 import pytest
-from typing import Generator, Any, Dict, List
 
 from doeff import (
-    ProgramInterpreter,
+    Effect,
     ExecutionContext,
     Program,
-    Effect,
-    do,
-    ask,
-    put,
-    get,
-    modify,
-    tell,
-    listen,
-    await_,
-    parallel,
-    fail,
-    catch,
-    io,
-    step,
+    ProgramInterpreter,
     annotate,
+    ask,
+    await_,
+    catch,
+    do,
+    fail,
+    get,
+    io,
+    listen,
+    modify,
+    parallel,
+    put,
+    step,
+    tell,
 )
 
 
@@ -30,7 +32,7 @@ from doeff import (
 async def test_deep_mixed_monad_chain():
     """Test deep chains using all monad types."""
 
-    def deep_mixed_program() -> Generator[Effect, Any, Dict]:
+    def deep_mixed_program() -> Generator[Effect, Any, dict]:
         """Program with 10,000 operations mixing all monad types."""
 
         # Initialize
@@ -71,22 +73,22 @@ async def test_deep_mixed_monad_chain():
                         yield tell(f"Recovered from error at {i}: {e}")
                         return -i
                     return recover()
-                
+
                 yield catch(maybe_fail(i), error_recovery)
 
         # Final results
         final_total = yield get("total")
-        
+
         @do
         def sub_program() -> Generator[Effect, Any, int]:
             """Sub computation with logging."""
             yield tell("Sub computation")
             yield put("sub_state", 42)
             return 42
-        
+
         listen_result = yield listen(sub_program())
         # Handle ListenResult object
-        if hasattr(listen_result, 'value') and hasattr(listen_result, 'log'):
+        if hasattr(listen_result, "value") and hasattr(listen_result, "log"):
             value = listen_result.value
             sub_log = listen_result.log
         else:
@@ -158,7 +160,7 @@ async def test_nested_monad_operations():
         @do
         def next_level() -> Generator[Effect, Any, int]:
             return (yield from nested_program(depth - 1))
-        
+
         def error_handler(e):
             """Error handler that returns a Program."""
             @do
@@ -166,7 +168,7 @@ async def test_nested_monad_operations():
                 yield tell(f"Error at depth {depth}: {e}")
                 return 0
             return handle()
-        
+
         result = yield catch(
             next_level(),
             error_handler,
@@ -199,7 +201,7 @@ async def test_nested_monad_operations():
 async def test_parallel_async_operations():
     """Test handling many parallel async operations."""
 
-    def parallel_program() -> Generator[Effect, Any, List[int]]:
+    def parallel_program() -> Generator[Effect, Any, list[int]]:
         """Program with many parallel operations."""
         results = []
 
@@ -244,7 +246,7 @@ async def test_parallel_async_operations():
 async def test_monad_composition_patterns():
     """Test various monad composition patterns."""
 
-    def composition_program() -> Generator[Effect, Any, Dict]:
+    def composition_program() -> Generator[Effect, Any, dict]:
         """Test different composition patterns."""
         results = {}
 
@@ -263,12 +265,12 @@ async def test_monad_composition_patterns():
             yield put("computed", 42)
             value = yield get("computed")
             return value
-        
+
         @do
         def default_program() -> Generator[Effect, Any, int]:
             yield put("computed", 0)
             return 0
-        
+
         try_result = yield catch(
             stateful_program(), lambda e: default_program()
         )
@@ -278,10 +280,10 @@ async def test_monad_composition_patterns():
         def local_program() -> Generator[Effect, Any, str]:
             yield tell("In local computation")
             return "local_result"
-        
+
         listen_result = yield listen(local_program())
         # Handle ListenResult object
-        if hasattr(listen_result, 'value') and hasattr(listen_result, 'log'):
+        if hasattr(listen_result, "value") and hasattr(listen_result, "log"):
             value = listen_result.value
             log = listen_result.log
         else:
@@ -305,7 +307,7 @@ async def test_monad_composition_patterns():
     assert result.value["logged_value"] == "local_result"
     assert result.value["log_size"] == 1
 
-    print(f"✅ Monad composition patterns work correctly")
+    print("✅ Monad composition patterns work correctly")
 
 
 if __name__ == "__main__":

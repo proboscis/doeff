@@ -26,6 +26,6 @@ def Dep(key: str) -> Effect:
 
 
 __all__ = [
-    "dep",
     "Dep",
+    "dep",
 ]

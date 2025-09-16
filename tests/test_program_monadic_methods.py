@@ -2,23 +2,25 @@
 Test the monadic methods (map, flat_map, pure) for the Program class.
 """
 
-import pytest
 import asyncio
-from typing import Generator, Any, Union
+from collections.abc import Generator
+from typing import Any
+
+import pytest
 
 from doeff import (
-    Program,
-    do,
-    Effect,
-    ProgramInterpreter,
-    ExecutionContext,
     # Effects
     Ask,
-    Put,
+    Await,
+    Effect,
+    ExecutionContext,
     Get,
     Log,
+    Program,
+    ProgramInterpreter,
+    Put,
     Step,
-    Await,
+    do,
 )
 
 
@@ -42,7 +44,7 @@ async def test_program_map():
     """Test Program.map transforms the result of a program."""
 
     @do
-    def base_program() -> Generator[Union[Effect, Program], Any, int]:
+    def base_program() -> Generator[Effect | Program, Any, int]:
         yield Put("x", 10)
         value = yield Get("x")
         return value
@@ -63,7 +65,7 @@ async def test_program_map_chain():
     """Test chaining multiple map operations."""
 
     @do
-    def base_program() -> Generator[Union[Effect, Program], Any, int]:
+    def base_program() -> Generator[Effect | Program, Any, int]:
         return 5
 
     # Chain multiple maps
@@ -86,13 +88,13 @@ async def test_program_flat_map():
     """Test Program.flat_map chains programs together."""
 
     @do
-    def first_program(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def first_program(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"First program with {x}")
         yield Put("first", x)
         return x * 2
 
     @do
-    def second_program(x: int) -> Generator[Union[Effect, Program], Any, str]:
+    def second_program(x: int) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Second program with {x}")
         yield Put("second", x)
         first_val = yield Get("first")
@@ -116,13 +118,13 @@ async def test_program_flat_map_with_effects():
     """Test flat_map with programs that use various effects."""
 
     @do
-    def read_config() -> Generator[Union[Effect, Program], Any, dict]:
+    def read_config() -> Generator[Effect | Program, Any, dict]:
         config = yield Ask("config")
         yield Log(f"Read config: {config}")
         return config
 
     @do
-    def process_config(config: dict) -> Generator[Union[Effect, Program], Any, int]:
+    def process_config(config: dict) -> Generator[Effect | Program, Any, int]:
         multiplier = config.get("multiplier", 1)
         base = config.get("base", 0)
         result = base * multiplier
@@ -131,7 +133,7 @@ async def test_program_flat_map_with_effects():
         return result
 
     @do
-    def format_result(value: int) -> Generator[Union[Effect, Program], Any, str]:
+    def format_result(value: int) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Formatting result: {value}")
         return f"Final result: {value}"
 
@@ -155,11 +157,11 @@ async def test_map_vs_flat_map():
     """Test the difference between map and flat_map."""
 
     @do
-    def base_prog() -> Generator[Union[Effect, Program], Any, int]:
+    def base_prog() -> Generator[Effect | Program, Any, int]:
         return 10
 
     @do
-    def effect_prog(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def effect_prog(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Processing {x}")
         return x * 2
 
@@ -190,7 +192,7 @@ async def test_monadic_laws_left_identity():
     """Test left identity law: pure(a).flat_map(f) == f(a)"""
 
     @do
-    def f(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def f(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Function f with {x}")
         return x * 2
 
@@ -212,7 +214,7 @@ async def test_monadic_laws_right_identity():
     """Test right identity law: m.flat_map(pure) == m"""
 
     @do
-    def m() -> Generator[Union[Effect, Program], Any, int]:
+    def m() -> Generator[Effect | Program, Any, int]:
         yield Log("Program m")
         return 42
 
@@ -237,7 +239,7 @@ async def test_async_in_flat_map():
         return x * 2
 
     @do
-    def async_prog(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def async_prog(x: int) -> Generator[Effect | Program, Any, int]:
         result = yield Await(async_operation(x))
         yield Log(f"Async result: {result}")
         return result
@@ -257,7 +259,7 @@ async def test_complex_composition():
     """Test complex composition of map and flat_map."""
 
     @do
-    def read_value(key: str) -> Generator[Union[Effect, Program], Any, int]:
+    def read_value(key: str) -> Generator[Effect | Program, Any, int]:
         value = yield Get(key)
         if value is None:
             value = 0
@@ -267,7 +269,7 @@ async def test_complex_composition():
     @do
     def write_value(
         key: str, value: int
-    ) -> Generator[Union[Effect, Program], Any, int]:
+    ) -> Generator[Effect | Program, Any, int]:
         yield Put(key, value)
         yield Log(f"Wrote {key}={value}")
         return value
@@ -297,13 +299,13 @@ async def test_error_propagation_in_flat_map():
     """Test that errors propagate through flat_map chains."""
 
     @do
-    def failing_prog() -> Generator[Union[Effect, Program], Any, int]:
+    def failing_prog() -> Generator[Effect | Program, Any, int]:
         yield Log("About to fail")
         raise ValueError("Intentional error")
         return 42  # Never reached
 
     @do
-    def never_runs(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def never_runs(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log("This should not run")
         return x * 2
 
