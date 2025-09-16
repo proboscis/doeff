@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from doeff._vendor import Ok, Err, WNode, WStep, WGraph
@@ -21,8 +22,15 @@ if TYPE_CHECKING:
 from doeff.program import Program
 
 
+class HandlerScope(Enum):
+    """Defines how handler state should be managed in parallel execution contexts."""
+    ISOLATED = auto()  # Each parallel execution gets its own handler instance (e.g., State)
+    SHARED = auto()    # All parallel executions share the same handler instance (e.g., Cache, Log)
+
+
 class ReaderEffectHandler:
     """Handles Reader monad effects."""
+    scope = HandlerScope.ISOLATED  # Each parallel execution gets its own environment
 
     async def handle_ask(self, key: str, ctx: ExecutionContext) -> Any:
         """Handle reader.ask effect."""
@@ -48,6 +56,7 @@ class ReaderEffectHandler:
 
 class StateEffectHandler:
     """Handles State monad effects."""
+    scope = HandlerScope.ISOLATED  # Each parallel execution gets its own state
 
     async def handle_get(self, key: str, ctx: ExecutionContext) -> Any:
         """Handle state.get effect."""
@@ -68,6 +77,7 @@ class StateEffectHandler:
 
 class WriterEffectHandler:
     """Handles Writer monad effects."""
+    scope = HandlerScope.ISOLATED  # Each parallel execution gets its own log
 
     async def handle_tell(self, message: Any, ctx: ExecutionContext) -> None:
         """Handle writer.tell effect."""
@@ -97,6 +107,7 @@ class WriterEffectHandler:
 
 class FutureEffectHandler:
     """Handles Future monad effects."""
+    scope = HandlerScope.SHARED  # Async operations are stateless
 
     async def handle_await(self, awaitable: Awaitable[Any]) -> Any:
         """Handle future.await effect."""
@@ -112,6 +123,7 @@ class FutureEffectHandler:
 
 class ResultEffectHandler:
     """Handles Result monad effects."""
+    scope = HandlerScope.SHARED  # Error handling is stateless
 
     async def handle_fail(self, exc: Exception) -> None:
         """Handle result.fail effect."""
@@ -173,6 +185,8 @@ class ResultEffectHandler:
         """Handle result.recover effect - try program, use fallback on error."""
         # Import here to avoid circular import
         from doeff.program import Program
+        from doeff._vendor import TraceError
+        import inspect
         
         # Check if payload["program"] is already a Program or a callable
         sub_program = payload["program"]
@@ -184,12 +198,73 @@ class ResultEffectHandler:
         pragmatic_result = await engine.run(sub_program, ctx)
         
         if isinstance(pragmatic_result.result, Err):
-            # Error occurred, use fallback
+            # Error occurred, extract the actual exception
+            error = pragmatic_result.result.error
+            if isinstance(error, TraceError):
+                error = error.exc
+            
+            # Get the fallback
             fallback = payload["fallback"]
             
-            # If fallback is a callable (thunk), call it
+            # Check if fallback is an error handler function
+            # We need to distinguish between:
+            # 1. Error handlers: callables that take an exception parameter
+            # 2. Thunks: zero-argument callables that return Programs
+            # 3. Programs: which are also callable
+            # 4. KleisliPrograms: @do decorated functions (can be either 1 or 2)
             if callable(fallback) and not isinstance(fallback, Program):
-                fallback = fallback()
+                from doeff.kleisli import KleisliProgram
+                
+                # KleisliProgram needs special handling since inspect.signature
+                # doesn't give us the real signature
+                if isinstance(fallback, KleisliProgram):
+                    # Try calling it as an error handler first
+                    handler_result = fallback(error)
+                    # This will return a Program, try to run it
+                    if isinstance(handler_result, Program):
+                        # Run it and see if it fails with TypeError
+                        try_result = await engine.run(handler_result, ctx)
+                        if isinstance(try_result.result, Err):
+                            # Check if the error is a TypeError about arguments
+                            inner_error = try_result.result.error
+                            from doeff._vendor import TraceError
+                            if isinstance(inner_error, TraceError):
+                                inner_error = inner_error.exc
+                            if isinstance(inner_error, TypeError) and "positional argument" in str(inner_error):
+                                # It failed because it doesn't accept an error arg
+                                # Try as thunk instead
+                                fallback = fallback()
+                            else:
+                                # Some other error - re-raise it
+                                raise inner_error
+                        else:
+                            # Succeeded as error handler
+                            return try_result.value
+                    else:
+                        # Somehow got a non-Program result
+                        return handler_result
+                else:
+                    # Regular callable - check signature
+                    try:
+                        sig = inspect.signature(fallback)
+                        # If it accepts at least one parameter, treat it as an error handler
+                        if len(sig.parameters) > 0:
+                            # It's an error handler - call it with the exception
+                            handler_result = fallback(error)
+                            
+                            # If handler returned a Program, run it
+                            if isinstance(handler_result, Program):
+                                handler_pragmatic_result = await engine.run(handler_result, ctx)
+                                return handler_pragmatic_result.value
+                            else:
+                                # Handler returned a direct value
+                                return handler_result
+                        else:
+                            # It's a thunk (zero-argument callable) - call it
+                            fallback = fallback()
+                    except (ValueError, TypeError):
+                        # Can't inspect signature, treat as thunk
+                        fallback = fallback()
             
             # If fallback is a Program, run it
             if isinstance(fallback, Program):
@@ -245,6 +320,7 @@ class ResultEffectHandler:
 
 class IOEffectHandler:
     """Handles IO monad effects."""
+    scope = HandlerScope.SHARED  # IO operations share permissions
 
     async def handle_run(self, action: Callable[[], Any], ctx: ExecutionContext) -> Any:
         """Handle io.run effect."""
@@ -261,6 +337,7 @@ class IOEffectHandler:
 
 class GraphEffectHandler:
     """Handles Graph effects for SGFR compatibility."""
+    scope = HandlerScope.ISOLATED  # Each parallel execution tracks its own graph
 
     async def handle_step(self, payload: Dict, ctx: ExecutionContext) -> Any:
         """Handle graph.step effect."""
@@ -282,16 +359,12 @@ class GraphEffectHandler:
 
 class CacheEffectHandler:
     """Handles Cache effects for memoization."""
+    scope = HandlerScope.SHARED  # Cache MUST be shared across parallel executions
 
     def __init__(self):
-        """Initialize the cache handler with an in-memory cache."""
+        """Initialize the cache handler."""
         import time
-        import hashlib
-        import json
-        self._cache: Dict[str, Tuple[Any, Optional[float]]] = {}  # serialized_key -> (value, expiry_time)
         self._time = time.time
-        self._hashlib = hashlib
-        self._json = json
 
     def _serialize_key(self, key: Any) -> str:
         """Serialize any key to a string for internal cache storage.
@@ -335,14 +408,14 @@ class CacheEffectHandler:
         """
         serialized_key = self._serialize_key(key)
         
-        if serialized_key not in self._cache:
+        if serialized_key not in ctx.cache:
             raise KeyError(f"Cache miss for key")
         
-        value, expiry = self._cache[serialized_key]
+        value, expiry = ctx.cache[serialized_key]
         
         # Check if expired
         if expiry is not None and self._time() > expiry:
-            del self._cache[serialized_key]
+            del ctx.cache[serialized_key]
             raise KeyError(f"Cache expired for key")
         
         return value
@@ -360,10 +433,11 @@ class CacheEffectHandler:
         if ttl is not None and ttl > 0:
             expiry = self._time() + ttl
         
-        self._cache[serialized_key] = (value, expiry)
+        ctx.cache[serialized_key] = (value, expiry)
 
 
 __all__ = [
+    "HandlerScope",
     "ReaderEffectHandler",
     "StateEffectHandler",
     "WriterEffectHandler",

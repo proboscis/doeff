@@ -88,8 +88,13 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
                 yield Log(f"Cache: stored result for {func_name}")
                 return result
             
+            # Create a program that tries to get from cache
+            @do
+            def try_cache_get() -> EffectGenerator[T]:
+                return (yield CacheGet(cache_key))
+            
             # Try to get from cache, recover with computation on miss
-            result = yield Recover(CacheGet(cache_key), compute_and_cache())
+            result = yield Recover(try_cache_get, compute_and_cache)
             
             # Log cache hit if we got here without computing
             # (The log will only appear if CacheGet succeeded)
