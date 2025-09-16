@@ -6,6 +6,7 @@ This module contains the foundational types with zero internal dependencies.
 
 from __future__ import annotations
 
+import traceback
 from dataclasses import dataclass, field
 from typing import Any, Dict, Generator, List, TypeVar, Union, TYPE_CHECKING
 
@@ -165,6 +166,56 @@ class RunResult[T]:
     def graph(self) -> WGraph:
         """Get the computation graph."""
         return self.context.graph
+    
+    def format_error(self) -> str:
+        """Format error with full traceback if result is a failure."""
+        if isinstance(self.result, Ok):
+            return ""
+        
+        error = self.result.error
+        
+        # If it's a TraceError, it already has formatted traceback
+        if isinstance(error, TraceError):
+            return str(error)
+        
+        # Otherwise, format the exception
+        if isinstance(error, BaseException):
+            # Try to get traceback if available
+            if hasattr(error, "__traceback__") and error.__traceback__:
+                tb_lines = traceback.format_exception(
+                    type(error), error, error.__traceback__
+                )
+                return "".join(tb_lines)
+            else:
+                # No traceback available, just show the error
+                return f"{error.__class__.__name__}: {error}"
+        
+        # For non-exception errors, just convert to string
+        return str(error)
+    
+    @property
+    def formatted_error(self) -> str:
+        """Get formatted error string if result is a failure."""
+        return self.format_error()
+    
+    def __repr__(self) -> str:
+        """Show enhanced representation with formatted traceback for failures."""
+        if isinstance(self.result, Ok):
+            return (
+                f"RunResult(Ok({repr(self.result.value)}), "
+                f"state={len(self.state)} items, "
+                f"log={len(self.log)} entries)"
+            )
+        else:
+            # Format the error with traceback
+            error_str = self.format_error()
+            # Indent the error for better readability
+            indented_error = "\n  ".join(error_str.split("\n"))
+            return (
+                f"RunResult(Err:\n  {indented_error}\n"
+                f"  state={len(self.state)} items, "
+                f"  log={len(self.log)} entries)"
+            )
 
 
 # ============================================
