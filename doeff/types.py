@@ -249,13 +249,43 @@ class RunResult[T]:
             lines.append(f"{ind}Value: {self._format_value(self.result.value, indent)}")
         else:
             lines.append(f"{ind}❌ Failure")
-            lines.append(f"{ind}Error: {self.result.error.__class__.__name__}")
-            if verbose:
-                error_lines = self.format_error().split("\n")
-                for line in error_lines[:10]:  # Limit traceback lines
-                    lines.append(f"{ind * 2}{line}")
-                if len(error_lines) > 10:
-                    lines.append(f"{ind * 2}... ({len(error_lines) - 10} more lines)")
+            
+            # Extract the actual error details
+            error = self.result.error
+            if isinstance(error, TraceError):
+                # Get the actual exception
+                actual_exc = error.exc
+                lines.append(f"{ind}Exception Type: {actual_exc.__class__.__name__}")
+                lines.append(f"{ind}Exception Message: {actual_exc}")
+                
+                # Show the full traceback
+                lines.append(f"\n{ind}📍 Stack Trace:")
+                if error.tb:
+                    tb_lines = error.tb.strip().split("\n")
+                    # Always show the full traceback for errors (not just in verbose mode)
+                    for tb_line in tb_lines:
+                        if tb_line.strip():  # Skip empty lines
+                            lines.append(f"{ind * 2}{tb_line}")
+                
+                # Show where the error was created if available
+                if error.created_at:
+                    lines.append(f"\n{ind}🔍 Created At:")
+                    created_lines = error.created_at.strip().split("\n")
+                    for created_line in created_lines:
+                        if created_line.strip():
+                            lines.append(f"{ind * 2}{created_line}")
+            else:
+                # Non-TraceError error
+                lines.append(f"{ind}Error Type: {error.__class__.__name__}")
+                lines.append(f"{ind}Error: {error}")
+                if hasattr(error, "__traceback__") and error.__traceback__ and verbose:
+                    lines.append(f"\n{ind}📍 Stack Trace:")
+                    tb_lines = traceback.format_exception(
+                        type(error), error, error.__traceback__
+                    )
+                    for tb_line in "".join(tb_lines).split("\n"):
+                        if tb_line.strip():
+                            lines.append(f"{ind * 2}{tb_line}")
         
         # State
         lines.append("\n🗂️ State:")

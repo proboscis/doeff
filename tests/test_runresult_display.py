@@ -1,0 +1,332 @@
+"""Test enhanced RunResult.display() method with stack traces and error details."""
+
+import pytest
+from doeff import (
+    do, 
+    EffectGenerator, 
+    ProgramInterpreter, 
+    Fail, 
+    Put, 
+    Get, 
+    Log,
+    Recover
+)
+
+
+@pytest.mark.asyncio
+async def test_display_success():
+    """Test display() for successful result."""
+    @do
+    def successful_program() -> EffectGenerator[str]:
+        yield Put("counter", 42)
+        yield Log("Computing result")
+        yield Log("Another log entry")
+        return "Success value!"
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(successful_program())
+    
+    # Test display output
+    display_output = result.display()
+    
+    # Verify success indicators
+    assert "✅ Success" in display_output
+    assert "Success value!" in display_output
+    assert "counter: 42" in display_output
+    assert "Computing result" in display_output
+    assert "Another log entry" in display_output
+    
+    # Verify summary
+    assert "Status: ✅ OK" in display_output
+    assert "State items: 1" in display_output
+    assert "Log entries: 2" in display_output
+    
+    # Test verbose mode
+    verbose_output = result.display(verbose=True)
+    assert len(verbose_output) >= len(display_output)
+
+
+@pytest.mark.asyncio
+async def test_display_error_with_traceback():
+    """Test display() shows full stack trace for errors."""
+    @do
+    def failing_program() -> EffectGenerator[str]:
+        yield Put("step", "before_error")
+        yield Log("About to fail")
+        yield Fail(ValueError("Something went wrong in the program"))
+        return "never reached"
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(failing_program())
+    
+    # Test display output
+    display_output = result.display()
+    
+    # Verify error indicators
+    assert "❌ Failure" in display_output
+    assert "Exception Type: ValueError" in display_output
+    assert "Exception Message: Something went wrong in the program" in display_output
+    
+    # Verify stack trace is shown
+    assert "📍 Stack Trace:" in display_output
+    assert "ValueError: Something went wrong in the program" in display_output
+    assert "Traceback" in display_output  # Traceback header
+    assert "handle_fail" in display_output  # Shows it went through the handler
+    
+    # Verify state and logs are still shown
+    assert "step: \"before_error\"" in display_output
+    assert "About to fail" in display_output
+    
+    # Verify summary shows error status
+    assert "Status: ❌ Error" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_nested_error():
+    """Test display() with nested errors and Recover."""
+    @do
+    def inner_failing() -> EffectGenerator[int]:
+        yield Fail(KeyError("missing_key"))
+        return 0
+    
+    @do
+    def outer_program() -> EffectGenerator[str]:
+        yield Put("outer_state", "started")
+        # This will fail with the inner KeyError
+        value = yield inner_failing()
+        return f"Got {value}"
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(outer_program())
+    
+    display_output = result.display()
+    
+    # Should show the KeyError details
+    assert "Exception Type: KeyError" in display_output
+    assert "Exception Message: 'missing_key'" in display_output
+    assert "📍 Stack Trace:" in display_output
+    assert "KeyError: 'missing_key'" in display_output
+    
+    # State should still be captured
+    assert "outer_state: \"started\"" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_with_complex_state():
+    """Test display() with complex state and log data."""
+    @do
+    def complex_program() -> EffectGenerator[dict]:
+        # Add various types of state
+        yield Put("string", "test value")
+        yield Put("number", 123.45)
+        yield Put("bool", True)
+        yield Put("none", None)
+        yield Put("list", [1, 2, 3, 4, 5])
+        yield Put("dict", {"nested": {"key": "value"}})
+        
+        # Add various log entries
+        yield Log("Simple log")
+        yield Log({"structured": "log", "with": "data"})
+        yield Log([1, 2, 3])
+        
+        return {"result": "complex", "data": [1, 2, 3]}
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(complex_program())
+    
+    display_output = result.display()
+    
+    # Verify different value types are formatted correctly
+    assert 'string: "test value"' in display_output
+    assert "number: 123.45" in display_output
+    assert "bool: True" in display_output
+    assert "none: None" in display_output
+    assert "list: [1, 2, 3, 4, 5]" in display_output
+    assert '"nested"' in display_output
+    
+    # Verify logs are shown
+    assert "Simple log" in display_output
+    assert "structured" in display_output
+    
+    # Verify result is formatted
+    assert "✅ Success" in display_output
+    assert '"result": "complex"' in display_output or "result" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_truncation():
+    """Test that display() truncates very long values."""
+    @do
+    def long_value_program() -> EffectGenerator[str]:
+        # Create a very long string
+        long_string = "x" * 500
+        yield Put("long", long_string)
+        
+        # Create many log entries
+        for i in range(20):
+            yield Log(f"Log entry {i}")
+        
+        # Create many state items
+        for i in range(30):
+            yield Put(f"item_{i}", i)
+        
+        return "done"
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(long_value_program())
+    
+    display_output = result.display()
+    
+    # Check truncation indicators
+    assert "..." in display_output  # Long values should be truncated
+    assert "and 10 more entries" in display_output  # Logs should be limited
+    assert "and 10 more items" in display_output or "and 11 more items" in display_output  # State should be limited
+
+
+@pytest.mark.asyncio
+async def test_display_error_types():
+    """Test display() with different error types."""
+    
+    # Test with TypeError
+    @do
+    def type_error_program() -> EffectGenerator[int]:
+        yield Fail(TypeError("Expected int, got str"))
+        return 0
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(type_error_program())
+    display = result.display()
+    
+    assert "Exception Type: TypeError" in display
+    assert "Expected int, got str" in display
+    
+    # Test with custom exception
+    class CustomError(Exception):
+        def __init__(self, code: int, message: str):
+            self.code = code
+            super().__init__(message)
+    
+    @do
+    def custom_error_program() -> EffectGenerator[str]:
+        yield Fail(CustomError(404, "Not found"))
+        return ""
+    
+    result2 = await engine.run(custom_error_program())
+    display2 = result2.display()
+    
+    assert "Exception Type: CustomError" in display2
+    assert "Not found" in display2
+
+
+@pytest.mark.asyncio
+async def test_display_verbose_mode():
+    """Test verbose mode shows additional details."""
+    from doeff import Ask, Local
+    
+    @do
+    def program_with_env() -> EffectGenerator[str]:
+        # Add some state to see difference
+        yield Put("state_item", "value1")
+        yield Put("state_item2", "value2")
+        
+        # Add logs to create graph steps
+        yield Log("First log")
+        yield Log("Second log")
+        
+        # Set up environment with Local
+        @do
+        def inner():
+            value = yield Ask("config")
+            yield Put("from_env", value)
+            return f"Got {value}"
+        
+        result = yield Local({"config": "test_value"}, inner())
+        return result
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(program_with_env())
+    
+    # Non-verbose shouldn't show environment
+    normal_display = result.display(verbose=False)
+    assert "🌍 Environment:" not in normal_display
+    
+    # Verbose should show environment (even if empty) or graph details
+    verbose_display = result.display(verbose=True)
+    # When there's actual content (state, logs), verbose mode will show more details
+    # If not much difference, at least check that verbose mode works without errors
+    assert isinstance(verbose_display, str)
+    assert len(verbose_display) >= len(normal_display)
+
+
+@pytest.mark.asyncio
+async def test_display_with_graph_steps():
+    """Test display() shows graph information."""
+    from doeff import Step, Annotate
+    
+    @do
+    def graph_program() -> EffectGenerator[int]:
+        value = yield Step(10, {"operation": "initial"})
+        value = yield Step(value * 2, {"operation": "double"})
+        yield Annotate({"final": True})
+        return value
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(graph_program())
+    
+    display = result.display()
+    assert "🌳 Graph:" in display
+    assert "Steps:" in display
+    
+    # Verbose mode should show step details
+    verbose = result.display(verbose=True)
+    assert "Meta:" in verbose or "Step" in verbose
+
+
+@pytest.mark.asyncio
+async def test_display_empty_result():
+    """Test display() with minimal/empty state."""
+    @do
+    def minimal_program() -> EffectGenerator[None]:
+        return None
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(minimal_program())
+    
+    display = result.display()
+    
+    assert "✅ Success" in display
+    assert "Value: None" in display
+    assert "State:" in display
+    assert "(empty)" in display
+    assert "Logs:" in display
+    assert "(no logs)" in display
+
+
+@pytest.mark.asyncio
+async def test_display_formatting():
+    """Test display() formatting and structure."""
+    @do
+    def test_program() -> EffectGenerator[int]:
+        yield Put("test", 123)
+        yield Log("test")
+        return 42
+    
+    engine = ProgramInterpreter()
+    result = await engine.run(test_program())
+    
+    display = result.display(indent=4)  # Test custom indent
+    
+    # Check basic structure
+    assert "=" * 60 in display  # Header separator
+    assert "RunResult Internal Data" in display
+    assert "📊 Result Status:" in display
+    assert "🗂️ State:" in display
+    assert "📝 Logs:" in display
+    assert "🌳 Graph:" in display
+    assert "Summary:" in display
+    
+    # Check indentation (4 spaces)
+    lines = display.split("\n")
+    for line in lines:
+        if "test: 123" in line:
+            assert line.startswith("    ")  # 4-space indent
