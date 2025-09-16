@@ -280,6 +280,89 @@ class GraphEffectHandler:
         ctx.graph = ctx.graph.with_last_meta(meta)
 
 
+class CacheEffectHandler:
+    """Handles Cache effects for memoization."""
+
+    def __init__(self):
+        """Initialize the cache handler with an in-memory cache."""
+        import time
+        import hashlib
+        import json
+        self._cache: Dict[str, Tuple[Any, Optional[float]]] = {}  # serialized_key -> (value, expiry_time)
+        self._time = time.time
+        self._hashlib = hashlib
+        self._json = json
+
+    def _serialize_key(self, key: Any) -> str:
+        """Serialize any key to a string for internal cache storage.
+        
+        Handles tuples, FrozenDicts, and other serializable objects.
+        """
+        import json
+        import hashlib
+        
+        # Convert key to a JSON-serializable format
+        def make_serializable(obj):
+            if isinstance(obj, (str, int, float, bool, type(None))):
+                return obj
+            elif isinstance(obj, (tuple, list)):
+                return ["__tuple__" if isinstance(obj, tuple) else "__list__", 
+                        [make_serializable(item) for item in obj]]
+            elif hasattr(obj, '__dict__'):  # FrozenDict and similar
+                return {"__type__": type(obj).__name__, 
+                        "data": {k: make_serializable(v) for k, v in obj.items()}}
+            elif isinstance(obj, dict):
+                return {k: make_serializable(v) for k, v in obj.items()}
+            else:
+                # Fallback to string representation
+                return str(obj)
+        
+        try:
+            serializable = make_serializable(key)
+            key_str = json.dumps(serializable, sort_keys=True)
+        except (TypeError, ValueError):
+            # Fallback to string representation
+            key_str = str(key)
+        
+        # Create a hash for consistent, shorter keys
+        hash_obj = hashlib.md5(key_str.encode())
+        return f"cache:{hash_obj.hexdigest()}"
+
+    async def handle_get(self, key: Any, ctx: ExecutionContext) -> Any:
+        """Handle cache.get effect.
+        
+        Raises KeyError if the key is not in cache or has expired.
+        """
+        serialized_key = self._serialize_key(key)
+        
+        if serialized_key not in self._cache:
+            raise KeyError(f"Cache miss for key")
+        
+        value, expiry = self._cache[serialized_key]
+        
+        # Check if expired
+        if expiry is not None and self._time() > expiry:
+            del self._cache[serialized_key]
+            raise KeyError(f"Cache expired for key")
+        
+        return value
+
+    async def handle_put(self, payload: Dict, ctx: ExecutionContext) -> None:
+        """Handle cache.put effect."""
+        key = payload["key"]
+        value = payload["value"]
+        ttl = payload.get("ttl")
+        
+        serialized_key = self._serialize_key(key)
+        
+        # Calculate expiry time if TTL is provided
+        expiry = None
+        if ttl is not None and ttl > 0:
+            expiry = self._time() + ttl
+        
+        self._cache[serialized_key] = (value, expiry)
+
+
 __all__ = [
     "ReaderEffectHandler",
     "StateEffectHandler",
@@ -288,4 +371,5 @@ __all__ = [
     "ResultEffectHandler",
     "IOEffectHandler",
     "GraphEffectHandler",
+    "CacheEffectHandler",
 ]
