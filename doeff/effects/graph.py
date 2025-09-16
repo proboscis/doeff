@@ -6,7 +6,7 @@ This module provides Graph effects for tracking computation steps.
 
 from typing import Any, Dict
 
-from .base import Effect
+from .base import Effect, create_effect_with_trace
 
 
 class graph:
@@ -15,23 +15,23 @@ class graph:
     @staticmethod
     def step(value: Any, meta: Dict[str, Any] | None = None) -> Effect:
         """Track a computation step."""
-        return Effect("graph.step", {"value": value, "meta": meta or {}})
+        return create_effect_with_trace("graph.step", {"value": value, "meta": meta or {}})
 
     @staticmethod
     def annotate(meta: Dict[str, Any]) -> Effect:
         """Annotate the current step."""
-        return Effect("graph.annotate", meta)
+        return create_effect_with_trace("graph.annotate", meta)
 
 
 # Uppercase aliases
 def Step(value: Any, meta: Dict[str, Any] | None = None) -> Effect:
     """Graph: Track a computation step."""
-    return graph.step(value, meta)
+    return create_effect_with_trace("graph.step", {"value": value, "meta": meta or {}}, skip_frames=3)
 
 
 def Annotate(meta: Dict[str, Any]) -> Effect:
     """Graph: Annotate the current step."""
-    return graph.annotate(meta)
+    return create_effect_with_trace("graph.annotate", meta, skip_frames=3)
 
 
 __all__ = [

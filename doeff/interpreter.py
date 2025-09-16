@@ -11,7 +11,7 @@ import asyncio
 from typing import Any, Dict, Optional, TypeVar
 
 from doeff._vendor import Ok, Err, Result, trace_err, WGraph, WNode, WStep
-from doeff.types import Effect, ExecutionContext, RunResult
+from doeff.types import Effect, ExecutionContext, RunResult, EffectFailure
 from doeff.program import Program
 from doeff.handlers import (
     HandlerScope,
@@ -167,19 +167,13 @@ class ProgramInterpreter:
                     try:
                         value = await self._handle_effect(current, ctx)
                     except Exception as exc:
-                        # If the effect has creation context, include it in the error
-                        if current.created_at:
-                            # Create a more informative error message
-                            error_msg = f"Effect '{current.tag}' failed\n"
-                            error_msg += f"\n📍 {current.created_at.format_full()}\n"
-                            error_msg += f"\n❌ Error: {exc}"
-                            
-                            # Create a wrapped exception with the additional context
-                            wrapped_exc = RuntimeError(error_msg)
-                            wrapped_exc.__cause__ = exc
-                            return RunResult(ctx, Err(trace_err(wrapped_exc)))
-                        else:
-                            return RunResult(ctx, Err(trace_err(exc)))
+                        # Create an EffectFailure with creation context
+                        effect_failure = EffectFailure(
+                            current.tag,
+                            current.created_at,
+                            exc
+                        )
+                        return RunResult(ctx, Err(trace_err(effect_failure)))
                     
                     # Send value back
                     try:

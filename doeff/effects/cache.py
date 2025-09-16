@@ -6,7 +6,7 @@ This module provides Cache effects for caching computations.
 
 from typing import Any
 
-from .base import Effect
+from .base import Effect, create_effect_with_trace
 
 
 class cache:
@@ -15,7 +15,7 @@ class cache:
     @staticmethod
     def get(key: Any) -> Effect:
         """Get value from cache. Key can be any serializable object."""
-        return Effect("cache.get", key)
+        return create_effect_with_trace("cache.get", key)
 
     @staticmethod
     def put(key: Any, value: Any, ttl: int | None = None) -> Effect:
@@ -23,18 +23,18 @@ class cache:
         
         Key can be any serializable object (e.g., tuple, FrozenDict).
         """
-        return Effect("cache.put", {"key": key, "value": value, "ttl": ttl})
+        return create_effect_with_trace("cache.put", {"key": key, "value": value, "ttl": ttl})
 
 
 # Uppercase aliases
 def CacheGet(key: Any) -> Effect:
     """Cache: Get value from cache. Key can be any serializable object."""
-    return cache.get(key)
+    return create_effect_with_trace("cache.get", key, skip_frames=3)
 
 
 def CachePut(key: Any, value: Any, ttl: int | None = None) -> Effect:
     """Cache: Put value into cache with optional TTL."""
-    return cache.put(key, value, ttl)
+    return create_effect_with_trace("cache.put", {"key": key, "value": value, "ttl": ttl}, skip_frames=3)
 
 
 __all__ = [
