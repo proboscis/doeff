@@ -96,6 +96,31 @@ class Effects:
                 handler: Function to handle exceptions
             """
             return Effect("result.catch", {"program": sub_program, "handler": handler})
+        
+        @staticmethod
+        def recover(sub_program: Any, fallback: Any) -> Effect:
+            """Try sub-program, use fallback value on error.
+            
+            Args:
+                sub_program: Program to try
+                fallback: Value or Program to use on error
+            """
+            return Effect("result.recover", {"program": sub_program, "fallback": fallback})
+        
+        @staticmethod
+        def retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
+            """Retry sub-program on failure.
+            
+            Args:
+                sub_program: Program to retry
+                max_attempts: Maximum number of attempts (default: 3)
+                delay_ms: Delay between attempts in milliseconds (default: 0)
+            """
+            return Effect("result.retry", {
+                "program": sub_program,
+                "max_attempts": max_attempts,
+                "delay_ms": delay_ms
+            })
 
     class io:
         """IO effects (executed immediately, not deferred)."""
@@ -214,6 +239,16 @@ def Catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
     return Effects.result.catch(sub_program, handler)
 
 
+def Recover(sub_program: Any, fallback: Any) -> Effect:
+    """Result: Try sub-program, use fallback value on error."""
+    return Effects.result.recover(sub_program, fallback)
+
+
+def Retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
+    """Result: Retry sub-program on failure."""
+    return Effects.result.retry(sub_program, max_attempts, delay_ms)
+
+
 def IO(action: Callable[[], Any]) -> Effect:
     """IO: Perform an IO action."""
     return Effects.io.perform(action)
@@ -265,6 +300,8 @@ await_ = Await
 parallel = Parallel
 fail = Fail
 catch = Catch
+recover = Recover
+retry = Retry
 io = IO
 print_ = Print
 step = Step
@@ -287,6 +324,8 @@ __all__ = [
     "Parallel",
     "Fail",
     "Catch",
+    "Recover",
+    "Retry",
     "IO",
     "Print",
     "Step",
@@ -307,6 +346,8 @@ __all__ = [
     "parallel",
     "fail",
     "catch",
+    "recover",
+    "retry",
     "io",
     "print_",
     "step",

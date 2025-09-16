@@ -2,7 +2,7 @@
 
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Union
 
 from openai import AsyncOpenAI, OpenAI
@@ -50,11 +50,14 @@ class OpenAIClient:
         max_retries: Optional[int] = None,
     ):
         """Initialize OpenAI client."""
+        import openai
+        
         self.api_key = api_key
         self.organization = organization
         self.base_url = base_url
         self.timeout = timeout
-        self.max_retries = max_retries
+        # Use OpenAI's default if not specified
+        self.max_retries = max_retries if max_retries is not None else openai.DEFAULT_MAX_RETRIES
         
         # Single mutable attribute for both clients
         self._mut_clients = ClientHolder()
@@ -90,12 +93,20 @@ class OpenAIClient:
 def get_openai_client() -> EffectGenerator[OpenAIClient]:
     """Get OpenAI client from environment or create new one."""
     # Try to get from Reader environment first
-    try:
-        client = yield Ask("openai_client")
-        if client:
-            return client
-    except KeyError:
-        pass
+    from doeff import Catch, do
+    
+    # Create a program that asks for the client
+    @do
+    def try_ask_client():
+        return (yield Ask("openai_client"))
+    
+    # Use Catch to handle KeyError
+    client = yield Catch(
+        try_ask_client(),
+        lambda e: None if isinstance(e, KeyError) else None
+    )
+    if client:
+        return client
     
     # Try to get from State
     client = yield Get("openai_client")
@@ -103,13 +114,15 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
         return client
     
     # Get API key from Reader environment or State
-    api_key = None
-    
     # Try to get from Reader environment
-    try:
-        api_key = yield Ask("openai_api_key")
-    except KeyError:
-        pass
+    @do
+    def try_ask_api_key():
+        return (yield Ask("openai_api_key"))
+    
+    api_key = yield Catch(
+        try_ask_api_key(),
+        lambda e: None if isinstance(e, KeyError) else None
+    )
     
     # If not found, try State
     if not api_key:
@@ -180,7 +193,7 @@ def track_api_call(
     metadata = APICallMetadata(
         operation=operation,
         model=model,
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         request_id=request_id,
         latency_ms=latency_ms,
         token_usage=token_usage,

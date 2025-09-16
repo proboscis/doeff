@@ -166,6 +166,81 @@ class ResultEffectHandler:
             else:
                 # Handler returned a direct value
                 return handler_result
+    
+    async def handle_recover(
+        self, payload: Dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+    ) -> Any:
+        """Handle result.recover effect - try program, use fallback on error."""
+        # Import here to avoid circular import
+        from doeff.program import Program
+        
+        # Check if payload["program"] is already a Program or a callable
+        sub_program = payload["program"]
+        if callable(sub_program) and not isinstance(sub_program, Program):
+            # It's a thunk, call it to get the Program
+            sub_program = sub_program()
+        
+        # Try to run the program
+        pragmatic_result = await engine.run(sub_program, ctx)
+        
+        if isinstance(pragmatic_result.result, Err):
+            # Error occurred, use fallback
+            fallback = payload["fallback"]
+            
+            # If fallback is a callable (thunk), call it
+            if callable(fallback) and not isinstance(fallback, Program):
+                fallback = fallback()
+            
+            # If fallback is a Program, run it
+            if isinstance(fallback, Program):
+                fallback_result = await engine.run(fallback, ctx)
+                return fallback_result.value
+            else:
+                # Fallback is a direct value
+                return fallback
+        else:
+            # Success - return the value
+            return pragmatic_result.value
+    
+    async def handle_retry(
+        self, payload: Dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+    ) -> Any:
+        """Handle result.retry effect - retry program on failure."""
+        import asyncio
+        from doeff.program import Program
+        from doeff._vendor import TraceError, Ok
+        
+        max_attempts = payload.get("max_attempts", 3)
+        delay_ms = payload.get("delay_ms", 0)
+        
+        # Check if payload["program"] is already a Program or a callable
+        sub_program = payload["program"]
+        if callable(sub_program) and not isinstance(sub_program, Program):
+            # It's a thunk, call it to get the Program
+            sub_program = sub_program()
+        
+        last_error = None
+        for attempt in range(max_attempts):
+            # Try to run the program
+            pragmatic_result = await engine.run(sub_program, ctx)
+            
+            if isinstance(pragmatic_result.result, Ok):
+                # Success - return the value
+                return pragmatic_result.value
+            
+            # Store the last error
+            last_error = pragmatic_result.result.error
+            
+            # If not the last attempt, wait before retrying
+            if attempt < max_attempts - 1 and delay_ms > 0:
+                await asyncio.sleep(delay_ms / 1000.0)
+        
+        # All attempts failed, raise the last error
+        if last_error:
+            # Re-raise the original error (it's already wrapped in TraceError)
+            raise last_error
+        else:
+            raise RuntimeError(f"All {max_attempts} attempts failed")
 
 
 class IOEffectHandler:

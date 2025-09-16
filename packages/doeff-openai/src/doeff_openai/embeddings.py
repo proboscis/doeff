@@ -73,7 +73,11 @@ def create_embedding(
     # Track start time
     start_time = time.time()
     
-    try:
+    from doeff import Catch, do, Fail
+    
+    # Define the main operation as a sub-program
+    @do
+    def main_operation():
         # Use IO effect for sync API call
         response = yield IO(lambda: client.sync_client.embeddings.create(**request_data))
         
@@ -91,8 +95,10 @@ def create_embedding(
         yield Log(f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}")
         
         return response
-        
-    except Exception as e:
+    
+    # Use Catch to handle errors
+    @do
+    def error_handler(e):
         # Track error
         metadata = yield track_api_call(
             operation="embedding",
@@ -103,7 +109,11 @@ def create_embedding(
             error=e,
         )
         yield Log(f"Embedding creation failed: {e}")
-        raise
+        yield Fail(e)
+    
+    # Execute with error handling
+    result = yield Catch(main_operation(), error_handler)
+    return result
 
 
 @do
@@ -132,7 +142,11 @@ def create_embedding_async(
     # Track start time
     start_time = time.time()
     
-    try:
+    from doeff import Catch, do, Fail
+    
+    # Define the main operation as a sub-program
+    @do
+    def main_operation():
         # Use Await effect for async API call
         async def create_embeddings():
             return await client.async_client.embeddings.create(**request_data)
@@ -150,8 +164,10 @@ def create_embedding_async(
         )
         
         return response
-        
-    except Exception as e:
+    
+    # Use Catch to handle errors
+    @do
+    def error_handler(e):
         # Track error
         metadata = yield track_api_call(
             operation="embedding",
@@ -161,7 +177,11 @@ def create_embedding_async(
             start_time=start_time,
             error=e,
         )
-        raise
+        yield Fail(e)
+    
+    # Execute with error handling
+    result = yield Catch(main_operation(), error_handler)
+    return result
 
 
 @do

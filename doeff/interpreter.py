@@ -80,6 +80,8 @@ class ProgramInterpreter:
             "future.parallel": self._dispatch_future_parallel,
             "result.fail": self._dispatch_result_fail,
             "result.catch": self._dispatch_result_catch,
+            "result.recover": self._dispatch_result_recover,
+            "result.retry": self._dispatch_result_retry,
             "io.run": self._dispatch_io_run,
             "io.perform": self._dispatch_io_run,  # Alias
             "io.print": self._dispatch_io_print,
@@ -211,6 +213,12 @@ class ProgramInterpreter:
 
     async def _dispatch_result_catch(self, payload: Any, ctx: ExecutionContext) -> Any:
         return await self.result_handler.handle_catch(payload, ctx, self)
+    
+    async def _dispatch_result_recover(self, payload: Any, ctx: ExecutionContext) -> Any:
+        return await self.result_handler.handle_recover(payload, ctx, self)
+    
+    async def _dispatch_result_retry(self, payload: Any, ctx: ExecutionContext) -> Any:
+        return await self.result_handler.handle_retry(payload, ctx, self)
 
     # IO dispatchers
     async def _dispatch_io_run(self, payload: Any, ctx: ExecutionContext) -> Any:
