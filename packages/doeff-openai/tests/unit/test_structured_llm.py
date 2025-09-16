@@ -2,7 +2,7 @@
 
 import json
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, AsyncMock
 
 import pytest
 from doeff_openai import (
@@ -263,6 +263,61 @@ async def test_process_structured_response_success():
 
 
 @pytest.mark.asyncio
+async def test_process_structured_response_list_payload():
+    """Structured responses may return JSON payload inside message parts."""
+
+    mock_response = MagicMock()
+    mock_message = MagicMock()
+    mock_message.content = [
+        {
+            "type": "output_json",
+            "json": {"answer": "42", "confidence": 0.99},
+        }
+    ]
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response.choices = [mock_choice]
+
+    @do
+    def test_flow() -> EffectGenerator[SimpleResponse]:
+        result = yield process_structured_response(mock_response, SimpleResponse)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(test_flow())
+
+    assert result.is_ok
+    assert result.value.answer == "42"
+    assert result.value.confidence == 0.99
+
+
+@pytest.mark.asyncio
+async def test_process_unstructured_response_with_parts():
+    """Unstructured responses should concatenate multipart content."""
+
+    mock_response = MagicMock()
+    mock_message = MagicMock()
+    mock_message.content = [
+        {"type": "output_text", "text": "Hello"},
+        {"type": "output_text", "text": "world"},
+    ]
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response.choices = [mock_choice]
+
+    @do
+    def test_flow() -> EffectGenerator[str]:
+        result = yield process_unstructured_response(mock_response)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(test_flow())
+
+    assert result.is_ok
+    assert result.value == "Hello world"
+
+
+@pytest.mark.asyncio
 async def test_process_structured_response_invalid_json():
     """Test processing structured response with invalid JSON."""
 
@@ -312,8 +367,8 @@ async def test_structured_llm_text_only():
 
     # Mock OpenAI client and response
     mock_client = Mock()
-    mock_sync_client = MagicMock()
-    mock_client.sync_client = mock_sync_client
+    mock_async_client = AsyncMock()
+    mock_client.async_client = mock_async_client
 
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -323,7 +378,7 @@ async def test_structured_llm_text_only():
     mock_response.usage.prompt_tokens = 20
     mock_response.usage.completion_tokens = 80
 
-    mock_sync_client.chat.completions.create.return_value = mock_response
+    mock_async_client.chat.completions.create.return_value = mock_response
 
     @do
     def test_flow() -> EffectGenerator[str]:
@@ -345,8 +400,8 @@ async def test_structured_llm_text_only():
     assert result.value == "Test response"
 
     # Check API was called
-    mock_sync_client.chat.completions.create.assert_called_once()
-    call_args = mock_sync_client.chat.completions.create.call_args[1]
+    mock_async_client.chat.completions.create.assert_called_once()
+    call_args = mock_async_client.chat.completions.create.call_args[1]
     assert call_args["model"] == "gpt-4o"
     assert call_args["max_tokens"] == 100
 
@@ -357,8 +412,8 @@ async def test_structured_llm_with_pydantic():
 
     # Mock OpenAI client and response
     mock_client = Mock()
-    mock_sync_client = MagicMock()
-    mock_client.sync_client = mock_sync_client
+    mock_async_client = AsyncMock()
+    mock_client.async_client = mock_async_client
 
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -371,7 +426,7 @@ async def test_structured_llm_with_pydantic():
     mock_response.usage.prompt_tokens = 50
     mock_response.usage.completion_tokens = 100
 
-    mock_sync_client.chat.completions.create.return_value = mock_response
+    mock_async_client.chat.completions.create.return_value = mock_response
 
     @do
     def test_flow() -> EffectGenerator[SimpleResponse]:
@@ -396,8 +451,8 @@ async def test_structured_llm_with_pydantic():
     assert result.value.confidence == 1.0
 
     # Check API was called with structured output
-    mock_sync_client.chat.completions.create.assert_called_once()
-    call_args = mock_sync_client.chat.completions.create.call_args[1]
+    mock_async_client.chat.completions.create.assert_called_once()
+    call_args = mock_async_client.chat.completions.create.call_args[1]
     assert "response_format" in call_args
     assert call_args["response_format"]["type"] == "json_schema"
 
@@ -408,8 +463,8 @@ async def test_gpt5_structured_convenience():
 
     # Mock OpenAI client and response
     mock_client = Mock()
-    mock_sync_client = MagicMock()
-    mock_client.sync_client = mock_sync_client
+    mock_async_client = AsyncMock()
+    mock_client.async_client = mock_async_client
 
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
@@ -424,7 +479,7 @@ async def test_gpt5_structured_convenience():
     mock_response.usage.completion_tokens_details.reasoning_tokens = 100
     mock_response.usage.completion_tokens_details.output_tokens = 50
 
-    mock_sync_client.chat.completions.create.return_value = mock_response
+    mock_async_client.chat.completions.create.return_value = mock_response
 
     @do
     def test_flow() -> EffectGenerator[str]:
@@ -445,8 +500,8 @@ async def test_gpt5_structured_convenience():
     assert result.value == "GPT-5 response"
 
     # Check API was called with GPT-5 parameters
-    mock_sync_client.chat.completions.create.assert_called_once()
-    call_args = mock_sync_client.chat.completions.create.call_args[1]
+    mock_async_client.chat.completions.create.assert_called_once()
+    call_args = mock_async_client.chat.completions.create.call_args[1]
     assert call_args["model"] == "gpt-5"
     assert call_args["reasoning_effort"] == "high"
     assert "max_completion_tokens" in call_args

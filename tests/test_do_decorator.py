@@ -1,13 +1,15 @@
 """Test the @do decorator with comprehensive monad support."""
 
 import asyncio
-from typing import Generator, Any
+import inspect
+from typing import Generator, Any, Union
 import pytest
 
 from doeff import (
     ProgramInterpreter,
     ExecutionContext,
     Effect,
+    Program,
     do,
     ask,
     put,
@@ -263,6 +265,30 @@ async def test_composition():
     assert len(result.log) == 2
     print(f"✅ Composed programs: {result.value}")
     print(f"   Log: {result.log}")
+
+
+def test_do_preserves_metadata_and_program_repr():
+    """Ensure @do preserves metadata and Program repr shows original function name."""
+
+    def metadata_program(x: int, y: int = 1) -> Generator[Union[Effect, Program], Any, int]:
+        """Original generator for metadata preservation tests."""
+
+        value = yield Program.pure(x + y)
+        return value
+
+    decorated = do(metadata_program)
+
+    assert decorated.__name__ == metadata_program.__name__
+    assert decorated.__qualname__ == metadata_program.__qualname__
+    assert decorated.__doc__ == metadata_program.__doc__
+    assert decorated.__module__ == metadata_program.__module__
+    assert decorated.__annotations__ == metadata_program.__annotations__
+    assert decorated.__wrapped__ is metadata_program
+    assert inspect.unwrap(decorated) is metadata_program
+    assert inspect.signature(decorated) == inspect.signature(metadata_program)
+
+    program_instance = decorated(3)
+    assert "metadata_program" in repr(program_instance)
 
 
 async def main():

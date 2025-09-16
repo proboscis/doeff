@@ -204,7 +204,7 @@ def track_api_call(
     
     # Log the API call
     if error:
-        yield Log(f"OpenAI API error: operation={operation}, model={model}, error={error}, latency={latency_ms:.2f}ms")
+        yield Log(f"OpenAI API error: operation={operation}, model={model}, error={str(error)}, latency={latency_ms:.2f}ms")
     else:
         log_msg = f"OpenAI API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
         if token_usage:
@@ -256,6 +256,27 @@ def track_api_call(
             {"error": str(error), "timestamp": graph_metadata["timestamp"]},
             {**graph_metadata, "phase": "error"}
         )
+    
+    # Track API call in state
+    api_calls = yield Get("openai_api_calls")
+    if api_calls is None:
+        api_calls = []
+    
+    # Add this call to the list
+    api_calls.append({
+        "operation": operation,
+        "model": model,
+        "timestamp": metadata.timestamp.isoformat(),
+        "latency_ms": latency_ms,
+        "error": str(error) if error else None,
+        "tokens": {
+            "prompt": token_usage.prompt_tokens if token_usage else 0,
+            "completion": token_usage.completion_tokens if token_usage else 0,
+            "total": token_usage.total_tokens if token_usage else 0,
+        } if token_usage else None,
+        "cost": cost_info.total_cost if cost_info else None,
+    })
+    yield Put("openai_api_calls", api_calls)
     
     # Track cumulative cost in state
     if cost_info:

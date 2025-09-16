@@ -149,7 +149,7 @@ class ProgramInterpreter:
 
         try:
             # Force evaluate the program for stack safety
-            program = force_eval(program)
+            #program = force_eval(program)
             
             # Create generator
             gen = program.generator_func()
@@ -162,7 +162,9 @@ class ProgramInterpreter:
                 return RunResult(ctx, Ok(e.value))
             
             # Process effects
+            from loguru import logger
             while True:
+                logger.info(f"effect: {current}")
                 if isinstance(current, Effect):
                     # Handle the effect
                     try:
