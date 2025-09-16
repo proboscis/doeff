@@ -258,6 +258,7 @@ async def test_cost_tracking():
     context = ExecutionContext()
     
     result = await engine.run(test_workflow(), context)
+    print(result.display())
     
     # Verify
     assert result.is_ok

@@ -104,7 +104,11 @@ def chat_completion(
     # Track start time
     start_time = time.time()
     
-    try:
+    from doeff import Catch, do, Fail
+    
+    # Define the main operation as a sub-program
+    @do
+    def main_operation():
         if stream:
             # For streaming, we need to handle differently
             # Create async generator wrapper
@@ -151,8 +155,10 @@ def chat_completion(
                 yield Log(f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}")
             
             return response
-            
-    except Exception as e:
+    
+    # Use Catch to handle errors
+    @do
+    def error_handler(e):
         # Track error
         metadata = yield track_api_call(
             operation="chat.completion",
@@ -163,7 +169,12 @@ def chat_completion(
             error=e,
         )
         yield Log(f"Chat completion failed: {e}")
-        raise
+        # Re-raise the error
+        yield Fail(e)
+    
+    # Execute with error handling
+    result = yield Catch(main_operation(), error_handler)
+    return result
 
 
 @do
@@ -193,7 +204,11 @@ def chat_completion_async(
     # Track start time
     start_time = time.time()
     
-    try:
+    from doeff import Catch, do, Fail
+    
+    # Define the main operation as a sub-program
+    @do
+    def main_operation():
         # Use Await effect for async API call
         async def create_completion():
             return await client.async_client.chat.completions.create(**request_data)
@@ -211,8 +226,10 @@ def chat_completion_async(
         )
         
         return response
-        
-    except Exception as e:
+    
+    # Use Catch to handle errors
+    @do
+    def error_handler(e):
         # Track error
         metadata = yield track_api_call(
             operation="chat.completion",
@@ -222,7 +239,11 @@ def chat_completion_async(
             start_time=start_time,
             error=e,
         )
-        raise
+        yield Fail(e)
+    
+    # Execute with error handling
+    result = yield Catch(main_operation(), error_handler)
+    return result
 
 
 @do
