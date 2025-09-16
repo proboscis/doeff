@@ -78,10 +78,12 @@ def mock_embedding_response():
     response.data = [MagicMock()]
     response.data[0].embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
     
-    # Add usage info
-    response.usage = MagicMock()
-    response.usage.prompt_tokens = 5
-    response.usage.total_tokens = 5
+    # Add usage info with actual numeric values
+    usage = MagicMock()
+    usage.prompt_tokens = 5
+    usage.completion_tokens = 0
+    usage.total_tokens = 5
+    response.usage = usage
     
     response.model = "text-embedding-3-small"
     
@@ -289,7 +291,7 @@ async def test_parallel_operations_with_gather():
             yield Effect("writer.tell", f"Call {index}")
             return f"Response {index}"
         
-        results = yield Gather([
+        results = yield Gather(*[
             mock_call(i) for i in range(3)
         ])
         
@@ -397,7 +399,7 @@ async def test_semantic_search_workflow():
         query_embedding = yield mock_embedding("cats and dogs")
         
         # Get embeddings for documents
-        doc_embeddings = yield Gather([
+        doc_embeddings = yield Gather(*[
             mock_embedding(doc) for doc in documents
         ])
         
@@ -427,5 +429,5 @@ async def test_semantic_search_workflow():
     assert result.value[0][1] >= result.value[1][1]
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+# if __name__ == "__main__":
+#     pytest.main([__file__, "-v"])
