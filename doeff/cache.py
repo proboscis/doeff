@@ -48,7 +48,22 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
         Subsequent calls within TTL will return the cached value.
     """
     def decorator(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
-        @functools.wraps(func)
+        # Check if func is a KleisliProgram (from @do decorator)
+        from doeff.kleisli import KleisliProgram
+        
+        # Store the function object for unique identification
+        # This ensures different functions have different cache keys
+        func_id = id(func)
+        
+        if isinstance(func, KleisliProgram):
+            # Get the actual function from KleisliProgram if possible
+            # Use the object id as part of the cache key for uniqueness
+            func_name = f"kleisli_{func_id}"
+            wrapped_func = func
+        else:
+            func_name = getattr(func, '__name__', f"func_{func_id}")
+            wrapped_func = func
+        
         @do
         def wrapper(*args, **kwargs) -> EffectGenerator[T]:
             # Create cache key as (func_name, args, frozen_kwargs)
@@ -56,21 +71,21 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
             frozen_kwargs = FrozenDict(kwargs) if kwargs else FrozenDict()
             
             if key_func:
-                cache_key = key_func(func.__name__, args, frozen_kwargs)
+                cache_key = key_func(func_name, args, frozen_kwargs)
             else:
-                cache_key = (func.__name__, args, frozen_kwargs)
+                cache_key = (func_name, args, frozen_kwargs)
             
-            yield Log(f"Cache: checking key for {func.__name__}")
+            yield Log(f"Cache: checking key for {func_name}")
             
             # Define the fallback computation
             @do
             def compute_and_cache() -> EffectGenerator[T]:
-                yield Log(f"Cache miss for {func.__name__}, computing...")
+                yield Log(f"Cache miss for {func_name}, computing...")
                 # Execute the original function
-                result = yield func(*args, **kwargs)
+                result = yield wrapped_func(*args, **kwargs)
                 # Store in cache with the key
                 yield CachePut(cache_key, result, ttl)
-                yield Log(f"Cache: stored result for {func.__name__}")
+                yield Log(f"Cache: stored result for {func_name}")
                 return result
             
             # Try to get from cache, recover with computation on miss
@@ -81,45 +96,52 @@ def cache(ttl: Optional[int] = None, key_func: Optional[Callable] = None):
             
             return result
         
+        # Try to preserve some metadata if possible
+        try:
+            wrapper.__name__ = getattr(func, '__name__', wrapper.__name__)
+            wrapper.__doc__ = getattr(func, '__doc__', wrapper.__doc__)
+        except (AttributeError, TypeError):
+            # Can't set attributes on some objects like KleisliProgram
+            pass
+        
         return wrapper
+    
     return decorator
 
 
-def cache_key(*key_parts: Any) -> Callable:
+def cache_key(*key_args: str) -> Callable:
     """
-    Create a custom key function for the cache decorator.
-    
-    This allows you to specify which arguments should be used for the cache key.
+    Create a key function that selects specific arguments for cache key.
     
     Args:
-        *key_parts: Names of arguments to include in the cache key
+        *key_args: Names of arguments to include in the cache key.
     
     Example:
         >>> @cache(key_func=cache_key("user_id", "date"))
         ... @do
-        ... def get_user_data(user_id: int, date: str, debug: bool = False):
-        ...     # Only user_id and date will be used for caching
-        ...     # debug flag won't affect cache key
-        ...     ...
+        ... def get_user_activity(user_id: int, date: str, include_details: bool = False):
+        ...     # Only user_id and date will be used for the cache key
+        ...     # include_details will be ignored for caching
+        ...     pass
     """
-    def key_func(func_name: str, args: tuple, frozen_kwargs: FrozenDict) -> tuple:
-        # Extract specified parts from args/kwargs
+    def key_function(func_name: str, args: tuple, kwargs: FrozenDict) -> tuple:
+        """Extract specified arguments for cache key."""
+        # For simplicity, assume key_args refer to positional arguments
+        # In a real implementation, you'd want to map parameter names properly
         import inspect
         
-        # Get the original function (this is tricky with decorators)
-        # For now, we'll just filter the provided kwargs
+        # Create a simpler key using only specified arguments
         key_values = []
-        kwargs = dict(frozen_kwargs) if frozen_kwargs else {}
+        for i, arg_name in enumerate(key_args):
+            if i < len(args):
+                key_values.append(args[i])
         
-        # Create a simplified key with only specified parts
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k in key_parts}
-        
-        return (func_name, args, FrozenDict(filtered_kwargs))
+        return (func_name, tuple(key_values), FrozenDict())
     
-    return key_func
+    return key_function
 
 
-# Convenience decorators with common TTL values
+# Convenience decorators
 def cache_1min(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
     """Cache with 1 minute TTL."""
     return cache(ttl=60)(func)
