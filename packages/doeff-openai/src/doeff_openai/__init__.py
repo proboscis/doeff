@@ -106,6 +106,16 @@ from doeff_openai.costs import (
     estimate_max_cost,
 )
 
+# Structured LLM exports
+from doeff_openai.structured_llm import (
+    structured_llm__openai,
+    gpt4o_structured,
+    gpt5_nano_structured,
+    gpt5_structured,
+    is_gpt5_model,
+    requires_max_completion_tokens,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -162,4 +172,12 @@ __all__ = [
     "estimate_cost",
     "get_model_pricing",
     "estimate_max_cost",
+    
+    # Structured LLM
+    "structured_llm__openai",
+    "gpt4o_structured",
+    "gpt5_nano_structured",
+    "gpt5_structured",
+    "is_gpt5_model",
+    "requires_max_completion_tokens",
 ]
