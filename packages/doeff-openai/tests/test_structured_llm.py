@@ -163,6 +163,7 @@ async def test_build_api_parameters_gpt4():
 
     engine = ProgramInterpreter()
     result = await engine.run(test_flow())
+    print(result.display())
 
     assert result.is_ok
     assert result.value["model"] == "gpt-4o"
@@ -225,6 +226,7 @@ async def test_build_api_parameters_structured():
 
     engine = ProgramInterpreter()
     result = await engine.run(test_flow())
+    print(result.display())
 
     assert result.is_ok
     assert "response_format" in result.value
@@ -276,6 +278,7 @@ async def test_process_structured_response_invalid_json():
 
     engine = ProgramInterpreter()
     result = await engine.run(test_flow())
+    print(result.display())
 
     assert result.is_err
     assert "Expecting value" in str(result.result.error)
