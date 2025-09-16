@@ -14,7 +14,6 @@ from doeff.effects import (
     Await,
     Catch,
     Dep,
-    Effects,
     Fail,
     Gather,
     GatherDict,
@@ -82,8 +81,6 @@ __all__ = [
     "ResultEffectHandler",
     "IOEffectHandler",
     "GraphEffectHandler",
-    # Effects API
-    "Effects",
     # Capitalized effect functions
     "Ask",
     "Local",
