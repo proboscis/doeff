@@ -2,22 +2,24 @@
 Test KleisliProgram automatic unwrapping of Program arguments.
 """
 
-import pytest
 import asyncio
-from typing import Generator, Any, Union
+from collections.abc import Generator
+from typing import Any
+
+import pytest
 
 from doeff import (
-    Program,
-    KleisliProgram,
-    do,
+    Await,
     Effect,
-    ProgramInterpreter,
     ExecutionContext,
+    Get,
+    KleisliProgram,
+    Log,
+    Program,
+    ProgramInterpreter,
     # Effects
     Put,
-    Get,
-    Log,
-    Await,
+    do,
 )
 
 
@@ -26,7 +28,7 @@ async def test_kleisli_basic():
     """Test that @do now returns a KleisliProgram."""
 
     @do
-    def add(x: int, y: int) -> Generator[Union[Effect, Program], Any, int]:
+    def add(x: int, y: int) -> Generator[Effect | Program, Any, int]:
         if False: yield  # Make it a generator
         return x + y
 
@@ -50,7 +52,7 @@ async def test_kleisli_unwrap_program_args():
     """Test automatic unwrapping of Program arguments."""
 
     @do
-    def add(x: int, y: int) -> Generator[Union[Effect, Program], Any, int]:
+    def add(x: int, y: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Adding {x} + {y}")
         return x + y
 
@@ -75,7 +77,7 @@ async def test_kleisli_mixed_args():
     """Test mixing Program and regular arguments."""
 
     @do
-    def multiply(x: int, y: int, z: int) -> Generator[Union[Effect, Program], Any, int]:
+    def multiply(x: int, y: int, z: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Multiplying {x} * {y} * {z}")
         return x * y * z
 
@@ -101,7 +103,7 @@ async def test_kleisli_kwargs():
     @do
     def greet(
         name: str, age: int, city: str
-    ) -> Generator[Union[Effect, Program], Any, str]:
+    ) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Creating greeting for {name}")
         return f"{name} is {age} years old and lives in {city}"
 
@@ -124,7 +126,7 @@ async def test_kleisli_with_effects():
     """Test KleisliProgram with functions that use effects."""
 
     @do
-    def fetch_value(key: str) -> Generator[Union[Effect, Program], Any, int]:
+    def fetch_value(key: str) -> Generator[Effect | Program, Any, int]:
         value = yield Get(key)
         if value is None:
             value = 0
@@ -132,7 +134,7 @@ async def test_kleisli_with_effects():
         return value
 
     @do
-    def compute(x: int, y: int) -> Generator[Union[Effect, Program], Any, int]:
+    def compute(x: int, y: int) -> Generator[Effect | Program, Any, int]:
         yield Put("x", x)
         yield Put("y", y)
         sum_val = x + y
@@ -162,17 +164,17 @@ async def test_kleisli_composition():
     """Test composing KleisliPrograms."""
 
     @do
-    def double(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def double(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Doubling {x}")
         return x * 2
 
     @do
-    def add_ten(x: int) -> Generator[Union[Effect, Program], Any, int]:
+    def add_ten(x: int) -> Generator[Effect | Program, Any, int]:
         yield Log(f"Adding 10 to {x}")
         return x + 10
 
     @do
-    def stringify(x: int) -> Generator[Union[Effect, Program], Any, str]:
+    def stringify(x: int) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Converting {x} to string")
         return f"Result: {x}"
 
@@ -199,7 +201,7 @@ async def test_kleisli_async():
         return f"Data from {url}"
 
     @do
-    def fetch_data(url: str) -> Generator[Union[Effect, Program], Any, str]:
+    def fetch_data(url: str) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Fetching {url}")
         data = yield Await(async_fetch(url))
         return data
@@ -207,7 +209,7 @@ async def test_kleisli_async():
     @do
     def process_data(
         data: str, prefix: str
-    ) -> Generator[Union[Effect, Program], Any, str]:
+    ) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Processing data with prefix {prefix}")
         return f"{prefix}: {data}"
 
@@ -231,7 +233,7 @@ async def test_kleisli_no_args():
     """Test KleisliProgram with no arguments."""
 
     @do
-    def get_constant() -> Generator[Union[Effect, Program], Any, int]:
+    def get_constant() -> Generator[Effect | Program, Any, int]:
         yield Log("Getting constant value")
         return 42
 
@@ -254,13 +256,13 @@ async def test_kleisli_error_propagation():
     """Test that errors propagate through KleisliProgram unwrapping."""
 
     @do
-    def failing_prog() -> Generator[Union[Effect, Program], Any, int]:
+    def failing_prog() -> Generator[Effect | Program, Any, int]:
         yield Log("About to fail")
         raise ValueError("Intentional error")
         return 42  # Never reached
 
     @do
-    def use_value(x: int) -> Generator[Union[Effect, Program], Any, str]:
+    def use_value(x: int) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Using value {x}")
         return f"Value: {x}"
 
@@ -289,7 +291,7 @@ async def test_kleisli_all_program_args():
     @do
     def concat_three(
         a: str, b: str, c: str
-    ) -> Generator[Union[Effect, Program], Any, str]:
+    ) -> Generator[Effect | Program, Any, str]:
         yield Log(f"Concatenating {a}, {b}, {c}")
         return f"{a}-{b}-{c}"
 

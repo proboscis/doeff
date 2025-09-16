@@ -5,25 +5,29 @@ This test file focuses on verifying that the bridge correctly handles
 the case where a Program yields another Program, not just Effects.
 """
 
-import pytest
-from typing import Generator, Any, Union
-from pinjected import design, AsyncResolver
 
-from doeff import (
-    Program,
-    do,
-    Effect,
-    EffectGenerator,
-    Log,
-    Step,
-    Dep,
-    Put,
-    Get,
-)
+import pytest
+
+try:  # Python <3.11 needs the backport to use ExceptionGroup in assertions
+    ExceptionGroup  # type: ignore[name-defined]
+except NameError:  # pragma: no cover - executed only on Python 3.10
+    from exceptiongroup import ExceptionGroup  # type: ignore[import-not-found]
 from doeff_pinjected.bridge import (
     program_to_injected,
-    program_to_iproxy,
     program_to_injected_result,
+    program_to_iproxy,
+)
+from pinjected import AsyncResolver, design
+
+from doeff import (
+    Dep,
+    EffectGenerator,
+    Get,
+    Log,
+    Program,
+    Put,
+    Step,
+    do,
 )
 
 

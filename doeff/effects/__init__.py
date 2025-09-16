@@ -8,37 +8,24 @@ The effects are now organized into separate modules for better maintainability.
 """
 
 # Import from individual modules
-from .reader import (
-    reader, Ask, Local
-)
-from .state import (
-    state, Get, Put, Modify
-)
-from .writer import (
-    writer, Tell, Listen, Log
-)
-from .future import (
-    future, Await, Parallel
-)
-from .result import (
-    result, Fail, Catch, Recover, Retry
-)
-from .io import (
-    io as io_class, IO, Print
-)
-from .graph import (
-    graph, Step, Annotate
-)
-from .dep import (
-    dep, Dep
-)
-from .gather import (
-    gather, Gather, GatherDict
-)
 from .cache import (
-    cache, CacheGet, CachePut
+    CacheGet,
+    CacheLifecycle,
+    CachePolicy,
+    CachePut,
+    CacheStorage,
+    cache,
 )
-
+from .dep import Dep, dep
+from .future import Await, Parallel, future
+from .gather import Gather, GatherDict, gather
+from .graph import Annotate, Step, graph
+from .io import IO, Print
+from .io import io as io_class
+from .reader import Ask, Local, reader
+from .result import Catch, Fail, Recover, Retry, result
+from .state import Get, Modify, Put, state
+from .writer import Listen, Log, Tell, writer
 
 # ============================================
 # Lowercase aliases for backward compatibility
@@ -98,6 +85,9 @@ __all__ = [
     "GatherDict",
     "CacheGet",
     "CachePut",
+    "CachePolicy",
+    "CacheLifecycle",
+    "CacheStorage",
     # Lowercase aliases
     "ask",
     "local",

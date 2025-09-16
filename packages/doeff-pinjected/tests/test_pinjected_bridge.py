@@ -6,40 +6,40 @@ ensuring proper dependency resolution through AsyncResolver.
 # pinjected-linter: ignore  # Testing free monad to pinjected bridge
 
 import asyncio
-from typing import Any, Generator
+from collections.abc import Generator
+from typing import Any
 
 import pytest
-from pinjected import Injected, design, AsyncResolver
-
-from doeff import (
-    ProgramInterpreter,
-    ExecutionContext,
-    RunResult,
-    Program,
-    Effect,
-    do,
-    # Effects
-    Ask,
-    Put,
-    Get,
-    Modify,
-    Log,
-    Await,
-    Fail,
-    Step,
-    Dep,  # pinjected-compatible dependency alias
-    Catch,
-    Local,
-    Listen,
-    Annotate,
-)
 from doeff_pinjected import (
     program_to_injected,
-    program_to_iproxy,
     program_to_injected_result,
+    program_to_iproxy,
     program_to_iproxy_result,
 )
+from pinjected import AsyncResolver, Injected, design
 
+from doeff import (
+    Annotate,
+    # Effects
+    Ask,
+    Await,
+    Catch,
+    Dep,  # pinjected-compatible dependency alias
+    Effect,
+    ExecutionContext,
+    Fail,
+    Get,
+    Listen,
+    Local,
+    Log,
+    Modify,
+    Program,
+    ProgramInterpreter,
+    Put,
+    RunResult,
+    Step,
+    do,
+)
 
 # ======================================================
 # Test Programs

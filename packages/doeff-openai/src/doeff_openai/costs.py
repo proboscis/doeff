@@ -1,14 +1,15 @@
 """Cost calculation and token counting utilities for OpenAI API calls."""
 
-from typing import Dict, List, Optional, Union, Any
-import tiktoken
 from functools import lru_cache
+from typing import Any
+
+import tiktoken
 
 from doeff_openai.types import (
-    TokenUsage,
-    CostInfo,
     MODEL_PRICING,
+    CostInfo,
     ModelPricing,
+    TokenUsage,
 )
 
 
@@ -21,14 +22,10 @@ def get_encoding(model: str) -> tiktoken.Encoding:
         return tiktoken.encoding_for_model(model)
     except KeyError:
         # Fall back to cl100k_base for newer models
-        if "gpt-4" in model or "gpt-3.5" in model:
+        if "gpt-4" in model or "gpt-3.5" in model or "embedding" in model:
             return tiktoken.get_encoding("cl100k_base")
-        # For embeddings, use cl100k_base as well
-        elif "embedding" in model:
-            return tiktoken.get_encoding("cl100k_base")
-        else:
-            # Default fallback
-            return tiktoken.get_encoding("cl100k_base")
+        # Default fallback
+        return tiktoken.get_encoding("cl100k_base")
 
 
 def count_tokens(text: str, model: str = "gpt-3.5-turbo") -> int:
@@ -38,7 +35,7 @@ def count_tokens(text: str, model: str = "gpt-3.5-turbo") -> int:
 
 
 def count_message_tokens(
-    messages: List[Dict[str, Any]], 
+    messages: list[dict[str, Any]],
     model: str = "gpt-3.5-turbo"
 ) -> int:
     """
@@ -47,7 +44,7 @@ def count_message_tokens(
     Based on OpenAI's guidelines for counting tokens in chat messages.
     """
     encoding = get_encoding(model)
-    
+
     # Token counts for message formatting
     if "gpt-3.5-turbo" in model:
         tokens_per_message = 3  # <|start|>{role}\n{content}<|end|>\n
@@ -59,7 +56,7 @@ def count_message_tokens(
         # Default for unknown models
         tokens_per_message = 3
         tokens_per_name = 1
-    
+
     num_tokens = 0
     for message in messages:
         num_tokens += tokens_per_message
@@ -97,24 +94,23 @@ def count_message_tokens(
                                     for kk, vv in v.items():
                                         if isinstance(vv, str):
                                             num_tokens += len(encoding.encode(vv))
-    
+
     # Add 3 tokens for the assistant's reply priming
     num_tokens += 3
-    
+
     return num_tokens
 
 
 def count_embedding_tokens(
-    input: Union[str, List[str]], 
+    input: str | list[str],
     model: str = "text-embedding-3-small"
 ) -> int:
     """Count tokens for embedding input."""
     encoding = get_encoding(model)
-    
+
     if isinstance(input, str):
         return len(encoding.encode(input))
-    else:
-        return sum(len(encoding.encode(text)) for text in input)
+    return sum(len(encoding.encode(text)) for text in input)
 
 
 def calculate_cost(
@@ -134,16 +130,16 @@ def calculate_cost(
             if model.startswith(model_key) or model_key in model:
                 pricing = model_pricing
                 break
-    
+
     if not pricing:
         # Default to GPT-3.5 pricing if model not found
         pricing = MODEL_PRICING["gpt-3.5-turbo"]
-    
+
     # Calculate costs
     input_cost = (token_usage.input_tokens / 1000) * pricing.input_price_per_1k
     output_cost = (token_usage.output_tokens / 1000) * pricing.output_price_per_1k
     total_cost = input_cost + output_cost
-    
+
     return CostInfo(
         input_cost=input_cost,
         output_cost=output_cost,
@@ -155,11 +151,11 @@ def calculate_cost(
 
 def estimate_cost(
     model: str,
-    input_text: Optional[str] = None,
-    output_text: Optional[str] = None,
-    messages: Optional[List[Dict[str, Any]]] = None,
-    input_tokens: Optional[int] = None,
-    output_tokens: Optional[int] = None,
+    input_text: str | None = None,
+    output_text: str | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> CostInfo:
     """
     Estimate the cost of an API call.
@@ -177,23 +173,23 @@ def estimate_cost(
             input_tokens = count_tokens(input_text, model)
         else:
             input_tokens = 0
-    
+
     if output_tokens is None:
         if output_text:
             output_tokens = count_tokens(output_text, model)
         else:
             output_tokens = 0
-    
+
     token_usage = TokenUsage(
         prompt_tokens=input_tokens,
         completion_tokens=output_tokens,
         total_tokens=input_tokens + output_tokens,
     )
-    
+
     return calculate_cost(model, token_usage)
 
 
-def get_model_pricing(model: str) -> Optional[ModelPricing]:
+def get_model_pricing(model: str) -> ModelPricing | None:
     """Get pricing information for a model."""
     pricing = MODEL_PRICING.get(model)
     if not pricing:
@@ -206,8 +202,8 @@ def get_model_pricing(model: str) -> Optional[ModelPricing]:
 
 def estimate_max_cost(
     model: str,
-    max_tokens: Optional[int] = None,
-    messages: Optional[List[Dict[str, Any]]] = None,
+    max_tokens: int | None = None,
+    messages: list[dict[str, Any]] | None = None,
 ) -> float:
     """
     Estimate the maximum cost for a completion request.
@@ -217,19 +213,19 @@ def estimate_max_cost(
     pricing = get_model_pricing(model)
     if not pricing:
         pricing = MODEL_PRICING["gpt-3.5-turbo"]
-    
+
     # Calculate input tokens
     if messages:
         input_tokens = count_message_tokens(messages, model)
     else:
         input_tokens = 0
-    
+
     # Use provided max_tokens or model's default
     if max_tokens is None:
         max_tokens = pricing.max_output_tokens or 4096
-    
+
     # Calculate maximum cost
     input_cost = (input_tokens / 1000) * pricing.input_price_per_1k
     output_cost = (max_tokens / 1000) * pricing.output_price_per_1k
-    
+
     return input_cost + output_cost

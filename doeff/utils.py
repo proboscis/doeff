@@ -4,15 +4,13 @@ Utility functions for the doeff library.
 
 import os
 import sys
-from typing import Optional, List
-from types import FrameType
-
+from typing import Optional
 
 # Environment variable to control debug mode
 DEBUG_EFFECTS = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
 
 
-def capture_creation_context(skip_frames: int = 2) -> Optional['EffectCreationContext']:
+def capture_creation_context(skip_frames: int = 2) -> Optional["EffectCreationContext"]:
     """
     Capture the current stack context for debugging effect creation.
     
@@ -23,16 +21,16 @@ def capture_creation_context(skip_frames: int = 2) -> Optional['EffectCreationCo
         EffectCreationContext with frame info (always captured, full stack if DEBUG enabled)
     """
     from doeff.types import EffectCreationContext
-    
+
     try:
         # Always get the frame of the caller
         frame = sys._getframe(skip_frames)
-        
+
         # Get basic info from the frame
         filename = frame.f_code.co_filename
         line = frame.f_lineno
         function = frame.f_code.co_name
-        
+
         # Try to get the source code line
         code = None
         try:
@@ -41,14 +39,14 @@ def capture_creation_context(skip_frames: int = 2) -> Optional['EffectCreationCo
             code = linecache.getline(filename, line).strip()
         except:
             pass
-        
+
         # Collect stack frames for deeper context if DEBUG is enabled
         stack_data = []
         if DEBUG_EFFECTS:
             current_frame = frame.f_back
             depth = 0
             max_depth = 10  # Limit stack depth to avoid too much data
-            
+
             while current_frame and depth < max_depth:
                 frame_data = {
                     "filename": current_frame.f_code.co_filename,
@@ -60,16 +58,16 @@ def capture_creation_context(skip_frames: int = 2) -> Optional['EffectCreationCo
                 try:
                     import linecache
                     frame_data["code"] = linecache.getline(
-                        current_frame.f_code.co_filename, 
+                        current_frame.f_code.co_filename,
                         current_frame.f_lineno
                     ).strip()
                 except:
                     pass
-                
+
                 stack_data.append(frame_data)
                 current_frame = current_frame.f_back
                 depth += 1
-        
+
         return EffectCreationContext(
             filename=filename,
             line=line,
@@ -96,7 +94,7 @@ def create_effect_with_trace(tag: str, payload, skip_frames: int = 3):
         Effect instance with creation context if debugging enabled
     """
     from doeff.types import Effect
-    
+
     created_at = capture_creation_context(skip_frames=skip_frames)
     return Effect(tag, payload, created_at)
 

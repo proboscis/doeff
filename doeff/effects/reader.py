@@ -4,7 +4,7 @@ Reader monad effects.
 This module provides Reader effects for environment-based configuration.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from .base import Effect, create_effect_with_trace
 
@@ -18,7 +18,7 @@ class reader:
         return create_effect_with_trace("reader.ask", key)
 
     @staticmethod
-    def local(env_update: Dict[str, Any], sub_program: Any) -> Effect:
+    def local(env_update: dict[str, Any], sub_program: Any) -> Effect:
         """Run sub-program with modified environment.
 
         Args:
@@ -34,13 +34,13 @@ def Ask(key: str) -> Effect:
     return create_effect_with_trace("reader.ask", key, skip_frames=3)
 
 
-def Local(env_update: Dict[str, Any], sub_program: Any) -> Effect:
+def Local(env_update: dict[str, Any], sub_program: Any) -> Effect:
     """Reader: Run sub-program with modified environment."""
     return create_effect_with_trace("reader.local", {"env": env_update, "program": sub_program}, skip_frames=3)
 
 
 __all__ = [
-    "reader",
     "Ask",
     "Local",
+    "reader",
 ]

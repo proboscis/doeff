@@ -8,8 +8,8 @@ integration with pinjected's dependency injection framework.
 
 from doeff_pinjected.bridge import (
     program_to_injected,
-    program_to_iproxy,
     program_to_injected_result,
+    program_to_iproxy,
     program_to_iproxy_result,
 )
 
@@ -17,7 +17,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "program_to_injected",
-    "program_to_iproxy",
     "program_to_injected_result",
+    "program_to_iproxy",
     "program_to_iproxy_result",
 ]

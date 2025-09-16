@@ -1,4 +1,5 @@
-from typing import TypeVar, Generator
+from collections.abc import Generator
+from typing import TypeVar
 
 from pinjected import AsyncResolver, Injected, IProxy
 
