@@ -118,7 +118,7 @@ async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_respo
         }
     
     # Set up mock to return our response
-    mock_openai_client.sync_client.chat.completions.create.return_value = mock_chat_response
+    mock_openai_client.async_client.chat.completions.create.return_value = mock_chat_response
     
     # Run with mock client in environment
     engine = ProgramInterpreter()
@@ -178,7 +178,7 @@ async def test_embedding_with_tracking(mock_openai_client, mock_embedding_respon
         }
     
     # Set up mock
-    mock_openai_client.sync_client.embeddings.create.return_value = mock_embedding_response
+    mock_openai_client.async_client.embeddings.create.return_value = mock_embedding_response
     
     # Run
     engine = ProgramInterpreter()

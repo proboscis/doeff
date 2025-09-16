@@ -13,8 +13,8 @@ from doeff import (
     EffectGenerator,
     Log,
     Step,
-    IO,
     Await,
+    Retry,
 )
 
 from doeff_openai.client import get_openai_client, track_api_call
@@ -101,79 +101,90 @@ def chat_completion(
     # Get OpenAI client
     client = yield get_openai_client()
     
-    # Track start time
-    start_time = time.time()
+    from doeff import Catch, Fail
     
-    from doeff import Catch, do, Fail
-    
-    # Define the main operation as a sub-program
+    # Define the main operation with retry support
     @do
-    def main_operation():
-        if stream:
-            # For streaming, we need to handle differently
-            # Create async generator wrapper
-            async def create_stream():
-                stream_response = await client.async_client.chat.completions.create(**request_data)
+    def make_api_call():
+        # Track start time for this specific attempt
+        attempt_start_time = time.time()
+        
+        # Define the API call with tracking
+        @do
+        def api_call_with_tracking():
+            if stream:
+                # For streaming, we need to handle differently
+                # Create async generator wrapper
+                async def create_stream():
+                    stream_response = await client.async_client.chat.completions.create(**request_data)
+                    return stream_response
+                
+                # Use Await effect for async operation
+                stream_response = yield Await(create_stream())
+                
+                # Log streaming start
+                yield Log(f"Started streaming chat completion")
+                
+                # Track the streaming request (no immediate response data)
+                metadata = yield track_api_call(
+                    operation="chat.completion",
+                    model=model,
+                    request_data=request_data,
+                    response=None,  # No immediate response for streaming
+                    start_time=attempt_start_time,
+                    error=None,
+                )
+                
                 return stream_response
-            
-            # Use Await effect for async operation
-            stream_response = yield Await(create_stream())
-            
-            # Log streaming start
-            yield Log(f"Started streaming chat completion")
-            
-            # Track the streaming request (no immediate response data)
+            else:
+                # Non-streaming completion
+                # Use Await effect for async API call
+                response = yield Await(client.async_client.chat.completions.create(**request_data))
+                
+                # Track successful API call
+                metadata = yield track_api_call(
+                    operation="chat.completion",
+                    model=model,
+                    request_data=request_data,
+                    response=response,
+                    start_time=attempt_start_time,
+                    error=None,
+                )
+                
+                # Log completion details
+                if response.choices:
+                    finish_reason = response.choices[0].finish_reason
+                    content = response.choices[0].message.content
+                    yield Log(f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}")
+                
+                return response
+        
+        # Error handler that tracks failed attempts
+        @do
+        def error_handler(e):
+            # Track failed API call attempt (tracking will log the error)
             metadata = yield track_api_call(
                 operation="chat.completion",
                 model=model,
                 request_data=request_data,
-                response=None,  # No immediate response for streaming
-                start_time=start_time,
-                error=None,
+                response=None,
+                start_time=attempt_start_time,
+                error=e,
             )
-            
-            return stream_response
-        else:
-            # Non-streaming completion
-            # Use IO effect for sync API call
-            response = yield IO(lambda: client.sync_client.chat.completions.create(**request_data))
-            
-            # Track the API call with full metadata
-            metadata = yield track_api_call(
-                operation="chat.completion",
-                model=model,
-                request_data=request_data,
-                response=response,
-                start_time=start_time,
-                error=None,
-            )
-            
-            # Log completion details
-            if response.choices:
-                finish_reason = response.choices[0].finish_reason
-                content = response.choices[0].message.content
-                yield Log(f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}")
-            
-            return response
+            # Re-raise to trigger retry
+            yield Fail(e)
+        
+        # Use Catch to track both success and failure
+        result = yield Catch(api_call_with_tracking(), error_handler)
+        return result
     
-    # Use Catch to handle errors
-    @do
-    def error_handler(e):
-        # Track error
-        metadata = yield track_api_call(
-            operation="chat.completion",
-            model=model,
-            request_data=request_data,
-            response=None,
-            start_time=start_time,
-            error=e,
-        )
-        yield Log(f"Chat completion failed: {e}")
-        # Re-raise the error
-        yield Fail(e)
+    # Use Retry effect for transient failures (3 attempts by default)
+    # Note: streaming responses typically shouldn't be retried automatically
+    if stream:
+        result = yield make_api_call()  # No retry for streaming
+    else:
+        result = yield Retry(make_api_call(), max_attempts=3, delay_ms=1000)
     
-    # Execute with error handling
-    result = yield Catch(main_operation(), error_handler)
     return result
 
 

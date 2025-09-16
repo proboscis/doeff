@@ -22,7 +22,7 @@ from doeff import (
     Put,
     Log,
     Step,
-    IO,
+    Await,
     Fail,
     Catch,
     Retry,
@@ -68,6 +68,90 @@ def convert_pil_to_base64(image: "PIL.Image.Image") -> str:
     return f"data:image/png;base64,{img_base64}"
 
 
+def _collect_message_content_parts(content: Any) -> tuple[Optional[Any], List[str]]:
+    """Extract JSON payload (if any) and text fragments from a message content."""
+    if content is None:
+        return None, []
+
+    if isinstance(content, str):
+        return None, [content]
+
+    json_payload: Optional[Any] = None
+    text_parts: List[str] = []
+
+    if isinstance(content, list):
+        for part in content:
+            part_type = getattr(part, "type", None)
+
+            # Extract possible JSON payload
+            part_json = None
+            if isinstance(part, dict):
+                part_json = part.get("json")
+            else:
+                part_json = getattr(part, "json", None)
+
+            if part_json is not None and json_payload is None:
+                json_payload = part_json
+
+            # Extract textual fragments
+            part_text = None
+            if isinstance(part, dict):
+                part_text = (
+                    part.get("text")
+                    or part.get("input_text")
+                    or part.get("output_text")
+                    or part.get("content")
+                )
+            else:
+                part_text = getattr(part, "text", None)
+                if part_text is None:
+                    part_text = getattr(part, "content", None)
+
+            if part_text is not None:
+                if isinstance(part_text, list):
+                    text_parts.extend(str(item) for item in part_text if item is not None)
+                else:
+                    text_parts.append(str(part_text))
+
+            # Some payloads encode JSON inside the text field
+            if part_json is None and isinstance(part_text, (dict, list)) and json_payload is None:
+                json_payload = part_text
+
+            # Fallback for known json-specific types
+            if json_payload is None and part_type in {"output_json", "json"}:
+                candidate = None
+                if isinstance(part, dict):
+                    candidate = part.get("content") or part.get("data")
+                else:
+                    candidate = getattr(part, "content", None)
+                if candidate is not None:
+                    if isinstance(candidate, (dict, list)):
+                        json_payload = candidate
+                    else:
+                        text_parts.append(str(candidate))
+    else:
+        text_parts.append(str(content))
+
+    return json_payload, text_parts
+
+
+def _stringify_for_log(content: Any, limit: int = 500) -> str:
+    """Prepare a compact string representation for logging purposes."""
+    try:
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, (dict, list)):
+            text = json.dumps(content)
+        else:
+            text = str(content)
+    except Exception:  # pragma: no cover - extremely defensive
+        text = str(content)
+
+    if len(text) > limit:
+        return f"{text[:limit]}..."
+    return text
+
+
 def ensure_strict_schema(schema: dict) -> dict:
     """
     Recursively ensure all objects in schema have additionalProperties: false.
@@ -89,6 +173,17 @@ def ensure_strict_schema(schema: dict) -> dict:
         for prop_name, prop_schema in result["properties"].items():
             new_properties[prop_name] = ensure_strict_schema(prop_schema)
         result["properties"] = new_properties
+
+        # Enforce that required contains every property name for strict mode
+        property_names = list(new_properties.keys())
+        if property_names:
+            existing_required = list(result.get("required", []))
+            seen = set(existing_required)
+            for name in property_names:
+                if name not in seen:
+                    existing_required.append(name)
+                    seen.add(name)
+            result["required"] = existing_required
     
     # Process items in arrays
     if "items" in result:
@@ -306,26 +401,48 @@ def process_structured_response(
         JSONDecodeError: If response content is not valid JSON
         ValidationError: If response doesn't match the expected format
     """
-    # Extract the content
-    content = response.choices[0].message.content
-    
+    message = response.choices[0].message
+    content = getattr(message, "content", None)
+
+    json_payload, text_parts = _collect_message_content_parts(content)
+
+    # Prepare a source for parsing and logging
+    parse_source: Any
+    if json_payload is not None:
+        parse_source = json_payload
+    elif text_parts:
+        parse_source = "\n".join(part for part in text_parts if part)
+    else:
+        parse_source = ""
+
+    raw_content_for_log = _stringify_for_log(parse_source)
+
     # Parse the JSON response
     from doeff import Catch, do, Fail
-    
+
     @do
     def parse_json():
         yield Log(f"Parsing JSON response for {response_format.__name__}")
-        parsed_json = json.loads(content)
-        result = response_format(**parsed_json)
+
+        if isinstance(parse_source, str):
+            parsed_json = json.loads(parse_source)
+        else:
+            parsed_json = parse_source
+
+        if hasattr(response_format, "model_validate"):
+            result_model = response_format.model_validate(parsed_json)  # type: ignore[attr-defined]
+        else:
+            result_model = response_format(**parsed_json)
+
         yield Log(f"Successfully parsed response as {response_format.__name__}")
-        return result
-    
+        return result_model
+
     @do
     def handle_parse_error(e):
         yield Log(f"Failed to parse structured response: {e}")
-        yield Log(f"Raw content: {content[:500]}...")
+        yield Log(f"Raw content: {raw_content_for_log}")
         yield Fail(e)
-    
+
     result = yield Catch(parse_json(), handle_parse_error)
     return result
 
@@ -341,15 +458,16 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
     Returns:
         Raw text content from the response
     """
-    # Return the raw text content
-    content = response.choices[0].message.content
-    
-    if len(content) > 100:
-        yield Log(f"Received response: {content[:100]}...")
-    else:
-        yield Log(f"Received response: {content}")
-    
-    return content
+    message = response.choices[0].message
+    content = getattr(message, "content", None)
+    _, text_parts = _collect_message_content_parts(content)
+
+    text = " ".join(part.strip() for part in text_parts if part).strip()
+
+    log_preview = _stringify_for_log(text, limit=100)
+    yield Log(f"Received response: {log_preview}")
+
+    return text
 
 
 @do
@@ -418,7 +536,7 @@ def structured_llm__openai(
         - Log: Tracks all operations and decisions
         - Step: Creates graph nodes for observability
         - Get/Put: Manages state for cost tracking
-        - IO: Makes API calls
+        - Await: Makes async API calls with the async OpenAI client
         - Retry: Handles transient failures
         - Catch: Handles parsing errors
     """
@@ -450,27 +568,49 @@ def structured_llm__openai(
     client = yield get_openai_client()
     
     # Phase 4: Make API call with retry
-    start_time = time.time()
-    
     @do
     def make_api_call():
+        # Track start time for this specific attempt
+        attempt_start_time = time.time()
         yield Log(f"Making OpenAI API call with model={model}")
-        # Use sync client for simplicity (async client handling could be added later)
-        response = yield IO(lambda: client.sync_client.chat.completions.create(**api_params))
+        
+        # Use Catch to handle errors and track them
+        @do
+        def api_call_with_tracking():
+            # Make the actual API call
+            response = yield Await(client.async_client.chat.completions.create(**api_params))
+            
+            # Track successful API call
+            metadata = yield track_api_call(
+                operation="structured_llm",
+                model=model,
+                request_data=api_params,
+                response=response,
+                start_time=attempt_start_time,
+                error=None,
+            )
+            return response
+        
+        @do 
+        def error_handler(error):
+            # Track failed API call attempt (tracking will log the error)
+            metadata = yield track_api_call(
+                operation="structured_llm",
+                model=model,
+                request_data=api_params,
+                response=None,
+                start_time=attempt_start_time,
+                error=error,
+            )
+            # Re-raise to trigger retry
+            yield Fail(error)
+        
+        # Use Catch to track both success and failure
+        response = yield Catch(api_call_with_tracking(), error_handler)
         return response
     
     # Use Retry effect for transient failures
     response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
-    
-    # Phase 5: Track the API call
-    metadata = yield track_api_call(
-        operation="structured_llm",
-        model=model,
-        request_data=api_params,
-        response=response,
-        start_time=start_time,
-        error=None,
-    )
     
     # Log token usage details for GPT-5 models
     if is_gpt5_model(model) and hasattr(response.usage, "completion_tokens_details"):

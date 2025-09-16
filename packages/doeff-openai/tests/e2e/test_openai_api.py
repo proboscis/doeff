@@ -95,6 +95,7 @@ async def test_unstructured_response():
     
     engine = ProgramInterpreter()
     result = await engine.run(test_program())
+    print(result.display())
     
     assert result.is_ok
     assert isinstance(result.value, str)
@@ -299,7 +300,7 @@ async def test_gpt4o_convenience_function():
     assert result.value.answer == 100
 
 
-@pytest.mark.skipif(skip_tests or True, reason="GPT-5 models may not be available yet")
+@pytest.mark.skipif(skip_tests, reason="OPENAI_API_KEY not set in environment")
 @pytest.mark.asyncio
 async def test_gpt5_with_reasoning():
     """Test GPT-5 model with reasoning tokens (if available)."""

@@ -7,6 +7,8 @@ into KleisliPrograms, enabling do-notation for monadic computations.
 
 from __future__ import annotations
 
+import inspect
+from functools import wraps
 from typing import Any, Callable, ParamSpec, TypeVar, Union, Generator
 
 from doeff.types import Effect, EffectGenerator
@@ -100,9 +102,11 @@ def do(
         Program argument unwrapping.
     """
 
+    @wraps(func)
     def create_program(*args: P.args, **kwargs: P.kwargs) -> Program[T]:
         """Create a Program from the generator function."""
 
+        @wraps(func)
         def generator_wrapper() -> Generator[Union[Effect, Program], Any, T]:
             # Call the original generator function
             gen_or_value = func(*args, **kwargs)
@@ -128,7 +132,25 @@ def do(
         return Program(generator_wrapper)
 
     # Return a KleisliProgram that creates Programs lazily
-    return KleisliProgram(create_program)
+    kleisli_program = KleisliProgram(create_program)
+
+    # Preserve metadata for introspection on the returned KleisliProgram instance.
+    # We need object.__setattr__ because KleisliProgram is a frozen dataclass.
+    object.__setattr__(kleisli_program, "__wrapped__", func)
+    object.__setattr__(kleisli_program, "__name__", getattr(func, "__name__", kleisli_program.__class__.__name__))
+    object.__setattr__(kleisli_program, "__qualname__", getattr(func, "__qualname__", getattr(func, "__name__", kleisli_program.__class__.__name__)))
+    object.__setattr__(kleisli_program, "__doc__", getattr(func, "__doc__", None))
+    object.__setattr__(kleisli_program, "__module__", getattr(func, "__module__", kleisli_program.__class__.__module__))
+    object.__setattr__(kleisli_program, "__annotations__", getattr(func, "__annotations__", {}))
+
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        pass
+    else:
+        object.__setattr__(kleisli_program, "__signature__", signature)
+
+    return kleisli_program
 
 
 __all__ = ["do"]

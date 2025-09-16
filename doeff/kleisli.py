@@ -8,6 +8,7 @@ unwrapping of Program arguments for natural composition.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import wraps
 from typing import Any, Callable, Generator, Generic, ParamSpec, TypeVar, Union
 
 from doeff.types import Effect, EffectGenerator
@@ -49,6 +50,7 @@ class KleisliProgram(Generic[P, T]):
         arguments at once, then passes the unwrapped values to the underlying function.
         """
 
+        @wraps(self.func)
         def unwrapping_generator() -> Generator[Union[Effect, "Program"], Any, T]:
             # Collect Program arguments and their indices/keys
             program_args = []

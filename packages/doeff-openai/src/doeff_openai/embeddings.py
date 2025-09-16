@@ -12,9 +12,9 @@ from doeff import (
     EffectGenerator,
     Log,
     Step,
-    IO,
     Await,
     Gather,
+    Retry,
 )
 
 from doeff_openai.client import get_openai_client, track_api_call
@@ -70,49 +70,56 @@ def create_embedding(
     # Get OpenAI client
     client = yield get_openai_client()
     
-    # Track start time
-    start_time = time.time()
+    from doeff import Catch, Fail
     
-    from doeff import Catch, do, Fail
-    
-    # Define the main operation as a sub-program
+    # Define the main operation with retry support
     @do
-    def main_operation():
-        # Use IO effect for sync API call
-        response = yield IO(lambda: client.sync_client.embeddings.create(**request_data))
+    def make_api_call():
+        # Track start time for this specific attempt
+        attempt_start_time = time.time()
         
-        # Track the API call with full metadata
-        metadata = yield track_api_call(
-            operation="embedding",
-            model=model,
-            request_data=request_data,
-            response=response,
-            start_time=start_time,
-            error=None,
-        )
+        # Define the API call with tracking
+        @do
+        def api_call_with_tracking():
+            # Use Await effect for async API call
+            response = yield Await(client.async_client.embeddings.create(**request_data))
+            
+            # Track successful API call
+            metadata = yield track_api_call(
+                operation="embedding",
+                model=model,
+                request_data=request_data,
+                response=response,
+                start_time=attempt_start_time,
+                error=None,
+            )
+            
+            # Log embedding details
+            yield Log(f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}")
+            
+            return response
         
-        # Log embedding details
-        yield Log(f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}")
+        # Error handler that tracks failed attempts
+        @do
+        def error_handler(e):
+            # Track failed API call attempt (tracking will log the error)
+            metadata = yield track_api_call(
+                operation="embedding",
+                model=model,
+                request_data=request_data,
+                response=None,
+                start_time=attempt_start_time,
+                error=e,
+            )
+            # Re-raise to trigger retry
+            yield Fail(e)
         
-        return response
+        # Use Catch to track both success and failure
+        result = yield Catch(api_call_with_tracking(), error_handler)
+        return result
     
-    # Use Catch to handle errors
-    @do
-    def error_handler(e):
-        # Track error
-        metadata = yield track_api_call(
-            operation="embedding",
-            model=model,
-            request_data=request_data,
-            response=None,
-            start_time=start_time,
-            error=e,
-        )
-        yield Log(f"Embedding creation failed: {e}")
-        yield Fail(e)
-    
-    # Execute with error handling
-    result = yield Catch(main_operation(), error_handler)
+    # Use Retry effect for transient failures (3 attempts by default)
+    result = yield Retry(make_api_call(), max_attempts=3, delay_ms=1000)
     return result
 
 
