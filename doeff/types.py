@@ -6,6 +6,7 @@ This module contains the foundational types with zero internal dependencies.
 
 from __future__ import annotations
 
+import json
 import traceback
 from dataclasses import dataclass, field
 from typing import Any, Dict, Generator, List, TypeVar, Union, TYPE_CHECKING
@@ -216,6 +217,153 @@ class RunResult[T]:
                 f"  state={len(self.state)} items, "
                 f"  log={len(self.log)} entries)"
             )
+    
+    def display(self, verbose: bool = False, indent: int = 2) -> str:
+        """
+        Display internal data in a formatted text structure.
+        
+        Args:
+            verbose: If True, show full details including graph steps
+            indent: Number of spaces for indentation
+        
+        Returns:
+            Formatted string representation of the RunResult
+        """
+        lines = []
+        ind = " " * indent
+        
+        # Header
+        lines.append("=" * 60)
+        lines.append("RunResult Internal Data")
+        lines.append("=" * 60)
+        
+        # Result Status
+        lines.append("\n📊 Result Status:")
+        if isinstance(self.result, Ok):
+            lines.append(f"{ind}✅ Success")
+            lines.append(f"{ind}Value: {self._format_value(self.result.value, indent)}")
+        else:
+            lines.append(f"{ind}❌ Failure")
+            lines.append(f"{ind}Error: {self.result.error.__class__.__name__}")
+            if verbose:
+                error_lines = self.format_error().split("\n")
+                for line in error_lines[:10]:  # Limit traceback lines
+                    lines.append(f"{ind * 2}{line}")
+                if len(error_lines) > 10:
+                    lines.append(f"{ind * 2}... ({len(error_lines) - 10} more lines)")
+        
+        # State
+        lines.append("\n🗂️ State:")
+        if self.state:
+            for key, value in list(self.state.items())[:20]:  # Limit items shown
+                value_str = self._format_value(value, indent, max_length=100)
+                lines.append(f"{ind}{key}: {value_str}")
+            if len(self.state) > 20:
+                lines.append(f"{ind}... and {len(self.state) - 20} more items")
+        else:
+            lines.append(f"{ind}(empty)")
+        
+        # Logs
+        lines.append("\n📝 Logs:")
+        if self.log:
+            for i, entry in enumerate(self.log[:10]):  # Show first 10 logs
+                entry_str = self._format_value(entry, indent, max_length=150)
+                lines.append(f"{ind}[{i}] {entry_str}")
+            if len(self.log) > 10:
+                lines.append(f"{ind}... and {len(self.log) - 10} more entries")
+        else:
+            lines.append(f"{ind}(no logs)")
+        
+        # Graph
+        lines.append("\n🌳 Graph:")
+        if self.graph and self.graph.steps:
+            lines.append(f"{ind}Steps: {len(self.graph.steps)}")
+            if verbose:
+                # Show graph steps in verbose mode
+                for i, step in enumerate(list(self.graph.steps)[:5]):
+                    lines.append(f"{ind}Step {i}:")
+                    if step.meta:
+                        lines.append(f"{ind * 2}Meta: {self._format_value(step.meta, indent * 2, max_length=100)}")
+                    lines.append(f"{ind * 2}Inputs: {len(step.inputs)} nodes")
+                    lines.append(f"{ind * 2}Output: {step.output.value.__class__.__name__ if step.output.value else 'None'}")
+                if len(self.graph.steps) > 5:
+                    lines.append(f"{ind}... and {len(self.graph.steps) - 5} more steps")
+        else:
+            lines.append(f"{ind}(no graph steps)")
+        
+        # Environment (in verbose mode)
+        if verbose and self.env:
+            lines.append("\n🌍 Environment:")
+            for key, value in list(self.env.items())[:10]:
+                value_str = self._format_value(value, indent, max_length=100)
+                lines.append(f"{ind}{key}: {value_str}")
+            if len(self.env) > 10:
+                lines.append(f"{ind}... and {len(self.env) - 10} more items")
+        
+        # Summary
+        lines.append("\n" + "=" * 60)
+        lines.append("Summary:")
+        lines.append(f"  • Status: {'✅ OK' if self.is_ok else '❌ Error'}")
+        lines.append(f"  • State items: {len(self.state)}")
+        lines.append(f"  • Log entries: {len(self.log)}")
+        lines.append(f"  • Graph steps: {len(self.graph.steps) if self.graph else 0}")
+        lines.append(f"  • Environment vars: {len(self.env)}")
+        lines.append("=" * 60)
+        
+        return "\n".join(lines)
+    
+    def _format_value(self, value: Any, indent: int, max_length: int = 200) -> str:
+        """Format a value for display, handling various types."""
+        if value is None:
+            return "None"
+        elif isinstance(value, bool):
+            return str(value)
+        elif isinstance(value, (int, float)):
+            return str(value)
+        elif isinstance(value, str):
+            if len(value) > max_length:
+                return f'"{value[:max_length]}..."'
+            return f'"{value}"'
+        elif isinstance(value, dict):
+            if not value:
+                return "{}"
+            try:
+                json_str = json.dumps(value, indent=None, default=str)
+                if len(json_str) > max_length:
+                    # Show keys only if too long
+                    keys = list(value.keys())[:5]
+                    keys_str = ", ".join(f'"{k}"' for k in keys)
+                    if len(value) > 5:
+                        keys_str += f", ... ({len(value) - 5} more)"
+                    return f"{{{keys_str}}}"
+                return json_str
+            except:
+                return f"<dict with {len(value)} items>"
+        elif isinstance(value, list):
+            if not value:
+                return "[]"
+            if len(value) > 5:
+                return f"[{len(value)} items]"
+            try:
+                json_str = json.dumps(value, indent=None, default=str)
+                if len(json_str) > max_length:
+                    return f"[{len(value)} items]"
+                return json_str
+            except:
+                return f"<list with {len(value)} items>"
+        elif hasattr(value, "__class__"):
+            class_name = value.__class__.__name__
+            if hasattr(value, "__repr__"):
+                repr_str = repr(value)
+                if len(repr_str) > max_length:
+                    return f"<{class_name} object>"
+                return repr_str
+            return f"<{class_name} object>"
+        else:
+            str_val = str(value)
+            if len(str_val) > max_length:
+                return str_val[:max_length] + "..."
+            return str_val
 
 
 # ============================================
