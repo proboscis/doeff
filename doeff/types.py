@@ -64,6 +64,52 @@ class EffectCreationContext:
                 if frame.get("code"):
                     lines.append(f'    {frame["code"]}')
         return "\n".join(lines)
+    
+    def build_traceback(self) -> str:
+        """Build a detailed traceback-style output from stored frame information."""
+        lines = []
+        lines.append("Traceback (most recent call last):")
+        
+        # Add frames from stack_trace in reverse order (innermost last)
+        if self.stack_trace:
+            for frame in reversed(self.stack_trace):
+                filename = frame.get('filename', '<unknown>')
+                line_no = frame.get('line', 0)
+                func_name = frame.get('function', '<unknown>')
+                code = frame.get('code', '')
+                
+                lines.append(f'  File "{filename}", line {line_no}, in {func_name}')
+                if code:
+                    lines.append(f'    {code}')
+        
+        # Add the immediate creation location
+        lines.append(f'  File "{self.filename}", line {self.line}, in {self.function}')
+        if self.code:
+            lines.append(f'    {self.code}')
+        
+        return "\n".join(lines)
+
+
+# ============================================
+# Effect Failure Exception
+# ============================================
+
+class EffectFailure(RuntimeError):
+    """Exception raised when an effect fails, carrying creation context."""
+    
+    def __init__(self, effect_tag: str, creation_context: Optional[EffectCreationContext], cause: Exception):
+        self.effect_tag = effect_tag
+        self.creation_context = creation_context
+        self.cause = cause
+        
+        # Build the error message
+        msg_parts = [f"Effect '{effect_tag}' failed"]
+        if creation_context:
+            msg_parts.append(f"\n📍 Creation Location:\n{creation_context.format_full()}")
+        msg_parts.append(f"\n❌ Error: {cause}")
+        
+        super().__init__("\n".join(msg_parts))
+        self.__cause__ = cause
 
 
 # ============================================
@@ -290,8 +336,56 @@ class RunResult[T]:
             if isinstance(error, TraceError):
                 # Get the actual exception
                 actual_exc = error.exc
-                lines.append(f"{ind}Exception Type: {actual_exc.__class__.__name__}")
-                lines.append(f"{ind}Exception Message: {actual_exc}")
+                
+                # Check if this is an EffectFailure exception
+                if isinstance(actual_exc, EffectFailure):
+                    # Show which effect failed
+                    lines.append(f"{ind}Failed Effect: '{actual_exc.effect_tag}'")
+                    
+                    # Show the original exception that caused the failure
+                    lines.append(f"\n{ind}❌ Execution Error:")
+                    lines.append(f"{ind * 2}Type: {actual_exc.cause.__class__.__name__}")
+                    lines.append(f"{ind * 2}Message: {actual_exc.cause}")
+                    
+                    # Show where the effect was created
+                    if actual_exc.creation_context:
+                        lines.append(f"\n{ind}📍 Effect Creation Stack Trace:")
+                        # Use the build_traceback method for proper stack trace format
+                        traceback_lines = actual_exc.creation_context.build_traceback().split("\n")
+                        for tb_line in traceback_lines:
+                            lines.append(f"{ind * 2}{tb_line}")
+                
+                # Check if this is a wrapped RuntimeError with effect creation context (legacy)
+                elif isinstance(actual_exc, RuntimeError) and "Effect created at" in str(actual_exc):
+                    # Legacy handling for old-style wrapped errors
+                    error_msg = str(actual_exc)
+                    parts = error_msg.split("\n\n")
+                    
+                    # Show the effect failure info
+                    for part in parts:
+                        if part.startswith("Effect "):
+                            lines.append(f"{ind}Error: {part}")
+                        elif "📍" in part or "Effect created at" in part:
+                            # Show creation context
+                            lines.append(f"\n{ind}📍 Effect Creation Context:")
+                            for line in part.split("\n"):
+                                if line.strip() and not line.startswith("📍"):
+                                    lines.append(f"{ind * 2}{line.strip()}")
+                        elif "❌" in part:
+                            # Show the actual error that occurred
+                            lines.append(f"\n{ind}❌ Execution Error:")
+                            error_part = part.replace("❌ Error: ", "")
+                            lines.append(f"{ind * 2}{error_part}")
+                    
+                    # Show the original cause if available
+                    if actual_exc.__cause__:
+                        lines.append(f"\n{ind}Original Exception:")
+                        lines.append(f"{ind * 2}Type: {actual_exc.__cause__.__class__.__name__}")
+                        lines.append(f"{ind * 2}Message: {actual_exc.__cause__}")
+                else:
+                    # Regular TraceError without effect context
+                    lines.append(f"{ind}Exception Type: {actual_exc.__class__.__name__}")
+                    lines.append(f"{ind}Exception Message: {actual_exc}")
                 
                 # Show the full traceback
                 lines.append(f"\n{ind}📍 Stack Trace:")
@@ -301,14 +395,6 @@ class RunResult[T]:
                     for tb_line in tb_lines:
                         if tb_line.strip():  # Skip empty lines
                             lines.append(f"{ind * 2}{tb_line}")
-                
-                # Show where the error was created if available
-                if error.created_at:
-                    lines.append(f"\n{ind}🔍 Created At:")
-                    created_lines = error.created_at.strip().split("\n")
-                    for created_line in created_lines:
-                        if created_line.strip():
-                            lines.append(f"{ind * 2}{created_line}")
             else:
                 # Non-TraceError error
                 lines.append(f"{ind}Error Type: {error.__class__.__name__}")

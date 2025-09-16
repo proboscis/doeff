@@ -216,5 +216,69 @@ async def test_effect_creation_context_structure():
         importlib.reload(utils)
 
 
+@pytest.mark.asyncio
+async def test_display_with_creation_trace():
+    """Test that RunResult.display() shows creation stack trace for failures."""
+    # Enable debug mode
+    os.environ["DOEFF_DEBUG"] = "true"  # noqa: PINJ050
+    
+    # Reload modules to pick up the debug setting
+    import importlib
+    from doeff import utils
+    importlib.reload(utils)
+    
+    # Re-import after reload to get updated factories
+    import sys
+    # Reload the result module directly
+    if 'doeff.effects.result' in sys.modules:
+        del sys.modules['doeff.effects.result']
+    from doeff.effects.result import Fail
+    
+    try:
+        @do
+        def test_program() -> EffectGenerator[str]:
+            yield Log("Starting test")
+            # This should capture creation context
+            yield Fail(ValueError("Test error for display"))
+            return "Should not reach here"
+        
+        engine = ProgramInterpreter()
+        result = await engine.run(test_program())
+        
+        # Verify the result is an error
+        assert result.is_err
+        
+        # Get the display output
+        display_output = result.display(verbose=True)
+        
+        # Check that display output contains the expected elements
+        assert "❌ Failure" in display_output
+        assert "Failed Effect: 'result.fail'" in display_output
+        assert "Execution Error:" in display_output
+        assert "ValueError" in display_output
+        assert "Test error for display" in display_output
+        
+        # Check that creation stack trace is shown
+        assert "Effect Creation Stack Trace:" in display_output
+        assert "Traceback (most recent call last):" in display_output
+        assert "test_program" in display_output
+        assert "test_effect_creation_trace.py" in display_output
+        
+        # Also test the non-verbose display
+        simple_display = result.display(verbose=False)
+        assert "❌ Failure" in simple_display
+        # Should still show creation context even in non-verbose mode
+        assert "Effect Creation Stack Trace:" in simple_display
+        
+    finally:
+        # Restore original debug setting
+        if "DOEFF_DEBUG" in os.environ:  # noqa: PINJ050
+            del os.environ["DOEFF_DEBUG"]  # noqa: PINJ050
+        importlib.reload(utils)
+        # Force reimport of result module
+        if 'doeff.effects.result' in sys.modules:
+            del sys.modules['doeff.effects.result']
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
