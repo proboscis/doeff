@@ -16,8 +16,6 @@ from doeff import (
     Effect,
     EffectGenerator,
     do,
-    # Organized Effects API
-    Effects,
     # Capitalized aliases
     Ask,
     Local,
@@ -65,7 +63,7 @@ async def test_reader_ask_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[str]:
         # Test with Effects API
-        api_key = yield Effects.reader.ask("api_key")
+        api_key = yield Ask("api_key")
 
         # Test with capitalized alias
         db_url = yield Ask("database_url")
@@ -110,7 +108,7 @@ async def test_reader_local_effect():  # noqa: PINJ040
         original_mode = yield Ask("mode")
 
         # Run with modified environment using Effects API
-        inner1 = yield Effects.reader.local(
+        inner1 = yield Local(
             {"mode": "test", "debug": True}, inner_program()
         )
 
@@ -148,7 +146,7 @@ async def test_state_get_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        count1 = yield Effects.state.get("counter")
+        count1 = yield Get("counter")
 
         # Test with capitalized alias
         count2 = yield Get("counter")
@@ -176,7 +174,7 @@ async def test_state_put_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[dict]:
         # Test with Effects API
-        yield Effects.state.put("name", "Alice")
+        yield Put("name", "Alice")
 
         # Test with capitalized alias
         yield Put("age", 30)
@@ -211,7 +209,7 @@ async def test_state_modify_effect():  # noqa: PINJ040
         yield Put("names", ["Alice"])
 
         # Test with Effects API
-        new_counter = yield Effects.state.modify("counter", lambda x: x * 2)
+        new_counter = yield Modify("counter", lambda x: x * 2)
 
         # Test with capitalized alias
         new_names = yield Modify("names", lambda xs: xs + ["Bob"])
@@ -243,7 +241,7 @@ async def test_writer_tell_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[None]:
         # Test with Effects API
-        yield Effects.writer.tell("Starting process")
+        yield Tell("Starting process")
 
         # Test with capitalized aliases
         yield Log("Processing data")
@@ -281,7 +279,7 @@ async def test_writer_listen_effect():  # noqa: PINJ040
         yield Log("Main: starting")
 
         # Test with Effects API
-        value1, log1 = yield Effects.writer.listen(sub_program())
+        value1, log1 = yield Listen(sub_program())
 
         # Test with capitalized alias
         value2, log2 = yield Listen(sub_program())
@@ -318,7 +316,7 @@ async def test_future_await_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        result1 = yield Effects.future.await_(async_fetch("data1"))
+        result1 = yield Await(async_fetch("data1"))
 
         # Test with capitalized alias
         result2 = yield Await(async_fetch("data2"))
@@ -347,7 +345,7 @@ async def test_future_parallel_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        results1 = yield Effects.future.parallel(
+        results1 = yield Parallel(
             async_process(1), async_process(2), async_process(3)
         )
 
@@ -379,7 +377,7 @@ async def test_result_fail_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[str]:
         # Test with Effects API
-        yield Effects.result.fail(ValueError("Effects API error"))
+        yield Fail(ValueError("Effects API error"))
         return "should not reach"
 
     engine = ProgramInterpreter()
@@ -422,7 +420,7 @@ async def test_result_catch_effect():  # noqa: PINJ040
     @do
     def main_program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        result1 = yield Effects.result.catch(failing_program, recovery_handler)
+        result1 = yield Catch(failing_program, recovery_handler)
 
         # Test with capitalized alias
         result2 = yield Catch(failing_program, recovery_handler)
@@ -464,7 +462,7 @@ async def test_io_run_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        result1 = yield Effects.io.run(
+        result1 = yield IO(
             lambda: side_effects.append("effect1") or "done1"
         )
 
@@ -492,7 +490,7 @@ async def test_io_print_effect(capsys):  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[None]:
         # Test with Effects API
-        yield Effects.io.print("Message from Effects API")
+        yield Print("Message from Effects API")
 
         # Test with capitalized alias
         yield Print("Message from Print")
@@ -540,7 +538,7 @@ async def test_graph_step_effect():  # noqa: PINJ040
     @do
     def program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        result1 = yield Effects.graph.step("value1", {"type": "api"})
+        result1 = yield Step("value1", {"type": "api"})
 
         # Test with capitalized alias
         result2 = yield Step("value2", {"type": "alias"})
@@ -588,7 +586,7 @@ async def test_graph_annotate_effect():  # noqa: PINJ040
         yield Step("initial")
 
         # Test with Effects API
-        yield Effects.graph.annotate({"stage": "processing", "version": 1})
+        yield Annotate({"stage": "processing", "version": 1})
 
         # Add another step
         yield Step("middle")

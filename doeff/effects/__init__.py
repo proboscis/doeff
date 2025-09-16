@@ -41,26 +41,6 @@ from .cache import (
 
 
 # ============================================
-# Main Effects API Class
-# ============================================
-
-class Effects:
-    """Organized effect creation API with grouped categories."""
-    
-    # Reference the imported classes directly
-    reader = reader
-    state = state
-    writer = writer
-    future = future
-    result = result
-    io = io_class
-    graph = graph
-    dep = dep
-    gather = gather
-    cache = cache
-
-
-# ============================================
 # Lowercase aliases for backward compatibility
 # ============================================
 
@@ -94,8 +74,6 @@ io = IO
 # ============================================
 
 __all__ = [
-    # Main API
-    "Effects",
     # Uppercase functions
     "Ask",
     "Local",

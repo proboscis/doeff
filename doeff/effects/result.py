@@ -4,7 +4,7 @@ Result/error handling effects.
 This module provides Result effects for error handling.
 """
 
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from .base import Effect
 
@@ -28,12 +28,15 @@ class result:
         return Effect("result.catch", {"program": sub_program, "handler": handler})
     
     @staticmethod
-    def recover(sub_program: Any, fallback: Any) -> Effect:
+    def recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) -> Effect:
         """Try sub-program, use fallback value on error.
         
         Args:
             sub_program: Program to try
-            fallback: Value or Program to use on error
+            fallback: Can be:
+                - A direct value to use on error
+                - A Program to run on error
+                - A function (Exception) -> value/Program to handle the error
         """
         return Effect("result.recover", {"program": sub_program, "fallback": fallback})
     
@@ -64,8 +67,16 @@ def Catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
     return result.catch(sub_program, handler)
 
 
-def Recover(sub_program: Any, fallback: Any) -> Effect:
-    """Result: Try sub-program, use fallback value on error."""
+def Recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) -> Effect:
+    """Result: Try sub-program, use fallback value on error.
+    
+    Args:
+        sub_program: Program to try
+        fallback: Can be:
+            - A direct value to use on error
+            - A Program to run on error
+            - A function (Exception) -> value/Program to handle the error
+    """
     return result.recover(sub_program, fallback)
 
 

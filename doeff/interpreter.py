@@ -14,6 +14,7 @@ from doeff._vendor import Ok, Err, Result, trace_err, WGraph, WNode, WStep
 from doeff.types import Effect, ExecutionContext, RunResult
 from doeff.program import Program
 from doeff.handlers import (
+    HandlerScope,
     ReaderEffectHandler,
     StateEffectHandler,
     WriterEffectHandler,
@@ -291,6 +292,7 @@ class ProgramInterpreter:
                 log=[],  # Each parallel program starts with empty log
                 graph=ctx.graph,  # Graph is immutable
                 io_allowed=ctx.io_allowed,
+                cache=ctx.cache,  # Cache is shared across parallel executions
             )
             sub_result = await self.run(prog, ctx_copy)
             sub_contexts.append(sub_result.context)
@@ -339,6 +341,7 @@ class ProgramInterpreter:
                 log=[],  # Each parallel program starts with empty log
                 graph=ctx.graph,  # Graph is immutable
                 io_allowed=ctx.io_allowed,
+                cache=ctx.cache,  # Cache is shared across parallel executions
             )
             sub_result = await self.run(prog, ctx_copy)
             sub_contexts.append(sub_result.context)

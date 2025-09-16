@@ -36,7 +36,6 @@ from doeff.types import (
 )
 
 from doeff.effects import (
-    Effects,
     # Effects - Reader
     Ask,
     Local,
@@ -133,8 +132,6 @@ __all__ = [
     "KleisliProgram",
     # Decorator
     "do",
-    # Effects API
-    "Effects",
     # Effects - Uppercase
     "IO",
     "Annotate",

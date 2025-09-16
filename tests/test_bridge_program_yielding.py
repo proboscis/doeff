@@ -17,7 +17,8 @@ from doeff import (
     Log,
     Step,
     Dep,
-    Effects,
+    Put,
+    Get,
 )
 from doeff_pinjected.bridge import (
     program_to_injected,
@@ -224,8 +225,8 @@ async def test_bridge_handles_mixed_effects_and_programs():  # noqa: PINJ040
         result2 = yield helper("second")
 
         # Use Effects.state
-        yield Effects.state.put("key", "value")
-        state_val = yield Effects.state.get("key")
+        yield Put("key", "value")
+        state_val = yield Get("key")
 
         yield Log(f"State value: {state_val}")
 

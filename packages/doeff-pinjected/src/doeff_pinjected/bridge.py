@@ -13,7 +13,7 @@ from pinjected import AsyncResolver, Injected, IProxy
 from doeff.program import Program
 from doeff.interpreter import ProgramInterpreter
 from doeff.types import ExecutionContext, RunResult
-from doeff.effects import Effects
+from doeff.effects import Await
 
 T = TypeVar("T")
 
@@ -61,7 +61,7 @@ def _create_dep_aware_generator(prog: Program, resolver: AsyncResolver) -> Gener
                 logger.debug(f"Resolving dependency for key: {key}")
                 future = resolver.provide(key)
                 # Wrap in await effect
-                await_effect = Effects.future.await_(future)
+                await_effect = Await(future)
                 # Send to generator and get result
                 value = yield await_effect
                 # Send resolved value back

@@ -92,6 +92,8 @@ class ExecutionContext:
     graph: WGraph = field(default_factory=lambda: WGraph.single(None))
     # IO permission flag
     io_allowed: bool = True
+    # Cache storage (shared across parallel executions)
+    cache: Dict[str, Any] = field(default_factory=dict)
 
     def copy(self) -> ExecutionContext:
         """Create a shallow copy of the context."""
@@ -101,6 +103,7 @@ class ExecutionContext:
             log=self.log.copy(),
             graph=self.graph,
             io_allowed=self.io_allowed,
+            cache=self.cache,  # Cache is shared reference, not copied
         )
 
     def with_env_update(self, updates: Dict[str, Any]) -> ExecutionContext:
@@ -112,6 +115,8 @@ class ExecutionContext:
             state=self.state.copy(),
             log=self.log.copy(),
             graph=self.graph,
+            io_allowed=self.io_allowed,
+            cache=self.cache,  # Cache is shared
         )
 
 
