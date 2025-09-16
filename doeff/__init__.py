@@ -67,6 +67,9 @@ from doeff.effects import (
     # Effects - Gather for parallel Programs
     Gather,
     GatherDict,
+    # Effects - Cache
+    CacheGet,
+    CachePut,
     # Lowercase effect functions (aliases)
     ask,
     local,
@@ -85,6 +88,8 @@ from doeff.effects import (
     print_,
     step,
     annotate,
+    cache_get,
+    cache_put,
 )
 
 # Import from new modular structure
@@ -92,6 +97,16 @@ from doeff.program import Program
 from doeff.interpreter import ProgramInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
+
+# Import cache decorator
+from doeff.cache import (
+    cache,
+    cache_key,
+    cache_1min,
+    cache_5min,
+    cache_1hour,
+    cache_forever,
+)
 
 __version__ = "0.1.0"
 
@@ -132,6 +147,8 @@ __all__ = [
     "Fail",
     "Gather",
     "GatherDict",
+    "CacheGet",
+    "CachePut",
     "Get",
     "Listen",
     "Local",
@@ -160,4 +177,13 @@ __all__ = [
     "put",
     "step",
     "tell",
+    "cache_get",
+    "cache_put",
+    # Cache decorator
+    "cache",
+    "cache_key",
+    "cache_1min",
+    "cache_5min",
+    "cache_1hour",
+    "cache_forever",
 ]

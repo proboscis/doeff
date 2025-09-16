@@ -174,6 +174,22 @@ class Effects:
             """Gather results from a dict of programs."""
             return Effect("gather.gather_dict", programs)
 
+    class cache:
+        """Cache effects for memoization."""
+
+        @staticmethod
+        def get(key: Any) -> Effect:
+            """Get value from cache. Key can be any serializable object."""
+            return Effect("cache.get", key)
+
+        @staticmethod
+        def put(key: Any, value: Any, ttl: int | None = None) -> Effect:
+            """Put value into cache with optional TTL (in seconds).
+            
+            Key can be any serializable object (e.g., tuple, FrozenDict).
+            """
+            return Effect("cache.put", {"key": key, "value": value, "ttl": ttl})
+
 
 # ============================================
 # Uppercase aliases (for backward compatibility)
@@ -284,6 +300,16 @@ def GatherDict(programs: Dict[str, Any]) -> Effect:
     return Effects.gather.gather_dict(programs)
 
 
+def CacheGet(key: Any) -> Effect:
+    """Cache: Get value from cache. Key can be any serializable object."""
+    return Effects.cache.get(key)
+
+
+def CachePut(key: Any, value: Any, ttl: int | None = None) -> Effect:
+    """Cache: Put value into cache with optional TTL."""
+    return Effects.cache.put(key, value, ttl)
+
+
 # ============================================
 # Lowercase aliases (for functional style)
 # ============================================
@@ -306,6 +332,8 @@ io = IO
 print_ = Print
 step = Step
 annotate = Annotate
+cache_get = CacheGet
+cache_put = CachePut
 
 
 __all__ = [
@@ -333,6 +361,8 @@ __all__ = [
     "Dep",
     "Gather",
     "GatherDict",
+    "CacheGet",
+    "CachePut",
     # Lowercase aliases
     "ask",
     "local",
@@ -352,4 +382,6 @@ __all__ = [
     "print_",
     "step",
     "annotate",
+    "cache_get",
+    "cache_put",
 ]

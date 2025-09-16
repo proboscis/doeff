@@ -21,6 +21,7 @@ from doeff.handlers import (
     ResultEffectHandler,
     IOEffectHandler,
     GraphEffectHandler,
+    CacheEffectHandler,
 )
 
 T = TypeVar("T")
@@ -55,17 +56,44 @@ class ProgramInterpreter:
 
     Uses separate handler classes for each effect category to maintain
     single responsibility and reduce complexity.
+    
+    Effect handlers can be customized by passing custom handlers to __init__.
     """
 
-    def __init__(self):
-        """Initialize effect handlers."""
-        self.reader_handler = ReaderEffectHandler()
-        self.state_handler = StateEffectHandler()
-        self.writer_handler = WriterEffectHandler()
-        self.future_handler = FutureEffectHandler()
-        self.result_handler = ResultEffectHandler()
-        self.io_handler = IOEffectHandler()
-        self.graph_handler = GraphEffectHandler()
+    def __init__(self, custom_handlers: Optional[Dict[str, Any]] = None):
+        """Initialize effect handlers.
+        
+        Args:
+            custom_handlers: Optional dict mapping effect categories to custom handlers.
+                           Keys can be: 'reader', 'state', 'writer', 'future', 'result',
+                           'io', 'graph', 'cache'.
+                           Values should be handler instances with appropriate handle_* methods.
+        """
+        # Initialize default handlers
+        handlers = {
+            'reader': ReaderEffectHandler(),
+            'state': StateEffectHandler(),
+            'writer': WriterEffectHandler(),
+            'future': FutureEffectHandler(),
+            'result': ResultEffectHandler(),
+            'io': IOEffectHandler(),
+            'graph': GraphEffectHandler(),
+            'cache': CacheEffectHandler(),
+        }
+        
+        # Override with custom handlers if provided
+        if custom_handlers:
+            handlers.update(custom_handlers)
+        
+        # Set handlers as attributes for backward compatibility
+        self.reader_handler = handlers['reader']
+        self.state_handler = handlers['state']
+        self.writer_handler = handlers['writer']
+        self.future_handler = handlers['future']
+        self.result_handler = handlers['result']
+        self.io_handler = handlers['io']
+        self.graph_handler = handlers['graph']
+        self.cache_handler = handlers['cache']
 
         # Dispatch table
         self._dispatchers = {
@@ -92,6 +120,8 @@ class ProgramInterpreter:
             "program.gather_dict": self._dispatch_program_gather_dict,
             "gather.gather_dict": self._dispatch_program_gather_dict,  # Alias
             "dep.inject": self._dispatch_dep_inject,
+            "cache.get": self._dispatch_cache_get,
+            "cache.put": self._dispatch_cache_put,
         }
 
     async def run(
@@ -337,6 +367,15 @@ class ProgramInterpreter:
     async def _dispatch_dep_inject(self, payload: Any, ctx: ExecutionContext) -> Any:
         """Handle dep.inject effect - same as reader.ask."""
         return await self.reader_handler.handle_ask(payload, ctx)
+
+    # Cache dispatchers
+    async def _dispatch_cache_get(self, payload: Any, ctx: ExecutionContext) -> Any:
+        """Handle cache.get effect."""
+        return await self.cache_handler.handle_get(payload, ctx)
+
+    async def _dispatch_cache_put(self, payload: Any, ctx: ExecutionContext) -> Any:
+        """Handle cache.put effect."""
+        return await self.cache_handler.handle_put(payload, ctx)
 
 
 __all__ = ["ProgramInterpreter", "force_eval"]
