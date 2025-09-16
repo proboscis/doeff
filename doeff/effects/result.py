@@ -6,7 +6,7 @@ This module provides Result effects for error handling.
 
 from typing import Any, Callable, Union
 
-from .base import Effect
+from .base import Effect, create_effect_with_trace
 
 
 class result:
@@ -15,7 +15,7 @@ class result:
     @staticmethod
     def fail(exc: Exception) -> Effect:
         """Signal failure."""
-        return Effect("result.fail", exc)
+        return create_effect_with_trace("result.fail", exc)
 
     @staticmethod
     def catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
@@ -25,7 +25,7 @@ class result:
             sub_program: Program to try
             handler: Function to handle exceptions
         """
-        return Effect("result.catch", {"program": sub_program, "handler": handler})
+        return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler})
     
     @staticmethod
     def recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) -> Effect:
@@ -38,7 +38,7 @@ class result:
                 - A Program to run on error
                 - A function (Exception) -> value/Program to handle the error
         """
-        return Effect("result.recover", {"program": sub_program, "fallback": fallback})
+        return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback})
     
     @staticmethod
     def retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
@@ -49,7 +49,7 @@ class result:
             max_attempts: Maximum number of attempts (default: 3)
             delay_ms: Delay between attempts in milliseconds (default: 0)
         """
-        return Effect("result.retry", {
+        return create_effect_with_trace("result.retry", {
             "program": sub_program,
             "max_attempts": max_attempts,
             "delay_ms": delay_ms
@@ -59,12 +59,12 @@ class result:
 # Uppercase aliases
 def Fail(exc: Exception) -> Effect:
     """Result: Signal failure."""
-    return result.fail(exc)
+    return create_effect_with_trace("result.fail", exc, skip_frames=3)
 
 
 def Catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
     """Result: Try sub-program with error handler."""
-    return result.catch(sub_program, handler)
+    return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler}, skip_frames=3)
 
 
 def Recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) -> Effect:
@@ -77,12 +77,16 @@ def Recover(sub_program: Any, fallback: Union[Any, Callable[[Exception], Any]]) 
             - A Program to run on error
             - A function (Exception) -> value/Program to handle the error
     """
-    return result.recover(sub_program, fallback)
+    return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback}, skip_frames=3)
 
 
 def Retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
     """Result: Retry sub-program on failure."""
-    return result.retry(sub_program, max_attempts, delay_ms)
+    return create_effect_with_trace("result.retry", {
+        "program": sub_program,
+        "max_attempts": max_attempts,
+        "delay_ms": delay_ms
+    }, skip_frames=3)
 
 
 __all__ = [

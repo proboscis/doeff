@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Dict, Generator, List, TypeVar, Union, TYPE_CHECKING
+from typing import Any, Dict, Generator, List, Optional, TypeVar, Union, TYPE_CHECKING
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
@@ -33,6 +33,40 @@ T = TypeVar("T")
 U = TypeVar("U")
 
 # ============================================
+# Effect Creation Context
+# ============================================
+
+@dataclass(frozen=True)
+class EffectCreationContext:
+    """Context information about where an effect was created."""
+    
+    filename: str
+    line: int
+    function: str
+    code: str | None = None
+    stack_trace: List[Dict[str, Any]] = field(default_factory=list)
+    frame_info: Any = None  # FrameInfo from inspect module
+    
+    def format_location(self) -> str:
+        """Format the creation location as a string."""
+        return f'{self.filename}:{self.line} in {self.function}'
+    
+    def format_full(self) -> str:
+        """Format the full creation context with stack trace."""
+        lines = []
+        lines.append(f"Effect created at {self.format_location()}")
+        if self.code:
+            lines.append(f"    {self.code}")
+        if self.stack_trace:
+            lines.append("\nCreation stack trace:")
+            for frame in self.stack_trace:
+                lines.append(f'  File "{frame["filename"]}", line {frame["line"]}, in {frame["function"]}')
+                if frame.get("code"):
+                    lines.append(f'    {frame["code"]}')
+        return "\n".join(lines)
+
+
+# ============================================
 # Core Effect Type
 # ============================================
 
@@ -47,6 +81,7 @@ class Effect:
 
     tag: str  # String discrimination instead of type-based
     payload: Any  # Untyped payload - Python can't express effect-specific types
+    created_at: Optional[EffectCreationContext] = None  # Optional creation context for debugging
 
 
 # ============================================

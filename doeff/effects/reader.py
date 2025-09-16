@@ -6,7 +6,7 @@ This module provides Reader effects for environment-based configuration.
 
 from typing import Any, Dict
 
-from .base import Effect
+from .base import Effect, create_effect_with_trace
 
 
 class reader:
@@ -15,7 +15,7 @@ class reader:
     @staticmethod
     def ask(key: str) -> Effect:
         """Ask for environment value."""
-        return Effect("reader.ask", key)
+        return create_effect_with_trace("reader.ask", key)
 
     @staticmethod
     def local(env_update: Dict[str, Any], sub_program: Any) -> Effect:
@@ -25,18 +25,18 @@ class reader:
             env_update: Environment updates to apply
             sub_program: A Program or a thunk that returns a Program
         """
-        return Effect("reader.local", {"env": env_update, "program": sub_program})
+        return create_effect_with_trace("reader.local", {"env": env_update, "program": sub_program})
 
 
 # Uppercase aliases
 def Ask(key: str) -> Effect:
     """Reader: Ask for environment value."""
-    return reader.ask(key)
+    return create_effect_with_trace("reader.ask", key, skip_frames=3)
 
 
 def Local(env_update: Dict[str, Any], sub_program: Any) -> Effect:
     """Reader: Run sub-program with modified environment."""
-    return reader.local(env_update, sub_program)
+    return create_effect_with_trace("reader.local", {"env": env_update, "program": sub_program}, skip_frames=3)
 
 
 __all__ = [
