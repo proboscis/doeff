@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Dict, Generator, List, Optional, TypeVar, Union, TYPE_CHECKING
+from typing import Any, Dict, Generator, Generic, List, Optional, TypeVar, Union, TYPE_CHECKING
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
@@ -227,7 +227,7 @@ class ExecutionContext:
 # ============================================
 
 @dataclass(frozen=True)
-class RunResult[T]:
+class RunResult(Generic[T]):
     """
     Result from running a Program through the pragmatic engine.
 
