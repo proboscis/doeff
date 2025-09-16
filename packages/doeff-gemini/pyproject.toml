@@ -7,7 +7,7 @@ name = "doeff-gemini"
 version = "0.1.0"
 description = "Google Gemini integration for doeff with structured output and observability"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Masui"},

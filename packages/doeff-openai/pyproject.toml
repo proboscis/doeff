@@ -7,7 +7,7 @@ name = "doeff-openai"
 version = "0.1.0"
 description = "OpenAI integration for doeff with comprehensive observability via Graph and Log effects"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Masui"},

@@ -6,6 +6,7 @@ This module contains the Program wrapper class that represents a lazy computatio
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Generator, Generic, TypeVar, Union
 
@@ -31,6 +32,16 @@ class Program(Generic[T]):
     def __iter__(self):
         """Allow iteration by returning a fresh generator."""
         return self.generator_func()
+
+    def __repr__(self) -> str:
+        """Return a developer-friendly representation including the wrapped function."""
+
+        func = inspect.unwrap(self.generator_func)
+        try:
+            func_repr = repr(func)
+        except Exception:  # pragma: no cover - very defensive, shouldn't happen
+            func_repr = object.__repr__(func)
+        return f"Program({func_repr})"
 
     def map(self, f: Callable[[T], U]) -> "Program[U]":
         """Map a function over the result of this program (functor map)."""
