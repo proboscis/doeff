@@ -61,6 +61,7 @@ from doeff.effects import (
     # Effects - Graph tracking
     Step,
     Annotate,
+    Snapshot,
     # Effects - Dependency injection (pinjected compatible)
     Dep,
     # Effects - Gather for parallel Programs
@@ -87,6 +88,7 @@ from doeff.effects import (
     print_,
     step,
     annotate,
+    snapshot,
     cache_get,
     cache_put,
 )
@@ -96,6 +98,7 @@ from doeff.program import Program
 from doeff.interpreter import ProgramInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
+from doeff.webui_stream import stream_program_to_webui
 
 # Import cache decorator
 from doeff.cache import (
@@ -132,6 +135,8 @@ __all__ = [  # noqa: RUF022
     "KleisliProgram",
     # Decorator
     "do",
+    # Web UI helper
+    "stream_program_to_webui",
     # Effects - Uppercase
     "IO",
     "Annotate",

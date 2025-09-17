@@ -25,6 +25,7 @@ from doeff.effects import (
     Parallel,
     Print,
     Put,
+    Snapshot,
     Step,
     Tell,
     annotate,
@@ -41,6 +42,7 @@ from doeff.effects import (
     parallel,
     print_,
     put,
+    snapshot,
     step,
     tell,
 )
@@ -96,6 +98,7 @@ __all__ = [
     "Catch",
     "IO",
     "Print",
+    "Snapshot",
     "Step",
     "Annotate",
     "Gather",

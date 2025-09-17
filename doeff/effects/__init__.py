@@ -19,7 +19,7 @@ from .cache import (
 from .dep import Dep, dep
 from .future import Await, Parallel, future
 from .gather import Gather, GatherDict, gather
-from .graph import Annotate, Step, graph
+from .graph import Annotate, Snapshot, Step, graph
 from .io import IO, Print
 from .io import io as io_class
 from .reader import Ask, Local, reader
@@ -50,6 +50,7 @@ io_func = IO  # Special case: io is a class, so use io_func
 print_ = Print
 step = Step
 annotate = Annotate
+snapshot = Snapshot
 cache_get = CacheGet
 cache_put = CachePut
 
@@ -80,6 +81,7 @@ __all__ = [
     "Print",
     "Step",
     "Annotate",
+    "Snapshot",
     "Dep",
     "Gather",
     "GatherDict",
@@ -107,6 +109,7 @@ __all__ = [
     "print_",
     "step",
     "annotate",
+    "snapshot",
     "cache_get",
     "cache_put",
 ]
