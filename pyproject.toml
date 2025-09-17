@@ -29,6 +29,8 @@ dependencies = [
     "pinjected>=0.3.0b0",
     "exceptiongroup>=1.2.0; python_version < '3.11'",
     "doeff-pinjected",
+    "cloudpickle>=3.0.0",
+    "phart>=1.1.4",
 ]
 
 [project.urls]

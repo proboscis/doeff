@@ -13,8 +13,20 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Optional, Dict
 
+import hashlib
+import json
+import lzma
+import os
+import pickle
+import sqlite3
+import tempfile
+from pathlib import Path
+
+import cloudpickle
+
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.types import ExecutionContext, ListenResult
+from doeff.cache_policy import CachePolicy, CacheStorage, ensure_cache_policy
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
@@ -371,83 +383,125 @@ class GraphEffectHandler:
         return ctx.graph
 
 
-class CacheEffectHandler:
-    """Handles Cache effects for memoization."""
-    scope = HandlerScope.SHARED  # Cache MUST be shared across parallel executions
 
-    def __init__(self):
-        """Initialize the cache handler."""
-        import time
-        self._time = time.time
+class MemoEffectHandler:
+    """In-memory memoization handler."""
+
+    scope = HandlerScope.SHARED
 
     def _serialize_key(self, key: Any) -> str:
-        """Serialize any key to a string for internal cache storage.
-        
-        Handles tuples, FrozenDicts, and other serializable objects.
-        """
-        import json
-        import hashlib
-        
-        # Convert key to a JSON-serializable format
-        def make_serializable(obj):
+        def make_serializable(obj: Any):
             if isinstance(obj, (str, int, float, bool, type(None))):
                 return obj
-            elif isinstance(obj, (tuple, list)):
-                return ["__tuple__" if isinstance(obj, tuple) else "__list__", 
-                        [make_serializable(item) for item in obj]]
-            elif hasattr(obj, '__dict__'):  # FrozenDict and similar
-                return {"__type__": type(obj).__name__, 
-                        "data": {k: make_serializable(v) for k, v in obj.items()}}
-            elif isinstance(obj, dict):
-                return {k: make_serializable(v) for k, v in obj.items()}
-            else:
-                # Fallback to string representation
-                return str(obj)
-        
-        try:
-            serializable = make_serializable(key)
-            key_str = json.dumps(serializable, sort_keys=True)
-        except (TypeError, ValueError):
-            # Fallback to string representation
-            key_str = str(key)
-        
-        # Create a hash for consistent, shorter keys
-        hash_obj = hashlib.md5(key_str.encode())
-        return f"cache:{hash_obj.hexdigest()}"
+            if isinstance(obj, (tuple, list)):
+                return [
+                    "__tuple__" if isinstance(obj, tuple) else "__list__",
+                    [make_serializable(item) for item in obj],
+                ]
+            if hasattr(obj, "items"):
+                return {str(k): make_serializable(v) for k, v in obj.items()}
+            return str(obj)
+
+        serializable = make_serializable(key)
+        key_str = json.dumps(serializable, sort_keys=True)
+        return hashlib.md5(key_str.encode()).hexdigest()
 
     async def handle_get(self, key: Any, ctx: ExecutionContext) -> Any:
-        """Handle cache.get effect.
-        
-        Raises KeyError if the key is not in cache or has expired.
-        """
         serialized_key = self._serialize_key(key)
-        
         if serialized_key not in ctx.cache:
-            raise KeyError(f"Cache miss for key")
-        
-        value, expiry = ctx.cache[serialized_key]
-        
-        # Check if expired
-        if expiry is not None and self._time() > expiry:
-            del ctx.cache[serialized_key]
-            raise KeyError(f"Cache expired for key")
-        
-        return value
+            raise KeyError("Memo miss for key")
+        return ctx.cache[serialized_key]
 
     async def handle_put(self, payload: Dict, ctx: ExecutionContext) -> None:
-        """Handle cache.put effect."""
+        serialized_key = self._serialize_key(payload["key"])
+        ctx.cache[serialized_key] = payload["value"]
+
+
+class CacheEffectHandler:
+    """Persistent cache backed by SQLite/LZMA storage."""
+
+    scope = HandlerScope.SHARED
+
+    def __init__(self):
+        import time
+
+        self._time = time.time
+        db_path = os.environ.get("DOEFF_CACHE_PATH")
+        if db_path:
+            self._db_path = Path(db_path)
+        else:
+            self._db_path = Path(tempfile.gettempdir()) / "doeff_cache.sqlite3"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(
+            self._db_path,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            check_same_thread=False,
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cache_entries (
+                key_hash TEXT PRIMARY KEY,
+                expiry REAL,
+                key_blob BLOB NOT NULL,
+                value_blob BLOB NOT NULL
+            )
+            """
+        )
+        self._conn.commit()
+        self._lock = asyncio.Lock()
+
+    def _serialize_key(self, key: Any) -> tuple[str, bytes]:
+        key_bytes = cloudpickle.dumps(key)
+        key_blob = lzma.compress(key_bytes)
+        key_hash = hashlib.sha256(key_blob).hexdigest()
+        return key_hash, key_blob
+
+    async def handle_get(self, key: Any, ctx: ExecutionContext) -> Any:
+        key_hash, _ = self._serialize_key(key)
+        async with self._lock:
+            row = self._conn.execute(
+                "SELECT value_blob, expiry FROM cache_entries WHERE key_hash = ?",
+                (key_hash,),
+            ).fetchone()
+        if row is None:
+            raise KeyError("Cache miss for key")
+
+        value_blob, expiry = row
+        if expiry is not None and self._time() > expiry:
+            await self._delete_entry(key_hash)
+            raise KeyError("Cache expired for key")
+
+        return cloudpickle.loads(lzma.decompress(value_blob))
+
+    async def handle_put(self, payload: Dict, ctx: ExecutionContext) -> None:
         key = payload["key"]
         value = payload["value"]
-        ttl = payload.get("ttl")
-        
-        serialized_key = self._serialize_key(key)
-        
-        # Calculate expiry time if TTL is provided
+        policy = payload.get("policy")
+        if not isinstance(policy, CachePolicy):
+            policy = ensure_cache_policy(policy=policy)
+
+        ttl = payload.get("ttl", policy.ttl)
         expiry = None
         if ttl is not None and ttl > 0:
             expiry = self._time() + ttl
-        
-        ctx.cache[serialized_key] = (value, expiry)
+
+        key_hash, key_blob = self._serialize_key(key)
+        value_blob = lzma.compress(cloudpickle.dumps(value))
+
+        async with self._lock:
+            self._conn.execute(
+                "REPLACE INTO cache_entries (key_hash, expiry, key_blob, value_blob) VALUES (?, ?, ?, ?)",
+                (key_hash, expiry, key_blob, value_blob),
+            )
+            self._conn.commit()
+
+    async def _delete_entry(self, key_hash: str) -> None:
+        async with self._lock:
+            self._conn.execute(
+                "DELETE FROM cache_entries WHERE key_hash = ?",
+                (key_hash,),
+            )
+            self._conn.commit()
 
 
 __all__ = [
@@ -459,5 +513,6 @@ __all__ = [
     "ResultEffectHandler",
     "IOEffectHandler",
     "GraphEffectHandler",
+    "MemoEffectHandler",
     "CacheEffectHandler",
 ]

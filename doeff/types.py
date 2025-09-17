@@ -14,6 +14,7 @@ from typing import Any, Dict, Generator, Generic, List, Optional, TypeVar, Union
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
     from doeff.program import Program
+    from phart.styles import NodeStyle
 
 # Re-export vendored types for backward compatibility
 from doeff._vendor import (
@@ -275,6 +276,142 @@ class RunResult(Generic[T]):
         """Get the computation graph."""
         return self.context.graph
     
+    def visualize_graph_ascii(
+        self,
+        *,
+        node_style: "NodeStyle | str" = "square",
+        node_spacing: int = 4,
+        margin: int = 1,
+        layer_spacing: int = 2,
+        show_arrows: bool = True,
+        use_ascii: bool | None = None,
+        max_value_length: int = 32,
+        include_ops: bool = True,
+        custom_decorators: Dict[WNode | str, tuple[str, str]] | None = None,
+    ) -> str:
+        """Render the computation graph as ASCII art using the phart library.
+
+        Args:
+            node_style: NodeStyle enum or string name recognised by phart.
+            node_spacing: Minimum horizontal spacing between nodes.
+            margin: Padding applied to the rendered canvas.
+            layer_spacing: Vertical spacing between layers.
+            show_arrows: Whether to render arrow heads on edges.
+            use_ascii: Force ASCII-only characters when True.
+            max_value_length: Maximum characters for node value previews.
+            include_ops: Append producing op metadata when available.
+            custom_decorators: Optional mapping of nodes or labels to (prefix, suffix).
+
+        Returns:
+            ASCII diagram of the run graph.
+
+        Raises:
+            ImportError: If phart (and its dependencies) are not installed.
+            ValueError: If ``node_style`` does not resolve to a valid style.
+            TypeError: If ``custom_decorators`` keys are not ``WNode`` or ``str``.
+        """
+
+        try:
+            import networkx as nx
+            from phart.renderer import ASCIIRenderer
+            from phart.styles import LayoutOptions, NodeStyle
+        except ImportError as exc:  # pragma: no cover - missing optional dependency
+            raise ImportError(
+                "visualize_graph_ascii requires the phart package. Install it via `pip install phart`."
+            ) from exc
+
+        steps = self.graph.steps or frozenset({self.graph.last})
+
+        base_graph = nx.DiGraph()
+        producers: Dict[WNode, WStep] = {}
+
+        for step in steps:
+            producers[step.output] = step
+            node_meta = step.meta or {}
+            base_graph.add_node(
+                step.output,
+                value=step.output.value,
+                op=node_meta.get("op"),
+            )
+            for input_node in step.inputs:
+                if input_node not in base_graph:
+                    base_graph.add_node(input_node, value=input_node.value)
+                base_graph.add_edge(input_node, step.output, op=node_meta.get("op"))
+
+        def _preview(value: Any) -> str:
+            preview = repr(value)
+            preview = preview.replace("\n", " ").replace("\r", " ")
+            if len(preview) <= max_value_length:
+                return preview
+            suffix = "..."
+            slice_len = max(0, max_value_length - len(suffix))
+            return f"{preview[:slice_len]}{suffix}"
+
+        try:
+            ordering = list(nx.topological_sort(base_graph))
+        except nx.NetworkXUnfeasible:
+            ordering = list(base_graph.nodes)
+
+        label_map: Dict[WNode, str] = {}
+        for index, node in enumerate(ordering):
+            node_data = base_graph.nodes[node]
+            preview = _preview(node_data.get("value"))
+            op_label = None
+            if include_ops:
+                producer = producers.get(node)
+                if producer:
+                    op_label = (producer.meta or {}).get("op")
+            parts = [f"{index:02d}", preview]
+            if op_label:
+                parts.append(f"@{op_label}")
+            label_map[node] = " ".join(part for part in parts if part)
+
+        phart_graph = nx.DiGraph()
+        for node, label in label_map.items():
+            phart_graph.add_node(label)
+
+        for src, dst in base_graph.edges:
+            phart_graph.add_edge(label_map[src], label_map[dst])
+
+        if isinstance(node_style, str):
+            try:
+                resolved_style = NodeStyle[node_style.upper()]
+            except KeyError as err:
+                valid = ", ".join(style.name.lower() for style in NodeStyle)
+                raise ValueError(
+                    f"Unknown node_style '{node_style}'. Valid values: {valid}."
+                ) from err
+        else:
+            resolved_style = node_style
+
+        decorator_map: Dict[str, tuple[str, str]] | None = None
+        if custom_decorators:
+            decorator_map = {}
+            for key, decorators in custom_decorators.items():
+                if isinstance(key, WNode):
+                    target_label = label_map.get(key)
+                elif isinstance(key, str):
+                    target_label = key
+                else:
+                    raise TypeError("custom_decorators keys must be WNode or str")
+                if target_label:
+                    decorator_map[target_label] = decorators
+            if decorator_map and resolved_style is not NodeStyle.CUSTOM:
+                resolved_style = NodeStyle.CUSTOM
+
+        options = LayoutOptions(
+            node_spacing=node_spacing,
+            margin=margin,
+            layer_spacing=layer_spacing,
+            node_style=resolved_style,
+            show_arrows=show_arrows,
+            use_ascii=use_ascii,
+            custom_decorators=decorator_map,
+        )
+
+        renderer = ASCIIRenderer(phart_graph, options=options)
+        return renderer.render()
+
     def format_error(self) -> str:
         """Format error with full traceback if result is a failure."""
         if isinstance(self.result, Ok):

@@ -22,6 +22,7 @@ from .gather import Gather, GatherDict, gather
 from .graph import Annotate, Snapshot, Step, graph
 from .io import IO, Print
 from .io import io as io_class
+from .memo import MemoGet, MemoPut, memo
 from .reader import Ask, Local, reader
 from .result import Catch, Fail, Recover, Retry, result
 from .state import Get, Modify, Put, state
@@ -51,6 +52,8 @@ print_ = Print
 step = Step
 annotate = Annotate
 snapshot = Snapshot
+memo_get = MemoGet
+memo_put = MemoPut
 cache_get = CacheGet
 cache_put = CachePut
 
@@ -90,6 +93,8 @@ __all__ = [
     "CachePolicy",
     "CacheLifecycle",
     "CacheStorage",
+    "MemoGet",
+    "MemoPut",
     # Lowercase aliases
     "ask",
     "local",
@@ -110,6 +115,8 @@ __all__ = [
     "step",
     "annotate",
     "snapshot",
+    "memo_get",
+    "memo_put",
     "cache_get",
     "cache_put",
 ]

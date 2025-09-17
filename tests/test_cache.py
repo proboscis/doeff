@@ -11,6 +11,7 @@ from doeff import (
     CachePut,
     CacheStorage,
     EffectGenerator,
+    ExecutionContext,
     ProgramInterpreter,
     Recover,
     do,
@@ -365,3 +366,58 @@ async def test_convenience_decorators():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+
+@pytest.mark.asyncio
+async def test_cache_decorator_hits():
+    calls = []
+
+    @cache()
+    @do
+    def compute(x: int) -> EffectGenerator[int]:
+        calls.append(x)
+        return x * 2
+
+    interpreter = ProgramInterpreter()
+    context = ExecutionContext()
+
+    result1 = await interpreter.run(compute(3), context)
+    assert result1.value == 6
+    assert calls == [3]
+
+    result2 = await interpreter.run(compute(3), result1.context)
+    assert result2.value == 6
+    assert calls == [3]
+
+
+@pytest.mark.asyncio
+async def test_cache_decorator_expiry():
+    calls = []
+
+    @cache(ttl=0.5)
+    @do
+    def compute(x: int) -> EffectGenerator[int]:
+        calls.append(x)
+        return x * 2
+
+    interpreter = ProgramInterpreter()
+    context = ExecutionContext()
+    cache_handler = interpreter.cache_handler
+    base_time = 1000.0
+    original_time = cache_handler._time
+
+    try:
+        cache_handler._time = lambda: base_time
+        await interpreter.run(compute(5), context)
+        assert calls == [5]
+
+        cache_handler._time = lambda: base_time + 0.2
+        await interpreter.run(compute(5), context)
+        assert calls == [5]
+
+        cache_handler._time = lambda: base_time + 1.0
+        await interpreter.run(compute(5), context)
+        assert calls == [5, 5]
+    finally:
+        cache_handler._time = original_time

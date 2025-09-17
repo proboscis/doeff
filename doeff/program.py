@@ -104,6 +104,38 @@ class Program(Generic[T]):
         """Sequence this program with another, discarding this program's result."""
         return self.flat_map(lambda _: next_program)
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program[Effect]"]
+    ) -> Program[T]:
+        """Return a Program that applies ``transform`` to every yielded effect."""
+
+        def intercepted_generator():
+            gen = self.generator_func()
+            try:
+                current = next(gen)
+            except StopIteration as exc:
+                return exc.value
+
+            while True:
+                if isinstance(current, Program):
+                    current = current.intercept(transform)
+                    value = yield current
+                elif isinstance(current, Effect):
+                    transformed = transform(current)
+                    if isinstance(transformed, Program):
+                        value = yield transformed
+                    else:
+                        value = yield transformed
+                else:
+                    value = yield current
+
+                try:
+                    current = gen.send(value)
+                except StopIteration as exc:
+                    return exc.value
+
+        return Program(intercepted_generator)
+
     @staticmethod
     def pure(value: T) -> Program[T]:
         """Create a program that returns the given value (monadic return)."""
