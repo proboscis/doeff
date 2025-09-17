@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,6 +23,60 @@ from doeff import (
 )
 
 from .types import APICallMetadata, CostInfo, TokenUsage
+
+
+def _prepare_prompt_details(
+    request_payload: dict[str, Any]
+) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], list[dict[str, Any]] | None]:
+    """Return sanitized payload plus extracted text/images/messages."""
+
+    sanitized_payload = copy.deepcopy(request_payload)
+
+    messages = request_payload.get("messages")
+    prompt_text_parts: list[str] = []
+    prompt_images: list[dict[str, Any]] = []
+    prompt_messages: list[dict[str, Any]] | None = None
+
+    if isinstance(messages, list):
+        sanitized_messages: list[dict[str, Any]] = []
+        for message in messages:
+            if isinstance(message, dict):
+                message_copy = copy.deepcopy(message)
+                content = message.get("content")
+                if isinstance(content, list):
+                    content_copy: list[Any] = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            part_copy = copy.deepcopy(part)
+                            part_type = part_copy.get("type")
+                            if part_type == "text":
+                                text_piece = part_copy.get("text")
+                                if isinstance(text_piece, str):
+                                    prompt_text_parts.append(text_piece)
+                            elif part_type == "image_url":
+                                image_url = part_copy.get("image_url", {})
+                                if isinstance(image_url, dict):
+                                    url = image_url.get("url")
+                                    if isinstance(url, str):
+                                        prompt_images.append({"data_uri": url})
+                            content_copy.append(part_copy)
+                        elif isinstance(part, str):
+                            prompt_text_parts.append(part)
+                            content_copy.append(part)
+                        else:
+                            content_copy.append(part)
+                    message_copy["content"] = content_copy
+                elif isinstance(content, str):
+                    prompt_text_parts.append(content)
+                sanitized_messages.append(message_copy)
+            else:
+                sanitized_messages.append(copy.deepcopy(message))
+        sanitized_payload["messages"] = sanitized_messages
+        prompt_messages = sanitized_messages
+
+    prompt_text = "\n\n".join(filter(None, prompt_text_parts)).strip() or None
+
+    return sanitized_payload, prompt_text, prompt_images, prompt_messages
 
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 
@@ -186,6 +241,9 @@ def track_api_call(
     """Track OpenRouter API call in logs, graph, and state."""
     end_time = time.time()
     latency_ms = (end_time - start_time) * 1000
+    sanitized_payload, prompt_text, prompt_images, prompt_messages = _prepare_prompt_details(
+        request_payload
+    )
     token_usage = (
         extract_token_usage(response_data) if response_data and not error else None
     )
@@ -230,13 +288,13 @@ def track_api_call(
     request_summary = {
         "operation": operation,
         "model": model,
-        "messages_count": len(request_payload.get("messages", [])),
-        "temperature": request_payload.get("temperature"),
-        "max_tokens": request_payload.get("max_tokens")
-        or request_payload.get("max_completion_tokens"),
+        "messages_count": len(sanitized_payload.get("messages", [])),
+        "temperature": sanitized_payload.get("temperature"),
+        "max_tokens": sanitized_payload.get("max_tokens")
+        or sanitized_payload.get("max_completion_tokens"),
     }
     yield Step(
-        {"request_payload": request_payload, "timestamp": graph_metadata["timestamp"]},
+        {"request_payload": sanitized_payload, "timestamp": graph_metadata["timestamp"]},
         {**graph_metadata, "phase": "request_payload"},
     )
     yield Step(
@@ -284,6 +342,9 @@ def track_api_call(
             else None,
             "cost": cost_info.total_cost if cost_info else None,
             "provider": provider,
+            "prompt_text": prompt_text,
+            "prompt_images": prompt_images,
+            "prompt_messages": prompt_messages,
         }
     )
     yield Put("openrouter_api_calls", api_calls)

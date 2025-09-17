@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -20,6 +22,45 @@ from doeff import (
 
 from .costs import calculate_cost
 from .types import APICallMetadata, CostInfo, TokenUsage
+
+
+def _serialize_image_for_logging(image: Any) -> dict[str, Any]:
+    """Serialize a PIL image into a loggable dictionary with base64 data."""
+    try:
+        image_format = (getattr(image, "format", None) or "PNG").upper()
+        buffer = io.BytesIO()
+        image.save(buffer, format=image_format)
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        mime_type = f"image/{image_format.lower()}"
+        return {
+            "format": image_format,
+            "mode": getattr(image, "mode", None),
+            "size": list(getattr(image, "size", ())) or None,
+            "mime_type": mime_type,
+            "data_uri": f"data:{mime_type};base64,{encoded}",
+        }
+    except Exception as exc:  # pragma: no cover - defensive logging helper
+        return {"error": f"failed_to_serialize_image: {exc}"}
+
+
+def _prepare_request_payload(
+    request_payload: Any,
+) -> tuple[Any, str | None, list[dict[str, Any]]]:
+    """Normalize Gemini request payload for logging/state tracking."""
+
+    if not isinstance(request_payload, dict):
+        return request_payload, None, []
+
+    text = request_payload.get("text") if isinstance(request_payload.get("text"), str) else None
+    raw_images = request_payload.get("images") or []
+    serialized_images: list[dict[str, Any]] = []
+    if isinstance(raw_images, list):
+        serialized_images = [_serialize_image_for_logging(image) for image in raw_images]
+
+    sanitized_payload = dict(request_payload)
+    sanitized_payload["images"] = serialized_images
+
+    return sanitized_payload, text, serialized_images
 
 
 class GeminiClient:
@@ -280,6 +321,8 @@ def track_api_call(
     end_time = time.time()
     latency_ms = (end_time - start_time) * 1000
 
+    sanitized_payload, prompt_text, prompt_images = _prepare_request_payload(request_payload)
+
     token_usage = _extract_usage(response) if response and not error else None
     request_id = _extract_request_id(response) if response else None
 
@@ -317,7 +360,7 @@ def track_api_call(
 
     graph_meta = metadata.to_graph_metadata()
     yield Step(
-        {"request_payload": request_payload, "timestamp": graph_meta["timestamp"]},
+        {"request_payload": sanitized_payload, "timestamp": graph_meta["timestamp"]},
         {**graph_meta, "phase": "request_payload"},
     )
     yield Step(
@@ -339,32 +382,34 @@ def track_api_call(
     api_calls = yield Get("gemini_api_calls")
     if api_calls is None:
         api_calls = []
-    api_calls.append(
-        {
-            "operation": operation,
-            "model": model,
-            "timestamp": metadata.timestamp.isoformat(),
-            "latency_ms": latency_ms,
-            "error": metadata.error,
-            "tokens": {
-                "input": token_usage.input_tokens if token_usage else None,
-                "output": token_usage.output_tokens if token_usage else None,
-                "total": token_usage.total_tokens if token_usage else None,
+        api_calls.append(
+            {
+                "operation": operation,
+                "model": model,
+                "timestamp": metadata.timestamp.isoformat(),
+                "latency_ms": latency_ms,
+                "error": metadata.error,
+                "tokens": {
+                    "input": token_usage.input_tokens if token_usage else None,
+                    "output": token_usage.output_tokens if token_usage else None,
+                    "total": token_usage.total_tokens if token_usage else None,
+                }
+                if token_usage
+                else None,
+                "request_id": request_id,
+                "cost": cost_info.total_cost if cost_info else None,
+                "cost_breakdown": {
+                    "text_input": cost_info.text_input_cost if cost_info else None,
+                    "text_output": cost_info.text_output_cost if cost_info else None,
+                    "image_input": cost_info.image_input_cost if cost_info else None,
+                    "image_output": cost_info.image_output_cost if cost_info else None,
+                }
+                if cost_info
+                else None,
+                "prompt_text": prompt_text,
+                "prompt_images": prompt_images,
             }
-            if token_usage
-            else None,
-            "request_id": request_id,
-            "cost": cost_info.total_cost if cost_info else None,
-            "cost_breakdown": {
-                "text_input": cost_info.text_input_cost if cost_info else None,
-                "text_output": cost_info.text_output_cost if cost_info else None,
-                "image_input": cost_info.image_input_cost if cost_info else None,
-                "image_output": cost_info.image_output_cost if cost_info else None,
-            }
-            if cost_info
-            else None,
-        }
-    )
+        )
     yield Put("gemini_api_calls", api_calls)
 
     if cost_info:

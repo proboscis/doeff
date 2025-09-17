@@ -405,6 +405,13 @@ async def test_structured_llm_text_only():
     assert call_args["model"] == "gpt-4o"
     assert call_args["max_tokens"] == 100
 
+    api_calls = result.context.state.get("openai_api_calls")
+    assert api_calls is not None
+    call_record = api_calls[0]
+    assert call_record["prompt_text"] == "What is 2+2?"
+    assert call_record["prompt_images"] == []
+    assert call_record["prompt_messages"][0]["content"] == "What is 2+2?"
+
 
 @pytest.mark.asyncio
 async def test_structured_llm_with_pydantic():
