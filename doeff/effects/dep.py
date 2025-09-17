@@ -1,31 +1,31 @@
 """
-Dependency injection effects.
-
-This module provides dependency injection effects compatible with pinjected.
+Dependency injection effects compatible with pinjected.
 """
 
-from .base import Effect, create_effect_with_trace
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class dep:
-    """Dependency injection (pinjected compatible)."""
+@dataclass(frozen=True)
+class DepInjectEffect(EffectBase):
+    """Effect emitted when requesting a dependency injection binding."""
 
-    @staticmethod
-    def inject(key: str) -> Effect:
-        """Request dependency injection."""
-        return create_effect_with_trace("dep.inject", key)
+    key: str
 
 
-# Uppercase aliases
+def inject(key: str) -> DepInjectEffect:
+    return create_effect_with_trace(DepInjectEffect(key=key))
+
+
 def Dep(key: str) -> Effect:
-    """Dependency: Request dependency injection."""
-    return create_effect_with_trace("dep.inject", key, skip_frames=3)
-
-
-# No lowercase alias for Dep to avoid confusion
+    return create_effect_with_trace(DepInjectEffect(key=key), skip_frames=3)
 
 
 __all__ = [
+    "DepInjectEffect",
+    "inject",
     "Dep",
-    "dep",
 ]

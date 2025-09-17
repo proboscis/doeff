@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import traceback
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 from functools import wraps
 from typing import (
     Any,
@@ -18,9 +18,11 @@ from typing import (
     Generic,
     List,
     Optional,
+    Protocol,
     TypeVar,
     Union,
     TYPE_CHECKING,
+    runtime_checkable,
 )
 
 # Import Program for type alias, but avoid circular imports
@@ -110,37 +112,40 @@ class EffectCreationContext:
 @dataclass
 class EffectFailure(Exception):
     """Complete error information for a failed effect.
-    
-    Combines both the runtime traceback (where error occurred) and 
+
+    Combines both the runtime traceback (where error occurred) and
     creation context (where effect was created) into a single clean structure.
     """
-    
-    effect_tag: str
+
+    effect: "Effect"
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: str | None = None  # Runtime stack trace where error occurred
     creation_context: Optional[EffectCreationContext] = None  # Where the effect was created
-    
+
     def __str__(self) -> str:
         """Format the error for display."""
-        lines = [f"Effect '{self.effect_tag}' failed"]
-        
+        lines = [f"Effect '{self.effect.__class__.__name__}' failed"]
+
         # Add creation location if available
         if self.creation_context:
             lines.append(f"Created at: {self.creation_context.format_location()}")
-        
+
         # Add the cause
         lines.append(f"Caused by: {self.cause.__class__.__name__}: {self.cause}")
-        
+
         return "\n".join(lines)
     
     def __post_init__(self):
         """Capture runtime traceback if not provided."""
+        if self.creation_context is None:
+            self.creation_context = getattr(self.effect, "created_at", None)
+
         if self.runtime_traceback is None and self.cause:
             # Capture the runtime traceback from the cause
             self.runtime_traceback = "".join(
                 traceback.format_exception(
-                    self.cause.__class__, 
-                    self.cause, 
+                    self.cause.__class__,
+                    self.cause,
                     self.cause.__traceback__
                 )
             )
@@ -150,28 +155,55 @@ class EffectFailure(Exception):
 # Core Effect Type
 # ============================================
 
-@dataclass(frozen=True)
-class Effect:
-    """Effect with tag and payload.
+E = TypeVar("E", bound="EffectBase")
 
-    This single type represents ALL effects in our system. We use string tags
-    instead of separate types because Python lacks proper sum types/GADTs.
-    The trade-off is runtime type checking vs compile-time safety.
-    """
 
-    tag: str  # String discrimination instead of type-based
-    payload: Any  # Untyped payload - Python can't express effect-specific types
-    created_at: Optional[EffectCreationContext] = None  # Optional creation context for debugging
+@runtime_checkable
+class Effect(Protocol):
+    """Protocol implemented by all effect values."""
+
+    created_at: Optional[EffectCreationContext]
 
     def intercept(
         self, transform: Callable[["Effect"], "Effect | Program"]
     ) -> "Effect":
-        """Return a copy with Programs in the payload intercepted by ``transform``."""
+        """Return a copy where any nested programs are intercepted."""
 
-        new_payload = _intercept_value(self.payload, transform)
-        if new_payload is self.payload:
+    def with_created_at(self: E, created_at: Optional[EffectCreationContext]) -> E:
+        """Return a copy with updated creation context."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class EffectBase:
+    """Base dataclass implementing :class:`Effect` semantics."""
+
+    created_at: Optional[EffectCreationContext] = field(
+        default=None, compare=False
+    )
+
+    def intercept(
+        self: E, transform: Callable[[Effect], Effect | "Program"]
+    ) -> E:
+        updates: Dict[str, Any] = {}
+        changed = False
+        for f in fields(self):
+            if f.name == "created_at":
+                continue
+            value = getattr(self, f.name)
+            new_value = _intercept_value(value, transform)
+            if new_value is not value:
+                changed = True
+            updates[f.name] = new_value
+        if not changed:
             return self
-        return Effect(self.tag, new_payload, self.created_at)
+        return replace(self, **updates)
+
+    def with_created_at(
+        self: E, created_at: Optional[EffectCreationContext]
+    ) -> E:
+        if created_at is self.created_at:
+            return self
+        return replace(self, created_at=created_at)
 
 
 # ============================================
@@ -297,7 +329,37 @@ class RunResult(Generic[T]):
     def graph(self) -> WGraph:
         """Get the computation graph."""
         return self.context.graph
-    
+
+    def __repr__(self) -> str:
+        if self.is_ok:
+            return (
+                "RunResult(ok=True, value="
+                f"{self._format_value(self.result.value, indent=2, max_length=60)})"
+            )
+
+        error_chain, _ = self._extract_error_chain(self.result.error)
+        if error_chain:
+            head = error_chain[0]
+            if head["type"] == "effect":
+                location = (
+                    head["context"].format_location()
+                    if head.get("context")
+                    else "<unknown>"
+                )
+                cause = head.get("cause")
+                cause_str = f"{cause.__class__.__name__}: {cause}" if cause else "<no cause>"
+                return (
+                    "RunResult(ok=False, effect="
+                    f"{head['tag']}, location={location}, cause={cause_str})"
+                )
+            if head["type"] == "exception":
+                return (
+                    "RunResult(ok=False, exception="
+                    f"{head['class']}: {head['message']})"
+                )
+
+        return f"RunResult(ok=False, error={self.result.error!r})"
+
     def visualize_graph_ascii(
         self,
         *,
@@ -609,18 +671,19 @@ class RunResult(Generic[T]):
                 
                 # Create a key for this effect based on tag and location
                 if exc.creation_context:
-                    effect_key = (exc.effect_tag, exc.creation_context.format_location())
+                    effect_key = (exc.effect.__class__, exc.creation_context.format_location())
                 else:
-                    effect_key = (exc.effect_tag, id(exc))
+                    effect_key = (exc.effect.__class__, id(exc.effect))
                 
                 # Only add if we haven't seen this exact effect before
                 if effect_key not in seen_effects:
                     seen_effects[effect_key] = True
                     chain.append({
                         'type': 'effect',
-                        'tag': exc.effect_tag,
+                        'tag': exc.effect.__class__.__name__,
                         'context': exc.creation_context,
-                        'cause': exc.cause
+                        'cause': exc.cause,
+                        'failure': exc,
                     })
                 
                 # Continue with the cause to extract the full chain
@@ -711,12 +774,32 @@ class RunResult(Generic[T]):
                             lines.append(f"{ind * 3}{location}")
                             if error_info['context'].code:
                                 lines.append(f"{ind * 3}{error_info['context'].code}")
-                        
+                            creation_trace = self._format_creation_trace(
+                                error_info['context'], indent, max_frames=6
+                            )
+                            if creation_trace:
+                                lines.append(f"{ind * 2}🧵 Creation stack:")
+                                for frame_line in creation_trace:
+                                    lines.append(f"{ind * 3}{frame_line}")
+
                         # Show the immediate cause if it's not another effect
                         if error_info['cause'] and not isinstance(error_info['cause'], EffectFailure):
                             cause = error_info['cause']
                             lines.append(f"{ind * 2}Caused by: {cause.__class__.__name__}: {cause}")
-                    
+                            cause_trace = self._format_exception_trace(cause, max_frames=6)
+                            if cause_trace:
+                                lines.append(f"{ind * 2}🔥 Cause stack:")
+                                for frame_line in cause_trace:
+                                    lines.append(f"{ind * 3}{frame_line}")
+                        failure = error_info.get('failure')
+                        if failure and failure.runtime_traceback:
+                            lines.append(f"{ind * 2}🔥 Effect runtime stack:")
+                            for tb_line in self._format_execution_traceback(
+                                failure.runtime_traceback, verbose
+                            ):
+                                if tb_line.strip():
+                                    lines.append(f"{ind * 3}{tb_line}")
+
                     elif error_info['type'] == 'exception':
                         # Show regular exception
                         lines.append(f"\n{ind}[{i+1}] {error_info['class']}: {error_info['message']}")
@@ -874,6 +957,58 @@ class RunResult(Generic[T]):
             if len(str_val) > max_length:
                 return str_val[:max_length] + "..."
             return str_val
+
+    def _format_creation_trace(
+        self,
+        context: EffectCreationContext,
+        indent: int,
+        max_frames: int = 5,
+    ) -> list[str]:
+        """Format the creation stack trace for display."""
+
+        if not context.stack_trace:
+            return []
+
+        trace_lines: list[str] = []
+        for frame in context.stack_trace[:max_frames]:
+            filename = frame.get("filename", "<unknown>")
+            line = frame.get("line", "?")
+            func = frame.get("function", "<unknown>")
+            trace_lines.append(f"File \"{filename}\", line {line}, in {func}")
+            code = frame.get("code")
+            if code:
+                trace_lines.append(f"  {code}")
+
+        # Ensure the immediate creation site is always included last
+        creation_site = f'File "{context.filename}", line {context.line}, in {context.function}'
+        if creation_site not in trace_lines:
+            trace_lines.append(creation_site)
+            if context.code:
+                trace_lines.append(f"  {context.code}")
+
+        return trace_lines
+
+    def _format_exception_trace(
+        self, exc: BaseException, max_frames: int = 6
+    ) -> list[str]:
+        tb = exc.__traceback__
+        if tb is None:
+            return []
+
+        extracted = traceback.extract_tb(tb)
+        if not extracted:
+            return []
+
+        lines: list[str] = []
+        for frame in extracted[-max_frames:]:
+            filename = frame.filename or "<unknown>"
+            line = frame.lineno or 0
+            func = frame.name or "<unknown>"
+            lines.append(f"File \"{filename}\", line {line}, in {func}")
+            if frame.line:
+                lines.append(f"  {frame.line.strip()}")
+
+        return lines
 
 
 # ============================================

@@ -2,99 +2,92 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Callable
+from typing import Any
 
 from ._program_types import ProgramLike
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class result:
-    """Result/error handling effects."""
-
-    @staticmethod
-    def fail(exc: Exception) -> Effect:
-        """Signal failure."""
-        return create_effect_with_trace("result.fail", exc)
-
-    @staticmethod
-    def catch(
-        sub_program: ProgramLike,
-        handler: Callable[[Exception], object | ProgramLike],
-    ) -> Effect:
-        """Try sub-program with error handler.
-
-        Args:
-            sub_program: Program to try
-            handler: Function to handle exceptions
-        """
-        return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler})
-
-    @staticmethod
-    def recover(
-        sub_program: ProgramLike,
-        fallback: object
-        | ProgramLike
-        | Callable[[Exception], object | ProgramLike],
-    ) -> Effect:
-        """Try sub-program, use fallback value on error.
-        
-        Args:
-            sub_program: Program to try
-            fallback: Can be:
-                - A direct value to use on error
-                - A Program to run on error
-                - A function (Exception) -> value/Program to handle the error
-        """
-        return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback})
-
-    @staticmethod
-    def retry(
-        sub_program: ProgramLike,
-        max_attempts: int = 3,
-        delay_ms: int = 0,
-    ) -> Effect:
-        """Retry sub-program on failure.
-        
-        Args:
-            sub_program: Program to retry
-            max_attempts: Maximum number of attempts (default: 3)
-            delay_ms: Delay between attempts in milliseconds (default: 0)
-        """
-        return create_effect_with_trace("result.retry", {
-            "program": sub_program,
-            "max_attempts": max_attempts,
-            "delay_ms": delay_ms
-        })
+@dataclass(frozen=True)
+class ResultFailEffect(EffectBase):
+    exception: Exception
 
 
-# Uppercase aliases
+@dataclass(frozen=True)
+class ResultCatchEffect(EffectBase):
+    sub_program: ProgramLike
+    handler: Callable[[Exception], Any | ProgramLike]
+
+
+@dataclass(frozen=True)
+class ResultRecoverEffect(EffectBase):
+    sub_program: ProgramLike
+    fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike]
+
+
+@dataclass(frozen=True)
+class ResultRetryEffect(EffectBase):
+    sub_program: ProgramLike
+    max_attempts: int = 3
+    delay_ms: int = 0
+
+
+def fail(exc: Exception) -> ResultFailEffect:
+    return create_effect_with_trace(ResultFailEffect(exception=exc))
+
+
+def catch(
+    sub_program: ProgramLike,
+    handler: Callable[[Exception], Any | ProgramLike],
+) -> ResultCatchEffect:
+    return create_effect_with_trace(
+        ResultCatchEffect(sub_program=sub_program, handler=handler)
+    )
+
+
+def recover(
+    sub_program: ProgramLike,
+    fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike],
+) -> ResultRecoverEffect:
+    return create_effect_with_trace(
+        ResultRecoverEffect(sub_program=sub_program, fallback=fallback)
+    )
+
+
+def retry(
+    sub_program: ProgramLike,
+    max_attempts: int = 3,
+    delay_ms: int = 0,
+) -> ResultRetryEffect:
+    return create_effect_with_trace(
+        ResultRetryEffect(
+            sub_program=sub_program, max_attempts=max_attempts, delay_ms=delay_ms
+        )
+    )
+
+
 def Fail(exc: Exception) -> Effect:
-    """Result: Signal failure."""
-    return create_effect_with_trace("result.fail", exc, skip_frames=3)
+    return create_effect_with_trace(ResultFailEffect(exception=exc), skip_frames=3)
 
 
 def Catch(
     sub_program: ProgramLike,
-    handler: Callable[[Exception], object | ProgramLike],
+    handler: Callable[[Exception], Any | ProgramLike],
 ) -> Effect:
-    """Result: Try sub-program with error handler."""
-    return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler}, skip_frames=3)
+    return create_effect_with_trace(
+        ResultCatchEffect(sub_program=sub_program, handler=handler), skip_frames=3
+    )
 
 
 def Recover(
     sub_program: ProgramLike,
-    fallback: object | ProgramLike | Callable[[Exception], object | ProgramLike],
+    fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike],
 ) -> Effect:
-    """Result: Try sub-program, use fallback value on error.
-    
-    Args:
-        sub_program: Program to try
-        fallback: Can be:
-            - A direct value to use on error
-            - A Program to run on error
-            - A function (Exception) -> value/Program to handle the error
-    """
-    return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback}, skip_frames=3)
+    return create_effect_with_trace(
+        ResultRecoverEffect(sub_program=sub_program, fallback=fallback), skip_frames=3
+    )
 
 
 def Retry(
@@ -102,18 +95,25 @@ def Retry(
     max_attempts: int = 3,
     delay_ms: int = 0,
 ) -> Effect:
-    """Result: Retry sub-program on failure."""
-    return create_effect_with_trace("result.retry", {
-        "program": sub_program,
-        "max_attempts": max_attempts,
-        "delay_ms": delay_ms
-    }, skip_frames=3)
+    return create_effect_with_trace(
+        ResultRetryEffect(
+            sub_program=sub_program, max_attempts=max_attempts, delay_ms=delay_ms
+        ),
+        skip_frames=3,
+    )
 
 
 __all__ = [
-    "Catch",
+    "ResultFailEffect",
+    "ResultCatchEffect",
+    "ResultRecoverEffect",
+    "ResultRetryEffect",
+    "fail",
+    "catch",
+    "recover",
+    "retry",
     "Fail",
+    "Catch",
     "Recover",
     "Retry",
-    "result",
 ]

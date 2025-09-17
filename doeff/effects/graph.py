@@ -1,50 +1,66 @@
-"""
-Graph tracking effects.
+"""Graph tracking effects."""
 
-This module provides Graph effects for tracking computation steps.
-"""
+from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Dict
 
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
+
+
+@dataclass(frozen=True)
+class GraphStepEffect(EffectBase):
+    value: Any
+    meta: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class GraphAnnotateEffect(EffectBase):
+    meta: Dict[str, Any]
+
+
+@dataclass(frozen=True)
+class GraphSnapshotEffect(EffectBase):
+    pass
 
 
 class graph:
     """Graph tracking effects."""
 
     @staticmethod
-    def step(value: Any, meta: dict[str, Any] | None = None) -> Effect:
-        """Track a computation step."""
-        return create_effect_with_trace("graph.step", {"value": value, "meta": meta or {}})
+    def step(value: Any, meta: dict[str, Any] | None = None) -> GraphStepEffect:
+        return create_effect_with_trace(
+            GraphStepEffect(value=value, meta=dict(meta or {}))
+        )
 
     @staticmethod
-    def annotate(meta: dict[str, Any]) -> Effect:
-        """Annotate the current step."""
-        return create_effect_with_trace("graph.annotate", meta)
+    def annotate(meta: dict[str, Any]) -> GraphAnnotateEffect:
+        return create_effect_with_trace(GraphAnnotateEffect(meta=dict(meta)))
 
     @staticmethod
-    def snapshot() -> Effect:
-        """Fetch the current computation graph."""
-        return create_effect_with_trace("graph.snapshot", None)
+    def snapshot() -> GraphSnapshotEffect:
+        return create_effect_with_trace(GraphSnapshotEffect())
 
 
 # Uppercase aliases
 def Step(value: Any, meta: dict[str, Any] | None = None) -> Effect:
-    """Graph: Track a computation step."""
-    return create_effect_with_trace("graph.step", {"value": value, "meta": meta or {}}, skip_frames=3)
+    return create_effect_with_trace(
+        GraphStepEffect(value=value, meta=dict(meta or {})), skip_frames=3
+    )
 
 
 def Annotate(meta: dict[str, Any]) -> Effect:
-    """Graph: Annotate the current step."""
-    return create_effect_with_trace("graph.annotate", meta, skip_frames=3)
+    return create_effect_with_trace(GraphAnnotateEffect(meta=dict(meta)), skip_frames=3)
 
 
 def Snapshot() -> Effect:
-    """Graph: Fetch the current computation graph."""
-    return create_effect_with_trace("graph.snapshot", None, skip_frames=3)
+    return create_effect_with_trace(GraphSnapshotEffect(), skip_frames=3)
 
 
 __all__ = [
+    "GraphStepEffect",
+    "GraphAnnotateEffect",
+    "GraphSnapshotEffect",
     "Annotate",
     "Snapshot",
     "Step",

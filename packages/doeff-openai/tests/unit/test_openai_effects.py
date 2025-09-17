@@ -20,12 +20,13 @@ from doeff_openai import (
 
 from doeff import (
     Ask,
-    Effect,
     EffectGenerator,
     ExecutionContext,
     Gather,
     Get,
     ProgramInterpreter,
+    Put,
+    Tell,
     do,
 )
 
@@ -220,8 +221,8 @@ async def test_cost_tracking():
 
         # Update state
         current = yield Get("total_openai_cost")
-        yield Effect("state.put", {"key": "total_openai_cost", "value": (current or 0) + cost1.total_cost})
-        yield Effect("state.put", {"key": "openai_cost_gpt-3.5-turbo", "value": cost1.total_cost})
+        yield Put("total_openai_cost", (current or 0) + cost1.total_cost)
+        yield Put("openai_cost_gpt-3.5-turbo", cost1.total_cost)
 
         # Second call - GPT-4
         token_usage2 = TokenUsage(
@@ -233,8 +234,8 @@ async def test_cost_tracking():
 
         # Update state
         current = yield Get("total_openai_cost")
-        yield Effect("state.put", {"key": "total_openai_cost", "value": current + cost2.total_cost})
-        yield Effect("state.put", {"key": "openai_cost_gpt-4", "value": cost2.total_cost})
+        yield Put("total_openai_cost", current + cost2.total_cost)
+        yield Put("openai_cost_gpt-4", cost2.total_cost)
 
         # Get costs
         total = yield get_total_cost()
@@ -284,7 +285,7 @@ async def test_parallel_operations_with_gather():
         # (In real usage, these would be actual API calls)
         @do
         def mock_call(index: int) -> EffectGenerator[str]:
-            yield Effect("writer.tell", f"Call {index}")
+            yield Tell(f"Call {index}")
             return f"Response {index}"
 
         results = yield Gather(*[

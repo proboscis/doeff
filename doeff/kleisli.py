@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Generic, ParamSpec, TypeVar
+from typing import Any, Callable as TypingCallable, Generic, ParamSpec, TypeVar
 
 from doeff.effects import Gather, GatherDict
 from doeff.program import Program
@@ -18,6 +18,7 @@ from doeff.types import Effect
 
 P = ParamSpec("P")
 T = TypeVar("T")
+U = TypeVar("U")
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,7 @@ class KleisliProgram(Generic[P, T]):
         This method uses the Gather effect to efficiently unwrap multiple Program
         arguments at once, then passes the unwrapped values to the underlying function.
         """
+
 
         @wraps(self.func)
         def unwrapping_generator() -> Generator[Effect | Program, Any, T]:
@@ -102,5 +104,106 @@ class KleisliProgram(Generic[P, T]):
 
         return Program(unwrapping_generator)
 
+    def partial(
+        self, /, *args: P.args, **kwargs: P.kwargs
+    ) -> "PartiallyAppliedKleisliProgram[P, T]":
+        """Partially apply positional/keyword arguments to this Kleisli program."""
 
-__all__ = ["KleisliProgram"]
+        return PartiallyAppliedKleisliProgram(self, args, kwargs)
+
+    def and_then_k(
+        self,
+        binder: TypingCallable[[T], Program[U]],
+    ) -> "KleisliProgram[P, U]":
+        """Compose with ``binder`` that turns this program's result into a Program.
+
+        The returned KleisliProgram keeps the same parameter signature as ``self``
+        and, when executed, will run ``self`` first, feed its result into
+        ``binder``, then execute the resulting Program.
+        """
+
+        if not callable(binder):
+            raise TypeError("binder must be callable returning a Program")
+
+        @wraps(self.func)
+        def composed(*args: P.args, **kwargs: P.kwargs) -> Program[U]:
+
+            def generator() -> Generator[Effect | Program, Any, U]:
+                initial_value = yield self(*args, **kwargs)
+                next_step = binder(initial_value)
+                if not isinstance(next_step, Program):
+                    raise TypeError(
+                        "binder must return a Program; got "
+                        f"{type(next_step).__name__}"
+                    )
+                result = yield next_step
+                return result
+
+            return Program(generator)
+
+        return KleisliProgram(composed)
+
+    def __rshift__(
+        self,
+        binder: TypingCallable[[T], Program[U]],
+    ) -> "KleisliProgram[P, U]":
+        """Alias for :meth:`and_then_k`, enabling ``program >> binder``."""
+
+        return self.and_then_k(binder)
+
+    def fmap(
+        self,
+        mapper: TypingCallable[[T], U],
+    ) -> "KleisliProgram[P, U]":
+        """Map ``mapper`` over the result produced by this Kleisli program."""
+
+        if not callable(mapper):
+            raise TypeError("mapper must be callable")
+
+        @wraps(self.func)
+        def mapped(*args: P.args, **kwargs: P.kwargs) -> Program[U]:
+
+            def generator() -> Generator[Effect | Program, Any, U]:
+                value = yield self(*args, **kwargs)
+                return mapper(value)
+
+            return Program(generator)
+
+        return KleisliProgram(mapped)
+
+
+class PartiallyAppliedKleisliProgram(KleisliProgram[P, T]):
+    """Lightweight wrapper returned by ``KleisliProgram.partial``."""
+
+    _base: KleisliProgram[P, T]
+    _pre_args: tuple[Any, ...]
+    _pre_kwargs: dict[str, Any]
+
+    def __init__(
+        self,
+        base: KleisliProgram[P, T],
+        pre_args: tuple[Any, ...],
+        pre_kwargs: dict[str, Any],
+    ) -> None:
+        object.__setattr__(self, "_base", base)
+        object.__setattr__(self, "_pre_args", pre_args)
+        object.__setattr__(self, "_pre_kwargs", dict(pre_kwargs))
+
+    @property
+    def func(self) -> Callable[P, Program[T]]:  # type: ignore[override]
+        return self._base.func
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Program[T]:
+        merged_args = self._pre_args + args
+        merged_kwargs = {**self._pre_kwargs, **kwargs}
+        return self._base(*merged_args, **merged_kwargs)
+
+    def partial(
+        self, /, *args: Any, **kwargs: Any
+    ) -> "PartiallyAppliedKleisliProgram[P, T]":
+        merged_args = self._pre_args + args
+        merged_kwargs = {**self._pre_kwargs, **kwargs}
+        return PartiallyAppliedKleisliProgram(self._base, merged_args, merged_kwargs)
+
+
+__all__ = ["KleisliProgram", "PartiallyAppliedKleisliProgram"]
