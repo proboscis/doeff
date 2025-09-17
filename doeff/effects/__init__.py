@@ -1,87 +1,99 @@
-"""
-Effect definitions for the doeff system.
+"""Public effect API for doeff."""
 
-This module provides the organized API for creating effects.
-All effects are created as Effect instances with specific tags.
+from __future__ import annotations
 
-The effects are now organized into separate modules for better maintainability.
-"""
-
-# Import from individual modules
-from .cache import (
-    CacheGet,
-    CacheLifecycle,
-    CachePolicy,
-    CachePut,
-    CacheStorage,
-    cache,
+from .cache import CacheGet, CacheGetEffect, CachePut, CachePutEffect, cache_get, cache_put
+from .dep import Dep, DepInjectEffect, inject
+from .future import Await, FutureAwaitEffect, FutureParallelEffect, Parallel, await_, parallel
+from .gather import Gather, GatherDict, GatherDictEffect, GatherEffect, gather, gather_dict
+from .graph import (
+    Annotate,
+    GraphAnnotateEffect,
+    GraphSnapshotEffect,
+    GraphStepEffect,
+    Snapshot,
+    Step,
 )
-from .dep import Dep, dep
-from .future import Await, Parallel, future
-from .gather import Gather, GatherDict, gather
-from .graph import Annotate, Snapshot, Step, graph
-from .io import IO, Print
-from .io import io as io_class
-from .memo import MemoGet, MemoPut, memo
-from .reader import Ask, Local, reader
-from .result import Catch, Fail, Recover, Retry, result
-from .state import Get, Modify, Put, state
-from .writer import Listen, Log, Tell, writer
+from .io import IO, IOPerformEffect, IOPrintEffect, Print, perform, print_, run
+from .memo import MemoGet, MemoGetEffect, MemoPut, MemoPutEffect, memo_get, memo_put
+from .reader import Ask, AskEffect, Local, LocalEffect, ask, local
+from .result import (
+    Catch,
+    Fail,
+    Recover,
+    ResultCatchEffect,
+    ResultFailEffect,
+    ResultRecoverEffect,
+    ResultRetryEffect,
+    Retry,
+    catch,
+    fail,
+    recover,
+    retry,
+)
+from .state import Get, Modify, Put, StateGetEffect, StateModifyEffect, StatePutEffect, get, modify, put
+from .writer import (
+    Listen,
+    Log,
+    Tell,
+    WriterListenEffect,
+    WriterTellEffect,
+    listen,
+    tell,
+)
 
-# ============================================
-# Lowercase aliases for backward compatibility
-# ============================================
+# Lowercase compatibility aliases
+# Functions imported above already provide lowercase helpers
 
-# Create lowercase aliases only at the module level
-ask = Ask
-local = Local
-get = Get
-put = Put
-modify = Modify
-log = Log
-tell = Tell
-listen = Listen
-await_ = Await
-parallel = Parallel
-fail = Fail
-catch = Catch
-recover = Recover
-retry = Retry
-io_func = IO  # Special case: io is a class, so use io_func
-print_ = Print
+# Legacy lowercase synonyms for backward compatibility
+io = IO
 step = Step
 annotate = Annotate
 snapshot = Snapshot
-memo_get = MemoGet
-memo_put = MemoPut
-cache_get = CacheGet
-cache_put = CachePut
 
-# Export io as function for backward compatibility
-io = IO
-
-# ============================================
-# Exports
-# ============================================
 
 __all__ = [
-    # Uppercase functions
+    # Effect classes
+    "AskEffect",
+    "LocalEffect",
+    "StateGetEffect",
+    "StatePutEffect",
+    "StateModifyEffect",
+    "WriterTellEffect",
+    "WriterListenEffect",
+    "FutureAwaitEffect",
+    "FutureParallelEffect",
+    "ResultFailEffect",
+    "ResultCatchEffect",
+    "ResultRecoverEffect",
+    "ResultRetryEffect",
+    "GraphStepEffect",
+    "GraphAnnotateEffect",
+    "GraphSnapshotEffect",
+    "DepInjectEffect",
+    "GatherEffect",
+    "GatherDictEffect",
+    "CacheGetEffect",
+    "CachePutEffect",
+    "MemoGetEffect",
+    "MemoPutEffect",
+    "IOPerformEffect",
+    "IOPrintEffect",
+    # Factory helpers
     "Ask",
     "Local",
     "Get",
     "Put",
     "Modify",
-    "Log",
     "Tell",
     "Listen",
+    "Log",
     "Await",
     "Parallel",
     "Fail",
     "Catch",
     "Recover",
     "Retry",
-    "IO",
-    "Print",
     "Step",
     "Annotate",
     "Snapshot",
@@ -90,12 +102,14 @@ __all__ = [
     "GatherDict",
     "CacheGet",
     "CachePut",
-    "CachePolicy",
-    "CacheLifecycle",
-    "CacheStorage",
     "MemoGet",
     "MemoPut",
-    # Lowercase aliases
+    "IO",
+    "Print",
+    "perform",
+    "run",
+    "print_",
+    # Compatibility aliases
     "ask",
     "local",
     "get",
@@ -111,7 +125,6 @@ __all__ = [
     "recover",
     "retry",
     "io",
-    "print_",
     "step",
     "annotate",
     "snapshot",

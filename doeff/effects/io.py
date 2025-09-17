@@ -1,47 +1,52 @@
-"""
-IO effects.
+"""IO effects."""
 
-This module provides IO effects for performing side effects.
-"""
+from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
 
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class io:
-    """IO effects (executed immediately, not deferred)."""
+@dataclass(frozen=True)
+class IOPerformEffect(EffectBase):
+    action: Callable[[], Any]
 
-    @staticmethod
-    def perform(action: Callable[[], Any]) -> Effect:
-        """Perform an IO action."""
-        return create_effect_with_trace("io.perform", action)
 
-    @staticmethod
-    def run(action: Callable[[], Any]) -> Effect:
-        """Perform an IO action (alias for perform)."""
-        return create_effect_with_trace("io.run", action)
+@dataclass(frozen=True)
+class IOPrintEffect(EffectBase):
+    message: str
 
-    @staticmethod
-    def print(message: str) -> Effect:
-        """Print to stdout."""
-        return create_effect_with_trace("io.print", message)
+
+def perform(action: Callable[[], Any]) -> IOPerformEffect:
+    return create_effect_with_trace(IOPerformEffect(action=action))
+
+
+def run(action: Callable[[], Any]) -> IOPerformEffect:
+    return perform(action)
+
+
+def print_(message: str) -> IOPrintEffect:
+    return create_effect_with_trace(IOPrintEffect(message=message))
 
 
 # Uppercase aliases
+
 def IO(action: Callable[[], Any]) -> Effect:
-    """IO: Perform an IO action."""
-    return create_effect_with_trace("io.perform", action, skip_frames=3)
+    return create_effect_with_trace(IOPerformEffect(action=action), skip_frames=3)
 
 
 def Print(message: str) -> Effect:
-    """IO: Print to stdout."""
-    return create_effect_with_trace("io.print", message, skip_frames=3)
+    return create_effect_with_trace(IOPrintEffect(message=message), skip_frames=3)
 
 
 __all__ = [
+    "IOPerformEffect",
+    "IOPrintEffect",
     "IO",
     "Print",
-    "io",
+    "perform",
+    "print_",
+    "run",
 ]

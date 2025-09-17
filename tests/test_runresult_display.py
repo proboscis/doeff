@@ -57,7 +57,7 @@ async def test_display_error_with_traceback():
     # Verify error indicators
     assert "❌ Failure" in display_output
     assert "Error Chain (most recent first):" in display_output
-    assert "Effect 'result.fail' failed" in display_output
+    assert "Effect 'ResultFailEffect' failed" in display_output
     assert "Caused by: ValueError: Something went wrong in the program" in display_output
 
     # Verify creation location is shown
@@ -94,7 +94,7 @@ async def test_display_nested_error():
 
     # Should show the KeyError details
     assert "Error Chain (most recent first):" in display_output
-    assert "Effect 'result.fail' failed" in display_output
+    assert "Effect 'ResultFailEffect' failed" in display_output
     assert "Caused by: KeyError: 'missing_key'" in display_output
 
     # State should still be captured
@@ -187,7 +187,7 @@ async def test_display_error_types():
     result = await engine.run(type_error_program())
     display = result.display()
 
-    assert "Effect 'result.fail' failed" in display
+    assert "Effect 'ResultFailEffect' failed" in display
     assert "Caused by: TypeError: Expected int, got str" in display
 
     # Test with custom exception
@@ -204,7 +204,7 @@ async def test_display_error_types():
     result2 = await engine.run(custom_error_program())
     display2 = result2.display()
 
-    assert "Effect 'result.fail' failed" in display2
+    assert "Effect 'ResultFailEffect' failed" in display2
     assert "Caused by: CustomError: Not found" in display2
 
 

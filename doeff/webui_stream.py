@@ -46,7 +46,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Generator, TypeVar
 
-from doeff.effects import Await, Catch, Fail, Gather, Recover, Snapshot
+from doeff.effects import (
+    Await,
+    Catch,
+    Fail,
+    Gather,
+    GatherDict,
+    GatherDictEffect,
+    GatherEffect,
+    GraphAnnotateEffect,
+    GraphStepEffect,
+    Recover,
+    Snapshot,
+)
 from doeff.program import Program
 from doeff.types import Effect, EffectFailure
 
@@ -110,17 +122,17 @@ def stream_program_to_webui(
 def _make_graph_transform(
     reporter: "GraphEffectReporter",
 ) -> Callable[[Effect], Effect | Program[Effect]]:
-    tracked_tags = {
-        "graph.step",
-        "graph.annotate",
-        "gather.gather",
-        "gather.gather_dict",
-    }
+    tracked_types = (
+        GraphStepEffect,
+        GraphAnnotateEffect,
+        GatherEffect,
+        GatherDictEffect,
+    )
 
     processed_effect_ids: set[int] = set()
 
     def transform(effect: Effect) -> Effect | Program[Effect]:
-        if effect.tag not in tracked_tags:
+        if not isinstance(effect, tracked_types):
             return effect
 
         effect_id = id(effect)
@@ -397,7 +409,7 @@ class GraphEffectReporter:
         label = f"Error: {type(error).__name__}"
         meta = {"message": str(error)}
         if effect is not None:
-            meta["effect"] = effect.tag
+            meta["effect"] = effect.__class__.__name__
 
         if isinstance(error, EffectFailure):
             cause = error.cause

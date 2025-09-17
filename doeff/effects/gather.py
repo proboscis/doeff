@@ -2,42 +2,47 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Mapping
+from typing import Tuple
 
 from ._program_types import ProgramLike
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class gather:
-    """Gather effects for parallel programs."""
-
-    @staticmethod
-    def gather(*programs: ProgramLike) -> Effect:
-        """Gather results from multiple programs."""
-        return create_effect_with_trace("gather.gather", programs)
-
-    @staticmethod
-    def gather_dict(programs: Mapping[str, ProgramLike]) -> Effect:
-        """Gather results from a dict of programs."""
-        return create_effect_with_trace("gather.gather_dict", programs)
+@dataclass(frozen=True)
+class GatherEffect(EffectBase):
+    programs: Tuple[ProgramLike, ...]
 
 
-# Uppercase aliases
+@dataclass(frozen=True)
+class GatherDictEffect(EffectBase):
+    programs: Mapping[str, ProgramLike]
+
+
+def gather(*programs: ProgramLike) -> GatherEffect:
+    return create_effect_with_trace(GatherEffect(programs=tuple(programs)))
+
+
+def gather_dict(programs: Mapping[str, ProgramLike]) -> GatherDictEffect:
+    return create_effect_with_trace(GatherDictEffect(programs=programs))
+
+
 def Gather(*programs: ProgramLike) -> Effect:
-    """Gather: Gather results from multiple programs."""
-    return create_effect_with_trace("gather.gather", programs, skip_frames=3)
+    return create_effect_with_trace(
+        GatherEffect(programs=tuple(programs)), skip_frames=3
+    )
 
 
 def GatherDict(programs: Mapping[str, ProgramLike]) -> Effect:
-    """Gather: Gather results from a dict of programs."""
-    return create_effect_with_trace("gather.gather_dict", programs, skip_frames=3)
-
-
-# No lowercase aliases to avoid confusion with the class name
+    return create_effect_with_trace(GatherDictEffect(programs=programs), skip_frames=3)
 
 
 __all__ = [
+    "GatherEffect",
+    "GatherDictEffect",
+    "gather",
+    "gather_dict",
     "Gather",
     "GatherDict",
-    "gather",
 ]

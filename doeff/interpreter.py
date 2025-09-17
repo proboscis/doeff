@@ -12,6 +12,33 @@ import traceback
 from typing import Any, TypeVar
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
+from doeff.effects import (
+    AskEffect,
+    CacheGetEffect,
+    CachePutEffect,
+    DepInjectEffect,
+    FutureAwaitEffect,
+    FutureParallelEffect,
+    GatherDictEffect,
+    GatherEffect,
+    GraphAnnotateEffect,
+    GraphSnapshotEffect,
+    GraphStepEffect,
+    IOPerformEffect,
+    IOPrintEffect,
+    LocalEffect,
+    MemoGetEffect,
+    MemoPutEffect,
+    ResultCatchEffect,
+    ResultFailEffect,
+    ResultRecoverEffect,
+    ResultRetryEffect,
+    StateGetEffect,
+    StateModifyEffect,
+    StatePutEffect,
+    WriterListenEffect,
+    WriterTellEffect,
+)
 from doeff.handlers import (
     CacheEffectHandler,
     FutureEffectHandler,
@@ -25,6 +52,12 @@ from doeff.handlers import (
 )
 from doeff.program import Program
 from doeff.types import Effect, EffectFailure, ExecutionContext, RunResult
+
+
+def _effect_is(effect: Effect, cls) -> bool:
+    """Return True if effect is instance of cls, tolerant to module reloads."""
+    return isinstance(effect, cls) or effect.__class__.__name__ == cls.__name__
+
 
 T = TypeVar("T")
 
@@ -101,37 +134,6 @@ class ProgramInterpreter:
         self.memo_handler = handlers["memo"]
         self.cache_handler = handlers["cache"]
 
-        # Dispatch table
-        self._dispatchers = {
-            "reader.ask": self._dispatch_reader_ask,
-            "reader.local": self._dispatch_reader_local,
-            "state.get": self._dispatch_state_get,
-            "state.put": self._dispatch_state_put,
-            "state.modify": self._dispatch_state_modify,
-            "writer.tell": self._dispatch_writer_tell,
-            "writer.listen": self._dispatch_writer_listen,
-            "future.await": self._dispatch_future_await,
-            "future.parallel": self._dispatch_future_parallel,
-            "result.fail": self._dispatch_result_fail,
-            "result.catch": self._dispatch_result_catch,
-            "result.recover": self._dispatch_result_recover,
-            "result.retry": self._dispatch_result_retry,
-            "io.run": self._dispatch_io_run,
-            "io.perform": self._dispatch_io_run,  # Alias
-            "io.print": self._dispatch_io_print,
-            "graph.step": self._dispatch_graph_step,
-            "graph.annotate": self._dispatch_graph_annotate,
-            "graph.snapshot": self._dispatch_graph_snapshot,
-            "program.gather": self._dispatch_program_gather,
-            "gather.gather": self._dispatch_program_gather,  # Alias
-            "program.gather_dict": self._dispatch_program_gather_dict,
-            "gather.gather_dict": self._dispatch_program_gather_dict,  # Alias
-            "dep.inject": self._dispatch_dep_inject,
-            "memo.get": self._dispatch_memo_get,
-            "memo.put": self._dispatch_memo_put,
-            "cache.get": self._dispatch_cache_get,
-            "cache.put": self._dispatch_cache_put,
-        }
 
     async def run(
         self, program: Program[T], context: ExecutionContext | None = None
@@ -185,10 +187,10 @@ class ProgramInterpreter:
                         ) if hasattr(exc, "__traceback__") else None
 
                         effect_failure = EffectFailure(
-                            effect_tag=current.tag,
+                            effect=current,
                             cause=exc,
                             runtime_traceback=runtime_tb,
-                            creation_context=current.created_at
+                            creation_context=current.created_at,
                         )
                         return RunResult(ctx, Err(effect_failure))
 
@@ -224,118 +226,117 @@ class ProgramInterpreter:
 
     async def _handle_effect(self, effect: Effect, ctx: ExecutionContext) -> Any:
         """Dispatch effect to appropriate handler."""
-        dispatcher = self._dispatchers.get(effect.tag)
-        if dispatcher:
-            return await dispatcher(effect.payload, ctx)
-        raise ValueError(f"Unknown effect tag: {effect.tag}")
 
-    # Reader dispatchers
-    async def _dispatch_reader_ask(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.reader_handler.handle_ask(payload, ctx)
+        if _effect_is(effect, AskEffect):
+            return await self.reader_handler.handle_ask(effect, ctx)
+        if _effect_is(effect, LocalEffect):
+            return await self.reader_handler.handle_local(effect, ctx, self)
 
-    async def _dispatch_reader_local(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.reader_handler.handle_local(payload, ctx, self)
+        if _effect_is(effect, StateGetEffect):
+            return await self.state_handler.handle_get(effect, ctx)
+        if _effect_is(effect, StatePutEffect):
+            return await self.state_handler.handle_put(effect, ctx)
+        if _effect_is(effect, StateModifyEffect):
+            return await self.state_handler.handle_modify(effect, ctx)
 
-    # State dispatchers
-    async def _dispatch_state_get(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.state_handler.handle_get(payload, ctx)
+        if _effect_is(effect, WriterTellEffect):
+            return await self.writer_handler.handle_tell(effect, ctx)
+        if _effect_is(effect, WriterListenEffect):
+            return await self.writer_handler.handle_listen(effect, ctx, self)
 
-    async def _dispatch_state_put(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.state_handler.handle_put(payload, ctx)
+        if _effect_is(effect, FutureAwaitEffect):
+            return await self.future_handler.handle_await(effect)
+        if _effect_is(effect, FutureParallelEffect):
+            return await self.future_handler.handle_parallel(effect)
 
-    async def _dispatch_state_modify(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.state_handler.handle_modify(payload, ctx)
+        if _effect_is(effect, ResultFailEffect):
+            return await self.result_handler.handle_fail(effect)
+        if _effect_is(effect, ResultCatchEffect):
+            return await self.result_handler.handle_catch(effect, ctx, self)
+        if _effect_is(effect, ResultRecoverEffect):
+            return await self.result_handler.handle_recover(effect, ctx, self)
+        if _effect_is(effect, ResultRetryEffect):
+            return await self.result_handler.handle_retry(effect, ctx, self)
 
-    # Writer dispatchers
-    async def _dispatch_writer_tell(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.writer_handler.handle_tell(payload, ctx)
+        if _effect_is(effect, IOPerformEffect):
+            return await self.io_handler.handle_run(effect, ctx)
+        if _effect_is(effect, IOPrintEffect):
+            return await self.io_handler.handle_print(effect, ctx)
 
-    async def _dispatch_writer_listen(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.writer_handler.handle_listen(payload, ctx, self)
+        if _effect_is(effect, GraphStepEffect):
+            return await self.graph_handler.handle_step(effect, ctx)
+        if _effect_is(effect, GraphAnnotateEffect):
+            return await self.graph_handler.handle_annotate(effect, ctx)
+        if _effect_is(effect, GraphSnapshotEffect):
+            return await self.graph_handler.handle_snapshot(effect, ctx)
 
-    # Future dispatchers
-    async def _dispatch_future_await(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.future_handler.handle_await(payload)
+        if _effect_is(effect, DepInjectEffect):
+            proxy_effect = AskEffect(key=effect.key, created_at=effect.created_at)
+            return await self.reader_handler.handle_ask(proxy_effect, ctx)
 
-    async def _dispatch_future_parallel(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.future_handler.handle_parallel(payload)
+        if _effect_is(effect, GatherEffect):
+            return await self._handle_gather_effect(effect, ctx)
+        if _effect_is(effect, GatherDictEffect):
+            return await self._handle_gather_dict_effect(effect, ctx)
 
-    # Result dispatchers
-    async def _dispatch_result_fail(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.result_handler.handle_fail(payload)
+        if _effect_is(effect, MemoGetEffect):
+            return await self.memo_handler.handle_get(effect, ctx)
+        if _effect_is(effect, MemoPutEffect):
+            return await self.memo_handler.handle_put(effect, ctx)
 
-    async def _dispatch_result_catch(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.result_handler.handle_catch(payload, ctx, self)
+        if _effect_is(effect, CacheGetEffect):
+            return await self.cache_handler.handle_get(effect, ctx)
+        if _effect_is(effect, CachePutEffect):
+            return await self.cache_handler.handle_put(effect, ctx)
 
-    async def _dispatch_result_recover(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.result_handler.handle_recover(payload, ctx, self)
+        raise ValueError(f"Unknown effect: {effect!r}")
 
-    async def _dispatch_result_retry(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.result_handler.handle_retry(payload, ctx, self)
+    async def _handle_gather_effect(self, effect: GatherEffect, ctx: ExecutionContext) -> Any:
+        return await self._run_gather_sequence(list(effect.programs), ctx)
 
-    # IO dispatchers
-    async def _dispatch_io_run(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.io_handler.handle_run(payload, ctx)
+    async def _handle_gather_dict_effect(
+        self, effect: GatherDictEffect, ctx: ExecutionContext
+    ) -> Any:
+        program_list = list(effect.programs.values())
+        results = await self._run_gather_sequence(program_list, ctx)
+        return {
+            key: value
+            for key, value in zip(effect.programs.keys(), results, strict=False)
+        }
 
-    async def _dispatch_io_print(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.io_handler.handle_print(payload, ctx)
-
-    # Graph dispatchers
-    async def _dispatch_graph_step(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.graph_handler.handle_step(payload, ctx)
-
-    async def _dispatch_graph_annotate(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.graph_handler.handle_annotate(payload, ctx)
-
-    async def _dispatch_graph_snapshot(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.graph_handler.handle_snapshot(payload, ctx)
-
-    # Program dispatchers for Gather effects
-    async def _dispatch_program_gather(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle program.gather and gather.gather effects.
-        
-        Each program runs with an isolated copy of the context to simulate
-        parallel execution. State changes are merged at the end with 
-        last-write-wins semantics.
-        """
-        programs = payload
-        results = []
+    async def _run_gather_sequence(
+        self, programs: list[Program], ctx: ExecutionContext
+    ) -> list[Any]:
+        results: list[Any] = []
         sub_contexts = []
+        error_to_raise: BaseException | None = None
 
-        # Run all programs with isolated contexts
-        error_to_raise = None
-        for prog in programs:
-            # Check if it's a thunk
+        for program in programs:
+            prog = program
             if callable(prog) and not isinstance(prog, Program):
                 prog = prog()
-            # Run each program with a copy of the current context for isolation
-            # This simulates parallel execution where each program starts with
-            # the same initial state
+
             ctx_copy = ExecutionContext(
                 env=ctx.env.copy() if ctx.env else {},
                 state=ctx.state.copy() if ctx.state else {},
-                log=[],  # Each parallel program starts with empty log
-                graph=ctx.graph,  # Graph is immutable
+                log=[],
+                graph=ctx.graph,
                 io_allowed=ctx.io_allowed,
-                cache=ctx.cache,  # Cache is shared across parallel executions
+                cache=ctx.cache,
             )
             sub_result = await self.run(prog, ctx_copy)
             sub_contexts.append(sub_result.context)
+
             if isinstance(sub_result.result, Err):
-                # Store error to raise after merging logs
                 if error_to_raise is None:
                     error_to_raise = sub_result.result.error
-                # Still collect the context even on error
             else:
                 results.append(sub_result.value)
 
-        # Merge all state changes, logs, and graph steps at the end
         combined_steps = set(ctx.graph.steps)
         gather_inputs: list[WNode] = []
         for sub_ctx in sub_contexts:
-            # Merge state changes with last-write-wins semantics
             ctx.state.update(sub_ctx.state)
-            # Append sub-program logs
             ctx.log.extend(sub_ctx.log)
             combined_steps.update(sub_ctx.graph.steps)
             gather_inputs.append(sub_ctx.graph.last.output)
@@ -348,95 +349,10 @@ class ProgramInterpreter:
         else:
             ctx.graph = WGraph(last=ctx.graph.last, steps=frozenset(combined_steps))
 
-        # Raise error after merging if one occurred
         if error_to_raise is not None:
             raise error_to_raise
 
         return results
-
-    async def _dispatch_program_gather_dict(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle program.gather_dict and gather.gather_dict effects.
-        
-        Each program runs with an isolated copy of the context to simulate
-        parallel execution. State changes are merged at the end with 
-        last-write-wins semantics.
-        """
-        programs_dict = payload
-        results = {}
-        sub_contexts = []
-
-        # Run all programs with isolated contexts
-        error_to_raise = None
-        for key, prog in programs_dict.items():
-            # Check if it's a thunk
-            if callable(prog) and not isinstance(prog, Program):
-                prog = prog()
-            # Run each program with a copy of the current context for isolation
-            ctx_copy = ExecutionContext(
-                env=ctx.env.copy() if ctx.env else {},
-                state=ctx.state.copy() if ctx.state else {},
-                log=[],  # Each parallel program starts with empty log
-                graph=ctx.graph,  # Graph is immutable
-                io_allowed=ctx.io_allowed,
-                cache=ctx.cache,  # Cache is shared across parallel executions
-            )
-            sub_result = await self.run(prog, ctx_copy)
-            sub_contexts.append(sub_result.context)
-            if isinstance(sub_result.result, Err):
-                # Store error to raise after merging logs
-                if error_to_raise is None:
-                    error_to_raise = sub_result.result.error
-                # Still collect the context even on error
-            else:
-                results[key] = sub_result.value
-
-        # Merge all state changes, logs, and graph steps at the end
-        combined_steps = set(ctx.graph.steps)
-        gather_inputs: list[WNode] = []
-        for sub_ctx in sub_contexts:
-            # Merge state changes with last-write-wins semantics
-            ctx.state.update(sub_ctx.state)
-            # Append sub-program logs
-            ctx.log.extend(sub_ctx.log)
-            combined_steps.update(sub_ctx.graph.steps)
-            gather_inputs.append(sub_ctx.graph.last.output)
-
-        if gather_inputs:
-            gather_node = WNode(results)
-            gather_step = WStep(
-                inputs=tuple(gather_inputs),
-                output=gather_node,
-            )
-            combined_steps.add(gather_step)
-            ctx.graph = WGraph(last=gather_step, steps=frozenset(combined_steps))
-        else:
-            ctx.graph = WGraph(last=ctx.graph.last, steps=frozenset(combined_steps))
-
-        # Raise error after merging if one occurred
-        if error_to_raise is not None:
-            raise error_to_raise
-
-        return results
-
-    # Dependency injection dispatcher
-    async def _dispatch_dep_inject(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle dep.inject effect - same as reader.ask."""
-        return await self.reader_handler.handle_ask(payload, ctx)
-
-    # Cache dispatchers
-    async def _dispatch_memo_get(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.memo_handler.handle_get(payload, ctx)
-
-    async def _dispatch_memo_put(self, payload: Any, ctx: ExecutionContext) -> Any:
-        return await self.memo_handler.handle_put(payload, ctx)
-
-    async def _dispatch_cache_get(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle cache.get effect."""
-        return await self.cache_handler.handle_get(payload, ctx)
-
-    async def _dispatch_cache_put(self, payload: Any, ctx: ExecutionContext) -> Any:
-        """Handle cache.put effect."""
-        return await self.cache_handler.handle_put(payload, ctx)
 
 
 __all__ = ["ProgramInterpreter", "force_eval"]

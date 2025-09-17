@@ -10,7 +10,7 @@ from typing import TypeVar
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff.effects import Await
+from doeff.effects import Await, DepInjectEffect
 from doeff.interpreter import ProgramInterpreter
 from doeff.program import Program
 from doeff.types import Effect, ExecutionContext, RunResult
@@ -29,8 +29,8 @@ def _program_with_dependency_interception(
         )
 
     def _transform(effect: Effect) -> Effect | Program:
-        if effect.tag in ("reader.ask", "dep.inject"):
-            key = effect.payload
+        if isinstance(effect, DepInjectEffect):
+            key = effect.key
             logger.debug(f"Resolving dependency for key: {key}")
             return Await(resolver.provide(key))
         return effect
