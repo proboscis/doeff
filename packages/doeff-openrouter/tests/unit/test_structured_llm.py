@@ -9,7 +9,8 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, ProgramInterpreter, do
+from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
+from doeff_openrouter.chat import chat_completion
 
 structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
 from doeff_openrouter.structured_llm import (
@@ -177,3 +178,40 @@ async def test_structured_llm_without_schema(monkeypatch):
     result = await engine.run(flow())
     assert result.is_ok
     assert result.value == "plain text"
+
+
+@pytest.mark.asyncio
+async def test_chat_completion_tracks_prompt_state():
+    """chat_completion should record prompt content in state."""
+
+    messages = [{"role": "user", "content": [{"type": "text", "text": "hello router"}]}]
+    response_data = {
+        "choices": [
+            {
+                "message": {
+                    "content": [{"type": "text", "text": "response"}],
+                    "role": "assistant",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "id": "test-id",
+    }
+
+    class FakeClient:
+        async def a_chat_completions(self, request_data: dict[str, Any], *, timeout=None, headers=None):
+            assert request_data["messages"] == messages
+            return response_data, {}
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(env={"openrouter_client": FakeClient()})
+    result = await engine.run(chat_completion(messages=messages, model="demo-model"), context)
+
+    assert result.is_ok
+    assert result.value == response_data
+
+    api_calls = result.context.state.get("openrouter_api_calls")
+    assert api_calls is not None
+    assert api_calls[0]["prompt_text"] == "hello router"
+    assert api_calls[0]["prompt_images"] == []
+    assert api_calls[0]["prompt_messages"][0]["content"][0]["text"] == "hello router"

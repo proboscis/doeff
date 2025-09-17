@@ -7,6 +7,7 @@ by handling effects through the registered handlers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import traceback
 from typing import Any, TypeVar
@@ -307,15 +308,31 @@ class ProgramInterpreter:
     async def _run_gather_sequence(
         self, programs: list[Program], ctx: ExecutionContext
     ) -> list[Any]:
-        results: list[Any] = []
-        sub_contexts = []
-        error_to_raise: BaseException | None = None
+        normalized_programs: list[Program] = []
+
+        def _enqueue_program(prog_like: Any) -> None:
+            if isinstance(prog_like, Program):
+                normalized_programs.append(prog_like)
+                return
+
+            if callable(prog_like) and not isinstance(prog_like, Program):
+                _enqueue_program(prog_like())
+                return
+
+            if isinstance(prog_like, (list, tuple)):
+                for nested in prog_like:
+                    _enqueue_program(nested)
+                return
+
+            raise TypeError(
+                "gather expects Program instances, callables returning Programs, or iterables of them"
+            )
 
         for program in programs:
-            prog = program
-            if callable(prog) and not isinstance(prog, Program):
-                prog = prog()
+            _enqueue_program(program)
 
+        tasks = []
+        for prog in normalized_programs:
             ctx_copy = ExecutionContext(
                 env=ctx.env.copy() if ctx.env else {},
                 state=ctx.state.copy() if ctx.state else {},
@@ -324,9 +341,15 @@ class ProgramInterpreter:
                 io_allowed=ctx.io_allowed,
                 cache=ctx.cache,
             )
-            sub_result = await self.run(prog, ctx_copy)
-            sub_contexts.append(sub_result.context)
+            tasks.append(asyncio.create_task(self.run(prog, ctx_copy)))
 
+        sub_results = await asyncio.gather(*tasks)
+
+        results: list[Any] = []
+        sub_contexts = [sub_result.context for sub_result in sub_results]
+        error_to_raise: BaseException | None = None
+
+        for sub_result in sub_results:
             if isinstance(sub_result.result, Err):
                 if error_to_raise is None:
                     error_to_raise = sub_result.result.error

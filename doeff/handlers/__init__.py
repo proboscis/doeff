@@ -24,7 +24,7 @@ import cloudpickle
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.cache_policy import CachePolicy, CacheStorage
-from doeff.types import EffectFailure, ExecutionContext, ListenResult
+from doeff.types import Effect, EffectFailure, ExecutionContext, ListenResult
 from doeff.effects import (
     AskEffect,
     CacheGetEffect,
@@ -41,6 +41,7 @@ from doeff.effects import (
     MemoPutEffect,
     ResultCatchEffect,
     ResultFailEffect,
+    ResultSafeEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
     StateGetEffect,
@@ -222,13 +223,27 @@ class ResultEffectHandler:
             else:
                 # Handler returned a direct value
                 return handler_result
-    
+
+    async def handle_safe(
+        self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
+    ) -> Any:
+        """Handle result.safe effect by capturing the program outcome."""
+        from doeff.program import Program
+
+        sub_program = effect.sub_program
+        if isinstance(sub_program, Effect):
+            sub_program = Program.from_effect(sub_program)
+        elif callable(sub_program) and not isinstance(sub_program, Program):
+            sub_program = sub_program()
+
+        pragmatic_result = await engine.run(sub_program, ctx)
+        return pragmatic_result.result
+
     async def handle_recover(
         self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle result.recover effect - try program, use fallback on error."""
         from doeff.program import Program
-        from doeff.types import Effect
         import inspect
         
         sub_program = effect.sub_program
@@ -370,7 +385,7 @@ class IOEffectHandler:
 
 class GraphEffectHandler:
     """Handles Graph effects for SGFR compatibility."""
-    scope = HandlerScope.ISOLATED  # Each parallel execution tracks its own graph
+    scope = HandlerScope.SHARED  # Share graph across parallel execution contexts
 
     async def handle_step(self, effect: GraphStepEffect, ctx: ExecutionContext) -> Any:
         """Handle graph.step effect."""

@@ -34,6 +34,11 @@ class ResultRetryEffect(EffectBase):
     delay_ms: int = 0
 
 
+@dataclass(frozen=True)
+class ResultSafeEffect(EffectBase):
+    sub_program: ProgramLike
+
+
 def fail(exc: Exception) -> ResultFailEffect:
     return create_effect_with_trace(ResultFailEffect(exception=exc))
 
@@ -66,6 +71,10 @@ def retry(
             sub_program=sub_program, max_attempts=max_attempts, delay_ms=delay_ms
         )
     )
+
+
+def safe(sub_program: ProgramLike) -> ResultSafeEffect:
+    return create_effect_with_trace(ResultSafeEffect(sub_program=sub_program))
 
 
 def Fail(exc: Exception) -> Effect:
@@ -103,17 +112,27 @@ def Retry(
     )
 
 
+def Safe(sub_program: ProgramLike) -> Effect:
+    return create_effect_with_trace(
+        ResultSafeEffect(sub_program=sub_program),
+        skip_frames=3,
+    )
+
+
 __all__ = [
     "ResultFailEffect",
     "ResultCatchEffect",
     "ResultRecoverEffect",
     "ResultRetryEffect",
+    "ResultSafeEffect",
     "fail",
     "catch",
     "recover",
     "retry",
+    "safe",
     "Fail",
     "Catch",
     "Recover",
     "Retry",
+    "Safe",
 ]

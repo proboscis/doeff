@@ -194,6 +194,11 @@ async def test_structured_llm_text_only() -> None:
     assert config.max_output_tokens == 128
     assert config.temperature == 0.2
 
+    api_calls = result.context.state.get("gemini_api_calls")
+    assert api_calls is not None
+    assert api_calls[0]["prompt_text"] == "Hello Gemini"
+    assert api_calls[0]["prompt_images"] == []
+
 
 @pytest.mark.asyncio
 async def test_structured_llm_with_pydantic() -> None:
