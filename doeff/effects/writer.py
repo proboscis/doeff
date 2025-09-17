@@ -1,11 +1,8 @@
-"""
-Writer monad effects.
+"""Writer monad effects."""
 
-This module provides Writer effects for logging and accumulating output.
-"""
+from __future__ import annotations
 
-from typing import Any
-
+from ._program_types import ProgramLike
 from .base import Effect, create_effect_with_trace
 
 
@@ -13,12 +10,12 @@ class writer:
     """Writer monad effects (accumulated logs)."""
 
     @staticmethod
-    def tell(message: Any) -> Effect:
+    def tell(message: object) -> Effect:
         """Add to the log."""
         return create_effect_with_trace("writer.tell", message)
 
     @staticmethod
-    def listen(sub_program: Any) -> Effect:
+    def listen(sub_program: ProgramLike) -> Effect:
         """Run sub-program and return its log.
 
         Args:
@@ -28,17 +25,17 @@ class writer:
 
 
 # Uppercase aliases
-def Tell(message: Any) -> Effect:
+def Tell(message: object) -> Effect:
     """Writer: Add to the log."""
     return create_effect_with_trace("writer.tell", message, skip_frames=3)
 
 
-def Listen(sub_program: Any) -> Effect:
+def Listen(sub_program: ProgramLike) -> Effect:
     """Writer: Run sub-program and return its log."""
     return create_effect_with_trace("writer.listen", sub_program, skip_frames=3)
 
 
-def Log(message: Any) -> Effect:
+def Log(message: object) -> Effect:
     """Writer: Add to the log (alias for Tell)."""
     return create_effect_with_trace("writer.tell", message, skip_frames=3)
 

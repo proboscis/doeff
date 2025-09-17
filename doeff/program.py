@@ -123,7 +123,7 @@ class Program(Generic[T]):
                 elif isinstance(current, Effect):
                     transformed = transform(current)
                     if isinstance(transformed, Program):
-                        value = yield transformed
+                        value = yield transformed.intercept(transform)
                     else:
                         value = yield transformed
                 else:

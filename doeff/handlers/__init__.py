@@ -11,22 +11,20 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Optional, Dict
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict
 
 import hashlib
-import json
 import lzma
 import os
-import pickle
 import sqlite3
 import tempfile
-from pathlib import Path
 
 import cloudpickle
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
-from doeff.types import ExecutionContext, ListenResult
 from doeff.cache_policy import CachePolicy, CacheStorage, ensure_cache_policy
+from doeff.types import EffectFailure, ExecutionContext, ListenResult
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
@@ -205,14 +203,15 @@ class ResultEffectHandler:
         """Handle result.recover effect - try program, use fallback on error."""
         # Import here to avoid circular import
         from doeff.program import Program
+        from doeff.types import Effect
         import inspect
         
-        # Check if payload["program"] is already a Program or a callable
         sub_program = payload["program"]
-        if callable(sub_program) and not isinstance(sub_program, Program):
-            # It's a thunk, call it to get the Program
+        if isinstance(sub_program, Effect):
+            sub_program = Program.from_effect(sub_program)
+        elif callable(sub_program) and not isinstance(sub_program, Program):
             sub_program = sub_program()
-        
+
         # Try to run the program
         pragmatic_result = await engine.run(sub_program, ctx)
         
@@ -390,21 +389,8 @@ class MemoEffectHandler:
     scope = HandlerScope.SHARED
 
     def _serialize_key(self, key: Any) -> str:
-        def make_serializable(obj: Any):
-            if isinstance(obj, (str, int, float, bool, type(None))):
-                return obj
-            if isinstance(obj, (tuple, list)):
-                return [
-                    "__tuple__" if isinstance(obj, tuple) else "__list__",
-                    [make_serializable(item) for item in obj],
-                ]
-            if hasattr(obj, "items"):
-                return {str(k): make_serializable(v) for k, v in obj.items()}
-            return str(obj)
-
-        serializable = make_serializable(key)
-        key_str = json.dumps(serializable, sort_keys=True)
-        return hashlib.md5(key_str.encode()).hexdigest()
+        key_bytes = cloudpickle.dumps(key)
+        return hashlib.sha256(key_bytes).hexdigest()
 
     async def handle_get(self, key: Any, ctx: ExecutionContext) -> Any:
         serialized_key = self._serialize_key(key)

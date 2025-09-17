@@ -1,12 +1,10 @@
-"""
-Result/error handling effects.
+"""Result/error handling effects."""
 
-This module provides Result effects for error handling.
-"""
+from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
 
+from ._program_types import ProgramLike
 from .base import Effect, create_effect_with_trace
 
 
@@ -19,7 +17,10 @@ class result:
         return create_effect_with_trace("result.fail", exc)
 
     @staticmethod
-    def catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
+    def catch(
+        sub_program: ProgramLike,
+        handler: Callable[[Exception], object | ProgramLike],
+    ) -> Effect:
         """Try sub-program with error handler.
 
         Args:
@@ -29,7 +30,12 @@ class result:
         return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler})
 
     @staticmethod
-    def recover(sub_program: Any, fallback: Any | Callable[[Exception], Any]) -> Effect:
+    def recover(
+        sub_program: ProgramLike,
+        fallback: object
+        | ProgramLike
+        | Callable[[Exception], object | ProgramLike],
+    ) -> Effect:
         """Try sub-program, use fallback value on error.
         
         Args:
@@ -42,7 +48,11 @@ class result:
         return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback})
 
     @staticmethod
-    def retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
+    def retry(
+        sub_program: ProgramLike,
+        max_attempts: int = 3,
+        delay_ms: int = 0,
+    ) -> Effect:
         """Retry sub-program on failure.
         
         Args:
@@ -63,12 +73,18 @@ def Fail(exc: Exception) -> Effect:
     return create_effect_with_trace("result.fail", exc, skip_frames=3)
 
 
-def Catch(sub_program: Any, handler: Callable[[Exception], Any]) -> Effect:
+def Catch(
+    sub_program: ProgramLike,
+    handler: Callable[[Exception], object | ProgramLike],
+) -> Effect:
     """Result: Try sub-program with error handler."""
     return create_effect_with_trace("result.catch", {"program": sub_program, "handler": handler}, skip_frames=3)
 
 
-def Recover(sub_program: Any, fallback: Any | Callable[[Exception], Any]) -> Effect:
+def Recover(
+    sub_program: ProgramLike,
+    fallback: object | ProgramLike | Callable[[Exception], object | ProgramLike],
+) -> Effect:
     """Result: Try sub-program, use fallback value on error.
     
     Args:
@@ -81,7 +97,11 @@ def Recover(sub_program: Any, fallback: Any | Callable[[Exception], Any]) -> Eff
     return create_effect_with_trace("result.recover", {"program": sub_program, "fallback": fallback}, skip_frames=3)
 
 
-def Retry(sub_program: Any, max_attempts: int = 3, delay_ms: int = 0) -> Effect:
+def Retry(
+    sub_program: ProgramLike,
+    max_attempts: int = 3,
+    delay_ms: int = 0,
+) -> Effect:
     """Result: Retry sub-program on failure."""
     return create_effect_with_trace("result.retry", {
         "program": sub_program,
