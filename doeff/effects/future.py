@@ -1,42 +1,49 @@
-"""
-Future/async effects.
+"""Future/async effects."""
 
-This module provides Future effects for async operations.
-"""
+from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Awaitable
-from typing import Any
+from typing import Any, Tuple
 
-from .base import Effect, create_effect_with_trace
-
-
-class future:
-    """Future/async effects (forced evaluation)."""
-
-    @staticmethod
-    def await_(awaitable: Awaitable[Any]) -> Effect:
-        """Await an async operation."""
-        return create_effect_with_trace("future.await", awaitable)
-
-    @staticmethod
-    def parallel(*awaitables: Awaitable[Any]) -> Effect:
-        """Run multiple async operations in parallel."""
-        return create_effect_with_trace("future.parallel", awaitables)
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-# Uppercase aliases
+@dataclass(frozen=True)
+class FutureAwaitEffect(EffectBase):
+    awaitable: Awaitable[Any]
+
+
+@dataclass(frozen=True)
+class FutureParallelEffect(EffectBase):
+    awaitables: Tuple[Awaitable[Any], ...]
+
+
+def await_(awaitable: Awaitable[Any]) -> FutureAwaitEffect:
+    return create_effect_with_trace(FutureAwaitEffect(awaitable=awaitable))
+
+
+def parallel(*awaitables: Awaitable[Any]) -> FutureParallelEffect:
+    return create_effect_with_trace(
+        FutureParallelEffect(awaitables=tuple(awaitables))
+    )
+
+
 def Await(awaitable: Awaitable[Any]) -> Effect:
-    """Future: Await an async operation."""
-    return create_effect_with_trace("future.await", awaitable, skip_frames=3)
+    return create_effect_with_trace(FutureAwaitEffect(awaitable=awaitable), skip_frames=3)
 
 
 def Parallel(*awaitables: Awaitable[Any]) -> Effect:
-    """Future: Run multiple async operations in parallel."""
-    return create_effect_with_trace("future.parallel", awaitables, skip_frames=3)
+    return create_effect_with_trace(
+        FutureParallelEffect(awaitables=tuple(awaitables)), skip_frames=3
+    )
 
 
 __all__ = [
+    "FutureAwaitEffect",
+    "FutureParallelEffect",
+    "await_",
+    "parallel",
     "Await",
     "Parallel",
-    "future",
 ]

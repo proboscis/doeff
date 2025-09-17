@@ -2,7 +2,7 @@
 
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Callable
 
 from openai.types.chat import ChatCompletionChunk
 
@@ -29,7 +29,7 @@ from doeff_openai.types import (
 def process_stream(
     stream: AsyncIterator[ChatCompletionChunk],
     model: str,
-    callback: callable | None = None,
+    callback: Callable[[str], None] | None = None,
 ) -> EffectGenerator[tuple[str, TokenUsage, float]]:
     """
     Process a streaming response with full tracking.

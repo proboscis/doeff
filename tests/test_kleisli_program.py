@@ -21,6 +21,7 @@ from doeff import (
     Put,
     do,
 )
+from doeff.kleisli import PartiallyAppliedKleisliProgram
 
 
 @pytest.mark.asyncio
@@ -307,6 +308,117 @@ async def test_kleisli_all_program_args():
 
     assert result.is_ok
     assert result.value == "foo-bar-baz"
+
+
+@pytest.mark.asyncio
+async def test_kleisli_partial_application():
+    """Partially applied Kleisli programs unwrap Program arguments correctly."""
+
+    @do
+    def add(x: int, y: int) -> Generator[Effect | Program, Any, int]:
+        return x + y
+
+    part = add.partial(Program.pure(2))
+    assert isinstance(part, PartiallyAppliedKleisliProgram)
+
+    engine = ProgramInterpreter()
+
+    prog = part(Program.pure(5))
+    result = await engine.run(prog)
+    assert result.is_ok
+    assert result.value == 7
+
+    part2 = part.partial(Program.pure(8))
+    prog2 = part2()
+    result2 = await engine.run(prog2)
+    assert result2.is_ok
+    assert result2.value == 10
+
+
+@pytest.mark.asyncio
+async def test_kleisli_partial_with_kwargs():
+    """Partial application should respect keyword arguments and defaults."""
+
+    @do
+    def scaled_sum(x: int, y: int, *, scale: int = 1) -> Generator[Effect | Program, Any, int]:
+        yield Log(f"Scaling sum of {x} and {y} by {scale}")
+        return (x + y) * scale
+
+    part = scaled_sum.partial(Program.pure(4))
+    engine = ProgramInterpreter()
+
+    prog = part(Program.pure(6), scale=Program.pure(3))
+    result = await engine.run(prog)
+
+    assert result.is_ok
+    assert result.value == 30
+    assert result.log == ["Scaling sum of 4 and 6 by 3"]
+
+
+@pytest.mark.asyncio
+async def test_kleisli_partial_chain_kwargs():
+    """Chaining partial applications merges positional and keyword arguments."""
+
+    @do
+    def combine(
+        a: int, b: int, c: int = 0
+    ) -> Generator[Effect | Program, Any, tuple[int, int, int]]:
+        return (a, b, c)
+
+    part1 = combine.partial(Program.pure(1))
+    part2 = part1.partial(b=Program.pure(2))
+    part3 = part2.partial(c=Program.pure(3))
+
+    engine = ProgramInterpreter()
+    result = await engine.run(part3())
+
+    assert result.is_ok
+    assert result.value == (1, 2, 3)
+
+
+@pytest.mark.asyncio
+async def test_kleisli_and_then_operator():
+    """``and_then_k`` and ``>>`` chain Kleisli programs via binder."""
+
+    @do
+    def load_number(value: int) -> Generator[Effect | Program, Any, int]:
+        return value
+
+    @do
+    def multiply(value: int, factor: int) -> Generator[Effect | Program, Any, int]:
+        yield Log(f"Multiplying {value} by {factor}")
+        return value * factor
+
+    binder = lambda n: multiply(n, Program.pure(3))
+    chained = load_number.and_then_k(binder)
+    chained_alias = load_number >> binder
+
+    engine = ProgramInterpreter()
+
+    result1 = await engine.run(chained(Program.pure(5)))
+    result2 = await engine.run(chained_alias(Program.pure(5)))
+
+    assert result1.is_ok and result1.value == 15
+    assert result2.is_ok and result2.value == 15
+    assert result1.log == result2.log
+
+
+@pytest.mark.asyncio
+async def test_kleisli_fmap():
+    """``fmap`` applies a pure mapper to the Kleisli result."""
+
+    @do
+    def load_number(value: int) -> Generator[Effect | Program, Any, int]:
+        return value
+
+    mapped = load_number.fmap(lambda n: n * 4)
+    engine = ProgramInterpreter()
+
+    result = await engine.run(mapped(Program.pure(6)))
+
+    assert result.is_ok
+    assert result.value == 24
+    assert result.log == []
 
 
 if __name__ == "__main__":

@@ -2,47 +2,48 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ._program_types import ProgramLike
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class writer:
-    """Writer monad effects (accumulated logs)."""
-
-    @staticmethod
-    def tell(message: object) -> Effect:
-        """Add to the log."""
-        return create_effect_with_trace("writer.tell", message)
-
-    @staticmethod
-    def listen(sub_program: ProgramLike) -> Effect:
-        """Run sub-program and return its log.
-
-        Args:
-            sub_program: A Program or a thunk that returns a Program
-        """
-        return create_effect_with_trace("writer.listen", sub_program)
+@dataclass(frozen=True)
+class WriterTellEffect(EffectBase):
+    message: object
 
 
-# Uppercase aliases
+@dataclass(frozen=True)
+class WriterListenEffect(EffectBase):
+    sub_program: ProgramLike
+
+
+def tell(message: object) -> WriterTellEffect:
+    return create_effect_with_trace(WriterTellEffect(message=message))
+
+
+def listen(sub_program: ProgramLike) -> WriterListenEffect:
+    return create_effect_with_trace(WriterListenEffect(sub_program=sub_program))
+
+
 def Tell(message: object) -> Effect:
-    """Writer: Add to the log."""
-    return create_effect_with_trace("writer.tell", message, skip_frames=3)
+    return create_effect_with_trace(WriterTellEffect(message=message), skip_frames=3)
 
 
 def Listen(sub_program: ProgramLike) -> Effect:
-    """Writer: Run sub-program and return its log."""
-    return create_effect_with_trace("writer.listen", sub_program, skip_frames=3)
+    return create_effect_with_trace(WriterListenEffect(sub_program=sub_program), skip_frames=3)
 
 
 def Log(message: object) -> Effect:
-    """Writer: Add to the log (alias for Tell)."""
-    return create_effect_with_trace("writer.tell", message, skip_frames=3)
+    return create_effect_with_trace(WriterTellEffect(message=message), skip_frames=3)
 
 
 __all__ = [
+    "WriterTellEffect",
+    "WriterListenEffect",
+    "tell",
+    "listen",
+    "Tell",
     "Listen",
     "Log",
-    "Tell",
-    "writer",
 ]

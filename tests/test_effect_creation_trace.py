@@ -48,7 +48,7 @@ async def test_fail_effect_with_creation_trace():
 
         # Should contain creation context if debug mode is on
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
-            assert "Effect 'result.fail' failed" in error_str
+            assert "Effect 'ResultFailEffect' failed" in error_str
             assert "Created at:" in error_str  # Changed from "Effect created at"
             assert "test_effect_creation_trace.py" in error_str
             assert "failing_program" in error_str
@@ -89,7 +89,7 @@ async def test_ask_effect_missing_key_with_trace():
 
         # Should show where Ask was created
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
-            assert "Effect 'reader.ask' failed" in error_str
+            assert "Effect 'AskEffect' failed" in error_str
             assert "Created at:" in error_str  # Changed from "Effect created at"
             assert "program_with_missing_key" in error_str
     finally:
@@ -164,7 +164,7 @@ async def test_nested_program_creation_trace():
 
         # Should show the creation context
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
-            assert "Effect 'result.fail' failed" in error_str
+            assert "Effect 'ResultFailEffect' failed" in error_str
             assert "inner_program" in error_str
     finally:
         if "DOEFF_DEBUG" in os.environ:  # noqa: PINJ050
@@ -259,7 +259,7 @@ async def test_display_with_creation_trace():
 
         # Check that display output contains the expected elements
         assert "❌ Failure" in display_output
-        assert "Effect 'result.fail' failed" in display_output
+        assert "Effect 'ResultFailEffect' failed" in display_output
         assert "ValueError" in display_output
         assert "Test error for display" in display_output
 
@@ -342,8 +342,8 @@ async def test_nested_effect_error_chain():
 
         # Check that it shows a clean error chain
         assert "Error Chain (most recent first):" in display
-        assert "Effect 'result.catch' failed" in display
-        assert "Effect 'result.fail' failed" in display
+        assert "Effect 'ResultCatchEffect' failed" in display
+        assert "Effect 'ResultFailEffect' failed" in display
         assert "ValueError: Expecting value: line 1 column 1 (char 0)" in display
 
         # Should show creation locations

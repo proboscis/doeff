@@ -23,8 +23,32 @@ import tempfile
 import cloudpickle
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
-from doeff.cache_policy import CachePolicy, CacheStorage, ensure_cache_policy
+from doeff.cache_policy import CachePolicy, CacheStorage
 from doeff.types import EffectFailure, ExecutionContext, ListenResult
+from doeff.effects import (
+    AskEffect,
+    CacheGetEffect,
+    CachePutEffect,
+    FutureAwaitEffect,
+    FutureParallelEffect,
+    GraphAnnotateEffect,
+    GraphSnapshotEffect,
+    GraphStepEffect,
+    IOPerformEffect,
+    IOPrintEffect,
+    LocalEffect,
+    MemoGetEffect,
+    MemoPutEffect,
+    ResultCatchEffect,
+    ResultFailEffect,
+    ResultRecoverEffect,
+    ResultRetryEffect,
+    StateGetEffect,
+    StateModifyEffect,
+    StatePutEffect,
+    WriterListenEffect,
+    WriterTellEffect,
+)
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
@@ -43,20 +67,26 @@ class ReaderEffectHandler:
     """Handles Reader monad effects."""
     scope = HandlerScope.ISOLATED  # Each parallel execution gets its own environment
 
-    async def handle_ask(self, key: str, ctx: ExecutionContext) -> Any:
+    async def handle_ask(self, effect: AskEffect, ctx: ExecutionContext) -> Any:
         """Handle reader.ask effect."""
-        if key not in ctx.env:
-            raise KeyError(f"Missing environment key: {key}")
-        return ctx.env[key]
+        key = effect.key
+        if key in ctx.env:
+            return ctx.env[key]
+
+        resolver = ctx.env.get("__resolver__")
+        if resolver is not None:
+            return await resolver.provide(key)
+
+        raise KeyError(f"Missing environment key: {key}")
 
     async def handle_local(
-        self, payload: dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: LocalEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle reader.local effect."""
         sub_ctx = ctx.copy()
-        sub_ctx.env.update(payload["env"])
-        # Check if payload["program"] is already a Program or a callable
-        sub_program = payload["program"]
+        sub_ctx.env.update(effect.env_update)
+        # Check if sub_program is already a Program or a callable
+        sub_program = effect.sub_program
         if callable(sub_program) and not isinstance(sub_program, Program):
             # It's a thunk, call it to get the Program
             sub_program = sub_program()
@@ -69,19 +99,19 @@ class StateEffectHandler:
     """Handles State monad effects."""
     scope = HandlerScope.ISOLATED  # Each parallel execution gets its own state
 
-    async def handle_get(self, key: str, ctx: ExecutionContext) -> Any:
+    async def handle_get(self, effect: StateGetEffect, ctx: ExecutionContext) -> Any:
         """Handle state.get effect."""
-        return ctx.state.get(key)
+        return ctx.state.get(effect.key)
 
-    async def handle_put(self, payload: dict, ctx: ExecutionContext) -> None:
+    async def handle_put(self, effect: StatePutEffect, ctx: ExecutionContext) -> None:
         """Handle state.put effect."""
-        ctx.state[payload["key"]] = payload["value"]
+        ctx.state[effect.key] = effect.value
 
-    async def handle_modify(self, payload: dict, ctx: ExecutionContext) -> Any:
+    async def handle_modify(self, effect: StateModifyEffect, ctx: ExecutionContext) -> Any:
         """Handle state.modify effect."""
-        key = payload["key"]
+        key = effect.key
         old_value = ctx.state.get(key)
-        new_value = payload["func"](old_value)
+        new_value = effect.func(old_value)
         ctx.state[key] = new_value
         return new_value
 
@@ -90,29 +120,25 @@ class WriterEffectHandler:
     """Handles Writer monad effects."""
     scope = HandlerScope.ISOLATED  # Each parallel execution gets its own log
 
-    async def handle_tell(self, message: Any, ctx: ExecutionContext) -> None:
+    async def handle_tell(self, effect: WriterTellEffect, ctx: ExecutionContext) -> None:
         """Handle writer.tell effect."""
-        ctx.log.append(message)
+        ctx.log.append(effect.message)
 
     async def handle_listen(
         self,
-        sub_program_func: Callable,
+        effect: WriterListenEffect,
         ctx: ExecutionContext,
         engine: "ProgramInterpreter",
     ) -> ListenResult:
         """Handle writer.listen effect."""
-        # Import here to avoid circular import
         from doeff.program import Program
         
-        # Check if it's already a Program or a callable
-        sub_program = sub_program_func
+        sub_program = effect.sub_program
         if callable(sub_program) and not isinstance(sub_program, Program):
-            # It's a thunk, call it to get the Program
             sub_program = sub_program()
         sub_ctx = ctx.copy()
         sub_ctx.log = []  # Fresh log for sub-program
         pragmatic_result = await engine.run(sub_program, sub_ctx)
-        # Return both the value and the sub-program's log
         return ListenResult(value=pragmatic_result.value, log=sub_ctx.log)
 
 
@@ -120,15 +146,15 @@ class FutureEffectHandler:
     """Handles Future monad effects."""
     scope = HandlerScope.SHARED  # Async operations are stateless
 
-    async def handle_await(self, awaitable: Awaitable[Any]) -> Any:
+    async def handle_await(self, effect: FutureAwaitEffect) -> Any:
         """Handle future.await effect."""
-        return await awaitable
+        return await effect.awaitable
 
     async def handle_parallel(
-        self, awaitables: tuple[Awaitable[Any], ...]
+        self, effect: FutureParallelEffect
     ) -> list[Any]:
         """Handle future.parallel effect."""
-        results = await asyncio.gather(*awaitables)
+        results = await asyncio.gather(*effect.awaitables)
         return results
 
 
@@ -136,19 +162,19 @@ class ResultEffectHandler:
     """Handles Result monad effects."""
     scope = HandlerScope.SHARED  # Error handling is stateless
 
-    async def handle_fail(self, exc: Exception) -> None:
+    async def handle_fail(self, effect: ResultFailEffect) -> None:
         """Handle result.fail effect."""
-        raise exc
+        raise effect.exception
 
     async def handle_catch(
-        self, payload: dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultCatchEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle result.catch effect."""
         # Import here to avoid circular import
         from doeff.program import Program
-        
-        # Check if payload["program"] is already a Program or a callable
-        sub_program = payload["program"]
+
+        # Check if sub_program is already a Program or a callable
+        sub_program = effect.sub_program
         if callable(sub_program) and not isinstance(sub_program, Program):
             # It's a thunk, call it to get the Program
             sub_program = sub_program()
@@ -165,7 +191,7 @@ class ResultEffectHandler:
                     error = error.cause
 
                 # Run error handler with the unwrapped exception
-                handler_result = payload["handler"](error)
+                handler_result = effect.handler(error)
 
                 # If handler returned a Program, run it
                 if isinstance(handler_result, Program):
@@ -187,7 +213,7 @@ class ResultEffectHandler:
                 actual_error = actual_error.cause
 
             # Run error handler with unwrapped exception
-            handler_result = payload["handler"](actual_error)
+            handler_result = effect.handler(actual_error)
 
             # If handler returned a Program, run it
             if isinstance(handler_result, Program):
@@ -198,34 +224,29 @@ class ResultEffectHandler:
                 return handler_result
     
     async def handle_recover(
-        self, payload: Dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle result.recover effect - try program, use fallback on error."""
-        # Import here to avoid circular import
         from doeff.program import Program
         from doeff.types import Effect
         import inspect
         
-        sub_program = payload["program"]
+        sub_program = effect.sub_program
         if isinstance(sub_program, Effect):
             sub_program = Program.from_effect(sub_program)
         elif callable(sub_program) and not isinstance(sub_program, Program):
             sub_program = sub_program()
 
-        # Try to run the program
         pragmatic_result = await engine.run(sub_program, ctx)
         
         if isinstance(pragmatic_result.result, Err):
-            # Error occurred, extract the actual exception
             error = pragmatic_result.result.error
             
-            # Unwrap EffectFailure to get the original cause
             from doeff.types import EffectFailure
             if isinstance(error, EffectFailure):
                 error = error.cause
             
-            # Get the fallback
-            fallback = payload["fallback"]
+            fallback = effect.fallback
             
             # Check if fallback is an error handler function
             # We need to distinguish between:
@@ -299,85 +320,75 @@ class ResultEffectHandler:
             return pragmatic_result.value
     
     async def handle_retry(
-        self, payload: Dict, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultRetryEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
     ) -> Any:
         """Handle result.retry effect - retry program on failure."""
         import asyncio
         from doeff.program import Program
         from doeff._vendor import Ok
         
-        max_attempts = payload.get("max_attempts", 3)
-        delay_ms = payload.get("delay_ms", 0)
+        max_attempts = effect.max_attempts
+        delay_ms = effect.delay_ms
         
-        # Check if payload["program"] is already a Program or a callable
-        sub_program = payload["program"]
+        sub_program = effect.sub_program
         if callable(sub_program) and not isinstance(sub_program, Program):
-            # It's a thunk, call it to get the Program
             sub_program = sub_program()
         
         last_error = None
         for attempt in range(max_attempts):
-            # Try to run the program
             pragmatic_result = await engine.run(sub_program, ctx)
             
             if isinstance(pragmatic_result.result, Ok):
-                # Success - return the value
                 return pragmatic_result.value
             
-            # Store the last error
             last_error = pragmatic_result.result.error
             
-            # If not the last attempt, wait before retrying
             if attempt < max_attempts - 1 and delay_ms > 0:
                 await asyncio.sleep(delay_ms / 1000.0)
         
-        # All attempts failed, raise the last error
         if last_error:
-            # Re-raise the original error (it's already wrapped in TraceError)
             raise last_error
-        else:
-            raise RuntimeError(f"All {max_attempts} attempts failed")
+        raise RuntimeError(f"All {max_attempts} attempts failed")
 
 
 class IOEffectHandler:
     """Handles IO monad effects."""
     scope = HandlerScope.SHARED  # IO operations share permissions
 
-    async def handle_run(self, action: Callable[[], Any], ctx: ExecutionContext) -> Any:
+    async def handle_run(self, effect: IOPerformEffect, ctx: ExecutionContext) -> Any:
         """Handle io.run effect."""
         if not ctx.io_allowed:
             raise PermissionError("IO not allowed in this context")
-        return action()
+        return effect.action()
 
-    async def handle_print(self, message: str, ctx: ExecutionContext) -> None:
+    async def handle_print(self, effect: IOPrintEffect, ctx: ExecutionContext) -> None:
         """Handle io.print effect."""
         if not ctx.io_allowed:
             raise PermissionError("IO not allowed in this context")
-        print(message)
+        print(effect.message)
 
 
 class GraphEffectHandler:
     """Handles Graph effects for SGFR compatibility."""
     scope = HandlerScope.ISOLATED  # Each parallel execution tracks its own graph
 
-    async def handle_step(self, payload: Dict, ctx: ExecutionContext) -> Any:
+    async def handle_step(self, effect: GraphStepEffect, ctx: ExecutionContext) -> Any:
         """Handle graph.step effect."""
-        value = payload["value"]
-        meta = payload.get("meta", {})
+        value = effect.value
+        meta = effect.meta
 
-        # Update graph
         new_node = WNode(value)
         new_step = WStep(inputs=(ctx.graph.last.output,), output=new_node, meta=meta)
         ctx.graph = WGraph(last=new_step, steps=ctx.graph.steps | {new_step})
         return value
 
     async def handle_annotate(
-        self, meta: Dict[str, Any], ctx: ExecutionContext
+        self, effect: GraphAnnotateEffect, ctx: ExecutionContext
     ) -> None:
         """Handle graph.annotate effect."""
-        ctx.graph = ctx.graph.with_last_meta(meta)
+        ctx.graph = ctx.graph.with_last_meta(effect.meta)
 
-    async def handle_snapshot(self, payload: Dict | None, ctx: ExecutionContext):
+    async def handle_snapshot(self, effect: GraphSnapshotEffect, ctx: ExecutionContext):
         """Return the current computation graph."""
         return ctx.graph
 
@@ -392,15 +403,15 @@ class MemoEffectHandler:
         key_bytes = cloudpickle.dumps(key)
         return hashlib.sha256(key_bytes).hexdigest()
 
-    async def handle_get(self, key: Any, ctx: ExecutionContext) -> Any:
-        serialized_key = self._serialize_key(key)
+    async def handle_get(self, effect: MemoGetEffect, ctx: ExecutionContext) -> Any:
+        serialized_key = self._serialize_key(effect.key)
         if serialized_key not in ctx.cache:
             raise KeyError("Memo miss for key")
         return ctx.cache[serialized_key]
 
-    async def handle_put(self, payload: Dict, ctx: ExecutionContext) -> None:
-        serialized_key = self._serialize_key(payload["key"])
-        ctx.cache[serialized_key] = payload["value"]
+    async def handle_put(self, effect: MemoPutEffect, ctx: ExecutionContext) -> None:
+        serialized_key = self._serialize_key(effect.key)
+        ctx.cache[serialized_key] = effect.value
 
 
 class CacheEffectHandler:
@@ -442,8 +453,8 @@ class CacheEffectHandler:
         key_hash = hashlib.sha256(key_blob).hexdigest()
         return key_hash, key_blob
 
-    async def handle_get(self, key: Any, ctx: ExecutionContext) -> Any:
-        key_hash, _ = self._serialize_key(key)
+    async def handle_get(self, effect: CacheGetEffect, ctx: ExecutionContext) -> Any:
+        key_hash, _ = self._serialize_key(effect.key)
         async with self._lock:
             row = self._conn.execute(
                 "SELECT value_blob, expiry FROM cache_entries WHERE key_hash = ?",
@@ -459,14 +470,12 @@ class CacheEffectHandler:
 
         return cloudpickle.loads(lzma.decompress(value_blob))
 
-    async def handle_put(self, payload: Dict, ctx: ExecutionContext) -> None:
-        key = payload["key"]
-        value = payload["value"]
-        policy = payload.get("policy")
-        if not isinstance(policy, CachePolicy):
-            policy = ensure_cache_policy(policy=policy)
+    async def handle_put(self, effect: CachePutEffect, ctx: ExecutionContext) -> None:
+        key = effect.key
+        value = effect.value
+        policy = effect.policy
 
-        ttl = payload.get("ttl", policy.ttl)
+        ttl = policy.ttl
         expiry = None
         if ttl is not None and ttl > 0:
             expiry = self._time() + ttl

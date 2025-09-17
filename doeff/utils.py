@@ -4,7 +4,7 @@ Utility functions for the doeff library.
 
 import os
 import sys
-from typing import Optional
+from typing import Optional, TypeVar
 
 # Environment variable to control debug mode
 DEBUG_EFFECTS = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
@@ -81,22 +81,19 @@ def capture_creation_context(skip_frames: int = 2) -> Optional["EffectCreationCo
         return None
 
 
-def create_effect_with_trace(tag: str, payload, skip_frames: int = 3):
-    """
-    Create an Effect with optional creation context.
-    
-    Args:
-        tag: Effect tag
-        payload: Effect payload
-        skip_frames: Number of frames to skip (default 3 for this function, caller, and effect factory)
-    
-    Returns:
-        Effect instance with creation context if debugging enabled
-    """
+E = TypeVar("E", bound="Effect")
+
+
+def create_effect_with_trace(effect: E, skip_frames: int = 3) -> E:
+    """Attach creation context metadata to an effect instance."""
+
     from doeff.types import Effect
 
+    if not isinstance(effect, Effect):  # Defensive
+        raise TypeError(f"Expected Effect, got {type(effect)!r}")
+
     created_at = capture_creation_context(skip_frames=skip_frames)
-    return Effect(tag, payload, created_at)
+    return effect.with_created_at(created_at)
 
 
 __all__ = [

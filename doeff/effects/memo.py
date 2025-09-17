@@ -1,32 +1,45 @@
 """Memoization effects."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Any
 
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class memo:
-    """Memoization helper effects."""
+@dataclass(frozen=True)
+class MemoGetEffect(EffectBase):
+    key: Any
 
-    @staticmethod
-    def get(key: Any) -> Effect:
-        return create_effect_with_trace("memo.get", key)
 
-    @staticmethod
-    def put(key: Any, value: Any) -> Effect:
-        return create_effect_with_trace("memo.put", {"key": key, "value": value})
+@dataclass(frozen=True)
+class MemoPutEffect(EffectBase):
+    key: Any
+    value: Any
+
+
+def memo_get(key: Any) -> MemoGetEffect:
+    return create_effect_with_trace(MemoGetEffect(key=key))
+
+
+def memo_put(key: Any, value: Any) -> MemoPutEffect:
+    return create_effect_with_trace(MemoPutEffect(key=key, value=value))
 
 
 def MemoGet(key: Any) -> Effect:
-    return create_effect_with_trace("memo.get", key, skip_frames=3)
+    return create_effect_with_trace(MemoGetEffect(key=key), skip_frames=3)
 
 
 def MemoPut(key: Any, value: Any) -> Effect:
-    return create_effect_with_trace("memo.put", {"key": key, "value": value}, skip_frames=3)
+    return create_effect_with_trace(MemoPutEffect(key=key, value=value), skip_frames=3)
 
 
 __all__ = [
-    "memo",
+    "MemoGetEffect",
+    "MemoPutEffect",
+    "memo_get",
+    "memo_put",
     "MemoGet",
     "MemoPut",
 ]

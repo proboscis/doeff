@@ -2,44 +2,53 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Mapping
 
 from ._program_types import ProgramLike
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class reader:
-    """Reader monad effects (forced evaluation)."""
+@dataclass(frozen=True)
+class AskEffect(EffectBase):
+    """Effect emitted when asking for an environment value."""
 
-    @staticmethod
-    def ask(key: str) -> Effect:
-        """Ask for environment value."""
-        return create_effect_with_trace("reader.ask", key)
-
-    @staticmethod
-    def local(env_update: Mapping[str, object], sub_program: ProgramLike) -> Effect:
-        """Run sub-program with modified environment.
-
-        Args:
-            env_update: Environment updates to apply
-            sub_program: A Program or a thunk that returns a Program
-        """
-        return create_effect_with_trace("reader.local", {"env": env_update, "program": sub_program})
+    key: str
 
 
-# Uppercase aliases
+@dataclass(frozen=True)
+class LocalEffect(EffectBase):
+    """Effect emitted when running a sub-program with modified environment."""
+
+    env_update: Mapping[str, object]
+    sub_program: ProgramLike
+
+
+def ask(key: str) -> AskEffect:
+    return create_effect_with_trace(AskEffect(key=key))
+
+
+def local(env_update: Mapping[str, object], sub_program: ProgramLike) -> LocalEffect:
+    return create_effect_with_trace(
+        LocalEffect(env_update=env_update, sub_program=sub_program)
+    )
+
+
 def Ask(key: str) -> Effect:
-    """Reader: Ask for environment value."""
-    return create_effect_with_trace("reader.ask", key, skip_frames=3)
+    return create_effect_with_trace(AskEffect(key=key), skip_frames=3)
 
 
 def Local(env_update: Mapping[str, object], sub_program: ProgramLike) -> Effect:
-    """Reader: Run sub-program with modified environment."""
-    return create_effect_with_trace("reader.local", {"env": env_update, "program": sub_program}, skip_frames=3)
+    return create_effect_with_trace(
+        LocalEffect(env_update=env_update, sub_program=sub_program), skip_frames=3
+    )
 
 
 __all__ = [
+    "AskEffect",
+    "LocalEffect",
+    "ask",
+    "local",
     "Ask",
     "Local",
-    "reader",
 ]

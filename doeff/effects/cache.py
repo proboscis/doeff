@@ -1,9 +1,8 @@
-"""
-Cache effects for memoization.
+"""Cache effects for memoization."""
 
-This module provides Cache effects for caching computations.
-"""
+from __future__ import annotations
 
+from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 
@@ -13,50 +12,49 @@ from ..cache_policy import (
     CacheStorage,
     ensure_cache_policy,
 )
-from .base import Effect, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
-class cache:
-    """Cache effects for memoization."""
-
-    @staticmethod
-    def get(key: Any) -> Effect:
-        """Get value from cache. Key can be any serializable object."""
-        return create_effect_with_trace("cache.get", key)
-
-    @staticmethod
-    def put(
-        key: Any,
-        value: Any,
-        ttl: float | None = None,
-        *,
-        lifecycle: CacheLifecycle | str | None = None,
-        storage: CacheStorage | str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        policy: CachePolicy | Mapping[str, Any] | None = None,
-    ) -> Effect:
-        """Put value into cache with optional TTL and policy hints.
-
-        Key can be any serializable object (e.g., tuple, FrozenDict).
-        """
-
-        cache_policy = ensure_cache_policy(
-            ttl=ttl,
-            lifecycle=lifecycle,
-            storage=storage,
-            metadata=metadata,
-            policy=policy,
-        )
-        payload = {"key": key, "value": value, "policy": cache_policy}
-        if cache_policy.ttl is not None:
-            payload["ttl"] = cache_policy.ttl
-        return create_effect_with_trace("cache.put", payload)
+@dataclass(frozen=True)
+class CacheGetEffect(EffectBase):
+    key: Any
 
 
-# Uppercase aliases
+@dataclass(frozen=True)
+class CachePutEffect(EffectBase):
+    key: Any
+    value: Any
+    policy: CachePolicy
+
+
+def cache_get(key: Any) -> CacheGetEffect:
+    return create_effect_with_trace(CacheGetEffect(key=key))
+
+
+def cache_put(
+    key: Any,
+    value: Any,
+    ttl: float | None = None,
+    *,
+    lifecycle: CacheLifecycle | str | None = None,
+    storage: CacheStorage | str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    policy: CachePolicy | Mapping[str, Any] | None = None,
+) -> CachePutEffect:
+    cache_policy = ensure_cache_policy(
+        ttl=ttl,
+        lifecycle=lifecycle,
+        storage=storage,
+        metadata=metadata,
+        policy=policy,
+    )
+    return create_effect_with_trace(
+        CachePutEffect(key=key, value=value, policy=cache_policy)
+    )
+
+
 def CacheGet(key: Any) -> Effect:
-    """Cache: Get value from cache. Key can be any serializable object."""
-    return create_effect_with_trace("cache.get", key, skip_frames=3)
+    return create_effect_with_trace(CacheGetEffect(key=key), skip_frames=3)
 
 
 def CachePut(
@@ -69,8 +67,6 @@ def CachePut(
     metadata: Mapping[str, Any] | None = None,
     policy: CachePolicy | Mapping[str, Any] | None = None,
 ) -> Effect:
-    """Cache: Put value into cache with optional TTL and lifecycle hints."""
-
     cache_policy = ensure_cache_policy(
         ttl=ttl,
         lifecycle=lifecycle,
@@ -78,17 +74,19 @@ def CachePut(
         metadata=metadata,
         policy=policy,
     )
-    payload = {"key": key, "value": value, "policy": cache_policy}
-    if cache_policy.ttl is not None:
-        payload["ttl"] = cache_policy.ttl
-    return create_effect_with_trace("cache.put", payload, skip_frames=3)
+    return create_effect_with_trace(
+        CachePutEffect(key=key, value=value, policy=cache_policy), skip_frames=3
+    )
 
 
 __all__ = [
+    "CacheGetEffect",
+    "CachePutEffect",
+    "cache_get",
+    "cache_put",
     "CacheGet",
+    "CachePut",
     "CacheLifecycle",
     "CachePolicy",
-    "CachePut",
     "CacheStorage",
-    "cache",
 ]
