@@ -7,6 +7,7 @@ by handling effects through the registered handlers.
 
 from __future__ import annotations
 
+import logging
 import traceback
 from typing import Any, TypeVar
 
@@ -16,6 +17,7 @@ from doeff.handlers import (
     FutureEffectHandler,
     GraphEffectHandler,
     IOEffectHandler,
+    MemoEffectHandler,
     ReaderEffectHandler,
     ResultEffectHandler,
     StateEffectHandler,
@@ -25,6 +27,8 @@ from doeff.program import Program
 from doeff.types import Effect, EffectFailure, ExecutionContext, RunResult
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 
 def force_eval(prog: Program[T]) -> Program[T]:
@@ -66,7 +70,7 @@ class ProgramInterpreter:
         Args:
             custom_handlers: Optional dict mapping effect categories to custom handlers.
                            Keys can be: 'reader', 'state', 'writer', 'future', 'result',
-                           'io', 'graph', 'cache'.
+                           'io', 'graph', 'memo', 'cache'.
                            Values should be handler instances with appropriate handle_* methods.
         """
         # Initialize default handlers
@@ -78,6 +82,7 @@ class ProgramInterpreter:
             "result": ResultEffectHandler(),
             "io": IOEffectHandler(),
             "graph": GraphEffectHandler(),
+            "memo": MemoEffectHandler(),
             "cache": CacheEffectHandler(),
         }
 
@@ -93,6 +98,7 @@ class ProgramInterpreter:
         self.result_handler = handlers["result"]
         self.io_handler = handlers["io"]
         self.graph_handler = handlers["graph"]
+        self.memo_handler = handlers["memo"]
         self.cache_handler = handlers["cache"]
 
         # Dispatch table
@@ -121,6 +127,8 @@ class ProgramInterpreter:
             "program.gather_dict": self._dispatch_program_gather_dict,
             "gather.gather_dict": self._dispatch_program_gather_dict,  # Alias
             "dep.inject": self._dispatch_dep_inject,
+            "memo.get": self._dispatch_memo_get,
+            "memo.put": self._dispatch_memo_put,
             "cache.get": self._dispatch_cache_get,
             "cache.put": self._dispatch_cache_put,
         }
@@ -161,7 +169,6 @@ class ProgramInterpreter:
                 return RunResult(ctx, Ok(e.value))
 
             # Process effects
-            from loguru import logger
             while True:
                 logger.debug(f"effect: {current}")
                 if isinstance(current, Effect):
@@ -417,6 +424,12 @@ class ProgramInterpreter:
         return await self.reader_handler.handle_ask(payload, ctx)
 
     # Cache dispatchers
+    async def _dispatch_memo_get(self, payload: Any, ctx: ExecutionContext) -> Any:
+        return await self.memo_handler.handle_get(payload, ctx)
+
+    async def _dispatch_memo_put(self, payload: Any, ctx: ExecutionContext) -> Any:
+        return await self.memo_handler.handle_put(payload, ctx)
+
     async def _dispatch_cache_get(self, payload: Any, ctx: ExecutionContext) -> Any:
         """Handle cache.get effect."""
         return await self.cache_handler.handle_get(payload, ctx)

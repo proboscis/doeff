@@ -578,7 +578,7 @@ def structured_llm__openai(
             metadata = yield track_api_call(
                 operation="structured_llm",
                 model=model,
-                request_data=api_params,
+                request_payload=api_params,
                 response=response,
                 start_time=attempt_start_time,
                 error=None,
@@ -591,7 +591,7 @@ def structured_llm__openai(
             metadata = yield track_api_call(
                 operation="structured_llm",
                 model=model,
-                request_data=api_params,
+                request_payload=api_params,
                 response=None,
                 start_time=attempt_start_time,
                 error=error,

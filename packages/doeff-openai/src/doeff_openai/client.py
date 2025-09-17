@@ -163,7 +163,7 @@ def extract_request_id(response: Any) -> str | None:
 def track_api_call(
     operation: str,
     model: str,
-    request_data: dict[str, Any],
+    request_payload: dict[str, Any],
     response: Any,
     start_time: float,
     error: Exception | None = None,
@@ -193,7 +193,7 @@ def track_api_call(
         token_usage=token_usage,
         cost_info=cost_info,
         error=str(error) if error else None,
-        stream=request_data.get("stream", False),
+        stream=request_payload.get("stream", False),
     )
 
     # Log the API call
@@ -216,17 +216,21 @@ def track_api_call(
         "model": model,
     }
     if operation == "chat.completion":
-        request_summary["messages_count"] = len(request_data.get("messages", []))
-        request_summary["temperature"] = request_data.get("temperature")
-        request_summary["max_tokens"] = request_data.get("max_tokens")
+        request_summary["messages_count"] = len(request_payload.get("messages", []))
+        request_summary["temperature"] = request_payload.get("temperature")
+        request_summary["max_tokens"] = request_payload.get("max_tokens")
     elif operation == "embedding":
-        input_data = request_data.get("input", "")
+        input_data = request_payload.get("input", "")
         if isinstance(input_data, list):
             request_summary["input_count"] = len(input_data)
         else:
             request_summary["input_length"] = len(input_data)
 
     # Add request as graph step
+    yield Step(
+        {"request_payload": request_payload, "timestamp": graph_metadata["timestamp"]},
+        {**graph_metadata, "phase": "request_payload"}
+    )
     yield Step(
         {"request": request_summary, "timestamp": graph_metadata["timestamp"]},
         {**graph_metadata, "phase": "request"}

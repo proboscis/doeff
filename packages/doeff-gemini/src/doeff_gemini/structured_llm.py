@@ -255,6 +255,30 @@ def structured_llm__gemini(
         generation_config_overrides=generation_config_overrides,
     )
 
+    generation_config_payload = {
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "top_p": top_p,
+        "top_k": top_k,
+        "candidate_count": candidate_count,
+        "system_instruction": system_instruction,
+        "safety_settings": safety_settings,
+        "tools": tools,
+        "tool_config": tool_config,
+        "response_format": response_format.__name__ if response_format else None,
+        "generation_config_overrides": generation_config_overrides,
+    }
+
+    request_payload = {
+        "text": text,
+        "images": images or [],
+        "generation_config": {
+            key: value
+            for key, value in generation_config_payload.items()
+            if value is not None
+        },
+    }
+
     request_summary = {
         "operation": "generate_content",
         "model": model,
@@ -281,6 +305,7 @@ def structured_llm__gemini(
                 operation="generate_content",
                 model=model,
                 request_summary=request_summary,
+                request_payload=request_payload,
                 response=response,
                 start_time=attempt_start_time,
                 error=None,
@@ -293,6 +318,7 @@ def structured_llm__gemini(
                 operation="generate_content",
                 model=model,
                 request_summary=request_summary,
+                request_payload=request_payload,
                 response=None,
                 start_time=attempt_start_time,
                 error=exc,

@@ -1,6 +1,5 @@
 """Tests for cache effects and decorator."""
 
-import pickle
 import time
 
 import pytest
@@ -10,6 +9,8 @@ from doeff import (
     CacheLifecycle,
     CachePut,
     CacheStorage,
+    MemoGet,
+    MemoPut,
     EffectGenerator,
     ExecutionContext,
     ProgramInterpreter,
@@ -18,6 +19,16 @@ from doeff import (
 )
 from doeff._vendor import FrozenDict
 from doeff.cache import cache, cache_1min, cache_key
+
+# Shared fixture ensuring each test uses isolated cache database
+
+
+@pytest.fixture
+def temp_cache_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "cache.sqlite3"
+    monkeypatch.setenv("DOEFF_CACHE_PATH", str(db_path))
+    yield db_path
+    monkeypatch.delenv("DOEFF_CACHE_PATH", raising=False)
 
 # Test cache effects directly
 
@@ -77,7 +88,7 @@ async def test_cache_with_complex_key():
 
 
 @pytest.mark.asyncio
-async def test_cache_ttl_expiry():
+async def test_cache_ttl_expiry(temp_cache_db):
     """Test that cached values expire after TTL."""
 
     # We need to wrap the sleep in an IO effect
@@ -111,69 +122,47 @@ async def test_cache_ttl_expiry():
 
 
 @pytest.mark.asyncio
-async def test_cache_persistent_lifecycle_uses_disk():
-    """Cache entries with persistent lifecycle should be written to disk."""
+async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db):
+    """Cache entries with persistent lifecycle persist across interpreter instances."""
 
     engine = ProgramInterpreter()
-    cache_dir = engine.cache_handler._disk_cache_dir
-    existing = set(cache_dir.iterdir()) if cache_dir.exists() else set()
 
     key = ("disk", 1)
 
     @do
-    def program():
+    def store():
         yield CachePut(key, {"value": 42}, lifecycle=CacheLifecycle.PERSISTENT)
+
+    @do
+    def fetch():
         return (yield CacheGet(key))
 
-    result = await engine.run(program())
+    await engine.run(store())
+    assert temp_cache_db.exists()
+
+    second_engine = ProgramInterpreter()
+    result = await second_engine.run(fetch())
 
     assert result.is_ok
     assert result.value == {"value": 42}
 
-    after = set(cache_dir.iterdir()) if cache_dir.exists() else set()
-    new_files = after - existing
-    try:
-        assert len(new_files) == 1
-        new_file = next(iter(new_files))
-        with new_file.open("rb") as fh:
-            stored = pickle.load(fh)
-        assert stored == {"value": 42}
-    finally:
-        for path in new_files:
-            if path.exists():
-                path.unlink()
-
 
 @pytest.mark.asyncio
-async def test_cache_explicit_storage_disk():
+async def test_cache_explicit_storage_disk(temp_cache_db):
     """Explicit disk storage hint should persist values on disk."""
 
     engine = ProgramInterpreter()
-    cache_dir = engine.cache_handler._disk_cache_dir
-    existing = set(cache_dir.iterdir()) if cache_dir.exists() else set()
 
     @do
-    def program():
+    def store_and_fetch():
         yield CachePut("disk_key", "value", storage=CacheStorage.DISK)
         return (yield CacheGet("disk_key"))
 
-    result = await engine.run(program())
+    result = await engine.run(store_and_fetch())
 
     assert result.is_ok
     assert result.value == "value"
-
-    after = set(cache_dir.iterdir()) if cache_dir.exists() else set()
-    new_files = after - existing
-    try:
-        assert len(new_files) == 1
-        file_path = next(iter(new_files))
-        with file_path.open("rb") as fh:
-            stored_value = pickle.load(fh)
-        assert stored_value == "value"
-    finally:
-        for path in new_files:
-            if path.exists():
-                path.unlink()
+    assert temp_cache_db.exists()
 
 
 @pytest.mark.asyncio
@@ -364,13 +353,8 @@ async def test_convenience_decorators():
     assert result.value == "1min"
 
 
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
-
-
-
 @pytest.mark.asyncio
-async def test_cache_decorator_hits():
+async def test_cache_decorator_hits(temp_cache_db):
     calls = []
 
     @cache()
@@ -392,7 +376,7 @@ async def test_cache_decorator_hits():
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_expiry():
+async def test_cache_decorator_expiry(temp_cache_db):
     calls = []
 
     @cache(ttl=0.5)
@@ -421,3 +405,60 @@ async def test_cache_decorator_expiry():
         assert calls == [5, 5]
     finally:
         cache_handler._time = original_time
+
+
+@pytest.mark.asyncio
+async def test_memo_effects():
+    @do
+    def program() -> EffectGenerator[int]:
+        yield MemoPut("alpha", 123)
+        return (yield MemoGet("alpha"))
+
+    interpreter = ProgramInterpreter()
+    result = await interpreter.run(program())
+
+    assert result.is_ok
+    assert result.value == 123
+
+
+@pytest.mark.asyncio
+async def test_memo_miss_raises_keyerror():
+    @do
+    def program() -> EffectGenerator[int]:
+        return (yield MemoGet("missing"))
+
+    interpreter = ProgramInterpreter()
+    result = await interpreter.run(program())
+
+    assert result.is_err
+    assert "Memo miss" in str(result.result.error)
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
+
+
+@pytest.mark.asyncio
+async def test_cache_decorator_accepts_pil(temp_cache_db):
+    from PIL import Image
+
+    calls = []
+
+    @cache()
+    @do
+    def compute(image: Image.Image) -> EffectGenerator[int]:
+        calls.append(image.size)
+        return image.width * image.height
+
+    image = Image.new("RGB", (16, 16), color="red")
+
+    interpreter = ProgramInterpreter()
+    context = ExecutionContext()
+
+    result1 = await interpreter.run(compute(image), context)
+    assert result1.value == 256
+    assert calls == [(16, 16)]
+
+    result2 = await interpreter.run(compute(image), result1.context)
+    assert result2.value == 256
+    assert calls == [(16, 16)]

@@ -40,14 +40,15 @@ import json
 import logging
 import queue
 import threading
+import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections.abc import Mapping
 from typing import Any, Callable, Dict, Generator, TypeVar
 
-from doeff.effects import Await, Catch, Gather, Snapshot
+from doeff.effects import Await, Catch, Fail, Gather, Recover, Snapshot
 from doeff.program import Program
-from doeff.types import Effect
+from doeff.types import Effect, EffectFailure
 
 try:  # Optional Pillow dependency
     from PIL.Image import Image as PILImage
@@ -63,7 +64,7 @@ def stream_program_to_webui(
     program: Program[T],
     *,
     host: str = "127.0.0.1",
-    port: int = 8765,
+    port: int | None = 8765,
     keep_alive: bool = True,
 ) -> Program[T]:
     """Return a Program that streams graph effects to a Cytoscape web UI.
@@ -77,7 +78,8 @@ def stream_program_to_webui(
     Args:
         program: Original program to execute.
         host: Host name for the web UI server.
-        port: TCP port for the web UI server.
+        port: Preferred TCP port (``None`` or an occupied port triggers automatic
+            selection of a free ephemeral port).
 
     Returns:
         A new :class:`Program` that forwards all effects but also publishes
@@ -90,9 +92,11 @@ def stream_program_to_webui(
     """
 
     server = _get_or_create_server(host, port)
+    host, port = server.host, server.port
     reporter = GraphEffectReporter(server.event_stream)
     transform = _make_graph_transform(reporter)
     instrumented = program.intercept(transform)
+    instrumented = _wrap_with_recover(instrumented, reporter, host, port)
     if not keep_alive:
         return instrumented
     return _with_keep_alive(instrumented, host, port)
@@ -113,19 +117,81 @@ def _make_graph_transform(
         "gather.gather_dict",
     }
 
+    processed_effect_ids: set[int] = set()
+
     def transform(effect: Effect) -> Effect | Program[Effect]:
         if effect.tag not in tracked_tags:
             return effect
 
+        effect_id = id(effect)
+        if effect_id in processed_effect_ids:
+            return effect
+
         def wrapper() -> Generator[Any, Any, Effect]:
-            result = yield effect
-            graph_state = yield Snapshot()
+            try:
+                processed_effect_ids.add(effect_id)
+                result = yield effect
+            except Exception as exc:  # pragma: no cover - passthrough
+                reporter.publish_error(exc, effect)
+                raise
+            finally:
+                processed_effect_ids.discard(effect_id)
+            try:
+                graph_state = yield Snapshot()
+            except Exception as exc:  # pragma: no cover - passthrough
+                reporter.publish_error(exc, None)
+                raise
             reporter.publish_graph(graph_state)
             return result
 
         return Program(wrapper)
 
     return transform
+
+
+def _wrap_with_recover(
+    program: Program[T],
+    reporter: "GraphEffectReporter",
+    host: str | None,
+    port: int | None,
+) -> Program[T]:
+    """Ensure final snapshots and error reporting using Recover."""
+
+    def failure_fallback(exc: Exception) -> Program[Any]:
+        def generator() -> Generator[Any, Any, Any]:
+            graph_state = None
+            try:
+                graph_state = yield Snapshot()
+            except Exception:  # pragma: no cover - defensive
+                graph_state = None
+            if graph_state is not None:
+                reporter.publish_graph(graph_state)
+            reporter.publish_error(exc, None)
+            destination = "the web UI"
+            if host and port:
+                destination = f"http://{host}:{port}"
+            logger.error(
+                "Program failed with %s: %s – inspect %s for details.",
+                exc.__class__.__name__,
+                exc,
+                destination,
+            )
+            yield Fail(exc)
+
+        return Program(generator)
+
+    def generator() -> Generator[Any, Any, T]:
+        result = yield Recover(program, failure_fallback)
+        graph_state = None
+        try:
+            graph_state = yield Snapshot()
+        except Exception:  # pragma: no cover - defensive
+            graph_state = None
+        if graph_state is not None:
+            reporter.publish_graph(graph_state)
+        return result
+
+    return Program(generator)
 
 
 def _with_keep_alive(program: Program[T], host: str, port: int) -> Program[T]:
@@ -215,6 +281,10 @@ class GraphEventStream:
         for client in clients:
             client.put(event)
 
+    def last_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return self._last_snapshot
+
 
 class GraphEffectReporter:
     """Build Cytoscape-ready snapshots from the interpreter graph."""
@@ -223,6 +293,7 @@ class GraphEffectReporter:
         self._stream = stream
         self._node_ids: dict[Any, str] = {}
         self._node_counter = itertools.count(1)
+        self._last_node_id: str | None = None
 
     def publish_graph(self, graph) -> None:
         nodes_payload: dict[str, dict[str, Any]] = {}
@@ -299,10 +370,62 @@ class GraphEffectReporter:
         if final_node_id is not None and final_node_id in nodes_payload:
             nodes_payload[final_node_id]["data"]["is_last"] = True
 
+        # Track the most recent node so errors can attach to it.
+        if final_node_id is not None:
+            self._last_node_id = final_node_id
+        elif not nodes_payload:
+            self._last_node_id = None
+
         self._stream.publish_snapshot(
             list(nodes_payload.values()),
             edges_payload,
         )
+
+    def publish_error(self, error: BaseException, effect: Effect | None) -> None:
+        """Publish an error node with stack trace information."""
+        snapshot = self._stream.last_snapshot()
+        nodes_map: dict[str, dict[str, Any]] = {}
+        for node in snapshot.get("nodes", []):
+            data = dict(node.get("data", {}))
+            node_id = data.get("id")
+            if not node_id:
+                continue
+            nodes_map[node_id] = {"data": data}
+        edges = list(snapshot.get("edges", []))
+
+        node_id = f"node-{next(self._node_counter)}"
+        label = f"Error: {type(error).__name__}"
+        meta = {"message": str(error)}
+        if effect is not None:
+            meta["effect"] = effect.tag
+
+        if isinstance(error, EffectFailure):
+            cause = error.cause
+            meta["message"] = f"{cause.__class__.__name__}: {cause}"
+            if error.creation_context:
+                meta["creation"] = error.creation_context.format_full()
+            if error.runtime_traceback:
+                meta["trace"] = error.runtime_traceback
+        else:
+            meta["trace"] = ''.join(
+                traceback.format_exception(type(error), error, error.__traceback__)
+            )
+
+        data = {
+            "id": node_id,
+            "label": label,
+            "value_repr": meta["message"],
+            "meta": meta,
+            "is_error": True,
+        }
+        nodes_map[node_id] = {"data": data}
+
+        if self._last_node_id and self._last_node_id in nodes_map:
+            edge_id = f"edge-{len(edges) + 1}"
+            edges.append({"data": {"id": edge_id, "source": self._last_node_id, "target": node_id}})
+
+        self._last_node_id = node_id
+        self._stream.publish_snapshot(list(nodes_map.values()), edges)
 
     @staticmethod
     def _value_to_label(value: Any) -> str:
@@ -419,16 +542,19 @@ class GraphWebUIServer:
         self._server: ThreadingHTTPServer | None = None
 
     def start(self) -> None:
-        print("Open http://127.0.0.1:8765 in your browser to view the graph.")
-        print("Press Ctrl+C when you're done to shut down the web UI.")
-
         if self._thread and self._thread.is_alive():
             return
 
+        handler = self._build_handler()
+        httpd = ThreadingHTTPServer((self.host, self.port), handler)
+        self._server = httpd
+        self.port = httpd.server_port
+
+        print(f"Open http://{self.host}:{self.port} in your browser to view the graph.")
+        print("Press Ctrl+C when you're done to shut down the web UI.")
+
         def serve() -> None:
-            handler = self._build_handler()
-            with ThreadingHTTPServer((self.host, self.port), handler) as httpd:
-                self._server = httpd
+            with httpd:
                 httpd.serve_forever()
 
         self._thread = threading.Thread(target=serve, daemon=True)
@@ -446,19 +572,41 @@ class GraphWebUIServer:
         return Handler
 
 
-_ACTIVE_SERVERS: dict[tuple[str, int], GraphWebUIServer] = {}
+_ACTIVE_SERVERS: dict[tuple[str, int | None], GraphWebUIServer] = {}
 _ACTIVE_SERVERS_LOCK = threading.Lock()
 
 
-def _get_or_create_server(host: str, port: int) -> GraphWebUIServer:
-    key = (host, port)
+def _get_or_create_server(host: str, port: int | None) -> GraphWebUIServer:
+    requested_port = port
+
     with _ACTIVE_SERVERS_LOCK:
-        server = _ACTIVE_SERVERS.get(key)
-        if server is None:
-            server = GraphWebUIServer(host, port)
+        direct_match = _ACTIVE_SERVERS.get((host, requested_port))
+        if direct_match is not None:
+            return direct_match
+
+    attempt_port = requested_port if requested_port is not None else 0
+
+    while True:
+        server = GraphWebUIServer(host, attempt_port)
+        try:
             server.start()
-            _ACTIVE_SERVERS[key] = server
-    return server
+        except OSError:
+            if requested_port is not None and attempt_port == requested_port:
+                logger.warning(
+                    "Port %s is busy; selecting an ephemeral port for graph web UI.",
+                    requested_port,
+                )
+            attempt_port = 0
+            continue
+
+        actual_port = server.port
+        with _ACTIVE_SERVERS_LOCK:
+            _ACTIVE_SERVERS[(host, actual_port)] = server
+            if requested_port not in (None, actual_port):
+                _ACTIVE_SERVERS[(host, requested_port)] = server
+            if requested_port is None:
+                _ACTIVE_SERVERS.setdefault((host, None), server)
+        return server
 
 
 _INDEX_HTML = """<!DOCTYPE html>
@@ -541,6 +689,13 @@ _INDEX_HTML = """<!DOCTYPE html>
           'background-color': '#facc15',
           'border-color': '#ca8a04',
           'color': '#1f2937'
+        })
+        .selector('node[is_error]')
+        .style({
+          'background-color': '#dc2626',
+          'border-color': '#7f1d1d',
+          'color': '#ffffff',
+          'font-weight': 'bold'
         })
         .selector('node[image]')
         .style({
