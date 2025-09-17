@@ -11,7 +11,7 @@ from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from doeff.types import Effect
+from doeff.types import Effect, EffectBase
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -120,12 +120,11 @@ class Program(Generic[T]):
                 if isinstance(current, Program):
                     current = current.intercept(transform)
                     value = yield current
-                elif isinstance(current, Effect):
-                    intercepted_effect = current.intercept(transform)
-                    transformed = transform(intercepted_effect)
+                elif isinstance(current, EffectBase):
+                    transformed = transform(current)
                     if isinstance(transformed, Program):
                         value = yield transformed.intercept(transform)
-                    elif isinstance(transformed, Effect):
+                    elif isinstance(transformed, EffectBase):
                         value = yield transformed.intercept(transform)
                     else:
                         value = yield transformed

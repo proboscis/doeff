@@ -1035,7 +1035,7 @@ def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program
     if isinstance(value, Program):
         return value.intercept(transform)
 
-    if isinstance(value, Effect):
+    if isinstance(value, EffectBase):
         return value.intercept(transform)
 
     if isinstance(value, dict):
