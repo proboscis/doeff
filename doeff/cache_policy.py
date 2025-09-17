@@ -42,10 +42,6 @@ class CachePolicy:
         return CacheStorage.MEMORY
 
 
-@dataclass
-class CacheEntry:
-    """Concrete cached value with policy and bookkeeping."""
-
     value: Any | None
     expiry: float | None
     policy: CachePolicy
@@ -117,7 +113,6 @@ def disk_artifact_path(base_dir: Path, key_hash: str) -> Path:
 
 
 __all__ = [
-    "CacheEntry",
     "CacheLifecycle",
     "CachePolicy",
     "CacheStorage",
