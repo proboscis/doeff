@@ -15,9 +15,12 @@ from doeff import (
     Fail,
     Get,
     Log,
+    Ok,
+    Err,
     ProgramInterpreter,
     Put,
     Recover,
+    Safe,
     Retry,
     do,
 )
@@ -338,6 +341,51 @@ async def test_recover_with_io_effect():
     assert result.is_ok
     assert result.value == "default_content"
     assert "IO result: default_content" in str(result.log[0])
+
+
+@pytest.mark.asyncio
+async def test_safe_wraps_successful_program() -> None:
+    """Safe should return Ok when the sub-program succeeds."""
+
+    @do
+    def happy_program() -> EffectGenerator[int]:
+        return 42
+
+    @do
+    def main_program() -> EffectGenerator[Ok[int]]:
+        outcome = yield Safe(happy_program())
+        assert isinstance(outcome, Ok)
+        return outcome
+
+    engine = ProgramInterpreter()
+    run_result = await engine.run(main_program())
+
+    assert run_result.is_ok
+    assert isinstance(run_result.value, Ok)
+    assert run_result.value.value == 42
+
+
+@pytest.mark.asyncio
+async def test_safe_wraps_failing_program() -> None:
+    """Safe should return Err when the sub-program fails."""
+
+    @do
+    def failing_program() -> EffectGenerator[int]:
+        yield Fail(ValueError("boom"))
+        return 0
+
+    @do
+    def main_program() -> EffectGenerator[Err]:
+        outcome = yield Safe(failing_program())
+        assert isinstance(outcome, Err)
+        return outcome
+
+    engine = ProgramInterpreter()
+    run_result = await engine.run(main_program())
+
+    assert run_result.is_ok
+    assert isinstance(run_result.value, Err)
+    assert "boom" in str(run_result.value.error)
 
 
 if __name__ == "__main__":

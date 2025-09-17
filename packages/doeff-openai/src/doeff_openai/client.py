@@ -1,5 +1,6 @@
 """Main OpenAI client using doeff effects for observability."""
 
+import copy
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,10 +20,66 @@ from doeff import (
     do,
 )
 from doeff_openai.costs import calculate_cost
-from doeff_openai.types import (
-    APICallMetadata,
-    TokenUsage,
-)
+from doeff_openai.types import APICallMetadata, TokenUsage
+
+
+def _prepare_prompt_details(
+    request_payload: dict[str, Any]
+) -> tuple[dict[str, Any], str | None, list[dict[str, Any]], list[dict[str, Any]] | None]:
+    """Create a sanitized payload and extract prompt text/images/messages."""
+
+    sanitized_payload = copy.deepcopy(request_payload)
+
+    messages = request_payload.get("messages")
+    prompt_text_parts: list[str] = []
+    prompt_images: list[dict[str, Any]] = []
+    prompt_messages: list[dict[str, Any]] | None = None
+
+    if isinstance(messages, list):
+        sanitized_messages: list[dict[str, Any]] = []
+        for message in messages:
+            if isinstance(message, dict):
+                message_copy = copy.deepcopy(message)
+                content = message.get("content")
+                if isinstance(content, list):
+                    content_copy: list[Any] = []
+                    for part in content:
+                        if isinstance(part, dict):
+                            part_copy = copy.deepcopy(part)
+                            part_type = part_copy.get("type")
+                            if part_type == "text":
+                                text_piece = part_copy.get("text")
+                                if isinstance(text_piece, str):
+                                    prompt_text_parts.append(text_piece)
+                            elif part_type == "image_url":
+                                image_url = part_copy.get("image_url", {})
+                                if isinstance(image_url, dict):
+                                    url = image_url.get("url")
+                                    if isinstance(url, str):
+                                        prompt_images.append(
+                                            {
+                                                "data_uri": url,
+                                                "detail": image_url.get("detail"),
+                                            }
+                                        )
+                            content_copy.append(part_copy)
+                        elif isinstance(part, str):
+                            prompt_text_parts.append(part)
+                            content_copy.append(part)
+                        else:
+                            content_copy.append(part)
+                    message_copy["content"] = content_copy
+                elif isinstance(content, str):
+                    prompt_text_parts.append(content)
+                sanitized_messages.append(message_copy)
+            else:
+                sanitized_messages.append(copy.deepcopy(message))
+        sanitized_payload["messages"] = sanitized_messages
+        prompt_messages = sanitized_messages
+
+    prompt_text = "\n\n".join(filter(None, prompt_text_parts)).strip() or None
+
+    return sanitized_payload, prompt_text, prompt_images, prompt_messages
 
 
 @dataclass
@@ -172,6 +229,10 @@ def track_api_call(
     end_time = time.time()
     latency_ms = (end_time - start_time) * 1000
 
+    sanitized_payload, prompt_text, prompt_images, prompt_messages = _prepare_prompt_details(
+        request_payload
+    )
+
     # Extract token usage if available
     token_usage = None
     cost_info = None
@@ -193,7 +254,7 @@ def track_api_call(
         token_usage=token_usage,
         cost_info=cost_info,
         error=str(error) if error else None,
-        stream=request_payload.get("stream", False),
+        stream=sanitized_payload.get("stream", False),
     )
 
     # Log the API call
@@ -216,11 +277,11 @@ def track_api_call(
         "model": model,
     }
     if operation == "chat.completion":
-        request_summary["messages_count"] = len(request_payload.get("messages", []))
-        request_summary["temperature"] = request_payload.get("temperature")
-        request_summary["max_tokens"] = request_payload.get("max_tokens")
+        request_summary["messages_count"] = len(sanitized_payload.get("messages", []))
+        request_summary["temperature"] = sanitized_payload.get("temperature")
+        request_summary["max_tokens"] = sanitized_payload.get("max_tokens")
     elif operation == "embedding":
-        input_data = request_payload.get("input", "")
+        input_data = sanitized_payload.get("input", "")
         if isinstance(input_data, list):
             request_summary["input_count"] = len(input_data)
         else:
@@ -228,7 +289,7 @@ def track_api_call(
 
     # Add request as graph step
     yield Step(
-        {"request_payload": request_payload, "timestamp": graph_metadata["timestamp"]},
+        {"request_payload": sanitized_payload, "timestamp": graph_metadata["timestamp"]},
         {**graph_metadata, "phase": "request_payload"}
     )
     yield Step(
@@ -261,19 +322,26 @@ def track_api_call(
         api_calls = []
 
     # Add this call to the list
-    api_calls.append({
-        "operation": operation,
-        "model": model,
-        "timestamp": metadata.timestamp.isoformat(),
-        "latency_ms": latency_ms,
-        "error": str(error) if error else None,
-        "tokens": {
-            "prompt": token_usage.prompt_tokens if token_usage else 0,
-            "completion": token_usage.completion_tokens if token_usage else 0,
-            "total": token_usage.total_tokens if token_usage else 0,
-        } if token_usage else None,
-        "cost": cost_info.total_cost if cost_info else None,
-    })
+    api_calls.append(
+        {
+            "operation": operation,
+            "model": model,
+            "timestamp": metadata.timestamp.isoformat(),
+            "latency_ms": latency_ms,
+            "error": str(error) if error else None,
+            "tokens": {
+                "prompt": token_usage.prompt_tokens if token_usage else 0,
+                "completion": token_usage.completion_tokens if token_usage else 0,
+                "total": token_usage.total_tokens if token_usage else 0,
+            }
+            if token_usage
+            else None,
+            "cost": cost_info.total_cost if cost_info else None,
+            "prompt_text": prompt_text,
+            "prompt_images": prompt_images,
+            "prompt_messages": prompt_messages,
+        }
+    )
     yield Put("openai_api_calls", api_calls)
 
     # Track cumulative cost in state

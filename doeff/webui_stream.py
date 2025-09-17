@@ -44,7 +44,7 @@ import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from collections.abc import Mapping
-from typing import Any, Callable, Dict, Generator, TypeVar
+from typing import Any, Callable, Dict, Generator, TypeVar, TYPE_CHECKING
 
 from doeff.effects import (
     Await,
@@ -63,9 +63,19 @@ from doeff.program import Program
 from doeff.types import Effect, EffectFailure
 
 try:  # Optional Pillow dependency
+    from PIL import Image as PILImageModule
     from PIL.Image import Image as PILImage
 except Exception:  # pragma: no cover - Pillow may be absent in some envs
+    PILImageModule = None  # type: ignore
     PILImage = None  # type: ignore
+
+try:  # Optional NumPy dependency
+    import numpy as np
+except Exception:  # pragma: no cover - NumPy may be absent in some envs
+    np = None  # type: ignore
+
+if TYPE_CHECKING:  # pragma: no cover - only for typing
+    import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +193,7 @@ def _wrap_with_recover(
             if host and port:
                 destination = f"http://{host}:{port}"
             logger.error(
-                "Program failed with %s: %s – inspect %s for details.",
+                "Monitored program finished with failure (%s: %s); inspect %s for details.",
                 exc.__class__.__name__,
                 exc,
                 destination,
@@ -200,7 +210,14 @@ def _wrap_with_recover(
         except Exception:  # pragma: no cover - defensive
             graph_state = None
         if graph_state is not None:
-            reporter.publish_graph(graph_state)
+            reporter.publish_graph(graph_state, mark_success=True)
+        destination = "the web UI"
+        if host and port:
+            destination = f"http://{host}:{port}"
+        logger.info(
+            "Monitored program completed successfully; inspect %s for the final graph.",
+            destination,
+        )
         return result
 
     return Program(generator)
@@ -307,7 +324,7 @@ class GraphEffectReporter:
         self._node_counter = itertools.count(1)
         self._last_node_id: str | None = None
 
-    def publish_graph(self, graph) -> None:
+    def publish_graph(self, graph, *, mark_success: bool = False) -> None:
         nodes_payload: dict[str, dict[str, Any]] = {}
         edges_payload: list[dict[str, Any]] = []
         seen_nodes: set[Any] = set()
@@ -322,6 +339,7 @@ class GraphEffectReporter:
             value_repr: str,
             meta: dict[str, Any],
             image: str | None = None,
+            value_image: str | None = None,
         ) -> str:
             node_id = self._node_ids.get(node)
             if node_id is None:
@@ -336,12 +354,16 @@ class GraphEffectReporter:
                 }
                 if image is not None:
                     data["image"] = image
+                if value_image is not None:
+                    data["value_image"] = value_image
                 nodes_payload[node_id] = {"data": data}
             else:
                 existing = nodes_payload[node_id]["data"]
                 existing.setdefault("meta", {}).update(meta)
                 if image is not None and "image" not in existing:
                     existing["image"] = image
+                if value_image is not None and "value_image" not in existing:
+                    existing["value_image"] = value_image
             return node_id
 
         for step in all_steps:
@@ -353,8 +375,17 @@ class GraphEffectReporter:
             image_src = None
             if PILImage is not None and isinstance(output_node.value, PILImage):
                 image_src = self._image_to_data_url(output_node.value)
+            elif np is not None and self._ndarray_is_image_like(output_node.value):
+                image_src = self._ndarray_to_data_url(output_node.value)
 
-            target_id = ensure_node(output_node, label, value_repr, meta_dict, image_src)
+            target_id = ensure_node(
+                output_node,
+                label,
+                value_repr,
+                meta_dict,
+                image=image_src,
+                value_image=image_src,
+            )
             if step is graph.last:
                 final_node_id = target_id
 
@@ -380,7 +411,10 @@ class GraphEffectReporter:
             final_node_id = self._node_ids[graph.last.output]
 
         if final_node_id is not None and final_node_id in nodes_payload:
-            nodes_payload[final_node_id]["data"]["is_last"] = True
+            final_node = nodes_payload[final_node_id]["data"]
+            final_node["is_last"] = True
+            if mark_success:
+                final_node["is_success"] = True
 
         # Track the most recent node so errors can attach to it.
         if final_node_id is not None:
@@ -458,6 +492,76 @@ class GraphEffectReporter:
         image.save(buffer, format="PNG")
         encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
         return f"data:image/png;base64,{encoded}"
+
+    @staticmethod
+    def _ndarray_is_image_like(value: Any) -> bool:
+        if np is None:
+            return False
+        if not isinstance(value, np.ndarray):  # type: ignore[arg-type]
+            return False
+        if value.size == 0:
+            return False
+        if value.ndim == 2:
+            return True
+        if value.ndim == 3 and (
+            value.shape[2] in (1, 3, 4) or value.shape[0] in (1, 3, 4)
+        ):
+            return True
+        return False
+
+    def _ndarray_to_data_url(self, array: "np.ndarray") -> str | None:
+        if np is None or PILImageModule is None:
+            return None
+        assert np is not None
+        assert PILImageModule is not None
+        arr = np.asarray(array)
+        if arr.size == 0:
+            return None
+        arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
+
+        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[2] not in (1, 3, 4):
+            arr = np.moveaxis(arr, 0, -1)
+
+        if arr.ndim == 3 and arr.shape[2] == 1:
+            arr = arr[..., 0]
+
+        mode: str | None
+        if arr.ndim == 2:
+            mode = "L"
+        elif arr.ndim == 3 and arr.shape[2] == 3:
+            mode = "RGB"
+        elif arr.ndim == 3 and arr.shape[2] == 4:
+            mode = "RGBA"
+        else:
+            return None
+
+        if np.issubdtype(arr.dtype, np.bool_):
+            arr = arr.astype(np.uint8) * 255
+        elif np.issubdtype(arr.dtype, np.integer):
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        else:
+            arr = arr.astype(np.float32)
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                arr = np.zeros_like(arr, dtype=np.uint8)
+            else:
+                min_val = float(finite.min())
+                max_val = float(finite.max())
+                if max_val == min_val:
+                    arr = np.zeros_like(arr, dtype=np.uint8)
+                else:
+                    arr = (arr - min_val) / (max_val - min_val)
+                    arr = np.clip(arr, 0.0, 1.0)
+                    arr = (arr * 255.0).round().astype(np.uint8)
+
+        arr = np.ascontiguousarray(arr)
+
+        try:
+            image = PILImageModule.fromarray(arr, mode)
+        except Exception:  # pragma: no cover - fallback when conversion fails
+            return None
+
+        return self._image_to_data_url(image)
 
     def _sanitize(self, value: Any) -> Any:
         """Return JSON-serialisable data for metadata/value display."""
@@ -653,14 +757,32 @@ _INDEX_HTML = """<!DOCTYPE html>
       #details h2 {
         margin-top: 0;
       }
-      #details pre {
+      #details-content {
+        flex: 1 1 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        overflow: auto;
+      }
+      #details-json {
         flex: 1 1 auto;
         background: #f0f4f8;
         padding: 12px;
-        overflow: auto;
         border-radius: 6px;
         white-space: pre-wrap;
         word-break: break-word;
+        margin: 0;
+        overflow: auto;
+      }
+      #details-images {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      #details-images img {
+        max-width: 100%;
+        border-radius: 6px;
+        border: 1px solid #d9e1ec;
       }
     </style>
     <script src=\"https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js\"></script>
@@ -669,7 +791,10 @@ _INDEX_HTML = """<!DOCTYPE html>
     <div id=\"cy\"></div>
     <div id=\"details\">
       <h2>Node Details</h2>
-      <pre id=\"details-content\">Select a node to inspect its metadata.</pre>
+      <div id=\"details-content\">
+        <pre id=\"details-json\">Select a node to inspect its metadata.</pre>
+        <div id=\"details-images\"></div>
+      </div>
     </div>
     <script>
       const cy = cytoscape({
@@ -702,6 +827,13 @@ _INDEX_HTML = """<!DOCTYPE html>
           'border-color': '#ca8a04',
           'color': '#1f2937'
         })
+        .selector('node[is_success]')
+        .style({
+          'background-color': '#16a34a',
+          'border-color': '#166534',
+          'color': '#ecfdf5',
+          'font-weight': 'bold'
+        })
         .selector('node[is_error]')
         .style({
           'background-color': '#dc2626',
@@ -722,6 +854,11 @@ _INDEX_HTML = """<!DOCTYPE html>
           'text-margin-y': -6,
           'font-weight': 'bold'
         })
+        .selector('node[image][is_success]')
+        .style({
+          'border-color': '#166534',
+          'border-width': 3
+        })
         .selector('edge')
         .style({
           'curve-style': 'bezier',
@@ -731,7 +868,94 @@ _INDEX_HTML = """<!DOCTYPE html>
           'target-arrow-shape': 'triangle'
         });
 
-      const detailsContent = document.getElementById('details-content');
+      const detailsJson = document.getElementById('details-json');
+      const detailsImages = document.getElementById('details-images');
+
+      function resetDetails() {
+        detailsJson.textContent = 'Select a node to inspect its metadata.';
+        detailsImages.innerHTML = '';
+      }
+
+      function extractImages(value) {
+        const results = new Set();
+        const uriByBase = new Map();
+        const base64Pattern = /^[A-Za-z0-9+/]+={0,2}$/;
+
+        function visit(current) {
+          if (typeof current === 'string') {
+            const trimmed = current.trim();
+            if (!trimmed) {
+              return;
+            }
+            if (trimmed.startsWith('data:image/')) {
+              results.add(trimmed);
+              return;
+            }
+            if (
+              trimmed.length >= 64 &&
+              trimmed.length % 4 === 0 &&
+              base64Pattern.test(trimmed)
+            ) {
+              const existing = uriByBase.get(trimmed);
+              if (existing) {
+                results.add(existing);
+              } else {
+                const fallback = `data:image/png;base64,${trimmed}`;
+                uriByBase.set(trimmed, fallback);
+                results.add(fallback);
+              }
+            }
+            return;
+          }
+
+          if (!current) {
+            return;
+          }
+
+          if (Array.isArray(current)) {
+            current.forEach(visit);
+            return;
+          }
+
+          if (typeof current === 'object') {
+            const inlineImage = current.image;
+            if (typeof inlineImage === 'string') {
+              const trimmed = inlineImage.trim();
+              if (trimmed.startsWith('data:image/')) {
+                results.add(trimmed);
+              }
+            }
+
+            const dataField = typeof current.data === 'string' ? current.data.trim() : null;
+            const mimeField =
+              typeof current.mime_type === 'string'
+                ? current.mime_type
+                : typeof current.mime === 'string'
+                ? current.mime
+                : typeof current.content_type === 'string'
+                ? current.content_type
+                : null;
+
+            if (
+              dataField &&
+              dataField.length >= 64 &&
+              dataField.length % 4 === 0 &&
+              base64Pattern.test(dataField) &&
+              mimeField &&
+              mimeField.startsWith('image/')
+            ) {
+              const uri = `data:${mimeField};base64,${dataField}`;
+              uriByBase.set(dataField, uri);
+              results.add(uri);
+            }
+
+            Object.values(current).forEach(visit);
+          }
+        }
+
+        visit(value);
+        return Array.from(results);
+      }
 
       function refreshLayout() {
         cy.layout({ name: 'breadthfirst', directed: true, padding: 40 }).run();
@@ -762,7 +986,7 @@ _INDEX_HTML = """<!DOCTYPE html>
 
       function updateDetails(element) {
         if (!element) {
-          detailsContent.textContent = 'Select a node to inspect its metadata.';
+          resetDetails();
           return;
         }
         const data = element.data();
@@ -772,7 +996,24 @@ _INDEX_HTML = """<!DOCTYPE html>
           value: data.value_repr,
           meta: data.meta || {}
         };
-        detailsContent.textContent = JSON.stringify(payload, null, 2);
+        detailsJson.textContent = JSON.stringify(payload, null, 2);
+        detailsImages.innerHTML = '';
+
+        const images = new Set();
+        if (typeof data.image === 'string' && data.image.trim().startsWith('data:image/')) {
+          images.add(data.image.trim());
+        }
+        if (typeof data.value_image === 'string' && data.value_image.trim().startsWith('data:image/')) {
+          images.add(data.value_image.trim());
+        }
+        extractImages(payload.meta).forEach((src) => images.add(src));
+
+        images.forEach((src) => {
+          const img = document.createElement('img');
+          img.src = src;
+          img.alt = 'Node metadata preview';
+          detailsImages.appendChild(img);
+        });
       }
 
       cy.on('tap', (event) => {
