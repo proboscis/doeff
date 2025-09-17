@@ -105,7 +105,7 @@ class Program(Generic[T]):
         return self.flat_map(lambda _: next_program)
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program[Effect]"]
+        self, transform: Callable[[Effect], Effect | "Program"]
     ) -> Program[T]:
         """Return a Program that applies ``transform`` to every yielded effect."""
 
@@ -121,8 +121,11 @@ class Program(Generic[T]):
                     current = current.intercept(transform)
                     value = yield current
                 elif isinstance(current, Effect):
-                    transformed = transform(current)
+                    intercepted_effect = current.intercept(transform)
+                    transformed = transform(intercepted_effect)
                     if isinstance(transformed, Program):
+                        value = yield transformed.intercept(transform)
+                    elif isinstance(transformed, Effect):
                         value = yield transformed.intercept(transform)
                     else:
                         value = yield transformed
