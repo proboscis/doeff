@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Dict
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.types import ExecutionContext, ListenResult
@@ -148,15 +148,15 @@ class ResultEffectHandler:
             if isinstance(pragmatic_result.result, Err):
                 # Extract the actual exception
                 error = pragmatic_result.result.error
-                
+
                 # Unwrap EffectFailure to get the original cause
                 from doeff.types import EffectFailure
                 if isinstance(error, EffectFailure):
                     error = error.cause
-                
+
                 # Run error handler with the unwrapped exception
                 handler_result = payload["handler"](error)
-                
+
                 # If handler returned a Program, run it
                 if isinstance(handler_result, Program):
                     handler_pragmatic_result = await engine.run(handler_result, ctx)
@@ -167,16 +167,18 @@ class ResultEffectHandler:
             else:
                 # Success - return the value
                 return pragmatic_result.value
-        except Exception as e:
+        except BaseException as e:
+            if isinstance(e, SystemExit):
+                raise
             # Unwrap EffectFailure to get the original cause
             from doeff.types import EffectFailure
             actual_error = e
             if isinstance(actual_error, EffectFailure):
                 actual_error = actual_error.cause
-            
+
             # Run error handler with unwrapped exception
             handler_result = payload["handler"](actual_error)
-            
+
             # If handler returned a Program, run it
             if isinstance(handler_result, Program):
                 handler_pragmatic_result = await engine.run(handler_result, ctx)
@@ -363,6 +365,10 @@ class GraphEffectHandler:
     ) -> None:
         """Handle graph.annotate effect."""
         ctx.graph = ctx.graph.with_last_meta(meta)
+
+    async def handle_snapshot(self, payload: Dict | None, ctx: ExecutionContext):
+        """Return the current computation graph."""
+        return ctx.graph
 
 
 class CacheEffectHandler:

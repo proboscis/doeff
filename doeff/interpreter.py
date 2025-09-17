@@ -115,6 +115,7 @@ class ProgramInterpreter:
             "io.print": self._dispatch_io_print,
             "graph.step": self._dispatch_graph_step,
             "graph.annotate": self._dispatch_graph_annotate,
+            "graph.snapshot": self._dispatch_graph_snapshot,
             "program.gather": self._dispatch_program_gather,
             "gather.gather": self._dispatch_program_gather,  # Alias
             "program.gather_dict": self._dispatch_program_gather_dict,
@@ -279,6 +280,9 @@ class ProgramInterpreter:
     async def _dispatch_graph_annotate(self, payload: Any, ctx: ExecutionContext) -> Any:
         return await self.graph_handler.handle_annotate(payload, ctx)
 
+    async def _dispatch_graph_snapshot(self, payload: Any, ctx: ExecutionContext) -> Any:
+        return await self.graph_handler.handle_snapshot(payload, ctx)
+
     # Program dispatchers for Gather effects
     async def _dispatch_program_gather(self, payload: Any, ctx: ExecutionContext) -> Any:
         """Handle program.gather and gather.gather effects.
@@ -318,12 +322,24 @@ class ProgramInterpreter:
             else:
                 results.append(sub_result.value)
 
-        # Merge all state changes and logs at the end
+        # Merge all state changes, logs, and graph steps at the end
+        combined_steps = set(ctx.graph.steps)
+        gather_inputs: list[WNode] = []
         for sub_ctx in sub_contexts:
             # Merge state changes with last-write-wins semantics
             ctx.state.update(sub_ctx.state)
             # Append sub-program logs
             ctx.log.extend(sub_ctx.log)
+            combined_steps.update(sub_ctx.graph.steps)
+            gather_inputs.append(sub_ctx.graph.last.output)
+
+        if gather_inputs:
+            gather_node = WNode(tuple(results))
+            gather_step = WStep(inputs=tuple(gather_inputs), output=gather_node)
+            combined_steps.add(gather_step)
+            ctx.graph = WGraph(last=gather_step, steps=frozenset(combined_steps))
+        else:
+            ctx.graph = WGraph(last=ctx.graph.last, steps=frozenset(combined_steps))
 
         # Raise error after merging if one occurred
         if error_to_raise is not None:
@@ -367,12 +383,27 @@ class ProgramInterpreter:
             else:
                 results[key] = sub_result.value
 
-        # Merge all state changes and logs at the end
+        # Merge all state changes, logs, and graph steps at the end
+        combined_steps = set(ctx.graph.steps)
+        gather_inputs: list[WNode] = []
         for sub_ctx in sub_contexts:
             # Merge state changes with last-write-wins semantics
             ctx.state.update(sub_ctx.state)
             # Append sub-program logs
             ctx.log.extend(sub_ctx.log)
+            combined_steps.update(sub_ctx.graph.steps)
+            gather_inputs.append(sub_ctx.graph.last.output)
+
+        if gather_inputs:
+            gather_node = WNode(results)
+            gather_step = WStep(
+                inputs=tuple(gather_inputs),
+                output=gather_node,
+            )
+            combined_steps.add(gather_step)
+            ctx.graph = WGraph(last=gather_step, steps=frozenset(combined_steps))
+        else:
+            ctx.graph = WGraph(last=ctx.graph.last, steps=frozenset(combined_steps))
 
         # Raise error after merging if one occurred
         if error_to_raise is not None:

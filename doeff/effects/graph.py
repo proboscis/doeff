@@ -22,6 +22,11 @@ class graph:
         """Annotate the current step."""
         return create_effect_with_trace("graph.annotate", meta)
 
+    @staticmethod
+    def snapshot() -> Effect:
+        """Fetch the current computation graph."""
+        return create_effect_with_trace("graph.snapshot", None)
+
 
 # Uppercase aliases
 def Step(value: Any, meta: dict[str, Any] | None = None) -> Effect:
@@ -34,8 +39,14 @@ def Annotate(meta: dict[str, Any]) -> Effect:
     return create_effect_with_trace("graph.annotate", meta, skip_frames=3)
 
 
+def Snapshot() -> Effect:
+    """Graph: Fetch the current computation graph."""
+    return create_effect_with_trace("graph.snapshot", None, skip_frames=3)
+
+
 __all__ = [
     "Annotate",
+    "Snapshot",
     "Step",
     "graph",
 ]
