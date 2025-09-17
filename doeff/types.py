@@ -9,7 +9,19 @@ from __future__ import annotations
 import json
 import traceback
 from dataclasses import dataclass, field
-from typing import Any, Dict, Generator, Generic, List, Optional, TypeVar, Union, TYPE_CHECKING
+from functools import wraps
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    Generic,
+    List,
+    Optional,
+    TypeVar,
+    Union,
+    TYPE_CHECKING,
+)
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
@@ -150,6 +162,16 @@ class Effect:
     tag: str  # String discrimination instead of type-based
     payload: Any  # Untyped payload - Python can't express effect-specific types
     created_at: Optional[EffectCreationContext] = None  # Optional creation context for debugging
+
+    def intercept(
+        self, transform: Callable[["Effect"], "Effect | Program"]
+    ) -> "Effect":
+        """Return a copy with Programs in the payload intercepted by ``transform``."""
+
+        new_payload = _intercept_value(self.payload, transform)
+        if new_payload is self.payload:
+            return self
+        return Effect(self.tag, new_payload, self.created_at)
 
 
 # ============================================
@@ -868,6 +890,63 @@ class ListenResult:
     def __iter__(self):
         """Make ListenResult unpackable as a tuple (value, log)."""
         return iter([self.value, self.log])
+
+
+def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program"]) -> Any:
+    """Recursively intercept Programs embedded within ``value``."""
+
+    from doeff.program import Program  # Local import to avoid circular dependency
+
+    if isinstance(value, Program):
+        return value.intercept(transform)
+
+    if isinstance(value, Effect):
+        return value.intercept(transform)
+
+    if isinstance(value, dict):
+        changed = False
+        new_items: Dict[Any, Any] = {}
+        for key, item in value.items():
+            new_item = _intercept_value(item, transform)
+            if new_item is not item:
+                changed = True
+            new_items[key] = new_item
+        if not changed:
+            return value
+        return new_items
+
+    if isinstance(value, tuple):
+        new_items = tuple(_intercept_value(item, transform) for item in value)
+        if new_items == value:
+            return value
+        return new_items
+
+    if isinstance(value, list):
+        return [_intercept_value(item, transform) for item in value]
+
+    if isinstance(value, set):
+        return {_intercept_value(item, transform) for item in value}
+
+    if isinstance(value, frozenset):
+        return frozenset(_intercept_value(item, transform) for item in value)
+
+    if callable(value):
+        return _wrap_callable(value, transform)
+
+    return value
+
+
+def _wrap_callable(
+    func: Callable[..., Any], transform: Callable[[Effect], Effect | "Program"]
+):
+    """Wrap callable so that any Program it returns is intercepted."""
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        result = func(*args, **kwargs)
+        return _intercept_value(result, transform)
+
+    return wrapper
 
 
 __all__ = [

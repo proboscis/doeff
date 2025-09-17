@@ -1,4 +1,3 @@
-from collections.abc import Generator
 from typing import TypeVar
 
 from pinjected import AsyncResolver, Injected, IProxy
@@ -8,12 +7,10 @@ from doeff.types import RunResult
 
 T = TypeVar("T")
 
+def _program_with_dependency_interception(
+    prog: Program[T], resolver: AsyncResolver
+) -> Program[T]: ...
 def program_to_injected(prog: Program[T]) -> Injected[T]: ...
 def program_to_iproxy(prog: Program[T]) -> IProxy[T]: ...
 def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]: ...
 def program_to_iproxy_result(prog: Program[T]) -> IProxy[RunResult[T]]: ...
-
-# Additional symbols:
-def _create_dep_aware_generator(
-    prog: Program, resolver: AsyncResolver
-) -> Generator: ...

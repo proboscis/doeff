@@ -5,7 +5,6 @@ This module provides functions to convert Program[T] from the pragmatic
 implementation into pinjected's Injected[T] and IProxy[T] types.
 """
 
-from collections.abc import Generator
 from typing import TypeVar
 
 from loguru import logger
@@ -14,65 +13,29 @@ from pinjected import AsyncResolver, Injected, IProxy
 from doeff.effects import Await
 from doeff.interpreter import ProgramInterpreter
 from doeff.program import Program
-from doeff.types import ExecutionContext, RunResult
+from doeff.types import Effect, ExecutionContext, RunResult
 
 T = TypeVar("T")
 
 
-def _create_dep_aware_generator(prog: Program, resolver: AsyncResolver) -> Generator:
-    """
-    Create a generator that intercepts Dep effects and converts them to Await effects.
+def _program_with_dependency_interception(
+    prog: Program[T], resolver: AsyncResolver
+) -> Program[T]:
+    """Attach dependency-resolution interception using ``Program.intercept``."""
 
-    This also properly handles the case where a Program is yielded.
+    if not isinstance(prog, Program):  # Defensive: keep API expectations clear
+        raise TypeError(
+            f"Pinjected bridge expects a Program instance, got {type(prog)!r}"
+        )
 
-    Args:
-        prog: The Program to wrap
-        resolver: The AsyncResolver for dependency injection
+    def _transform(effect: Effect) -> Effect | Program:
+        if effect.tag in ("reader.ask", "dep.inject"):
+            key = effect.payload
+            logger.debug(f"Resolving dependency for key: {key}")
+            return Await(resolver.provide(key))
+        return effect
 
-    Returns:
-        A generator that handles dependency resolution
-    """
-    # Get the generator from the Program
-    if hasattr(prog, "generator_func") and callable(prog.generator_func):
-        gen = prog.generator_func()
-    elif callable(prog):
-        gen = prog()
-    else:
-        # It might already be a generator
-        gen = prog
-
-    if gen is None:
-        return None
-
-    try:
-        current = next(gen)
-        while True:
-            # Check if this is a Program (yielded Programs should be passed through)
-            if isinstance(current, Program):
-                # Wrap the yielded Program to handle its dependencies too
-                wrapped_sub_program = Program(
-                    lambda: _create_dep_aware_generator(current, resolver)
-                )
-                value = yield wrapped_sub_program
-                current = gen.send(value)
-            # Check if this is a Dep effect (reader.ask)
-            elif hasattr(current, "tag") and current.tag in ("reader.ask", "dep.inject"):
-                # This is a dependency request (either ask or Dep)
-                key = current.payload
-                logger.debug(f"Resolving dependency for key: {key}")
-                future = resolver.provide(key)
-                # Wrap in await effect
-                await_effect = Await(future)
-                # Send to generator and get result
-                value = yield await_effect
-                # Send resolved value back
-                current = gen.send(value)
-            else:
-                # Pass through other effects unchanged
-                value = yield current
-                current = gen.send(value)
-    except StopIteration as e:
-        return getattr(e, "value", None)
+    return prog.intercept(_transform)
 
 
 def program_to_injected(prog: Program[T]) -> Injected[T]:
@@ -94,9 +57,7 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
         engine = ProgramInterpreter()
 
         # Create wrapped program that handles dependency resolution
-        wrapped_program = Program(
-            lambda: _create_dep_aware_generator(prog, __resolver__)
-        )
+        wrapped_program = _program_with_dependency_interception(prog, __resolver__)
 
         # Run with env containing the resolver for use by ask effects
         context = ExecutionContext(env={"__resolver__": __resolver__})
@@ -154,9 +115,7 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
         engine = ProgramInterpreter()
 
         # Create wrapped program that handles dependency resolution
-        wrapped_program = Program(
-            lambda: _create_dep_aware_generator(prog, __resolver__)
-        )
+        wrapped_program = _program_with_dependency_interception(prog, __resolver__)
 
         # Run with env containing the resolver for use by ask effects
         context = ExecutionContext(env={"__resolver__": __resolver__})
