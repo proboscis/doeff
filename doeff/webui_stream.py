@@ -91,52 +91,41 @@ def stream_program_to_webui(
 
     server = _get_or_create_server(host, port)
     reporter = GraphEffectReporter(server.event_stream)
-    instrumented = _wrap_program(program, reporter)
+    transform = _make_graph_transform(reporter)
+    instrumented = program.intercept(transform)
     if not keep_alive:
         return instrumented
     return _with_keep_alive(instrumented, host, port)
 
 
 # ---------------------------------------------------------------------------
-# Effect interception utilities
+# Graph capture utilities
 # ---------------------------------------------------------------------------
 
 
-def _wrap_program(
-    program: Program[T],
+def _make_graph_transform(
     reporter: "GraphEffectReporter",
-) -> Program[T]:
-    """Return a Program that mirrors all yielded effects through ``on_effect``.
+) -> Callable[[Effect], Effect | Program[Effect]]:
+    tracked_tags = {
+        "graph.step",
+        "graph.annotate",
+        "gather.gather",
+        "gather.gather_dict",
+    }
 
-    ``on_effect`` receives every effect before it is yielded to the interpreter.
-    Sub-programs are wrapped recursively so callers see a transparent program.
-    """
+    def transform(effect: Effect) -> Effect | Program[Effect]:
+        if effect.tag not in tracked_tags:
+            return effect
 
-    def generator() -> Generator[Any, Any, T]:
-        gen = program.generator_func()
-        try:
-            current = next(gen)
-        except StopIteration as exc:
-            return exc.value
+        def wrapper() -> Generator[Any, Any, Effect]:
+            result = yield effect
+            graph_state = yield Snapshot()
+            reporter.publish_graph(graph_state)
+            return result
 
-        while True:
-            if isinstance(current, Program):
-                current = _wrap_program(current, reporter)
-                value = yield current
-            elif isinstance(current, Effect):
-                value = yield current
-                if current.tag in {"graph.step", "graph.annotate", "gather.gather", "gather.gather_dict"}:
-                    graph_state = yield Snapshot()
-                    reporter.publish_graph(graph_state)
-            else:
-                value = yield current
+        return Program(wrapper)
 
-            try:
-                current = gen.send(value)
-            except StopIteration as exc:
-                return exc.value
-
-    return Program(generator)
+    return transform
 
 
 def _with_keep_alive(program: Program[T], host: str, port: int) -> Program[T]:

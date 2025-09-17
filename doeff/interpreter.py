@@ -163,7 +163,7 @@ class ProgramInterpreter:
             # Process effects
             from loguru import logger
             while True:
-                logger.info(f"effect: {current}")
+                logger.debug(f"effect: {current}")
                 if isinstance(current, Effect):
                     # Handle the effect
                     try:

@@ -67,6 +67,8 @@ from doeff.effects import (
     # Effects - Gather for parallel Programs
     Gather,
     GatherDict,
+    MemoGet,
+    MemoPut,
     # Effects - Cache
     CacheGet,
     CachePut,
@@ -109,6 +111,7 @@ from doeff.cache import (
     cache_1hour,
     cache_forever,
 )
+from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
 __version__ = "0.1.0"
 
@@ -120,6 +123,9 @@ __all__ = [  # noqa: RUF022
     "ExecutionContext",
     "RunResult",
     "ListenResult",
+    "CacheLifecycle",
+    "CachePolicy",
+    "CacheStorage",
     # Vendored types
     "Ok",
     "Err",
@@ -151,6 +157,9 @@ __all__ = [  # noqa: RUF022
     "GatherDict",
     "CacheGet",
     "CachePut",
+    "CacheLifecycle",
+    "CachePolicy",
+    "CacheStorage",
     "Get",
     "Listen",
     "Local",

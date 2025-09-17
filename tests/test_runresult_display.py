@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import EffectGenerator, Fail, Log, ProgramInterpreter, Put, do
+from doeff import EffectGenerator, Fail, Log, ProgramInterpreter, Put, Step, do
 
 
 @pytest.mark.asyncio
@@ -270,6 +270,40 @@ async def test_display_with_graph_steps():
     # Verbose mode should show step details
     verbose = result.display(verbose=True)
     assert "Meta:" in verbose or "Step" in verbose
+
+
+@pytest.mark.asyncio
+async def test_visualize_graph_ascii():
+    """RunResult.visualize_graph_ascii renders computation graph metadata."""
+
+    @do
+    def graph_program() -> EffectGenerator[str]:
+        yield Step("root", meta={"op": "root"})
+        middle = yield Step("middle", meta={"op": "mid"})
+        yield Step({"leaf": middle}, meta={"op": "leaf"})
+        return "done"
+
+    interpreter = ProgramInterpreter()
+    result = await interpreter.run(graph_program())
+
+    ascii_view = result.visualize_graph_ascii(max_value_length=20)
+
+    assert "00" in ascii_view
+    assert "root" in ascii_view
+    assert "@root" in ascii_view
+    assert "@mid" in ascii_view
+    assert "@leaf" in ascii_view
+
+    root_step = next(
+        step for step in result.graph.steps if (step.meta or {}).get("op") == "root"
+    )
+
+    ascii_custom = result.visualize_graph_ascii(
+        include_ops=False, custom_decorators={root_step.output: ("<", ">")}
+    )
+
+    assert "@root" not in ascii_custom
+    assert "<" in ascii_custom
 
 
 @pytest.mark.asyncio
