@@ -175,7 +175,7 @@ def extract_provider_name(response_data: dict[str, Any]) -> str | None:
 def track_api_call(
     operation: str,
     model: str,
-    request_data: dict[str, Any],
+    request_payload: dict[str, Any],
     response_data: dict[str, Any] | None,
     response_headers: Mapping[str, str] | None,
     start_time: float,
@@ -230,11 +230,15 @@ def track_api_call(
     request_summary = {
         "operation": operation,
         "model": model,
-        "messages_count": len(request_data.get("messages", [])),
-        "temperature": request_data.get("temperature"),
-        "max_tokens": request_data.get("max_tokens")
-        or request_data.get("max_completion_tokens"),
+        "messages_count": len(request_payload.get("messages", [])),
+        "temperature": request_payload.get("temperature"),
+        "max_tokens": request_payload.get("max_tokens")
+        or request_payload.get("max_completion_tokens"),
     }
+    yield Step(
+        {"request_payload": request_payload, "timestamp": graph_metadata["timestamp"]},
+        {**graph_metadata, "phase": "request_payload"},
+    )
     yield Step(
         {"request": request_summary, "timestamp": graph_metadata["timestamp"]},
         {**graph_metadata, "phase": "request"},

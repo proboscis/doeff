@@ -195,7 +195,7 @@ class ExecutionContext:
     graph: WGraph = field(default_factory=lambda: WGraph.single(None))
     # IO permission flag
     io_allowed: bool = True
-    # Cache storage (shared across parallel executions)
+    # Memo storage (shared across parallel executions)
     cache: Dict[str, Any] = field(default_factory=dict)
 
     def copy(self) -> ExecutionContext:

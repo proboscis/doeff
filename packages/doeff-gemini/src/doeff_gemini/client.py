@@ -18,7 +18,8 @@ from doeff import (
     do,
 )
 
-from .types import APICallMetadata, TokenUsage
+from .costs import calculate_cost
+from .types import APICallMetadata, CostInfo, TokenUsage
 
 
 class GeminiClient:
@@ -218,19 +219,50 @@ def _extract_usage(response: Any) -> TokenUsage | None:
     usage = getattr(response, "usage_metadata", None)
     if usage is None:
         return None
-    input_tokens = getattr(usage, "input_token_count", None)
-    if input_tokens is None:
-        input_tokens = getattr(usage, "prompt_token_count", None)
-    output_tokens = getattr(usage, "output_token_count", None)
-    total_tokens = getattr(usage, "total_token_count", None)
-    if input_tokens is None and output_tokens is None and total_tokens is None:
+
+    def _get_attr(*names: str) -> int | None:
+        for name in names:
+            if hasattr(usage, name):
+                value = getattr(usage, name)
+                if value is not None:
+                    return int(value)
         return None
+
+    input_tokens = _get_attr(
+        "text_input_token_count",
+        "input_token_count",
+        "prompt_token_count",
+    )
+    output_tokens = _get_attr("text_output_token_count", "output_token_count")
+    image_input_tokens = _get_attr("image_input_token_count")
+    image_output_tokens = _get_attr("image_output_token_count")
+    total_tokens = _get_attr("total_token_count")
+
+    if (
+        input_tokens is None
+        and output_tokens is None
+        and image_input_tokens is None
+        and image_output_tokens is None
+        and total_tokens is None
+    ):
+        return None
+
+    derived_total = total_tokens
+    if derived_total is None:
+        derived_total = sum(
+            token
+            for token in [input_tokens, output_tokens, image_input_tokens, image_output_tokens]
+            if token is not None
+        ) or 0
+
     return TokenUsage(
         input_tokens=input_tokens or 0,
         output_tokens=output_tokens or 0,
-        total_tokens=total_tokens
-        if total_tokens is not None
-        else (input_tokens or 0) + (output_tokens or 0),
+        total_tokens=derived_total,
+        text_input_tokens=input_tokens,
+        text_output_tokens=output_tokens,
+        image_input_tokens=image_input_tokens,
+        image_output_tokens=image_output_tokens,
     )
 
 
@@ -239,6 +271,7 @@ def track_api_call(
     operation: str,
     model: str,
     request_summary: dict[str, Any],
+    request_payload: Any,
     response: Any,
     start_time: float,
     error: Exception | None = None,
@@ -250,6 +283,15 @@ def track_api_call(
     token_usage = _extract_usage(response) if response and not error else None
     request_id = _extract_request_id(response) if response else None
 
+    cost_info: CostInfo | None = None
+    if token_usage:
+        usage_for_cost = token_usage.to_cost_usage()
+        if usage_for_cost:
+            try:
+                cost_info = calculate_cost(model, usage_for_cost)
+            except ValueError as exc:
+                yield Log(f"Gemini cost calculation unavailable: {exc}")
+
     metadata = APICallMetadata(
         operation=operation,
         model=model,
@@ -257,6 +299,7 @@ def track_api_call(
         request_id=request_id,
         latency_ms=latency_ms,
         token_usage=token_usage,
+        cost_info=cost_info,
         error=str(error) if error else None,
     )
 
@@ -268,9 +311,15 @@ def track_api_call(
         log_line = f"Gemini API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
         if token_usage:
             log_line += f", tokens={token_usage.total_tokens}"
+        if cost_info:
+            log_line += f", cost=${cost_info.total_cost:.6f}"
         yield Log(log_line)
 
     graph_meta = metadata.to_graph_metadata()
+    yield Step(
+        {"request_payload": request_payload, "timestamp": graph_meta["timestamp"]},
+        {**graph_meta, "phase": "request_payload"},
+    )
     yield Step(
         {"request": request_summary, "timestamp": graph_meta["timestamp"]},
         {**graph_meta, "phase": "request"},
@@ -305,9 +354,28 @@ def track_api_call(
             if token_usage
             else None,
             "request_id": request_id,
+            "cost": cost_info.total_cost if cost_info else None,
+            "cost_breakdown": {
+                "text_input": cost_info.text_input_cost if cost_info else None,
+                "text_output": cost_info.text_output_cost if cost_info else None,
+                "image_input": cost_info.image_input_cost if cost_info else None,
+                "image_output": cost_info.image_output_cost if cost_info else None,
+            }
+            if cost_info
+            else None,
         }
     )
     yield Put("gemini_api_calls", api_calls)
+
+    if cost_info:
+        current_total = yield Get("gemini_total_cost")
+        new_total = (current_total or 0.0) + cost_info.total_cost
+        yield Put("gemini_total_cost", new_total)
+
+        model_cost_key = f"gemini_cost_{model}"
+        current_model_cost = yield Get(model_cost_key)
+        new_model_cost = (current_model_cost or 0.0) + cost_info.total_cost
+        yield Put(model_cost_key, new_model_cost)
 
     return metadata
 

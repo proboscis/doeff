@@ -42,16 +42,6 @@ class CachePolicy:
         return CacheStorage.MEMORY
 
 
-    value: Any | None
-    expiry: float | None
-    policy: CachePolicy
-    artifact_path: str | None = None
-
-    def is_expired(self, now: float) -> bool:
-        """Check whether this entry has expired."""
-        return self.expiry is not None and now > self.expiry
-
-
 def ensure_cache_policy(
     *,
     ttl: float | None = None,
@@ -105,17 +95,10 @@ def _normalize_storage(value: CacheStorage | str | None) -> CacheStorage | None:
     return CacheStorage(value)
 
 
-def disk_artifact_path(base_dir: Path, key_hash: str) -> Path:
-    """Compute a deterministic disk path for a cache artifact."""
-
-    safe_name = key_hash.replace(":", "_")
-    return base_dir / f"{safe_name}.cache"
-
 
 __all__ = [
     "CacheLifecycle",
     "CachePolicy",
     "CacheStorage",
-    "disk_artifact_path",
     "ensure_cache_policy",
 ]

@@ -126,7 +126,7 @@ def chat_completion(
                 metadata = yield track_api_call(
                     operation="chat.completion",
                     model=model,
-                    request_data=request_data,
+                    request_payload=request_data,
                     response=None,  # No immediate response for streaming
                     start_time=attempt_start_time,
                     error=None,
@@ -142,7 +142,7 @@ def chat_completion(
                 metadata = yield track_api_call(
                     operation="chat.completion",
                     model=model,
-                    request_data=request_data,
+                    request_payload=request_data,
                     response=response,
                     start_time=attempt_start_time,
                     error=None,
@@ -163,7 +163,7 @@ def chat_completion(
             metadata = yield track_api_call(
                 operation="chat.completion",
                 model=model,
-                request_data=request_data,
+                request_payload=request_data,
                 response=None,
                 start_time=attempt_start_time,
                 error=e,
@@ -227,7 +227,7 @@ def chat_completion_async(
         metadata = yield track_api_call(
             operation="chat.completion",
             model=model,
-            request_data=request_data,
+            request_payload=request_data,
             response=response,
             start_time=start_time,
             error=None,
@@ -242,7 +242,7 @@ def chat_completion_async(
         metadata = yield track_api_call(
             operation="chat.completion",
             model=model,
-            request_data=request_data,
+            request_payload=request_data,
             response=None,
             start_time=start_time,
             error=e,

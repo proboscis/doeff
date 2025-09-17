@@ -80,7 +80,7 @@ def create_embedding(
             metadata = yield track_api_call(
                 operation="embedding",
                 model=model,
-                request_data=request_data,
+                request_payload=request_data,
                 response=response,
                 start_time=attempt_start_time,
                 error=None,
@@ -98,7 +98,7 @@ def create_embedding(
             metadata = yield track_api_call(
                 operation="embedding",
                 model=model,
-                request_data=request_data,
+                request_payload=request_data,
                 response=None,
                 start_time=attempt_start_time,
                 error=e,
@@ -156,7 +156,7 @@ def create_embedding_async(
         metadata = yield track_api_call(
             operation="embedding",
             model=model,
-            request_data=request_data,
+            request_payload=request_data,
             response=response,
             start_time=start_time,
             error=None,
@@ -171,7 +171,7 @@ def create_embedding_async(
         metadata = yield track_api_call(
             operation="embedding",
             model=model,
-            request_data=request_data,
+            request_payload=request_data,
             response=None,
             start_time=start_time,
             error=e,

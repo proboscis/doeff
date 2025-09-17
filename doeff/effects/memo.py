@@ -1,4 +1,4 @@
-"""Memo (in-memory) effects for doeff."""
+"""Memoization effects."""
 
 from typing import Any
 

@@ -109,7 +109,7 @@ def chat_completion(
                 yield track_api_call(
                     operation="chat.completion",
                     model=model,
-                    request_data=request_data,
+                    request_payload=request_data,
                     response_data=response_data,
                     response_headers=response_headers,
                     start_time=start_time,
@@ -120,7 +120,7 @@ def chat_completion(
             yield track_api_call(
                 operation="chat.completion",
                 model=model,
-                request_data=request_data,
+                request_payload=request_data,
                 response_data=response_data,
                 response_headers=response_headers,
                 start_time=start_time,
@@ -140,7 +140,7 @@ def chat_completion(
             yield track_api_call(
                 operation="chat.completion",
                 model=model,
-                request_data=request_data,
+                request_payload=request_data,
                 response_data=None,
                 response_headers=None,
                 start_time=start_time,

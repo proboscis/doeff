@@ -1,11 +1,10 @@
-"""
-Gather effects for parallel programs.
+"""Gather effects for parallel programs."""
 
-This module provides Gather effects for running multiple programs in parallel.
-"""
+from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
 
+from ._program_types import ProgramLike
 from .base import Effect, create_effect_with_trace
 
 
@@ -13,23 +12,23 @@ class gather:
     """Gather effects for parallel programs."""
 
     @staticmethod
-    def gather(*programs: Any) -> Effect:
+    def gather(*programs: ProgramLike) -> Effect:
         """Gather results from multiple programs."""
         return create_effect_with_trace("gather.gather", programs)
 
     @staticmethod
-    def gather_dict(programs: dict[str, Any]) -> Effect:
+    def gather_dict(programs: Mapping[str, ProgramLike]) -> Effect:
         """Gather results from a dict of programs."""
         return create_effect_with_trace("gather.gather_dict", programs)
 
 
 # Uppercase aliases
-def Gather(*programs: Any) -> Effect:
+def Gather(*programs: ProgramLike) -> Effect:
     """Gather: Gather results from multiple programs."""
     return create_effect_with_trace("gather.gather", programs, skip_frames=3)
 
 
-def GatherDict(programs: dict[str, Any]) -> Effect:
+def GatherDict(programs: Mapping[str, ProgramLike]) -> Effect:
     """Gather: Gather results from a dict of programs."""
     return create_effect_with_trace("gather.gather_dict", programs, skip_frames=3)
 
