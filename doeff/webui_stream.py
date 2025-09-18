@@ -38,8 +38,10 @@ import io
 import itertools
 import json
 import logging
+import re
 import queue
 import threading
+import time
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -88,6 +90,7 @@ def stream_program_to_webui(
     host: str = "127.0.0.1",
     port: int | None = 8765,
     keep_alive: bool = True,
+    graph_push_interval: float = 1.0,
 ) -> Program[T]:
     """Return a Program that streams graph effects to a Cytoscape web UI.
 
@@ -102,6 +105,8 @@ def stream_program_to_webui(
         host: Host name for the web UI server.
         port: Preferred TCP port (``None`` or an occupied port triggers automatic
             selection of a free ephemeral port).
+        graph_push_interval: Minimum number of seconds between UI graph updates.
+            Use ``0`` or a negative value to disable throttling entirely.
 
     Returns:
         A new :class:`Program` that forwards all effects but also publishes
@@ -115,7 +120,10 @@ def stream_program_to_webui(
 
     server = _get_or_create_server(host, port)
     host, port = server.host, server.port
-    reporter = GraphEffectReporter(server.event_stream)
+    reporter = GraphEffectReporter(
+        server.event_stream,
+        throttle_interval=graph_push_interval,
+    )
     transform = _make_graph_transform(reporter)
     instrumented = program.intercept(transform)
     instrumented = _wrap_with_recover(instrumented, reporter, host, port)
@@ -139,9 +147,13 @@ def _make_graph_transform(
         GatherDictEffect,
     )
 
+    gather_effect_types = (GatherEffect, GatherDictEffect)
+
     processed_effect_ids: set[int] = set()
+    gather_depth = 0
 
     def transform(effect: Effect) -> Effect | Program[Effect]:
+        nonlocal gather_depth
         if not isinstance(effect, tracked_types):
             return effect
 
@@ -150,20 +162,26 @@ def _make_graph_transform(
             return effect
 
         def wrapper() -> Generator[Any, Any, Effect]:
+            nonlocal gather_depth
+            is_gather_effect = isinstance(effect, gather_effect_types)
             try:
                 processed_effect_ids.add(effect_id)
+                if is_gather_effect:
+                    gather_depth += 1
                 result = yield effect
             except Exception as exc:  # pragma: no cover - passthrough
                 reporter.publish_error(exc, effect)
                 raise
             finally:
                 processed_effect_ids.discard(effect_id)
+                if is_gather_effect and gather_depth > 0:
+                    gather_depth -= 1
             try:
                 graph_state = yield Snapshot()
             except Exception as exc:  # pragma: no cover - passthrough
                 reporter.publish_error(exc, None)
                 raise
-            reporter.publish_graph(graph_state)
+            reporter.publish_graph(graph_state, merge=gather_depth > 0)
             return result
 
         return Program(wrapper)
@@ -318,15 +336,66 @@ class GraphEventStream:
 class GraphEffectReporter:
     """Build Cytoscape-ready snapshots from the interpreter graph."""
 
-    def __init__(self, stream: GraphEventStream) -> None:
+    IMAGE_PLACEHOLDER = "[image data]"
+    _BASE64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+
+    def __init__(
+        self,
+        stream: GraphEventStream,
+        *,
+        throttle_interval: float | None = None,
+    ) -> None:
         self._stream = stream
         self._node_ids: dict[Any, str] = {}
         self._node_counter = itertools.count(1)
         self._last_node_id: str | None = None
+        self._edge_ids: dict[tuple[Any, Any], str] = {}
+        self._edge_counter = itertools.count(1)
+        self._throttle_interval = (
+            float(throttle_interval)
+            if throttle_interval is not None and throttle_interval > 0
+            else 0.0
+        )
+        self._lock = threading.Lock()
+        self._last_publish_time = 0.0
+        self._pending_snapshot: tuple[
+            list[dict[str, Any]],
+            list[dict[str, Any]],
+            bool,
+        ] | None = None
+        self._pending_timer: threading.Timer | None = None
+        self._latest_snapshot: dict[str, Any] | None = None
 
-    def publish_graph(self, graph, *, mark_success: bool = False) -> None:
+    def publish_graph(
+        self,
+        graph,
+        *,
+        mark_success: bool = False,
+        merge: bool = False,
+    ) -> None:
+        baseline_snapshot = self._latest_snapshot if merge else None
+        if merge and baseline_snapshot is None:
+            baseline_snapshot = self._stream.last_snapshot()
+
         nodes_payload: dict[str, dict[str, Any]] = {}
-        edges_payload: list[dict[str, Any]] = []
+        edges_payload: dict[str, dict[str, Any]] = {}
+
+        if merge and baseline_snapshot:
+            for node in baseline_snapshot.get("nodes", []):
+                data = dict(node.get("data", {}))
+                node_id = data.get("id")
+                if not node_id:
+                    continue
+                nodes_payload[node_id] = {"data": data}
+            for edge in baseline_snapshot.get("edges", []):
+                if not isinstance(edge, Mapping):
+                    continue
+                data = dict(edge.get("data", {}))
+                edge_id = data.get("id")
+                if not edge_id:
+                    continue
+                edges_payload[edge_id] = {"data": data}
+
         seen_nodes: set[Any] = set()
         final_node_id: str | None = None
 
@@ -370,7 +439,8 @@ class GraphEffectReporter:
             output_node = step.output
             seen_nodes.add(output_node)
             label = self._value_to_label(output_node.value)
-            meta_dict = self._sanitize_meta(step.meta)
+            meta_dict_raw = self._sanitize_meta(step.meta)
+            meta_dict, meta_images = self._redact_meta_images(meta_dict_raw)
             value_repr = self._trimmed_repr(output_node.value)
             image_src = None
             if PILImage is not None and isinstance(output_node.value, PILImage):
@@ -386,6 +456,14 @@ class GraphEffectReporter:
                 image=image_src,
                 value_image=image_src,
             )
+            target_node_data = nodes_payload[target_id]["data"]
+            if meta_images:
+                meta_image_list = target_node_data.setdefault("meta_images", [])
+                for candidate in meta_images:
+                    if candidate not in meta_image_list:
+                        meta_image_list.append(candidate)
+                if ("image" not in target_node_data or not target_node_data["image"]) and meta_image_list:
+                    target_node_data["image"] = meta_image_list[0]
             if step is graph.last:
                 final_node_id = target_id
 
@@ -397,15 +475,27 @@ class GraphEffectReporter:
                     self._trimmed_repr(input_node.value),
                     {},
                 )
-                edge_id = f"edge-{len(edges_payload) + 1}"
-                edges_payload.append(
-                    {"data": {"id": edge_id, "source": source_id, "target": target_id}}
-                )
+                edge_key = (input_node, output_node)
+                edge_id = self._edge_ids.get(edge_key)
+                if edge_id is None:
+                    edge_id = f"edge-{next(self._edge_counter)}"
+                    self._edge_ids[edge_key] = edge_id
+                edges_payload[edge_id] = {
+                    "data": {"id": edge_id, "source": source_id, "target": target_id}
+                }
 
-        # Remove node ids that are no longer present
-        for node in list(self._node_ids):
-            if node not in seen_nodes:
-                del self._node_ids[node]
+        if not merge:
+            for node in list(self._node_ids):
+                if node not in seen_nodes:
+                    del self._node_ids[node]
+
+        if not merge:
+            active_edge_keys = {
+                key for key, edge_id in self._edge_ids.items() if edge_id in edges_payload
+            }
+            self._edge_ids = {
+                key: edge_id for key, edge_id in self._edge_ids.items() if key in active_edge_keys
+            }
 
         if final_node_id is None and graph.last.output in self._node_ids:
             final_node_id = self._node_ids[graph.last.output]
@@ -416,20 +506,21 @@ class GraphEffectReporter:
             if mark_success:
                 final_node["is_success"] = True
 
-        # Track the most recent node so errors can attach to it.
+        nodes_list = list(nodes_payload.values())
+        edges_list = list(edges_payload.values())
+        snapshot = {"type": "snapshot", "nodes": nodes_list, "edges": edges_list}
+        self._latest_snapshot = snapshot
+
         if final_node_id is not None:
             self._last_node_id = final_node_id
-        elif not nodes_payload:
+        elif not nodes_list:
             self._last_node_id = None
 
-        self._stream.publish_snapshot(
-            list(nodes_payload.values()),
-            edges_payload,
-        )
+        self._dispatch_snapshot(nodes_list, edges_list, mark_success=mark_success)
 
     def publish_error(self, error: BaseException, effect: Effect | None) -> None:
         """Publish an error node with stack trace information."""
-        snapshot = self._stream.last_snapshot()
+        snapshot = self._latest_snapshot or self._stream.last_snapshot()
         nodes_map: dict[str, dict[str, Any]] = {}
         for node in snapshot.get("nodes", []):
             data = dict(node.get("data", {}))
@@ -437,7 +528,16 @@ class GraphEffectReporter:
             if not node_id:
                 continue
             nodes_map[node_id] = {"data": data}
-        edges = list(snapshot.get("edges", []))
+        edges: list[dict[str, Any]] = []
+        for edge in snapshot.get("edges", []):
+            if not isinstance(edge, Mapping):
+                continue
+            edge_payload: dict[str, Any] = {"data": dict(edge.get("data", {}))}
+            for key, value in edge.items():
+                if key == "data":
+                    continue
+                edge_payload[key] = value
+            edges.append(edge_payload)
 
         node_id = f"node-{next(self._node_counter)}"
         label = f"Error: {type(error).__name__}"
@@ -467,11 +567,73 @@ class GraphEffectReporter:
         nodes_map[node_id] = {"data": data}
 
         if self._last_node_id and self._last_node_id in nodes_map:
-            edge_id = f"edge-{len(edges) + 1}"
+            edge_id = f"edge-{next(self._edge_counter)}"
             edges.append({"data": {"id": edge_id, "source": self._last_node_id, "target": node_id}})
 
+        nodes_list = list(nodes_map.values())
         self._last_node_id = node_id
-        self._stream.publish_snapshot(list(nodes_map.values()), edges)
+        self._latest_snapshot = {"type": "snapshot", "nodes": nodes_list, "edges": edges}
+        self._dispatch_snapshot(nodes_list, edges, force=True)
+
+
+    def _dispatch_snapshot(
+        self,
+        nodes: list[dict[str, Any]],
+        edges: list[dict[str, Any]],
+        *,
+        mark_success: bool = False,
+        force: bool = False,
+    ) -> None:
+        if mark_success:
+            force = True
+
+        interval = self._throttle_interval
+        publish_now = False
+        timer_to_cancel: threading.Timer | None = None
+
+        with self._lock:
+            if interval <= 0 or force:
+                publish_now = True
+                timer_to_cancel = self._cancel_pending_timer_locked()
+                self._pending_snapshot = None
+                self._last_publish_time = time.monotonic()
+            else:
+                now = time.monotonic()
+                elapsed = now - self._last_publish_time
+                if elapsed >= interval:
+                    publish_now = True
+                    timer_to_cancel = self._cancel_pending_timer_locked()
+                    self._pending_snapshot = None
+                    self._last_publish_time = now
+                else:
+                    delay = max(0.01, interval - elapsed)
+                    self._pending_snapshot = (nodes, edges, mark_success)
+                    if self._pending_timer is None:
+                        self._pending_timer = threading.Timer(delay, self._flush_pending_snapshot)
+                        self._pending_timer.daemon = True
+                        self._pending_timer.start()
+
+        if timer_to_cancel is not None:
+            timer_to_cancel.cancel()
+        if publish_now:
+            self._stream.publish_snapshot(nodes, edges)
+
+    def _cancel_pending_timer_locked(self) -> threading.Timer | None:
+        timer = self._pending_timer
+        if timer is not None:
+            self._pending_timer = None
+        return timer
+
+    def _flush_pending_snapshot(self) -> None:
+        with self._lock:
+            payload = self._pending_snapshot
+            self._pending_snapshot = None
+            self._pending_timer = None
+            if not payload:
+                return
+            nodes, edges, _ = payload
+            self._last_publish_time = time.monotonic()
+        self._stream.publish_snapshot(nodes, edges)
 
     @staticmethod
     def _value_to_label(value: Any) -> str:
@@ -586,6 +748,24 @@ class GraphEffectReporter:
             return text
         return f"{text[:limit - 3]}..."
 
+    def _extract_image_data_uri(self, blob: Mapping[str, Any]) -> str | None:
+        data_field = blob.get("data")
+        if not isinstance(data_field, str):
+            return None
+        mime_field = (
+            blob.get("mime_type")
+            or blob.get("mime")
+            or blob.get("content_type")
+        )
+        if not isinstance(mime_field, str) or not mime_field.startswith("image/"):
+            return None
+        trimmed = data_field.strip()
+        if not trimmed or len(trimmed) < 64 or len(trimmed) % 4:
+            return None
+        if not self._BASE64_RE.fullmatch(trimmed):
+            return None
+        return f"data:{mime_field};base64,{trimmed}"
+
     def _sanitize_meta(self, value: Any) -> dict[str, Any]:
         if isinstance(value, Mapping):
             value = dict(value)
@@ -593,6 +773,47 @@ class GraphEffectReporter:
         if isinstance(sanitized, dict):
             return sanitized
         return {"value": sanitized}
+
+    def _redact_meta_images(
+        self, value: dict[str, Any]
+    ) -> tuple[dict[str, Any], list[str]]:
+        images: list[str] = []
+
+        def visit(obj: Any) -> Any:
+            if isinstance(obj, str):
+                trimmed = obj.strip()
+                if trimmed.startswith("data:image/"):
+                    if trimmed not in images:
+                        images.append(trimmed)
+                    return self.IMAGE_PLACEHOLDER
+                return obj
+
+            if isinstance(obj, Mapping):
+                mapped: dict[str, Any] = {}
+                data_uri = self._extract_image_data_uri(obj)
+                for key, val in obj.items():
+                    key_str = str(key)
+                    if (
+                        data_uri
+                        and key_str.lower() == "data"
+                        and isinstance(val, str)
+                    ):
+                        if data_uri not in images:
+                            images.append(data_uri)
+                        mapped[key_str] = self.IMAGE_PLACEHOLDER
+                        continue
+                    mapped[key_str] = visit(val)
+                return mapped
+
+            if isinstance(obj, (list, tuple, set)):
+                return [visit(item) for item in obj]
+
+            return obj
+
+        redacted = visit(value)
+        if isinstance(redacted, dict):
+            return redacted, images
+        return {"value": redacted}, images
 
 # ---------------------------------------------------------------------------
 # HTTP server serving the Cytoscape UI and the SSE feed
@@ -769,10 +990,66 @@ _INDEX_HTML = """<!DOCTYPE html>
         background: #f0f4f8;
         padding: 12px;
         border-radius: 6px;
-        white-space: pre-wrap;
-        word-break: break-word;
-        margin: 0;
         overflow: auto;
+        font-family: 'Fira Code', 'SFMono-Regular', ui-monospace, SFMono-Regular, Menlo, Monaco,
+          Consolas, 'Liberation Mono', 'Courier New', monospace;
+        font-size: 12px;
+        color: #1f2937;
+      }
+      #details-json .json-root {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #details-json .json-leaf {
+        display: flex;
+        gap: 4px;
+        align-items: baseline;
+        padding-left: 4px;
+      }
+      #details-json .json-key {
+        font-weight: 600;
+        color: #0f172a;
+      }
+      #details-json .json-value {
+        word-break: break-word;
+      }
+      #details-json details.json-node {
+        border-left: 2px solid #d9e1ec;
+        margin-left: 4px;
+        padding-left: 8px;
+      }
+      #details-json details.json-node > summary {
+        cursor: pointer;
+        list-style: none;
+        font-weight: 600;
+        color: #0f172a;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #details-json details.json-node > summary::-webkit-details-marker {
+        display: none;
+      }
+      #details-json details.json-node > summary::before {
+        content: '\\25B6';
+        display: inline-block;
+        font-size: 10px;
+        transform: rotate(0deg);
+        transition: transform 0.2s ease;
+      }
+      #details-json details.json-node[open] > summary::before {
+        transform: rotate(90deg);
+      }
+      #details-json .json-children {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      #details-json .json-empty {
+        color: #64748b;
+        font-style: italic;
       }
       #details-images {
         display: flex;
@@ -792,7 +1069,7 @@ _INDEX_HTML = """<!DOCTYPE html>
     <div id=\"details\">
       <h2>Node Details</h2>
       <div id=\"details-content\">
-        <pre id=\"details-json\">Select a node to inspect its metadata.</pre>
+        <div id=\"details-json\">Select a node to inspect its metadata.</div>
         <div id=\"details-images\"></div>
       </div>
     </div>
@@ -984,6 +1261,91 @@ _INDEX_HTML = """<!DOCTYPE html>
         node.data('meta', Object.assign({}, current, meta));
       }
 
+      function formatPrimitive(value) {
+        if (value === null) return 'null';
+        if (value === undefined) return 'undefined';
+        if (typeof value === 'string') return `"${value}"`;
+        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+        return JSON.stringify(value);
+      }
+
+      function renderEntry(label, value, collapsed = false) {
+        if (value && typeof value === 'object') {
+          const details = document.createElement('details');
+          details.className = 'json-node';
+          if (!collapsed) {
+            details.open = true;
+          }
+
+          const summary = document.createElement('summary');
+          const isArray = Array.isArray(value);
+          const suffix = isArray ? `[${value.length}]` : '{…}';
+          summary.textContent = label !== null ? `${label} ${suffix}` : suffix;
+          details.appendChild(summary);
+
+          const childContainer = document.createElement('div');
+          childContainer.className = 'json-children';
+
+          if (isArray) {
+            if (!value.length) {
+              const empty = document.createElement('div');
+              empty.className = 'json-leaf json-empty';
+              empty.textContent = '∅';
+              childContainer.appendChild(empty);
+            } else {
+              value.forEach((item, index) => {
+                childContainer.appendChild(renderEntry(`[${index}]`, item, true));
+              });
+            }
+          } else {
+            const entries = Object.entries(value);
+            if (!entries.length) {
+              const empty = document.createElement('div');
+              empty.className = 'json-leaf json-empty';
+              empty.textContent = '∅';
+              childContainer.appendChild(empty);
+            } else {
+              entries.forEach(([childKey, childValue]) => {
+                childContainer.appendChild(renderEntry(childKey, childValue, true));
+              });
+            }
+          }
+
+          details.appendChild(childContainer);
+          return details;
+        }
+
+        const leaf = document.createElement('div');
+        leaf.className = 'json-leaf';
+        if (label !== null) {
+          const keySpan = document.createElement('span');
+          keySpan.className = 'json-key';
+          keySpan.textContent = `${label}:`;
+          leaf.appendChild(keySpan);
+        }
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'json-value';
+        valueSpan.textContent = label !== null ? ` ${formatPrimitive(value)}` : formatPrimitive(value);
+        leaf.appendChild(valueSpan);
+        return leaf;
+      }
+
+      function renderDetailsPanel(payload) {
+        detailsJson.innerHTML = '';
+        const root = document.createElement('div');
+        root.className = 'json-root';
+        root.appendChild(renderEntry('id', payload.id, false));
+        if ('label' in payload) {
+          root.appendChild(renderEntry('label', payload.label, false));
+        }
+        if ('value' in payload) {
+          root.appendChild(renderEntry('value', payload.value, false));
+        }
+        const metaValue = payload.meta && typeof payload.meta === 'object' ? payload.meta : {};
+        root.appendChild(renderEntry('meta', metaValue, true));
+        detailsJson.appendChild(root);
+      }
+
       function updateDetails(element) {
         if (!element) {
           resetDetails();
@@ -996,17 +1358,27 @@ _INDEX_HTML = """<!DOCTYPE html>
           value: data.value_repr,
           meta: data.meta || {}
         };
-        detailsJson.textContent = JSON.stringify(payload, null, 2);
+        renderDetailsPanel(payload);
         detailsImages.innerHTML = '';
 
         const images = new Set();
-        if (typeof data.image === 'string' && data.image.trim().startsWith('data:image/')) {
-          images.add(data.image.trim());
+        const addImage = (src) => {
+          if (typeof src !== 'string') {
+            return;
+          }
+          const trimmed = src.trim();
+          if (trimmed.startsWith('data:image/')) {
+            images.add(trimmed);
+          }
+        };
+
+        addImage(data.image);
+        addImage(data.value_image);
+        if (Array.isArray(data.meta_images)) {
+          data.meta_images.forEach(addImage);
         }
-        if (typeof data.value_image === 'string' && data.value_image.trim().startsWith('data:image/')) {
-          images.add(data.value_image.trim());
-        }
-        extractImages(payload.meta).forEach((src) => images.add(src));
+
+        extractImages(payload.meta).forEach(addImage);
 
         images.forEach((src) => {
           const img = document.createElement('img');
