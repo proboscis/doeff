@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import traceback
+from pprint import pformat
 from dataclasses import dataclass, field, fields, replace
 from functools import wraps
 from typing import (
@@ -751,7 +752,12 @@ class RunResult(Generic[T]):
         lines.append("\n📊 Result Status:")
         if isinstance(self.result, Ok):
             lines.append(f"{ind}✅ Success")
-            lines.append(f"{ind}Value: {self._format_value(self.result.value, indent)}")
+            value_repr = pformat(self.result.value, width=80, compact=False)
+            if "\n" in value_repr:
+                lines.append(f"{ind}Value:")
+                lines.extend(f"{ind * 2}{line}" for line in value_repr.splitlines())
+            else:
+                lines.append(f"{ind}Value: {value_repr}")
         else:
             lines.append(f"{ind}❌ Failure")
             
