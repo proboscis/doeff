@@ -1,6 +1,7 @@
 """Tests for cache effects and decorator."""
 
 import time
+from typing import Any, Mapping
 
 import pytest
 
@@ -330,6 +331,49 @@ async def test_cache_key_selector():
     assert result.value[1] == "User 1"  # Cached, ignores include_details
     assert result.value[2] == "User 2"
     assert result.value[3] == 2  # Called twice (once for user 1, once for user 2)
+
+
+@pytest.mark.asyncio
+async def test_cache_key_hashers_transform_arguments():
+    """Test key_hashers applies transformations for positional and keyword args."""
+
+    calls = []
+
+    def dict_hasher(data: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
+        return tuple(sorted(data.items()))
+
+    hasher_runs: list[str] = []
+
+    @do
+    def extract_id(metadata: Mapping[str, Any]) -> EffectGenerator[Any]:
+        hasher_runs.append(metadata["id"])
+        return metadata.get("id")
+
+    @cache(key_hashers={"payload": dict_hasher, "extra": extract_id})
+    @do
+    def compute(user_id: int, payload: dict[str, int], *, extra: dict[str, str]) -> EffectGenerator[int]:
+        calls.append((user_id, payload["value"]))
+        return payload["value"]
+
+    interpreter = ProgramInterpreter()
+    context = ExecutionContext()
+
+    payload_one = {"value": 1, "other": 99}
+    payload_two = {"other": 99, "value": 1}
+    extra_one = {"id": "alpha", "note": "first"}
+    extra_two = {"note": "first", "id": "alpha"}
+
+    result1 = await interpreter.run(compute(7, payload_one, extra=extra_one), context)
+    assert result1.value == 1
+
+    result2 = await interpreter.run(
+        compute(7, payload_two, extra=extra_two),
+        result1.context,
+    )
+    assert result2.value == 1
+
+    assert calls == [(7, 1)]
+    assert hasher_runs == ["alpha", "alpha"]
 
 
 @pytest.mark.asyncio
