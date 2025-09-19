@@ -24,7 +24,7 @@ import cloudpickle
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.cache_policy import CachePolicy, CacheStorage
-from doeff.types import Effect, EffectFailure, ExecutionContext, ListenResult
+from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 from doeff.effects import (
     AskEffect,
     CacheGetEffect,
@@ -50,6 +50,7 @@ from doeff.effects import (
     WriterListenEffect,
     WriterTellEffect,
 )
+from doeff.effects.result import ResultUnwrapEffect
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
@@ -231,13 +232,32 @@ class ResultEffectHandler:
         from doeff.program import Program
 
         sub_program = effect.sub_program
-        if isinstance(sub_program, Effect):
+        if isinstance(sub_program, EffectBase):
             sub_program = Program.from_effect(sub_program)
         elif callable(sub_program) and not isinstance(sub_program, Program):
             sub_program = sub_program()
 
         pragmatic_result = await engine.run(sub_program, ctx)
         return pragmatic_result.result
+
+    async def handle_unwrap(
+        self,
+        effect: ResultUnwrapEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Any:
+        """Handle result.unwrap effect by raising or returning the Result."""
+
+        result = effect.result
+        if isinstance(result, Ok):
+            return result.value
+
+        if isinstance(result, Err):
+            raise result.error
+
+        raise TypeError(
+            f"ResultUnwrapEffect expected Result, got {type(result)!r}"
+        )
 
     async def handle_recover(
         self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
@@ -247,7 +267,7 @@ class ResultEffectHandler:
         import inspect
         
         sub_program = effect.sub_program
-        if isinstance(sub_program, Effect):
+        if isinstance(sub_program, EffectBase):
             sub_program = Program.from_effect(sub_program)
         elif callable(sub_program) and not isinstance(sub_program, Program):
             sub_program = sub_program()

@@ -6,29 +6,39 @@ from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
 
+from doeff._vendor import Result
+
 from ._program_types import ProgramLike
 from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
 class ResultFailEffect(EffectBase):
+    """Immediately raises the provided exception within the program."""
+
     exception: Exception
 
 
 @dataclass(frozen=True)
 class ResultCatchEffect(EffectBase):
+    """Runs the sub-program and yields either its value or the handler's recovery."""
+
     sub_program: ProgramLike
     handler: Callable[[Exception], Any | ProgramLike]
 
 
 @dataclass(frozen=True)
 class ResultRecoverEffect(EffectBase):
+    """Executes the sub-program and falls back to the provided value or program."""
+
     sub_program: ProgramLike
     fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike]
 
 
 @dataclass(frozen=True)
 class ResultRetryEffect(EffectBase):
+    """Retries the sub-program until success and yields the first successful value."""
+
     sub_program: ProgramLike
     max_attempts: int = 3
     delay_ms: int = 0
@@ -36,7 +46,16 @@ class ResultRetryEffect(EffectBase):
 
 @dataclass(frozen=True)
 class ResultSafeEffect(EffectBase):
+    """Runs the sub-program and yields a Result for success/failure."""
+
     sub_program: ProgramLike
+
+
+@dataclass(frozen=True)
+class ResultUnwrapEffect(EffectBase):
+    """Unwrap a Result, yielding the value or raising the stored error."""
+
+    result: Result[Any]
 
 
 def fail(exc: Exception) -> ResultFailEffect:
@@ -75,6 +94,10 @@ def retry(
 
 def safe(sub_program: ProgramLike) -> ResultSafeEffect:
     return create_effect_with_trace(ResultSafeEffect(sub_program=sub_program))
+
+
+def unwrap_result(result: Result[Any]) -> ResultUnwrapEffect:
+    return create_effect_with_trace(ResultUnwrapEffect(result=result))
 
 
 def Fail(exc: Exception) -> Effect:
@@ -119,20 +142,30 @@ def Safe(sub_program: ProgramLike) -> Effect:
     )
 
 
+def Unwrap(result: Result[Any]) -> Effect:
+    return create_effect_with_trace(
+        ResultUnwrapEffect(result=result),
+        skip_frames=3,
+    )
+
+
 __all__ = [
     "ResultFailEffect",
     "ResultCatchEffect",
     "ResultRecoverEffect",
     "ResultRetryEffect",
     "ResultSafeEffect",
+    "ResultUnwrapEffect",
     "fail",
     "catch",
     "recover",
     "retry",
     "safe",
+    "unwrap_result",
     "Fail",
     "Catch",
     "Recover",
     "Retry",
     "Safe",
+    "Unwrap",
 ]

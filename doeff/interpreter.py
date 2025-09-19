@@ -34,6 +34,7 @@ from doeff.effects import (
     ResultFailEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
+    ResultUnwrapEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -258,6 +259,8 @@ class ProgramInterpreter:
             return await self.result_handler.handle_recover(effect, ctx, self)
         if _effect_is(effect, ResultRetryEffect):
             return await self.result_handler.handle_retry(effect, ctx, self)
+        if _effect_is(effect, ResultUnwrapEffect):
+            return await self.result_handler.handle_unwrap(effect, ctx, self)
 
         if _effect_is(effect, IOPerformEffect):
             return await self.io_handler.handle_run(effect, ctx)
