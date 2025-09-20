@@ -11,7 +11,7 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class DepInjectEffect(EffectBase):
-    """Effect emitted when requesting a dependency injection binding."""
+    """Resolves the dependency identified by key and yields the bound object."""
 
     key: str
 

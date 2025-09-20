@@ -57,6 +57,7 @@ from doeff.effects import (
     Safe,
     Unwrap,
     Retry,
+    Unwrap,
     # Effects - IO
     IO,
     Print,
@@ -64,6 +65,7 @@ from doeff.effects import (
     Step,
     Annotate,
     Snapshot,
+    CaptureGraph,
     # Effects - Dependency injection (pinjected compatible)
     Dep,
     # Effects - Gather for parallel Programs
@@ -90,6 +92,7 @@ from doeff.effects import (
     recover,
     unwrap_result,
     retry,
+    unwrap_result,
     io,
     print_,
     memo_get,
@@ -97,6 +100,7 @@ from doeff.effects import (
     step,
     annotate,
     snapshot,
+    capture_graph,
     cache_get,
     cache_put,
 )
@@ -106,7 +110,15 @@ from doeff.program import Program
 from doeff.interpreter import ProgramInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
-from doeff.webui_stream import stream_program_to_webui
+from doeff.webui_stream import (
+    stream_program_to_webui,
+    snapshot_program_to_webui,
+    graph_to_webui_html,
+    graph_to_webui_html_blocking,
+    graph_to_webui_html_async,
+    write_graph_to_webui_html,
+    write_graph_to_webui_html_async,
+)
 
 # Import cache decorator
 from doeff.cache import (
@@ -120,6 +132,9 @@ from doeff.cache import (
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
 __version__ = "0.1.0"
+
+# Shorthand alias matching lowercase helpers
+capture = capture_graph
 
 __all__ = [  # noqa: RUF022
     # Core types
@@ -149,6 +164,12 @@ __all__ = [  # noqa: RUF022
     "do",
     # Web UI helper
     "stream_program_to_webui",
+    "snapshot_program_to_webui",
+    "graph_to_webui_html",
+    "graph_to_webui_html_blocking",
+    "graph_to_webui_html_async",
+    "write_graph_to_webui_html",
+    "write_graph_to_webui_html_async",
     # Effects - Uppercase
     "IO",
     "Annotate",
@@ -159,6 +180,7 @@ __all__ = [  # noqa: RUF022
     "Recover",
     "Unwrap",
     "Retry",
+    "Unwrap",
     "Dep",
     "Fail",
     "Gather",
@@ -179,6 +201,7 @@ __all__ = [  # noqa: RUF022
     "Print",
     "Put",
     "Step",
+    "CaptureGraph",
     "Tell",
     # Effects - lowercase
     "annotate",
@@ -189,6 +212,7 @@ __all__ = [  # noqa: RUF022
     "recover",
     "unwrap_result",
     "retry",
+    "unwrap_result",
     "fail",
     "get",
     "io",
@@ -199,6 +223,8 @@ __all__ = [  # noqa: RUF022
     "print_",
     "put",
     "step",
+    "capture",
+    "capture_graph",
     "tell",
     "memo_get",
     "memo_put",

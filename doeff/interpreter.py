@@ -23,6 +23,7 @@ from doeff.effects import (
     GatherDictEffect,
     GatherEffect,
     GraphAnnotateEffect,
+    GraphCaptureEffect,
     GraphSnapshotEffect,
     GraphStepEffect,
     IOPerformEffect,
@@ -34,6 +35,7 @@ from doeff.effects import (
     ResultFailEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
+    ResultSafeEffect,
     ResultUnwrapEffect,
     StateGetEffect,
     StateModifyEffect,
@@ -53,7 +55,13 @@ from doeff.handlers import (
     WriterEffectHandler,
 )
 from doeff.program import Program
-from doeff.types import Effect, EffectFailure, ExecutionContext, RunResult
+from doeff.types import (
+    Effect,
+    EffectFailure,
+    EffectObservation,
+    ExecutionContext,
+    RunResult,
+)
 
 
 def _effect_is(effect: Effect, cls) -> bool:
@@ -226,8 +234,45 @@ class ProgramInterpreter:
         except Exception as exc:
             return RunResult(ctx, Err(exc))
 
+    def _record_effect_usage(self, effect: Effect, ctx: ExecutionContext) -> None:
+        """Record Dep/Ask effect usage for later inspection."""
+
+        try:
+            observations = ctx.effect_observations
+        except AttributeError:  # Defensive: context without observation tracking
+            return
+
+        effect_type: str | None = None
+        key: str | None = None
+
+        if _effect_is(effect, DepInjectEffect):
+            effect_type = "Dep"
+            key = getattr(effect, "key", None)
+        elif _effect_is(effect, AskEffect):
+            effect_type = "Ask"
+            key = getattr(effect, "key", None)
+
+        if effect_type is None:
+            return
+
+        context_info = getattr(effect, "created_at", None)
+        if context_info is not None:
+            sanitized = context_info.without_frames()
+        else:
+            sanitized = None
+
+        observations.append(
+            EffectObservation(
+                effect_type=effect_type,
+                key=key,
+                context=sanitized,
+            )
+        )
+
     async def _handle_effect(self, effect: Effect, ctx: ExecutionContext) -> Any:
         """Dispatch effect to appropriate handler."""
+
+        self._record_effect_usage(effect, ctx)
 
         if _effect_is(effect, AskEffect):
             return await self.reader_handler.handle_ask(effect, ctx)
@@ -259,6 +304,8 @@ class ProgramInterpreter:
             return await self.result_handler.handle_recover(effect, ctx, self)
         if _effect_is(effect, ResultRetryEffect):
             return await self.result_handler.handle_retry(effect, ctx, self)
+        if _effect_is(effect, ResultSafeEffect):
+            return await self.result_handler.handle_safe(effect, ctx, self)
         if _effect_is(effect, ResultUnwrapEffect):
             return await self.result_handler.handle_unwrap(effect, ctx, self)
 
@@ -273,9 +320,12 @@ class ProgramInterpreter:
             return await self.graph_handler.handle_annotate(effect, ctx)
         if _effect_is(effect, GraphSnapshotEffect):
             return await self.graph_handler.handle_snapshot(effect, ctx)
+        if _effect_is(effect, GraphCaptureEffect):
+            return await self.graph_handler.handle_capture(effect, ctx, self)
 
         if _effect_is(effect, DepInjectEffect):
             proxy_effect = AskEffect(key=effect.key, created_at=effect.created_at)
+            self._record_effect_usage(proxy_effect, ctx)
             return await self.reader_handler.handle_ask(proxy_effect, ctx)
 
         if _effect_is(effect, GatherEffect):
@@ -343,6 +393,7 @@ class ProgramInterpreter:
                 graph=ctx.graph,
                 io_allowed=ctx.io_allowed,
                 cache=ctx.cache,
+                effect_observations=ctx.effect_observations,
             )
             tasks.append(asyncio.create_task(self.run(prog, ctx_copy)))
 

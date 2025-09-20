@@ -11,17 +11,23 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class StateGetEffect(EffectBase):
+    """Retrieves the state value for key and yields it."""
+
     key: str
 
 
 @dataclass(frozen=True)
 class StatePutEffect(EffectBase):
+    """Updates the stored state for key and completes with no value."""
+
     key: str
     value: Any
 
 
 @dataclass(frozen=True)
 class StateModifyEffect(EffectBase):
+    """Applies func to the current state value and yields the updated value."""
+
     key: str
     func: Callable[[Any], Any]
 

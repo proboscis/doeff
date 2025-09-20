@@ -822,20 +822,30 @@ fn extract_docstring(body: &[Stmt]) -> Option<String> {
 }
 
 pub(crate) fn compute_module_path(root: &Path, file_path: &Path) -> String {
+    // Make both paths absolute for consistent comparison
+    let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let abs_file = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
+    
     // Try to determine the Python package root
-    let package_root = find_python_package_root(root, file_path);
+    let package_root = find_python_package_root(&abs_root, &abs_file);
     
     let relative = if let Some(pkg_root) = package_root {
-        file_path
+        abs_file
             .strip_prefix(&pkg_root)
-            .unwrap_or(file_path)
+            .unwrap_or_else(|_| {
+                // If strip_prefix fails, try with the project root
+                abs_file.strip_prefix(&abs_root)
+                    .unwrap_or(&abs_file)
+            })
             .to_path_buf()
     } else {
         // Fall back to relative path from root
-        file_path
-            .strip_prefix(root)
-            .unwrap_or(file_path)
-            .to_path_buf()
+        abs_file
+            .strip_prefix(&abs_root)
+            .unwrap_or_else(|_| {
+                // Last resort: use just the file name
+                Path::new(abs_file.file_name().unwrap_or_default()).to_path_buf()
+            })
     };
 
     let mut rel_str = relative.to_string_lossy().replace('\\', "/");

@@ -17,11 +17,15 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class CacheGetEffect(EffectBase):
+    """Requests the cached value for the key and yields the stored payload."""
+
     key: Any
 
 
 @dataclass(frozen=True)
 class CachePutEffect(EffectBase):
+    """Persists the value under the key and completes after the cache is updated."""
+
     key: Any
     value: Any
     policy: CachePolicy
