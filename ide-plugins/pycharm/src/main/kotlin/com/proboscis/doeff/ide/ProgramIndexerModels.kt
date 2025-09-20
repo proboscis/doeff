@@ -65,9 +65,13 @@ data class IndexEntry(
     @SerializedName("program_interpreter_parameters") val interpreterParameters: List<IndexParameter>,
     @SerializedName("type_usages") val typeUsages: List<ProgramTypeUsage>,
     val docstring: String?,
+    val markers: List<String> = emptyList(),  // Added field for doeff markers
 ) {
     fun hasCategory(category: IndexEntryCategory): Boolean =
         categories.any { IndexEntryCategory.fromRaw(it) == category }
+    
+    fun hasMarker(marker: String): Boolean =
+        markers.any { it.equals(marker, ignoreCase = true) }
 }
 
 data class IndexPayload(val entries: List<IndexEntry>)
