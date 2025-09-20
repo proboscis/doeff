@@ -32,6 +32,7 @@ from doeff.effects import (
     FutureAwaitEffect,
     FutureParallelEffect,
     GraphAnnotateEffect,
+    GraphCaptureEffect,
     GraphSnapshotEffect,
     GraphStepEffect,
     IOPerformEffect,
@@ -426,6 +427,40 @@ class GraphEffectHandler:
     async def handle_snapshot(self, effect: GraphSnapshotEffect, ctx: ExecutionContext):
         """Return the current computation graph."""
         return ctx.graph
+
+    async def handle_capture(
+        self,
+        effect: GraphCaptureEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> tuple[Any, WGraph]:
+        from doeff.program import Program
+
+        sub_program = effect.program
+        if callable(sub_program) and not isinstance(sub_program, Program):
+            sub_program = sub_program()
+
+        sub_ctx = ExecutionContext(
+            env=ctx.env.copy() if ctx.env else {},
+            state=ctx.state.copy() if ctx.state else {},
+            log=[],
+            graph=WGraph(
+                last=WStep(inputs=tuple(), output=WNode("_root"), meta={}),
+                steps=frozenset(),
+            ),
+            io_allowed=ctx.io_allowed,
+            cache=ctx.cache,
+        )
+
+        result = await engine.run(sub_program, sub_ctx)
+
+        if isinstance(result.result, Err):
+            raise result.result.error
+
+        ctx.state.update(result.context.state)
+        ctx.log.extend(result.context.log)
+
+        return result.value, result.context.graph
 
 
 

@@ -31,7 +31,13 @@ dependencies = [
     "doeff-pinjected",
     "cloudpickle>=3.0.0",
     "phart>=1.1.4",
+    "numpy>=1.26.0",
+    "pillow>=11.0.0",
+    "webui_snapshot",
 ]
+
+[project.scripts]
+doeff = "doeff.__main__:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"
@@ -42,11 +48,18 @@ Issues = "https://github.com/proboscis/doeff/issues"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+
 [tool.uv.workspace]
-members = ["packages/*"]
+members = [
+    "packages/doeff-gemini",
+    "packages/doeff-openai",
+    "packages/doeff-openrouter",
+    "packages/doeff-pinjected",
+]
 
 [tool.uv.sources]
 doeff-pinjected = { workspace = true }
+webui_snapshot = { path = "rust/webui_snapshot" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

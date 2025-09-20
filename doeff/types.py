@@ -105,6 +105,28 @@ class EffectCreationContext:
         
         return "\n".join(lines)
 
+    def without_frames(self) -> "EffectCreationContext":
+        """Return a sanitized copy without live frame references."""
+
+        sanitized_stack: list[dict[str, Any]] = []
+        for frame in self.stack_trace:
+            if isinstance(frame, dict):
+                sanitized_frame = {
+                    key: value
+                    for key, value in frame.items()
+                    if key != "frame"
+                }
+                sanitized_stack.append(sanitized_frame)
+
+        return EffectCreationContext(
+            filename=self.filename,
+            line=self.line,
+            function=self.function,
+            code=self.code,
+            stack_trace=sanitized_stack,
+            frame_info=None,
+        )
+
 
 # ============================================
 # Effect Failure Exception
@@ -252,6 +274,8 @@ class ExecutionContext:
     io_allowed: bool = True
     # Memo storage (shared across parallel executions)
     cache: Dict[str, Any] = field(default_factory=dict)
+    # Observed effects during run (shared reference)
+    effect_observations: list["EffectObservation"] = field(default_factory=list)
 
     def copy(self) -> ExecutionContext:
         """Create a shallow copy of the context."""
@@ -262,6 +286,7 @@ class ExecutionContext:
             graph=self.graph,
             io_allowed=self.io_allowed,
             cache=self.cache,  # Cache is shared reference, not copied
+            effect_observations=self.effect_observations,
         )
 
     def with_env_update(self, updates: Dict[str, Any]) -> ExecutionContext:
@@ -275,7 +300,17 @@ class ExecutionContext:
             graph=self.graph,
             io_allowed=self.io_allowed,
             cache=self.cache,  # Cache is shared
+            effect_observations=self.effect_observations,
         )
+
+
+@dataclass(frozen=True)
+class EffectObservation:
+    """Lightweight record of an observed effect during execution."""
+
+    effect_type: str
+    key: str | None
+    context: EffectCreationContext | None = None
 
 
 # ============================================
@@ -330,6 +365,11 @@ class RunResult(Generic[T]):
     def graph(self) -> WGraph:
         """Get the computation graph."""
         return self.context.graph
+
+    @property
+    def effect_observations(self) -> list["EffectObservation"]:
+        """Get recorded effect observations."""
+        return self.context.effect_observations
 
     def __repr__(self) -> str:
         if self.is_ok:
@@ -781,7 +821,7 @@ class RunResult(Generic[T]):
                             if error_info['context'].code:
                                 lines.append(f"{ind * 3}{error_info['context'].code}")
                             creation_trace = self._format_creation_trace(
-                                error_info['context'], indent, max_frames=6
+                                error_info['context'], indent, max_frames=18
                             )
                             if creation_trace:
                                 lines.append(f"{ind * 2}🧵 Creation stack:")
@@ -792,7 +832,7 @@ class RunResult(Generic[T]):
                         if error_info['cause'] and not isinstance(error_info['cause'], EffectFailure):
                             cause = error_info['cause']
                             lines.append(f"{ind * 2}Caused by: {cause.__class__.__name__}: {cause}")
-                            cause_trace = self._format_exception_trace(cause, max_frames=6)
+                            cause_trace = self._format_exception_trace(cause, max_frames=18)
                             if cause_trace:
                                 lines.append(f"{ind * 2}🔥 Cause stack:")
                                 for frame_line in cause_trace:
@@ -872,7 +912,29 @@ class RunResult(Generic[T]):
                 lines.append(f"{ind}... and {len(self.log) - 10} more entries")
         else:
             lines.append(f"{ind}(no logs)")
-        
+
+        # Dep/Ask effect usage
+        lines.append("\n🔗 Dep/Ask Usage:")
+        dep_ask_observations = [
+            obs for obs in self.effect_observations if obs.effect_type in {"Dep", "Ask"}
+        ]
+        if dep_ask_observations:
+            limit = 40
+            for idx, obs in enumerate(dep_ask_observations[:limit], start=1):
+                key_text = f" key={obs.key!r}" if obs.key is not None else ""
+                lines.append(f"{ind}[{idx}] {obs.effect_type}{key_text}")
+                if obs.context is not None:
+                    lines.append(f"{ind * 2}{obs.context.format_location()}")
+                    if obs.context.code:
+                        lines.append(f"{ind * 3}{obs.context.code}")
+                else:
+                    lines.append(f"{ind * 2}<location unavailable>")
+            if len(dep_ask_observations) > limit:
+                remaining = len(dep_ask_observations) - limit
+                lines.append(f"{ind}... and {remaining} more entries")
+        else:
+            lines.append(f"{ind}(no Dep/Ask effects observed)")
+
         # Graph
         lines.append("\n🌳 Graph:")
         if self.graph and self.graph.steps:
@@ -968,7 +1030,7 @@ class RunResult(Generic[T]):
         self,
         context: EffectCreationContext,
         indent: int,
-        max_frames: int = 5,
+        max_frames: int = 15,
     ) -> list[str]:
         """Format the creation stack trace for display."""
 
@@ -995,24 +1057,28 @@ class RunResult(Generic[T]):
         return trace_lines
 
     def _format_exception_trace(
-        self, exc: BaseException, max_frames: int = 6
+        self, exc: BaseException, max_frames: int = 18
     ) -> list[str]:
         tb = exc.__traceback__
         if tb is None:
             return []
 
-        extracted = traceback.extract_tb(tb)
-        if not extracted:
+        formatted = traceback.format_exception(type(exc), exc, tb)
+        if not formatted:
             return []
 
-        lines: list[str] = []
-        for frame in extracted[-max_frames:]:
-            filename = frame.filename or "<unknown>"
-            line = frame.lineno or 0
-            func = frame.name or "<unknown>"
-            lines.append(f"File \"{filename}\", line {line}, in {func}")
-            if frame.line:
-                lines.append(f"  {frame.line.strip()}")
+        lines = []
+        for raw in formatted:
+            for piece in raw.rstrip().split("\n"):
+                if piece.strip():
+                    lines.append(piece)
+
+        if max_frames is not None and max_frames > 0 and len(lines) > max_frames:
+            lines = lines[-max_frames:]
+
+        trailer = f"{type(exc).__name__}: {exc}"
+        if lines and lines[-1].strip() == trailer:
+            lines = lines[:-1]
 
         return lines
 
@@ -1106,6 +1172,7 @@ __all__ = [
     "EffectGenerator",
     "Program",
     "ExecutionContext",
+    "EffectObservation",
     "RunResult",
     "ListenResult",
 ]
