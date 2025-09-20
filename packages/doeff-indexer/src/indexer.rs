@@ -69,6 +69,7 @@ pub struct IndexEntry {
     pub program_parameters: Vec<ParameterRef>,
     pub program_interpreter_parameters: Vec<ParameterRef>,
     pub type_usages: Vec<ProgramTypeUsage>,
+    pub markers: Vec<String>,  // Added field for doeff markers like "interpreter", "transform"
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,7 +207,7 @@ fn parse_python_file(path: &Path, root: &Path) -> Result<Vec<IndexEntry>> {
     let line_index = LineIndex::new(&source);
 
     let mut entries = Vec::new();
-    extract_entries(&module, &module_path, path, &line_index, &mut entries);
+    extract_entries(&module, &module_path, path, &line_index, &source, &mut entries);
 
     Ok(entries)
 }
@@ -216,6 +217,7 @@ fn extract_entries(
     module_path: &str,
     file_path: &Path,
     line_index: &LineIndex,
+    source: &str,
     entries: &mut Vec<IndexEntry>,
 ) {
     let Mod::Module(module) = module else {
@@ -226,7 +228,7 @@ fn extract_entries(
         match stmt {
             Stmt::FunctionDef(func) => {
                 if let Some(entry) =
-                    analyze_function(func, module_path, file_path, line_index, ItemKind::Function)
+                    analyze_function(func, module_path, file_path, line_index, source, ItemKind::Function)
                 {
                     entries.push(entry);
                 }
@@ -237,6 +239,7 @@ fn extract_entries(
                     module_path,
                     file_path,
                     line_index,
+                    source,
                     ItemKind::AsyncFunction,
                 ) {
                     entries.push(entry);
@@ -258,23 +261,76 @@ fn extract_entries(
     }
 }
 
+fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str, _args: &Arguments) -> Vec<String> {
+    let mut markers = Vec::new();
+    let lines: Vec<&str> = source.lines().collect();
+    
+    // Look at the function definition line and the line above for markers
+    // func_line is 1-based, convert to 0-based for array indexing
+    let line_idx = func_line.saturating_sub(1);
+    
+    // Check the function definition line itself (for inline comments)
+    if line_idx < lines.len() {
+        if let Some(marker) = extract_marker_from_line(lines[line_idx]) {
+            markers.push(marker);
+        }
+    }
+    
+    // Also check parameter lines for inline markers
+    // This handles cases like:
+    // def some_transform( # doeff: transform
+    //     tgt: Program):
+    for i in line_idx..lines.len().min(line_idx + 10) {
+        if let Some(line) = lines.get(i) {
+            if line.contains("# doeff:") {
+                if let Some(marker) = extract_marker_from_line(line) {
+                    if !markers.contains(&marker) {
+                        markers.push(marker);
+                    }
+                }
+            }
+            // Stop if we hit another function definition
+            if i > line_idx && (line.trim_start().starts_with("def ") || line.trim_start().starts_with("async def ")) {
+                break;
+            }
+        }
+    }
+    
+    markers
+}
+
+fn extract_marker_from_line(line: &str) -> Option<String> {
+    // Look for "# doeff: <marker>" pattern
+    if let Some(idx) = line.find("# doeff:") {
+        let marker_part = &line[idx + 8..]; // Skip "# doeff:"
+        let marker = marker_part.trim().split_whitespace().next()?.to_string();
+        Some(marker)
+    } else {
+        None
+    }
+}
+
 fn analyze_function(
     func: &StmtFunctionDef,
     module_path: &str,
     file_path: &Path,
     line_index: &LineIndex,
+    source: &str,
     item_kind: ItemKind,
 ) -> Option<IndexEntry> {
+    let line = line_index.line_number(func.range.start());
+    let markers = extract_markers_from_source(source, line, &func.name, &func.args);
     analyze_callable(
         &func.name,
         &func.decorator_list,
         &func.args,
         func.returns.as_deref(),
         &func.body,
-        line_index.line_number(func.range.start()),
+        line,
         module_path,
         file_path,
         item_kind,
+        markers,
     )
 }
 
@@ -283,18 +339,22 @@ fn analyze_async_function(
     module_path: &str,
     file_path: &Path,
     line_index: &LineIndex,
+    source: &str,
     item_kind: ItemKind,
 ) -> Option<IndexEntry> {
+    let line = line_index.line_number(func.range.start());
+    let markers = extract_markers_from_source(source, line, &func.name, &func.args);
     analyze_callable(
         &func.name,
         &func.decorator_list,
         &func.args,
         func.returns.as_deref(),
         &func.body,
-        line_index.line_number(func.range.start()),
+        line,
         module_path,
         file_path,
         item_kind,
+        markers,
     )
 }
 
@@ -308,6 +368,7 @@ fn analyze_callable(
     module_path: &str,
     file_path: &Path,
     item_kind: ItemKind,
+    markers: Vec<String>,
 ) -> Option<IndexEntry> {
     let mut categories: HashSet<EntryCategory> = HashSet::new();
 
@@ -424,6 +485,7 @@ fn analyze_callable(
         program_parameters: program_params,
         program_interpreter_parameters: interpreter_params,
         type_usages,
+        markers,
     })
 }
 
@@ -478,6 +540,7 @@ fn analyze_assignment(
                 program_parameters: Vec::new(),
                 program_interpreter_parameters: Vec::new(),
                 type_usages,
+                markers: Vec::new(),  // No markers for assignments
             });
         }
     }
@@ -543,6 +606,7 @@ fn analyze_ann_assignment(
         program_parameters: Vec::new(),
         program_interpreter_parameters: Vec::new(),
         type_usages,
+        markers: Vec::new(),  // No markers for assignments
     })
 }
 
@@ -1026,6 +1090,23 @@ fn extract_type_arguments(slice: &Expr) -> Vec<String> {
         },
         _ => vec![expr_to_string(slice)],
     }
+}
+
+pub fn entry_matches_with_markers(
+    entry: &IndexEntry,
+    kind: Option<ProgramTypeKind>,
+    type_arg: Option<&str>,
+    marker: Option<&str>,
+) -> bool {
+    // First check marker if provided
+    if let Some(m) = marker {
+        if !entry.markers.iter().any(|em| em.eq_ignore_ascii_case(m)) {
+            return false;
+        }
+    }
+    
+    // Then check the existing logic
+    entry_matches(entry, kind, type_arg)
 }
 
 pub fn entry_matches(

@@ -35,7 +35,14 @@ object ProgramExecutionController {
         )
         val indexer = IndexerClient(project)
         indexer.queryEntries(typeArgument) { entries ->
-            val interpreters = entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_INTERPRETER) }
+            // First try to filter by marker "interpreter" if any are marked
+            val markedInterpreters = entries.filter { it.hasMarker("interpreter") }
+            // Fall back to category-based detection if no markers found
+            val interpreters = if (markedInterpreters.isNotEmpty()) {
+                markedInterpreters
+            } else {
+                entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_INTERPRETER) }
+            }
             if (interpreters.isEmpty()) {
                 logger.warn("No interpreters found in index for type $typeArgument")
                 ProgramPluginDiagnostics.warn(
@@ -47,9 +54,23 @@ object ProgramExecutionController {
                 return@queryEntries
             }
 
-            val kleisli = entries.filter { it.hasCategory(IndexEntryCategory.KLEISLI_PROGRAM) }
+            // For Kleisli programs, check markers first
+            val markedKleisli = entries.filter { it.hasMarker("kleisli") }
                 .filter { usageMatchesType(it, typeArgument) }
-            val transformers = entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_TRANSFORMER) }
+            val kleisli = if (markedKleisli.isNotEmpty()) {
+                markedKleisli
+            } else {
+                entries.filter { it.hasCategory(IndexEntryCategory.KLEISLI_PROGRAM) }
+                    .filter { usageMatchesType(it, typeArgument) }
+            }
+            
+            // For transformers, check markers first
+            val markedTransformers = entries.filter { it.hasMarker("transform") || it.hasMarker("transformer") }
+            val transformers = if (markedTransformers.isNotEmpty()) {
+                markedTransformers
+            } else {
+                entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_TRANSFORMER) }
+            }
 
             val dialog = ProgramSelectionDialog(
                 project = project,

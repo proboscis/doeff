@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use doeff_indexer::{build_index, entry_matches, ProgramTypeKind};
+use doeff_indexer::{build_index, entry_matches_with_markers, ProgramTypeKind};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Index doeff programs and Kleisli programs", long_about = None)]
@@ -27,6 +27,10 @@ struct Cli {
     /// Filter by type argument (for example "User"); omit or use Any to match all
     #[arg(long)]
     type_arg: Option<String>,
+    
+    /// Filter by doeff marker (e.g. "interpreter", "transform")
+    #[arg(long)]
+    marker: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -52,9 +56,10 @@ fn main() -> Result<()> {
 
     let kind_filter = cli.kind.to_program_kind();
     let type_arg = cli.type_arg.as_deref();
+    let marker = cli.marker.as_deref();
     index
         .entries
-        .retain(|entry| entry_matches(entry, kind_filter, type_arg));
+        .retain(|entry| entry_matches_with_markers(entry, kind_filter, type_arg, marker));
 
     let json = if cli.pretty {
         serde_json::to_string_pretty(&index)?
