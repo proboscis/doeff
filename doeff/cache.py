@@ -6,6 +6,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.result import Recover
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
+@do_wrapper
 def cache(
     ttl: float | None = None,
     key_func: Callable | None = None,

@@ -11,11 +11,15 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class IOPerformEffect(EffectBase):
+    """Runs the supplied callable and yields whatever value it returns."""
+
     action: Callable[[], Any]
 
 
 @dataclass(frozen=True)
 class IOPrintEffect(EffectBase):
+    """Emits a message that will be printed to the active output stream."""
+
     message: str
 
 

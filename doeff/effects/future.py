@@ -11,11 +11,15 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class FutureAwaitEffect(EffectBase):
+    """Awaits the given awaitable and yields its resolved value."""
+
     awaitable: Awaitable[Any]
 
 
 @dataclass(frozen=True)
 class FutureParallelEffect(EffectBase):
+    """Runs all awaitables concurrently and yields the collected results list."""
+
     awaitables: Tuple[Awaitable[Any], ...]
 
 
