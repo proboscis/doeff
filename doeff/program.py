@@ -107,7 +107,11 @@ class Program(Generic[T]):
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
     ) -> Program[T]:
-        """Return a Program that applies ``transform`` to every yielded effect."""
+        """Return a Program that applies ``transform`` to every yielded effect.
+        
+        When transform returns a Program, it will NOT be recursively intercepted
+        to avoid infinite recursion. The returned Program is yielded as-is.
+        """
 
         def intercepted_generator():
             gen = self.generator_func()
@@ -118,13 +122,17 @@ class Program(Generic[T]):
 
             while True:
                 if isinstance(current, Program):
+                    # Recursively intercept nested Programs
                     current = current.intercept(transform)
                     value = yield current
                 elif isinstance(current, EffectBase):
                     transformed = transform(current)
                     if isinstance(transformed, Program):
-                        value = yield transformed.intercept(transform)
+                        # DO NOT recursively intercept the returned Program
+                        # to avoid infinite recursion
+                        value = yield transformed
                     elif isinstance(transformed, EffectBase):
+                        # Recursively intercept nested effects within the transformed effect
                         value = yield transformed.intercept(transform)
                     else:
                         value = yield transformed
