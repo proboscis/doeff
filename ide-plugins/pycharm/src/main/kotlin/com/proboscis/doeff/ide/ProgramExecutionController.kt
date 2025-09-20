@@ -6,6 +6,8 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VfsUtil
+import com.intellij.openapi.wm.StatusBar
+import com.intellij.openapi.wm.WindowManager
 import com.jetbrains.python.psi.PyFile
 import com.jetbrains.python.psi.PyTargetExpression
 import java.awt.event.MouseEvent
@@ -15,6 +17,8 @@ object ProgramExecutionController {
 
     fun handleNavigation(mouseEvent: MouseEvent?, targetExpression: PyTargetExpression, typeArgument: String) {
         val project = targetExpression.project
+        updateStatusBar(project, "Doeff: Analyzing ${targetExpression.name}...")
+        
         val modulePath = findModulePath(targetExpression)
         if (modulePath == null) {
             logger.warn("Unable to determine module path for ${targetExpression.text}")
@@ -22,7 +26,8 @@ object ProgramExecutionController {
                 project,
                 "Unable to determine module path for ${targetExpression.text}"
             )
-            notify(project, "Unable to determine module path", NotificationType.WARNING)
+            showErrorPopup(project, "Doeff Navigation Error", "Unable to determine module path for ${targetExpression.text}")
+            updateStatusBar(project, "Doeff: Error - Module path not found")
             return
         }
 
@@ -33,8 +38,13 @@ object ProgramExecutionController {
             "Opening doeff runner for $programPath (type $typeArgument)",
             key = "nav-$programPath"
         )
+        
+        updateStatusBar(project, "Doeff: Indexing project for $programPath...")
+        showInfoNotification(project, "Doeff Indexing", "Searching for interpreters and transformers...")
+        
         val indexer = IndexerClient(project)
         indexer.queryEntries(typeArgument) { entries ->
+            updateStatusBar(project, "Doeff: Found ${entries.size} entries")
             // First try to filter by marker "interpreter" if any are marked
             val markedInterpreters = entries.filter { it.hasMarker("interpreter") }
             // Fall back to category-based detection if no markers found
@@ -50,7 +60,12 @@ object ProgramExecutionController {
                     "No interpreters found for doeff type $typeArgument",
                     key = "no-interpreter-$typeArgument"
                 )
-                notify(project, "No doeff interpreters found", NotificationType.WARNING)
+                showErrorPopup(project, "No Interpreters Found", 
+                    "No doeff interpreters found for type '$typeArgument'.\n" +
+                    "Make sure you have functions that:\n" +
+                    "- Accept a Program parameter, or\n" +
+                    "- Are marked with # doeff: interpreter")
+                updateStatusBar(project, "Doeff: No interpreters found")
                 return@queryEntries
             }
 
@@ -72,6 +87,8 @@ object ProgramExecutionController {
                 entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_TRANSFORMER) }
             }
 
+            updateStatusBar(project, "Doeff: Found ${interpreters.size} interpreters, ${kleisli.size} kleisli, ${transformers.size} transformers")
+            
             val dialog = ProgramSelectionDialog(
                 project = project,
                 programPath = programPath,
@@ -91,6 +108,7 @@ object ProgramExecutionController {
                         "Launching doeff run for ${selection.programPath} with interpreter $interpreterName",
                         key = "run-${selection.programPath}-$interpreterName"
                     )
+                    updateStatusBar(project, "Doeff: Launching ${selection.programPath}...")
                     DoEffRunConfigurationHelper(project).run(selection)
                 } else {
                     logger.warn("Dialog returned no selection")
@@ -99,6 +117,7 @@ object ProgramExecutionController {
                         "doeff run dialog closed without a selection for $programPath",
                         key = "no-selection-$programPath"
                     )
+                    updateStatusBar(project, "Doeff: Cancelled")
                 }
             }
         }
@@ -134,6 +153,40 @@ object ProgramExecutionController {
                 .getNotificationGroup("doeff.plugin")
                 .createNotification("doeff", message, type)
                 .notify(project)
+        }
+    }
+    
+    private fun showErrorPopup(project: Project, title: String, message: String) {
+        ApplicationManager.getApplication().invokeLater {
+            NotificationGroupManager.getInstance()
+                .getNotificationGroup("doeff.plugin")
+                .createNotification(title, message, NotificationType.ERROR)
+                .notify(project)
+        }
+    }
+    
+    private fun showInfoNotification(project: Project, title: String, message: String) {
+        ApplicationManager.getApplication().invokeLater {
+            NotificationGroupManager.getInstance()
+                .getNotificationGroup("doeff.plugin")
+                .createNotification(title, message, NotificationType.INFORMATION)
+                .notify(project)
+        }
+    }
+    
+    private fun updateStatusBar(project: Project, message: String) {
+        ApplicationManager.getApplication().invokeLater {
+            val statusBar = WindowManager.getInstance().getStatusBar(project)
+            statusBar?.info = message
+            // Clear the message after 5 seconds
+            ApplicationManager.getApplication().executeOnPooledThread {
+                Thread.sleep(5000)
+                ApplicationManager.getApplication().invokeLater {
+                    if (statusBar?.info == message) {
+                        statusBar.info = ""
+                    }
+                }
+            }
         }
     }
 }
