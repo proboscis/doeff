@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Tuple
 
 try:
@@ -61,7 +61,7 @@ def demo_program() -> EffectGenerator[str]:
 
     yield Step("Bootstrap", {"stage": "init"})
     yield Await(asyncio.sleep(0.2))
-    yield Annotate({"timestamp": datetime.now(UTC).isoformat()})
+    yield Annotate({"timestamp": datetime.now(timezone.utc).isoformat()})
     yield Await(asyncio.sleep(0.2))
 
     config = yield Await(fetch_remote_config())
@@ -139,7 +139,7 @@ def demo_program() -> EffectGenerator[str]:
             {"stage": "load", "batch": batch, "items": 256 + batch},
         )
         yield Await(asyncio.sleep(0.2))
-        yield Annotate({"batch": batch, "timestamp": datetime.now(UTC).isoformat()})
+        yield Annotate({"batch": batch, "timestamp": datetime.now(timezone.utc).isoformat()})
         yield Await(asyncio.sleep(0.2))
 
         yield Step(

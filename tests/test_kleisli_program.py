@@ -3,6 +3,7 @@ Test KleisliProgram automatic unwrapping of Program arguments.
 """
 
 import asyncio
+import inspect
 from collections.abc import Generator
 from typing import Any
 
@@ -120,6 +121,24 @@ async def test_kleisli_kwargs():
     assert result.is_ok
     assert result.value == "Alice is 30 years old and lives in Tokyo"
     assert "Creating greeting for Alice" in result.log[0]
+
+
+@pytest.mark.asyncio
+async def test_kleisli_respects_program_annotation():
+    """Program-annotated parameters should not be auto-unwrapped."""
+
+    @do
+    def echo(program_value: Program[int]) -> Generator[Effect | Program, Any, int]:
+        assert isinstance(program_value, Program)
+        result = yield program_value
+        return result
+
+    program_arg = Program.pure(42)
+    engine = ProgramInterpreter()
+    result = await engine.run(echo(program_arg))
+
+    assert result.is_ok
+    assert result.value == 42
 
 
 @pytest.mark.asyncio
@@ -374,6 +393,18 @@ async def test_kleisli_partial_chain_kwargs():
 
     assert result.is_ok
     assert result.value == (1, 2, 3)
+
+
+def test_kleisli_program_preserves_callable_signature():
+    """KleisliProgram instances expose the wrapped callable signature."""
+
+    def sample(a: int, b: str = "hi") -> Program[int]:
+        return Program.pure(a)
+
+    program = KleisliProgram(sample)
+
+    assert inspect.signature(program) == inspect.signature(sample)
+    assert program.__wrapped__ is sample
 
 
 @pytest.mark.asyncio
