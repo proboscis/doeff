@@ -1117,9 +1117,45 @@ _INDEX_HTML = """<!DOCTYPE html>
         height: 100vh;
         overflow: hidden;
       }
-      #cy {
+      #graph-container {
         flex: 1 1 auto;
         width: 70vw;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+      #controls {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        z-index: 1000;
+        display: flex;
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 8px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+      #controls button {
+        background: #4a90e2;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: background 0.2s;
+      }
+      #controls button:hover {
+        background: #357abd;
+      }
+      #controls button:active {
+        transform: translateY(1px);
+      }
+      #cy {
+        flex: 1 1 auto;
+        width: 100%;
         height: 100vh;
         background: #f5f7fa;
       }
@@ -1225,7 +1261,15 @@ _INDEX_HTML = """<!DOCTYPE html>
     <script src=\"https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js\"></script>
   </head>
   <body>
-    <div id=\"cy\"></div>
+    <div id=\"graph-container\">
+      <div id=\"controls\">
+        <button id=\"btn-fit\" title=\"Fit graph to viewport\">🏠 Home</button>
+        <button id=\"btn-zoom-in\" title=\"Zoom in\">➕ Zoom In</button>
+        <button id=\"btn-zoom-out\" title=\"Zoom out\">➖ Zoom Out</button>
+        <button id=\"btn-layout\" title=\"Re-run layout\">🔄 Re-Layout</button>
+      </div>
+      <div id=\"cy\"></div>
+    </div>
     <div id=\"details\">
       <h2>Node Details</h2>
       <div id=\"details-content\">
@@ -1675,6 +1719,26 @@ _INDEX_HTML = """<!DOCTYPE html>
 
       cy.on('tap', 'node', (event) => {
         updateDetails(event.target);
+      });
+
+      // Control button handlers
+      document.getElementById('btn-fit').addEventListener('click', () => {
+        cy.fit();
+        cy.center();
+      });
+
+      document.getElementById('btn-zoom-in').addEventListener('click', () => {
+        cy.zoom(cy.zoom() * 1.25);
+        cy.center();
+      });
+
+      document.getElementById('btn-zoom-out').addEventListener('click', () => {
+        cy.zoom(cy.zoom() * 0.8);
+        cy.center();
+      });
+
+      document.getElementById('btn-layout').addEventListener('click', () => {
+        refreshLayout();
       });
 
       const source = new EventSource('events');
