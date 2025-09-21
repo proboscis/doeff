@@ -445,14 +445,13 @@ def _keep_alive_program(host: str | None, port: int | None) -> Program[None]:
 
 
 def _topologically_sorted_steps(graph: WGraph) -> list[WStep]:
-    """Return graph steps ordered so dependencies appear before their consumers."""
+    """Return graph steps in original order - Cytoscape will handle topological sorting."""
     
-    # Skip topological sorting to avoid numpy array comparison issues
-    # Let the framework handle the layout instead
+    # Simply return all steps without manual sorting
+    # Cytoscape's dagre layout will handle the topological ordering automatically
     all_steps = list(graph.steps)
     all_steps.append(graph.last)
     
-    # Return steps in their original order
     return all_steps
 
 
@@ -1222,6 +1221,8 @@ _INDEX_HTML = """<!DOCTYPE html>
       }
     </style>
     <script src=\"https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js\"></script>
+    <script src=\"https://unpkg.com/dagre@0.8.5/dist/dagre.min.js\"></script>
+    <script src=\"https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js\"></script>
   </head>
   <body>
     <div id=\"cy\"></div>
@@ -1233,10 +1234,45 @@ _INDEX_HTML = """<!DOCTYPE html>
       </div>
     </div>
     <script>
+      // Initialize layout configuration - disable auto-fit to avoid conflicts
+      let layoutConfig = {
+        name: 'breadthfirst',
+        directed: true,
+        padding: 40,
+        fit: false,  // Disable auto-fit to avoid viewport conflicts
+        spacingFactor: 1.5,
+        animate: false
+      };
+      
+      // Check if dagre is available and use it if so
+      if (typeof dagre !== 'undefined' && typeof cytoscape !== 'undefined') {
+        // Register dagre with cytoscape
+        if (typeof cytoscapeDagre !== 'undefined') {
+          cytoscape.use(cytoscapeDagre);
+          console.log('Dagre extension registered');
+          
+          // Use dagre layout
+          layoutConfig = {
+            name: 'dagre',
+            rankDir: 'TB',
+            nodeSep: 50,
+            rankSep: 70,
+            edgeSep: 10,
+            ranker: 'network-simplex',
+            animate: false,
+            fit: false,  // Disable auto-fit to avoid viewport conflicts
+            padding: 40
+          };
+          console.log('Using dagre layout');
+        }
+      } else {
+        console.log('Using breadthfirst layout');
+      }
+      
       const cy = cytoscape({
         container: document.getElementById('cy'),
         elements: [],
-        layout: { name: 'breadthfirst', directed: true, padding: 40 },
+        layout: layoutConfig,
         wheelSensitivity: 0.2
       });
 
@@ -1427,13 +1463,64 @@ _INDEX_HTML = """<!DOCTYPE html>
       }
 
       function refreshLayout() {
-        cy.layout({ name: 'breadthfirst', directed: true, padding: 40 }).run();
+        // Try dagre first, fallback to breadthfirst
+        let layout;
+        try {
+          layout = cy.layout({ 
+            name: 'dagre',
+            rankDir: 'TB',
+            nodeSep: 50,
+            rankSep: 70,
+            edgeSep: 10,
+            ranker: 'network-simplex',
+            animate: false,
+            fit: false,  // Disable auto-fit to avoid conflicts
+            padding: 40
+          });
+        } catch (e) {
+          console.log('Dagre layout failed, using breadthfirst:', e);
+          layout = cy.layout({
+            name: 'breadthfirst',
+            directed: true,
+            padding: 40,
+            fit: false,  // Disable auto-fit to avoid conflicts
+            spacingFactor: 1.5,
+            animate: false
+          });
+        }
+        
+        // Run layout and then manually fit when complete
+        layout.run();
+        
+        // Use layoutstop event for reliable timing
+        layout.on('layoutstop', function() {
+          console.log('Layout complete, fitting viewport');
+          cy.fit();
+          cy.center();
+        });
+        
+        // Also try after a delay as fallback
+        setTimeout(() => {
+          cy.fit();
+          cy.center();
+          console.log('Viewport fitted with', cy.nodes().length, 'nodes');
+        }, 150);
       }
 
       function applySnapshot(nodes, edges) {
         cy.elements().remove();
-        cy.add(nodes.concat(edges));
-        refreshLayout();
+        
+        // Add nodes and edges
+        const elements = nodes.concat(edges);
+        console.log('Adding elements:', elements.length, 'nodes:', nodes.length, 'edges:', edges.length);
+        
+        if (elements.length > 0) {
+          cy.add(elements);
+          console.log('Elements added to cy, total nodes:', cy.nodes().length);
+          
+          // Use refreshLayout which has fallback logic
+          refreshLayout();
+        }
       }
 
       function applyAdd(nodes, edges) {
@@ -1631,7 +1718,15 @@ _SSE_SCRIPT_BLOCK = """      const source = new EventSource('events');
 
 _SNAPSHOT_SCRIPT_BLOCK = """      const snapshotData = __SNAPSHOT_DATA__;
       try {
+        console.log('Loading snapshot with', snapshotData.nodes?.length || 0, 'nodes and', snapshotData.edges?.length || 0, 'edges');
         applySnapshot(snapshotData.nodes || [], snapshotData.edges || []);
+        
+        // Ensure graph is visible and fitted to viewport
+        setTimeout(() => {
+          cy.fit();
+          cy.center();
+          console.log('Graph centered with', cy.nodes().length, 'nodes');
+        }, 100);
       } catch (err) {
         console.error('Failed to render graph snapshot', err);
       }
