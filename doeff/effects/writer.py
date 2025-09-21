@@ -10,11 +10,15 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class WriterTellEffect(EffectBase):
+    """Appends the message to the writer log without producing a value."""
+
     message: object
 
 
 @dataclass(frozen=True)
 class WriterListenEffect(EffectBase):
+    """Runs the sub-program and yields a ListenResult of its value and log."""
+
     sub_program: ProgramLike
 
 

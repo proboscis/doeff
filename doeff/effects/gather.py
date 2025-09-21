@@ -12,11 +12,15 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class GatherEffect(EffectBase):
+    """Executes all programs in parallel and yields their results as a list."""
+
     programs: Tuple[ProgramLike, ...]
 
 
 @dataclass(frozen=True)
 class GatherDictEffect(EffectBase):
+    """Runs the program mapping and yields a dict keyed by the supplied names."""
+
     programs: Mapping[str, ProgramLike]
 
 

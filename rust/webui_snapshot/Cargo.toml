@@ -1,0 +1,20 @@
+[package]
+name = "webui_snapshot"
+version = "0.1.0"
+edition = "2021"
+description = "Rust acceleration for doeff webui graph snapshots"
+license = "MIT"
+authors = ["doeff contributors"]
+
+[lib]
+name = "_webui_snapshot"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20.3", features = ["extension-module", "abi3-py310"] }
+indexmap = "2.2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = "s"
