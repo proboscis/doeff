@@ -1,0 +1,179 @@
+"""
+Comprehensive test suite for doeff type detection.
+Each section tests specific detection rules.
+"""
+from typing import Any, Optional
+from doeff import Program, KleisliProgram, do, Effect
+
+# ===========================================================================
+# SECTION 1: INTERPRETERS (Program[T] -> Any where Any != Program)
+# ===========================================================================
+
+# CORRECT: Marked interpreter (Program -> non-Program)
+def exec_int(program: Program[int]) -> int:  # doeff: interpreter
+    """✅ Should be found by find-interpreters"""
+    return program.run()
+
+# CORRECT: Interpreter with Any type
+def exec_any(program: Program[Any]) -> Any:  # doeff: interpreter
+    """✅ Should be found by find-interpreters"""
+    return program.run()
+
+# WRONG: Not marked (signature alone not enough for find-*)
+def exec_unmarked(program: Program[str]) -> str:
+    """❌ Should NOT be found by find-interpreters (no marker)"""
+    return program.run()
+
+# WRONG: Returns Program (this is a transform, not interpreter!)
+def wrong_interpreter(program: Program[int]) -> Program[int]:  # doeff: interpreter
+    """❌ Incorrectly marked - returns Program so it's a transform"""
+    return program
+
+# ===========================================================================
+# SECTION 2: TRANSFORMS (Program[_] -> Program[_])
+# ===========================================================================
+
+# CORRECT: Marked transform
+def map_transform(program: Program[int]) -> Program[str]:  # doeff: transform
+    """✅ Should be found by find-transforms"""
+    return program.map(str)
+
+# CORRECT: @do with Program first param (becomes transform)
+@do
+def do_transform(program: Program[int]) -> str:  # doeff: transform
+    """✅ @do with Program param -> Transform (returns Program[str])"""
+    result = yield program
+    return str(result)
+
+# WRONG: Not marked
+def unmarked_transform(program: Program[int]) -> Program[int]:
+    """❌ Should NOT be found by find-transforms (no marker)"""
+    return program
+
+# WRONG: Doesn't return Program (this is an interpreter!)
+def wrong_transform(program: Program[int]) -> int:  # doeff: transform
+    """❌ Incorrectly marked - doesn't return Program"""
+    return program.run()
+
+# ===========================================================================
+# SECTION 3: KLEISLI PROGRAMS (T -> Program[U] or @do functions)
+# ===========================================================================
+
+# CORRECT: @do function (automatic Kleisli)
+@do
+def fetch_by_id(user_id: str) -> User:
+    """✅ KleisliProgram[str, User] via @do"""
+    yield Log(f"Fetching {user_id}")
+    return User(user_id)
+
+# CORRECT: @do with Any parameter
+@do
+def process_any(data: Any) -> Result:
+    """✅ KleisliProgram[Any, Result] - matches ALL type filters"""
+    yield Log("Processing")
+    return Result(data)
+
+# CORRECT: Manually marked Kleisli
+def manual_kleisli(value: int) -> Program[str]:  # doeff: kleisli
+    """✅ Marked as kleisli"""
+    return Program.of(str(value))
+
+# SPECIAL: @do with Program param (NOT Kleisli, it's Transform!)
+@do
+def not_kleisli(program: Program[int]) -> str:
+    """❌ NOT Kleisli - @do with Program param makes it Transform"""
+    result = yield program
+    return str(result)
+
+# Type filtering test cases
+@do
+def kleisli_str(name: str) -> int:
+    """For testing: find-kleisli --type-arg str should match"""
+    return len(name)
+
+@do
+def kleisli_int(count: int) -> str:
+    """For testing: find-kleisli --type-arg str should NOT match"""
+    return str(count)
+
+@do
+def kleisli_optional(value: Optional[str]) -> int:
+    """For testing: Optional parameters"""
+    return len(value or "")
+
+# ===========================================================================
+# SECTION 4: INTERCEPTORS (Effect -> Effect | Program)
+# ===========================================================================
+
+# CORRECT: Marked interceptor
+def log_effect_interceptor(effect: LogEffect) -> LogEffect:  # doeff: interceptor
+    """✅ Should be found by find-interceptors"""
+    return LogEffect(f"[INTERCEPTED] {effect.message}")
+
+# CORRECT: @do with Effect first param
+@do
+def do_effect_interceptor(effect: Effect) -> str:  # doeff: interceptor
+    """✅ @do with Effect param -> Interceptor"""
+    yield effect
+    return "done"
+
+# CORRECT: Generic Effect type
+def generic_interceptor(effect: Effect) -> Effect:  # doeff: interceptor
+    """✅ Generic Effect interceptor"""
+    return effect
+
+# WRONG: Not marked
+def unmarked_interceptor(effect: Effect) -> Effect:
+    """❌ Should NOT be found by find-interceptors (no marker)"""
+    return effect
+
+# ===========================================================================
+# SECTION 5: EDGE CASES & SPECIAL SCENARIOS
+# ===========================================================================
+
+# Multiple markers (should appear in multiple find-* results)
+def hybrid_function(x: Any) -> Program[Any]:  # doeff: kleisli transform
+    """Has both kleisli and transform markers"""
+    return Program.of(x)
+
+# @do with Effect param but NOT marked as interceptor
+@do
+def unlabeled_do_effect(effect: Effect) -> str:
+    """@do with Effect but no interceptor marker - categorized but not found by find-interceptors"""
+    yield effect
+    return "result"
+
+# Function with no doeff relevance
+def regular_function(x: int) -> str:
+    """Regular function - should not appear in any find-* results"""
+    return str(x)
+
+# Class methods (should also be detected)
+class Controller:
+    def run_program(self, program: Program[int]) -> int:  # doeff: interpreter
+        """Class method interpreter"""
+        return program.run()
+    
+    @do
+    def fetch_data(self, key: str) -> Data:
+        """Class method Kleisli"""
+        yield Log(f"Fetching {key}")
+        return Data(key)
+
+# ===========================================================================
+# HELPER CLASSES (for type annotations)
+# ===========================================================================
+
+class User:
+    def __init__(self, id: str): self.id = id
+
+class Result:
+    def __init__(self, data: Any): self.data = data
+
+class Data:
+    def __init__(self, key: str): self.key = key
+
+class LogEffect(Effect):
+    def __init__(self, message: str): self.message = message
+
+def Log(msg: str): return LogEffect(msg)
