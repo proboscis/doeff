@@ -33,7 +33,6 @@ dependencies = [
     "phart>=1.1.4",
     "numpy>=1.26.0",
     "pillow>=11.0.0",
-    "webui_snapshot",
 ]
 
 [project.scripts]
@@ -55,7 +54,6 @@ exclude = ["packages/doeff-indexer"]
 
 [tool.uv.sources]
 doeff-pinjected = { workspace = true }
-webui_snapshot = { path = "rust/webui_snapshot" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

@@ -1,6 +1,6 @@
 use doeff_indexer::{
-    build_index, find_interceptors, find_interpreters,
-    find_kleisli, find_kleisli_with_type, find_transforms, EntryCategory,
+    build_index, find_interceptors, find_interpreters, find_kleisli, find_kleisli_with_type,
+    find_transforms, EntryCategory,
 };
 use std::fs;
 use std::path::Path;
@@ -15,7 +15,7 @@ fn create_test_file(dir: &Path, name: &str, content: &str) {
 #[test]
 fn test_interpreter_marker_detection() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_interpreters.py",
@@ -38,15 +38,15 @@ def fake_interpreter(p: Program[int]) -> Program[int]:  # doeff: interpreter
 
     let index = build_index(temp_dir.path()).unwrap();
     let interpreters = find_interpreters(&index.entries);
-    
+
     // Should find 2 interpreters with markers
     assert_eq!(interpreters.len(), 2);
-    
+
     // Check names
     let names: Vec<&str> = interpreters.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"run_program"));
     assert!(names.contains(&"fake_interpreter"));
-    
+
     // execute_program should NOT be in the list (no marker)
     assert!(!names.contains(&"execute_program"));
 }
@@ -54,7 +54,7 @@ def fake_interpreter(p: Program[int]) -> Program[int]:  # doeff: interpreter
 #[test]
 fn test_transform_detection() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_transforms.py",
@@ -79,7 +79,7 @@ def chain_program(p: Program[int]) -> Program[int]:
 
     let index = build_index(temp_dir.path()).unwrap();
     let transforms = find_transforms(&index.entries);
-    
+
     // Should only find map_program (has marker)
     // do_transform doesn't have marker, so not found by find-transforms
     assert_eq!(transforms.len(), 1);
@@ -89,7 +89,7 @@ def chain_program(p: Program[int]) -> Program[int]:
 #[test]
 fn test_kleisli_detection() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_kleisli.py",
@@ -119,10 +119,10 @@ def make_program(x: int) -> Program[int]:
 
     let index = build_index(temp_dir.path()).unwrap();
     let kleisli = find_kleisli(&index.entries);
-    
+
     // Should find 3: two @do functions and one marked
     assert_eq!(kleisli.len(), 3);
-    
+
     let names: Vec<&str> = kleisli.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"fetch_user"));
     assert!(names.contains(&"process_any"));
@@ -133,7 +133,7 @@ def make_program(x: int) -> Program[int]:
 #[test]
 fn test_kleisli_type_filtering() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_kleisli_types.py",
@@ -159,22 +159,22 @@ def marked_str(s: str) -> Program[int]:  # doeff: kleisli
     );
 
     let index = build_index(temp_dir.path()).unwrap();
-    
+
     // Filter by str type
     let str_kleisli = find_kleisli_with_type(&index.entries, "str");
     let str_names: Vec<&str> = str_kleisli.iter().map(|e| e.name.as_str()).collect();
-    
+
     // Should find process_string, process_any (Any matches all), and marked_str
     assert_eq!(str_kleisli.len(), 3);
     assert!(str_names.contains(&"process_string"));
     assert!(str_names.contains(&"process_any"));
     assert!(str_names.contains(&"marked_str"));
     assert!(!str_names.contains(&"process_int"));
-    
+
     // Filter by int type
     let int_kleisli = find_kleisli_with_type(&index.entries, "int");
     let int_names: Vec<&str> = int_kleisli.iter().map(|e| e.name.as_str()).collect();
-    
+
     // Should find process_int and process_any
     assert_eq!(int_kleisli.len(), 2);
     assert!(int_names.contains(&"process_int"));
@@ -184,7 +184,7 @@ def marked_str(s: str) -> Program[int]:  # doeff: kleisli
 #[test]
 fn test_interceptor_detection() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_interceptors.py",
@@ -213,10 +213,10 @@ class LogEffect(Effect):
 
     let index = build_index(temp_dir.path()).unwrap();
     let interceptors = find_interceptors(&index.entries);
-    
+
     // Should only find marked interceptors
     assert_eq!(interceptors.len(), 2);
-    
+
     let names: Vec<&str> = interceptors.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"log_interceptor"));
     assert!(names.contains(&"wrap_effect"));
@@ -226,7 +226,7 @@ class LogEffect(Effect):
 #[test]
 fn test_do_decorator_categorization() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_do_categories.py",
@@ -253,27 +253,51 @@ def interceptor_func(e: Effect) -> str:
     );
 
     let index = build_index(temp_dir.path()).unwrap();
-    
+
     // Check kleisli_func
-    let kleisli_entry = index.entries.iter().find(|e| e.name == "kleisli_func").unwrap();
-    assert!(kleisli_entry.categories.contains(&EntryCategory::KleisliProgram));
-    assert!(kleisli_entry.categories.contains(&EntryCategory::DoFunction));
-    
+    let kleisli_entry = index
+        .entries
+        .iter()
+        .find(|e| e.name == "kleisli_func")
+        .unwrap();
+    assert!(kleisli_entry
+        .categories
+        .contains(&EntryCategory::KleisliProgram));
+    assert!(kleisli_entry
+        .categories
+        .contains(&EntryCategory::DoFunction));
+
     // Check transform_func
-    let transform_entry = index.entries.iter().find(|e| e.name == "transform_func").unwrap();
-    assert!(transform_entry.categories.contains(&EntryCategory::ProgramTransformer));
-    assert!(transform_entry.categories.contains(&EntryCategory::DoFunction));
-    
+    let transform_entry = index
+        .entries
+        .iter()
+        .find(|e| e.name == "transform_func")
+        .unwrap();
+    assert!(transform_entry
+        .categories
+        .contains(&EntryCategory::ProgramTransformer));
+    assert!(transform_entry
+        .categories
+        .contains(&EntryCategory::DoFunction));
+
     // Check interceptor_func
-    let interceptor_entry = index.entries.iter().find(|e| e.name == "interceptor_func").unwrap();
-    assert!(interceptor_entry.categories.contains(&EntryCategory::Interceptor));
-    assert!(interceptor_entry.categories.contains(&EntryCategory::DoFunction));
+    let interceptor_entry = index
+        .entries
+        .iter()
+        .find(|e| e.name == "interceptor_func")
+        .unwrap();
+    assert!(interceptor_entry
+        .categories
+        .contains(&EntryCategory::Interceptor));
+    assert!(interceptor_entry
+        .categories
+        .contains(&EntryCategory::DoFunction));
 }
 
 #[test]
 fn test_class_method_detection() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_class_methods.py",
@@ -294,17 +318,17 @@ class Controller:
     );
 
     let index = build_index(temp_dir.path()).unwrap();
-    
+
     // Check interpreter detection
     let interpreters = find_interpreters(&index.entries);
     assert_eq!(interpreters.len(), 1);
     assert_eq!(interpreters[0].name, "Controller.run_program");
-    
+
     // Check Kleisli detection (@do method)
     let kleisli = find_kleisli(&index.entries);
     assert_eq!(kleisli.len(), 1);
     assert_eq!(kleisli[0].name, "Controller.fetch_data");
-    
+
     // Check transform detection
     let transforms = find_transforms(&index.entries);
     assert_eq!(transforms.len(), 1);
@@ -314,7 +338,7 @@ class Controller:
 #[test]
 fn test_multiple_markers() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_multi_markers.py",
@@ -328,22 +352,28 @@ def hybrid(x: int) -> Program[int]:  # doeff: kleisli transform
     );
 
     let index = build_index(temp_dir.path()).unwrap();
-    
+
     // Should be found by both find-kleisli and find-transforms
     let kleisli = find_kleisli(&index.entries);
     let transforms = find_transforms(&index.entries);
-    
+
     assert_eq!(kleisli.len(), 1);
     assert_eq!(kleisli[0].name, "hybrid");
-    
+
     assert_eq!(transforms.len(), 1);
     assert_eq!(transforms[0].name, "hybrid");
+
+    let hybrid_entry = index.entries.iter().find(|e| e.name == "hybrid").unwrap();
+    assert!(
+        hybrid_entry.categories.contains(&EntryCategory::HasMarker),
+        "hybrid entry should include HasMarker category"
+    );
 }
 
 #[test]
 fn test_marker_case_insensitivity() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_case.py",
@@ -363,10 +393,10 @@ def lower(p: Program[int]) -> int:  # doeff: interpreter
 
     let index = build_index(temp_dir.path()).unwrap();
     let interpreters = find_interpreters(&index.entries);
-    
+
     // All three should be found regardless of case
     assert_eq!(interpreters.len(), 3);
-    
+
     let names: Vec<&str> = interpreters.iter().map(|e| e.name.as_str()).collect();
     assert!(names.contains(&"upper"));
     assert!(names.contains(&"mixed"));
@@ -376,7 +406,7 @@ def lower(p: Program[int]) -> int:  # doeff: interpreter
 #[test]
 fn test_signature_based_categorization() {
     let temp_dir = TempDir::new().unwrap();
-    
+
     create_test_file(
         temp_dir.path(),
         "test_categories.py",
@@ -399,25 +429,55 @@ def interceptor(e: Effect) -> Effect:
     );
 
     let index = build_index(temp_dir.path()).unwrap();
-    
+
     // Check internal categorization (not marker-based)
-    let interpreter_entry = index.entries.iter().find(|e| e.name == "interpreter").unwrap();
-    assert!(interpreter_entry.categories.contains(&EntryCategory::ProgramInterpreter));
-    assert!(interpreter_entry.categories.contains(&EntryCategory::AcceptsProgramParam));
-    
-    let transformer_entry = index.entries.iter().find(|e| e.name == "transformer").unwrap();
-    assert!(transformer_entry.categories.contains(&EntryCategory::ProgramTransformer));
-    assert!(transformer_entry.categories.contains(&EntryCategory::AcceptsProgramParam));
-    assert!(transformer_entry.categories.contains(&EntryCategory::ReturnsProgram));
-    
+    let interpreter_entry = index
+        .entries
+        .iter()
+        .find(|e| e.name == "interpreter")
+        .unwrap();
+    assert!(interpreter_entry
+        .categories
+        .contains(&EntryCategory::ProgramInterpreter));
+    assert!(interpreter_entry
+        .categories
+        .contains(&EntryCategory::AcceptsProgramParam));
+
+    let transformer_entry = index
+        .entries
+        .iter()
+        .find(|e| e.name == "transformer")
+        .unwrap();
+    assert!(transformer_entry
+        .categories
+        .contains(&EntryCategory::ProgramTransformer));
+    assert!(transformer_entry
+        .categories
+        .contains(&EntryCategory::AcceptsProgramParam));
+    assert!(transformer_entry
+        .categories
+        .contains(&EntryCategory::ReturnsProgram));
+
     let kleisli_entry = index.entries.iter().find(|e| e.name == "kleisli").unwrap();
-    assert!(kleisli_entry.categories.contains(&EntryCategory::KleisliProgram));
-    assert!(kleisli_entry.categories.contains(&EntryCategory::ReturnsProgram));
-    
-    let interceptor_entry = index.entries.iter().find(|e| e.name == "interceptor").unwrap();
-    assert!(interceptor_entry.categories.contains(&EntryCategory::Interceptor));
-    assert!(interceptor_entry.categories.contains(&EntryCategory::AcceptsEffectParam));
-    
+    assert!(kleisli_entry
+        .categories
+        .contains(&EntryCategory::KleisliProgram));
+    assert!(kleisli_entry
+        .categories
+        .contains(&EntryCategory::ReturnsProgram));
+
+    let interceptor_entry = index
+        .entries
+        .iter()
+        .find(|e| e.name == "interceptor")
+        .unwrap();
+    assert!(interceptor_entry
+        .categories
+        .contains(&EntryCategory::Interceptor));
+    assert!(interceptor_entry
+        .categories
+        .contains(&EntryCategory::AcceptsEffectParam));
+
     // But they should NOT be found by find-* commands (no markers)
     assert_eq!(find_interpreters(&index.entries).len(), 0);
     assert_eq!(find_transforms(&index.entries).len(), 0);

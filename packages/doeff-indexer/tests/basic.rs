@@ -77,8 +77,8 @@ workflow: Program[int] = Program.pure(5)
         .expect("run entry");
     assert!(run.categories.contains(&EntryCategory::AcceptsProgramParam));
     assert!(run.categories.contains(&EntryCategory::ReturnsProgram));
-    assert!(run.categories.contains(&EntryCategory::ProgramInterpreter));
     assert!(run.categories.contains(&EntryCategory::ProgramTransformer));
+    assert!(!run.categories.contains(&EntryCategory::ProgramInterpreter));
     assert_eq!(run.program_parameters.len(), 1);
     let param = &run.program_parameters[0];
     assert_eq!(param.name, "program");
@@ -117,29 +117,11 @@ workflow: Program[int] = Program.pure(5)
     assert!(interpret_param.is_required);
     assert!(matches!(interpret_param.kind, ParameterKind::Positional));
 
-    let execute = entries
+    assert!(entries
         .iter()
-        .find(|entry| entry.qualified_name.ends_with("execute"))
-        .expect("execute entry");
-    assert!(execute
-        .categories
-        .contains(&EntryCategory::AcceptsProgramInterpreterParam));
+        .all(|entry| !entry.qualified_name.ends_with("execute")));
 
-    let workflow = entries
+    assert!(entries
         .iter()
-        .find(|entry| entry.qualified_name.ends_with("workflow"))
-        .expect("workflow entry");
-    assert!(workflow.categories.contains(&EntryCategory::Program));
-    assert_eq!(workflow.item_kind, ItemKind::Assignment);
-    assert!(workflow.qualified_name.ends_with("workflow"));
-    assert!(type_usage_contains(
-        &workflow.type_usages,
-        ProgramTypeKind::Program,
-        "int"
-    ));
-    assert!(entry_matches(
-        workflow,
-        Some(ProgramTypeKind::Program),
-        Some("Any")
-    ));
+        .all(|entry| !entry.qualified_name.ends_with("workflow")));
 }
