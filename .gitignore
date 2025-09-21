@@ -62,3 +62,6 @@ pyrightconfig.json
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Rust build artifacts
+rust/**/target/

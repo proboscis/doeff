@@ -34,56 +34,57 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
+import heapq
 import io
-import itertools
 import json
 import logging
 import re
 import queue
 import threading
-import time
 import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import defaultdict
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable, Dict, Generator, TypeVar, TYPE_CHECKING
 
+from loguru import logger as loguru_logger
+
+from doeff import Get, Put, do
 from doeff.effects import (
     Await,
     Catch,
     Fail,
     Gather,
-    GatherDict,
-    GatherDictEffect,
-    GatherEffect,
-    GraphAnnotateEffect,
-    GraphStepEffect,
     Recover,
     Snapshot,
 )
 from doeff.program import Program
 from doeff.types import Effect, EffectFailure
+from doeff._vendor import WGraph, WNode, WStep
 
-try:  # Optional Pillow dependency
-    from PIL import Image as PILImageModule
-    from PIL.Image import Image as PILImage
-except Exception:  # pragma: no cover - Pillow may be absent in some envs
-    PILImageModule = None  # type: ignore
-    PILImage = None  # type: ignore
+from PIL import Image as PILImageModule
+from PIL.Image import Image as PILImage
+import numpy as np
 
-try:  # Optional NumPy dependency
-    import numpy as np
-except Exception:  # pragma: no cover - NumPy may be absent in some envs
-    np = None  # type: ignore
-
-if TYPE_CHECKING:  # pragma: no cover - only for typing
-    import numpy as np
+from _webui_snapshot import (
+    build_snapshot as _build_snapshot_rust,
+    build_snapshot_html as _build_snapshot_html_rust,
+)
 
 logger = logging.getLogger(__name__)
+loguru_logger = loguru_logger.bind(component="webui_stream")
 
 T = TypeVar("T")
 
 
+_WEBUI_SERVER_STORE_KEY = "doeff_webui_servers"
+
+
+@do
 def stream_program_to_webui(
     program: Program[T],
     *,
@@ -118,7 +119,23 @@ def stream_program_to_webui(
         web UI visible without additional plumbing.
     """
 
-    server = _get_or_create_server(host, port)
+    server_store: dict[tuple[str, int | None], GraphWebUIServer] | None = yield Get(
+        _WEBUI_SERVER_STORE_KEY
+    )
+    if server_store is None:
+        server_store = {}
+        yield Put(_WEBUI_SERVER_STORE_KEY, server_store)
+
+    key = (host, port)
+    server = server_store.get(key)
+    if server is None:
+        server = _get_or_create_server(host, port)
+        actual_key = (server.host, server.port)
+        server_store[actual_key] = server
+        if key != actual_key:
+            server_store[key] = server
+        yield Put(_WEBUI_SERVER_STORE_KEY, server_store)
+
     host, port = server.host, server.port
     reporter = GraphEffectReporter(
         server.event_stream,
@@ -127,9 +144,122 @@ def stream_program_to_webui(
     transform = _make_graph_transform(reporter)
     instrumented = program.intercept(transform)
     instrumented = _wrap_with_recover(instrumented, reporter, host, port)
-    if not keep_alive:
-        return instrumented
-    return _with_keep_alive(instrumented, host, port)
+    if keep_alive:
+        instrumented = _with_keep_alive(instrumented, host, port)
+
+    result = yield instrumented
+    return result
+
+
+def snapshot_program_to_webui(
+    program: Program[T],
+    *,
+    output_path: str | Path,
+    title: str = "doeff Graph Snapshot",
+    graph_push_interval: float = 0.0,
+) -> Program[T]:
+    """Return a Program that saves a standalone HTML graph snapshot upon completion."""
+
+    stream = GraphEventStream()
+    reporter = GraphEffectReporter(stream, throttle_interval=graph_push_interval)
+    transform = _make_graph_transform(reporter)
+    instrumented = program.intercept(transform)
+    instrumented = _wrap_with_recover(instrumented, reporter, host=None, port=None)
+    instrumented = _with_snapshot_writer(
+        instrumented,
+        reporter,
+        stream,
+        Path(output_path).expanduser().resolve(),
+        title,
+    )
+    return instrumented
+
+
+async def graph_to_webui_html_async(
+    graph: WGraph,
+    *,
+    title: str = "doeff Graph Snapshot",
+    mark_success: bool = False,
+) -> str:
+    """Return an HTML document that renders ``graph`` in the Cytoscape UI."""
+
+    snapshot = await asyncio.to_thread(
+        build_graph_snapshot,
+        graph,
+        mark_success=mark_success,
+    )
+    return _build_snapshot_html(snapshot, title)
+
+
+@do
+def graph_to_webui_html(
+    graph: WGraph,
+    *,
+    title: str = "doeff Graph Snapshot",
+    mark_success: bool = False,
+) -> str:
+    """Return a Program that yields HTML rendering for ``graph``."""
+
+    html = yield Await(
+        graph_to_webui_html_async(
+            graph,
+            title=title,
+            mark_success=mark_success,
+        )
+    )
+    return html
+
+
+
+
+async def write_graph_to_webui_html_async(
+    graph: WGraph,
+    output_path: str | Path,
+    *,
+    title: str = "doeff Graph Snapshot",
+    mark_success: bool = False,
+) -> Path:
+    """Async helper to persist ``graph`` as a standalone HTML snapshot."""
+
+    html = await graph_to_webui_html_async(
+        graph,
+        title=title,
+        mark_success=mark_success,
+    )
+    path = Path(output_path).expanduser().resolve()
+    await asyncio.to_thread(_write_snapshot_html_file, path, html)
+    loguru_logger.info("Graph snapshot saved to %s", path)
+    return path
+
+
+def write_graph_to_webui_html(
+    graph: WGraph,
+    output_path: str | Path,
+    *,
+    title: str = "doeff Graph Snapshot",
+    mark_success: bool = False,
+) -> Path:
+    """Synchronously persist ``graph`` as a standalone HTML snapshot."""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        raise RuntimeError(
+            "write_graph_to_webui_html() cannot be called while an event loop is running; "
+            "use await write_graph_to_webui_html_async(...) instead."
+        )
+
+    return asyncio.run(
+        write_graph_to_webui_html_async(
+            graph,
+            output_path,
+            title=title,
+            mark_success=mark_success,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -140,51 +270,8 @@ def stream_program_to_webui(
 def _make_graph_transform(
     reporter: "GraphEffectReporter",
 ) -> Callable[[Effect], Effect | Program[Effect]]:
-    tracked_types = (
-        GraphStepEffect,
-        GraphAnnotateEffect,
-        GatherEffect,
-        GatherDictEffect,
-    )
-
-    gather_effect_types = (GatherEffect, GatherDictEffect)
-
-    processed_effect_ids: set[int] = set()
-    gather_depth = 0
-
     def transform(effect: Effect) -> Effect | Program[Effect]:
-        nonlocal gather_depth
-        if not isinstance(effect, tracked_types):
-            return effect
-
-        effect_id = id(effect)
-        if effect_id in processed_effect_ids:
-            return effect
-
-        def wrapper() -> Generator[Any, Any, Effect]:
-            nonlocal gather_depth
-            is_gather_effect = isinstance(effect, gather_effect_types)
-            try:
-                processed_effect_ids.add(effect_id)
-                if is_gather_effect:
-                    gather_depth += 1
-                result = yield effect
-            except Exception as exc:  # pragma: no cover - passthrough
-                reporter.publish_error(exc, effect)
-                raise
-            finally:
-                processed_effect_ids.discard(effect_id)
-                if is_gather_effect and gather_depth > 0:
-                    gather_depth -= 1
-            try:
-                graph_state = yield Snapshot()
-            except Exception as exc:  # pragma: no cover - passthrough
-                reporter.publish_error(exc, None)
-                raise
-            reporter.publish_graph(graph_state, merge=gather_depth > 0)
-            return result
-
-        return Program(wrapper)
+        return effect
 
     return transform
 
@@ -205,8 +292,8 @@ def _wrap_with_recover(
             except Exception:  # pragma: no cover - defensive
                 graph_state = None
             if graph_state is not None:
-                reporter.publish_graph(graph_state)
-            reporter.publish_error(exc, None)
+                yield Await(reporter.publish_graph(graph_state))
+            yield Await(reporter.publish_error(exc, None))
             destination = "the web UI"
             if host and port:
                 destination = f"http://{host}:{port}"
@@ -228,7 +315,7 @@ def _wrap_with_recover(
         except Exception:  # pragma: no cover - defensive
             graph_state = None
         if graph_state is not None:
-            reporter.publish_graph(graph_state, mark_success=True)
+            yield Await(reporter.publish_graph(graph_state, mark_success=True))
         destination = "the web UI"
         if host and port:
             destination = f"http://{host}:{port}"
@@ -247,6 +334,38 @@ def _with_keep_alive(program: Program[T], host: str, port: int) -> Program[T]:
     def generator() -> Generator[Any, Any, T]:
         results = yield Gather(program, _keep_alive_program(host, port))
         return results[0]
+
+    return Program(generator)
+
+
+def _with_snapshot_writer(
+    program: Program[T],
+    reporter: "GraphEffectReporter",
+    event_stream: GraphEventStream,
+    output_path: Path,
+    title: str,
+) -> Program[T]:
+    """Wrap a program so the final graph snapshot is written to disk."""
+
+    output_path = output_path.expanduser()
+
+    def generator() -> Generator[Any, Any, T]:
+        try:
+            result = yield program
+        except Exception as exc:
+            snapshot = reporter.latest_snapshot() or event_stream.last_snapshot()
+            html = _build_snapshot_html(snapshot, title)
+            yield Await(asyncio.to_thread(_write_snapshot_html_file, output_path, html))
+            loguru_logger.info(
+                "Graph snapshot saved to %s after failure", output_path
+            )
+            raise exc
+
+        snapshot = reporter.latest_snapshot() or event_stream.last_snapshot()
+        html = _build_snapshot_html(snapshot, title)
+        yield Await(asyncio.to_thread(_write_snapshot_html_file, output_path, html))
+        loguru_logger.info("Graph snapshot saved to %s", output_path)
+        return result
 
     return Program(generator)
 
@@ -299,6 +418,17 @@ def _keep_alive_program(host: str | None, port: int | None) -> Program[None]:
 # ---------------------------------------------------------------------------
 
 
+def _topologically_sorted_steps(graph: WGraph) -> list[WStep]:
+    """Return graph steps in original order - Cytoscape will handle topological sorting."""
+    
+    # Simply return all steps without manual sorting
+    # Cytoscape's dagre layout will handle the topological ordering automatically
+    all_steps = list(graph.steps)
+    all_steps.append(graph.last)
+    
+    return all_steps
+
+
 class GraphEventStream:
     """Thread-safe fan-out of graph snapshots to SSE clients."""
 
@@ -318,19 +448,36 @@ class GraphEventStream:
         with self._lock:
             self._clients.discard(client)
 
-    def publish_snapshot(
-        self, nodes: list[dict[str, Any]], edges: list[dict[str, Any]]
-    ) -> None:
-        event = {"type": "snapshot", "nodes": nodes, "edges": edges}
+    def publish_snapshot(self, snapshot: dict[str, Any]) -> None:
+        event = {
+            "type": snapshot.get("type", "snapshot"),
+            "nodes": list(snapshot.get("nodes", [])),
+            "edges": list(snapshot.get("edges", [])),
+        }
         with self._lock:
-            self._last_snapshot = event
+            self._last_snapshot = copy.deepcopy(snapshot)
             clients = list(self._clients)
         for client in clients:
             client.put(event)
 
     def last_snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return self._last_snapshot
+            return copy.deepcopy(self._last_snapshot)
+
+
+
+@dataclass(frozen=True)
+class _NodePayload:
+    label: str
+    value_repr: str
+    meta: dict[str, Any]
+    image: str | None
+    value_image: str | None
+    meta_images: tuple[str, ...]
+    meta_id: int | None
+    value_id: int
+    display_width: float | None
+    display_height: float | None
 
 
 class GraphEffectReporter:
@@ -345,202 +492,107 @@ class GraphEffectReporter:
         *,
         throttle_interval: float | None = None,
     ) -> None:
+        # ``throttle_interval`` retained for backward compatibility but ignored.
         self._stream = stream
-        self._node_ids: dict[Any, str] = {}
-        self._node_counter = itertools.count(1)
-        self._last_node_id: str | None = None
-        self._edge_ids: dict[tuple[Any, Any], str] = {}
-        self._edge_counter = itertools.count(1)
-        self._throttle_interval = (
-            float(throttle_interval)
-            if throttle_interval is not None and throttle_interval > 0
-            else 0.0
-        )
-        self._lock = threading.Lock()
-        self._last_publish_time = 0.0
-        self._pending_snapshot: tuple[
-            list[dict[str, Any]],
-            list[dict[str, Any]],
-            bool,
-        ] | None = None
-        self._pending_timer: threading.Timer | None = None
         self._latest_snapshot: dict[str, Any] | None = None
+        self._node_payload_cache: dict[Any, _NodePayload] = {}
+        self._last_node_id: str | None = None
+        self._error_counter: int = 1
 
-    def publish_graph(
+    async def publish_graph(
         self,
         graph,
         *,
         mark_success: bool = False,
         merge: bool = False,
     ) -> None:
-        baseline_snapshot = self._latest_snapshot if merge else None
-        if merge and baseline_snapshot is None:
-            baseline_snapshot = self._stream.last_snapshot()
+        if merge:  # pragma: no cover - legacy compatibility
+            loguru_logger.debug("merge flag ignored in simplified reporter")
 
-        nodes_payload: dict[str, dict[str, Any]] = {}
-        edges_payload: dict[str, dict[str, Any]] = {}
+        snapshot = self._build_snapshot(graph, mark_success=mark_success)
+        self._latest_snapshot = copy.deepcopy(snapshot)
+        self._last_node_id = snapshot.get("last_node_id")
+        self._stream.publish_snapshot(snapshot)
 
-        if merge and baseline_snapshot:
-            for node in baseline_snapshot.get("nodes", []):
-                data = dict(node.get("data", {}))
-                node_id = data.get("id")
-                if not node_id:
-                    continue
-                nodes_payload[node_id] = {"data": data}
-            for edge in baseline_snapshot.get("edges", []):
-                if not isinstance(edge, Mapping):
-                    continue
-                data = dict(edge.get("data", {}))
-                edge_id = data.get("id")
-                if not edge_id:
-                    continue
-                edges_payload[edge_id] = {"data": data}
+    def build_snapshot(
+        self,
+        graph,
+        *,
+        mark_success: bool = False,
+    ) -> dict[str, Any]:
+        snapshot = self._build_snapshot(graph, mark_success=mark_success)
+        self._latest_snapshot = copy.deepcopy(snapshot)
+        self._last_node_id = snapshot.get("last_node_id")
+        return copy.deepcopy(snapshot)
 
-        seen_nodes: set[Any] = set()
-        final_node_id: str | None = None
-
-        all_steps = set(graph.steps)
-        all_steps.add(graph.last)
-
-        def ensure_node(
-            node: Any,
-            label: str,
-            value_repr: str,
-            meta: dict[str, Any],
-            image: str | None = None,
-            value_image: str | None = None,
-        ) -> str:
-            node_id = self._node_ids.get(node)
-            if node_id is None:
-                node_id = f"node-{next(self._node_counter)}"
-                self._node_ids[node] = node_id
-            if node_id not in nodes_payload:
-                data = {
-                    "id": node_id,
-                    "label": label,
-                    "value_repr": value_repr,
-                    "meta": meta,
-                }
-                if image is not None:
-                    data["image"] = image
-                if value_image is not None:
-                    data["value_image"] = value_image
-                nodes_payload[node_id] = {"data": data}
-            else:
-                existing = nodes_payload[node_id]["data"]
-                existing.setdefault("meta", {}).update(meta)
-                if image is not None and "image" not in existing:
-                    existing["image"] = image
-                if value_image is not None and "value_image" not in existing:
-                    existing["value_image"] = value_image
-            return node_id
-
-        for step in all_steps:
-            output_node = step.output
-            seen_nodes.add(output_node)
-            label = self._value_to_label(output_node.value)
-            meta_dict_raw = self._sanitize_meta(step.meta)
-            meta_dict, meta_images = self._redact_meta_images(meta_dict_raw)
-            value_repr = self._trimmed_repr(output_node.value)
-            image_src = None
-            if PILImage is not None and isinstance(output_node.value, PILImage):
-                image_src = self._image_to_data_url(output_node.value)
-            elif np is not None and self._ndarray_is_image_like(output_node.value):
-                image_src = self._ndarray_to_data_url(output_node.value)
-
-            target_id = ensure_node(
-                output_node,
-                label,
-                value_repr,
-                meta_dict,
-                image=image_src,
-                value_image=image_src,
+    def _build_snapshot(
+        self,
+        graph,
+        *,
+        mark_success: bool = False,
+    ) -> dict[str, Any]:
+        steps_override = _topologically_sorted_steps(graph)
+        try:
+            rust_result = _build_snapshot_rust(
+                graph,
+                None,
+                node_ids=None,
+                edge_ids=None,
+                node_counter=1,
+                edge_counter=1,
+                last_node_id=None,
+                mark_success=mark_success,
+                merge=False,
+                payload_getter=self._get_node_payload,
+                steps_override=steps_override,
             )
-            target_node_data = nodes_payload[target_id]["data"]
-            if meta_images:
-                meta_image_list = target_node_data.setdefault("meta_images", [])
-                for candidate in meta_images:
-                    if candidate not in meta_image_list:
-                        meta_image_list.append(candidate)
-                if ("image" not in target_node_data or not target_node_data["image"]) and meta_image_list:
-                    target_node_data["image"] = meta_image_list[0]
-            if step is graph.last:
-                final_node_id = target_id
+        except Exception as exc:  # pragma: no cover - escalated failure path
+            loguru_logger.exception("Rust snapshot builder failed")
+            raise
 
-            for idx, input_node in enumerate(step.inputs):
-                seen_nodes.add(input_node)
-                source_id = ensure_node(
-                    input_node,
-                    self._value_to_label(input_node.value),
-                    self._trimmed_repr(input_node.value),
-                    {},
-                )
-                edge_key = (input_node, output_node)
-                edge_id = self._edge_ids.get(edge_key)
-                if edge_id is None:
-                    edge_id = f"edge-{next(self._edge_counter)}"
-                    self._edge_ids[edge_key] = edge_id
-                edges_payload[edge_id] = {
-                    "data": {"id": edge_id, "source": source_id, "target": target_id}
-                }
+        if not isinstance(rust_result, Mapping):
+            raise RuntimeError("Rust snapshot builder returned unexpected payload")
 
-        if not merge:
-            for node in list(self._node_ids):
-                if node not in seen_nodes:
-                    del self._node_ids[node]
+        nodes_list = list(rust_result.get("nodes", []))
+        edges_list = list(rust_result.get("edges", []))
 
-        if not merge:
-            active_edge_keys = {
-                key for key, edge_id in self._edge_ids.items() if edge_id in edges_payload
-            }
-            self._edge_ids = {
-                key: edge_id for key, edge_id in self._edge_ids.items() if key in active_edge_keys
-            }
+        final_node_id: str | None = None
+        final_node_candidate = rust_result.get("final_node_id")
+        if isinstance(final_node_candidate, str):
+            final_node_id = final_node_candidate
 
-        if final_node_id is None and graph.last.output in self._node_ids:
-            final_node_id = self._node_ids[graph.last.output]
+        last_node_id: str | None = None
+        last_node_candidate = rust_result.get("last_node_id")
+        if isinstance(last_node_candidate, str):
+            last_node_id = last_node_candidate
+        if last_node_id is None:
+            last_node_id = final_node_id
 
-        if final_node_id is not None and final_node_id in nodes_payload:
-            final_node = nodes_payload[final_node_id]["data"]
-            final_node["is_last"] = True
-            if mark_success:
-                final_node["is_success"] = True
+        snapshot = {
+            "type": "snapshot",
+            "nodes": nodes_list,
+            "edges": edges_list,
+            "final_node_id": final_node_id,
+            "last_node_id": last_node_id,
+        }
+        return snapshot
 
-        nodes_list = list(nodes_payload.values())
-        edges_list = list(edges_payload.values())
-        snapshot = {"type": "snapshot", "nodes": nodes_list, "edges": edges_list}
-        self._latest_snapshot = snapshot
 
-        if final_node_id is not None:
-            self._last_node_id = final_node_id
-        elif not nodes_list:
-            self._last_node_id = None
-
-        self._dispatch_snapshot(nodes_list, edges_list, mark_success=mark_success)
-
-    def publish_error(self, error: BaseException, effect: Effect | None) -> None:
+    async def publish_error(self, error: BaseException, effect: Effect | None) -> None:
         """Publish an error node with stack trace information."""
-        snapshot = self._latest_snapshot or self._stream.last_snapshot()
-        nodes_map: dict[str, dict[str, Any]] = {}
-        for node in snapshot.get("nodes", []):
-            data = dict(node.get("data", {}))
-            node_id = data.get("id")
-            if not node_id:
-                continue
-            nodes_map[node_id] = {"data": data}
-        edges: list[dict[str, Any]] = []
-        for edge in snapshot.get("edges", []):
-            if not isinstance(edge, Mapping):
-                continue
-            edge_payload: dict[str, Any] = {"data": dict(edge.get("data", {}))}
-            for key, value in edge.items():
-                if key == "data":
-                    continue
-                edge_payload[key] = value
-            edges.append(edge_payload)
+        loguru_logger.debug(
+            "publish_error triggered effect={}",
+            effect.__class__.__name__ if effect else None,
+        )
 
-        node_id = f"node-{next(self._node_counter)}"
-        label = f"Error: {type(error).__name__}"
+        base_snapshot = self._latest_snapshot or self._stream.last_snapshot()
+        nodes: list[dict[str, Any]] = copy.deepcopy(base_snapshot.get("nodes", []))
+        edges: list[dict[str, Any]] = copy.deepcopy(base_snapshot.get("edges", []))
+
+        node_id = f"error-node-{self._error_counter}"
+        edge_id = f"error-edge-{self._error_counter}"
+        self._error_counter += 1
+
         meta = {"message": str(error)}
         if effect is not None:
             meta["effect"] = effect.__class__.__name__
@@ -553,177 +605,98 @@ class GraphEffectReporter:
             if error.runtime_traceback:
                 meta["trace"] = error.runtime_traceback
         else:
-            meta["trace"] = ''.join(
+            meta["trace"] = "".join(
                 traceback.format_exception(type(error), error, error.__traceback__)
             )
 
-        data = {
-            "id": node_id,
-            "label": label,
-            "value_repr": meta["message"],
-            "meta": meta,
-            "is_error": True,
+        nodes.append(
+            {
+                "data": {
+                    "id": node_id,
+                    "label": f"Error: {type(error).__name__}",
+                    "value_repr": meta["message"],
+                    "meta": meta,
+                    "is_error": True,
+                }
+            }
+        )
+
+        if self._last_node_id:
+            edges.append(
+                {
+                    "data": {
+                        "id": edge_id,
+                        "source": self._last_node_id,
+                        "target": node_id,
+                    }
+                }
+            )
+
+        snapshot = {
+            "type": "snapshot",
+            "nodes": nodes,
+            "edges": edges,
+            "last_node_id": node_id,
+            "final_node_id": base_snapshot.get("final_node_id"),
         }
-        nodes_map[node_id] = {"data": data}
 
-        if self._last_node_id and self._last_node_id in nodes_map:
-            edge_id = f"edge-{next(self._edge_counter)}"
-            edges.append({"data": {"id": edge_id, "source": self._last_node_id, "target": node_id}})
-
-        nodes_list = list(nodes_map.values())
+        self._latest_snapshot = copy.deepcopy(snapshot)
         self._last_node_id = node_id
-        self._latest_snapshot = {"type": "snapshot", "nodes": nodes_list, "edges": edges}
-        self._dispatch_snapshot(nodes_list, edges, force=True)
+        self._stream.publish_snapshot(snapshot)
 
+    def _get_node_payload(self, node: Any, step_meta: Any | None) -> _NodePayload:
+        loguru_logger.debug(
+            "_get_node_payload start node_id={} meta_present={}",
+            id(node),
+            step_meta is not None,
+        )
+        cached = self._node_payload_cache.get(node)
+        if step_meta is None and cached:
+            loguru_logger.debug(
+                "node payload cache hit (no meta) node_id={}", id(node)
+            )
+            return cached
 
-    def _dispatch_snapshot(
-        self,
-        nodes: list[dict[str, Any]],
-        edges: list[dict[str, Any]],
-        *,
-        mark_success: bool = False,
-        force: bool = False,
-    ) -> None:
-        if mark_success:
-            force = True
+        value_obj = getattr(node, "value", node)
+        value_id = id(value_obj)
+        meta_id = id(step_meta) if step_meta is not None else None
 
-        interval = self._throttle_interval
-        publish_now = False
-        timer_to_cancel: threading.Timer | None = None
+        if cached and cached.meta_id == meta_id and cached.value_id == value_id:
+            loguru_logger.debug(
+                "node payload cache hit node_id={} meta_id={}", id(node), meta_id
+            )
+            return cached
 
-        with self._lock:
-            if interval <= 0 or force:
-                publish_now = True
-                timer_to_cancel = self._cancel_pending_timer_locked()
-                self._pending_snapshot = None
-                self._last_publish_time = time.monotonic()
-            else:
-                now = time.monotonic()
-                elapsed = now - self._last_publish_time
-                if elapsed >= interval:
-                    publish_now = True
-                    timer_to_cancel = self._cancel_pending_timer_locked()
-                    self._pending_snapshot = None
-                    self._last_publish_time = now
-                else:
-                    delay = max(0.01, interval - elapsed)
-                    self._pending_snapshot = (nodes, edges, mark_success)
-                    if self._pending_timer is None:
-                        self._pending_timer = threading.Timer(delay, self._flush_pending_snapshot)
-                        self._pending_timer.daemon = True
-                        self._pending_timer.start()
+        sanitized_meta = self._sanitize_meta(step_meta or {})
+        meta_dict, meta_images = self._redact_meta_images(sanitized_meta)
 
-        if timer_to_cancel is not None:
-            timer_to_cancel.cancel()
-        if publish_now:
-            self._stream.publish_snapshot(nodes, edges)
+        image_src: str | None = None
+        display_width: float | None = None
+        display_height: float | None = None
+        if PILImage is not None and isinstance(value_obj, PILImage):
+            image_src = self._image_to_data_url(value_obj)
+            display_width, display_height = self._infer_display_dimensions(value_obj)
+        elif np is not None and self._ndarray_is_image_like(value_obj):
+            image_src = self._ndarray_to_data_url(value_obj)
+            display_width, display_height = self._infer_display_dimensions(value_obj)
 
-    def _cancel_pending_timer_locked(self) -> threading.Timer | None:
-        timer = self._pending_timer
-        if timer is not None:
-            self._pending_timer = None
-        return timer
-
-    def _flush_pending_snapshot(self) -> None:
-        with self._lock:
-            payload = self._pending_snapshot
-            self._pending_snapshot = None
-            self._pending_timer = None
-            if not payload:
-                return
-            nodes, edges, _ = payload
-            self._last_publish_time = time.monotonic()
-        self._stream.publish_snapshot(nodes, edges)
-
-    @staticmethod
-    def _value_to_label(value: Any) -> str:
-        if value is None:
-            return "None"
-        if isinstance(value, str):
-            return value if len(value) <= 80 else f"{value[:77]}..."
-        if isinstance(value, (int, float, bool)):
-            return str(value)
-        if PILImage is not None and isinstance(value, PILImage):
-            return "Image"
-        return type(value).__name__
-
-    @staticmethod
-    def _image_to_data_url(image: PILImage) -> str:
-        buffer = io.BytesIO()
-        # Always export PNG to ensure wide browser support.
-        image.save(buffer, format="PNG")
-        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
-        return f"data:image/png;base64,{encoded}"
-
-    @staticmethod
-    def _ndarray_is_image_like(value: Any) -> bool:
-        if np is None:
-            return False
-        if not isinstance(value, np.ndarray):  # type: ignore[arg-type]
-            return False
-        if value.size == 0:
-            return False
-        if value.ndim == 2:
-            return True
-        if value.ndim == 3 and (
-            value.shape[2] in (1, 3, 4) or value.shape[0] in (1, 3, 4)
-        ):
-            return True
-        return False
-
-    def _ndarray_to_data_url(self, array: "np.ndarray") -> str | None:
-        if np is None or PILImageModule is None:
-            return None
-        assert np is not None
-        assert PILImageModule is not None
-        arr = np.asarray(array)
-        if arr.size == 0:
-            return None
-        arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
-
-        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[2] not in (1, 3, 4):
-            arr = np.moveaxis(arr, 0, -1)
-
-        if arr.ndim == 3 and arr.shape[2] == 1:
-            arr = arr[..., 0]
-
-        mode: str | None
-        if arr.ndim == 2:
-            mode = "L"
-        elif arr.ndim == 3 and arr.shape[2] == 3:
-            mode = "RGB"
-        elif arr.ndim == 3 and arr.shape[2] == 4:
-            mode = "RGBA"
-        else:
-            return None
-
-        if np.issubdtype(arr.dtype, np.bool_):
-            arr = arr.astype(np.uint8) * 255
-        elif np.issubdtype(arr.dtype, np.integer):
-            arr = np.clip(arr, 0, 255).astype(np.uint8)
-        else:
-            arr = arr.astype(np.float32)
-            finite = arr[np.isfinite(arr)]
-            if finite.size == 0:
-                arr = np.zeros_like(arr, dtype=np.uint8)
-            else:
-                min_val = float(finite.min())
-                max_val = float(finite.max())
-                if max_val == min_val:
-                    arr = np.zeros_like(arr, dtype=np.uint8)
-                else:
-                    arr = (arr - min_val) / (max_val - min_val)
-                    arr = np.clip(arr, 0.0, 1.0)
-                    arr = (arr * 255.0).round().astype(np.uint8)
-
-        arr = np.ascontiguousarray(arr)
-
-        try:
-            image = PILImageModule.fromarray(arr, mode)
-        except Exception:  # pragma: no cover - fallback when conversion fails
-            return None
-
-        return self._image_to_data_url(image)
+        payload = _NodePayload(
+            label=self._value_to_label(value_obj),
+            value_repr=self._trimmed_repr(value_obj),
+            meta=meta_dict,
+            image=image_src,
+            value_image=image_src,
+            meta_images=tuple(meta_images),
+            meta_id=meta_id,
+            value_id=value_id,
+            display_width=display_width,
+            display_height=display_height,
+        )
+        loguru_logger.debug(
+            "node payload cache update node_id={} meta_id={} value_id={}", id(node), meta_id, value_id
+        )
+        self._node_payload_cache[node] = payload
+        return payload
 
     def _sanitize(self, value: Any) -> Any:
         """Return JSON-serialisable data for metadata/value display."""
@@ -815,9 +788,168 @@ class GraphEffectReporter:
             return redacted, images
         return {"value": redacted}, images
 
-# ---------------------------------------------------------------------------
-# HTTP server serving the Cytoscape UI and the SSE feed
-# ---------------------------------------------------------------------------
+    def latest_snapshot(self) -> dict[str, Any] | None:
+        snapshot = self._latest_snapshot
+        if snapshot is None:
+            return None
+        return copy.deepcopy(snapshot)
+
+    def _infer_display_dimensions(self, value: Any) -> tuple[float | None, float | None]:
+        width: float | None = None
+        height: float | None = None
+
+        if PILImage is not None and isinstance(value, PILImage):
+            w, h = value.size
+            width, height = float(w), float(h)
+        elif np is not None and self._ndarray_is_image_like(value):
+            arr = np.asarray(value)
+            if arr.ndim == 2:
+                height, width = float(arr.shape[0]), float(arr.shape[1])
+            elif arr.ndim == 3:
+                if arr.shape[0] in (1, 3, 4) and arr.shape[2] not in (1, 3, 4):
+                    height, width = float(arr.shape[1]), float(arr.shape[2])
+                else:
+                    height, width = float(arr.shape[0]), float(arr.shape[1])
+
+        if not width or not height:
+            return None, None
+
+        return self._normalize_dimensions(width, height)
+
+    def _normalize_dimensions(self, width: float, height: float) -> tuple[float, float]:
+        max_dim = 360.0
+        min_dim = 140.0
+
+        longest = max(width, height)
+        if longest <= 0:
+            return self._default_image_width(), self._default_image_height()
+
+        scale = min(1.0, max_dim / longest)
+        width *= scale
+        height *= scale
+
+        longest = max(width, height)
+        if longest < min_dim:
+            scale = min_dim / longest
+            width *= scale
+            height *= scale
+            longest = max(width, height)
+            if longest > max_dim:
+                scale = max_dim / longest
+                width *= scale
+                height *= scale
+
+        return round(width, 2), round(height, 2)
+
+    @staticmethod
+    def _default_image_width() -> float:
+        return 240.0
+
+    @staticmethod
+    def _default_image_height() -> float:
+        return 180.0
+
+    @staticmethod
+    def _value_to_label(value: Any) -> str:
+        if value is None:
+            return "None"
+        if isinstance(value, str):
+            return value if len(value) <= 80 else f"{value[:77]}..."
+        if isinstance(value, (int, float, bool)):
+            return str(value)
+        if PILImage is not None and isinstance(value, PILImage):
+            return "Image"
+        return type(value).__name__
+
+    @staticmethod
+    def _image_to_data_url(image: PILImage) -> str:
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
+
+    @staticmethod
+    def _ndarray_is_image_like(value: Any) -> bool:
+        if np is None:
+            return False
+        if not isinstance(value, np.ndarray):  # type: ignore[arg-type]
+            return False
+        if value.size == 0:
+            return False
+        if value.ndim == 2:
+            return True
+        if value.ndim == 3 and (
+            value.shape[2] in (1, 3, 4) or value.shape[0] in (1, 3, 4)
+        ):
+            return True
+        return False
+
+    def _ndarray_to_data_url(self, array: "np.ndarray") -> str | None:
+        if np is None or PILImageModule is None:
+            return None
+        assert np is not None
+        assert PILImageModule is not None
+        arr = np.asarray(array)
+        if arr.size == 0:
+            return None
+        arr = np.nan_to_num(arr, nan=0.0, posinf=255.0, neginf=0.0)
+
+        if arr.ndim == 3 and arr.shape[0] in (1, 3, 4) and arr.shape[2] not in (1, 3, 4):
+            arr = np.moveaxis(arr, 0, -1)
+
+        if arr.ndim == 3 and arr.shape[2] == 1:
+            arr = arr[..., 0]
+
+        if arr.ndim == 3 and arr.shape[2] not in (3, 4):
+            return None
+
+        if arr.ndim == 2:
+            mode = "L"
+        elif arr.ndim == 3 and arr.shape[2] == 3:
+            mode = "RGB"
+        elif arr.ndim == 3 and arr.shape[2] == 4:
+            mode = "RGBA"
+        else:
+            return None
+
+        if np.issubdtype(arr.dtype, np.bool_):
+            arr = arr.astype(np.uint8) * 255
+        elif np.issubdtype(arr.dtype, np.integer):
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        else:
+            arr = arr.astype(np.float32)
+            finite = arr[np.isfinite(arr)]
+            if finite.size == 0:
+                arr = np.zeros_like(arr, dtype=np.uint8)
+            else:
+                min_val = float(finite.min())
+                max_val = float(finite.max())
+                if max_val == min_val:
+                    arr = np.zeros_like(arr, dtype=np.uint8)
+                else:
+                    arr = (arr - min_val) / (max_val - min_val)
+                    arr = np.clip(arr, 0.0, 1.0)
+                    arr = (arr * 255.0).round().astype(np.uint8)
+
+        arr = np.ascontiguousarray(arr)
+
+        try:
+            image = PILImageModule.fromarray(arr, mode)
+        except Exception:  # pragma: no cover - fallback when conversion fails
+            return None
+
+        return self._image_to_data_url(image)
+
+
+def build_graph_snapshot(
+    graph: WGraph,
+    *,
+    mark_success: bool = False,
+) -> dict[str, Any]:
+    """Return a serialisable snapshot for ``graph`` using the Rust accelerator."""
+
+    reporter = GraphEffectReporter(GraphEventStream())
+    return reporter.build_snapshot(graph, mark_success=mark_success)
 
 
 class _GraphRequestHandler(BaseHTTPRequestHandler):
@@ -959,9 +1091,45 @@ _INDEX_HTML = """<!DOCTYPE html>
         height: 100vh;
         overflow: hidden;
       }
-      #cy {
+      #graph-container {
         flex: 1 1 auto;
         width: 70vw;
+        display: flex;
+        flex-direction: column;
+        position: relative;
+      }
+      #controls {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        z-index: 1000;
+        display: flex;
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.95);
+        padding: 8px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      }
+      #controls button {
+        background: #4a90e2;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 8px 16px;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        transition: background 0.2s;
+      }
+      #controls button:hover {
+        background: #357abd;
+      }
+      #controls button:active {
+        transform: translateY(1px);
+      }
+      #cy {
+        flex: 1 1 auto;
+        width: 100%;
         height: 100vh;
         background: #f5f7fa;
       }
@@ -1063,9 +1231,19 @@ _INDEX_HTML = """<!DOCTYPE html>
       }
     </style>
     <script src=\"https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js\"></script>
+    <script src=\"https://unpkg.com/dagre@0.8.5/dist/dagre.min.js\"></script>
+    <script src=\"https://unpkg.com/cytoscape-dagre@2.5.0/cytoscape-dagre.js\"></script>
   </head>
   <body>
-    <div id=\"cy\"></div>
+    <div id=\"graph-container\">
+      <div id=\"controls\">
+        <button id=\"btn-fit\" title=\"Fit graph to viewport\">🏠 Home</button>
+        <button id=\"btn-zoom-in\" title=\"Zoom in\">➕ Zoom In</button>
+        <button id=\"btn-zoom-out\" title=\"Zoom out\">➖ Zoom Out</button>
+        <button id=\"btn-layout\" title=\"Re-run layout\">🔄 Re-Layout</button>
+      </div>
+      <div id=\"cy\"></div>
+    </div>
     <div id=\"details\">
       <h2>Node Details</h2>
       <div id=\"details-content\">
@@ -1074,10 +1252,45 @@ _INDEX_HTML = """<!DOCTYPE html>
       </div>
     </div>
     <script>
+      // Initialize layout configuration - disable auto-fit to avoid conflicts
+      let layoutConfig = {
+        name: 'breadthfirst',
+        directed: true,
+        padding: 40,
+        fit: false,  // Disable auto-fit to avoid viewport conflicts
+        spacingFactor: 1.5,
+        animate: false
+      };
+      
+      // Check if dagre is available and use it if so
+      if (typeof dagre !== 'undefined' && typeof cytoscape !== 'undefined') {
+        // Register dagre with cytoscape
+        if (typeof cytoscapeDagre !== 'undefined') {
+          cytoscape.use(cytoscapeDagre);
+          console.log('Dagre extension registered');
+          
+          // Use dagre layout
+          layoutConfig = {
+            name: 'dagre',
+            rankDir: 'TB',
+            nodeSep: 50,
+            rankSep: 70,
+            edgeSep: 10,
+            ranker: 'network-simplex',
+            animate: false,
+            fit: false,  // Disable auto-fit to avoid viewport conflicts
+            padding: 40
+          };
+          console.log('Using dagre layout');
+        }
+      } else {
+        console.log('Using breadthfirst layout');
+      }
+      
       const cy = cytoscape({
         container: document.getElementById('cy'),
         elements: [],
-        layout: { name: 'breadthfirst', directed: true, padding: 40 },
+        layout: layoutConfig,
         wheelSensitivity: 0.2
       });
 
@@ -1120,21 +1333,54 @@ _INDEX_HTML = """<!DOCTYPE html>
         })
         .selector('node[image]')
         .style({
+          'shape': 'roundrectangle',
           'background-image': 'data(image)',
-          'background-fit': 'cover cover',
+          'background-fit': 'contain',
+          'background-repeat': 'no-repeat',
+          'background-position': 'center center',
           'background-opacity': 1,
+          'background-color': '#ffffff',
           'border-width': 2,
           'border-color': '#4a90e2',
+          'border-style': 'solid',
+          'border-radius': 12,
+          'width': 'data(image_width)',
+          'height': 'data(image_height)',
+          'padding': '6px',
           'label': 'data(label)',
           'color': '#222',
           'text-valign': 'bottom',
-          'text-margin-y': -6,
+          'text-margin-y': 10,
+          'text-halign': 'center',
+          'text-background-color': '#ffffffcc',
+          'text-background-opacity': 1,
+          'text-background-padding': 4,
+          'text-background-shape': 'roundrectangle',
           'font-weight': 'bold'
+        })
+        .selector('node[image][is_last]')
+        .style({
+          'border-color': '#ca8a04',
+          'border-width': 3,
+          'overlay-color': '#facc15',
+          'overlay-padding': 4,
+          'overlay-opacity': 0.25
         })
         .selector('node[image][is_success]')
         .style({
           'border-color': '#166534',
-          'border-width': 3
+          'border-width': 3,
+          'overlay-color': '#16a34a',
+          'overlay-padding': 4,
+          'overlay-opacity': 0.2
+        })
+        .selector('node[image][is_error]')
+        .style({
+          'border-color': '#7f1d1d',
+          'border-width': 3,
+          'overlay-color': '#dc2626',
+          'overlay-padding': 4,
+          'overlay-opacity': 0.3
         })
         .selector('edge')
         .style({
@@ -1235,13 +1481,64 @@ _INDEX_HTML = """<!DOCTYPE html>
       }
 
       function refreshLayout() {
-        cy.layout({ name: 'breadthfirst', directed: true, padding: 40 }).run();
+        // Try dagre first, fallback to breadthfirst
+        let layout;
+        try {
+          layout = cy.layout({ 
+            name: 'dagre',
+            rankDir: 'TB',
+            nodeSep: 50,
+            rankSep: 70,
+            edgeSep: 10,
+            ranker: 'network-simplex',
+            animate: false,
+            fit: false,  // Disable auto-fit to avoid conflicts
+            padding: 40
+          });
+        } catch (e) {
+          console.log('Dagre layout failed, using breadthfirst:', e);
+          layout = cy.layout({
+            name: 'breadthfirst',
+            directed: true,
+            padding: 40,
+            fit: false,  // Disable auto-fit to avoid conflicts
+            spacingFactor: 1.5,
+            animate: false
+          });
+        }
+        
+        // Run layout and then manually fit when complete
+        layout.run();
+        
+        // Use layoutstop event for reliable timing
+        layout.on('layoutstop', function() {
+          console.log('Layout complete, fitting viewport');
+          cy.fit();
+          cy.center();
+        });
+        
+        // Also try after a delay as fallback
+        setTimeout(() => {
+          cy.fit();
+          cy.center();
+          console.log('Viewport fitted with', cy.nodes().length, 'nodes');
+        }, 150);
       }
 
       function applySnapshot(nodes, edges) {
         cy.elements().remove();
-        cy.add(nodes.concat(edges));
-        refreshLayout();
+        
+        // Add nodes and edges
+        const elements = nodes.concat(edges);
+        console.log('Adding elements:', elements.length, 'nodes:', nodes.length, 'edges:', edges.length);
+        
+        if (elements.length > 0) {
+          cy.add(elements);
+          console.log('Elements added to cy, total nodes:', cy.nodes().length);
+          
+          // Use refreshLayout which has fallback logic
+          refreshLayout();
+        }
       }
 
       function applyAdd(nodes, edges) {
@@ -1398,6 +1695,26 @@ _INDEX_HTML = """<!DOCTYPE html>
         updateDetails(event.target);
       });
 
+      // Control button handlers
+      document.getElementById('btn-fit').addEventListener('click', () => {
+        cy.fit();
+        cy.center();
+      });
+
+      document.getElementById('btn-zoom-in').addEventListener('click', () => {
+        cy.zoom(cy.zoom() * 1.25);
+        cy.center();
+      });
+
+      document.getElementById('btn-zoom-out').addEventListener('click', () => {
+        cy.zoom(cy.zoom() * 0.8);
+        cy.center();
+      });
+
+      document.getElementById('btn-layout').addEventListener('click', () => {
+        refreshLayout();
+      });
+
       const source = new EventSource('events');
       source.onmessage = (event) => {
         try {
@@ -1417,3 +1734,48 @@ _INDEX_HTML = """<!DOCTYPE html>
   </body>
 </html>
 """
+
+
+_SSE_SCRIPT_BLOCK = """      const source = new EventSource('events');
+      source.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === 'snapshot') {
+            applySnapshot(payload.nodes || [], payload.edges || []);
+          } else if (payload.type === 'add') {
+            applyAdd(payload.nodes || [], payload.edges || []);
+          } else if (payload.type === 'update_meta') {
+            updateMeta(payload.node_id, payload.meta || {});
+          }
+        } catch (err) {
+          console.error('Failed to process graph event', err);
+        }
+      };
+"""
+
+
+_SNAPSHOT_SCRIPT_BLOCK = """      const snapshotData = __SNAPSHOT_DATA__;
+      try {
+        console.log('Loading snapshot with', snapshotData.nodes?.length || 0, 'nodes and', snapshotData.edges?.length || 0, 'edges');
+        applySnapshot(snapshotData.nodes || [], snapshotData.edges || []);
+        
+        // Ensure graph is visible and fitted to viewport
+        setTimeout(() => {
+          cy.fit();
+          cy.center();
+          console.log('Graph centered with', cy.nodes().length, 'nodes');
+        }, 100);
+      } catch (err) {
+        console.error('Failed to render graph snapshot', err);
+      }
+"""
+
+
+def _build_snapshot_html(snapshot: dict[str, Any] | None, title: str) -> str:
+    snapshot_data = snapshot or {"type": "snapshot", "nodes": [], "edges": []}
+    return _build_snapshot_html_rust(snapshot_data, title=title)
+
+
+def _write_snapshot_html_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")

@@ -11,14 +11,14 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class AskEffect(EffectBase):
-    """Effect emitted when asking for an environment value."""
+    """Looks up the environment entry for key and yields the resolved value."""
 
     key: str
 
 
 @dataclass(frozen=True)
 class LocalEffect(EffectBase):
-    """Effect emitted when running a sub-program with modified environment."""
+    """Runs a sub-program against an updated environment and yields its value."""
 
     env_update: Mapping[str, object]
     sub_program: ProgramLike

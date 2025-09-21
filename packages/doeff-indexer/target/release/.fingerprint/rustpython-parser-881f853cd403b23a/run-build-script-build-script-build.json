@@ -1,0 +1,1 @@
+{"rustc":16542739221701554903,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[9148200463761420093,"build_script_build",false,10270605661925362556]],"local":[{"RerunIfChanged":{"output":"release/build/rustpython-parser-881f853cd403b23a/output","paths":["src/python.lalrpop"]}}],"rustflags":[],"config":0,"compile_kind":0}

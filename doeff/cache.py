@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.result import Recover
@@ -13,12 +14,17 @@ from doeff.effects.writer import Log
 from doeff.types import EffectGenerator
 from doeff._vendor import FrozenDict
 
+if TYPE_CHECKING:
+    from doeff.kleisli import KleisliProgram
+
 T = TypeVar("T")
 
 
+@do_wrapper
 def cache(
     ttl: float | None = None,
     key_func: Callable | None = None,
+    key_hashers: Mapping[str, Callable[[Any], Any] | "KleisliProgram[Any, Any]"] | None = None,
     *,
     lifecycle: CacheLifecycle | str | None = None,
     storage: CacheStorage | str | None = None,
@@ -39,6 +45,10 @@ def cache(
         ttl: Time-to-live for cache entries in seconds. None means no expiration.
         key_func: Optional function to transform cache keys. If not provided,
                  uses (func_name, args, FrozenDict(kwargs)) as key.
+        key_hashers: Optional mapping of argument names to callables or
+                 Kleisli programs that transform argument values before they
+                 are incorporated into the cache key. Useful for hashing or
+                 normalizing large or non-hashable inputs.
         lifecycle: Hint describing expected lifetime of cached values.
         storage: Explicit storage target hint (e.g., "memory", "disk").
         metadata: Arbitrary metadata to attach to the cache policy.
@@ -88,12 +98,48 @@ def cache(
                 except TypeError:
                     args_for_key = args
                     kwargs_for_key = dict(kwargs)
+                    if key_hashers:
+                        for name, hasher in key_hashers.items():
+                            if name in kwargs_for_key:
+                                kwargs_for_key[name] = (
+                                    (yield hasher(kwargs_for_key[name]))
+                                    if isinstance(hasher, KleisliProgram)
+                                    else hasher(kwargs_for_key[name])
+                                )
                 else:
                     bound.apply_defaults()
+                    arguments = bound.arguments.copy()
+                    kwargs_param_name: str | None = None
+                    if key_hashers:
+                        for param_name, param in signature.parameters.items():
+                            if param.kind is inspect.Parameter.VAR_KEYWORD:
+                                kwargs_param_name = param_name
+                                break
+                        if kwargs_param_name and kwargs_param_name in arguments:
+                            arguments[kwargs_param_name] = dict(arguments[kwargs_param_name])
+
+                        for name, hasher in key_hashers.items():
+                            if name in arguments:
+                                arguments[name] = (
+                                    (yield hasher(arguments[name]))
+                                    if isinstance(hasher, KleisliProgram)
+                                    else hasher(arguments[name])
+                                )
+                            elif (
+                                kwargs_param_name
+                                and kwargs_param_name in arguments
+                                and name in arguments[kwargs_param_name]
+                            ):
+                                arguments[kwargs_param_name][name] = (
+                                    (yield hasher(arguments[kwargs_param_name][name]))
+                                    if isinstance(hasher, KleisliProgram)
+                                    else hasher(arguments[kwargs_param_name][name])
+                                )
+
                     args_list: list[Any] = []
-                    kwargs_for_key: dict[str, Any] = {}
+                    kwargs_for_key = {}
                     for name, param in signature.parameters.items():
-                        value = bound.arguments.get(name)
+                        value = arguments.get(name)
                         if param.kind in (
                             inspect.Parameter.POSITIONAL_ONLY,
                             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -110,6 +156,14 @@ def cache(
             else:
                 args_for_key = args
                 kwargs_for_key = dict(kwargs)
+                if key_hashers:
+                    for name, hasher in key_hashers.items():
+                        if name in kwargs_for_key:
+                            kwargs_for_key[name] = (
+                                (yield hasher(kwargs_for_key[name]))
+                                if isinstance(hasher, KleisliProgram)
+                                else hasher(kwargs_for_key[name])
+                            )
 
             frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
 

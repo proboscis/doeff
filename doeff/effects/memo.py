@@ -10,11 +10,15 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 @dataclass(frozen=True)
 class MemoGetEffect(EffectBase):
+    """Fetches the memoized value for the key and yields it."""
+
     key: Any
 
 
 @dataclass(frozen=True)
 class MemoPutEffect(EffectBase):
+    """Stores the value in the memo cache and completes without a result."""
+
     key: Any
     value: Any
 

@@ -8,12 +8,16 @@ from .future import Await, FutureAwaitEffect, FutureParallelEffect, Parallel, aw
 from .gather import Gather, GatherDict, GatherDictEffect, GatherEffect, gather, gather_dict
 from .graph import (
     Annotate,
+    CaptureGraph,
     GraphAnnotateEffect,
+    GraphCaptureEffect,
     GraphSnapshotEffect,
     GraphStepEffect,
     Snapshot,
     Step,
+    graph,
 )
+from .graph import capture as capture_graph
 from .io import IO, IOPerformEffect, IOPrintEffect, Print, perform, print_, run
 from .memo import MemoGet, MemoGetEffect, MemoPut, MemoPutEffect, memo_get, memo_put
 from .reader import Ask, AskEffect, Local, LocalEffect, ask, local
@@ -32,6 +36,7 @@ from .result import (
     Unwrap,
     catch,
     fail,
+    unwrap_result,
     safe,
     recover,
     retry,
@@ -56,6 +61,7 @@ io = IO
 step = Step
 annotate = Annotate
 snapshot = Snapshot
+capture = capture_graph
 
 
 __all__ = [
@@ -78,6 +84,7 @@ __all__ = [
     "GraphStepEffect",
     "GraphAnnotateEffect",
     "GraphSnapshotEffect",
+    "GraphCaptureEffect",
     "DepInjectEffect",
     "GatherEffect",
     "GatherDictEffect",
@@ -107,6 +114,7 @@ __all__ = [
     "Step",
     "Annotate",
     "Snapshot",
+    "CaptureGraph",
     "Dep",
     "Gather",
     "GatherDict",
@@ -140,6 +148,8 @@ __all__ = [
     "step",
     "annotate",
     "snapshot",
+    "capture_graph",
+    "capture",
     "memo_get",
     "memo_put",
     "cache_get",
