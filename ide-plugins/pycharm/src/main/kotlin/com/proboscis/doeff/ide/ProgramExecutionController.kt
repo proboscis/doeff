@@ -43,16 +43,8 @@ object ProgramExecutionController {
         showInfoNotification(project, "Doeff Indexing", "Searching for interpreters and transformers...")
         
         val indexer = IndexerClient(project)
-        indexer.queryEntries(typeArgument) { entries ->
-            updateStatusBar(project, "Doeff: Found ${entries.size} entries")
-            // First try to filter by marker "interpreter" if any are marked
-            val markedInterpreters = entries.filter { it.hasMarker("interpreter") }
-            // Fall back to category-based detection if no markers found
-            val interpreters = if (markedInterpreters.isNotEmpty()) {
-                markedInterpreters
-            } else {
-                entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_INTERPRETER) }
-            }
+        // Use the find-interpreters command to get only valid interpreters
+        indexer.findInterpreters(typeArgument) { interpreters ->
             if (interpreters.isEmpty()) {
                 logger.warn("No interpreters found in index for type $typeArgument")
                 ProgramPluginDiagnostics.warn(
@@ -66,58 +58,46 @@ object ProgramExecutionController {
                     "- Accept a Program parameter, or\n" +
                     "- Are marked with # doeff: interpreter")
                 updateStatusBar(project, "Doeff: No interpreters found")
-                return@queryEntries
+                return@findInterpreters
             }
 
-            // For Kleisli programs, check markers first
-            val markedKleisli = entries.filter { it.hasMarker("kleisli") }
-                .filter { usageMatchesType(it, typeArgument) }
-            val kleisli = if (markedKleisli.isNotEmpty()) {
-                markedKleisli
-            } else {
-                entries.filter { it.hasCategory(IndexEntryCategory.KLEISLI_PROGRAM) }
-                    .filter { usageMatchesType(it, typeArgument) }
-            }
-            
-            // For transformers, check markers first
-            val markedTransformers = entries.filter { it.hasMarker("transform") || it.hasMarker("transformer") }
-            val transformers = if (markedTransformers.isNotEmpty()) {
-                markedTransformers
-            } else {
-                entries.filter { it.hasCategory(IndexEntryCategory.PROGRAM_TRANSFORMER) }
-            }
-
-            updateStatusBar(project, "Doeff: Found ${interpreters.size} interpreters, ${kleisli.size} kleisli, ${transformers.size} transformers")
-            
-            val dialog = ProgramSelectionDialog(
-                project = project,
-                programPath = programPath,
-                programType = typeArgument,
-                interpreters = interpreters,
-                kleisliPrograms = kleisli,
-                transformers = transformers
-            )
-
-            if (dialog.showAndGet()) {
-                val selection = dialog.buildSelection()
-                if (selection != null) {
-                    logger.debug("Launching run configuration for ${selection.programPath}")
-                    val interpreterName = selection.interpreter.qualifiedName
-                    ProgramPluginDiagnostics.info(
-                        project,
-                        "Launching doeff run for ${selection.programPath} with interpreter $interpreterName",
-                        key = "run-${selection.programPath}-$interpreterName"
+            // Get Kleisli functions using the dedicated command
+            indexer.findKleisli(typeArgument) { kleisli ->
+                // Get transformers using the dedicated command
+                indexer.findTransforms(typeArgument) { transformers ->
+                    updateStatusBar(project, "Doeff: Found ${interpreters.size} interpreters, ${kleisli.size} kleisli, ${transformers.size} transformers")
+                    
+                    val dialog = ProgramSelectionDialog(
+                        project = project,
+                        programPath = programPath,
+                        programType = typeArgument,
+                        interpreters = interpreters,
+                        kleisliPrograms = kleisli,
+                        transformers = transformers
                     )
-                    updateStatusBar(project, "Doeff: Launching ${selection.programPath}...")
-                    DoEffRunConfigurationHelper(project).run(selection)
-                } else {
-                    logger.warn("Dialog returned no selection")
-                    ProgramPluginDiagnostics.warn(
-                        project,
-                        "doeff run dialog closed without a selection for $programPath",
-                        key = "no-selection-$programPath"
-                    )
-                    updateStatusBar(project, "Doeff: Cancelled")
+
+                    if (dialog.showAndGet()) {
+                        val selection = dialog.buildSelection()
+                        if (selection != null) {
+                            logger.debug("Launching run configuration for ${selection.programPath}")
+                            val interpreterName = selection.interpreter.qualifiedName
+                            ProgramPluginDiagnostics.info(
+                                project,
+                                "Launching doeff run for ${selection.programPath} with interpreter $interpreterName",
+                                key = "run-${selection.programPath}-$interpreterName"
+                            )
+                            updateStatusBar(project, "Doeff: Launching ${selection.programPath}...")
+                            DoEffRunConfigurationHelper(project).run(selection)
+                        } else {
+                            logger.warn("Dialog returned no selection")
+                            ProgramPluginDiagnostics.warn(
+                                project,
+                                "doeff run dialog closed without a selection for $programPath",
+                                key = "no-selection-$programPath"
+                            )
+                            updateStatusBar(project, "Doeff: Cancelled")
+                        }
+                    }
                 }
             }
         }

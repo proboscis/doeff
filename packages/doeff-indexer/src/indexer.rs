@@ -22,6 +22,7 @@ pub enum EntryCategory {
     AcceptsProgramInterpreterParam,
     ProgramInterpreter,
     ProgramTransformer,
+    Interceptor,  // Function that takes Effect and returns Effect or Program
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -68,6 +69,7 @@ pub struct IndexEntry {
     pub return_annotation: Option<String>,
     pub program_parameters: Vec<ParameterRef>,
     pub program_interpreter_parameters: Vec<ParameterRef>,
+    pub all_parameters: Vec<ParameterRef>,  // All function parameters for Kleisli type matching
     pub type_usages: Vec<ProgramTypeUsage>,
     pub markers: Vec<String>,  // Added field for doeff markers like "interpreter", "transform"
 }
@@ -261,7 +263,7 @@ fn extract_entries(
     }
 }
 
-fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str, _args: &Arguments) -> Vec<String> {
+pub(crate) fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str, _args: &Arguments) -> Vec<String> {
     let mut markers = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
     
@@ -271,8 +273,12 @@ fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str,
     
     // Check the function definition line itself (for inline comments)
     if line_idx < lines.len() {
-        if let Some(marker) = extract_marker_from_line(lines[line_idx]) {
-            markers.push(marker);
+        if let Some(marker_str) = extract_marker_from_line(lines[line_idx]) {
+            for marker in parse_markers(&marker_str) {
+                if !markers.contains(&marker) {
+                    markers.push(marker);
+                }
+            }
         }
     }
     
@@ -282,13 +288,22 @@ fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str,
     //     tgt: Program):
     for i in line_idx..lines.len().min(line_idx + 10) {
         if let Some(line) = lines.get(i) {
-            if line.contains("# doeff:") {
-                if let Some(marker) = extract_marker_from_line(line) {
-                    if !markers.contains(&marker) {
-                        markers.push(marker);
+            let lower_line = line.to_lowercase();
+            if lower_line.contains("# doeff:") {
+                if let Some(marker_str) = extract_marker_from_line(line) {
+                    for marker in parse_markers(&marker_str) {
+                        if !markers.contains(&marker) {
+                            markers.push(marker);
+                        }
                     }
                 }
             }
+            
+            // Stop if we hit the end of function signature (colon not in comment)
+            if line.contains(':') && !line.trim_start().starts_with('#') {
+                break;
+            }
+            
             // Stop if we hit another function definition
             if i > line_idx && (line.trim_start().starts_with("def ") || line.trim_start().starts_with("async def ")) {
                 break;
@@ -300,14 +315,32 @@ fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str,
 }
 
 fn extract_marker_from_line(line: &str) -> Option<String> {
-    // Look for "# doeff: <marker>" pattern
-    if let Some(idx) = line.find("# doeff:") {
+    // Look for "# doeff: <marker>" pattern (case-insensitive)
+    let lower_line = line.to_lowercase();
+    if let Some(idx) = lower_line.find("# doeff:") {
+        // Get the original case substring for markers
         let marker_part = &line[idx + 8..]; // Skip "# doeff:"
-        let marker = marker_part.trim().split_whitespace().next()?.to_string();
-        Some(marker)
+        // Return the entire marker string (may contain multiple markers)
+        Some(marker_part.trim().to_string())
     } else {
         None
     }
+}
+
+fn parse_markers(marker_str: &str) -> Vec<String> {
+    // Split by commas and clean up each marker
+    // Only take valid identifier characters (alphanumeric and underscore)
+    marker_str
+        .split(',')
+        .map(|s| {
+            // Take only the identifier part (stop at first non-identifier char)
+            s.trim()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn analyze_function(
@@ -372,9 +405,10 @@ fn analyze_callable(
 ) -> Option<IndexEntry> {
     let mut categories: HashSet<EntryCategory> = HashSet::new();
 
-    if decorators.iter().any(|d| is_do_decorator(d)) {
+    let is_do_function = decorators.iter().any(|d| is_do_decorator(d));
+    if is_do_function {
         categories.insert(EntryCategory::DoFunction);
-        categories.insert(EntryCategory::KleisliProgram);
+        // Don't set KleisliProgram yet - will be determined based on first parameter
     }
 
     let mut type_usages = Vec::new();
@@ -427,10 +461,16 @@ fn analyze_callable(
         .and_then(identify_program_kind)
         .map_or(false, |kind| kind == ProgramTypeKind::Program);
 
-    if first_param_is_program {
-        categories.insert(EntryCategory::ProgramInterpreter);
-    }
+    // Check if first parameter is Effect (for Interceptor detection)
+    let first_param_is_effect = first_required
+        .and_then(|param| param.annotation)
+        .map(|annotation| {
+            let ann_str = expr_to_string(annotation);
+            ann_str == "Effect" || ann_str.contains("Effect")
+        })
+        .unwrap_or(false);
 
+    // First analyze the return type
     let mut return_annotation = returns.map(expr_to_string);
     let mut return_kind: Option<ProgramTypeKind> = None;
 
@@ -449,8 +489,44 @@ fn analyze_callable(
         }
     }
 
-    if first_param_is_program && matches!(return_kind, Some(ProgramTypeKind::Program)) {
-        categories.insert(EntryCategory::ProgramTransformer);
+    // Now categorize based on both parameter and return type
+    // Special handling for @do decorated functions
+    if is_do_function {
+        // @do functions wrap their return value in Program
+        if first_param_is_program {
+            // @do with Program first param -> ProgramTransform
+            categories.insert(EntryCategory::ProgramTransformer);
+        } else if first_param_is_effect {
+            // @do with Effect first param -> Interceptor
+            categories.insert(EntryCategory::Interceptor);
+        } else {
+            // @do with other first param -> KleisliProgram
+            categories.insert(EntryCategory::KleisliProgram);
+        }
+    } else {
+        // Non-@do functions: regular categorization
+        if first_param_is_program {
+            if matches!(return_kind, Some(ProgramTypeKind::Program)) {
+                // Program -> Program is a Transform, NOT an Interpreter
+                categories.insert(EntryCategory::ProgramTransformer);
+            } else {
+                // Program -> non-Program (or no return type specified) is an Interpreter
+                categories.insert(EntryCategory::ProgramInterpreter);
+            }
+        }
+
+        // Check for Interceptor: Effect -> Effect | Program
+        if first_param_is_effect {
+            // An interceptor takes Effect and returns either Effect or Program
+            if let Some(ret_annotation) = &return_annotation {
+                if ret_annotation.contains("Effect") || ret_annotation.contains("Program") {
+                    categories.insert(EntryCategory::Interceptor);
+                }
+            } else {
+                // If no return type specified, still mark as potential interceptor
+                categories.insert(EntryCategory::Interceptor);
+            }
+        }
     }
 
     if categories.is_empty() {
@@ -472,6 +548,17 @@ fn analyze_callable(
         format!("{}.{}", module_path, name)
     };
 
+    // Collect all parameters for Kleisli type filtering
+    let all_params: Vec<ParameterRef> = parameters.iter().map(|param| {
+        ParameterRef {
+            name: param.arg.arg.to_string(),
+            annotation: param.annotation.map(expr_to_string),
+            is_required: param.is_required,
+            position: param.position,
+            kind: param.kind,
+        }
+    }).collect();
+
     Some(IndexEntry {
         name: name.to_string(),
         qualified_name,
@@ -484,6 +571,7 @@ fn analyze_callable(
         return_annotation,
         program_parameters: program_params,
         program_interpreter_parameters: interpreter_params,
+        all_parameters: all_params,
         type_usages,
         markers,
     })
@@ -539,6 +627,7 @@ fn analyze_assignment(
                 return_annotation: None,
                 program_parameters: Vec::new(),
                 program_interpreter_parameters: Vec::new(),
+                all_parameters: Vec::new(),  // Assignments have no parameters
                 type_usages,
                 markers: Vec::new(),  // No markers for assignments
             });
@@ -605,6 +694,7 @@ fn analyze_ann_assignment(
         return_annotation: Some(expr_to_string(assign.annotation.as_ref())),
         program_parameters: Vec::new(),
         program_interpreter_parameters: Vec::new(),
+        all_parameters: Vec::new(),  // Assignments have no parameters
         type_usages,
         markers: Vec::new(),  // No markers for assignments
     })
@@ -844,8 +934,9 @@ pub(crate) fn compute_module_path(root: &Path, file_path: &Path) -> String {
             .strip_prefix(&abs_root)
             .unwrap_or_else(|_| {
                 // Last resort: use just the file name
-                Path::new(abs_file.file_name().unwrap_or_default()).to_path_buf()
+                Path::new(abs_file.file_name().unwrap_or_default())
             })
+            .to_path_buf()
     };
 
     let mut rel_str = relative.to_string_lossy().replace('\\', "/");
@@ -871,53 +962,64 @@ pub(crate) fn compute_module_path(root: &Path, file_path: &Path) -> String {
 }
 
 /// Find the Python package root by looking for package markers
-fn find_python_package_root(root: &Path, file_path: &Path) -> Option<std::path::PathBuf> {
-    // Walk up from the file to find a Python package root
-    let mut current = file_path.parent()?;
-    let mut deepest_package = None;
-    
-    while current.starts_with(root) || current == root {
-        // Check if this directory is a Python package
-        // A directory is a package if it contains __init__.py OR is listed in pyproject.toml
-        let init_py = current.join("__init__.py");
-        let pyproject = current.join("pyproject.toml");
-        
-        if init_py.exists() {
-            // This is a Python package
-            deepest_package = Some(current.to_path_buf());
-        } else if pyproject.exists() {
-            // Check if this is the project root with packages
-            // For now, we'll assume if there's a pyproject.toml and a subdirectory
-            // with the project name, that's the package root
-            if let Ok(content) = fs::read_to_string(&pyproject) {
-                // Simple heuristic: look for package name in pyproject.toml
-                // and check if that directory exists
-                if content.contains("name = \"doeff\"") && current.join("doeff").exists() {
-                    return Some(current.join("doeff"));
-                }
-                // Also check common patterns like src/ layout
-                if current.join("src").exists() {
-                    // Check if src contains packages
-                    for entry in fs::read_dir(current.join("src")).ok()? {
-                        if let Ok(entry) = entry {
-                            let path = entry.path();
-                            if path.is_dir() && path.join("__init__.py").exists() {
-                                return Some(current.join("src"));
-                            }
-                        }
+pub(crate) fn find_python_package_root(root: &Path, file_path: &Path) -> Option<std::path::PathBuf> {
+    // First check if we're in a UV project with pyproject.toml at the root
+    let root_pyproject = root.join("pyproject.toml");
+    if root_pyproject.exists() {
+        if let Ok(content) = fs::read_to_string(&root_pyproject) {
+            // Parse the project name from pyproject.toml
+            // Look for [project] section and name = "package_name"
+            let mut in_project_section = false;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed == "[project]" {
+                    in_project_section = true;
+                } else if trimmed.starts_with('[') {
+                    in_project_section = false;
+                } else if in_project_section && trimmed.starts_with("name = ") {
+                    // Extract the package name
+                    let name_part = trimmed.strip_prefix("name = ").unwrap_or("");
+                    let package_name = name_part.trim_matches('"').trim_matches('\'');
+                    
+                    // Check if a directory with this name exists and contains __init__.py
+                    let package_dir = root.join(package_name);
+                    if package_dir.exists() && package_dir.join("__init__.py").exists() {
+                        // This is the package root for a UV project
+                        return Some(root.to_path_buf());
                     }
                 }
             }
-            // If we found pyproject.toml but no package structure, treat this as root
-            // Files directly here are not in a package
-            return None;
+        }
+    }
+    
+    // Walk up from the file to find a Python package root
+    // We want to find the parent directory of the topmost package
+    let mut current = file_path.parent()?;
+    let mut topmost_package_parent = None;
+    
+    while current.starts_with(root) || current == root {
+        // Check if this directory is a Python package
+        let init_py = current.join("__init__.py");
+        
+        if init_py.exists() {
+            // This is a Python package, so its parent is what we want
+            if let Some(parent) = current.parent() {
+                if parent.starts_with(root) || parent == root {
+                    topmost_package_parent = Some(parent.to_path_buf());
+                }
+            }
+        }
+        
+        // If we've reached the root, stop
+        if current == root {
+            break;
         }
         
         // Move up one directory
         current = current.parent()?;
     }
     
-    deepest_package
+    topmost_package_parent
 }
 
 fn push_usage(usages: &mut Vec<ProgramTypeUsage>, usage: ProgramTypeUsage) {
@@ -1184,4 +1286,64 @@ impl LineIndex {
             .unwrap_or_else(|i| i.saturating_sub(1))
             + 1
     }
+}
+
+// Strict marker-based filtering functions for specific find-* commands
+// These are used when explicitly searching for specific types via find-interpreters, find-transforms, find-kleisli
+// They require explicit markers for precise control from IDE plugins
+pub fn find_interpreters(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
+    // STRICT MODE for find-interpreters command: Only functions with explicit "interpreter" marker
+    entries.iter().filter(|entry| {
+        // Must have explicit "interpreter" marker
+        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("interpreter"))
+    }).collect()
+}
+
+pub fn find_transforms(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
+    // STRICT MODE for find-transforms command: Only functions with explicit "transform" marker
+    entries.iter().filter(|entry| {
+        // Must have explicit "transform" marker
+        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("transform"))
+    }).collect()
+}
+
+pub fn find_kleisli(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
+    // STRICT MODE for find-kleisli command: Only functions with explicit "kleisli" marker OR @do decorator
+    entries.iter().filter(|entry| {
+        // Must have explicit "kleisli" marker OR be a @do decorated function
+        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("kleisli"))
+            || entry.categories.contains(&EntryCategory::DoFunction)
+    }).collect()
+}
+
+// Type filtering for Kleisli functions - matches on first non-optional parameter
+pub fn find_kleisli_with_type<'a>(entries: &'a [IndexEntry], type_arg: &str) -> Vec<&'a IndexEntry> {
+    find_kleisli(entries).into_iter().filter(|entry| {
+        // For Kleisli functions, check the first non-optional parameter's type
+        // Get first required parameter from all_parameters
+        let first_required = entry.all_parameters.iter()
+            .find(|p| p.is_required);
+            
+        if let Some(param) = first_required {
+            if let Some(annotation) = &param.annotation {
+                // Match if parameter type is the requested type OR is Any
+                annotation.contains(type_arg) || 
+                annotation == "Any" || 
+                annotation.contains("typing.Any")
+            } else {
+                false
+            }
+        } else {
+            // No required parameters - check if it's a no-arg Kleisli
+            false
+        }
+    }).collect()
+}
+
+pub fn find_interceptors(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
+    // STRICT MODE for find-interceptors command: Only functions with explicit "interceptor" marker
+    entries.iter().filter(|entry| {
+        // Must have explicit "interceptor" marker
+        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("interceptor"))
+    }).collect()
 }

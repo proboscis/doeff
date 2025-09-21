@@ -32,7 +32,117 @@ class IndexerClient(private val project: Project) {
                 }
             }
     }
+    
+    fun findInterpreters(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
+        CompletableFuture.supplyAsync { runIndexerCommand("find-interpreters", typeArgument) }
+            .whenComplete { result, throwable ->
+                if (throwable != null) {
+                    notifyError("Failed to find interpreters", throwable.message ?: "Unknown error", throwable)
+                    log.warn("Error while finding interpreters", throwable)
+                    return@whenComplete
+                }
+                if (result == null) {
+                    notifyError("doeff-indexer returned no data", "Unexpected empty response", null)
+                    return@whenComplete
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    onSuccess(result)
+                }
+            }
+    }
+    
+    fun findTransforms(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
+        CompletableFuture.supplyAsync { runIndexerCommand("find-transforms", typeArgument) }
+            .whenComplete { result, throwable ->
+                if (throwable != null) {
+                    notifyError("Failed to find transforms", throwable.message ?: "Unknown error", throwable)
+                    log.warn("Error while finding transforms", throwable)
+                    return@whenComplete
+                }
+                if (result == null) {
+                    notifyError("doeff-indexer returned no data", "Unexpected empty response", null)
+                    return@whenComplete
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    onSuccess(result)
+                }
+            }
+    }
+    
+    fun findKleisli(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
+        CompletableFuture.supplyAsync { runIndexerCommand("find-kleisli", typeArgument) }
+            .whenComplete { result, throwable ->
+                if (throwable != null) {
+                    notifyError("Failed to find Kleisli functions", throwable.message ?: "Unknown error", throwable)
+                    log.warn("Error while finding Kleisli functions", throwable)
+                    return@whenComplete
+                }
+                if (result == null) {
+                    notifyError("doeff-indexer returned no data", "Unexpected empty response", null)
+                    return@whenComplete
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    onSuccess(result)
+                }
+            }
+    }
 
+    private fun runIndexerCommand(command: String, typeArgument: String?): List<IndexEntry>? {
+        val indexerPath = locateIndexer() ?: return emptyList()
+        val root = project.basePath ?: return emptyList()
+        val commandList = mutableListOf(indexerPath, command, "--root", root)
+        if (!typeArgument.isNullOrBlank()) {
+            commandList.add("--type-arg")
+            commandList.add(typeArgument)
+        }
+
+        log.debug("Executing doeff-indexer: ${commandList.joinToString(" ")}")
+        val process = ProcessBuilder(commandList)
+            .directory(File(root))
+            .start()
+
+        // Read output and error streams concurrently to avoid deadlock
+        val output = StringBuilder()
+        val error = StringBuilder()
+        
+        // Create threads to read streams
+        val outputReader = Thread {
+            process.inputStream.bufferedReader().use { reader ->
+                output.append(reader.readText())
+            }
+        }
+        val errorReader = Thread {
+            process.errorStream.bufferedReader().use { reader ->
+                error.append(reader.readText())
+            }
+        }
+        
+        // Start reading streams
+        outputReader.start()
+        errorReader.start()
+        
+        // Wait for process to complete
+        val completed = process.waitFor(30, TimeUnit.SECONDS)
+        
+        // Wait for readers to finish
+        outputReader.join(1000)
+        errorReader.join(1000)
+        
+        if (!completed) {
+            process.destroyForcibly()
+            notifyError("doeff-indexer timed out", "Waited 30 seconds without response", null)
+            return emptyList()
+        }
+
+        if (process.exitValue() != 0) {
+            val errorText = error.toString()
+            notifyError("doeff-indexer failed", errorText.ifBlank { "Exit code ${process.exitValue()}" }, null)
+            return emptyList()
+        }
+
+        return parseEntries(output.toString())
+    }
+    
     private fun runIndexer(typeArgument: String?): List<IndexEntry>? {
         val indexerPath = locateIndexer() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
