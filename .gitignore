@@ -65,3 +65,4 @@ dmypy.json
 
 # Rust build artifacts
 rust/**/target/
+packages/**/target/
