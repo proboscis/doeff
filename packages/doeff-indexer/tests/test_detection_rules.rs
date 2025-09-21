@@ -12,11 +12,14 @@ fn test_interpreter_detection() {
 
     // Find interpreters (marker-only)
     let interpreters = find_interpreters(&index.entries);
-    
+
     // Should only find functions with "interpreter" marker
     for entry in &interpreters {
         assert!(
-            entry.markers.iter().any(|m| m.eq_ignore_ascii_case("interpreter")),
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("interpreter")),
             "Found interpreter without marker: {}",
             entry.name
         );
@@ -24,10 +27,16 @@ fn test_interpreter_detection() {
 
     // Verify categorization: interpreters should NOT return Program
     for entry in &index.entries {
-        if entry.categories.contains(&EntryCategory::ProgramInterpreter) {
+        if entry
+            .categories
+            .contains(&EntryCategory::ProgramInterpreter)
+        {
             // If categorized as interpreter, should not also be transformer
             // (unless it has wrong marker)
-            if !entry.categories.contains(&EntryCategory::ProgramTransformer) {
+            if !entry
+                .categories
+                .contains(&EntryCategory::ProgramTransformer)
+            {
                 // Should not have Program return type
                 if let Some(ret) = &entry.return_annotation {
                     assert!(
@@ -48,11 +57,14 @@ fn test_transform_detection() {
 
     // Find transforms (marker-only)
     let transforms = find_transforms(&index.entries);
-    
+
     // Should only find functions with "transform" marker
     for entry in &transforms {
         assert!(
-            entry.markers.iter().any(|m| m.eq_ignore_ascii_case("transform")),
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("transform")),
             "Found transform without marker: {}",
             entry.name
         );
@@ -60,10 +72,15 @@ fn test_transform_detection() {
 
     // Verify categorization: transforms should return Program
     for entry in &index.entries {
-        if entry.categories.contains(&EntryCategory::ProgramTransformer) {
+        if entry
+            .categories
+            .contains(&EntryCategory::ProgramTransformer)
+        {
             // Should accept Program parameter
             assert!(
-                entry.categories.contains(&EntryCategory::AcceptsProgramParam),
+                entry
+                    .categories
+                    .contains(&EntryCategory::AcceptsProgramParam),
                 "Transform {} doesn't accept Program",
                 entry.name
             );
@@ -87,10 +104,13 @@ fn test_kleisli_detection() {
 
     // Find Kleisli functions (marker OR @do)
     let kleisli = find_kleisli(&index.entries);
-    
+
     // Should find functions with "kleisli" marker OR @do decorator
     for entry in &kleisli {
-        let has_marker = entry.markers.iter().any(|m| m.eq_ignore_ascii_case("kleisli"));
+        let has_marker = entry
+            .markers
+            .iter()
+            .any(|m| m.eq_ignore_ascii_case("kleisli"));
         let has_do = entry.categories.contains(&EntryCategory::DoFunction);
         assert!(
             has_marker || has_do,
@@ -107,7 +127,7 @@ fn test_kleisli_type_filtering() {
 
     // Test filtering by type argument
     let str_kleisli = find_kleisli_with_type(&index.entries, "str");
-    
+
     for entry in &str_kleisli {
         // Should have first parameter matching "str" or "Any"
         if let Some(first_param) = entry.all_parameters.first() {
@@ -138,7 +158,7 @@ fn test_kleisli_type_filtering() {
     for type_arg in &["str", "int", "User"] {
         let filtered = find_kleisli_with_type(&index.entries, type_arg);
         let kleisli_funcs = find_kleisli(&index.entries);
-        
+
         for any_entry in &any_entries {
             // Check if this Any-typed entry is in Kleisli functions
             if kleisli_funcs.iter().any(|k| k.name == any_entry.name) {
@@ -166,7 +186,9 @@ fn test_do_decorator_categorization() {
                     if annotation.contains("Program") {
                         // @do with Program param -> Transform
                         assert!(
-                            entry.categories.contains(&EntryCategory::ProgramTransformer),
+                            entry
+                                .categories
+                                .contains(&EntryCategory::ProgramTransformer),
                             "@do function {} with Program param should be Transform",
                             entry.name
                         );
@@ -199,11 +221,14 @@ fn test_interceptor_detection() {
 
     // Find interceptors (marker-only)
     let interceptors = find_interceptors(&index.entries);
-    
+
     // Should only find functions with "interceptor" marker
     for entry in &interceptors {
         assert!(
-            entry.markers.iter().any(|m| m.eq_ignore_ascii_case("interceptor")),
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("interceptor")),
             "Found interceptor without marker: {}",
             entry.name
         );
@@ -246,7 +271,7 @@ fn test_marker_only_detection() {
         );
     }
 
-    // Every transform must have marker  
+    // Every transform must have marker
     for entry in transforms {
         assert!(
             !entry.markers.is_empty(),

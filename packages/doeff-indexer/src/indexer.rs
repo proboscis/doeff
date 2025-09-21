@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rustpython_ast::text_size::TextSize;
 use rustpython_ast::{
-    self as ast, Arg, Arguments, Constant, Expr, Mod, Stmt, StmtAsyncFunctionDef, StmtFunctionDef,
+    self as ast, Arg, Arguments, Constant, Expr, Mod, Stmt, StmtAsyncFunctionDef, StmtClassDef,
+    StmtFunctionDef,
 };
 use rustpython_parser::{parse, Mode};
 use serde::Serialize;
@@ -14,15 +15,15 @@ use walkdir::{DirEntry, WalkDir};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EntryCategory {
-    KleisliProgram,
-    DoFunction,
-    Program,
-    ReturnsProgram,
-    AcceptsProgramParam,
-    AcceptsProgramInterpreterParam,
     ProgramInterpreter,
     ProgramTransformer,
-    Interceptor,  // Function that takes Effect and returns Effect or Program
+    KleisliProgram,
+    Interceptor,
+    DoFunction,
+    AcceptsProgramParam,
+    ReturnsProgram,
+    AcceptsEffectParam,
+    HasMarker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -69,9 +70,9 @@ pub struct IndexEntry {
     pub return_annotation: Option<String>,
     pub program_parameters: Vec<ParameterRef>,
     pub program_interpreter_parameters: Vec<ParameterRef>,
-    pub all_parameters: Vec<ParameterRef>,  // All function parameters for Kleisli type matching
+    pub all_parameters: Vec<ParameterRef>, // All function parameters for Kleisli type matching
     pub type_usages: Vec<ProgramTypeUsage>,
-    pub markers: Vec<String>,  // Added field for doeff markers like "interpreter", "transform"
+    pub markers: Vec<String>, // Added field for doeff markers like "interpreter", "transform"
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -209,7 +210,14 @@ fn parse_python_file(path: &Path, root: &Path) -> Result<Vec<IndexEntry>> {
     let line_index = LineIndex::new(&source);
 
     let mut entries = Vec::new();
-    extract_entries(&module, &module_path, path, &line_index, &source, &mut entries);
+    extract_entries(
+        &module,
+        &module_path,
+        path,
+        &line_index,
+        &source,
+        &mut entries,
+    );
 
     Ok(entries)
 }
@@ -229,9 +237,14 @@ fn extract_entries(
     for stmt in &module.body {
         match stmt {
             Stmt::FunctionDef(func) => {
-                if let Some(entry) =
-                    analyze_function(func, module_path, file_path, line_index, source, ItemKind::Function)
-                {
+                if let Some(entry) = analyze_function(
+                    func,
+                    module_path,
+                    file_path,
+                    line_index,
+                    source,
+                    ItemKind::Function,
+                ) {
                     entries.push(entry);
                 }
             }
@@ -246,6 +259,17 @@ fn extract_entries(
                 ) {
                     entries.push(entry);
                 }
+            }
+            Stmt::ClassDef(class_def) => {
+                extract_class_entries(
+                    class_def,
+                    module_path,
+                    file_path,
+                    line_index,
+                    source,
+                    entries,
+                    class_def.name.to_string(),
+                );
             }
             Stmt::Assign(assign) => {
                 let mut vars = analyze_assignment(assign, module_path, file_path, line_index);
@@ -263,14 +287,85 @@ fn extract_entries(
     }
 }
 
-pub(crate) fn extract_markers_from_source(source: &str, func_line: usize, _func_name: &str, _args: &Arguments) -> Vec<String> {
+fn extract_class_entries(
+    class_def: &StmtClassDef,
+    module_path: &str,
+    file_path: &Path,
+    line_index: &LineIndex,
+    source: &str,
+    entries: &mut Vec<IndexEntry>,
+    prefix: String,
+) {
+    for stmt in &class_def.body {
+        match stmt {
+            Stmt::FunctionDef(func) => {
+                let line = line_index.line_number(func.range.start());
+                let method_name = format!("{}.{}", prefix, func.name);
+                let markers = extract_markers_from_source(source, line, &func.name, &func.args);
+                if let Some(entry) = analyze_callable(
+                    &method_name,
+                    &func.decorator_list,
+                    &func.args,
+                    func.returns.as_deref(),
+                    &func.body,
+                    line,
+                    module_path,
+                    file_path,
+                    ItemKind::Function,
+                    markers,
+                ) {
+                    entries.push(entry);
+                }
+            }
+            Stmt::AsyncFunctionDef(func) => {
+                let line = line_index.line_number(func.range.start());
+                let method_name = format!("{}.{}", prefix, func.name);
+                let markers = extract_markers_from_source(source, line, &func.name, &func.args);
+                if let Some(entry) = analyze_callable(
+                    &method_name,
+                    &func.decorator_list,
+                    &func.args,
+                    func.returns.as_deref(),
+                    &func.body,
+                    line,
+                    module_path,
+                    file_path,
+                    ItemKind::AsyncFunction,
+                    markers,
+                ) {
+                    entries.push(entry);
+                }
+            }
+            Stmt::ClassDef(inner) => {
+                let nested_prefix = format!("{}.{}", prefix, inner.name);
+                extract_class_entries(
+                    inner,
+                    module_path,
+                    file_path,
+                    line_index,
+                    source,
+                    entries,
+                    nested_prefix,
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn extract_markers_from_source(
+    source: &str,
+    func_line: usize,
+    _func_name: &str,
+    _args: &Arguments,
+) -> Vec<String> {
     let mut markers = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
-    
+
     // Look at the function definition line and the line above for markers
     // func_line is 1-based, convert to 0-based for array indexing
     let line_idx = func_line.saturating_sub(1);
-    
+
     // Check the function definition line itself (for inline comments)
     if line_idx < lines.len() {
         if let Some(marker_str) = extract_marker_from_line(lines[line_idx]) {
@@ -281,7 +376,7 @@ pub(crate) fn extract_markers_from_source(source: &str, func_line: usize, _func_
             }
         }
     }
-    
+
     // Also check parameter lines for inline markers
     // This handles cases like:
     // def some_transform( # doeff: transform
@@ -298,19 +393,22 @@ pub(crate) fn extract_markers_from_source(source: &str, func_line: usize, _func_
                     }
                 }
             }
-            
+
             // Stop if we hit the end of function signature (colon not in comment)
             if line.contains(':') && !line.trim_start().starts_with('#') {
                 break;
             }
-            
+
             // Stop if we hit another function definition
-            if i > line_idx && (line.trim_start().starts_with("def ") || line.trim_start().starts_with("async def ")) {
+            if i > line_idx
+                && (line.trim_start().starts_with("def ")
+                    || line.trim_start().starts_with("async def "))
+            {
                 break;
             }
         }
     }
-    
+
     markers
 }
 
@@ -320,7 +418,7 @@ fn extract_marker_from_line(line: &str) -> Option<String> {
     if let Some(idx) = lower_line.find("# doeff:") {
         // Get the original case substring for markers
         let marker_part = &line[idx + 8..]; // Skip "# doeff:"
-        // Return the entire marker string (may contain multiple markers)
+                                            // Return the entire marker string (may contain multiple markers)
         Some(marker_part.trim().to_string())
     } else {
         None
@@ -332,8 +430,8 @@ fn parse_markers(marker_str: &str) -> Vec<String> {
     // Only take valid identifier characters (alphanumeric and underscore)
     marker_str
         .split(',')
+        .flat_map(|segment| segment.split_whitespace())
         .map(|s| {
-            // Take only the identifier part (stop at first non-identifier char)
             s.trim()
                 .chars()
                 .take_while(|c| c.is_alphanumeric() || *c == '_')
@@ -422,7 +520,6 @@ fn analyze_callable(
             collect_program_type_usages(annotation, &mut type_usages);
 
             if expr_mentions(annotation, &["ProgramInterpreter"]) {
-                categories.insert(EntryCategory::AcceptsProgramInterpreterParam);
                 interpreter_params.push(ParameterRef {
                     name: param.arg.arg.to_string(),
                     annotation: Some(expr_to_string(annotation)),
@@ -449,26 +546,32 @@ fn analyze_callable(
         }
     }
 
-    let first_required = parameters.iter().find(|param| {
-        matches!(
-            param.kind,
-            ParameterKind::PositionalOnly | ParameterKind::Positional
-        ) && param.is_required
+    let first_annotated = parameters.iter().find(|param| {
+        param.is_required
+            && param.annotation.is_some()
+            && matches!(
+                param.kind,
+                ParameterKind::PositionalOnly | ParameterKind::Positional
+            )
     });
 
-    let first_param_is_program = first_required
+    let first_param_is_program = first_annotated
         .and_then(|param| param.annotation)
         .and_then(identify_program_kind)
         .map_or(false, |kind| kind == ProgramTypeKind::Program);
 
     // Check if first parameter is Effect (for Interceptor detection)
-    let first_param_is_effect = first_required
+    let first_param_is_effect = first_annotated
         .and_then(|param| param.annotation)
         .map(|annotation| {
             let ann_str = expr_to_string(annotation);
             ann_str == "Effect" || ann_str.contains("Effect")
         })
         .unwrap_or(false);
+
+    if first_param_is_effect {
+        categories.insert(EntryCategory::AcceptsEffectParam);
+    }
 
     // First analyze the return type
     let mut return_annotation = returns.map(expr_to_string);
@@ -527,6 +630,17 @@ fn analyze_callable(
                 categories.insert(EntryCategory::Interceptor);
             }
         }
+
+        if !first_param_is_program
+            && !first_param_is_effect
+            && matches!(return_kind, Some(ProgramTypeKind::Program))
+        {
+            categories.insert(EntryCategory::KleisliProgram);
+        }
+    }
+
+    if !markers.is_empty() {
+        categories.insert(EntryCategory::HasMarker);
     }
 
     if categories.is_empty() {
@@ -549,15 +663,16 @@ fn analyze_callable(
     };
 
     // Collect all parameters for Kleisli type filtering
-    let all_params: Vec<ParameterRef> = parameters.iter().map(|param| {
-        ParameterRef {
+    let all_params: Vec<ParameterRef> = parameters
+        .iter()
+        .map(|param| ParameterRef {
             name: param.arg.arg.to_string(),
             annotation: param.annotation.map(expr_to_string),
             is_required: param.is_required,
             position: param.position,
             kind: param.kind,
-        }
-    }).collect();
+        })
+        .collect();
 
     Some(IndexEntry {
         name: name.to_string(),
@@ -583,58 +698,8 @@ fn analyze_assignment(
     file_path: &Path,
     line_index: &LineIndex,
 ) -> Vec<IndexEntry> {
-    let mut entries = Vec::new();
-
-    for target in &assign.targets {
-        if let Expr::Name(name) = target {
-            let mut categories: HashSet<EntryCategory> = HashSet::new();
-            let mut type_usages = Vec::new();
-            collect_program_type_usages(&assign.value, &mut type_usages);
-            for usage in &type_usages {
-                match usage.kind {
-                    ProgramTypeKind::Program => {
-                        categories.insert(EntryCategory::Program);
-                    }
-                    ProgramTypeKind::KleisliProgram => {
-                        categories.insert(EntryCategory::KleisliProgram);
-                    }
-                }
-            }
-            if categories.is_empty() {
-                continue;
-            }
-
-            ensure_type_usage_defaults(&mut type_usages, &categories);
-            sort_type_usages(&mut type_usages);
-
-            let qualified_name = if module_path.is_empty() {
-                name.id.to_string()
-            } else {
-                format!("{}.{}", module_path, name.id)
-            };
-            let mut cats: Vec<EntryCategory> = categories.into_iter().collect();
-            cats.sort();
-
-            entries.push(IndexEntry {
-                name: name.id.to_string(),
-                qualified_name,
-                file_path: file_path.to_string_lossy().to_string(),
-                line: line_index.line_number(assign.range.start()),
-                item_kind: ItemKind::Assignment,
-                categories: cats,
-                decorators: Vec::new(),
-                docstring: None,
-                return_annotation: None,
-                program_parameters: Vec::new(),
-                program_interpreter_parameters: Vec::new(),
-                all_parameters: Vec::new(),  // Assignments have no parameters
-                type_usages,
-                markers: Vec::new(),  // No markers for assignments
-            });
-        }
-    }
-
-    entries
+    let _ = (assign, module_path, file_path, line_index);
+    Vec::new()
 }
 
 fn analyze_ann_assignment(
@@ -643,61 +708,8 @@ fn analyze_ann_assignment(
     file_path: &Path,
     line_index: &LineIndex,
 ) -> Option<IndexEntry> {
-    let mut categories = HashSet::new();
-    let mut type_usages = Vec::new();
-
-    collect_program_type_usages(assign.annotation.as_ref(), &mut type_usages);
-    if let Some(value) = assign.value.as_ref() {
-        collect_program_type_usages(value.as_ref(), &mut type_usages);
-    }
-
-    for usage in &type_usages {
-        match usage.kind {
-            ProgramTypeKind::Program => {
-                categories.insert(EntryCategory::Program);
-            }
-            ProgramTypeKind::KleisliProgram => {
-                categories.insert(EntryCategory::KleisliProgram);
-            }
-        }
-    }
-
-    if categories.is_empty() {
-        return None;
-    }
-
-    let Expr::Name(name) = &*assign.target else {
-        return None;
-    };
-
-    ensure_type_usage_defaults(&mut type_usages, &categories);
-    sort_type_usages(&mut type_usages);
-
-    let mut cats: Vec<EntryCategory> = categories.into_iter().collect();
-    cats.sort();
-
-    let qualified_name = if module_path.is_empty() {
-        name.id.to_string()
-    } else {
-        format!("{}.{}", module_path, name.id)
-    };
-
-    Some(IndexEntry {
-        name: name.id.to_string(),
-        qualified_name,
-        file_path: file_path.to_string_lossy().to_string(),
-        line: line_index.line_number(assign.range.start()),
-        item_kind: ItemKind::Assignment,
-        categories: cats,
-        decorators: Vec::new(),
-        docstring: None,
-        return_annotation: Some(expr_to_string(assign.annotation.as_ref())),
-        program_parameters: Vec::new(),
-        program_interpreter_parameters: Vec::new(),
-        all_parameters: Vec::new(),  // Assignments have no parameters
-        type_usages,
-        markers: Vec::new(),  // No markers for assignments
-    })
+    let _ = (assign, module_path, file_path, line_index);
+    None
 }
 
 fn collect_parameter_info(args: &Arguments) -> Vec<ParameterInfo<'_>> {
@@ -914,18 +926,19 @@ fn extract_docstring(body: &[Stmt]) -> Option<String> {
 pub(crate) fn compute_module_path(root: &Path, file_path: &Path) -> String {
     // Make both paths absolute for consistent comparison
     let abs_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let abs_file = file_path.canonicalize().unwrap_or_else(|_| file_path.to_path_buf());
-    
+    let abs_file = file_path
+        .canonicalize()
+        .unwrap_or_else(|_| file_path.to_path_buf());
+
     // Try to determine the Python package root
     let package_root = find_python_package_root(&abs_root, &abs_file);
-    
+
     let relative = if let Some(pkg_root) = package_root {
         abs_file
             .strip_prefix(&pkg_root)
             .unwrap_or_else(|_| {
                 // If strip_prefix fails, try with the project root
-                abs_file.strip_prefix(&abs_root)
-                    .unwrap_or(&abs_file)
+                abs_file.strip_prefix(&abs_root).unwrap_or(&abs_file)
             })
             .to_path_buf()
     } else {
@@ -962,7 +975,10 @@ pub(crate) fn compute_module_path(root: &Path, file_path: &Path) -> String {
 }
 
 /// Find the Python package root by looking for package markers
-pub(crate) fn find_python_package_root(root: &Path, file_path: &Path) -> Option<std::path::PathBuf> {
+pub(crate) fn find_python_package_root(
+    root: &Path,
+    file_path: &Path,
+) -> Option<std::path::PathBuf> {
     // First check if we're in a UV project with pyproject.toml at the root
     let root_pyproject = root.join("pyproject.toml");
     if root_pyproject.exists() {
@@ -980,7 +996,7 @@ pub(crate) fn find_python_package_root(root: &Path, file_path: &Path) -> Option<
                     // Extract the package name
                     let name_part = trimmed.strip_prefix("name = ").unwrap_or("");
                     let package_name = name_part.trim_matches('"').trim_matches('\'');
-                    
+
                     // Check if a directory with this name exists and contains __init__.py
                     let package_dir = root.join(package_name);
                     if package_dir.exists() && package_dir.join("__init__.py").exists() {
@@ -991,16 +1007,16 @@ pub(crate) fn find_python_package_root(root: &Path, file_path: &Path) -> Option<
             }
         }
     }
-    
+
     // Walk up from the file to find a Python package root
     // We want to find the parent directory of the topmost package
     let mut current = file_path.parent()?;
     let mut topmost_package_parent = None;
-    
+
     while current.starts_with(root) || current == root {
         // Check if this directory is a Python package
         let init_py = current.join("__init__.py");
-        
+
         if init_py.exists() {
             // This is a Python package, so its parent is what we want
             if let Some(parent) = current.parent() {
@@ -1009,16 +1025,16 @@ pub(crate) fn find_python_package_root(root: &Path, file_path: &Path) -> Option<
                 }
             }
         }
-        
+
         // If we've reached the root, stop
         if current == root {
             break;
         }
-        
+
         // Move up one directory
         current = current.parent()?;
     }
-    
+
     topmost_package_parent
 }
 
@@ -1036,7 +1052,10 @@ fn ensure_type_usage_defaults(
     type_usages: &mut Vec<ProgramTypeUsage>,
     categories: &HashSet<EntryCategory>,
 ) {
-    if categories.contains(&EntryCategory::Program)
+    if (categories.contains(&EntryCategory::ProgramInterpreter)
+        || categories.contains(&EntryCategory::ProgramTransformer)
+        || categories.contains(&EntryCategory::AcceptsProgramParam)
+        || categories.contains(&EntryCategory::ReturnsProgram))
         && !type_usages
             .iter()
             .any(|usage| matches!(usage.kind, ProgramTypeKind::Program))
@@ -1216,7 +1235,7 @@ pub fn entry_matches_with_markers(
             return false;
         }
     }
-    
+
     // Then check the existing logic
     entry_matches(entry, kind, type_arg)
 }
@@ -1293,57 +1312,86 @@ impl LineIndex {
 // They require explicit markers for precise control from IDE plugins
 pub fn find_interpreters(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     // STRICT MODE for find-interpreters command: Only functions with explicit "interpreter" marker
-    entries.iter().filter(|entry| {
-        // Must have explicit "interpreter" marker
-        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("interpreter"))
-    }).collect()
+    entries
+        .iter()
+        .filter(|entry| {
+            // Must have explicit "interpreter" marker
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("interpreter"))
+        })
+        .collect()
 }
 
 pub fn find_transforms(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     // STRICT MODE for find-transforms command: Only functions with explicit "transform" marker
-    entries.iter().filter(|entry| {
-        // Must have explicit "transform" marker
-        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("transform"))
-    }).collect()
+    entries
+        .iter()
+        .filter(|entry| {
+            // Must have explicit "transform" marker
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("transform"))
+        })
+        .collect()
 }
 
 pub fn find_kleisli(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     // STRICT MODE for find-kleisli command: Only functions with explicit "kleisli" marker OR @do decorator
-    entries.iter().filter(|entry| {
-        // Must have explicit "kleisli" marker OR be a @do decorated function
-        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("kleisli"))
-            || entry.categories.contains(&EntryCategory::DoFunction)
-    }).collect()
+    entries
+        .iter()
+        .filter(|entry| {
+            // Must have explicit "kleisli" marker OR be a @do decorated function
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("kleisli"))
+                || entry.categories.contains(&EntryCategory::DoFunction)
+        })
+        .collect()
 }
 
 // Type filtering for Kleisli functions - matches on first non-optional parameter
-pub fn find_kleisli_with_type<'a>(entries: &'a [IndexEntry], type_arg: &str) -> Vec<&'a IndexEntry> {
-    find_kleisli(entries).into_iter().filter(|entry| {
-        // For Kleisli functions, check the first non-optional parameter's type
-        // Get first required parameter from all_parameters
-        let first_required = entry.all_parameters.iter()
-            .find(|p| p.is_required);
-            
-        if let Some(param) = first_required {
-            if let Some(annotation) = &param.annotation {
-                // Match if parameter type is the requested type OR is Any
-                annotation.contains(type_arg) || 
-                annotation == "Any" || 
-                annotation.contains("typing.Any")
+pub fn find_kleisli_with_type<'a>(
+    entries: &'a [IndexEntry],
+    type_arg: &str,
+) -> Vec<&'a IndexEntry> {
+    find_kleisli(entries)
+        .into_iter()
+        .filter(|entry| {
+            // For Kleisli functions, check the first non-optional parameter's type
+            // Get first required parameter from all_parameters
+            let first_required = entry.all_parameters.iter().find(|p| p.is_required);
+
+            if let Some(param) = first_required {
+                if let Some(annotation) = &param.annotation {
+                    // Match if parameter type is the requested type OR is Any
+                    annotation.contains(type_arg)
+                        || annotation == "Any"
+                        || annotation.contains("typing.Any")
+                } else {
+                    false
+                }
             } else {
+                // No required parameters - check if it's a no-arg Kleisli
                 false
             }
-        } else {
-            // No required parameters - check if it's a no-arg Kleisli
-            false
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 pub fn find_interceptors(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     // STRICT MODE for find-interceptors command: Only functions with explicit "interceptor" marker
-    entries.iter().filter(|entry| {
-        // Must have explicit "interceptor" marker
-        entry.markers.iter().any(|m| m.eq_ignore_ascii_case("interceptor"))
-    }).collect()
+    entries
+        .iter()
+        .filter(|entry| {
+            // Must have explicit "interceptor" marker
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("interceptor"))
+        })
+        .collect()
 }
