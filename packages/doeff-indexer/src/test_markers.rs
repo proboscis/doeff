@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod tests {
     use crate::indexer::extract_markers_from_source;
-    use rustpython_parser::ast;
     use rustpython_ast::text_size::TextRange;
+    use rustpython_parser::ast;
 
     #[test]
     fn test_extract_marker_same_line() {

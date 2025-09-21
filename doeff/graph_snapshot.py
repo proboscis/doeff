@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -43,24 +44,22 @@ def build_graph_snapshot(
     Returns:
         Dictionary containing nodes and edges for vis.js visualization
     """
-    nodes = []
-    edges = []
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
     node_counter = 1
-    edge_counter = 1
-    node_ids = {}  # Map WNode to node ID
-    level_map = {}  # Track levels for hierarchical layout
-    current_level = 0
-    
+    node_ids: dict[int, int] = {}  # Map WNode id() to node ID
+    node_lookup: dict[int, dict[str, Any]] = {}
+
     # First pass: create nodes for all steps
     if hasattr(graph, 'steps'):
         for step in graph.steps:
             node_id = node_counter
             node_counter += 1
-            
+
             # Map output node to ID
             if hasattr(step, 'output'):
                 node_ids[id(step.output)] = node_id
-            
+
             # WStep has output (WNode) which has value
             value = step.output.value if hasattr(step, 'output') and hasattr(step.output, 'value') else None
             
@@ -82,9 +81,10 @@ def build_graph_snapshot(
                     "border": "#60a5fa"
                 }
             }
-            
+
             nodes.append(node_data)
-    
+            node_lookup[node_id] = node_data
+
     # Process last node (which is also a WStep)
     if hasattr(graph, 'last') and graph.last:
         # Check if last node already exists
@@ -108,13 +108,13 @@ def build_graph_snapshot(
             # Map output node to ID
             if hasattr(graph.last, 'output'):
                 node_ids[id(graph.last.output)] = node_id
-            
+
             value = graph.last.output.value if hasattr(graph.last, 'output') and hasattr(graph.last.output, 'value') else None
-            
+
             label = str(value) if value is not None else 'Complete'
             if hasattr(graph.last, 'meta') and graph.last.meta and 'label' in graph.last.meta:
                 label = graph.last.meta['label']
-            
+
             if len(label) > 30:
                 label = label[:27] + "..."
             
@@ -132,28 +132,13 @@ def build_graph_snapshot(
                 }
             
             nodes.append(node_data)
-    
+            node_lookup[node_id] = node_data
+
     # Second pass: create edges and determine levels
-    processed_nodes = set()
-    
-    def get_node_level(node_id, edges_dict):
-        """Calculate level for hierarchical layout."""
-        if node_id in level_map:
-            return level_map[node_id]
-        
-        # Find predecessors
-        predecessors = [e["from"] for e in edges_dict if e["to"] == node_id]
-        if not predecessors:
-            level = 0
-        else:
-            level = max(get_node_level(p, edges_dict) for p in predecessors) + 1
-        
-        level_map[node_id] = level
-        return level
-    
     # Build edges list first
-    edges_list = []
-    
+    edges_list: list[dict[str, int]] = []
+    seen_edges: set[tuple[int, int]] = set()
+
     if hasattr(graph, 'steps'):
         for step in graph.steps:
             if hasattr(step, 'output') and hasattr(step, 'inputs'):
@@ -162,36 +147,103 @@ def build_graph_snapshot(
                     for input_node in step.inputs:
                         source_id = node_ids.get(id(input_node))
                         if source_id:
+                            key = (source_id, target_id)
+                            if key not in seen_edges:
+                                seen_edges.add(key)
+                                edges_list.append({
+                                    "from": source_id,
+                                    "to": target_id
+                                })
+
+    # Add edges for last node
+    if hasattr(graph, 'last') and hasattr(graph.last, 'inputs'):
+        included_in_steps = hasattr(graph, 'steps') and graph.last in getattr(graph, 'steps')
+        if not included_in_steps:
+            target_id = node_ids.get(id(graph.last.output))
+            if target_id:
+                for input_node in graph.last.inputs:
+                    source_id = node_ids.get(id(input_node))
+                    if source_id:
+                        key = (source_id, target_id)
+                        if key not in seen_edges:
+                            seen_edges.add(key)
                             edges_list.append({
                                 "from": source_id,
                                 "to": target_id
                             })
-    
-    # Add edges for last node
-    if hasattr(graph, 'last') and hasattr(graph.last, 'inputs'):
-        target_id = node_ids.get(id(graph.last.output))
-        if target_id:
-            for input_node in graph.last.inputs:
-                source_id = node_ids.get(id(input_node))
-                if source_id:
-                    edges_list.append({
-                        "from": source_id,
-                        "to": target_id
-                    })
-    
-    # Calculate levels and add to nodes
+
+    # Build adjacency for deterministic layout
+    adjacency: dict[int, set[int]] = {node["id"]: set() for node in nodes}
+    indegree: dict[int, int] = {node["id"]: 0 for node in nodes}
+
     for edge in edges_list:
-        get_node_level(edge["to"], edges_list)
-    
-    # Add levels to nodes
+        source_id = edge["from"]
+        target_id = edge["to"]
+        if target_id not in adjacency[source_id]:
+            adjacency[source_id].add(target_id)
+            indegree[target_id] += 1
+
+    import heapq
+
+    level_map: dict[int, int] = {}
+    topo_order: list[int] = []
+    heap: list[tuple[int, str, int]] = []
+
     for node in nodes:
-        node["level"] = level_map.get(node["id"], 0)
-    
+        node_id = node["id"]
+        if indegree[node_id] == 0:
+            level_map[node_id] = 0
+            heapq.heappush(heap, (0, node["label"], node_id))
+
+    while heap:
+        level, label, node_id = heapq.heappop(heap)
+        topo_order.append(node_id)
+        for neighbor in sorted(adjacency[node_id]):
+            candidate_level = level_map[node_id] + 1
+            if candidate_level > level_map.get(neighbor, 0):
+                level_map[neighbor] = candidate_level
+            indegree[neighbor] -= 1
+            if indegree[neighbor] == 0:
+                heapq.heappush(
+                    heap,
+                    (level_map.get(neighbor, candidate_level), node_lookup[neighbor]["label"], neighbor),
+                )
+
+    if len(topo_order) != len(nodes):
+        # Fallback to deterministic ordering if cycles are present
+        remaining = {node["id"] for node in nodes} - set(topo_order)
+        for node_id in remaining:
+            topo_order.append(node_id)
+            level_map.setdefault(node_id, 0)
+
+    from collections import defaultdict
+
+    level_buckets: dict[int, list[int]] = defaultdict(list)
+    for node_id in topo_order:
+        level = level_map.get(node_id, 0)
+        level_buckets[level].append(node_id)
+
+    H_SPACING = 220
+    V_SPACING = 180
+
+    for level, bucket in level_buckets.items():
+        if not bucket:
+            continue
+        total_width = (len(bucket) - 1) * H_SPACING
+        start_x = -total_width / 2
+        for index, node_id in enumerate(bucket):
+            node = node_lookup[node_id]
+            node["level"] = level
+            node["x"] = start_x + index * H_SPACING
+            node["y"] = level * V_SPACING
+            node["fixed"] = {"x": True, "y": True}
+            node["physics"] = False
+
     # Add arrows to edges
     for edge in edges_list:
         edge["arrows"] = "to"
         edges.append(edge)
-    
+
     return {
         "nodes": nodes,
         "edges": edges
@@ -306,10 +358,13 @@ def generate_html_template(snapshot_data: dict[str, Any], title: str = "doeff Gr
   <script type="text/javascript">
     // Graph data from Python
     const graphData = {snapshot_json};
+    const nodesArray = graphData.nodes || [];
+    const edgesArray = graphData.edges || [];
+    const hasManualLayout = nodesArray.every(node => typeof node.x === 'number' && typeof node.y === 'number');
     
     // Create DataSets
-    const nodes = new vis.DataSet(graphData.nodes || []);
-    const edges = new vis.DataSet(graphData.edges || []);
+    const nodes = new vis.DataSet(nodesArray);
+    const edges = new vis.DataSet(edgesArray);
     
     // Get container
     const container = document.getElementById('network');
@@ -321,20 +376,47 @@ def generate_html_template(snapshot_data: dict[str, Any], title: str = "doeff Gr
     }};
     
     // Network options
-    const options = {{
-      layout: {{
-        hierarchical: {{
-          enabled: true,
-          direction: "UD",  // Up-Down for DAG
-          sortMethod: "directed",
-          shakeTowards: "roots",
-          levelSeparation: 100,
-          nodeSpacing: 150,
-          treeSpacing: 200,
-          blockShifting: true,
-          edgeMinimization: true
+    const options = hasManualLayout
+      ? {{
+          layout: {{
+            improvedLayout: false
+          }},
+          physics: {{
+            enabled: false
+          }},
+          interaction: {{
+            hover: true,
+            tooltipDelay: 200,
+            zoomView: true,
+            dragView: true
+          }}
         }}
-      }},
+      : {{
+          layout: {{
+            hierarchical: {{
+              enabled: true,
+              direction: "UD",  // Up-Down for DAG
+              sortMethod: "directed",
+              shakeTowards: "roots",
+              levelSeparation: 120,
+              nodeSpacing: 180,
+              treeSpacing: 220,
+              blockShifting: true,
+              edgeMinimization: true
+            }}
+          }},
+          physics: {{
+            enabled: false
+          }},
+          interaction: {{
+            hover: true,
+            tooltipDelay: 200,
+            zoomView: true,
+            dragView: true
+          }}
+        }};
+
+    const optionsEdges = {{
       edges: {{
         smooth: {{
           enabled: true,
@@ -374,19 +456,12 @@ def generate_html_template(snapshot_data: dict[str, Any], title: str = "doeff Gr
           y: 2
         }}
       }},
-      physics: {{
-        enabled: false  // Disable physics for static DAG layout
-      }},
-      interaction: {{
-        hover: true,
-        tooltipDelay: 200,
-        zoomView: true,
-        dragView: true
-      }}
     }};
-    
+
+    const mergedOptions = Object.assign({{}}, options, optionsEdges);
+
     // Create network
-    let network = new vis.Network(container, data, options);
+    let network = new vis.Network(container, data, mergedOptions);
     
     // Status element
     const statusEl = document.getElementById('status');
@@ -584,5 +659,3 @@ def write_graph_html(
         )
     )
     return path
-
-

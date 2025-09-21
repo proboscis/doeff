@@ -3,26 +3,28 @@ package com.proboscis.doeff.ide
 import com.google.gson.annotations.SerializedName
 
 enum class IndexEntryCategory {
-    @SerializedName("kleisli_program") KLEISLI_PROGRAM,
-    @SerializedName("do_function") DO_FUNCTION,
-    @SerializedName("program") PROGRAM,
-    @SerializedName("returns_program") RETURNS_PROGRAM,
-    @SerializedName("accepts_program_param") ACCEPTS_PROGRAM_PARAM,
-    @SerializedName("accepts_program_interpreter_param") ACCEPTS_PROGRAM_INTERPRETER_PARAM,
     @SerializedName("program_interpreter") PROGRAM_INTERPRETER,
     @SerializedName("program_transformer") PROGRAM_TRANSFORMER,
+    @SerializedName("kleisli_program") KLEISLI_PROGRAM,
+    @SerializedName("interceptor") INTERCEPTOR,
+    @SerializedName("do_function") DO_FUNCTION,
+    @SerializedName("accepts_program_param") ACCEPTS_PROGRAM_PARAM,
+    @SerializedName("returns_program") RETURNS_PROGRAM,
+    @SerializedName("accepts_effect_param") ACCEPTS_EFFECT_PARAM,
+    @SerializedName("has_marker") HAS_MARKER,
     UNKNOWN;
 
     companion object {
         fun fromRaw(raw: String): IndexEntryCategory = when (raw) {
-            "kleisli_program" -> KLEISLI_PROGRAM
-            "do_function" -> DO_FUNCTION
-            "program" -> PROGRAM
-            "returns_program" -> RETURNS_PROGRAM
-            "accepts_program_param" -> ACCEPTS_PROGRAM_PARAM
-            "accepts_program_interpreter_param" -> ACCEPTS_PROGRAM_INTERPRETER_PARAM
             "program_interpreter" -> PROGRAM_INTERPRETER
             "program_transformer" -> PROGRAM_TRANSFORMER
+            "kleisli_program" -> KLEISLI_PROGRAM
+            "interceptor" -> INTERCEPTOR
+            "do_function" -> DO_FUNCTION
+            "accepts_program_param" -> ACCEPTS_PROGRAM_PARAM
+            "returns_program" -> RETURNS_PROGRAM
+            "accepts_effect_param" -> ACCEPTS_EFFECT_PARAM
+            "has_marker" -> HAS_MARKER
             else -> UNKNOWN
         }
     }
