@@ -2,35 +2,64 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::{Parser, ValueEnum};
-use doeff_indexer::{build_index, entry_matches_with_markers, ProgramTypeKind};
+use clap::{Parser, Subcommand, ValueEnum};
+use doeff_indexer::{build_index, entry_matches_with_markers, find_interpreters, find_transforms, find_kleisli, find_kleisli_with_type, find_interceptors, ProgramTypeKind};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Index doeff programs and Kleisli programs", long_about = None)]
 struct Cli {
     /// Root directory to scan
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", global = true)]
     root: PathBuf,
 
     /// Output file for the index (prints to stdout if not provided)
-    #[arg(long)]
+    #[arg(long, global = true)]
     output: Option<PathBuf>,
 
     /// Pretty-print JSON output
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, global = true)]
     pretty: bool,
-
-    /// Filter by type usage kind: program, kleisli, or any
-    #[arg(long, value_enum, default_value_t = QueryKind::Any)]
-    kind: QueryKind,
-
-    /// Filter by type argument (for example "User"); omit or use Any to match all
-    #[arg(long)]
-    type_arg: Option<String>,
     
-    /// Filter by doeff marker (e.g. "interpreter", "transform")
-    #[arg(long)]
-    marker: Option<String>,
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Build full index (default behavior)
+    Index {
+        /// Filter by type usage kind: program, kleisli, or any
+        #[arg(long, value_enum, default_value_t = QueryKind::Any)]
+        kind: QueryKind,
+
+        /// Filter by type argument (for example "User"); omit or use Any to match all
+        #[arg(long)]
+        type_arg: Option<String>,
+        
+        /// Filter by doeff marker (e.g. "interpreter", "transform")
+        #[arg(long)]
+        marker: Option<String>,
+    },
+    
+    /// Find interpreter functions (with # doeff: interpreter marker or Program -> T signature)
+    FindInterpreters,
+    
+    /// Find transform functions (with # doeff: transform marker or Program -> Program signature)
+    FindTransforms,
+    
+    /// Find Kleisli functions (with # doeff: kleisli marker or @do decorator)
+    FindKleisli {
+        /// Filter by type argument (for example "User")
+        #[arg(long)]
+        type_arg: Option<String>,
+    },
+    
+    /// Find interceptor functions (with # doeff: interceptor marker)
+    FindInterceptors {
+        /// Filter by effect type (for example "LogEffect")
+        #[arg(long)]
+        type_arg: Option<String>,
+    },
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -54,13 +83,68 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut index = build_index(&cli.root)?;
 
-    let kind_filter = cli.kind.to_program_kind();
-    let type_arg = cli.type_arg.as_deref();
-    let marker = cli.marker.as_deref();
-    index
-        .entries
-        .retain(|entry| entry_matches_with_markers(entry, kind_filter, type_arg, marker));
+    // Process based on command
+    match cli.command {
+        None | Some(Commands::Index { .. }) => {
+            // Default behavior or explicit index command
+            if let Some(Commands::Index { kind, type_arg, marker }) = cli.command {
+                let kind_filter = kind.to_program_kind();
+                let type_arg_ref = type_arg.as_deref();
+                let marker_ref = marker.as_deref();
+                index.entries.retain(|entry| 
+                    entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref)
+                );
+            }
+        }
+        
+        Some(Commands::FindInterpreters) => {
+            // Filter to only interpreters using marker-aware logic
+            let interpreters = find_interpreters(&index.entries);
+            index.entries = interpreters.into_iter().cloned().collect();
+        }
+        
+        Some(Commands::FindTransforms) => {
+            // Filter to only transforms using marker-aware logic
+            let transforms = find_transforms(&index.entries);
+            index.entries = transforms.into_iter().cloned().collect();
+        }
+        
+        Some(Commands::FindKleisli { type_arg }) => {
+            // Filter to only kleisli functions using marker-aware logic
+            if let Some(type_arg_ref) = type_arg.as_deref() {
+                // Use special type filtering for Kleisli (matches first parameter)
+                let kleisli = find_kleisli_with_type(&index.entries, type_arg_ref);
+                index.entries = kleisli.into_iter().cloned().collect();
+            } else {
+                let kleisli = find_kleisli(&index.entries);
+                index.entries = kleisli.into_iter().cloned().collect();
+            }
+        }
+        
+        Some(Commands::FindInterceptors { type_arg }) => {
+            // Filter to only interceptor functions using marker-aware logic
+            let interceptors = find_interceptors(&index.entries);
+            index.entries = interceptors.into_iter().cloned().collect();
+            
+            // Further filter by type if specified
+            if let Some(type_arg_ref) = type_arg.as_deref() {
+                // For interceptors, filter by Effect type in first parameter
+                index.entries.retain(|entry| {
+                    if let Some(first_param) = entry.all_parameters.iter().find(|p| p.is_required) {
+                        if let Some(annotation) = &first_param.annotation {
+                            annotation.contains(type_arg_ref) || annotation == "Effect"
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                });
+            }
+        }
+    }
 
+    // Output the result
     let json = if cli.pretty {
         serde_json::to_string_pretty(&index)?
     } else {

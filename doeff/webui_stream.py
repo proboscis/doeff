@@ -210,32 +210,6 @@ def graph_to_webui_html(
     return html
 
 
-def graph_to_webui_html_blocking(
-    graph: WGraph,
-    *,
-    title: str = "doeff Graph Snapshot",
-    mark_success: bool = False,
-) -> str:
-    """Blocking helper to render ``graph`` to HTML outside of ``@do`` contexts."""
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        raise RuntimeError(
-            "graph_to_webui_html_blocking() cannot be called while an event loop is running; "
-            "use await graph_to_webui_html_async(...) instead."
-        )
-
-    return asyncio.run(
-        graph_to_webui_html_async(
-            graph,
-            title=title,
-            mark_success=mark_success,
-        )
-    )
 
 
 async def write_graph_to_webui_html_async(

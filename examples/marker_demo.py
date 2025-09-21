@@ -213,9 +213,9 @@ class ProgramExecutor:
 
 def interpreter_with_comment(
     program: Program  # This is a regular comment, not a marker
-):  # doeff: interpreter - This IS the marker
+):  # doeff: interpreter
     """
-    Shows that only comments starting with '# doeff:' are markers.
+    Shows that only special marker comments are recognized.
     Other comments are ignored by the indexer.
     """
     return program.run()
