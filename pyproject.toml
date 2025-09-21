@@ -50,12 +50,8 @@ build-backend = "hatchling.build"
 
 
 [tool.uv.workspace]
-members = [
-    "packages/doeff-gemini",
-    "packages/doeff-openai",
-    "packages/doeff-openrouter",
-    "packages/doeff-pinjected",
-]
+members = ["packages/*"]
+exclude = ["packages/doeff-indexer"]
 
 [tool.uv.sources]
 doeff-pinjected = { workspace = true }
