@@ -5,15 +5,16 @@ import com.google.gson.JsonSyntaxException
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import kotlin.jvm.Volatile
 
 class IndexerClient(private val project: Project) {
     private val log = Logger.getInstance(IndexerClient::class.java)
     private val gson = Gson()
+    @Volatile
+    private var cachedIndexerPath: String? = null
 
     fun queryEntries(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
         CompletableFuture.supplyAsync { runIndexer(typeArgument) }
@@ -88,12 +89,20 @@ class IndexerClient(private val project: Project) {
     }
 
     private fun runIndexerCommand(command: String, typeArgument: String?): List<IndexEntry>? {
-        val indexerPath = locateIndexer() ?: return emptyList()
+        val indexerPath = resolveIndexerPath() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
         val commandList = mutableListOf(indexerPath, command, "--root", root)
-        if (!typeArgument.isNullOrBlank()) {
+        val trimmedType = typeArgument?.trim()?.takeUnless { it.equals("Any", ignoreCase = true) }
+        val supportsTypeArg = when (command) {
+            "find-kleisli", "find-interceptors" -> true
+            else -> false
+        }
+
+        if (supportsTypeArg && !trimmedType.isNullOrEmpty()) {
             commandList.add("--type-arg")
-            commandList.add(typeArgument)
+            commandList.add(trimmedType)
+        } else if (!supportsTypeArg && !trimmedType.isNullOrEmpty()) {
+            log.debug("Skipping type-arg '$trimmedType' for command $command – not supported")
         }
 
         log.debug("Executing doeff-indexer: ${commandList.joinToString(" ")}")
@@ -127,29 +136,40 @@ class IndexerClient(private val project: Project) {
         // Wait for readers to finish
         outputReader.join(1000)
         errorReader.join(1000)
-        
+
+        val stdout = output.toString()
+        val stderr = error.toString()
+
         if (!completed) {
             process.destroyForcibly()
-            notifyError("doeff-indexer timed out", "Waited 30 seconds without response", null)
+            notifyTranscript(commandList, null, stdout, stderr, "timeout after 30s", isError = true)
             return emptyList()
         }
 
-        if (process.exitValue() != 0) {
-            val errorText = error.toString()
-            notifyError("doeff-indexer failed", errorText.ifBlank { "Exit code ${process.exitValue()}" }, null)
+        val exitCode = process.exitValue()
+        if (exitCode != 0) {
+            notifyTranscript(commandList, exitCode, stdout, stderr, "exit code $exitCode", isError = true)
             return emptyList()
         }
 
-        return parseEntries(output.toString())
+        val entries = parseEntries(stdout, stderr)
+        return if (entries != null) {
+            notifyTranscript(commandList, exitCode, stdout, stderr, "success (${entries.size} entries)", isError = false)
+            entries
+        } else {
+            notifyTranscript(commandList, exitCode, stdout, stderr, "invalid JSON output", isError = true)
+            emptyList()
+        }
     }
     
     private fun runIndexer(typeArgument: String?): List<IndexEntry>? {
-        val indexerPath = locateIndexer() ?: return emptyList()
+        val indexerPath = resolveIndexerPath() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
         val command = mutableListOf(indexerPath, "--root", root, "--kind", "any")
-        if (!typeArgument.isNullOrBlank()) {
+        val trimmedType = typeArgument?.trim()?.takeUnless { it.equals("Any", ignoreCase = true) }
+        if (!trimmedType.isNullOrEmpty()) {
             command.add("--type-arg")
-            command.add(typeArgument)
+            command.add(trimmedType)
         }
 
         log.debug("Executing doeff-indexer: ${command.joinToString(" ")}")
@@ -183,34 +203,84 @@ class IndexerClient(private val project: Project) {
         // Wait for readers to finish
         outputReader.join(1000)
         errorReader.join(1000)
-        
+
+        val stdout = output.toString()
+        val stderr = error.toString()
+
         if (!completed) {
             process.destroyForcibly()
-            notifyError("doeff-indexer timed out", "Waited 30 seconds without response", null)
+            notifyTranscript(command, null, stdout, stderr, "timeout after 30s", isError = true)
             return emptyList()
         }
 
-        if (process.exitValue() != 0) {
-            val errorText = error.toString()
-            notifyError("doeff-indexer failed", errorText.ifBlank { "Exit code ${process.exitValue()}" }, null)
+        val exitCode = process.exitValue()
+        if (exitCode != 0) {
+            notifyTranscript(command, exitCode, stdout, stderr, "exit code $exitCode", isError = true)
             return emptyList()
         }
 
-        return parseEntries(output.toString())
+        val entries = parseEntries(stdout, stderr)
+        return if (entries != null) {
+            notifyTranscript(command, exitCode, stdout, stderr, "success (${entries.size} entries)", isError = false)
+            entries
+        } else {
+            notifyTranscript(command, exitCode, stdout, stderr, "invalid JSON output", isError = true)
+            emptyList()
+        }
     }
 
-    private fun parseEntries(output: String): List<IndexEntry>? {
+    private fun parseEntries(stdout: String, stderr: String): List<IndexEntry>? {
         return try {
-            val payload = gson.fromJson(output, IndexPayload::class.java)
+            val payload = gson.fromJson(stdout, IndexPayload::class.java)
             payload.entries
         } catch (ex: JsonSyntaxException) {
-            notifyError("Invalid indexer output", ex.message ?: "Unable to parse JSON", ex)
-            log.warn("Failed to parse indexer output: $output", ex)
+            log.warn("Failed to parse indexer output: $stdout", ex)
             null
         }
     }
 
-    private fun locateIndexer(): String? {
+    private fun notifyTranscript(
+        command: List<String>,
+        exitCode: Int?,
+        stdout: String,
+        stderr: String,
+        status: String,
+        isError: Boolean
+    ) {
+        val message = buildString {
+            append("Command: ").append(command.joinToString(" "))
+            append("\nStatus: ").append(status)
+            exitCode?.let { append("\nExit code: ").append(it) }
+            if (stderr.isNotBlank()) {
+                append("\nstderr:\n").append(stderr)
+            }
+            if (stdout.isNotBlank()) {
+                append("\nstdout:\n").append(stdout)
+            }
+        }
+
+        if (isError) {
+            ProgramPluginDiagnostics.error(project, message)
+        } else {
+            ProgramPluginDiagnostics.info(project, message)
+        }
+    }
+
+    fun lastKnownIndexerPath(): String? = cachedIndexerPath
+
+    private fun resolveIndexerPath(): String? {
+        cachedIndexerPath?.let { cached ->
+            if (File(cached).canExecute()) {
+                return cached
+            }
+        }
+
+        val located = locateIndexerInternal()
+        cachedIndexerPath = located
+        return located
+    }
+
+    private fun locateIndexerInternal(): String? {
         System.getenv("DOEFF_INDEXER_PATH")?.takeIf { it.isNotBlank() }?.let { path ->
             val file = File(path)
             if (file.canExecute()) {

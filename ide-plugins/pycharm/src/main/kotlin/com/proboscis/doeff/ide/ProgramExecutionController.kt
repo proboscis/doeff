@@ -71,6 +71,7 @@ object ProgramExecutionController {
                         project = project,
                         programPath = programPath,
                         programType = typeArgument,
+                        indexerPath = indexer.lastKnownIndexerPath(),
                         interpreters = interpreters,
                         kleisliPrograms = kleisli,
                         transformers = transformers

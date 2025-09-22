@@ -97,15 +97,19 @@ fn test_kleisli_detection() {
 from doeff import Program, do
 from typing import Any
 
-# @do functions are automatically Kleisli
+# @do functions become Kleisli when marked
 @do
-def fetch_user(user_id: str) -> dict:
+def fetch_user(user_id: str) -> dict:  # doeff: kleisli
     return {"id": user_id}
 
 # @do with Any parameter
 @do
-def process_any(data: Any) -> str:
+def process_any(data: Any) -> str:  # doeff: kleisli
     return str(data)
+
+@do
+def unmarked_kleisli(value: str) -> str:
+    return value
 
 # Marked Kleisli
 def create_program(value: int) -> Program[str]:  # doeff: kleisli
@@ -128,6 +132,7 @@ def make_program(x: int) -> Program[int]:
     assert!(names.contains(&"process_any"));
     assert!(names.contains(&"create_program"));
     assert!(!names.contains(&"make_program"));
+    assert!(!names.contains(&"unmarked_kleisli"));
 }
 
 #[test]
@@ -142,16 +147,24 @@ from doeff import Program, do
 from typing import Any
 
 @do
-def process_string(s: str) -> int:
+def process_string(s: str) -> int:  # doeff: kleisli
     return len(s)
 
 @do
-def process_int(n: int) -> str:
+def process_int(n: int) -> str:  # doeff: kleisli
     return str(n)
 
 @do
-def process_any(data: Any) -> str:
+def process_any(data: Any) -> str:  # doeff: kleisli
     return str(data)
+
+@do
+def process_with_default(text: str, retries: int = 1) -> int:  # doeff: kleisli
+    return len(text) + retries
+
+@do
+def process_two_required(text: str, retries: int) -> int:  # doeff: kleisli
+    return len(text) + retries
 
 def marked_str(s: str) -> Program[int]:  # doeff: kleisli
     return Program.of(len(s))
@@ -161,24 +174,63 @@ def marked_str(s: str) -> Program[int]:  # doeff: kleisli
     let index = build_index(temp_dir.path()).unwrap();
 
     // Filter by str type
-    let str_kleisli = find_kleisli_with_type(&index.entries, "str");
+    let str_kleisli = find_kleisli_with_type(&index.entries, "Program[str]");
     let str_names: Vec<&str> = str_kleisli.iter().map(|e| e.name.as_str()).collect();
 
-    // Should find process_string, process_any (Any matches all), and marked_str
-    assert_eq!(str_kleisli.len(), 3);
+    // Should find @do functions with single required str parameter
+    for entry in &str_kleisli {
+        assert!(
+            entry.categories.contains(&EntryCategory::DoFunction),
+            "find-kleisli Program[str] returned non-@do function: {}",
+            entry.name
+        );
+        let required: Vec<_> = entry
+            .all_parameters
+            .iter()
+            .filter(|p| p.is_required)
+            .collect();
+        assert_eq!(
+            required.len(),
+            1,
+            "{} should have exactly one required parameter",
+            entry.name
+        );
+    }
+
     assert!(str_names.contains(&"process_string"));
     assert!(str_names.contains(&"process_any"));
-    assert!(str_names.contains(&"marked_str"));
+    assert!(str_names.contains(&"process_with_default"));
+    assert!(!str_names.contains(&"process_two_required"));
+    assert!(!str_names.contains(&"marked_str"));
     assert!(!str_names.contains(&"process_int"));
 
     // Filter by int type
-    let int_kleisli = find_kleisli_with_type(&index.entries, "int");
+    let int_kleisli = find_kleisli_with_type(&index.entries, "Program[int]");
     let int_names: Vec<&str> = int_kleisli.iter().map(|e| e.name.as_str()).collect();
 
-    // Should find process_int and process_any
-    assert_eq!(int_kleisli.len(), 2);
+    // Should find process_int and process_any (Any matches all)
+    for entry in &int_kleisli {
+        assert!(
+            entry.categories.contains(&EntryCategory::DoFunction),
+            "find-kleisli Program[int] returned non-@do function: {}",
+            entry.name
+        );
+        let required: Vec<_> = entry
+            .all_parameters
+            .iter()
+            .filter(|p| p.is_required)
+            .collect();
+        assert_eq!(
+            required.len(),
+            1,
+            "{} should have exactly one required parameter",
+            entry.name
+        );
+    }
+
     assert!(int_names.contains(&"process_int"));
     assert!(int_names.contains(&"process_any"));
+    assert!(!int_names.contains(&"marked_str"));
 }
 
 #[test]
@@ -309,7 +361,7 @@ class Controller:
         return p.run()
     
     @do
-    def fetch_data(self, key: str) -> dict:
+    def fetch_data(self, key: str) -> dict:  # doeff: kleisli
         return {"key": key}
     
     def transform_data(self, p: Program[dict]) -> Program[str]:  # doeff: transform

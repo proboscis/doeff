@@ -342,15 +342,14 @@ find-transforms /project/path
 
 #### `find-kleisli <root_path>`
 
-Returns functions marked with `# doeff: kleisli` OR having `@do` decorator.
+Returns functions marked with `# doeff: kleisli`.
 
 ```bash
 find-kleisli /project/path
 ```
 
 **Filtering Logic:**
-- Has `kleisli` in markers array, OR
-- Has `DoFunction` in categories (any `@do` function)
+- Has `kleisli` in markers array
 
 #### `find-kleisli --type-arg <type> <root_path>`
 
@@ -379,7 +378,7 @@ find-interceptors /project/path
 
 All `find-*` commands:
 - Build the index from scratch each time
-- Apply marker-based filtering (except `find-kleisli` which also includes `@do`)
+- Rely exclusively on marker-based filtering
 - Return JSON arrays of matching entries
 - Exit with status 0 on success, non-zero on error
 
@@ -393,7 +392,7 @@ The indexer supports sophisticated type matching for parameter filtering:
 ```python
 # find-kleisli --type-arg str matches:
 @do
-def process_string(value: str) -> int:  # ✅ Exact match
+def process_string(value: str) -> int:  # doeff: kleisli  # ✅ Exact match
     return len(value)
 ```
 
@@ -401,18 +400,18 @@ def process_string(value: str) -> int:  # ✅ Exact match
 ```python
 # find-kleisli --type-arg str matches:
 @do  
-def process_optional(value: Optional[str]) -> int:  # ✅ Contains str
+def process_optional(value: Optional[str]) -> int:  # doeff: kleisli  # ✅ Contains str
     return len(value or "")
 
 @do
-def process_list(items: List[str]) -> int:  # ✅ Contains str  
+def process_list(items: List[str]) -> int:  # doeff: kleisli  # ✅ Contains str  
     return len(items)
 ```
 
 #### Any Type Special Handling
 ```python
 @do
-def process_any(value: Any) -> str:  # ✅ Matches ALL type filters
+def process_any(value: Any) -> str:  # doeff: kleisli  # ✅ Matches ALL type filters
     return str(value)
 ```
 
@@ -423,14 +422,14 @@ def process_any(value: Any) -> str:  # ✅ Matches ALL type filters
 #### Union Type Handling
 ```python
 @do
-def process_union(value: Union[str, int]) -> str:  # ✅ Matches --type-arg str
+def process_union(value: Union[str, int]) -> str:  # doeff: kleisli  # ✅ Matches --type-arg str
     return str(value)
 ```
 
 #### Complex Generics
 ```python  
-@do
-def process_complex(data: Dict[str, List[User]]) -> Summary:  # ✅ Matches --type-arg User
+@do  
+def process_complex(data: Dict[str, List[User]]) -> Summary:  # doeff: kleisli  # ✅ Matches --type-arg User
     return analyze(data)
 ```
 
@@ -456,6 +455,20 @@ fn matches_type_filter(annotation: &str, type_filter: &str) -> bool {
     false
 }
 ```
+
+### Kleisli Type-Arg Constraints
+
+When clients call `find-kleisli --type-arg Program[T]`, the indexer extracts the inner `T` and
+returns only entries that model `Kleisli[T, _]`:
+
+- Only functions marked with `# doeff: kleisli` are eligible for CLI results.
+- Type filtering additionally requires the function to use `@do`.
+- Exactly one positional parameter may lack a default value; it must be annotated as `T` or `Any`.
+- Additional parameters are allowed only when they provide defaults, because the CLI cannot infer
+  values for extra required arguments.
+- Functions with multiple required parameters are excluded from Kleisli results.
+- Parameters typed as `Any` continue to match every `--type-arg` filter after the `Program[T]`
+  unwrapping step.
 
 ## @do Decorator Handling
 
@@ -509,25 +522,21 @@ def kleisli_function(user_id: str) -> User:
 2. **Interceptor Override**: `@do` + `Effect` parameter = `Interceptor`  
 3. **Kleisli Default**: `@do` + other parameter = `KleisliProgram`
 
-### @do in find-kleisli
+### Marker Requirements for CLI Commands
 
-The `find-kleisli` command has special logic to include `@do` functions:
+Specific CLI discovery commands (`find-interpreters`, `find-transforms`, `find-kleisli`,
+`find-interceptors`) only return entries that carry an explicit marker comment. Categorization
+still honours signature analysis and decorators, but discoverability via these commands requires a
+matching marker:
 
-```rust
-fn find_kleisli(entries: &[IndexEntry]) -> Vec<IndexEntry> {
-    entries.iter()
-        .filter(|entry| {
-            // Include if marked with kleisli
-            entry.markers.iter().any(|m| m.eq_ignore_ascii_case("kleisli")) ||
-            // OR if it has @do decorator (regardless of first parameter type)
-            entry.categories.contains(&EntryCategory::DoFunction)
-        })
-        .cloned()
-        .collect()
-}
-```
+- `find-interpreters` → `# doeff: interpreter`
+- `find-transforms` → `# doeff: transform`
+- `find-kleisli` → `# doeff: kleisli`
+- `find-interceptors` → `# doeff: interceptor`
 
-This means ALL `@do` functions appear in `find-kleisli` results, even if they're categorized as Transforms or Interceptors.
+`@do` functions continue to be categorized automatically (Kleisli/Transform/Interceptor), yet they
+must also be marked to appear in CLI results. This guarantees that IDE integrations and automation
+only surface functions that were intentionally exposed by maintainers.
 
 ## Integration with IDE Plugins
 

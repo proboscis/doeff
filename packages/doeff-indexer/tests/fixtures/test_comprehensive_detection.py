@@ -2,7 +2,7 @@
 Comprehensive test suite for doeff type detection.
 Each section tests specific detection rules.
 """
-from typing import Any, Optional
+from typing import Any, Iterable, Optional, TypeVar, Generic
 from doeff import Program, KleisliProgram, do, Effect
 
 # ===========================================================================
@@ -61,14 +61,14 @@ def wrong_transform(program: Program[int]) -> int:  # doeff: transform
 
 # CORRECT: @do function (automatic Kleisli)
 @do
-def fetch_by_id(user_id: str) -> User:
+def fetch_by_id(user_id: str) -> User:  # doeff: kleisli
     """✅ KleisliProgram[str, User] via @do"""
     yield Log(f"Fetching {user_id}")
     return User(user_id)
 
 # CORRECT: @do with Any parameter
 @do
-def process_any(data: Any) -> Result:
+def process_any(data: Any) -> Result:  # doeff: kleisli
     """✅ KleisliProgram[Any, Result] - matches ALL type filters"""
     yield Log("Processing")
     return Result(data)
@@ -87,19 +87,46 @@ def not_kleisli(program: Program[int]) -> str:
 
 # Type filtering test cases
 @do
-def kleisli_str(name: str) -> int:
+def kleisli_str(name: str) -> int:  # doeff: kleisli
     """For testing: find-kleisli --type-arg str should match"""
     return len(name)
 
 @do
-def kleisli_int(count: int) -> str:
+def unmarked_kleisli(name: str) -> int:
+    """❌ Missing marker - should not be discoverable"""
+    return len(name) + 1
+
+@do
+def kleisli_int(count: int) -> str:  # doeff: kleisli
     """For testing: find-kleisli --type-arg str should NOT match"""
     return str(count)
 
 @do
-def kleisli_optional(value: Optional[str]) -> int:
+def kleisli_optional(value: Optional[str]) -> int:  # doeff: kleisli
     """For testing: Optional parameters"""
     return len(value or "")
+
+@do
+def kleisli_with_default(name: str, retries: int = 1) -> int:  # doeff: kleisli
+    """Additional optional parameters should be allowed"""
+    yield Log(f"Retry {name}")
+    return len(name) + retries
+
+@do
+def kleisli_multi_required(primary: str, secondary: int) -> int:  # doeff: kleisli
+    """Multiple required parameters should disqualify Program[T] filters"""
+    yield Log("Multiple args")
+    return len(primary) + secondary
+
+@do
+def kp_aggregate_segmentations(
+    image: Img,
+    extractors: Iterable[tuple[int, Extractor]],
+) -> EffectGenerator[Mask1]:  # doeff: kleisli
+    """Aggregate multiple segmentations into a multi-class mask using parallel execution."""
+    yield Log("Starting aggregation of segmentations")
+    extractor_items = list(extractors)
+    return Mask1(len(extractor_items))
 
 # ===========================================================================
 # SECTION 4: INTERCEPTORS (Effect -> Effect | Program)
@@ -177,3 +204,16 @@ class LogEffect(Effect):
     def __init__(self, message: str): self.message = message
 
 def Log(msg: str): return LogEffect(msg)
+
+T = TypeVar("T")
+
+class EffectGenerator(Generic[T]):
+    def __init__(self, value: T): self.value = value
+
+class Img: ...
+
+class Extractor:
+    def __init__(self, name: str): self.name = name
+
+class Mask1:
+    def __init__(self, classes: int): self.classes = classes
