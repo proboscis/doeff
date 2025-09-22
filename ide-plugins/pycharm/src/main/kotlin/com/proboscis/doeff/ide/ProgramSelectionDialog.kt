@@ -17,6 +17,7 @@ class ProgramSelectionDialog(
     project: Project,
     private val programPath: String,
     private val programType: String,
+    private val indexerPath: String?,
     private val interpreters: List<IndexEntry>,
     private val kleisliPrograms: List<IndexEntry>,
     private val transformers: List<IndexEntry>
@@ -64,6 +65,15 @@ class ProgramSelectionDialog(
         content.add(JLabel("Program type"), constraints)
         constraints.gridx = 1
         content.add(JLabel(programType), constraints)
+
+        row += 1
+        constraints.gridx = 0
+        constraints.gridy = row
+        content.add(JLabel("Indexer binary"), constraints)
+        constraints.gridx = 1
+        val indexerLabel = JLabel(indexerPath ?: "<unknown>")
+        indexerLabel.toolTipText = indexerPath ?: "Indexer location not resolved"
+        content.add(indexerLabel, constraints)
 
         row += 1
         constraints.gridx = 0

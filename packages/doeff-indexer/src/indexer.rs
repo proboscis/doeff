@@ -1339,16 +1339,14 @@ pub fn find_transforms(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
 }
 
 pub fn find_kleisli(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
-    // STRICT MODE for find-kleisli command: Only functions with explicit "kleisli" marker OR @do decorator
+    // STRICT MODE for find-kleisli command: Only functions with explicit "kleisli" marker
     entries
         .iter()
         .filter(|entry| {
-            // Must have explicit "kleisli" marker OR be a @do decorated function
             entry
                 .markers
                 .iter()
                 .any(|m| m.eq_ignore_ascii_case("kleisli"))
-                || entry.categories.contains(&EntryCategory::DoFunction)
         })
         .collect()
 }
@@ -1358,28 +1356,104 @@ pub fn find_kleisli_with_type<'a>(
     entries: &'a [IndexEntry],
     type_arg: &str,
 ) -> Vec<&'a IndexEntry> {
+    let trimmed = type_arg.trim();
+    let effective_type = if let Some(inner) = extract_program_inner_type(trimmed) {
+        inner
+    } else {
+        trimmed.to_string()
+    };
+
     find_kleisli(entries)
         .into_iter()
-        .filter(|entry| {
-            // For Kleisli functions, check the first non-optional parameter's type
-            // Get first required parameter from all_parameters
-            let first_required = entry.all_parameters.iter().find(|p| p.is_required);
-
-            if let Some(param) = first_required {
-                if let Some(annotation) = &param.annotation {
-                    // Match if parameter type is the requested type OR is Any
-                    annotation.contains(type_arg)
-                        || annotation == "Any"
-                        || annotation.contains("typing.Any")
-                } else {
-                    false
-                }
-            } else {
-                // No required parameters - check if it's a no-arg Kleisli
-                false
-            }
-        })
+        .filter(|entry| kleisli_parameter_matches(entry, &effective_type))
         .collect()
+}
+
+fn kleisli_parameter_matches(entry: &IndexEntry, target_type: &str) -> bool {
+    if !entry.categories.contains(&EntryCategory::DoFunction) {
+        return false;
+    }
+
+    let required_params: Vec<&ParameterRef> = entry
+        .all_parameters
+        .iter()
+        .filter(|param| param.is_required)
+        .collect();
+
+    if required_params.len() != 1 {
+        return false;
+    }
+
+    if let Some(param) = required_params.first() {
+        if let Some(annotation) = &param.annotation {
+            return annotation_matches(annotation, target_type);
+        }
+    }
+
+    false
+}
+
+fn annotation_matches(annotation: &str, target_type: &str) -> bool {
+    if target_type.trim().is_empty() {
+        return false;
+    }
+
+    if is_any_type(target_type) {
+        return true;
+    }
+
+    if is_any_type(annotation) {
+        return true;
+    }
+
+    let normalized_target = target_type.trim();
+    annotation.contains(normalized_target)
+}
+
+fn is_any_type(value: &str) -> bool {
+    let normalized = value.trim();
+    normalized.eq_ignore_ascii_case("any") || normalized.contains("typing.Any")
+}
+
+fn extract_program_inner_type(type_arg: &str) -> Option<String> {
+    let trimmed = type_arg.trim();
+    let program_pos = trimmed.rfind("Program")?;
+    let after_program = &trimmed[program_pos + "Program".len()..];
+    let mut chars = after_program.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch.is_whitespace() {
+            continue;
+        }
+
+        if ch != '[' {
+            return None;
+        }
+
+        let mut depth = 1usize;
+        let mut inner = String::new();
+
+        while let Some(next) = chars.next() {
+            match next {
+                '[' => {
+                    depth += 1;
+                    inner.push(next);
+                }
+                ']' => {
+                    if depth == 1 {
+                        return Some(inner.trim().to_string());
+                    }
+                    depth -= 1;
+                    inner.push(']');
+                }
+                _ => inner.push(next),
+            }
+        }
+
+        break;
+    }
+
+    None
 }
 
 pub fn find_interceptors(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
