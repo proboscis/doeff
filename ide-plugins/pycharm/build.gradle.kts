@@ -4,7 +4,7 @@ plugins {
 }
 
 intellij {
-    version.set("2023.3")
+    version.set("2024.3")
     type.set("PC")
     plugins.set(listOf("PythonCore"))
 }
@@ -24,7 +24,7 @@ kotlin {
 tasks {
     patchPluginXml {
         sinceBuild.set("233")
-        untilBuild.set("241.*")
+        untilBuild.set("")
     }
 
     buildSearchableOptions {
