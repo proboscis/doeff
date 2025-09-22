@@ -105,16 +105,14 @@ fn test_kleisli_detection() {
     // Find Kleisli functions (marker OR @do)
     let kleisli = find_kleisli(&index.entries);
 
-    // Should find functions with "kleisli" marker OR @do decorator
+    // Should find functions with "kleisli" marker only
     for entry in &kleisli {
-        let has_marker = entry
-            .markers
-            .iter()
-            .any(|m| m.eq_ignore_ascii_case("kleisli"));
-        let has_do = entry.categories.contains(&EntryCategory::DoFunction);
         assert!(
-            has_marker || has_do,
-            "Found Kleisli without marker or @do: {}",
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("kleisli")),
+            "Found Kleisli without marker: {}",
             entry.name
         );
     }
@@ -125,52 +123,119 @@ fn test_kleisli_type_filtering() {
     let test_dir = Path::new("tests/fixtures");
     let index = build_index(test_dir).expect("Failed to build index");
 
-    // Test filtering by type argument
-    let str_kleisli = find_kleisli_with_type(&index.entries, "str");
+    // Test filtering by Program[str] type argument
+    let str_kleisli = find_kleisli_with_type(&index.entries, "Program[str]");
+    let str_names: Vec<&str> = str_kleisli.iter().map(|e| e.name.as_str()).collect();
 
+    // Only @do functions with a single required parameter should be returned
     for entry in &str_kleisli {
-        // Should have first parameter matching "str" or "Any"
-        if let Some(first_param) = entry.all_parameters.first() {
-            if let Some(annotation) = &first_param.annotation {
-                assert!(
-                    annotation.contains("str") || annotation == "Any" || annotation.contains("Any"),
-                    "Kleisli {} first param {} doesn't match str filter",
-                    entry.name,
-                    annotation
-                );
-            }
-        }
+        assert!(
+            entry.categories.contains(&EntryCategory::DoFunction),
+            "find-kleisli Program[str] returned non-@do function: {}",
+            entry.name
+        );
+
+        let required_params: Vec<_> = entry
+            .all_parameters
+            .iter()
+            .filter(|p| p.is_required)
+            .collect();
+        assert_eq!(
+            required_params.len(),
+            1,
+            "{} should have exactly one required parameter",
+            entry.name
+        );
+
+        let annotation = required_params[0].annotation.as_deref().unwrap_or_default();
+        assert!(
+            annotation.contains("str") || annotation == "Any" || annotation.contains("Any"),
+            "Kleisli {} first param {} doesn't match Program[str] filter",
+            entry.name,
+            annotation
+        );
     }
 
-    // Test that Any matches all types
-    let any_entries: Vec<_> = index
-        .entries
-        .iter()
-        .filter(|e| {
-            e.all_parameters
-                .first()
-                .and_then(|p| p.annotation.as_ref())
-                .map(|a| a == "Any" || a.contains("Any"))
-                .unwrap_or(false)
-        })
-        .collect();
+    assert!(str_names.contains(&"fetch_by_id"));
+    assert!(str_names.contains(&"kleisli_str"));
+    assert!(str_names.contains(&"kleisli_optional"));
+    assert!(str_names.contains(&"kleisli_with_default"));
+    assert!(str_names.contains(&"process_any"));
+    assert!(!str_names.contains(&"manual_kleisli"));
+    assert!(!str_names.contains(&"unmarked_kleisli"));
+    assert!(!str_names.contains(&"kleisli_int"));
+    assert!(!str_names.contains(&"kleisli_multi_required"));
+    assert!(!str_names.contains(&"fetch_data"));
+    assert!(!str_names.contains(&"hybrid_function"));
 
-    for type_arg in &["str", "int", "User"] {
+    // Test that Any-typed @do functions match all Program filters
+    for type_arg in &["Program[str]", "Program[int]", "Program[User]"] {
         let filtered = find_kleisli_with_type(&index.entries, type_arg);
-        let kleisli_funcs = find_kleisli(&index.entries);
-
-        for any_entry in &any_entries {
-            // Check if this Any-typed entry is in Kleisli functions
-            if kleisli_funcs.iter().any(|k| k.name == any_entry.name) {
-                assert!(
-                    filtered.iter().any(|e| e.name == any_entry.name),
-                    "Any-typed Kleisli {} should match {} filter",
-                    any_entry.name,
-                    type_arg
-                );
-            }
-        }
+        assert!(
+            filtered.iter().any(|entry| entry.name == "process_any"),
+            "process_any should match filter {}",
+            type_arg
+        );
     }
+
+    // Program[int] should include int-typed kleisli but still enforce single required arg rule
+    let int_kleisli = find_kleisli_with_type(&index.entries, "Program[int]");
+    let int_names: Vec<&str> = int_kleisli.iter().map(|e| e.name.as_str()).collect();
+
+    assert!(int_names.contains(&"kleisli_int"));
+    assert!(int_names.contains(&"process_any"));
+    assert!(!int_names.contains(&"kleisli_str"));
+    assert!(!int_names.contains(&"manual_kleisli"));
+
+    // Multi-argument Kleisli should be excluded regardless of filter type
+    let img_kleisli = find_kleisli_with_type(&index.entries, "Img");
+    assert!(img_kleisli
+        .iter()
+        .all(|entry| entry.name != "kp_aggregate_segmentations"));
+    let program_img_kleisli = find_kleisli_with_type(&index.entries, "Program[Img]");
+    assert!(program_img_kleisli
+        .iter()
+        .all(|entry| entry.name != "kp_aggregate_segmentations"));
+}
+
+#[test]
+fn test_cli_marker_requirements() {
+    let test_dir = Path::new("tests/fixtures");
+    let index = build_index(test_dir).expect("Failed to build index");
+
+    let interpreter_names: Vec<_> = find_interpreters(&index.entries)
+        .into_iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    assert!(interpreter_names.contains(&"exec_int"));
+    assert!(interpreter_names.contains(&"exec_any"));
+    assert!(!interpreter_names.contains(&"exec_unmarked"));
+
+    let transform_names: Vec<_> = find_transforms(&index.entries)
+        .into_iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    assert!(transform_names.contains(&"map_transform"));
+    assert!(transform_names.contains(&"do_transform"));
+    assert!(!transform_names.contains(&"unmarked_transform"));
+
+    let kleisli_names: Vec<_> = find_kleisli(&index.entries)
+        .into_iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    assert!(kleisli_names.contains(&"fetch_by_id"));
+    assert!(kleisli_names.contains(&"kleisli_str"));
+    assert!(kleisli_names.contains(&"hybrid_function"));
+    assert!(!kleisli_names.contains(&"unmarked_kleisli"));
+    assert!(!kleisli_names.contains(&"not_kleisli"));
+
+    let interceptor_names: Vec<_> = find_interceptors(&index.entries)
+        .into_iter()
+        .map(|entry| entry.name.as_str())
+        .collect();
+    assert!(interceptor_names.contains(&"log_effect_interceptor"));
+    assert!(interceptor_names.contains(&"do_effect_interceptor"));
+    assert!(!interceptor_names.contains(&"unmarked_interceptor"));
 }
 
 #[test]
