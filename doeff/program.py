@@ -7,14 +7,16 @@ This module contains the Program wrapper class that represents a lazy computatio
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from doeff.types import Effect, EffectBase
+from doeff.effects import gather, gather_dict
 
 T = TypeVar("T")
 U = TypeVar("U")
+V = TypeVar("V")
 
 
 @dataclass(frozen=True)
@@ -169,6 +171,14 @@ class Program(Generic[T]):
         return Program.pure(value)
 
     @staticmethod
+    def lift(value: "Program[U] | U") -> Program[U]:
+        """Return ``value`` unchanged if it is already a Program, else wrap it in ``Program.pure``."""
+
+        if isinstance(value, Program):
+            return value
+        return Program.pure(value)
+
+    @staticmethod
     def from_effect(effect: Effect) -> Program[Any]:
         """Create a program from a single effect."""
 
@@ -180,20 +190,12 @@ class Program(Generic[T]):
 
     @staticmethod
     def sequence(programs: list[Program[T]]) -> Program[list[T]]:
-        """Sequence a list of programs, collecting their results."""
+        """Sequence a list of programs, collecting their results in parallel where supported."""
 
         def sequence_generator():
-            results = []
-            for prog in programs:
-                gen = prog.generator_func()
-                try:
-                    current = next(gen)
-                    while True:
-                        value = yield current
-                        current = gen.send(value)
-                except StopIteration as e:
-                    results.append(e.value)
-            return results
+            effect = gather(*programs)
+            results = yield effect
+            return list(results)
 
         return Program(sequence_generator)
 
@@ -202,6 +204,63 @@ class Program(Generic[T]):
         """Map a function returning Programs over a list and sequence the results."""
         programs = [f(item) for item in items]
         return Program.sequence(programs)
+
+    @staticmethod
+    def list(values: Iterable["Program[U] | U"]) -> Program[list[U]]:
+        """Construct a Program that resolves each element and returns a list."""
+
+        programs = [Program.lift(value) for value in values]
+        return Program.sequence(programs)
+
+    @staticmethod
+    def tuple(values: Iterable["Program[U] | U"]) -> Program[tuple[U, ...]]:
+        """Construct a Program that resolves each element and returns a tuple."""
+
+        programs = [Program.lift(value) for value in values]
+        return Program.sequence(programs).map(lambda items: tuple(items))
+
+    @staticmethod
+    def set(values: Iterable["Program[U] | U"]) -> Program[set[U]]:
+        """Construct a Program that resolves each element and returns a set."""
+
+        programs = [Program.lift(value) for value in values]
+        return Program.sequence(programs).map(lambda items: set(items))
+
+    @staticmethod
+    def dict(
+        *mapping: Mapping[Any, "Program[V] | V"] | Iterable[tuple[Any, "Program[V] | V"]],
+        **kwargs: "Program[V] | V",
+    ) -> Program[dict[Any, V]]:
+        """Construct a Program that resolves values and returns a dict.
+
+        Mirrors ``dict`` semantics: positional arguments may be mappings or iterables of
+        key/value pairs while keyword arguments provide additional items.
+        """
+
+        raw = dict(*mapping, **kwargs)
+
+        def dict_generator():
+            # gather_dict expects Programs or callables yielding Programs in mapping values
+            program_map = {
+                key: Program.lift(value)
+                for key, value in raw.items()
+            }
+            effect = gather_dict(program_map)
+            result = yield effect
+            return dict(result)
+
+        return Program(dict_generator)
+
+    def __getattr__(self, item):
+        return self.map(lambda x: getattr(x, item))
+
+    def __getitem__(self, item):
+        return self.map(lambda x: x[item])
+
+    def __call__(self, *args, **kwargs):
+        return self.map(lambda f: f(*args, **kwargs))
+
+
 
 
 __all__ = ["Program"]
