@@ -9,14 +9,18 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from doeff.types import Effect, EffectBase
-from doeff.effects import gather, gather_dict
+from doeff.effects import gather, gather_dict, first_success_effect
+from doeff.types import Effect, EffectBase, Maybe
+
+if TYPE_CHECKING:
+    from doeff.effects._program_types import ProgramLike
 
 T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
+S = TypeVar("S")
 
 
 @dataclass(frozen=True)
@@ -118,6 +122,7 @@ class Program(Generic[T]):
 
         def intercepted_generator():
             gen = self.generator_func()
+            transformed_cache: dict[int, Any] = {}
             try:
                 current = next(gen)
             except StopIteration as exc:
@@ -129,7 +134,13 @@ class Program(Generic[T]):
                     current = current.intercept(transform)
                     value = yield current
                 elif isinstance(current, EffectBase):
-                    transformed = transform(current)
+                    effect_id = id(current)
+                    cached = transformed_cache.get(effect_id)
+                    if cached is not None:
+                        transformed = cached
+                    else:
+                        transformed = transform(current)
+                        transformed_cache[effect_id] = transformed
                     if isinstance(transformed, Program):
                         # Yield the Program to get the result (Effect or value)
                         # DO NOT recursively intercept to avoid infinite recursion
@@ -203,6 +214,41 @@ class Program(Generic[T]):
             "Expected Program or Effect, got "
             f"{type(program_like).__name__}"
         )
+
+    @staticmethod
+    def first_success(*programs: "ProgramLike[T]") -> "Program[T]":
+        """Return a Program that yields the first successful result from ``programs``."""
+
+        if not programs:
+            raise ValueError("Program.first_success requires at least one program")
+
+        def first_success_generator():
+            effect = first_success_effect(*programs)
+            value = yield effect
+            return value
+
+        return Program(first_success_generator)
+
+    @staticmethod
+    def first_some(*programs: "ProgramLike[S]") -> "Program[Maybe[S]]":
+        """Return the first ``Some`` result from the provided programs."""
+
+        if not programs:
+            raise ValueError("Program.first_some requires at least one program")
+
+        def first_some_generator():
+            for candidate in programs:
+                normalized = Program.from_program_like(candidate)
+                value = yield normalized
+
+                maybe = value if isinstance(value, Maybe) else Maybe.from_optional(value)
+
+                if maybe.is_some():
+                    return maybe
+
+            return Maybe.from_optional(None)
+
+        return Program(first_some_generator)
 
     @staticmethod
     def sequence(programs: list[Program[T]]) -> Program[list[T]]:
