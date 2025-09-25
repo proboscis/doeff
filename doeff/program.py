@@ -176,6 +176,9 @@ class Program(Generic[T]):
 
         if isinstance(value, Program):
             return value
+        if isinstance(value, Effect):
+            # Effect values are converted to single-step Programs
+            return Program.from_effect(value)  # type: ignore[return-value]
         return Program.pure(value)
 
     @staticmethod
@@ -187,6 +190,19 @@ class Program(Generic[T]):
             return result
 
         return Program(effect_generator)
+
+    @staticmethod
+    def from_program_like(program_like: Program[Any] | Effect) -> Program[Any]:
+        """Normalize a value that should be either ``Program`` or ``Effect``."""
+
+        if isinstance(program_like, Program):
+            return program_like
+        if isinstance(program_like, Effect):
+            return Program.from_effect(program_like)
+        raise TypeError(
+            "Expected Program or Effect, got "
+            f"{type(program_like).__name__}"
+        )
 
     @staticmethod
     def sequence(programs: list[Program[T]]) -> Program[list[T]]:
