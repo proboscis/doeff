@@ -89,8 +89,10 @@ class ReaderEffectHandler:
         sub_ctx = ctx.copy()
         sub_ctx.env.update(effect.env_update)
         sub_ctx.log = ctx.log  # Share writer log with parent context
+        sub_ctx.state = ctx.state  # Share state so mutations persist outside Local
         sub_program = Program.from_program_like(effect.sub_program)
         pragmatic_result = await engine.run(sub_program, sub_ctx)
+        ctx.state.update(pragmatic_result.context.state)
         # Return the value from the sub-program
         return pragmatic_result.value
 
