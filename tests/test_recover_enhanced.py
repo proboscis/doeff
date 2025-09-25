@@ -19,7 +19,7 @@ async def test_error_handler_returning_value():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing_program, handle_error)
+        result = yield Recover(failing_program(), handle_error)
         return result
 
     engine = ProgramInterpreter()
@@ -48,7 +48,7 @@ async def test_error_handler_returning_program():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing_program, handle_error)
+        result = yield Recover(failing_program(), handle_error)
         return result
 
     engine = ProgramInterpreter()
@@ -104,7 +104,7 @@ async def test_backward_compat_with_value():
     @do
     def test_program() -> EffectGenerator[str]:
         # Using a direct value as fallback (old behavior)
-        result = yield Recover(failing_program, "fallback_value")
+        result = yield Recover(failing_program(), "fallback_value")
         return result
 
     engine = ProgramInterpreter()
@@ -130,7 +130,7 @@ async def test_backward_compat_with_program():
     @do
     def test_program() -> EffectGenerator[str]:
         # Using a Program as fallback (old behavior)
-        result = yield Recover(failing_program, fallback_program)
+        result = yield Recover(failing_program(), fallback_program())
         return result
 
     engine = ProgramInterpreter()
@@ -198,7 +198,7 @@ async def test_nested_recover_with_handlers():
     @do
     def outer_program() -> EffectGenerator[int]:
         # Inner recover handles the error
-        value = yield Recover(inner_failing, inner_handler)
+        value = yield Recover(inner_failing(), inner_handler)
 
         if value > 50:
             # This will fail
@@ -212,7 +212,7 @@ async def test_nested_recover_with_handlers():
 
     @do
     def test_program() -> EffectGenerator[int]:
-        result = yield Recover(outer_program, outer_handler)
+        result = yield Recover(outer_program(), outer_handler)
         return result
 
     engine = ProgramInterpreter()
@@ -245,7 +245,7 @@ async def test_error_handler_with_state_effects():
 
     @do
     def test_program() -> EffectGenerator[int]:
-        result = yield Recover(failing_with_state, stateful_handler)
+        result = yield Recover(failing_with_state(), stateful_handler)
         final_counter = yield Get("counter")
         return result + (final_counter or 0)
 
@@ -268,7 +268,7 @@ async def test_lambda_error_handler():
     def test_program() -> EffectGenerator[str]:
         # Lambda error handler
         result = yield Recover(
-            failing,
+            failing(),
             lambda exc: f"KeyError: {exc.args[0]}" if isinstance(exc, KeyError) else "unknown"
         )
         return result
@@ -294,7 +294,7 @@ async def test_error_handler_that_returns_none():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing, none_handler)
+        result = yield Recover(failing(), none_handler)
         return "None" if result is None else "not None"
 
     engine = ProgramInterpreter()

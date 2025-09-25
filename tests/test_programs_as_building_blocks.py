@@ -70,9 +70,9 @@ async def test_catch_with_programs():
             lambda e: f"Error: {e}",
         )
 
-        # Test failure case with recovery - pass Program via lambda
+        # Test failure case with recovery - pass Program directly
         failure_result = yield Catch(
-            lambda: risky_program(True),  # Thunk that returns Program
+            risky_program(True),
             lambda e: error_handler_program(e),  # Handler returns Program
         )
 
@@ -121,10 +121,10 @@ async def test_local_with_programs():
             env_dependent_program(),  # Pass Program directly!
         )
 
-        # Test with thunk
+        # Test with another Program instance
         result2 = yield Local(
             {"config": "another"},
-            lambda: env_dependent_program(),  # Thunk that returns Program
+            env_dependent_program(),
         )
 
         # Check original env is preserved
@@ -165,9 +165,9 @@ async def test_listen_with_programs():
         assert isinstance(result1, ListenResult)
         value1, log1 = result1  # Should work with unpacking
 
-        # Test with thunk
+        # Test with another Program instance
         result2 = yield Listen(
-            lambda: sub_program_with_log()  # Thunk that returns Program
+            sub_program_with_log()
         )
 
         # Can also access as attributes

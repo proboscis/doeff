@@ -183,7 +183,21 @@ class ProgramInterpreter:
             # Process effects
             while True:
                 logger.debug(f"effect: {current}")
-                if isinstance(current, Effect):
+                if isinstance(current, Program):
+                    # Sub-program - run it recursively
+                    sub_result = await self.run(current, ctx)
+                    if isinstance(sub_result.result, Err):
+                        return sub_result
+
+                    # Update context with sub-program changes
+                    ctx = sub_result.context
+
+                    # Send sub-program result back
+                    try:
+                        current = gen.send(sub_result.value)
+                    except StopIteration as e:
+                        return RunResult(ctx, Ok(e.value))
+                elif isinstance(current, Effect):
                     # Handle the effect
                     try:
                         value = await self._handle_effect(current, ctx)
@@ -203,21 +217,6 @@ class ProgramInterpreter:
                     # Send value back
                     try:
                         current = gen.send(value)
-                    except StopIteration as e:
-                        return RunResult(ctx, Ok(e.value))
-
-                elif isinstance(current, Program):
-                    # Sub-program - run it recursively
-                    sub_result = await self.run(current, ctx)
-                    if isinstance(sub_result.result, Err):
-                        return sub_result
-
-                    # Update context with sub-program changes
-                    ctx = sub_result.context
-
-                    # Send sub-program result back
-                    try:
-                        current = gen.send(sub_result.value)
                     except StopIteration as e:
                         return RunResult(ctx, Ok(e.value))
                 else:

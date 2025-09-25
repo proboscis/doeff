@@ -903,16 +903,24 @@ class _StatusSection(_BaseSection):
                     lines.append(
                         self.indent(
                             2,
-                            f"Created at: {head.creation_context.format_location()}",
+                            f"📍 Created at: {head.creation_context.format_location()}",
                         )
                     )
                 if head.cause:
-                    lines.append(
-                        self.indent(
-                            2,
-                            f"Cause: {head.cause.__class__.__name__}: {head.cause}",
+                    if isinstance(head.cause, EffectFailure):
+                        lines.append(
+                            self.indent(
+                                2,
+                                "Caused by: EffectFailure (see error chain)",
+                            )
                         )
-                    )
+                    else:
+                        lines.append(
+                            self.indent(
+                                2,
+                                f"Caused by: {head.cause.__class__.__name__}: {head.cause}",
+                            )
+                        )
             elif isinstance(head, ExceptionFailureInfo):
                 exc = head.exception
                 lines.append(
@@ -951,28 +959,46 @@ class _ErrorSection(_BaseSection):
 
         ctx = entry.creation_context
         if ctx is not None:
-            lines.append(self.indent(2, f"Location: {ctx.format_location()}"))
+            lines.append(self.indent(2, f"📍 Created at: {ctx.format_location()}"))
             if ctx.code:
                 lines.append(self.indent(3, ctx.code))
             if self.context.verbose and ctx.stack_trace:
-                lines.append(self.indent(2, "Creation stack:"))
+                lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
                 for frame_line in ctx.build_traceback().splitlines():
                     lines.append(self.indent(3, frame_line))
         else:
-            lines.append(self.indent(2, "Location: <unknown>"))
+            lines.append(self.indent(2, "📍 Created at: <unknown>"))
 
         if entry.cause:
-            lines.append(
-                self.indent(
-                    2,
-                    f"Cause: {entry.cause.__class__.__name__}: {entry.cause}",
+            if isinstance(entry.cause, EffectFailure):
+                lines.append(
+                    self.indent(
+                        2,
+                        "Caused by: EffectFailure (see nested entries)",
+                    )
                 )
-            )
-            if entry.cause_trace:
-                lines.extend(self._render_trace(entry.cause_trace, "Cause stack"))
+            else:
+                lines.append(
+                    self.indent(
+                        2,
+                        f"Caused by: {entry.cause.__class__.__name__}: {entry.cause}",
+                    )
+                )
+                if entry.cause_trace:
+                    lines.extend(
+                        self._render_trace(
+                            entry.cause_trace,
+                            "🔥 Cause Stack Trace",
+                        )
+                    )
 
         if entry.runtime_trace:
-            lines.extend(self._render_trace(entry.runtime_trace, "Runtime stack"))
+            lines.extend(
+                self._render_trace(
+                    entry.runtime_trace,
+                    "🔥 Execution Stack Trace",
+                )
+            )
 
         return lines
 

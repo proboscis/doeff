@@ -202,9 +202,9 @@ async def test_program_collection_builders_dict():
 async def test_program_collection_builders_sequence():
     engine = ProgramInterpreter()
 
-    list_prog = Program.list([Program.pure(1), 2, Program.pure(3)])
-    tuple_prog = Program.tuple((Program.pure("x"), "y", Program.pure("z")))
-    set_prog = Program.set([Program.pure(1), 2, 2])
+    list_prog = Program.list(Program.pure(1), 2, Program.pure(3))
+    tuple_prog = Program.tuple(Program.pure("x"), "y", Program.pure("z"))
+    set_prog = Program.set(Program.pure(1), 2, 2)
 
     list_result = await engine.run(list_prog)
     tuple_result = await engine.run(tuple_prog)
