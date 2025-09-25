@@ -88,11 +88,7 @@ class ReaderEffectHandler:
         """Handle reader.local effect."""
         sub_ctx = ctx.copy()
         sub_ctx.env.update(effect.env_update)
-        # Check if sub_program is already a Program or a callable
-        sub_program = effect.sub_program
-        if callable(sub_program) and not isinstance(sub_program, Program):
-            # It's a thunk, call it to get the Program
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.sub_program)
         pragmatic_result = await engine.run(sub_program, sub_ctx)
         # Return the value from the sub-program
         return pragmatic_result.value
@@ -136,9 +132,7 @@ class WriterEffectHandler:
         """Handle writer.listen effect."""
         from doeff.program import Program
         
-        sub_program = effect.sub_program
-        if callable(sub_program) and not isinstance(sub_program, Program):
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.sub_program)
         sub_ctx = ctx.copy()
         sub_ctx.log = []  # Fresh log for sub-program
         pragmatic_result = await engine.run(sub_program, sub_ctx)
@@ -177,10 +171,7 @@ class ResultEffectHandler:
         from doeff.program import Program
 
         # Check if sub_program is already a Program or a callable
-        sub_program = effect.sub_program
-        if callable(sub_program) and not isinstance(sub_program, Program):
-            # It's a thunk, call it to get the Program
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.sub_program)
 
         try:
             pragmatic_result = await engine.run(sub_program, ctx)
@@ -196,13 +187,12 @@ class ResultEffectHandler:
                 # Run error handler with the unwrapped exception
                 handler_result = effect.handler(error)
 
-                # If handler returned a Program, run it
-                if isinstance(handler_result, Program):
-                    handler_pragmatic_result = await engine.run(handler_result, ctx)
+                if isinstance(handler_result, (Program, EffectBase)):
+                    handler_program = Program.from_program_like(handler_result)
+                    handler_pragmatic_result = await engine.run(handler_program, ctx)
                     return handler_pragmatic_result.value
-                else:
-                    # Handler returned a direct value
-                    return handler_result
+
+                return handler_result
             else:
                 # Success - return the value
                 return pragmatic_result.value
@@ -218,13 +208,12 @@ class ResultEffectHandler:
             # Run error handler with unwrapped exception
             handler_result = effect.handler(actual_error)
 
-            # If handler returned a Program, run it
-            if isinstance(handler_result, Program):
-                handler_pragmatic_result = await engine.run(handler_result, ctx)
+            if isinstance(handler_result, (Program, EffectBase)):
+                handler_program = Program.from_program_like(handler_result)
+                handler_pragmatic_result = await engine.run(handler_program, ctx)
                 return handler_pragmatic_result.value
-            else:
-                # Handler returned a direct value
-                return handler_result
+
+            return handler_result
 
     async def handle_safe(
         self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
@@ -232,11 +221,7 @@ class ResultEffectHandler:
         """Handle result.safe effect by capturing the program outcome."""
         from doeff.program import Program
 
-        sub_program = effect.sub_program
-        if isinstance(sub_program, EffectBase):
-            sub_program = Program.from_effect(sub_program)
-        elif callable(sub_program) and not isinstance(sub_program, Program):
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.sub_program)
 
         pragmatic_result = await engine.run(sub_program, ctx)
         return pragmatic_result.result
@@ -267,11 +252,7 @@ class ResultEffectHandler:
         from doeff.program import Program
         import inspect
         
-        sub_program = effect.sub_program
-        if isinstance(sub_program, EffectBase):
-            sub_program = Program.from_effect(sub_program)
-        elif callable(sub_program) and not isinstance(sub_program, Program):
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.sub_program)
 
         pragmatic_result = await engine.run(sub_program, ctx)
         
@@ -298,10 +279,9 @@ class ResultEffectHandler:
                 if isinstance(fallback, KleisliProgram):
                     # Try calling it as an error handler first
                     handler_result = fallback(error)
-                    # This will return a Program, try to run it
-                    if isinstance(handler_result, Program):
-                        # Run it and see if it fails with TypeError
-                        try_result = await engine.run(handler_result, ctx)
+                    if isinstance(handler_result, (Program, EffectBase)):
+                        handler_program = Program.from_program_like(handler_result)
+                        try_result = await engine.run(handler_program, ctx)
                         if isinstance(try_result.result, Err):
                             # Check if the error is a TypeError about arguments
                             inner_error = try_result.result.error
@@ -329,14 +309,13 @@ class ResultEffectHandler:
                         if len(sig.parameters) > 0:
                             # It's an error handler - call it with the exception
                             handler_result = fallback(error)
-                            
-                            # If handler returned a Program, run it
-                            if isinstance(handler_result, Program):
-                                handler_pragmatic_result = await engine.run(handler_result, ctx)
+
+                            if isinstance(handler_result, (Program, EffectBase)):
+                                handler_program = Program.from_program_like(handler_result)
+                                handler_pragmatic_result = await engine.run(handler_program, ctx)
                                 return handler_pragmatic_result.value
-                            else:
-                                # Handler returned a direct value
-                                return handler_result
+
+                            return handler_result
                         else:
                             # It's a thunk (zero-argument callable) - call it
                             fallback = fallback()
@@ -344,13 +323,12 @@ class ResultEffectHandler:
                         # Can't inspect signature, treat as thunk
                         fallback = fallback()
             
-            # If fallback is a Program, run it
-            if isinstance(fallback, Program):
-                fallback_result = await engine.run(fallback, ctx)
+            if isinstance(fallback, (Program, EffectBase)):
+                fallback_program = Program.from_program_like(fallback)
+                fallback_result = await engine.run(fallback_program, ctx)
                 return fallback_result.value
-            else:
-                # Fallback is a direct value
-                return fallback
+
+            return fallback
         else:
             # Success - return the value
             return pragmatic_result.value
@@ -366,9 +344,7 @@ class ResultEffectHandler:
         max_attempts = effect.max_attempts
         delay_ms = effect.delay_ms
         
-        sub_program = effect.sub_program
-        if callable(sub_program) and not isinstance(sub_program, Program):
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.sub_program)
         
         last_error = None
         for attempt in range(max_attempts):
@@ -436,9 +412,7 @@ class GraphEffectHandler:
     ) -> tuple[Any, WGraph]:
         from doeff.program import Program
 
-        sub_program = effect.program
-        if callable(sub_program) and not isinstance(sub_program, Program):
-            sub_program = sub_program()
+        sub_program = Program.from_program_like(effect.program)
 
         sub_ctx = ExecutionContext(
             env=ctx.env.copy() if ctx.env else {},
