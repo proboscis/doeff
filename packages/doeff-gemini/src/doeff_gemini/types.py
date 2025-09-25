@@ -15,6 +15,22 @@ class GeminiImageEditResult:
     mime_type: str
     text: str | None
 
+    def to_pil_image(self):  # type: ignore[override]
+        """Convert the response payload into a :class:`PIL.Image.Image`."""
+        from io import BytesIO
+
+        from PIL import Image
+
+        with BytesIO(self.image_bytes) as buffer:
+            image = Image.open(buffer)
+            return image.copy()
+
+    def save(self, path: str, *, format: str | None = None) -> None:
+        """Persist the edited image to disk."""
+
+        image = self.to_pil_image()
+        image.save(path, format=format)
+
 
 @dataclass(frozen=True)
 class TokenUsage:

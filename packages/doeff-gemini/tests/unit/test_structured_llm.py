@@ -2,6 +2,7 @@
 
 import json
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -297,10 +298,13 @@ class _CandidateContent:
 
 
 @pytest.mark.asyncio
-async def test_process_image_edit_response_success() -> None:
+async def test_process_image_edit_response_success(tmp_path: Path) -> None:
     """Image edit response should surface image bytes and optional text."""
 
-    image_bytes = b"fake-image"
+    base_image = Image.new("RGB", (1, 1), color=(0, 255, 0))
+    buffer = BytesIO()
+    base_image.save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
     response = SimpleNamespace(
         candidates=[
             SimpleNamespace(
@@ -326,6 +330,11 @@ async def test_process_image_edit_response_success() -> None:
     assert payload.image_bytes == image_bytes
     assert payload.mime_type == "image/png"
     assert payload.text == "Edit applied"
+    pil_image = payload.to_pil_image()
+    assert pil_image.size == (1, 1)
+    output_path = tmp_path / "edited.png"
+    payload.save(output_path.as_posix())
+    assert output_path.exists()
 
 
 @pytest.mark.asyncio
@@ -337,7 +346,10 @@ async def test_edit_image__gemini_success() -> None:
     base_image.save(buffer, format="PNG")
     uploaded = buffer.getvalue()
 
-    edited_bytes = b"edited-image"
+    edited_image = Image.new("RGB", (4, 4), color=(0, 128, 0))
+    edited_buffer = BytesIO()
+    edited_image.save(edited_buffer, format="PNG")
+    edited_bytes = edited_buffer.getvalue()
     response = SimpleNamespace(
         candidates=[
             SimpleNamespace(
