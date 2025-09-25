@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterable, Optional
 
 from doeff import Program, ProgramInterpreter, RunResult
 from doeff.kleisli import KleisliProgram
+from doeff.types import capture_traceback
 
 
 @dataclass
@@ -205,15 +206,21 @@ def main(argv: Iterable[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
+        captured = capture_traceback(exc)
         if getattr(args, "format", "text") == "json":
             payload = {
                 "status": "error",
                 "error": exc.__class__.__name__,
                 "message": str(exc),
             }
+            if captured is not None:
+                payload["traceback"] = captured.format(condensed=False, max_lines=200)
             print(json.dumps(payload))
         else:
-            print(f"Error: {exc}", file=sys.stderr)
+            if captured is not None:
+                print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
+            else:
+                print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 
