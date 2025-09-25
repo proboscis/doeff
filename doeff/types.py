@@ -337,10 +337,6 @@ class EffectBase:
         return replace(self, created_at=created_at)
 
 
-# ============================================
-# Effect Generator Type Alias
-# ============================================
-
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
 if TYPE_CHECKING:

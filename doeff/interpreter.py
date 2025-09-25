@@ -365,8 +365,8 @@ class ProgramInterpreter:
                 normalized_programs.append(prog_like)
                 return
 
-            if callable(prog_like) and not isinstance(prog_like, Program):
-                _enqueue_program(prog_like())
+            if isinstance(prog_like, Effect):
+                normalized_programs.append(Program.from_program_like(prog_like))
                 return
 
             if isinstance(prog_like, (list, tuple)):
@@ -375,7 +375,7 @@ class ProgramInterpreter:
                 return
 
             raise TypeError(
-                "gather expects Program instances, callables returning Programs, or iterables of them"
+                "gather expects Program or Effect instances, optionally nested in iterables"
             )
 
         for program in programs:
