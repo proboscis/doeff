@@ -188,6 +188,39 @@ async def test_map_vs_flat_map():
 
 
 @pytest.mark.asyncio
+async def test_program_collection_builders_dict():
+    engine = ProgramInterpreter()
+    prog = Program.dict({"a": Program.pure(1), "b": 2}, c=Program.pure(3))
+
+    result = await engine.run(prog)
+
+    assert result.is_ok
+    assert result.value == {"a": 1, "b": 2, "c": 3}
+
+
+@pytest.mark.asyncio
+async def test_program_collection_builders_sequence():
+    engine = ProgramInterpreter()
+
+    list_prog = Program.list([Program.pure(1), 2, Program.pure(3)])
+    tuple_prog = Program.tuple((Program.pure("x"), "y", Program.pure("z")))
+    set_prog = Program.set([Program.pure(1), 2, 2])
+
+    list_result = await engine.run(list_prog)
+    tuple_result = await engine.run(tuple_prog)
+    set_result = await engine.run(set_prog)
+
+    assert list_result.is_ok
+    assert list_result.value == [1, 2, 3]
+
+    assert tuple_result.is_ok
+    assert tuple_result.value == ("x", "y", "z")
+
+    assert set_result.is_ok
+    assert set_result.value == {1, 2}
+
+
+@pytest.mark.asyncio
 async def test_monadic_laws_left_identity():
     """Test left identity law: pure(a).flat_map(f) == f(a)"""
 
