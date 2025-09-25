@@ -129,6 +129,118 @@ class EffectCreationContext:
 
 
 # ============================================
+# Traceback Capture Helpers
+# ============================================
+
+_TRACEBACK_ATTR = "_doeff_traceback"
+
+
+@dataclass(frozen=True)
+class CapturedTraceback:
+    """Structured representation of a traceback captured from an exception."""
+
+    traceback: traceback.TracebackException
+
+    def _raw_lines(self) -> list[str]:
+        lines: list[str] = []
+        for chunk in self.traceback.format():
+            text = chunk.rstrip("\n")
+            if not text:
+                continue
+            lines.extend(part for part in text.split("\n"))
+        return [line for line in lines if line]
+
+    def _sanitize_lines(self) -> list[str]:
+        lines = self._raw_lines()
+        if not lines:
+            return []
+
+        sanitized: list[str] = []
+        seen_headers = 0
+        skip_effect_failure = False
+
+        for line in lines:
+            stripped = line.strip()
+
+            if stripped.startswith("Traceback (most recent call last):"):
+                seen_headers += 1
+                if seen_headers == 1:
+                    sanitized.append(line)
+                continue
+
+            if stripped == "----- Exception Traceback -----":
+                continue
+
+            if "doeff.types.EffectFailure" in stripped:
+                skip_effect_failure = True
+                continue
+
+            if skip_effect_failure:
+                continue
+
+            sanitized.append(line)
+
+        return sanitized
+
+    def lines(
+        self,
+        *,
+        condensed: bool = False,
+        max_lines: int = 12,
+    ) -> list[str]:
+        """Return sanitized traceback lines with optional condensation."""
+
+        sanitized = self._sanitize_lines()
+        if not condensed or max_lines is None or len(sanitized) <= max_lines:
+            return sanitized
+
+        if not sanitized:
+            return []
+
+        header: list[str] = []
+        body = sanitized
+
+        if sanitized[0].strip().startswith("Traceback"):
+            header = [sanitized[0]]
+            body = sanitized[1:]
+
+        if not body:
+            return header
+
+        available = max_lines - len(header)
+        if available <= 0:
+            return header[:max_lines]
+
+        body_tail = body[-available:]
+        return header + body_tail
+
+    def format(
+        self,
+        *,
+        condensed: bool = False,
+        max_lines: int = 12,
+    ) -> str:
+        """Render the traceback as a single string."""
+
+        return "\n".join(self.lines(condensed=condensed, max_lines=max_lines))
+
+
+def capture_traceback(exc: BaseException) -> CapturedTraceback:
+    """Capture and memoize traceback information for an exception."""
+
+    tb_exc = traceback.TracebackException.from_exception(exc, capture_locals=False)
+    captured = CapturedTraceback(tb_exc)
+    setattr(exc, _TRACEBACK_ATTR, captured)
+    return captured
+
+
+def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:
+    """Return previously captured traceback information if available."""
+
+    return getattr(exc, _TRACEBACK_ATTR, None)
+
+
+# ============================================
 # Effect Failure Exception
 # ============================================
 
@@ -142,7 +254,7 @@ class EffectFailure(Exception):
 
     effect: "Effect"
     cause: BaseException  # The original exception that caused the failure
-    runtime_traceback: str | None = None  # Runtime stack trace where error occurred
+    runtime_traceback: CapturedTraceback | None = None  # Runtime stack trace where error occurred
     creation_context: Optional[EffectCreationContext] = None  # Where the effect was created
 
     def __str__(self) -> str:
@@ -163,15 +275,11 @@ class EffectFailure(Exception):
         if self.creation_context is None:
             self.creation_context = getattr(self.effect, "created_at", None)
 
-        if self.runtime_traceback is None and self.cause:
-            # Capture the runtime traceback from the cause
-            self.runtime_traceback = "".join(
-                traceback.format_exception(
-                    self.cause.__class__,
-                    self.cause,
-                    self.cause.__traceback__
-                )
-            )
+        if self.runtime_traceback is None and isinstance(self.cause, BaseException):
+            captured = get_captured_traceback(self.cause)
+            if captured is None:
+                captured = capture_traceback(self.cause)
+            self.runtime_traceback = captured
 
 
 # ============================================
@@ -314,6 +422,99 @@ class EffectObservation:
 
 
 # ============================================
+# Failure Introspection Types
+# ============================================
+
+
+@dataclass(frozen=True)
+class EffectFailureInfo:
+    """Summary of a single EffectFailure instance within an error chain."""
+
+    effect: Effect
+    creation_context: EffectCreationContext | None
+    cause: BaseException | None
+    runtime_trace: CapturedTraceback | None
+    cause_trace: CapturedTraceback | None
+
+
+@dataclass(frozen=True)
+class ExceptionFailureInfo:
+    """Summary of a plain exception in the failure chain."""
+
+    exception: BaseException
+    trace: CapturedTraceback | None
+
+
+FailureEntry = EffectFailureInfo | ExceptionFailureInfo
+
+
+@dataclass(frozen=True)
+class RunFailureDetails:
+    """Structured view of the failure chain for a RunResult."""
+
+    entries: tuple[FailureEntry, ...]
+
+    @classmethod
+    def from_error(cls, error: Any) -> "RunFailureDetails | None":
+        if not isinstance(error, BaseException):
+            return None
+
+        entries: list[FailureEntry] = []
+        seen: set[int] = set()
+        seen_exceptions: set[int] = set()
+
+        def capture(exc: BaseException | None) -> CapturedTraceback | None:
+            if exc is None:
+                return None
+            captured = get_captured_traceback(exc)
+            if captured is None:
+                captured = capture_traceback(exc)
+            return captured
+
+        def walk(exc: BaseException) -> None:
+            exc_id = id(exc)
+            if exc_id in seen:
+                return
+            seen.add(exc_id)
+
+            if isinstance(exc, EffectFailure):
+                runtime_trace = exc.runtime_traceback
+                cause_exc: BaseException | None = exc.cause if exc.cause else None
+                if cause_exc is not None:
+                    seen_exceptions.add(id(cause_exc))
+                entries.append(
+                    EffectFailureInfo(
+                        effect=exc.effect,
+                        creation_context=exc.creation_context,
+                        cause=cause_exc,
+                        runtime_trace=runtime_trace,
+                        cause_trace=capture(cause_exc),
+                    )
+                )
+                if isinstance(exc.cause, BaseException):
+                    walk(exc.cause)
+            else:
+                if exc_id in seen_exceptions:
+                    return
+                entries.append(
+                    ExceptionFailureInfo(
+                        exception=exc,
+                        trace=capture(exc),
+                    )
+                )
+                seen_exceptions.add(exc_id)
+                if exc.__cause__ is not None:
+                    walk(exc.__cause__)
+
+        walk(error)
+
+        if not entries:
+            return None
+
+        return cls(entries=tuple(entries))
+
+
+# ============================================
 # Run Result
 # ============================================
 
@@ -371,35 +572,88 @@ class RunResult(Generic[T]):
         """Get recorded effect observations."""
         return self.context.effect_observations
 
+    def _failure_details(self) -> RunFailureDetails | None:
+        if not self.is_err:
+            return None
+        return RunFailureDetails.from_error(self.result.error)
+
+    def _failure_summary(self) -> str:
+        details = self._failure_details()
+        if details and details.entries:
+            head = details.entries[0]
+            if isinstance(head, EffectFailureInfo):
+                effect_name = head.effect.__class__.__name__
+                if head.cause:
+                    return (
+                        f"effect={effect_name}, "
+                        f"cause={head.cause.__class__.__name__}: {head.cause}"
+                    )
+                return f"effect={effect_name}"
+            if isinstance(head, ExceptionFailureInfo):
+                exc = head.exception
+                return f"{exc.__class__.__name__}: {exc}"
+        return repr(self.result.error)
+
+    def format_error(self, *, condensed: bool = False) -> str:
+        """Return a formatted traceback for the failure if present."""
+        if self.is_ok:
+            return ""
+
+        error = self.result.error
+
+        if isinstance(error, TraceError):
+            return str(error)
+
+        if isinstance(error, EffectFailure):
+            trace = error.runtime_traceback
+            if trace is not None:
+                return trace.format(condensed=condensed)
+            if isinstance(error.cause, BaseException):
+                captured = get_captured_traceback(error.cause)
+                if captured is None:
+                    captured = capture_traceback(error.cause)
+                return captured.format(condensed=condensed)
+            return f"EffectFailure: {error}"
+
+        if isinstance(error, BaseException):
+            captured = get_captured_traceback(error)
+            if captured is None:
+                captured = capture_traceback(error)
+            return captured.format(condensed=condensed)
+
+        return str(error)
+
+    @property
+    def formatted_error(self) -> str:
+        """Get formatted error string if result is a failure."""
+        return self.format_error()
+
     def __repr__(self) -> str:
         if self.is_ok:
             return (
-                "RunResult(ok=True, value="
-                f"{self._format_value(self.result.value, indent=2, max_length=60)})"
+                f"RunResult(Ok({repr(self.result.value)}), "
+                f"state={len(self.state)} items, "
+                f"log={len(self.log)} entries)"
             )
 
-        error_chain, _ = self._extract_error_chain(self.result.error)
-        if error_chain:
-            head = error_chain[0]
-            if head["type"] == "effect":
-                location = (
-                    head["context"].format_location()
-                    if head.get("context")
-                    else "<unknown>"
-                )
-                cause = head.get("cause")
-                cause_str = f"{cause.__class__.__name__}: {cause}" if cause else "<no cause>"
-                return (
-                    "RunResult(ok=False, effect="
-                    f"{head['tag']}, location={location}, cause={cause_str})"
-                )
-            if head["type"] == "exception":
-                return (
-                    "RunResult(ok=False, exception="
-                    f"{head['class']}: {head['message']})"
-                )
+        summary = self._failure_summary()
+        return (
+            f"RunResult(Err({summary}), "
+            f"state={len(self.state)} items, "
+            f"log={len(self.log)} entries)"
+        )
 
-        return f"RunResult(ok=False, error={self.result.error!r})"
+    def display(self, verbose: bool = False, indent: int = 2) -> str:
+        """Render a human-readable report using structured sections."""
+
+        context = RunResultDisplayContext(
+            run_result=self,
+            verbose=verbose,
+            indent_unit=" " * indent,
+            failure_details=self._failure_details(),
+        )
+        renderer = RunResultDisplayRenderer(context)
+        return renderer.render()
 
     def visualize_graph_ascii(
         self,
@@ -537,442 +791,6 @@ class RunResult(Generic[T]):
         renderer = ASCIIRenderer(phart_graph, options=options)
         return renderer.render()
 
-    def format_error(self) -> str:
-        """Format error with full traceback if result is a failure."""
-        if isinstance(self.result, Ok):
-            return ""
-        
-        error = self.result.error
-        
-        # If it's a TraceError, it already has formatted traceback
-        if isinstance(error, TraceError):
-            return str(error)
-        
-        # Otherwise, format the exception
-        if isinstance(error, BaseException):
-            # Try to get traceback if available
-            if hasattr(error, "__traceback__") and error.__traceback__:
-                tb_lines = traceback.format_exception(
-                    type(error), error, error.__traceback__
-                )
-                return "".join(tb_lines)
-            else:
-                # No traceback available, just show the error
-                return f"{error.__class__.__name__}: {error}"
-        
-        # For non-exception errors, just convert to string
-        return str(error)
-    
-    @property
-    def formatted_error(self) -> str:
-        """Get formatted error string if result is a failure."""
-        return self.format_error()
-    
-    def __repr__(self) -> str:
-        """Show enhanced representation with formatted traceback for failures."""
-        if isinstance(self.result, Ok):
-            return (
-                f"RunResult(Ok({repr(self.result.value)}), "
-                f"state={len(self.state)} items, "
-                f"log={len(self.log)} entries)"
-            )
-        else:
-            # Format the error with traceback
-            error_str = self.format_error()
-            # Indent the error for better readability
-            indented_error = "\n  ".join(error_str.split("\n"))
-            return (
-                f"RunResult(Err:\n  {indented_error}\n"
-                f"  state={len(self.state)} items, "
-                f"  log={len(self.log)} entries)"
-            )
-    
-    def _format_execution_traceback(self, traceback_text: str, verbose: bool = False) -> List[str]:
-        """Format execution traceback for display.
-        
-        Args:
-            traceback_text: Raw traceback text from TraceError
-            verbose: If True, show full traceback; if False, show condensed version
-            
-        Returns:
-            List of formatted lines to display
-        """
-        if not traceback_text:
-            return []
-        
-        tb_lines = traceback_text.strip().split("\n")
-        
-        # Clean up the traceback - remove duplicate headers and EffectFailure noise
-        cleaned_lines = []
-        seen_headers = 0
-        skip_remaining = False
-        i = 0
-        
-        while i < len(tb_lines):
-            line = tb_lines[i]
-            
-            # Handle duplicate traceback headers
-            if "Traceback (most recent call last):" in line:
-                seen_headers += 1
-                if seen_headers == 1:
-                    cleaned_lines.append(line)
-                i += 1
-                continue
-            
-            # Skip "Exception Traceback" dividers
-            if "----- Exception Traceback -----" in line:
-                i += 1
-                continue
-            
-            # Stop processing at EffectFailure (that's our wrapper, not the real error)
-            if "doeff.types.EffectFailure:" in line:
-                # But keep "The above exception was the direct cause" if present
-                if i > 0 and "The above exception was the direct cause" in tb_lines[i-1]:
-                    pass  # Already added
-                skip_remaining = True
-                i += 1
-                continue
-            
-            # Skip everything after EffectFailure
-            if skip_remaining:
-                i += 1
-                continue
-            
-            # Keep all other lines (frames, error messages, etc.)
-            cleaned_lines.append(line)
-            i += 1
-        
-        if not verbose:
-            # In non-verbose mode, show only the most relevant frames
-            result = []
-            
-            # Find where the actual frames start and end
-            frame_start = -1
-            frame_end = -1
-            for i, line in enumerate(cleaned_lines):
-                if line.strip().startswith("File "):
-                    if frame_start == -1:
-                        frame_start = i
-                    frame_end = i + 1  # Include the code line after File
-                    
-            # Include header
-            for line in cleaned_lines:
-                if "Traceback" in line:
-                    result.append(line)
-                    break
-            
-            # If we found frames, include the last few
-            if frame_start != -1:
-                # Count frame pairs (File line + code line)
-                frame_pairs = []
-                i = frame_start
-                while i < len(cleaned_lines):
-                    if cleaned_lines[i].strip().startswith("File "):
-                        # This is a frame, grab it and the next line (code)
-                        frame_pairs.append(cleaned_lines[i])
-                        if i + 1 < len(cleaned_lines) and not cleaned_lines[i + 1].strip().startswith("File "):
-                            frame_pairs.append(cleaned_lines[i + 1])
-                            i += 2
-                        else:
-                            i += 1
-                    else:
-                        # End of frames, keep the error message
-                        if cleaned_lines[i].strip():
-                            frame_pairs.append(cleaned_lines[i])
-                        i += 1
-                
-                # Take last 6 lines (3 frames) plus error message
-                result.extend(frame_pairs[-8:])
-            else:
-                # No frames found, just show what we have
-                result = cleaned_lines[-6:]
-                
-            return result
-        else:
-            # In verbose mode, show all cleaned frames
-            return cleaned_lines[:50]
-    
-    def _extract_error_chain(self, error: Any) -> tuple[List[Dict[str, Any]], Optional[str]]:
-        """Extract the chain of errors from nested exceptions."""
-        chain = []
-        seen = set()  # Track seen errors to avoid infinite loops
-        seen_effects = {}  # Track seen effects by (tag, location) to avoid duplicates
-        runtime_traceback = None  # Store the runtime traceback
-        
-        def extract(exc, depth=0):
-            nonlocal runtime_traceback
-            if depth > 10 or id(exc) in seen:  # Prevent infinite recursion
-                return
-            seen.add(id(exc))
-            
-            if isinstance(exc, EffectFailure):
-                # Preserve the runtime traceback from the first EffectFailure
-                if runtime_traceback is None and exc.runtime_traceback:
-                    runtime_traceback = exc.runtime_traceback
-                
-                # Create a key for this effect based on tag and location
-                if exc.creation_context:
-                    effect_key = (exc.effect.__class__, exc.creation_context.format_location())
-                else:
-                    effect_key = (exc.effect.__class__, id(exc.effect))
-                
-                # Only add if we haven't seen this exact effect before
-                if effect_key not in seen_effects:
-                    seen_effects[effect_key] = True
-                    chain.append({
-                        'type': 'effect',
-                        'tag': exc.effect.__class__.__name__,
-                        'context': exc.creation_context,
-                        'cause': exc.cause,
-                        'failure': exc,
-                    })
-                
-                # Continue with the cause to extract the full chain
-                if exc.cause:
-                    extract(exc.cause, depth + 1)
-            elif isinstance(exc, BaseException):
-                # Record regular exception only if it's not wrapped in an EffectFailure
-                # Check if this is a root cause (not already captured as an effect cause)
-                chain.append({
-                    'type': 'exception',
-                    'class': exc.__class__.__name__,
-                    'message': str(exc),
-                    'exc': exc
-                })
-                # Check for __cause__ chain
-                if hasattr(exc, '__cause__') and exc.__cause__:
-                    extract(exc.__cause__, depth + 1)
-        
-        extract(error)
-        
-        # Remove duplicate exceptions that are already shown as causes of effects
-        seen_exceptions = set()
-        filtered_chain = []
-        for item in chain:
-            if item['type'] == 'exception':
-                exc_key = (item['class'], item['message'])
-                # Check if this exception is already a cause of an effect
-                is_cause = False
-                for other in chain:
-                    if other['type'] == 'effect' and other['cause']:
-                        cause = other['cause']
-                        if cause.__class__.__name__ == item['class'] and str(cause) == item['message']:
-                            is_cause = True
-                            break
-                
-                # Only add if not already shown as a cause and not a duplicate
-                if not is_cause and exc_key not in seen_exceptions:
-                    seen_exceptions.add(exc_key)
-                    filtered_chain.append(item)
-            else:
-                filtered_chain.append(item)
-        
-        return filtered_chain, runtime_traceback
-    
-    def display(self, verbose: bool = False, indent: int = 2) -> str:
-        """
-        Display internal data in a formatted text structure.
-        
-        Args:
-            verbose: If True, show full details including graph steps
-            indent: Number of spaces for indentation
-        
-        Returns:
-            Formatted string representation of the RunResult
-        """
-        lines = []
-        ind = " " * indent
-        
-        # Header
-        lines.append("=" * 60)
-        lines.append("RunResult Internal Data")
-        lines.append("=" * 60)
-        
-        # Result Status
-        lines.append("\n📊 Result Status:")
-        if isinstance(self.result, Ok):
-            lines.append(f"{ind}✅ Success")
-            value_repr = pformat(self.result.value, width=80, compact=False)
-            if "\n" in value_repr:
-                lines.append(f"{ind}Value:")
-                lines.extend(f"{ind * 2}{line}" for line in value_repr.splitlines())
-            else:
-                lines.append(f"{ind}Value: {value_repr}")
-        else:
-            lines.append(f"{ind}❌ Failure")
-            
-            # Extract error chain and runtime traceback
-            error_chain, runtime_traceback = self._extract_error_chain(self.result.error)
-            
-            if error_chain:
-                # Show error chain from outermost to innermost
-                lines.append(f"\n{ind}Error Chain (most recent first):")
-                
-                for i, error_info in enumerate(error_chain):
-                    if error_info['type'] == 'effect':
-                        # Show effect failure
-                        lines.append(f"\n{ind}[{i+1}] Effect '{error_info['tag']}' failed")
-                        
-                        # Show creation location if available
-                        if error_info['context']:
-                            lines.append(f"{ind * 2}📍 Created at:")
-                            location = error_info['context'].format_location()
-                            lines.append(f"{ind * 3}{location}")
-                            if error_info['context'].code:
-                                lines.append(f"{ind * 3}{error_info['context'].code}")
-                            creation_trace = self._format_creation_trace(
-                                error_info['context'], indent, max_frames=18
-                            )
-                            if creation_trace:
-                                lines.append(f"{ind * 2}🧵 Creation stack:")
-                                for frame_line in creation_trace:
-                                    lines.append(f"{ind * 3}{frame_line}")
-
-                        # Show the immediate cause if it's not another effect
-                        if error_info['cause'] and not isinstance(error_info['cause'], EffectFailure):
-                            cause = error_info['cause']
-                            lines.append(f"{ind * 2}Caused by: {cause.__class__.__name__}: {cause}")
-                            cause_trace = self._format_exception_trace(cause, max_frames=18)
-                            if cause_trace:
-                                lines.append(f"{ind * 2}🔥 Cause stack:")
-                                for frame_line in cause_trace:
-                                    lines.append(f"{ind * 3}{frame_line}")
-                        failure = error_info.get('failure')
-                        if failure and failure.runtime_traceback:
-                            lines.append(f"{ind * 2}🔥 Effect runtime stack:")
-                            for tb_line in self._format_execution_traceback(
-                                failure.runtime_traceback, verbose
-                            ):
-                                if tb_line.strip():
-                                    lines.append(f"{ind * 3}{tb_line}")
-
-                    elif error_info['type'] == 'exception':
-                        # Show regular exception
-                        lines.append(f"\n{ind}[{i+1}] {error_info['class']}: {error_info['message']}")
-                
-                # Always show execution stack trace if available (critical debugging info)
-                if runtime_traceback:
-                    lines.append(f"\n{ind}🔥 Execution Stack Trace (where error occurred):")
-                    # Use the dedicated formatter
-                    formatted_tb = self._format_execution_traceback(runtime_traceback, verbose)
-                    for tb_line in formatted_tb:
-                        if tb_line.strip():
-                            lines.append(f"{ind * 2}{tb_line}")
-                
-                # Show detailed creation stack traces if verbose
-                if verbose:
-                    
-                    # Show creation stack trace if available
-                    if error_chain:
-                        for error_info in error_chain:
-                            if error_info['type'] == 'effect' and error_info['context'] and error_info['context'].stack_trace:
-                                lines.append(f"\n{ind}📍 Effect Creation Stack Trace (where effect was created):")
-                                traceback_lines = error_info['context'].build_traceback().split("\n")
-                                for tb_line in traceback_lines[:20]:  # Limit lines
-                                    lines.append(f"{ind * 2}{tb_line}")
-                                break
-            else:
-                # No error chain extracted, show simple error info
-                lines.append(f"{ind}Exception Type: {self.result.error.__class__.__name__}")
-                lines.append(f"{ind}Exception Message: {self.result.error}")
-                # Always try to show execution trace
-                if runtime_traceback:
-                    lines.append(f"\n{ind}🔥 Execution Stack Trace:")
-                    formatted_tb = self._format_execution_traceback(runtime_traceback, verbose)
-                    for tb_line in formatted_tb:
-                        if tb_line.strip():
-                            lines.append(f"{ind * 2}{tb_line}")
-                elif verbose and hasattr(self.result.error, "__traceback__") and self.result.error.__traceback__:
-                        lines.append(f"\n{ind}📍 Stack Trace:")
-                        tb_lines = traceback.format_exception(
-                            type(self.result.error), self.result.error, self.result.error.__traceback__
-                        )
-                        for tb_line in "".join(tb_lines).split("\n"):
-                            if tb_line.strip():
-                                lines.append(f"{ind * 2}{tb_line}")
-        
-        # State
-        lines.append("\n🗂️ State:")
-        if self.state:
-            for key, value in list(self.state.items())[:20]:  # Limit items shown
-                value_str = self._format_value(value, indent, max_length=100)
-                lines.append(f"{ind}{key}: {value_str}")
-            if len(self.state) > 20:
-                lines.append(f"{ind}... and {len(self.state) - 20} more items")
-        else:
-            lines.append(f"{ind}(empty)")
-        
-        # Logs
-        lines.append("\n📝 Logs:")
-        if self.log:
-            for i, entry in enumerate(self.log[:10]):  # Show first 10 logs
-                entry_str = self._format_value(entry, indent, max_length=150)
-                lines.append(f"{ind}[{i}] {entry_str}")
-            if len(self.log) > 10:
-                lines.append(f"{ind}... and {len(self.log) - 10} more entries")
-        else:
-            lines.append(f"{ind}(no logs)")
-
-        # Dep/Ask effect usage
-        lines.append("\n🔗 Dep/Ask Usage:")
-        dep_ask_observations = [
-            obs for obs in self.effect_observations if obs.effect_type in {"Dep", "Ask"}
-        ]
-        if dep_ask_observations:
-            limit = 40
-            for idx, obs in enumerate(dep_ask_observations[:limit], start=1):
-                key_text = f" key={obs.key!r}" if obs.key is not None else ""
-                lines.append(f"{ind}[{idx}] {obs.effect_type}{key_text}")
-                if obs.context is not None:
-                    lines.append(f"{ind * 2}{obs.context.format_location()}")
-                    if obs.context.code:
-                        lines.append(f"{ind * 3}{obs.context.code}")
-                else:
-                    lines.append(f"{ind * 2}<location unavailable>")
-            if len(dep_ask_observations) > limit:
-                remaining = len(dep_ask_observations) - limit
-                lines.append(f"{ind}... and {remaining} more entries")
-        else:
-            lines.append(f"{ind}(no Dep/Ask effects observed)")
-
-        # Graph
-        lines.append("\n🌳 Graph:")
-        if self.graph and self.graph.steps:
-            lines.append(f"{ind}Steps: {len(self.graph.steps)}")
-            if verbose:
-                # Show graph steps in verbose mode
-                for i, step in enumerate(list(self.graph.steps)[:5]):
-                    lines.append(f"{ind}Step {i}:")
-                    if step.meta:
-                        lines.append(f"{ind * 2}Meta: {self._format_value(step.meta, indent * 2, max_length=100)}")
-                    lines.append(f"{ind * 2}Inputs: {len(step.inputs)} nodes")
-                    lines.append(f"{ind * 2}Output: {step.output.value.__class__.__name__ if step.output.value else 'None'}")
-                if len(self.graph.steps) > 5:
-                    lines.append(f"{ind}... and {len(self.graph.steps) - 5} more steps")
-        else:
-            lines.append(f"{ind}(no graph steps)")
-        
-        # Environment (in verbose mode)
-        if verbose and self.env:
-            lines.append("\n🌍 Environment:")
-            for key, value in list(self.env.items())[:10]:
-                value_str = self._format_value(value, indent, max_length=100)
-                lines.append(f"{ind}{key}: {value_str}")
-            if len(self.env) > 10:
-                lines.append(f"{ind}... and {len(self.env) - 10} more items")
-        
-        # Summary
-        lines.append("\n" + "=" * 60)
-        lines.append("Summary:")
-        lines.append(f"  • Status: {'✅ OK' if self.is_ok else '❌ Error'}")
-        lines.append(f"  • State items: {len(self.state)}")
-        lines.append(f"  • Log entries: {len(self.log)}")
-        lines.append(f"  • Graph steps: {len(self.graph.steps) if self.graph else 0}")
-        lines.append(f"  • Environment vars: {len(self.env)}")
-        lines.append("=" * 60)
-        
-        return "\n".join(lines)
-    
     def _format_value(self, value: Any, indent: int, max_length: int = 200) -> str:
         """Format a value for display, handling various types."""
         if value is None:
@@ -1026,61 +844,325 @@ class RunResult(Generic[T]):
                 return str_val[:max_length] + "..."
             return str_val
 
-    def _format_creation_trace(
-        self,
-        context: EffectCreationContext,
-        indent: int,
-        max_frames: int = 15,
-    ) -> list[str]:
-        """Format the creation stack trace for display."""
+@dataclass(frozen=True)
+class RunResultDisplayContext:
+    """Shared context for building RunResult display output."""
 
-        if not context.stack_trace:
-            return []
+    run_result: "RunResult[Any]"
+    verbose: bool
+    indent_unit: str
+    failure_details: RunFailureDetails | None
 
-        trace_lines: list[str] = []
-        for frame in context.stack_trace[:max_frames]:
-            filename = frame.get("filename", "<unknown>")
-            line = frame.get("line", "?")
-            func = frame.get("function", "<unknown>")
-            trace_lines.append(f"File \"{filename}\", line {line}, in {func}")
-            code = frame.get("code")
-            if code:
-                trace_lines.append(f"  {code}")
+    def indent(self, level: int, text: str) -> str:
+        if not text:
+            return text
+        return f"{self.indent_unit * level}{text}"
 
-        # Ensure the immediate creation site is always included last
-        creation_site = f'File "{context.filename}", line {context.line}, in {context.function}'
-        if creation_site not in trace_lines:
-            trace_lines.append(creation_site)
-            if context.code:
-                trace_lines.append(f"  {context.code}")
 
-        return trace_lines
+@dataclass(frozen=True)
+class _BaseSection:
+    context: RunResultDisplayContext
 
-    def _format_exception_trace(
-        self, exc: BaseException, max_frames: int = 18
-    ) -> list[str]:
-        tb = exc.__traceback__
-        if tb is None:
-            return []
+    def indent(self, level: int, text: str) -> str:
+        return self.context.indent(level, text)
 
-        formatted = traceback.format_exception(type(exc), exc, tb)
-        if not formatted:
-            return []
+    def format_value(self, value: Any, *, max_length: int = 200) -> str:
+        indent_width = len(self.context.indent_unit) or 2
+        return self.context.run_result._format_value(
+            value,
+            indent_width,
+            max_length=max_length,
+        )
 
-        lines = []
-        for raw in formatted:
-            for piece in raw.rstrip().split("\n"):
-                if piece.strip():
-                    lines.append(piece)
 
-        if max_frames is not None and max_frames > 0 and len(lines) > max_frames:
-            lines = lines[-max_frames:]
+class _HeaderSection(_BaseSection):
+    def render(self) -> list[str]:
+        return ["=" * 60, "RunResult Internal Data", "=" * 60]
 
-        trailer = f"{type(exc).__name__}: {exc}"
-        if lines and lines[-1].strip() == trailer:
-            lines = lines[:-1]
+
+class _StatusSection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        lines = ["📊 Result Status:"]
+
+        if rr.is_ok:
+            lines.append(self.indent(1, "✅ Success"))
+            value_repr = pformat(rr.result.value, width=80, compact=False)
+            if "\n" in value_repr:
+                lines.append(self.indent(1, "Value:"))
+                for line in value_repr.splitlines():
+                    lines.append(self.indent(2, line))
+            else:
+                lines.append(self.indent(1, f"Value: {value_repr}"))
+            return lines
+
+        lines.append(self.indent(1, "❌ Failure"))
+        details = self.context.failure_details
+        if details and details.entries:
+            head = details.entries[0]
+            if isinstance(head, EffectFailureInfo):
+                effect_name = head.effect.__class__.__name__
+                lines.append(self.indent(1, f"Effect '{effect_name}' failed"))
+                if head.creation_context:
+                    lines.append(
+                        self.indent(
+                            2,
+                            f"Created at: {head.creation_context.format_location()}",
+                        )
+                    )
+                if head.cause:
+                    lines.append(
+                        self.indent(
+                            2,
+                            f"Cause: {head.cause.__class__.__name__}: {head.cause}",
+                        )
+                    )
+            elif isinstance(head, ExceptionFailureInfo):
+                exc = head.exception
+                lines.append(
+                    self.indent(1, f"{exc.__class__.__name__}: {exc}")
+                )
+        else:
+            lines.append(self.indent(1, f"Error: {rr.result.error!r}"))
 
         return lines
+
+
+class _ErrorSection(_BaseSection):
+    def render(self) -> list[str]:
+        details = self.context.failure_details
+        if details is None or not details.entries:
+            return []
+
+        lines: list[str] = ["Error Chain (most recent first):"]
+
+        for idx, entry in enumerate(details.entries, start=1):
+            if idx > 1:
+                lines.append("")
+
+            if isinstance(entry, EffectFailureInfo):
+                lines.extend(self._render_effect_entry(idx, entry))
+            elif isinstance(entry, ExceptionFailureInfo):
+                lines.extend(self._render_exception_entry(idx, entry))
+
+        return lines
+
+    def _render_effect_entry(
+        self, idx: int, entry: EffectFailureInfo
+    ) -> list[str]:
+        effect_name = entry.effect.__class__.__name__
+        lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
+
+        ctx = entry.creation_context
+        if ctx is not None:
+            lines.append(self.indent(2, f"Location: {ctx.format_location()}"))
+            if ctx.code:
+                lines.append(self.indent(3, ctx.code))
+            if self.context.verbose and ctx.stack_trace:
+                lines.append(self.indent(2, "Creation stack:"))
+                for frame_line in ctx.build_traceback().splitlines():
+                    lines.append(self.indent(3, frame_line))
+        else:
+            lines.append(self.indent(2, "Location: <unknown>"))
+
+        if entry.cause:
+            lines.append(
+                self.indent(
+                    2,
+                    f"Cause: {entry.cause.__class__.__name__}: {entry.cause}",
+                )
+            )
+            if entry.cause_trace:
+                lines.extend(self._render_trace(entry.cause_trace, "Cause stack"))
+
+        if entry.runtime_trace:
+            lines.extend(self._render_trace(entry.runtime_trace, "Runtime stack"))
+
+        return lines
+
+    def _render_exception_entry(
+        self, idx: int, entry: ExceptionFailureInfo
+    ) -> list[str]:
+        exc = entry.exception
+        lines = [self.indent(1, f"[{idx}] {exc.__class__.__name__}: {exc}")]
+        if entry.trace:
+            lines.extend(self._render_trace(entry.trace, "Stack"))
+        return lines
+
+    def _render_trace(
+        self,
+        trace: CapturedTraceback,
+        label: str,
+    ) -> list[str]:
+        condensed = not self.context.verbose
+        frames = trace.lines(condensed=condensed)
+        if not frames:
+            return []
+        result = [self.indent(2, f"{label}:")]
+        result.extend(self.indent(3, frame) for frame in frames)
+        return result
+
+
+class _StateSection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        lines = ["🗂️ State:"]
+        if rr.state:
+            items = list(rr.state.items())
+            for key, value in items[:20]:
+                value_str = self.format_value(value, max_length=100)
+                lines.append(self.indent(1, f"{key}: {value_str}"))
+            if len(items) > 20:
+                remaining = len(items) - 20
+                lines.append(self.indent(1, f"... and {remaining} more items"))
+        else:
+            lines.append(self.indent(1, "(empty)"))
+        return lines
+
+
+class _LogSection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        lines = ["📝 Logs:"]
+        if rr.log:
+            for index, entry in enumerate(rr.log[:10]):
+                entry_str = self.format_value(entry, max_length=150)
+                lines.append(self.indent(1, f"[{index}] {entry_str}"))
+            if len(rr.log) > 10:
+                remaining = len(rr.log) - 10
+                lines.append(self.indent(1, f"... and {remaining} more entries"))
+        else:
+            lines.append(self.indent(1, "(no logs)"))
+        return lines
+
+
+class _EffectUsageSection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        lines = ["🔗 Dep/Ask Usage:"]
+        observations = [
+            obs
+            for obs in rr.effect_observations
+            if obs.effect_type in {"Dep", "Ask"}
+        ]
+        if not observations:
+            lines.append(self.indent(1, "(no Dep/Ask effects observed)"))
+            return lines
+
+        limit = 40
+        for idx, obs in enumerate(observations[:limit], start=1):
+            key_text = f" key={obs.key!r}" if obs.key is not None else ""
+            lines.append(self.indent(1, f"[{idx}] {obs.effect_type}{key_text}"))
+            if obs.context is not None:
+                lines.append(
+                    self.indent(2, obs.context.format_location())
+                )
+                if obs.context.code:
+                    lines.append(self.indent(3, obs.context.code))
+            else:
+                lines.append(self.indent(2, "<location unavailable>"))
+
+        if len(observations) > limit:
+            remaining = len(observations) - limit
+            lines.append(self.indent(1, f"... and {remaining} more entries"))
+
+        return lines
+
+
+class _GraphSection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        graph = rr.graph
+        lines = ["🌳 Graph:"]
+
+        if not graph or not graph.steps:
+            lines.append(self.indent(1, "(no graph steps)"))
+            return lines
+
+        lines.append(self.indent(1, f"Steps: {len(graph.steps)}"))
+        if not self.context.verbose:
+            return lines
+
+        steps = list(graph.steps)
+        for index, step in enumerate(steps[:5]):
+            lines.append(self.indent(1, f"Step {index}:"))
+            if step.meta:
+                meta_str = self.format_value(step.meta, max_length=100)
+                lines.append(self.indent(2, f"Meta: {meta_str}"))
+            lines.append(self.indent(2, f"Inputs: {len(step.inputs)} nodes"))
+            output_value = step.output.value
+            output_cls = output_value.__class__.__name__ if output_value else "None"
+            lines.append(self.indent(2, f"Output: {output_cls}"))
+
+        if len(steps) > 5:
+            remaining = len(steps) - 5
+            lines.append(self.indent(1, f"... and {remaining} more steps"))
+
+        return lines
+
+
+class _EnvironmentSection(_BaseSection):
+    def render(self) -> list[str]:
+        if not self.context.verbose:
+            return []
+        env = self.context.run_result.env
+        if not env:
+            return []
+        lines = ["🌍 Environment:"]
+        items = list(env.items())
+        for key, value in items[:10]:
+            value_str = self.format_value(value, max_length=100)
+            lines.append(self.indent(1, f"{key}: {value_str}"))
+        if len(items) > 10:
+            remaining = len(items) - 10
+            lines.append(self.indent(1, f"... and {remaining} more items"))
+        return lines
+
+
+class _SummarySection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        lines = ["=" * 60, "Summary:"]
+        status = "✅ OK" if rr.is_ok else "❌ Error"
+        lines.append(f"  • Status: {status}")
+        lines.append(f"  • State items: {len(rr.state)}")
+        lines.append(f"  • Log entries: {len(rr.log)}")
+        graph_steps = len(rr.graph.steps) if rr.graph else 0
+        lines.append(f"  • Graph steps: {graph_steps}")
+        lines.append(f"  • Environment vars: {len(rr.env)}")
+        lines.append("=" * 60)
+        return lines
+
+
+@dataclass(frozen=True)
+class RunResultDisplayRenderer:
+    """Assemble display sections into the final string."""
+
+    context: RunResultDisplayContext
+
+    def render(self) -> str:
+        sections = [
+            _HeaderSection(self.context),
+            _StatusSection(self.context),
+            _ErrorSection(self.context),
+            _StateSection(self.context),
+            _LogSection(self.context),
+            _EffectUsageSection(self.context),
+            _GraphSection(self.context),
+            _EnvironmentSection(self.context),
+            _SummarySection(self.context),
+        ]
+
+        collected: list[str] = []
+        for section in sections:
+            section_lines = section.render()
+            if not section_lines:
+                continue
+            if collected:
+                collected.append("")
+            collected.extend(section_lines)
+
+        return "\n".join(collected)
 
 
 # ============================================
