@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import time
@@ -21,6 +22,7 @@ from doeff import (
 )
 
 from .client import get_gemini_client, track_api_call
+from .types import GeminiImageEditResult
 
 if TYPE_CHECKING:  # pragma: no cover - optional dependency for type checkers
     import PIL.Image
@@ -119,6 +121,7 @@ def build_generation_config(
     tools: list[dict[str, Any]] | None,
     tool_config: dict[str, Any] | None,
     response_format: type[BaseModel] | None,
+    response_modalities: list[str] | None = None,
     generation_config_overrides: dict[str, Any] | None,
 ) -> EffectGenerator[Any]:
     """Create the :class:`google.genai.types.GenerateContentConfig` payload."""
@@ -144,6 +147,8 @@ def build_generation_config(
     if response_format is not None and issubclass(response_format, BaseModel):
         config_data["response_schema"] = response_format
         config_data.setdefault("response_mime_type", "application/json")
+    if response_modalities:
+        config_data["response_modalities"] = response_modalities
     if generation_config_overrides:
         config_data.update({k: v for k, v in generation_config_overrides.items() if v is not None})
 
@@ -216,9 +221,79 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
 
 
 @do
+def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEditResult]:
+    """Extract image bytes and optional text from a Gemini response."""
+
+    image_bytes: bytes | None = None
+    mime_type: str | None = None
+    text_fragments: list[str] = []
+
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        if content is None:
+            continue
+        parts = getattr(content, "parts", None) or []
+        if not parts:
+            part_text = getattr(content, "text", None)
+            if part_text:
+                text_fragments.append(part_text)
+            continue
+        for part in parts:
+            part_text: str | None = None
+            inline_data: Any | None = None
+            if isinstance(part, dict):
+                part_text = part.get("text")
+                inline_data = part.get("inline_data") or part.get("inlineData")
+            else:
+                part_text = getattr(part, "text", None)
+                inline_data = getattr(part, "inline_data", None) or getattr(part, "inlineData", None)
+
+            if part_text:
+                text_fragments.append(str(part_text))
+                continue
+
+            if inline_data is None or image_bytes is not None:
+                continue
+
+            if isinstance(inline_data, dict):
+                data = inline_data.get("data")
+                mime = inline_data.get("mime_type") or inline_data.get("mimeType")
+            else:
+                data = getattr(inline_data, "data", None)
+                mime = getattr(inline_data, "mime_type", None) or getattr(inline_data, "mimeType", None)
+
+            if isinstance(data, str):
+                try:
+                    data = base64.b64decode(data)
+                except Exception:  # pragma: no cover - fall back if decoding fails
+                    data = data.encode("utf-8")
+
+            if data is None:
+                continue
+
+            image_bytes = bytes(data)
+            mime_type = mime or "image/png"
+
+    if image_bytes is None or mime_type is None:
+        yield Log("Gemini response did not include edited image data")
+        yield Fail(ValueError("Gemini response missing edited image"))
+
+    combined_text = "\n".join(text_fragments) if text_fragments else None
+    text_preview = _stringify_for_log(combined_text, limit=200)
+    yield Log(f"Gemini image edit text preview: {text_preview}")
+
+    return GeminiImageEditResult(
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        text=combined_text,
+    )
+
+
+@do
 def structured_llm__gemini(
     text: str,
-    model: str = "gemini-1.5-pro-latest",
+    model: str = "gemini-2.5-pro",
     images: list[PIL.Image.Image] | None = None,
     response_format: type[BaseModel] | None = None,
     max_output_tokens: int = 2048,
@@ -252,6 +327,7 @@ def structured_llm__gemini(
         tools=tools,
         tool_config=tool_config,
         response_format=response_format,
+        response_modalities=None,
         generation_config_overrides=generation_config_overrides,
     )
 
@@ -343,10 +419,149 @@ def structured_llm__gemini(
     return result
 
 
+@do
+def edit_image__gemini(
+    prompt: str,
+    model: str = "gemini-2.5-flash-image-preview",
+    images: list[PIL.Image.Image] | None = None,
+    max_output_tokens: int = 8192,
+    temperature: float = 0.9,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    candidate_count: int = 1,
+    system_instruction: str | None = None,
+    safety_settings: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_config: dict[str, Any] | None = None,
+    response_modalities: list[str] | None = None,
+    generation_config_overrides: dict[str, Any] | None = None,
+    max_retries: int = 3,
+) -> EffectGenerator[GeminiImageEditResult]:
+    """Generate or edit an image using Gemini multimodal models."""
+
+    yield Log(
+        "Preparing Gemini image edit call using model="
+        f"{model} with {len(images) if images else 0} input image(s)"
+    )
+
+    client = yield get_gemini_client()
+    async_client = client.async_client
+
+    contents = yield build_contents(text=prompt, images=images)
+
+    response_modalities = list(response_modalities or ["TEXT", "IMAGE"])
+
+    generation_config = yield build_generation_config(
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        top_p=top_p,
+        top_k=top_k,
+        candidate_count=candidate_count,
+        system_instruction=system_instruction,
+        safety_settings=safety_settings,
+        tools=tools,
+        tool_config=tool_config,
+        response_format=None,
+        response_modalities=response_modalities,
+        generation_config_overrides=generation_config_overrides,
+    )
+
+    generation_config_payload = {
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "top_p": top_p,
+        "top_k": top_k,
+        "candidate_count": candidate_count,
+        "system_instruction": system_instruction,
+        "safety_settings": safety_settings,
+        "tools": tools,
+        "tool_config": tool_config,
+        "response_modalities": response_modalities,
+        "generation_config_overrides": generation_config_overrides,
+    }
+
+    request_payload = {
+        "text": prompt,
+        "images": images or [],
+        "generation_config": {
+            key: value
+            for key, value in generation_config_payload.items()
+            if value is not None
+        },
+    }
+
+    request_summary = {
+        "operation": "generate_content",
+        "model": model,
+        "has_images": bool(images),
+        "candidate_count": candidate_count,
+        "response_modalities": response_modalities,
+    }
+    request_summary = {k: v for k, v in request_summary.items() if v is not None}
+
+    @do
+    def make_api_call() -> EffectGenerator[Any]:
+        attempt_start_time = time.time()
+
+        @do
+        def api_call_with_tracking() -> EffectGenerator[Any]:
+            response = yield Await(
+                async_client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=generation_config,
+                )
+            )
+            yield track_api_call(
+                operation="generate_content",
+                model=model,
+                request_summary=request_summary,
+                request_payload=request_payload,
+                response=response,
+                start_time=attempt_start_time,
+                error=None,
+            )
+            return response
+
+        @do
+        def handle_error(exc: Exception) -> EffectGenerator[None]:
+            yield track_api_call(
+                operation="generate_content",
+                model=model,
+                request_summary=request_summary,
+                request_payload=request_payload,
+                response=None,
+                start_time=attempt_start_time,
+                error=exc,
+            )
+            yield Fail(exc)
+
+        return (yield Catch(api_call_with_tracking(), handle_error))
+
+    response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
+
+    result = yield process_image_edit_response(response)
+
+    yield Step(
+        value={
+            "result_type": type(result).__name__,
+            "has_text": bool(result.text),
+        },
+        meta={
+            "model": model,
+            "input_image_count": len(images) if images else 0,
+        },
+    )
+
+    return result
+
+
 __all__ = [
     "build_contents",
     "build_generation_config",
     "process_structured_response",
     "process_unstructured_response",
+    "process_image_edit_response",
     "structured_llm__gemini",
+    "edit_image__gemini",
 ]

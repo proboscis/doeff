@@ -1,13 +1,19 @@
 """Tests for the Gemini structured LLM implementation."""
 
 import json
+from io import BytesIO
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from PIL import Image
 from doeff_gemini import (
+    GeminiImageEditResult,
     build_contents,
     build_generation_config,
+    edit_image__gemini,
+    process_image_edit_response,
     process_structured_response,
     process_unstructured_response,
     structured_llm__gemini,
@@ -86,6 +92,37 @@ async def test_build_generation_config_basic() -> None:
     assert config.system_instruction == "Be concise"
     assert config.stop_sequences == ["END"]
     assert config.logprobs == 2
+
+
+@pytest.mark.asyncio
+async def test_build_generation_config_with_modalities() -> None:
+    """Response modalities should be captured when provided."""
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (
+            yield build_generation_config(
+                temperature=0.7,
+                max_output_tokens=1024,
+                top_p=None,
+                top_k=None,
+                candidate_count=1,
+                system_instruction=None,
+                safety_settings=None,
+                tools=None,
+                tool_config=None,
+                response_format=None,
+                response_modalities=["TEXT", "IMAGE"],
+                generation_config_overrides=None,
+            )
+        )
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    config = result.value
+    assert config.response_modalities == ["TEXT", "IMAGE"]
 
 
 @pytest.mark.asyncio
@@ -240,3 +277,123 @@ async def test_structured_llm_with_pydantic() -> None:
     config = async_models.generate_content.call_args.kwargs["config"]
     assert config.response_schema is SimpleResponse
     assert config.response_mime_type == "application/json"
+
+
+class _InlineData:
+    def __init__(self, data: bytes, mime_type: str) -> None:
+        self.data = data
+        self.mime_type = mime_type
+
+
+class _ContentPart:
+    def __init__(self, text: str | None = None, inline_data: Any | None = None) -> None:
+        self.text = text
+        self.inline_data = inline_data
+
+
+class _CandidateContent:
+    def __init__(self, parts: list[Any]) -> None:
+        self.parts = parts
+
+
+@pytest.mark.asyncio
+async def test_process_image_edit_response_success() -> None:
+    """Image edit response should surface image bytes and optional text."""
+
+    image_bytes = b"fake-image"
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=_CandidateContent(
+                    parts=[
+                        _ContentPart(text="Edit applied"),
+                        _ContentPart(inline_data=_InlineData(data=image_bytes, mime_type="image/png")),
+                    ]
+                )
+            )
+        ]
+    )
+
+    @do
+    def flow() -> EffectGenerator[GeminiImageEditResult]:
+        return (yield process_image_edit_response(response))
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    payload = result.value
+    assert payload.image_bytes == image_bytes
+    assert payload.mime_type == "image/png"
+    assert payload.text == "Edit applied"
+
+
+@pytest.mark.asyncio
+async def test_edit_image__gemini_success() -> None:
+    """End-to-end image edit call should capture inline image data."""
+
+    base_image = Image.new("RGB", (8, 4), color=(255, 0, 0))
+    buffer = BytesIO()
+    base_image.save(buffer, format="PNG")
+    uploaded = buffer.getvalue()
+
+    edited_bytes = b"edited-image"
+    response = SimpleNamespace(
+        candidates=[
+            SimpleNamespace(
+                content=_CandidateContent(
+                    parts=[
+                        _ContentPart(text="Success"),
+                        _ContentPart(inline_data=_InlineData(data=edited_bytes, mime_type="image/png")),
+                    ]
+                )
+            )
+        ],
+        usage_metadata=SimpleNamespace(
+            text_input_token_count=100,
+            text_output_token_count=10,
+            image_input_token_count=1,
+            image_output_token_count=1,
+            total_token_count=112,
+        ),
+    )
+
+    async_models = MagicMock()
+    async_models.generate_content = AsyncMock(return_value=response)
+    async_client = MagicMock()
+    async_client.models = async_models
+
+    client = MagicMock()
+    client.async_client = async_client
+
+    @do
+    def flow() -> EffectGenerator[GeminiImageEditResult]:
+        return (
+            yield edit_image__gemini(
+                prompt="Enhance the colors",
+                model="gemini-2.5-flash-image-preview",
+                images=[Image.open(BytesIO(uploaded))],
+                temperature=0.5,
+                top_k=8,
+            )
+        )
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(env={"gemini_client": client})
+    result = await engine.run(flow(), context)
+
+    assert result.is_ok
+    payload = result.value
+    assert payload.image_bytes == edited_bytes
+    assert payload.mime_type == "image/png"
+    assert payload.text == "Success"
+
+    async_models.generate_content.assert_called_once()
+    call_kwargs = async_models.generate_content.call_args.kwargs
+    config = call_kwargs["config"]
+    assert config.response_modalities == ["TEXT", "IMAGE"]
+
+    api_calls = result.context.state.get("gemini_api_calls")
+    assert api_calls is not None
+    assert api_calls[0]["prompt_text"] == "Enhance the colors"
+    assert api_calls[0]["prompt_images"][0]["mime_type"].startswith("image/")

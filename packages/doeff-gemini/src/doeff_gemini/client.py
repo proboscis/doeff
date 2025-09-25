@@ -379,37 +379,50 @@ def track_api_call(
             {**graph_meta, "phase": "response"},
         )
 
+    if token_usage:
+        yield Step(
+            {"usage": token_usage.to_dict()},
+            {**graph_meta, "phase": "usage"},
+        )
+
+    if cost_info:
+        yield Step(
+            {"cost": cost_info.to_dict()},
+            {**graph_meta, "phase": "cost"},
+        )
+
     api_calls = yield Get("gemini_api_calls")
     if api_calls is None:
         api_calls = []
-        api_calls.append(
-            {
-                "operation": operation,
-                "model": model,
-                "timestamp": metadata.timestamp.isoformat(),
-                "latency_ms": latency_ms,
-                "error": metadata.error,
-                "tokens": {
-                    "input": token_usage.input_tokens if token_usage else None,
-                    "output": token_usage.output_tokens if token_usage else None,
-                    "total": token_usage.total_tokens if token_usage else None,
-                }
-                if token_usage
-                else None,
-                "request_id": request_id,
-                "cost": cost_info.total_cost if cost_info else None,
-                "cost_breakdown": {
-                    "text_input": cost_info.text_input_cost if cost_info else None,
-                    "text_output": cost_info.text_output_cost if cost_info else None,
-                    "image_input": cost_info.image_input_cost if cost_info else None,
-                    "image_output": cost_info.image_output_cost if cost_info else None,
-                }
-                if cost_info
-                else None,
-                "prompt_text": prompt_text,
-                "prompt_images": prompt_images,
+
+    api_calls.append(
+        {
+            "operation": operation,
+            "model": model,
+            "timestamp": metadata.timestamp.isoformat(),
+            "latency_ms": latency_ms,
+            "error": metadata.error,
+            "tokens": {
+                "input": token_usage.input_tokens if token_usage else None,
+                "output": token_usage.output_tokens if token_usage else None,
+                "total": token_usage.total_tokens if token_usage else None,
             }
-        )
+            if token_usage
+            else None,
+            "request_id": request_id,
+            "cost": cost_info.total_cost if cost_info else None,
+            "cost_breakdown": {
+                "text_input": cost_info.text_input_cost if cost_info else None,
+                "text_output": cost_info.text_output_cost if cost_info else None,
+                "image_input": cost_info.image_input_cost if cost_info else None,
+                "image_output": cost_info.image_output_cost if cost_info else None,
+            }
+            if cost_info
+            else None,
+            "prompt_text": prompt_text,
+            "prompt_images": prompt_images,
+        }
+    )
     yield Put("gemini_api_calls", api_calls)
 
     if cost_info:
