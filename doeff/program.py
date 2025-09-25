@@ -206,21 +206,21 @@ class Program(Generic[T]):
         return Program.sequence(programs)
 
     @staticmethod
-    def list(values: Iterable["Program[U] | U"]) -> Program[list[U]]:
+    def list(*values: Iterable["Program[U] | U"]) -> Program[list[U]]:
         """Construct a Program that resolves each element and returns a list."""
 
         programs = [Program.lift(value) for value in values]
         return Program.sequence(programs)
 
     @staticmethod
-    def tuple(values: Iterable["Program[U] | U"]) -> Program[tuple[U, ...]]:
+    def tuple(*values: Iterable["Program[U] | U"]) -> Program[tuple[U, ...]]:
         """Construct a Program that resolves each element and returns a tuple."""
 
         programs = [Program.lift(value) for value in values]
         return Program.sequence(programs).map(lambda items: tuple(items))
 
     @staticmethod
-    def set(values: Iterable["Program[U] | U"]) -> Program[set[U]]:
+    def set(*values: Iterable["Program[U] | U"]) -> Program[set[U]]:
         """Construct a Program that resolves each element and returns a set."""
 
         programs = [Program.lift(value) for value in values]
