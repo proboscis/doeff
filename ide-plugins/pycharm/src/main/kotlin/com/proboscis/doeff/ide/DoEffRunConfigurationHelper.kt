@@ -74,23 +74,16 @@ class DoEffRunConfigurationHelper(private val project: Project) {
             arguments.add("--transform")
             arguments.add(it.qualifiedName)
         }
-        arguments.add("--format")
-        arguments.add("json")
         return arguments.joinToString(separator = " ")
     }
 
-    private fun buildConfigurationName(selection: RunConfigurationSelection): String = buildString {
-        append(selection.programPath)
-        append(" :: ")
-        append(selection.interpreter.qualifiedName)
-        selection.kleisli?.let {
-            append(" | kleisli=")
-            append(it.qualifiedName)
-        }
-        selection.transformer?.let {
-            append(" | transform=")
-            append(it.qualifiedName)
-        }
+    private fun buildConfigurationName(selection: RunConfigurationSelection): String {
+        val variableName = selection.programPath.substringAfterLast('.')
+        val kleisliName = selection.kleisli?.name ?: "None"
+        val transformerName = selection.transformer?.name ?: "None"
+        val interpreterName = selection.interpreter.name
+
+        return "VAR:$variableName -> K:$kleisliName -> T:$transformerName -> I:$interpreterName"
     }
 
     private fun createSettings(
