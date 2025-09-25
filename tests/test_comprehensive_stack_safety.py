@@ -105,17 +105,20 @@ async def test_deep_mixed_monad_chain():
         """Quick async operation."""
         return n * 2
 
-    def maybe_fail(n) -> Generator[Effect, Any, int]:
+    @do
+    def maybe_fail(n: int) -> Generator[Effect, Any, int]:
         """Sometimes fails."""
         if n == 3000:
             yield fail(ValueError("Expected failure"))
         return n
 
-    def recover_value(n) -> Generator[Effect, Any, int]:
+    @do
+    def recover_value(n: int) -> Generator[Effect, Any, int]:
         """Recovery function."""
         yield tell(f"Recovered from error at {n}")
         return -n
 
+    @do
     def sub_computation() -> Generator[Effect, Any, int]:
         """Sub computation with logging."""
         yield tell("Sub computation")
