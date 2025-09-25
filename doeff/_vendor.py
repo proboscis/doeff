@@ -7,6 +7,7 @@ Original source: sge-hub/src/sge_hub/monads/state_graph_future_result/
 from __future__ import annotations
 
 import traceback
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
@@ -79,9 +80,10 @@ class WStep:
     inputs: tuple[WNode, ...]
     output: WNode
     meta: dict[str, Any] = field(default_factory=dict)
+    _unique_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     def __hash__(self) -> int:
-        return hash((self.inputs, self.output))
+        return hash(self._unique_id)
 
 
 @dataclass(frozen=True)
