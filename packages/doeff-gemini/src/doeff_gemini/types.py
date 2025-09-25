@@ -8,6 +8,15 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class GeminiImageEditResult:
+    """Result payload returned by the Gemini image edit helper."""
+
+    image_bytes: bytes
+    mime_type: str
+    text: str | None
+
+
+@dataclass(frozen=True)
 class TokenUsage:
     """Token accounting returned by the Gemini API."""
 
@@ -31,6 +40,19 @@ class TokenUsage:
             usage["image_output_tokens"] = self.image_output_tokens
         return usage or None
 
+    def to_dict(self) -> dict[str, int | None]:
+        """Return a serializable snapshot of usage counters."""
+
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "text_input_tokens": self.text_input_tokens,
+            "text_output_tokens": self.text_output_tokens,
+            "image_input_tokens": self.image_input_tokens,
+            "image_output_tokens": self.image_output_tokens,
+        }
+
 
 @dataclass(frozen=True)
 class CostInfo:
@@ -41,6 +63,17 @@ class CostInfo:
     text_output_cost: float
     image_input_cost: float
     image_output_cost: float
+
+    def to_dict(self) -> dict[str, float]:
+        """Return a serializable snapshot of the cost breakdown."""
+
+        return {
+            "total_cost": self.total_cost,
+            "text_input_cost": self.text_input_cost,
+            "text_output_cost": self.text_output_cost,
+            "image_input_cost": self.image_input_cost,
+            "image_output_cost": self.image_output_cost,
+        }
 
 
 @dataclass(frozen=True)
@@ -82,4 +115,4 @@ class APICallMetadata:
         return metadata
 
 
-__all__ = ["APICallMetadata", "TokenUsage", "CostInfo"]
+__all__ = ["APICallMetadata", "TokenUsage", "CostInfo", "GeminiImageEditResult"]
