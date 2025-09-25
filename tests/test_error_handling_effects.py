@@ -15,6 +15,9 @@ from doeff import (
     Fail,
     Get,
     Log,
+    Local,
+    Listen,
+    ListenResult,
     Ok,
     Err,
     ProgramInterpreter,
@@ -275,6 +278,176 @@ async def test_catch_vs_recover():
     recover_result = await engine.run(test_recover())
     assert recover_result.is_ok
     assert recover_result.value == "fallback"
+
+
+@pytest.mark.asyncio
+async def test_catch_handler_logs_are_accumulated():
+    """Catch handler logs should append to the surrounding writer log."""
+
+    @do
+    def failing_program() -> EffectGenerator[int]:
+        yield Log("before fail")
+        yield Fail(ValueError("boom"))
+        return 0  # Never reached
+
+    @do
+    def handler(exc: Exception) -> EffectGenerator[int]:
+        yield Log(f"handled {type(exc).__name__}")
+        return 42
+
+    @do
+    def main_program() -> EffectGenerator[int]:
+        result = yield Catch(failing_program(), handler)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(main_program())
+
+    assert result.is_ok
+    assert result.value == 42
+    assert result.log == ["before fail", "handled ValueError"]
+
+
+@pytest.mark.asyncio
+async def test_catch_handler_logs_with_listen():
+    """Listen should capture logs produced by both failing program and handler."""
+
+    @do
+    def failing_program() -> EffectGenerator[int]:
+        yield Log("before fail")
+        yield Fail(RuntimeError("nope"))
+        return 0
+
+    @do
+    def handler(exc: Exception) -> EffectGenerator[int]:
+        yield Log(f"handled {type(exc).__name__}")
+        return 7
+
+    @do
+    def main_program() -> EffectGenerator:
+        listen_result = yield Listen(Catch(failing_program(), handler))
+        return listen_result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(main_program())
+
+    assert result.is_ok
+    assert isinstance(result.value, ListenResult)
+    assert result.value.value == 7
+    assert result.value.log == ["before fail", "handled RuntimeError"]
+    assert result.log == []  # Listen isolates the log from the parent context
+
+
+@pytest.mark.asyncio
+async def test_catch_handler_fail_propagates_error_logs():
+    """If the handler fails, logs before the failure should persist once."""
+
+    @do
+    def failing_program() -> EffectGenerator[int]:
+        yield Log("before fail")
+        yield Fail(ValueError("boom"))
+
+    @do
+    def failing_handler(exc: Exception) -> EffectGenerator[int]:
+        yield Log(f"handled {type(exc).__name__}")
+        yield Fail(RuntimeError("handler boom"))
+
+    @do
+    def main_program() -> EffectGenerator[None]:
+        yield Catch(failing_program(), failing_handler)
+
+    engine = ProgramInterpreter()
+    result = await engine.run(main_program())
+
+    assert result.is_err
+
+    error = result.result.error
+    from doeff.types import EffectFailure
+
+    while isinstance(error, EffectFailure):
+        error = error.cause
+
+    assert isinstance(error, RuntimeError)
+    assert str(error) == "handler boom"
+    assert result.log == ["before fail", "handled ValueError"]
+
+
+@pytest.mark.asyncio
+async def test_catch_within_local_propagates_logs():
+    """Catch inside Local should retain logs when rethrown from handler."""
+
+    @do
+    def failing_subprogram() -> EffectGenerator[int]:
+        yield Log("sub before fail")
+        yield Fail(ValueError("boom"))
+
+    @do
+    def failing_handler(exc: Exception) -> EffectGenerator[int]:
+        yield Log(f"handler saw {exc}")
+        yield Fail(exc)
+
+    @do
+    def main_program() -> EffectGenerator[int]:
+        yield Local({}, Catch(failing_subprogram(), failing_handler))
+        return 0
+
+    engine = ProgramInterpreter()
+    result = await engine.run(main_program())
+
+    assert result.is_err
+
+    error = result.result.error
+    from doeff.types import EffectFailure
+
+    while isinstance(error, EffectFailure):
+        error = error.cause
+
+    assert isinstance(error, ValueError)
+    assert result.log == ["sub before fail", "handler saw boom"]
+
+
+@pytest.mark.asyncio
+async def test_retry_of_catch_preserves_attempt_logs():
+    """Retry should keep logs from each attempt when handlers rethrow."""
+
+    attempts: list[int] = []
+
+    @do
+    def unstable() -> EffectGenerator[int]:
+        attempt_no = len(attempts) + 1
+        attempts.append(attempt_no)
+        yield Log(f"attempt {attempt_no}")
+        yield Fail(ValueError(f"boom {attempt_no}"))
+
+    @do
+    def handler(exc: Exception) -> EffectGenerator[int]:
+        yield Log(f"handler saw {exc}")
+        yield Fail(exc)
+
+    @do
+    def main_program() -> EffectGenerator[int]:
+        yield Retry(Catch(unstable(), handler), max_attempts=2, delay_ms=0)
+        return 0
+
+    engine = ProgramInterpreter()
+    result = await engine.run(main_program())
+
+    assert result.is_err
+
+    error = result.result.error
+    from doeff.types import EffectFailure
+
+    while isinstance(error, EffectFailure):
+        error = error.cause
+
+    assert isinstance(error, ValueError)
+    assert str(error) == "boom 2"
+    assert result.log == [
+        "attempt 1",
+        "handler saw boom 1",
+        "attempt 2",
+        "handler saw boom 2",
+    ]
 
 
 @pytest.mark.asyncio
