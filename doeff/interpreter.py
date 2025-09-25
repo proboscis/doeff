@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import traceback
 from typing import Any, TypeVar
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
@@ -61,6 +60,7 @@ from doeff.types import (
     EffectObservation,
     ExecutionContext,
     RunResult,
+    capture_traceback,
 )
 
 
@@ -190,11 +190,7 @@ class ProgramInterpreter:
                     except Exception as exc:
                         # Create an EffectFailure with both runtime and creation context
                         # Capture the runtime traceback now while we have it
-                        runtime_tb = "".join(
-                            traceback.format_exception(
-                                exc.__class__, exc, exc.__traceback__
-                            )
-                        ) if hasattr(exc, "__traceback__") else None
+                        runtime_tb = capture_traceback(exc)
 
                         effect_failure = EffectFailure(
                             effect=current,
@@ -232,6 +228,7 @@ class ProgramInterpreter:
                     )
 
         except Exception as exc:
+            capture_traceback(exc)
             return RunResult(ctx, Err(exc))
 
     def _record_effect_usage(self, effect: Effect, ctx: ExecutionContext) -> None:
