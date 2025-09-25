@@ -199,7 +199,7 @@ def cache(
                 return (yield CacheGet(cache_key))
 
             # Try to get from cache, recover with computation on miss
-            result = yield Recover(try_cache_get, compute_and_cache)
+            result = yield Recover(try_cache_get(), compute_and_cache())
 
             # Log cache hit if we got here without computing
             # (The log will only appear if CacheGet succeeded)

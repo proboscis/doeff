@@ -229,15 +229,19 @@ def build_graph_snapshot(
     for level, bucket in level_buckets.items():
         if not bucket:
             continue
-        total_width = (len(bucket) - 1) * H_SPACING
+        ordered_ids = sorted(bucket, key=lambda node_id: node_lookup[node_id]["label"])
+        total_width = (len(ordered_ids) - 1) * H_SPACING
         start_x = -total_width / 2
-        for index, node_id in enumerate(bucket):
+        for index, node_id in enumerate(ordered_ids):
             node = node_lookup[node_id]
             node["level"] = level
             node["x"] = start_x + index * H_SPACING
             node["y"] = level * V_SPACING
             node["fixed"] = {"x": True, "y": True}
             node["physics"] = False
+
+    # Sort nodes by level then x to ensure deterministic ordering for consumers
+    nodes.sort(key=lambda node: (node.get("level", 0), node.get("x", 0)))
 
     # Add arrows to edges
     for edge in edges_list:

@@ -428,16 +428,16 @@ async def test_result_catch_effect():  # noqa: PINJ040
     @do
     def main_program() -> EffectGenerator[tuple]:
         # Test with Effects API
-        result1 = yield Catch(failing_program, recovery_handler)
+        result1 = yield Catch(failing_program(), recovery_handler)
 
         # Test with capitalized alias
-        result2 = yield Catch(failing_program, recovery_handler)
+        result2 = yield Catch(failing_program(), recovery_handler)
 
         # Test with lowercase (backwards compatibility)
-        result3 = yield catch(failing_program, recovery_handler)
+        result3 = yield catch(failing_program(), recovery_handler)
 
         # Test successful case - should not trigger recovery
-        result4 = yield Catch(success_program, recovery_handler)
+        result4 = yield Catch(success_program(), recovery_handler)
 
         return (result1, result2, result3, result4)
 

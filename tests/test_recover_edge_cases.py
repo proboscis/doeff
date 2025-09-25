@@ -19,7 +19,7 @@ async def test_error_handler_that_raises_different_exception():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing, handler_that_raises)
+        result = yield Recover(failing(), handler_that_raises)
         return result
 
     engine = ProgramInterpreter()
@@ -47,7 +47,7 @@ async def test_error_handler_program_that_fails():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing, handler_that_fails)
+        result = yield Recover(failing(), handler_that_fails)
         return result
 
     engine = ProgramInterpreter()
@@ -82,7 +82,7 @@ async def test_recover_with_async_effect_in_handler():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing, async_handler)
+        result = yield Recover(failing(), async_handler)
         return result
 
     engine = ProgramInterpreter()
@@ -108,7 +108,7 @@ async def test_recover_with_no_args_kleisli_program():
     @do
     def test_program() -> EffectGenerator[str]:
         # Should work as a thunk, not an error handler
-        result = yield Recover(failing, no_args_fallback)
+        result = yield Recover(failing(), no_args_fallback)
         return result
 
     engine = ProgramInterpreter()
@@ -134,7 +134,7 @@ async def test_recover_with_one_arg_kleisli_program():
     @do
     def test_program() -> EffectGenerator[str]:
         # Should work as an error handler
-        result = yield Recover(failing, one_arg_handler)
+        result = yield Recover(failing(), one_arg_handler)
         return result
 
     engine = ProgramInterpreter()
@@ -161,7 +161,7 @@ async def test_recover_success_path_doesnt_call_handler():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(succeeding, handler)
+        result = yield Recover(succeeding(), handler)
         return result
 
     engine = ProgramInterpreter()
@@ -193,7 +193,7 @@ async def test_recover_with_custom_exception_class():
 
     @do
     def test_program() -> EffectGenerator[str]:
-        result = yield Recover(failing, custom_handler)
+        result = yield Recover(failing(), custom_handler)
         return result
 
     engine = ProgramInterpreter()
