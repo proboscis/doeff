@@ -51,7 +51,7 @@ from doeff.effects import (
     WriterListenEffect,
     WriterTellEffect,
 )
-from doeff.effects.result import ResultUnwrapEffect
+from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
@@ -88,6 +88,7 @@ class ReaderEffectHandler:
         """Handle reader.local effect."""
         sub_ctx = ctx.copy()
         sub_ctx.env.update(effect.env_update)
+        sub_ctx.log = ctx.log  # Share writer log with parent context
         sub_program = Program.from_program_like(effect.sub_program)
         pragmatic_result = await engine.run(sub_program, sub_ctx)
         # Return the value from the sub-program
@@ -169,51 +170,40 @@ class ResultEffectHandler:
         """Handle result.catch effect."""
         # Import here to avoid circular import
         from doeff.program import Program
+        from doeff.types import EffectFailure
 
-        # Check if sub_program is already a Program or a callable
         sub_program = Program.from_program_like(effect.sub_program)
 
-        try:
-            pragmatic_result = await engine.run(sub_program, ctx)
-            if isinstance(pragmatic_result.result, Err):
-                # Extract the actual exception
-                error = pragmatic_result.result.error
+        def _unwrap_error(error: Any) -> Any:
+            if isinstance(error, EffectFailure):
+                return error.cause
+            return error
 
-                # Unwrap EffectFailure to get the original cause
-                from doeff.types import EffectFailure
-                if isinstance(error, EffectFailure):
-                    error = error.cause
-
-                # Run error handler with the unwrapped exception
-                handler_result = effect.handler(error)
-
-                if isinstance(handler_result, (Program, EffectBase)):
-                    handler_program = Program.from_program_like(handler_result)
-                    handler_pragmatic_result = await engine.run(handler_program, ctx)
-                    return handler_pragmatic_result.value
-
-                return handler_result
-            else:
-                # Success - return the value
-                return pragmatic_result.value
-        except BaseException as e:
-            if isinstance(e, SystemExit):
-                raise
-            # Unwrap EffectFailure to get the original cause
-            from doeff.types import EffectFailure
-            actual_error = e
-            if isinstance(actual_error, EffectFailure):
-                actual_error = actual_error.cause
-
-            # Run error handler with unwrapped exception
-            handler_result = effect.handler(actual_error)
+        async def _run_handler(handler_error: Any) -> Any:
+            handler_result = effect.handler(handler_error)
 
             if isinstance(handler_result, (Program, EffectBase)):
                 handler_program = Program.from_program_like(handler_result)
-                handler_pragmatic_result = await engine.run(handler_program, ctx)
-                return handler_pragmatic_result.value
+                handler_run = await engine.run(handler_program, ctx)
+                if isinstance(handler_run.result, Err):
+                    raise handler_run.result.error
+                return handler_run.value
 
             return handler_result
+
+        try:
+            pragmatic_result = await engine.run(sub_program, ctx)
+        except BaseException as exc:  # Handle direct exceptions from the sub-program
+            if isinstance(exc, SystemExit):
+                raise
+            actual_error = _unwrap_error(exc)
+            return await _run_handler(actual_error)
+
+        if isinstance(pragmatic_result.result, Err):
+            error = _unwrap_error(pragmatic_result.result.error)
+            return await _run_handler(error)
+
+        return pragmatic_result.value
 
     async def handle_safe(
         self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
@@ -225,6 +215,44 @@ class ResultEffectHandler:
 
         pragmatic_result = await engine.run(sub_program, ctx)
         return pragmatic_result.result
+
+    async def handle_first_success(
+        self,
+        effect: ResultFirstSuccessEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Any:
+        """Handle sequential attempts, returning the first successful value."""
+
+        from doeff.program import Program
+
+        base_snapshot = ctx.copy()
+        base_snapshot.effect_observations = list(ctx.effect_observations)
+
+        last_error: Exception | None = None
+
+        for program_like in effect.programs:
+            candidate = Program.from_program_like(program_like)
+
+            attempt_ctx = base_snapshot.copy()
+            attempt_ctx.effect_observations = list(base_snapshot.effect_observations)
+
+            pragmatic_result = await engine.run(candidate, attempt_ctx)
+
+            if isinstance(pragmatic_result.result, Ok):
+                ctx.env = attempt_ctx.env
+                ctx.state = attempt_ctx.state
+                ctx.log = attempt_ctx.log
+                ctx.graph = attempt_ctx.graph
+                ctx.effect_observations = attempt_ctx.effect_observations
+                return pragmatic_result.value
+
+            last_error = pragmatic_result.result.error
+
+        if last_error is not None:
+            raise last_error
+
+        raise RuntimeError("All programs failed")
 
     async def handle_unwrap(
         self,
