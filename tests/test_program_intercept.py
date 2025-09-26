@@ -4,18 +4,167 @@ from __future__ import annotations
 
 import pytest
 
+from dataclasses import dataclass
+from typing import Callable, Sequence
+
 from doeff import (
+    EffectGenerator,
+    ExecutionContext,
+    Log,
     Program,
     ProgramInterpreter,
     Ask,
-    Local,
+    Listen,
     Gather,
-    Log,
-    EffectGenerator,
+    Get,
+    Local,
+    Put,
+    Safe,
+    Fail,
     do,
 )
-from doeff.effects import AskEffect
-from doeff.types import Effect
+from doeff.effects.reader import AskEffect, LocalEffect
+from doeff.effects.state import StateGetEffect, StatePutEffect
+from doeff.effects.writer import WriterListenEffect, WriterTellEffect
+from doeff.effects.result import ResultSafeEffect
+from doeff.types import EffectBase, Effect
+
+
+@dataclass(frozen=True)
+class InterceptCase:
+    name: str
+    build_program: Callable[[], Program]
+    build_context: Callable[[], ExecutionContext | None]
+    expected: Sequence[type[EffectBase]]
+
+
+def _build_ask_program() -> Program:
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Ask("key")
+        yield Log("after ask")
+        return "ok"
+
+    return _program()
+
+
+def _build_get_program() -> Program:
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Get("value")
+        yield Log("after get")
+        return "ok"
+
+    return _program()
+
+
+def _build_put_program() -> Program:
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Put("value", 1)
+        yield Log("after put")
+        return "ok"
+
+    return _program()
+
+
+def _build_local_program() -> Program:
+    @do
+    def _inner() -> EffectGenerator[None]:
+        yield Log("inner log")
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Local({"scoped": True}, _inner())
+        yield Log("outer log")
+        return "ok"
+
+    return _program()
+
+
+def _build_listen_program() -> Program:
+    @do
+    def _inner() -> EffectGenerator[str]:
+        yield Log("inside listen")
+        return "done"
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Listen(_inner())
+        yield Log("after listen")
+        return "ok"
+
+    return _program()
+
+
+def _build_safe_program() -> Program:
+    @do
+    def _program() -> EffectGenerator[str]:
+        result = yield Safe(Fail(ValueError("boom")))
+        yield Log("after safe")
+        return repr(result)
+
+    return _program()
+
+
+INTERCEPT_CASES: tuple[InterceptCase, ...] = (
+    InterceptCase(
+        name="ask_with_log",
+        build_program=_build_ask_program,
+        build_context=lambda: ExecutionContext(env={"key": "value"}),
+        expected=(AskEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="get_with_log",
+        build_program=_build_get_program,
+        build_context=lambda: ExecutionContext(state={"value": 3}),
+        expected=(StateGetEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="put_with_log",
+        build_program=_build_put_program,
+        build_context=lambda: ExecutionContext(state={}),
+        expected=(StatePutEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="local_with_inner_log",
+        build_program=_build_local_program,
+        build_context=lambda: None,
+        expected=(LocalEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="listen_with_log",
+        build_program=_build_listen_program,
+        build_context=lambda: None,
+        expected=(WriterListenEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="safe_with_log",
+        build_program=_build_safe_program,
+        build_context=lambda: None,
+        expected=(ResultSafeEffect, WriterTellEffect),
+    ),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", INTERCEPT_CASES, ids=lambda case: case.name)
+async def test_intercept_effect_with_log_calls(case: InterceptCase) -> None:
+    """Each effect combined with Log should trigger the transformer the expected number of times."""
+
+    seen: list[type[EffectBase]] = []
+
+    def transformer(effect: EffectBase) -> EffectBase:
+        seen.append(effect.__class__)
+        return effect
+
+    program = case.build_program()
+    context = case.build_context()
+    interpreter = ProgramInterpreter()
+    result = await interpreter.run(program.intercept(transformer), context)
+
+    assert result.is_ok
+    assert tuple(seen) == case.expected
 
 
 def _intercept_transform(effect: Effect) -> Effect | Program:
