@@ -4,7 +4,16 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Program, ProgramInterpreter, Ask, Local, Gather, do
+from doeff import (
+    Program,
+    ProgramInterpreter,
+    Ask,
+    Local,
+    Gather,
+    Log,
+    EffectGenerator,
+    do,
+)
 from doeff.effects import AskEffect
 from doeff.types import Effect
 
@@ -55,3 +64,34 @@ async def test_intercept_rewrites_gathered_programs():
 
     assert result.is_ok
     assert result.value == ["intercepted", "intercepted"]
+
+
+@pytest.mark.asyncio
+async def test_intercept_visits_each_effect_once():
+    """Each effect instance should trigger the transformer exactly once."""
+
+    @do
+    def inner_program() -> EffectGenerator[str]:
+        yield Log("inner")
+        return "inner-result"
+
+    @do
+    def outer_program() -> EffectGenerator[str]:
+        yield Log("outer start")
+        yield Local({"config": "scoped"}, inner_program())
+        yield Log("outer end")
+        return "done"
+
+    call_counts: dict[int, int] = {}
+
+    def transformer(effect: Effect) -> Effect:
+        key = id(effect)
+        call_counts[key] = call_counts.get(key, 0) + 1
+        return effect
+
+    interpreter = ProgramInterpreter()
+    result = await interpreter.run(outer_program().intercept(transformer))
+
+    assert result.is_ok
+    assert result.value == "done"
+    assert all(count == 1 for count in call_counts.values())
