@@ -377,7 +377,14 @@ async def test_intercept_effect_with_log_calls(case: InterceptCase) -> None:
 
 def _intercept_transform(effect: Effect) -> Effect | Program:
     if isinstance(effect, AskEffect):
-        return Program.pure("intercepted")
+        from doeff.effects.writer import Log as WriterLog
+
+        @do
+        def replacement() -> EffectGenerator[Effect]:
+            yield WriterLog("ask intercepted")
+            return effect
+
+        return replacement()
     return effect
 
 
@@ -396,9 +403,11 @@ async def test_intercept_rewrites_local_subprogram():
     intercepted = outer_program().intercept(_intercept_transform)  # type: ignore[arg-type]
 
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(intercepted)
+    context = ExecutionContext(env={"some_key": "intercepted"})
+    result = await interpreter.run(intercepted, context)
 
     assert result.is_ok
+    assert "ask intercepted" in result.log
     assert result.value == "intercepted"
 
 
@@ -417,10 +426,13 @@ async def test_intercept_rewrites_gathered_programs():
     intercepted = gather_program().intercept(_intercept_transform)  # type: ignore[arg-type]
 
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(intercepted)
+    context = ExecutionContext(env={"key-1": "intercepted", "key-2": "intercepted"})
+    result = await interpreter.run(intercepted, context)
 
     assert result.is_ok
     assert result.value == ["intercepted", "intercepted"]
+    assert result.log.count("ask intercepted") == 2
+    assert result.log.count("ask intercepted") >= 1
 
 
 @pytest.mark.asyncio

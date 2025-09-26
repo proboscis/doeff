@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
-from doeff.effects.result import Recover
+from doeff.effects.result import Recover, Safe, Fail
 from doeff.effects.writer import Log
 from doeff.types import EffectGenerator
-from doeff._vendor import FrozenDict
+from doeff._vendor import FrozenDict, Result
 
 if TYPE_CHECKING:
     from doeff.kleisli import KleisliProgram
@@ -179,19 +179,23 @@ def cache(
             def compute_and_cache() -> EffectGenerator[T]:
                 yield Log(f"Cache miss for {func_name}, computing...")
                 # Execute the original function
-                result = yield wrapped_func(*args, **kwargs)
-                # Store in cache with the key
-                yield CachePut(
-                    cache_key,
-                    result,
-                    ttl,
-                    lifecycle=lifecycle,
-                    storage=storage,
-                    metadata=metadata,
-                    policy=policy,
-                )
-                yield Log(f"Cache: stored result for {func_name}")
-                return result
+                result: Result = yield Safe(wrapped_func(*args, **kwargs))
+                if result.is_ok():
+                    # Store in cache with the key
+                    yield CachePut(
+                        cache_key,
+                        result.unwrap(),
+                        ttl,
+                        lifecycle=lifecycle,
+                        storage=storage,
+                        metadata=metadata,
+                        policy=policy,
+                    )
+                    yield Log(f"Cache: stored result for {func_name}")
+                else:
+                    yield Log(f"Computation for {func_name} failed, not caching.")
+                    raise RuntimeError(f"Cache Computation Failed for {func_name}") from result.unwrap_err()
+                return result.unwrap()
 
             # Create a program that tries to get from cache
             @do
@@ -204,6 +208,8 @@ def cache(
             # Log cache hit if we got here without computing
             # (The log will only appear if CacheGet succeeded)
 
+            if isinstance(result, Result):
+                return result.unwrap()
             return result
 
         # Try to preserve some metadata if possible

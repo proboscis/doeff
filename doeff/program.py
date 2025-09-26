@@ -112,51 +112,9 @@ class Program(Generic[T]):
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
     ) -> Program[T]:
-        """Return a Program that applies ``transform`` to every yielded effect.
-        
-        When transform returns a Program[Effect], the Program is yielded to get
-        the resulting Effect, which is then yielded. This avoids infinite recursion
-        while maintaining the Effect contract.
-        """
+        """Return a Program that applies ``transform`` to every yielded effect."""
 
-        def intercepted_generator():
-            gen = self.generator_func()
-            try:
-                current = next(gen)
-            except StopIteration as exc:
-                return exc.value
-
-            while True:
-                if isinstance(current, Program):
-                    # Recursively intercept nested Programs
-                    current = current.intercept(transform)
-                    value = yield current
-                elif isinstance(current, EffectBase):
-                    transformed = transform(current)
-                    if isinstance(transformed, Program):
-                        # Yield the Program to get the result (Effect or value)
-                        # DO NOT recursively intercept to avoid infinite recursion
-                        result = yield transformed
-                        # If the result is an Effect, yield it
-                        if isinstance(result, EffectBase):
-                            value = yield result
-                        else:
-                            # Otherwise, use the result as the value
-                            value = result
-                    elif isinstance(transformed, EffectBase):
-                        # Recursively intercept nested effects within the transformed effect
-                        value = yield transformed.intercept(transform)
-                    else:
-                        value = yield transformed
-                else:
-                    value = yield current
-
-                try:
-                    current = gen.send(value)
-                except StopIteration as exc:
-                    return exc.value
-
-        return Program(intercepted_generator)
+        return _InterceptedProgram.compose(self, (transform,))
 
     @staticmethod
     def pure(value: T) -> Program[T]:
@@ -317,4 +275,141 @@ class Program(Generic[T]):
 
 
 
+class _InterceptedProgram(Program[T]):
+    """Program wrapper that composes multiple intercept transforms exactly once."""
+
+    def __init__(
+        self,
+        base: Program[T],
+        transforms: tuple[Callable[[Effect], Effect | Program], ...],
+    ) -> None:
+        def generator_func() -> Generator[Effect | Program, Any, T]:
+            return self._intercept_generator(base, transforms)
+
+        super().__init__(generator_func)
+        object.__setattr__(self, "_base_program", base)
+        object.__setattr__(self, "_transforms", transforms)
+
+    @property
+    def base_program(self) -> Program[T]:
+        return self._base_program  # type: ignore[attr-defined]
+
+    @property
+    def transforms(self) -> tuple[Callable[[Effect], Effect | Program], ...]:
+        return self._transforms  # type: ignore[attr-defined]
+
+    @classmethod
+    def compose(
+        cls,
+        program: Program[T],
+        transforms: tuple[Callable[[Effect], Effect | Program], ...],
+    ) -> Program[T]:
+        if not transforms:
+            return program
+
+        if isinstance(program, cls):
+            base = program.base_program
+            combined = program.transforms + transforms
+        else:
+            base = program
+            combined = transforms
+
+        return cls(base, combined)
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> Program[T]:
+        return self.compose(self.base_program, self.transforms + (transform,))
+
+    @staticmethod
+    def _intercept_generator(
+        base: Program[T],
+        transforms: tuple[Callable[[Effect], Effect | Program], ...],
+    ) -> Generator[Effect | Program, Any, T]:
+        gen = base.generator_func()
+        try:
+            current = next(gen)
+        except StopIteration as exc:
+            return exc.value
+
+        kleisli_transform = _InterceptedProgram._compose_kleisli(transforms)
+
+        while True:
+            if isinstance(current, Program):
+                current = _InterceptedProgram.compose(current, transforms)
+                try:
+                    current = gen.send((yield current))
+                except StopIteration as exc:
+                    return exc.value
+                continue
+
+            if isinstance(current, EffectBase):
+                effect_program = kleisli_transform(current)
+                final_effect = yield effect_program
+
+                if not isinstance(final_effect, EffectBase):
+                    raise TypeError(
+                        "Intercept transform must resolve to an Effect, got "
+                        f"{type(final_effect).__name__}"
+                    )
+
+                nested_effect = final_effect.intercept(
+                    lambda eff: _InterceptedProgram._compose_kleisli(transforms)(eff)
+                )
+                result = yield nested_effect
+                try:
+                    current = gen.send(result)
+                except StopIteration as exc:
+                    return exc.value
+                continue
+
+            value = yield current
+            try:
+                current = gen.send(value)
+            except StopIteration as exc:
+                return exc.value
+
+    @staticmethod
+    def _compose_kleisli(
+        transforms: tuple[Callable[[Effect], Effect | Program], ...]
+    ) -> Callable[[EffectBase], Program[EffectBase]]:
+        lifted = [_InterceptedProgram._lift_transform(transform) for transform in transforms]
+
+        def combined(effect: EffectBase) -> Program[EffectBase]:
+            program: Program[EffectBase] = Program.pure(effect)
+            for lift in lifted:
+                program = program.flat_map(lift)
+            return program
+
+        return combined
+
+    @staticmethod
+    def _lift_transform(
+        transform: Callable[[Effect], Effect | Program]
+    ) -> Callable[[EffectBase], Program[EffectBase]]:
+        def lifted(effect: EffectBase) -> Program[EffectBase]:
+            result = transform(effect)
+
+            if isinstance(result, Program):
+                return result.flat_map(_InterceptedProgram._ensure_effect_program)
+
+            if isinstance(result, EffectBase):
+                return Program.pure(result)
+
+            raise TypeError(
+                "Intercept transform must return Effect or Program yielding Effect, "
+                f"got {type(result).__name__}"
+            )
+
+        return lifted
+
+
+    @staticmethod
+    def _ensure_effect_program(value: Any) -> Program[EffectBase]:
+        if isinstance(value, EffectBase):
+            return Program.pure(value)
+        raise TypeError(
+            "Intercept transform must resolve to an Effect, got "
+            f"{type(value).__name__}"
+        )
 __all__ = ["Program"]
