@@ -21,12 +21,14 @@ from doeff import (
     Put,
     Safe,
     Fail,
+    Catch,
     do,
 )
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.state import StateGetEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-from doeff.effects.result import ResultSafeEffect
+from doeff.effects.result import ResultSafeEffect, ResultCatchEffect, ResultFailEffect
+from doeff.effects.gather import GatherEffect
 from doeff.types import EffectBase, Effect
 
 
@@ -100,9 +102,49 @@ def _build_listen_program() -> Program:
 def _build_safe_program() -> Program:
     @do
     def _program() -> EffectGenerator[str]:
-        result = yield Safe(Fail(ValueError("boom")))
+        @do
+        def risky() -> EffectGenerator[None]:
+            yield Log("inside risky")
+            yield Fail(ValueError("boom"))
+
+        result = yield Safe(risky())
         yield Log("after safe")
         return repr(result)
+
+    return _program()
+
+
+def _build_catch_program() -> Program:
+    @do
+    def risky() -> EffectGenerator[str]:
+        yield Log("before fail")
+        yield Fail(ValueError("boom"))
+
+    @do
+    def handler(exc: Exception) -> EffectGenerator[str]:
+        yield Log(f"handled {exc}")
+        return "ok"
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Catch(risky(), handler)  # type: ignore[name-defined]
+        yield Log("after catch")
+        return "done"
+
+    return _program()
+
+
+def _build_gather_program() -> Program:
+    @do
+    def child(index: int) -> EffectGenerator[int]:
+        yield Log(f"child {index}")
+        return index
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Gather(child(1), child(2))
+        yield Log("after gather")
+        return "done"
 
     return _program()
 
@@ -142,7 +184,19 @@ INTERCEPT_CASES: tuple[InterceptCase, ...] = (
         name="safe_with_log",
         build_program=_build_safe_program,
         build_context=lambda: None,
-        expected=(ResultSafeEffect, WriterTellEffect),
+        expected=(ResultSafeEffect, WriterTellEffect, ResultFailEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="catch_with_log",
+        build_program=_build_catch_program,
+        build_context=lambda: None,
+        expected=(ResultCatchEffect, WriterTellEffect, ResultFailEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="gather_with_log_children",
+        build_program=_build_gather_program,
+        build_context=lambda: None,
+        expected=(GatherEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
     ),
 )
 
