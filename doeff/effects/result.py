@@ -58,6 +58,13 @@ class ResultUnwrapEffect(EffectBase):
     result: Result[Any]
 
 
+@dataclass(frozen=True)
+class ResultFirstSuccessEffect(EffectBase):
+    """Try programs sequentially until one succeeds."""
+
+    programs: tuple[ProgramLike, ...]
+
+
 def fail(exc: Exception) -> ResultFailEffect:
     return create_effect_with_trace(ResultFailEffect(exception=exc))
 
@@ -98,6 +105,14 @@ def safe(sub_program: ProgramLike) -> ResultSafeEffect:
 
 def unwrap_result(result: Result[Any]) -> ResultUnwrapEffect:
     return create_effect_with_trace(ResultUnwrapEffect(result=result))
+
+
+def first_success_effect(*programs: ProgramLike) -> ResultFirstSuccessEffect:
+    if not programs:
+        raise ValueError("first_success_effect requires at least one program")
+    return create_effect_with_trace(
+        ResultFirstSuccessEffect(programs=tuple(programs))
+    )
 
 
 def Fail(exc: Exception) -> Effect:
@@ -149,6 +164,13 @@ def Unwrap(result: Result[Any]) -> Effect:
     )
 
 
+def FirstSuccess(*programs: ProgramLike) -> Effect:
+    return create_effect_with_trace(
+        ResultFirstSuccessEffect(programs=tuple(programs)),
+        skip_frames=3,
+    )
+
+
 __all__ = [
     "ResultFailEffect",
     "ResultCatchEffect",
@@ -156,16 +178,19 @@ __all__ = [
     "ResultRetryEffect",
     "ResultSafeEffect",
     "ResultUnwrapEffect",
+    "ResultFirstSuccessEffect",
     "fail",
     "catch",
     "recover",
     "retry",
     "safe",
     "unwrap_result",
+    "first_success_effect",
     "Fail",
     "Catch",
     "Recover",
     "Retry",
     "Safe",
     "Unwrap",
+    "FirstSuccess",
 ]

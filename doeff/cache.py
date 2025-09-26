@@ -31,57 +31,82 @@ def cache(
     metadata: Mapping[str, Any] | None = None,
     policy: CachePolicy | Mapping[str, Any] | None = None,
 ):
-    """
-    Cache decorator that uses CacheGet/CachePut effects with Recover for misses.
-    
-    This decorator automatically caches the results of the decorated function.
-    On cache miss (when CacheGet fails), it uses Recover to execute the original
-    function and then stores the result with CachePut.
-    
-    The cache key is composed of (func_name, args_tuple, kwargs_frozendict).
-    The interpreter is responsible for serializing this key.
-    
+    """Cache decorator that uses CacheGet/CachePut effects with Recover for misses.
+
+    The decorator automatically caches results produced by the wrapped function. On a cache miss
+    (when ``CacheGet`` fails), it evaluates the original function, caches the ``Result`` via
+    ``CachePut``, and then unwraps it for the caller.
+
+    The default interpreter stores entries in the sqlite/LZMA handler. Only ``ttl`` is acted on by
+    that handler today; ``lifecycle``, ``storage``, and ``metadata`` are preserved for custom
+    handlers that want richer behaviour.
+
+    The cache key defaults to ``(func_name, args, FrozenDict(kwargs))`` where ``func_name`` is the
+    fully qualified module path of the wrapped callable; the interpreter serializes the key before
+    persistence.
+
     Args:
-        ttl: Time-to-live for cache entries in seconds. None means no expiration.
-        key_func: Optional function to transform cache keys. If not provided,
-                 uses (func_name, args, FrozenDict(kwargs)) as key.
-        key_hashers: Optional mapping of argument names to callables or
-                 Kleisli programs that transform argument values before they
-                 are incorporated into the cache key. Useful for hashing or
-                 normalizing large or non-hashable inputs.
-        lifecycle: Hint describing expected lifetime of cached values.
-        storage: Explicit storage target hint (e.g., "memory", "disk").
-        metadata: Arbitrary metadata to attach to the cache policy.
-        policy: Pre-built CachePolicy or mapping describing cache behaviour.
-    
+        ttl: Expiry in seconds. ``None`` or values <= 0 mean "no expiry" for the bundled handler.
+        key_func: Optional key builder. Receives ``(func_name, args, FrozenDict(kwargs))`` and must
+            return the object to cache under.
+        key_hashers: Mapping of argument names to hashers or Kleisli programs that pre-process
+            arguments prior to key construction (e.g., to normalize large inputs).
+        lifecycle: Lifecycle hint for downstream handlers. Accepts ``CacheLifecycle`` or the
+            strings ``"transient"``, ``"session"``, ``"persistent"``.
+        storage: Storage hint for downstream handlers. Accepts ``CacheStorage`` or the strings
+            ``"memory"`` and ``"disk"``.
+        metadata: Arbitrary mapping carried alongside the cache policy for custom handlers.
+        policy: Pre-built ``CachePolicy`` (or mapping) describing cache behaviour. Mutually
+            exclusive with the individual policy fields above.
+
     Example:
-        >>> @cache(ttl=60)
+        >>> @cache(ttl=60, lifecycle="session")
         ... @do
         ... def expensive_computation(x: int) -> EffectGenerator[int]:
         ...     yield Log(f"Computing result for {x}")
         ...     return x * 2
+        >>> await ProgramInterpreter().run(expensive_computation(5))
         
-        The first call will compute and cache the result.
-        Subsequent calls within TTL will return the cached value.
+        The first call will compute and cache the result. Subsequent calls within the TTL return
+        the cached value, and the policy hints remain available to custom cache handlers.
     """
     def decorator(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
         # Check if func is a KleisliProgram (from @do decorator)
         from doeff.kleisli import KleisliProgram
 
-        # Store the function object for unique identification
-        # This ensures different functions have different cache keys
-        func_id = id(func)
+        def _function_identifier(target: Any) -> str:
+            module = getattr(target, "__module__", None)
+            qualname = getattr(target, "__qualname__", None)
+            name = getattr(target, "__name__", None)
+
+            parts: list[str] = []
+            if module:
+                parts.append(module)
+            if qualname:
+                parts.append(qualname)
+            elif name:
+                parts.append(name)
+
+            if parts:
+                return ".".join(parts)
+
+            func_attr = getattr(target, "func", None)
+            if func_attr is not None and func_attr is not target:
+                inner = _function_identifier(func_attr)
+                cls = target.__class__
+                return f"{cls.__module__}.{cls.__qualname__}({inner})"
+
+            cls = target.__class__
+            return f"{cls.__module__}.{cls.__qualname__}"
 
         if isinstance(func, KleisliProgram):
-            # Get the actual function from KleisliProgram if possible
-            # Use the object id as part of the cache key for uniqueness
-            func_name = f"kleisli_{func_id}"
             wrapped_func = func
             signature_source = func.func
+            func_name = _function_identifier(signature_source)
         else:
-            func_name = getattr(func, "__name__", f"func_{func_id}")
             wrapped_func = func
             signature_source = func
+            func_name = _function_identifier(func)
 
         try:
             signature = inspect.signature(signature_source)
@@ -184,7 +209,7 @@ def cache(
                     # Store in cache with the key
                     yield CachePut(
                         cache_key,
-                        result.unwrap(),
+                        result,
                         ttl,
                         lifecycle=lifecycle,
                         storage=storage,
@@ -194,7 +219,7 @@ def cache(
                     yield Log(f"Cache: stored result for {func_name}")
                 else:
                     yield Log(f"Computation for {func_name} failed, not caching.")
-                    raise RuntimeError(f"Cache Computation Failed for {func_name}") from result.unwrap_err()
+                    raise result.unwrap_err()
                 return result.unwrap()
 
             # Create a program that tries to get from cache

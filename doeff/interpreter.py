@@ -14,6 +14,8 @@ from typing import Any, TypeVar
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.effects import (
     AskEffect,
+    AtomicGetEffect,
+    AtomicUpdateEffect,
     CacheGetEffect,
     CachePutEffect,
     DepInjectEffect,
@@ -32,6 +34,7 @@ from doeff.effects import (
     MemoPutEffect,
     ResultCatchEffect,
     ResultFailEffect,
+    ResultFirstSuccessEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
@@ -43,6 +46,7 @@ from doeff.effects import (
     WriterTellEffect,
 )
 from doeff.handlers import (
+    AtomicEffectHandler,
     CacheEffectHandler,
     FutureEffectHandler,
     GraphEffectHandler,
@@ -120,6 +124,7 @@ class ProgramInterpreter:
         handlers = {
             "reader": ReaderEffectHandler(),
             "state": StateEffectHandler(),
+            "atomic": AtomicEffectHandler(),
             "writer": WriterEffectHandler(),
             "future": FutureEffectHandler(),
             "result": ResultEffectHandler(),
@@ -136,6 +141,7 @@ class ProgramInterpreter:
         # Set handlers as attributes for backward compatibility
         self.reader_handler = handlers["reader"]
         self.state_handler = handlers["state"]
+        self.atomic_handler = handlers["atomic"]
         self.writer_handler = handlers["writer"]
         self.future_handler = handlers["future"]
         self.result_handler = handlers["result"]
@@ -282,6 +288,11 @@ class ProgramInterpreter:
         if _effect_is(effect, StateModifyEffect):
             return await self.state_handler.handle_modify(effect, ctx)
 
+        if _effect_is(effect, AtomicGetEffect):
+            return await self.atomic_handler.handle_get(effect, ctx)
+        if _effect_is(effect, AtomicUpdateEffect):
+            return await self.atomic_handler.handle_update(effect, ctx)
+
         if _effect_is(effect, WriterTellEffect):
             return await self.writer_handler.handle_tell(effect, ctx)
         if _effect_is(effect, WriterListenEffect):
@@ -300,6 +311,8 @@ class ProgramInterpreter:
             return await self.result_handler.handle_recover(effect, ctx, self)
         if _effect_is(effect, ResultRetryEffect):
             return await self.result_handler.handle_retry(effect, ctx, self)
+        if _effect_is(effect, ResultFirstSuccessEffect):
+            return await self.result_handler.handle_first_success(effect, ctx, self)
         if _effect_is(effect, ResultSafeEffect):
             return await self.result_handler.handle_safe(effect, ctx, self)
         if _effect_is(effect, ResultUnwrapEffect):

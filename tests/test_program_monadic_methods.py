@@ -11,15 +11,20 @@ import pytest
 from doeff import (
     # Effects
     Ask,
+    AtomicUpdate,
     Await,
     Effect,
     ExecutionContext,
     Get,
     Log,
+    Maybe,
+    NOTHING,
     Program,
     ProgramInterpreter,
     Put,
     Step,
+    Some,
+    Gather,
     do,
 )
 
@@ -357,6 +362,157 @@ async def test_error_propagation_in_flat_map():
     assert len(result.log) == 1  # Only "About to fail"
     # "This should not run" should not be in the log
 
+
+@pytest.mark.asyncio
+async def test_program_first_success_returns_earliest_success():
+    """first_success should stop at the first program that succeeds."""
+
+    @do
+    def failing_one() -> Generator[Effect | Program, Any, int]:
+        raise ValueError("boom one")
+
+    @do
+    def failing_two() -> Generator[Effect | Program, Any, int]:
+        raise RuntimeError("boom two")
+
+    @do
+    def succeeding() -> Generator[Effect | Program, Any, int]:
+        return 99
+
+    prog = Program.first_success(
+        failing_one(),
+        failing_two(),
+        succeeding(),
+    )
+
+    engine = ProgramInterpreter()
+    result = await engine.run(prog)
+
+    assert result.is_ok
+    assert result.value == 99
+
+
+@pytest.mark.asyncio
+async def test_program_first_success_raises_last_error_when_all_fail():
+    """When all candidates fail, first_success should propagate the last error."""
+
+    @do
+    def failing_one() -> Generator[Effect | Program, Any, int]:
+        raise ValueError("fail first")
+
+    @do
+    def failing_two() -> Generator[Effect | Program, Any, int]:
+        raise RuntimeError("fail second")
+
+    prog = Program.first_success(failing_one(), failing_two())
+
+    engine = ProgramInterpreter()
+    result = await engine.run(prog)
+
+    assert result.is_err
+    error = result.result.error
+    from doeff.types import EffectFailure
+
+    if isinstance(error, EffectFailure):
+        error = error.cause
+
+    assert isinstance(error, RuntimeError)
+    assert "fail second" in str(error)
+
+
+@pytest.mark.asyncio
+async def test_program_first_some_returns_first_present_value():
+    """first_some should return the first Some value."""
+
+    @do
+    def none_program() -> Generator[Effect | Program, Any, Maybe[int]]:
+        return Maybe.from_optional(None)
+
+    @do
+    def some_program() -> Generator[Effect | Program, Any, Maybe[int]]:
+        return Some(7)
+
+    prog = Program.first_some(none_program(), some_program())
+
+    engine = ProgramInterpreter()
+    result = await engine.run(prog)
+
+    assert result.is_ok
+    value = result.value
+    assert isinstance(value, Some)
+    assert value.unwrap() == 7
+
+
+@pytest.mark.asyncio
+async def test_program_first_some_returns_nothing_when_all_none():
+    """first_some should return Nothing when every program yields None/NOTHING."""
+
+    prog = Program.first_some(
+        Program.pure(NOTHING),
+        Program.pure(Maybe.from_optional(None)),
+    )
+
+    engine = ProgramInterpreter()
+    result = await engine.run(prog)
+
+    assert result.is_ok
+    assert result.value is NOTHING
+
+
+@pytest.mark.asyncio
+async def test_program_first_success_resets_state_between_attempts():
+    """Failed attempts should not mutate shared state for later candidates."""
+
+    @do
+    def mutating_failure() -> Generator[Effect | Program, Any, int]:
+        yield Put("counter", 99)
+        raise RuntimeError("boom")
+
+    @do
+    def reader_success() -> Generator[Effect | Program, Any, int]:
+        return (yield Get("counter"))
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(state={"counter": 0})
+
+    prog = Program.first_success(mutating_failure(), reader_success())
+
+    result = await engine.run(prog, context)
+
+    assert result.is_ok
+    assert result.value == 0
+    assert context.state["counter"] == 0
+    assert context.log == []
+
+
+@pytest.mark.asyncio
+async def test_run_result_display_shows_shared_state():
+    """RunResult.display should surface shared atomic state entries."""
+
+    @do
+    def increment_shared() -> Generator[Effect | Program, Any, None]:
+        yield AtomicUpdate(
+            "shared_counter",
+            lambda current: (current or 0) + 1,
+            default_factory=lambda: 0,
+        )
+        return None
+
+    @do
+    def run_parallel() -> Generator[Effect | Program, Any, None]:
+        yield Gather(increment_shared(), increment_shared())
+        return None
+
+    engine = ProgramInterpreter()
+    result = await engine.run(run_parallel())
+
+    assert result.is_ok
+    assert result.state["shared_counter"] == 2
+
+    display = result.display()
+
+    assert "🤝 Shared State:" in display
+    assert "shared_counter" in display
 
 if __name__ == "__main__":
     # Run tests

@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import io
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 from doeff import (
     Ask,
+    AtomicUpdate,
     Catch,
     EffectGenerator,
     Fail,
@@ -61,6 +63,72 @@ def _prepare_request_payload(
     sanitized_payload["images"] = serialized_images
 
     return sanitized_payload, text, serialized_images
+
+
+def _summarize_payload_for_log(value: Any, *, max_string_length: int = 200) -> Any:
+    """Produce a repr-friendly copy of payload data with bounded string lengths."""
+
+    if isinstance(value, str):
+        if len(value) <= max_string_length:
+            return value
+        if value.startswith("data:") and ";base64," in value:
+            header, encoded = value.split(";base64,", 1)
+            return f"{header};base64,<len={len(encoded)}>"
+        return f"{value[:max_string_length]}...<len={len(value)}>"
+
+    if isinstance(value, dict):
+        return {
+            key: _summarize_payload_for_log(item, max_string_length=max_string_length)
+            for key, item in value.items()
+        }
+
+    if isinstance(value, list):
+        return [
+            _summarize_payload_for_log(item, max_string_length=max_string_length)
+            for item in value
+        ]
+
+    if isinstance(value, tuple):
+        return tuple(
+            _summarize_payload_for_log(item, max_string_length=max_string_length)
+            for item in value
+        )
+
+    return value
+
+
+@dataclass(slots=True)
+class GeminiAPIPayloadLog:
+    """Log wrapper that keeps full payload data with a repr-safe preview."""
+
+    operation: str
+    model: str
+    payload: Any
+    preview_payload: Any | None = None
+    max_string_length: int = 200
+
+    def __post_init__(self) -> None:
+        if self.preview_payload is None:
+            self.preview_payload = self.payload
+
+    def _summarized_preview(self) -> Any:
+        try:
+            return _summarize_payload_for_log(
+                self.preview_payload, max_string_length=self.max_string_length
+            )
+        except Exception:  # pragma: no cover - defensive fallback
+            return repr(self.preview_payload)
+
+    def __repr__(self) -> str:  # pragma: no cover - trivial formatting
+        preview = self._summarized_preview()
+        return (
+            "GeminiAPIPayloadLog("
+            f"operation={self.operation!r}, "
+            f"model={self.model!r}, "
+            f"payload={preview!r})"
+        )
+
+    __str__ = __repr__
 
 
 class GeminiClient:
@@ -316,8 +384,13 @@ def track_api_call(
     response: Any,
     start_time: float,
     error: Exception | None = None,
+    api_payload: Any | None = None,
 ) -> EffectGenerator[APICallMetadata]:
-    """Log and persist observability metadata for a Gemini API invocation."""
+    """Log and persist observability metadata for a Gemini API invocation.
+
+    The optional ``api_payload`` parameter allows callers to attach the exact
+    payload passed to the Google client while the log preview remains sanitized.
+    """
     end_time = time.time()
     latency_ms = (end_time - start_time) * 1000
 
@@ -358,6 +431,15 @@ def track_api_call(
             log_line += f", cost=${cost_info.total_cost:.6f}"
         yield Log(log_line)
 
+    yield Log(
+        GeminiAPIPayloadLog(
+            operation=operation,
+            model=model,
+            payload=api_payload if api_payload is not None else request_payload,
+            preview_payload=sanitized_payload,
+        )
+    )
+
     graph_meta = metadata.to_graph_metadata()
     yield Step(
         {"request_payload": sanitized_payload, "timestamp": graph_meta["timestamp"]},
@@ -391,49 +473,62 @@ def track_api_call(
             {**graph_meta, "phase": "cost"},
         )
 
-    api_calls = yield Get("gemini_api_calls")
-    if api_calls is None:
-        api_calls = []
-
-    api_calls.append(
-        {
-            "operation": operation,
-            "model": model,
-            "timestamp": metadata.timestamp.isoformat(),
-            "latency_ms": latency_ms,
-            "error": metadata.error,
-            "tokens": {
-                "input": token_usage.input_tokens if token_usage else None,
-                "output": token_usage.output_tokens if token_usage else None,
-                "total": token_usage.total_tokens if token_usage else None,
-            }
-            if token_usage
-            else None,
-            "request_id": request_id,
-            "cost": cost_info.total_cost if cost_info else None,
-            "cost_breakdown": {
-                "text_input": cost_info.text_input_cost if cost_info else None,
-                "text_output": cost_info.text_output_cost if cost_info else None,
-                "image_input": cost_info.image_input_cost if cost_info else None,
-                "image_output": cost_info.image_output_cost if cost_info else None,
-            }
-            if cost_info
-            else None,
-            "prompt_text": prompt_text,
-            "prompt_images": prompt_images,
+    call_entry = {
+        "operation": operation,
+        "model": model,
+        "timestamp": metadata.timestamp.isoformat(),
+        "latency_ms": latency_ms,
+        "error": metadata.error,
+        "tokens": {
+            "input": token_usage.input_tokens if token_usage else None,
+            "output": token_usage.output_tokens if token_usage else None,
+            "total": token_usage.total_tokens if token_usage else None,
         }
-    )
-    yield Put("gemini_api_calls", api_calls)
+        if token_usage
+        else None,
+        "request_id": request_id,
+        "cost": cost_info.total_cost if cost_info else None,
+        "cost_breakdown": {
+            "text_input": cost_info.text_input_cost if cost_info else None,
+            "text_output": cost_info.text_output_cost if cost_info else None,
+            "image_input": cost_info.image_input_cost if cost_info else None,
+            "image_output": cost_info.image_output_cost if cost_info else None,
+        }
+        if cost_info
+        else None,
+        "prompt_text": prompt_text,
+        "prompt_images": prompt_images,
+    }
+
+    def _append_call(current: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        entries = list(current) if current else []
+        entries.append(call_entry)
+        return entries
+
+    yield AtomicUpdate("gemini_api_calls", _append_call, default_factory=list)
 
     if cost_info:
-        current_total = yield Get("gemini_total_cost")
-        new_total = (current_total or 0.0) + cost_info.total_cost
-        yield Put("gemini_total_cost", new_total)
+        def _increment_total(current: float | None) -> float:
+            base = current if current is not None else 0.0
+            return base + cost_info.total_cost
+
+        yield AtomicUpdate(
+            "gemini_total_cost",
+            _increment_total,
+            default_factory=lambda: 0.0,
+        )
 
         model_cost_key = f"gemini_cost_{model}"
-        current_model_cost = yield Get(model_cost_key)
-        new_model_cost = (current_model_cost or 0.0) + cost_info.total_cost
-        yield Put(model_cost_key, new_model_cost)
+
+        def _increment_model(current: float | None) -> float:
+            base = current if current is not None else 0.0
+            return base + cost_info.total_cost
+
+        yield AtomicUpdate(
+            model_cost_key,
+            _increment_model,
+            default_factory=lambda: 0.0,
+        )
 
     return metadata
 

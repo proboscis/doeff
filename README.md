@@ -105,6 +105,21 @@ def async_operations():
     return (result1, results)
 ```
 
+### Cache (CacheGet, CachePut)
+```python
+@do
+def cached_call():
+    try:
+        return (yield CacheGet("expensive"))
+    except KeyError:
+        value = yield do_expensive_work()
+        yield CachePut("expensive", value, ttl=60)
+        return value
+```
+
+See `docs/cache.md` for accepted policy fields (`ttl`, lifecycle/storage hints, metadata) and the
+behaviour of the bundled sqlite-backed handler.
+
 ## Pinjected Integration
 
 ```python

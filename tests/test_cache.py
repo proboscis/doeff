@@ -1,5 +1,9 @@
 """Tests for cache effects and decorator."""
 
+import asyncio
+import os
+import sys
+import textwrap
 import time
 from typing import Any, Mapping
 
@@ -20,6 +24,7 @@ from doeff import (
 )
 from doeff._vendor import FrozenDict
 from doeff.cache import cache, cache_1min, cache_key
+from doeff.handlers import HandlerScope
 
 # Shared fixture ensuring each test uses isolated cache database
 
@@ -191,7 +196,7 @@ async def test_cache_recover_on_miss():
 # Test the @cache decorator
 
 @pytest.mark.asyncio
-async def test_basic_cache_decorator():
+async def test_basic_cache_decorator(temp_cache_db):
     """Test basic caching with decorator."""
 
     call_count = [0]
@@ -224,7 +229,146 @@ async def test_basic_cache_decorator():
 
 
 @pytest.mark.asyncio
-async def test_cache_with_kwargs():
+async def test_cache_decorator_persistent_lifecycle(temp_cache_db):
+    """Decorator should propagate persistent lifecycle and reuse cached value."""
+
+    call_count = [0]
+
+    class RecordingCacheHandler:
+        scope = HandlerScope.SHARED
+
+        def __init__(self):
+            self.store: dict[Any, Any] = {}
+            self.policies: list[Any] = []
+
+        async def handle_get(self, effect, ctx):
+            if effect.key not in self.store:
+                raise KeyError("miss")
+            return self.store[effect.key]
+
+        async def handle_put(self, effect, ctx):
+            self.store[effect.key] = effect.value
+            self.policies.append(effect.policy)
+
+    cache_handler = RecordingCacheHandler()
+    engine = ProgramInterpreter(custom_handlers={"cache": cache_handler})
+
+    @cache(lifecycle=CacheLifecycle.PERSISTENT)
+    @do
+    def expensive(x: int) -> EffectGenerator[int]:
+        call_count[0] += 1
+        return x * 3
+
+    first = await engine.run(expensive(4))
+    assert first.is_ok
+    assert first.value == 12
+    assert call_count[0] == 1
+    assert cache_handler.policies
+    assert cache_handler.policies[-1].lifecycle is CacheLifecycle.PERSISTENT
+
+    second = await engine.run(expensive(4))
+    assert second.is_ok
+    assert second.value == 12
+    assert call_count[0] == 1  # cache hit
+
+
+@pytest.mark.asyncio
+async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db):
+    """Persistent lifecycle hint should keep data across interpreter instances."""
+
+    call_count = [0]
+
+    @cache(lifecycle=CacheLifecycle.PERSISTENT)
+    @do
+    def expensive_value() -> EffectGenerator[str]:
+        call_count[0] += 1
+        return "value"
+
+    engine_one = ProgramInterpreter()
+    first = await engine_one.run(expensive_value())
+
+    assert first.is_ok
+    assert first.value == "value"
+    assert call_count[0] == 1
+    assert temp_cache_db.exists()
+
+    engine_two = ProgramInterpreter()
+    second = await engine_two.run(expensive_value())
+
+    assert second.is_ok
+    assert second.value == "value"
+    # Should still be 1 because cache hit happens in new interpreter
+    assert call_count[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
+    """Persistent lifecycle cache survives across different Python processes."""
+
+    script = textwrap.dedent(
+        """
+        import asyncio
+        import sys
+        from doeff import CacheGet, CachePut, CacheLifecycle, ProgramInterpreter, do
+
+        CACHE_KEY = ("cross_process", 42)
+
+        @do
+        def store():
+            yield CachePut(CACHE_KEY, "persisted", lifecycle=CacheLifecycle.PERSISTENT)
+
+        @do
+        def load():
+            return (yield CacheGet(CACHE_KEY))
+
+        async def run(mode: str) -> None:
+            engine = ProgramInterpreter()
+            if mode == "store":
+                result = await engine.run(store())
+                if result.is_err:
+                    raise SystemExit(f"store failed: {result.result.error!r}")
+            elif mode == "load":
+                result = await engine.run(load())
+                if result.is_err:
+                    raise result.result.error
+                if result.value != "persisted":
+                    raise SystemExit(f"unexpected value: {result.value!r}")
+            else:
+                raise SystemExit(f"unknown mode: {mode}")
+
+        if __name__ == "__main__":
+            asyncio.run(run(sys.argv[1]))
+        """
+    )
+
+    env = os.environ.copy()
+    env["DOEFF_CACHE_PATH"] = str(temp_cache_db)
+
+    async def run_mode(mode: str) -> str:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            script,
+            mode,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise AssertionError(
+                f"Process {mode} failed with code {proc.returncode}\n"
+                f"STDOUT: {stdout.decode()}\nSTDERR: {stderr.decode()}"
+            )
+        return stdout.decode()
+
+    await run_mode("store")
+    assert temp_cache_db.exists()
+    await run_mode("load")
+
+
+@pytest.mark.asyncio
+async def test_cache_with_kwargs(temp_cache_db):
     """Test caching with keyword arguments."""
 
     call_count = [0]
@@ -259,7 +403,7 @@ async def test_cache_with_kwargs():
 
 
 @pytest.mark.asyncio
-async def test_cache_with_ttl():
+async def test_cache_with_ttl(temp_cache_db):
     """Test cache decorator with TTL."""
 
     call_count = [0]
@@ -301,7 +445,7 @@ async def test_cache_with_ttl():
 
 
 @pytest.mark.asyncio
-async def test_cache_key_selector():
+async def test_cache_key_selector(temp_cache_db):
     """Test custom cache key selection."""
 
     call_count = [0]
@@ -334,7 +478,7 @@ async def test_cache_key_selector():
 
 
 @pytest.mark.asyncio
-async def test_cache_key_hashers_transform_arguments():
+async def test_cache_key_hashers_transform_arguments(temp_cache_db):
     """Test key_hashers applies transformations for positional and keyword args."""
 
     calls = []

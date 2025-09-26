@@ -558,7 +558,11 @@ async def test_safe_wraps_failing_program() -> None:
 
     assert run_result.is_ok
     assert isinstance(run_result.value, Err)
-    assert "boom" in str(run_result.value.error)
+    assert isinstance(run_result.value.error, ValueError)
+    assert str(run_result.value.error) == "boom"
+    from doeff.types import EffectFailure
+
+    assert not isinstance(run_result.value.error, EffectFailure)
 
 
 if __name__ == "__main__":

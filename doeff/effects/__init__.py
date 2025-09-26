@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from .atomic import (
+    AtomicGet,
+    AtomicGetEffect,
+    AtomicUpdate,
+    AtomicUpdateEffect,
+    atomic_get,
+    atomic_update,
+)
 from .cache import CacheGet, CacheGetEffect, CachePut, CachePutEffect, cache_get, cache_put
 from .dep import Dep, DepInjectEffect, inject
 from .future import Await, FutureAwaitEffect, FutureParallelEffect, Parallel, await_, parallel
@@ -31,15 +39,18 @@ from .result import (
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultUnwrapEffect,
+    ResultFirstSuccessEffect,
     Retry,
     Safe,
     Unwrap,
+    FirstSuccess,
     catch,
     fail,
     unwrap_result,
     safe,
     recover,
     retry,
+    first_success_effect,
     unwrap_result,
 )
 from .state import Get, Modify, Put, StateGetEffect, StateModifyEffect, StatePutEffect, get, modify, put
@@ -81,6 +92,7 @@ __all__ = [
     "ResultRecoverEffect",
     "ResultRetryEffect",
     "ResultUnwrapEffect",
+    "ResultFirstSuccessEffect",
     "GraphStepEffect",
     "GraphAnnotateEffect",
     "GraphSnapshotEffect",
@@ -94,6 +106,8 @@ __all__ = [
     "MemoPutEffect",
     "IOPerformEffect",
     "IOPrintEffect",
+    "AtomicGetEffect",
+    "AtomicUpdateEffect",
     # Factory helpers
     "Ask",
     "Local",
@@ -111,6 +125,7 @@ __all__ = [
     "Recover",
     "Retry",
     "Unwrap",
+    "FirstSuccess",
     "Step",
     "Annotate",
     "Snapshot",
@@ -127,6 +142,8 @@ __all__ = [
     "perform",
     "run",
     "print_",
+    "AtomicGet",
+    "AtomicUpdate",
     # Compatibility aliases
     "ask",
     "local",
@@ -143,6 +160,7 @@ __all__ = [
     "safe",
     "recover",
     "retry",
+    "first_success_effect",
     "unwrap_result",
     "io",
     "step",
@@ -154,4 +172,6 @@ __all__ = [
     "memo_put",
     "cache_get",
     "cache_put",
+    "atomic_get",
+    "atomic_update",
 ]
