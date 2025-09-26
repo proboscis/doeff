@@ -16,6 +16,9 @@ from doeff import (
     Ask,
     Listen,
     Gather,
+    Program,
+    ProgramInterpreter,
+    Ask,
     Get,
     Local,
     Put,
@@ -243,6 +246,29 @@ def _build_first_success_program() -> Program:
         value = yield FirstSuccess(fail(), succeed())
         yield Log("after first success")
         return value
+
+    return _program()
+
+
+def _build_local_program_with_program_list() -> Program:
+    @do
+    def context_program() -> EffectGenerator[list[str]]:
+        entries = yield Program.list([Log("context log")])
+        return entries
+
+    @do
+    def inner_program(execution_context: list[str]) -> EffectGenerator[str]:
+        yield Log("segment start")
+        yield Log(f"context entries: {execution_context}")
+        yield Log("segment end")
+        return "segmented"
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        entries = yield context_program()
+        yield Local({"ctx": entries}, inner_program(entries))
+        yield Log("after local with program list")
+        return "done"
 
     return _program()
 
