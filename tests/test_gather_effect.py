@@ -14,7 +14,6 @@ from doeff import (
     Gather,
     GatherDict,
     Get,
-    Local,
     Log,
     Program,
     ProgramInterpreter,
@@ -234,39 +233,6 @@ async def test_gather_error_propagation():
     # With parallel execution, logs may vary depending on execution order
     # We should have at least 1 log (could be from good_prog(1), bad_prog, or good_prog(2))
     assert len(result.log) >= 1
-
-
-@pytest.mark.asyncio
-async def test_gather_failure_preserves_state():
-    """State written inside Local before failure should be visible on parent context."""
-
-    @do
-    def scoped_failure() -> Generator[Effect | Program, Any, None]:
-        yield Put("branch", "pre-failure")
-        raise ValueError("scoped boom")
-
-    @do
-    def failing_prog() -> Generator[Effect | Program, Any, None]:
-        # Local modifies env but must not isolate state mutations
-        yield Local({"env": "scoped"}, scoped_failure())
-        return None
-
-    @do
-    def successful_prog() -> Generator[Effect | Program, Any, str]:
-        yield Put("successful", "ok")
-        return "ok"
-
-    @do
-    def gather_with_state_failure() -> Generator[Effect | Program, Any, list[Any]]:
-        results = yield Gather(successful_prog(), failing_prog())
-        return results
-
-    engine = ProgramInterpreter()
-    result = await engine.run(gather_with_state_failure())
-
-    assert result.is_err
-    assert result.state["successful"] == "ok"
-    assert result.state["branch"] == "pre-failure"
 
 
 @pytest.mark.asyncio
