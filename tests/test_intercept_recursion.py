@@ -24,7 +24,7 @@ async def test_intercept_with_effect_to_program_no_recursion():
     interceptor_calls = []
     
     @do
-    def interceptor_effect_to_program(effect: Effect) -> EffectGenerator:
+    def interceptor_effect_to_program(effect: Effect) -> EffectGenerator[Effect]:
         """Interceptor that returns a Program (generator) instead of an Effect."""
         interceptor_calls.append(effect)
         
@@ -34,23 +34,23 @@ async def test_intercept_with_effect_to_program_no_recursion():
         if isinstance(effect, CustomEffect):
             # Return a Program that yields a WriterTellEffect
             yield WriterTellEffect(f"custom_{effect.value}")
-            return f"handled_{effect.value}"
+            return WriterTellEffect(f"handled_{effect.value}")
         
         # For other effects, just yield them unchanged
         yield effect
         return effect
     
     @do
-    def main_program() -> EffectGenerator[str]:
+    def main_program() -> EffectGenerator[None]:
         """Main program that uses custom effects."""
         # Use custom effect that will be intercepted
-        result1 = yield CustomEffect("test1")
-        result2 = yield CustomEffect("test2")
+        yield CustomEffect("test1")
+        yield CustomEffect("test2")
         
         # Also use standard effect
         yield WriterTellEffect("log message")
         
-        return f"Results: {result1}, {result2}"
+        return None
     
     # Create interpreter and context
     interpreter = ProgramInterpreter()
@@ -72,11 +72,12 @@ async def test_intercept_with_effect_to_program_no_recursion():
     assert len(custom_effects) == 2, f"Expected 2 CustomEffects, got {len(custom_effects)}"
     
     # Verify the log contains the transformed messages
-    assert len(context.log) >= 2, f"Expected at least 2 log entries, got {len(context.log)}"
+    assert len(context.log) >= 3, f"Expected at least 3 log entries, got {len(context.log)}"
     
     # Check specific transformations happened
-    assert "custom_test1" in str(context.log), "First custom effect not transformed correctly"
-    assert "custom_test2" in str(context.log), "Second custom effect not transformed correctly"
+    log_str = " ".join(str(entry) for entry in context.log)
+    assert "custom_test1" in log_str, "First custom effect not transformed correctly"
+    assert "custom_test2" in log_str, "Second custom effect not transformed correctly"
 
 
 @pytest.mark.asyncio
@@ -94,21 +95,21 @@ async def test_intercept_with_nested_intercept_no_recursion():
         return effect
     
     @do
-    def level2_interceptor_program(effect: Effect) -> EffectGenerator:
+    def level2_interceptor_program(effect: Effect) -> EffectGenerator[Effect]:
         """Second level interceptor that returns a Program."""
         intercept_level2_calls.append(effect)
         if isinstance(effect, CustomEffect):
             # Transform to WriterTellEffect which the interpreter can handle
             yield WriterTellEffect(f"custom_{effect.value}_L2")
-            return f"handled_{effect.value}"
+            return WriterTellEffect(f"handled_{effect.value}")
         yield effect
         return effect
     
     @do
-    def test_program() -> EffectGenerator[str]:
+    def test_program() -> EffectGenerator[None]:
         """Program with nested effects."""
-        result = yield CustomEffect("nested")
-        return f"Final: {result}"
+        yield CustomEffect("nested")
+        return None
     
     interpreter = ProgramInterpreter()
     context = ExecutionContext()
