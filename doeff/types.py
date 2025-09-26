@@ -38,6 +38,10 @@ from doeff._vendor import (
     Ok,
     Err,
     Result,
+    Maybe,
+    Nothing,
+    NOTHING,
+    Some,
     WNode,
     WStep,
     WGraph,
@@ -554,6 +558,14 @@ class RunResult(Generic[T]):
         return self.context.state
 
     @property
+    def shared_state(self) -> Dict[str, Any]:
+        """Get shared atomic state captured during execution."""
+        store = self.context.cache.get("__atomic_state__")
+        if isinstance(store, dict):
+            return store
+        return {}
+
+    @property
     def log(self) -> List[Any]:
         """Get the accumulated log."""
         return self.context.log
@@ -1042,6 +1054,23 @@ class _StateSection(_BaseSection):
         return lines
 
 
+class _SharedStateSection(_BaseSection):
+    def render(self) -> list[str]:
+        shared = self.context.run_result.shared_state
+        if not shared:
+            return []
+
+        lines = ["🤝 Shared State:"]
+        items = list(shared.items())
+        for key, value in items[:20]:
+            value_str = self.format_value(value, max_length=100)
+            lines.append(self.indent(1, f"{key}: {value_str}"))
+        if len(items) > 20:
+            remaining = len(items) - 20
+            lines.append(self.indent(1, f"... and {remaining} more items"))
+        return lines
+
+
 class _LogSection(_BaseSection):
     def render(self) -> list[str]:
         rr = self.context.run_result
@@ -1148,6 +1177,9 @@ class _SummarySection(_BaseSection):
         status = "✅ OK" if rr.is_ok else "❌ Error"
         lines.append(f"  • Status: {status}")
         lines.append(f"  • State items: {len(rr.state)}")
+        shared_items = len(rr.shared_state)
+        if shared_items:
+            lines.append(f"  • Shared state items: {shared_items}")
         lines.append(f"  • Log entries: {len(rr.log)}")
         graph_steps = len(rr.graph.steps) if rr.graph else 0
         lines.append(f"  • Graph steps: {graph_steps}")
@@ -1168,6 +1200,7 @@ class RunResultDisplayRenderer:
             _StatusSection(self.context),
             _ErrorSection(self.context),
             _StateSection(self.context),
+            _SharedStateSection(self.context),
             _LogSection(self.context),
             _EffectUsageSection(self.context),
             _GraphSection(self.context),
@@ -1207,11 +1240,14 @@ def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program
     """Recursively intercept Programs embedded within ``value``."""
 
     from doeff.program import Program  # Local import to avoid circular dependency
+    #from loguru import logger
 
     if isinstance(value, Program):
+        #logger.info(f"Intercepting Program: {value}")
         return value.intercept(transform)
 
     if isinstance(value, Effect):
+        #logger.info(f"Intercepting Effect: {value}")
         return value.intercept(transform)
 
     if isinstance(value, dict):
@@ -1267,6 +1303,10 @@ __all__ = [
     "Ok",
     "Err",
     "Result",
+    "Maybe",
+    "Nothing",
+    "NOTHING",
+    "Some",
     "WNode",
     "WStep",
     "WGraph",

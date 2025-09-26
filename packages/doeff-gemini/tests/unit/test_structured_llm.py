@@ -1,6 +1,8 @@
 """Tests for the Gemini structured LLM implementation."""
 
 import json
+import math
+import time
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,10 +21,13 @@ from doeff_gemini import (
     process_unstructured_response,
     structured_llm__gemini,
 )
+from doeff_gemini.costs import calculate_cost
+from doeff_gemini.client import track_api_call
+from doeff_gemini.types import APICallMetadata
 from google.genai import types as genai_types
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
+from doeff import EffectGenerator, ExecutionContext, Gather, ProgramInterpreter, do
 
 
 class SimpleResponse(BaseModel):
@@ -409,3 +414,69 @@ async def test_edit_image__gemini_success() -> None:
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "Enhance the colors"
     assert api_calls[0]["prompt_images"][0]["mime_type"].startswith("image/")
+
+
+@pytest.mark.asyncio
+async def test_track_api_call_accumulates_under_gather() -> None:
+    """Atomic updates should preserve Gemini stats across parallel calls."""
+
+    model = "gemini-1.5-flash"
+    call_defs = [
+        {"request_id": "req-1", "prompt": "First", "input": 1200, "output": 640},
+        {"request_id": "req-2", "prompt": "Second", "input": 800, "output": 320},
+    ]
+
+    @do
+    def invoke(call: dict[str, Any]) -> EffectGenerator[APICallMetadata]:
+        response = SimpleNamespace(
+            text="ok",
+            response_id=call["request_id"],
+            usage_metadata=SimpleNamespace(
+                text_input_token_count=call["input"],
+                text_output_token_count=call["output"],
+                total_token_count=call["input"] + call["output"],
+            ),
+        )
+        start_time = time.time() - 0.01
+        return (
+            yield track_api_call(
+                operation="generate",
+                model=model,
+                request_summary={"prompt": call["prompt"]},
+                request_payload={"text": call["prompt"], "images": []},
+                response=response,
+                start_time=start_time,
+                error=None,
+            )
+        )
+
+    @do
+    def run_parallel() -> EffectGenerator[list[APICallMetadata]]:
+        return (yield Gather(*(invoke(call) for call in call_defs)))
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext()
+    result = await engine.run(run_parallel(), context)
+
+    assert result.is_ok
+    state = result.context.state
+    api_calls = state.get("gemini_api_calls")
+    assert api_calls is not None
+    assert sorted(entry["request_id"] for entry in api_calls) == [
+        "req-1",
+        "req-2",
+    ]
+
+    expected_total = sum(
+        calculate_cost(
+            model,
+            {
+                "text_input_tokens": call["input"],
+                "text_output_tokens": call["output"],
+            },
+        ).total_cost
+        for call in call_defs
+    )
+
+    assert math.isclose(state.get("gemini_total_cost", 0.0), expected_total, rel_tol=1e-9)
+    assert math.isclose(state.get(f"gemini_cost_{model}", 0.0), expected_total, rel_tol=1e-9)
