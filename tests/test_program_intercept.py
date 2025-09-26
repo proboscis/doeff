@@ -21,14 +21,27 @@ from doeff import (
     Put,
     Safe,
     Fail,
+    Recover,
+    Retry,
+    FirstSuccess,
+    CaptureGraph,
+    GatherDict,
     Catch,
     do,
 )
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.state import StateGetEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-from doeff.effects.result import ResultSafeEffect, ResultCatchEffect, ResultFailEffect
-from doeff.effects.gather import GatherEffect
+from doeff.effects.result import (
+    ResultSafeEffect,
+    ResultCatchEffect,
+    ResultRecoverEffect,
+    ResultRetryEffect,
+    ResultFirstSuccessEffect,
+    ResultFailEffect,
+)
+from doeff.effects.gather import GatherEffect, GatherDictEffect
+from doeff.effects.graph import GraphCaptureEffect
 from doeff.types import EffectBase, Effect
 
 
@@ -149,6 +162,91 @@ def _build_gather_program() -> Program:
     return _program()
 
 
+def _build_gather_dict_program() -> Program:
+    @do
+    def child(name: str) -> EffectGenerator[str]:
+        yield Log(f"child {name}")
+        return name
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield GatherDict({"a": child("a"), "b": child("b")})
+        yield Log("after gather dict")
+        return "done"
+
+    return _program()
+
+
+def _build_capture_program() -> Program:
+    @do
+    def inner() -> EffectGenerator[None]:
+        yield Log("inside capture")
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield CaptureGraph(inner())
+        yield Log("after capture")
+        return "done"
+
+    return _program()
+
+
+def _build_recover_program() -> Program:
+    @do
+    def fallback() -> EffectGenerator[str]:
+        yield Log("fallback log")
+        return "fallback"
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Recover(Fail(ValueError("boom")), fallback())
+        yield Log("after recover")
+        return "done"
+
+    return _program()
+
+
+def _build_retry_program() -> Program:
+    attempts: list[int] = []
+
+    @do
+    def risky() -> EffectGenerator[None]:
+        attempt = len(attempts) + 1
+        attempts.append(attempt)
+        yield Log(f"attempt {attempt}")
+        if attempt == 1:
+            yield Fail(ValueError("boom"))
+        return None
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        yield Retry(risky(), max_attempts=2, delay_ms=0)
+        yield Log("after retry")
+        return "done"
+
+    return _program()
+
+
+def _build_first_success_program() -> Program:
+    @do
+    def fail() -> EffectGenerator[str]:
+        yield Log("first fail")
+        raise ValueError("fail")
+
+    @do
+    def succeed() -> EffectGenerator[str]:
+        yield Log("success log")
+        return "success"
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        value = yield FirstSuccess(fail(), succeed())
+        yield Log("after first success")
+        return value
+
+    return _program()
+
+
 INTERCEPT_CASES: tuple[InterceptCase, ...] = (
     InterceptCase(
         name="ask_with_log",
@@ -197,6 +295,36 @@ INTERCEPT_CASES: tuple[InterceptCase, ...] = (
         build_program=_build_gather_program,
         build_context=lambda: None,
         expected=(GatherEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="gather_dict_with_log_children",
+        build_program=_build_gather_dict_program,
+        build_context=lambda: None,
+        expected=(GatherDictEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="capture_graph_with_log",
+        build_program=_build_capture_program,
+        build_context=lambda: None,
+        expected=(GraphCaptureEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="recover_with_log",
+        build_program=_build_recover_program,
+        build_context=lambda: None,
+        expected=(ResultRecoverEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="retry_with_log",
+        build_program=_build_retry_program,
+        build_context=lambda: None,
+        expected=(ResultRetryEffect, WriterTellEffect, ResultFailEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="first_success_with_log",
+        build_program=_build_first_success_program,
+        build_context=lambda: None,
+        expected=(ResultFirstSuccessEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
     ),
 )
 
