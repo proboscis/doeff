@@ -38,7 +38,7 @@ from doeff.effects import (
     step,
     tell,
 )
-from doeff._vendor import Result, WGraph
+from doeff._vendor import Maybe, Result, WGraph
 
 T = TypeVar("T")
 U = TypeVar("U")
@@ -142,6 +142,10 @@ class Program(Generic[T]):
     def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]: ...
     @staticmethod
     def pure(value: T) -> Program[T]: ...
+    @staticmethod
+    def first_success(*programs: Program[T] | Effect) -> Program[T]: ...
+    @staticmethod
+    def first_some(*programs: Program[T] | Effect) -> Program[Maybe[T]]: ...
 
 class ExecutionContext:
     env: dict[str, Any]

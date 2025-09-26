@@ -345,6 +345,12 @@ def structured_llm__gemini(
         "generation_config_overrides": generation_config_overrides,
     }
 
+    api_payload = {
+        "model": model,
+        "contents": contents,
+        "config": generation_config,
+    }
+
     request_payload = {
         "text": text,
         "images": images or [],
@@ -385,6 +391,7 @@ def structured_llm__gemini(
                 response=response,
                 start_time=attempt_start_time,
                 error=None,
+                api_payload=api_payload,
             )
             return response
 
@@ -398,6 +405,7 @@ def structured_llm__gemini(
                 response=None,
                 start_time=attempt_start_time,
                 error=exc,
+                api_payload=api_payload,
             )
             yield Fail(exc)
 
@@ -480,6 +488,12 @@ def edit_image__gemini(
         "generation_config_overrides": generation_config_overrides,
     }
 
+    api_payload = {
+        "model": model,
+        "contents": contents,
+        "config": generation_config,
+    }
+
     request_payload = {
         "text": prompt,
         "images": images or [],
@@ -520,6 +534,7 @@ def edit_image__gemini(
                 response=response,
                 start_time=attempt_start_time,
                 error=None,
+                api_payload=api_payload,
             )
             return response
 
@@ -533,6 +548,7 @@ def edit_image__gemini(
                 response=None,
                 start_time=attempt_start_time,
                 error=exc,
+                api_payload=api_payload,
             )
             yield Fail(exc)
 

@@ -27,6 +27,8 @@ from doeff.cache_policy import CachePolicy, CacheStorage
 from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 from doeff.effects import (
     AskEffect,
+    AtomicGetEffect,
+    AtomicUpdateEffect,
     CacheGetEffect,
     CachePutEffect,
     FutureAwaitEffect,
@@ -114,6 +116,68 @@ class StateEffectHandler:
         new_value = effect.func(old_value)
         ctx.state[key] = new_value
         return new_value
+
+
+class AtomicEffectHandler:
+    """Handles atomic shared-state effects with per-key locks."""
+
+    scope = HandlerScope.SHARED
+
+    def __init__(self) -> None:
+        self._locks: dict[tuple[int, str], asyncio.Lock] = {}
+
+    def _atomic_store(self, ctx: ExecutionContext) -> dict[str, Any]:
+        store = ctx.cache.get("__atomic_state__")
+        if store is None:
+            store = {}
+            ctx.cache["__atomic_state__"] = store
+        return store
+
+    def _lock_for(self, store: dict[str, Any], key: str) -> asyncio.Lock:
+        lock_key = (id(store), key)
+        lock = self._locks.get(lock_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[lock_key] = lock
+        return lock
+
+    def _ensure_current(
+        self,
+        store: dict[str, Any],
+        key: str,
+        default_factory: Callable[[], Any] | None,
+        ctx: ExecutionContext,
+    ) -> Any:
+        sentinel = object()
+        current = store.get(key, sentinel)
+        if current is sentinel:
+            if key in ctx.state:
+                current = ctx.state[key]
+            elif default_factory is not None:
+                current = default_factory()
+            else:
+                current = None
+            store[key] = current
+        ctx.state[key] = current
+        return current
+
+    async def handle_get(self, effect: AtomicGetEffect, ctx: ExecutionContext) -> Any:
+        store = self._atomic_store(ctx)
+        lock = self._lock_for(store, effect.key)
+        async with lock:
+            return self._ensure_current(store, effect.key, effect.default_factory, ctx)
+
+    async def handle_update(
+        self, effect: AtomicUpdateEffect, ctx: ExecutionContext
+    ) -> Any:
+        store = self._atomic_store(ctx)
+        lock = self._lock_for(store, effect.key)
+        async with lock:
+            current = self._ensure_current(store, effect.key, effect.default_factory, ctx)
+            new_value = effect.updater(current)
+            store[effect.key] = new_value
+            ctx.state[effect.key] = new_value
+            return new_value
 
 
 class WriterEffectHandler:
@@ -214,7 +278,21 @@ class ResultEffectHandler:
         sub_program = Program.from_program_like(effect.sub_program)
 
         pragmatic_result = await engine.run(sub_program, ctx)
-        return pragmatic_result.result
+        result = pragmatic_result.result
+
+        if isinstance(result, Err):
+            error = result.error
+            if isinstance(error, EffectFailure):
+                unwrapped = error.cause
+                while isinstance(unwrapped, EffectFailure):
+                    unwrapped = unwrapped.cause
+
+                if isinstance(unwrapped, Exception):
+                    return Err(unwrapped)
+
+            return result
+
+        return result
 
     async def handle_first_success(
         self,
@@ -575,6 +653,7 @@ __all__ = [
     "HandlerScope",
     "ReaderEffectHandler",
     "StateEffectHandler",
+    "AtomicEffectHandler",
     "WriterEffectHandler",
     "FutureEffectHandler",
     "ResultEffectHandler",
