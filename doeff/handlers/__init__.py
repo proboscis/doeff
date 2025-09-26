@@ -93,6 +93,15 @@ class ReaderEffectHandler:
         sub_ctx.log = ctx.log  # Share writer log with parent context
         sub_program = Program.from_program_like(effect.sub_program)
         pragmatic_result = await engine.run(sub_program, sub_ctx)
+
+        # Propagate sub-context graph/state/log updates back to parent context.
+        # ``ExecutionContext.copy`` shares the cache and effect observations, but
+        # graph/state mutations happen on ``sub_ctx``. Without copying them back,
+        # any GraphStep/Step effects executed inside ``Local`` are lost.
+        ctx.graph = pragmatic_result.context.graph
+        ctx.state = pragmatic_result.context.state
+        ctx.log = pragmatic_result.context.log
+
         # Return the value from the sub-program
         return pragmatic_result.value
 
