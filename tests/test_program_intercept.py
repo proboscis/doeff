@@ -432,7 +432,6 @@ async def test_intercept_rewrites_gathered_programs():
     assert result.is_ok
     assert result.value == ["intercepted", "intercepted"]
     assert result.log.count("ask intercepted") == 2
-    assert result.log.count("ask intercepted") >= 1
 
 
 @pytest.mark.asyncio
@@ -464,3 +463,30 @@ async def test_intercept_visits_each_effect_once():
     assert result.is_ok
     assert result.value == "done"
     assert all(count == 1 for count in call_counts.values())
+
+
+@pytest.mark.asyncio
+async def test_intercept_multiple_layers_single_application():
+    """Stacked intercept calls still visit each effect once per transformer."""
+
+    @do
+    def simple_program() -> EffectGenerator[None]:
+        yield Log("hello")
+        return None
+
+    counts: dict[str, list[int]] = {"first": [], "second": []}
+
+    def make_transform(name: str) -> Callable[[Effect], Effect]:
+        def _transform(effect: Effect) -> Effect:
+            counts[name].append(id(effect))
+            return effect
+
+        return _transform
+
+    interpreter = ProgramInterpreter()
+    program = simple_program().intercept(make_transform("first")).intercept(make_transform("second"))
+    result = await interpreter.run(program)
+
+    assert result.is_ok
+    for call_ids in counts.values():
+        assert len(call_ids) == 1
