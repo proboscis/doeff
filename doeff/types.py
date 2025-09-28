@@ -1085,15 +1085,17 @@ class _ErrorSection(_BaseSection):
                     lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
                     for frame_line in ctx.build_traceback().splitlines():
                         lines.append(self.indent(3, frame_line))
-                elif is_primary:
-                    label = (
-                        "🔥 Fail Creation Stack Trace:"
-                        if effect_name == "ResultFailEffect"
-                        else "🔥 Effect Creation Stack Trace:"
-                    )
-                    lines.append(self.indent(2, label))
-                    for frame_line in ctx.build_traceback().splitlines():
-                        lines.append(self.indent(3, frame_line))
+                else:
+                    show_stack = is_primary or not isinstance(entry.cause, EffectFailure)
+                    if show_stack:
+                        label = (
+                            "🔥 Fail Creation Stack Trace:"
+                            if effect_name == "ResultFailEffect"
+                            else "🔥 Effect Creation Stack Trace:"
+                        )
+                        lines.append(self.indent(2, label))
+                        for frame_line in ctx.build_traceback().splitlines():
+                            lines.append(self.indent(3, frame_line))
         else:
             lines.append(self.indent(2, "📍 Created at: <unknown>"))
 

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from doeff import CachePut, EffectGenerator, Fail, Log, ProgramInterpreter, Put, Step, do
+from doeff import CachePut, EffectGenerator, Fail, Log, ProgramInterpreter, Put, Recover, Step, do
 
 
 @pytest.mark.asyncio
@@ -131,6 +131,48 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch):
     assert "Effect 'CachePutEffect' failed" in display_output
     assert "🔥 Effect Creation Stack Trace:" in display_output
     assert "cache_program" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
+    """Recover failures should surface the failing effect's creation stack."""
+
+    def failing_dumps(value, context):
+        raise TypeError("synthetic cache failure")
+
+    monkeypatch.setattr("doeff.handlers._cloudpickle_dumps", failing_dumps)
+
+    @do
+    def try_cache_get() -> EffectGenerator[None]:
+        yield Fail(KeyError("missing"))
+        return None
+
+    @do
+    def compute_and_cache() -> EffectGenerator[None]:
+        yield CachePut(("bad", object()), "value")
+        return None
+
+    @do
+    def recover_program() -> EffectGenerator[None]:
+        yield Recover(try_cache_get(), compute_and_cache())
+        return None
+
+    engine = ProgramInterpreter()
+    result = await engine.run(recover_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    assert "Effect 'ResultRecoverEffect' failed" in display_output
+    recover_section = display_output.split("Effect 'ResultRecoverEffect' failed", 1)[1]
+    assert "🔥 Effect Creation Stack Trace:" in recover_section
+    assert "recover_program" in recover_section
+
+    assert "Effect 'CachePutEffect' failed" in display_output
+    cache_section = display_output.split("Effect 'CachePutEffect' failed", 1)[1]
+    assert "🔥 Effect Creation Stack Trace:" in cache_section
+    assert "compute_and_cache" in cache_section
 
 
 @pytest.mark.asyncio
