@@ -277,7 +277,7 @@ class ProgramInterpreter:
         self._record_effect_usage(effect, ctx)
 
         if _effect_is(effect, AskEffect):
-            return await self.reader_handler.handle_ask(effect, ctx)
+            return await self.reader_handler.handle_ask(effect, ctx, self)
         if _effect_is(effect, LocalEffect):
             return await self.reader_handler.handle_local(effect, ctx, self)
 
@@ -335,7 +335,7 @@ class ProgramInterpreter:
         if _effect_is(effect, DepInjectEffect):
             proxy_effect = AskEffect(key=effect.key, created_at=effect.created_at)
             self._record_effect_usage(proxy_effect, ctx)
-            return await self.reader_handler.handle_ask(proxy_effect, ctx)
+            return await self.reader_handler.handle_ask(proxy_effect, ctx, self)
 
         if _effect_is(effect, GatherEffect):
             return await self._handle_gather_effect(effect, ctx)
