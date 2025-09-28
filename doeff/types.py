@@ -1099,6 +1099,16 @@ class _ErrorSection(_BaseSection):
                         )
                     )
 
+        show_creation_stack = (
+            not self.context.verbose
+            and ctx is not None
+            and entry.effect.__class__.__name__ == "ResultFailEffect"
+        )
+        if show_creation_stack:
+            lines.append(self.indent(2, "🔥 Fail Creation Stack Trace:"))
+            for frame_line in ctx.build_traceback().splitlines():
+                lines.append(self.indent(3, frame_line))
+
         if entry.runtime_trace:
             lines.extend(
                 self._render_trace(
