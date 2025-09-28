@@ -150,6 +150,33 @@ async def test_local_with_programs():
 
 
 @pytest.mark.asyncio
+async def test_ask_resolves_program_env_value():
+    """Ask resolves Program-valued environment entries once and caches result."""
+    engine = ProgramInterpreter()
+
+    @do
+    def config_provider() -> Generator[Effect, Any, str]:
+        yield Log("computing config")
+        return "computed"
+
+    @do
+    def main_program() -> Generator[Effect, Any, tuple[str, str]]:
+        from doeff import Ask
+
+        first = yield Ask("config")
+        second = yield Ask("config")
+        return first, second
+
+    context = ExecutionContext(env={"config": config_provider()})
+    result = await engine.run(main_program(), context)
+
+    assert result.is_ok
+    first, second = result.value
+    assert first == second == "computed"
+    assert result.context.env["config"] == "computed"
+
+
+@pytest.mark.asyncio
 async def test_listen_with_programs():
     """Test Listen effect with Programs (no .generator_func)."""
     engine = ProgramInterpreter()
