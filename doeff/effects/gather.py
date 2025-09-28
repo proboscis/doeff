@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping
-from typing import Tuple
+from typing import Callable, Tuple
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -16,12 +16,28 @@ class GatherEffect(EffectBase):
 
     programs: Tuple[ProgramLike, ...]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "GatherEffect":
+        programs = intercept_value(self.programs, transform)
+        if programs is self.programs:
+            return self
+        return replace(self, programs=programs)
+
 
 @dataclass(frozen=True)
 class GatherDictEffect(EffectBase):
     """Runs the program mapping and yields a dict keyed by the supplied names."""
 
     programs: Mapping[str, ProgramLike]
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "GatherDictEffect":
+        programs = intercept_value(self.programs, transform)
+        if programs is self.programs:
+            return self
+        return replace(self, programs=programs)
 
 
 def gather(*programs: ProgramLike) -> GatherEffect:

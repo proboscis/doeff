@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Awaitable
-from typing import Any, Tuple
+from typing import Any, Callable, Tuple
 
 from .base import Effect, EffectBase, create_effect_with_trace
 
@@ -15,12 +15,22 @@ class FutureAwaitEffect(EffectBase):
 
     awaitable: Awaitable[Any]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "FutureAwaitEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class FutureParallelEffect(EffectBase):
     """Runs all awaitables concurrently and yields the collected results list."""
 
     awaitables: Tuple[Awaitable[Any], ...]
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "FutureParallelEffect":
+        return self
 
 
 def await_(awaitable: Awaitable[Any]) -> FutureAwaitEffect:

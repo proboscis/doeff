@@ -5,6 +5,7 @@ Dependency injection effects compatible with pinjected.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Callable
 
 from .base import Effect, EffectBase, create_effect_with_trace
 
@@ -14,6 +15,11 @@ class DepInjectEffect(EffectBase):
     """Resolves the dependency identified by key and yields the bound object."""
 
     key: str
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "DepInjectEffect":
+        return self
 
 
 def inject(key: str) -> DepInjectEffect:

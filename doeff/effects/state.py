@@ -15,6 +15,11 @@ class StateGetEffect(EffectBase):
 
     key: str
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "StateGetEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class StatePutEffect(EffectBase):
@@ -23,6 +28,11 @@ class StatePutEffect(EffectBase):
     key: str
     value: Any
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "StatePutEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class StateModifyEffect(EffectBase):
@@ -30,6 +40,11 @@ class StateModifyEffect(EffectBase):
 
     key: str
     func: Callable[[Any], Any]
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "StateModifyEffect":
+        return self
 
 
 def get(key: str) -> StateGetEffect:

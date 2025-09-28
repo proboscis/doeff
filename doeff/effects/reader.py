@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Mapping
+from typing import Callable
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,11 @@ class AskEffect(EffectBase):
 
     key: str
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "AskEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class LocalEffect(EffectBase):
@@ -22,6 +28,14 @@ class LocalEffect(EffectBase):
 
     env_update: Mapping[str, object]
     sub_program: ProgramLike
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "LocalEffect":
+        sub_program = intercept_value(self.sub_program, transform)
+        if sub_program is self.sub_program:
+            return self
+        return replace(self, sub_program=sub_program)
 
 
 def ask(key: str) -> AskEffect:

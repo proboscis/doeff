@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import textwrap
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,15 @@ from .types import GeminiImageEditResult
 
 if TYPE_CHECKING:  # pragma: no cover - optional dependency for type checkers
     import PIL.Image
+
+
+class GeminiStructuredOutputError(ValueError):
+    """Raised when Gemini returns content that cannot be parsed as the requested schema."""
+
+    def __init__(self, *, format_name: str, raw_content: str, message: str) -> None:
+        super().__init__(message)
+        self.format_name = format_name
+        self.raw_content = raw_content
 
 
 def _stringify_for_log(content: Any, limit: int = 500) -> str:
@@ -86,6 +96,55 @@ def _extract_text_from_response(response: Any) -> str:
             if part_text:
                 fragments.append(part_text)
     return "\n".join(fragment for fragment in fragments if fragment).strip()
+
+
+def _extract_json_payload_from_response(response: Any) -> Any | None:
+    """Pull the first JSON-compatible payload exposed by the Gemini SDK."""
+
+    def _to_sequence(value: Any) -> list[Any]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return [value]
+
+    def _iter_parts(container: Any) -> list[Any]:
+        if container is None:
+            return []
+        if isinstance(container, dict):
+            parts = container.get("parts")
+        else:
+            parts = getattr(container, "parts", None)
+        return _to_sequence(parts)
+
+    candidate_sources: list[Any] = []
+    for attr in ("candidates", "output", "outputs"):
+        value = getattr(response, attr, None)
+        if isinstance(value, dict):
+            value = value.get(attr)
+        candidate_sources.extend(_to_sequence(value))
+
+    for candidate in candidate_sources:
+        contents: list[Any] = []
+        if isinstance(candidate, dict):
+            contents.extend(_to_sequence(candidate.get("content")))
+            contents.extend(_to_sequence(candidate.get("contents")))
+        else:
+            contents.extend(_to_sequence(getattr(candidate, "content", None)))
+            contents.extend(_to_sequence(getattr(candidate, "contents", None)))
+
+        for content in contents:
+            for part in _iter_parts(content):
+                if isinstance(part, dict):
+                    json_payload = part.get("json") or part.get("data")
+                else:
+                    json_payload = getattr(part, "json", None) or getattr(part, "data", None)
+
+                if isinstance(json_payload, BaseModel):
+                    return json_payload.model_dump()
+                if isinstance(json_payload, (dict, list, str)) and json_payload:
+                    return json_payload
+    return None
 
 
 @do
@@ -156,7 +215,7 @@ def build_generation_config(
         config = types.GenerateContentConfig(**config_data)
     except ValidationError as exc:
         yield Log(f"Invalid Gemini generation configuration: {exc}")
-        yield Fail(exc)
+        raise
 
     yield Log(
         "Generation config prepared: "
@@ -173,30 +232,80 @@ def process_structured_response(
     """Parse a structured Gemini response into the provided Pydantic model."""
     parsed_candidate = getattr(response, "parsed", None)
     payload: Any | None = None
+    format_name = f"{response_format.__module__}.{response_format.__qualname__}"
 
     if parsed_candidate:
-        candidate = parsed_candidate[0] if isinstance(parsed_candidate, list) else parsed_candidate
-        if isinstance(candidate, response_format):
-            yield Log("Gemini provided pre-parsed structured output")
-            return candidate
-        if isinstance(candidate, BaseModel):
-            payload = candidate.model_dump()
-        elif isinstance(candidate, dict):
-            payload = candidate
+        if isinstance(parsed_candidate, (list, tuple)):
+            non_null = [item for item in parsed_candidate if item is not None]
+            candidate = non_null[0] if non_null else None
         else:
-            payload = candidate
+            candidate = parsed_candidate
+
+        if candidate is not None:
+            if isinstance(candidate, response_format):
+                yield Log("Gemini provided pre-parsed structured output")
+                return candidate
+            if isinstance(candidate, BaseModel):
+                payload = candidate.model_dump()
+            elif isinstance(candidate, dict):
+                payload = candidate
+            elif isinstance(candidate, list):  # pragma: no cover - defensive
+                payload = candidate[0] if candidate else None
+            else:
+                payload = candidate
+
         preview = _stringify_for_log(payload, limit=200)
         yield Log(f"Parsing structured payload from parsed field: {preview}")
     else:
-        raw_text = _extract_text_from_response(response)
-        preview = _stringify_for_log(raw_text, limit=200)
-        yield Log(f"Parsing Gemini structured response: {preview}")
-        try:
-            payload = json.loads(raw_text)
-        except json.JSONDecodeError as exc:
-            yield Log(f"Failed to decode JSON from Gemini response: {exc}")
-            yield Log(f"Raw content: {preview}")
-            yield Fail(exc)
+        payload = _extract_json_payload_from_response(response)
+
+        if payload is not None and isinstance(payload, str):
+            stripped = payload.strip()
+            if stripped:
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError:
+                    preview = _stringify_for_log(stripped, limit=200)
+                    raw_content_for_error = stripped
+                    yield Log("Gemini json payload could not be decoded")
+                    raise GeminiStructuredOutputError(
+                        format_name=format_name,
+                        raw_content=stripped,
+                        message=(
+                            f"Gemini returned invalid structured payload for {format_name}: {preview}"
+                        ),
+                    )
+            else:
+                payload = None
+
+        if payload is None:
+            raw_text = _extract_text_from_response(response)
+            preview = _stringify_for_log(raw_text, limit=200)
+            yield Log(f"Parsing Gemini structured response fall back to text: {preview}")
+            stripped = raw_text.strip()
+            raw_content_for_error = raw_text
+            if stripped and stripped[0] in "[{":
+                try:
+                    payload = json.loads(stripped)
+                except json.JSONDecodeError:
+                    yield Log("Gemini response text was not valid JSON")
+                    yield Log(f"Raw content: {preview}")
+                    raise GeminiStructuredOutputError(
+                        format_name=format_name,
+                        raw_content=raw_text,
+                        message=(
+                            f"Gemini returned non-JSON structured output for {format_name}: {preview}"
+                        ),
+                    )
+            else:
+                yield Log("Gemini response did not include JSON payload")
+                raise GeminiStructuredOutputError(
+                    format_name=format_name,
+                    raw_content=raw_text,
+                    message=(
+                        f"Gemini missing structured JSON payload for {format_name}: {preview}"
+                    ),
+                )
 
     try:
         if hasattr(response_format, "model_validate"):
@@ -207,7 +316,7 @@ def process_structured_response(
         preview = _stringify_for_log(payload, limit=200)
         yield Log(f"Structured response validation error: {exc}")
         yield Log(f"Raw content: {preview}")
-        yield Fail(exc)
+        raise
     return result
 
 
@@ -218,6 +327,149 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
     preview = _stringify_for_log(text, limit=200)
     yield Log(f"Received Gemini response: {preview}")
     return text
+
+
+@do
+def repair_structured_response(
+    *,
+    model: str,
+    response_format: type[BaseModel],
+    malformed_content: str,
+    max_output_tokens: int,
+    system_instruction: str | None,
+    safety_settings: list[dict[str, Any]] | None,
+    tools: list[dict[str, Any]] | None,
+    tool_config: dict[str, Any] | None,
+    generation_config_overrides: dict[str, Any] | None,
+) -> EffectGenerator[Any]:
+    """Attempt to repair malformed JSON by making a focused Gemini call."""
+
+    yield Log("Attempting Gemini structured output repair with second call")
+
+    client = yield get_gemini_client()
+    async_client = client.async_client
+
+    schema_json = json.dumps(
+        response_format.model_json_schema(mode="validation"), indent=2, sort_keys=True
+    )
+
+    repair_instruction = (
+        (system_instruction + "\n\n") if system_instruction else ""
+    ) + "You must return only valid JSON that strictly matches the provided schema."
+
+    prompt = textwrap.dedent(
+        f"""
+        You previously produced output that failed to parse as the required JSON schema.
+        Rewrite the response as valid JSON that matches the schema.
+        Do not add any explanation, markdown, or commentary.
+
+        JSON schema:
+        ```json
+        {schema_json}
+        ```
+        Malformed response:
+        ```
+        {malformed_content}
+        ```
+
+        Return only valid JSON.
+        """
+    ).strip()
+
+    contents = yield build_contents(text=prompt, images=None)
+
+    generation_config = yield build_generation_config(
+        temperature=0.0,
+        max_output_tokens=max_output_tokens,
+        top_p=None,
+        top_k=None,
+        candidate_count=1,
+        system_instruction=repair_instruction,
+        safety_settings=safety_settings,
+        tools=tools,
+        tool_config=tool_config,
+        response_format=response_format,
+        response_modalities=None,
+        generation_config_overrides=generation_config_overrides,
+    )
+
+    attempt_start_time = time.time()
+
+    generation_config_payload = {
+        "temperature": 0.0,
+        "max_output_tokens": max_output_tokens,
+        "top_p": None,
+        "top_k": None,
+        "candidate_count": 1,
+        "system_instruction": repair_instruction,
+        "safety_settings": safety_settings,
+        "tools": tools,
+        "tool_config": tool_config,
+        "response_format": response_format.__name__,
+        "generation_config_overrides": generation_config_overrides,
+    }
+
+    api_payload = {
+        "model": model,
+        "contents": contents,
+        "config": generation_config,
+    }
+
+    request_payload = {
+        "text": prompt,
+        "images": [],
+        "generation_config": {
+            key: value
+            for key, value in generation_config_payload.items()
+            if value is not None
+        },
+    }
+
+    request_summary = {
+        "operation": "repair_structured_output",
+        "model": model,
+        "response_schema": response_format.__name__,
+    }
+
+    @do
+    def api_call_with_tracking() -> EffectGenerator[Any]:
+        response = yield Await(
+            async_client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=generation_config,
+            )
+        )
+        yield track_api_call(
+            operation="repair_structured_output",
+            model=model,
+            request_summary=request_summary,
+            request_payload=request_payload,
+            response=response,
+            start_time=attempt_start_time,
+            error=None,
+            api_payload=api_payload,
+        )
+        return response
+
+    @do
+    def handle_error(exc: Exception) -> EffectGenerator[None]:
+        yield track_api_call(
+            operation="repair_structured_output",
+            model=model,
+            request_summary=request_summary,
+            request_payload=request_payload,
+            response=None,
+            start_time=attempt_start_time,
+            error=exc,
+            api_payload=api_payload,
+        )
+        raise exc
+
+    response = yield Catch(api_call_with_tracking(), handle_error)
+
+    repaired = yield process_structured_response(response, response_format)
+    return repaired
 
 
 @do
@@ -373,7 +625,6 @@ def structured_llm__gemini(
     @do
     def make_api_call() -> EffectGenerator[Any]:
         attempt_start_time = time.time()
-
         @do
         def api_call_with_tracking() -> EffectGenerator[Any]:
             response = yield Await(
@@ -407,15 +658,35 @@ def structured_llm__gemini(
                 error=exc,
                 api_payload=api_payload,
             )
-            yield Fail(exc)
+            raise exc
 
-        response = yield Catch(api_call_with_tracking(), handle_error)
-        return response
+        return (yield Catch(api_call_with_tracking(), handle_error))
 
     response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
 
     if response_format is not None and issubclass(response_format, BaseModel):
-        result = yield process_structured_response(response, response_format)
+        @do
+        def handle_structured_error(exc: Exception) -> EffectGenerator[Any]:
+            if isinstance(exc, GeminiStructuredOutputError):
+                return (
+                    yield repair_structured_response(
+                        model=model,
+                        response_format=response_format,
+                        malformed_content=exc.raw_content,
+                        max_output_tokens=max_output_tokens,
+                        system_instruction=system_instruction,
+                        safety_settings=safety_settings,
+                        tools=tools,
+                        tool_config=tool_config,
+                        generation_config_overrides=generation_config_overrides,
+                    )
+                )
+            raise exc
+
+        result = yield Catch(
+            process_structured_response(response, response_format),
+            handle_structured_error,
+        )
     else:
         result = yield process_unstructured_response(response)
 

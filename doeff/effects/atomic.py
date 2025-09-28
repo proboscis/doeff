@@ -15,6 +15,11 @@ class AtomicGetEffect(EffectBase):
     key: str
     default_factory: Callable[[], Any] | None = None
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "AtomicGetEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class AtomicUpdateEffect(EffectBase):
@@ -23,6 +28,11 @@ class AtomicUpdateEffect(EffectBase):
     key: str
     updater: Callable[[Any], Any]
     default_factory: Callable[[], Any] | None = None
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "AtomicUpdateEffect":
+        return self
 
 
 def atomic_get(key: str, *, default_factory: Callable[[], Any] | None = None) -> AtomicGetEffect:
