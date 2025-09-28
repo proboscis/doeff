@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from collections.abc import Callable
 from typing import Any
 
 from doeff._vendor import Result
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,11 @@ class ResultFailEffect(EffectBase):
     """Immediately raises the provided exception within the program."""
 
     exception: Exception
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultFailEffect":
+        return self
 
 
 @dataclass(frozen=True)
@@ -26,6 +31,15 @@ class ResultCatchEffect(EffectBase):
     sub_program: ProgramLike
     handler: Callable[[Exception], Any | ProgramLike]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultCatchEffect":
+        sub_program = intercept_value(self.sub_program, transform)
+        handler = intercept_value(self.handler, transform)
+        if sub_program is self.sub_program and handler is self.handler:
+            return self
+        return replace(self, sub_program=sub_program, handler=handler)
+
 
 @dataclass(frozen=True)
 class ResultRecoverEffect(EffectBase):
@@ -33,6 +47,15 @@ class ResultRecoverEffect(EffectBase):
 
     sub_program: ProgramLike
     fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike]
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultRecoverEffect":
+        sub_program = intercept_value(self.sub_program, transform)
+        fallback = intercept_value(self.fallback, transform)
+        if sub_program is self.sub_program and fallback is self.fallback:
+            return self
+        return replace(self, sub_program=sub_program, fallback=fallback)
 
 
 @dataclass(frozen=True)
@@ -43,12 +66,28 @@ class ResultRetryEffect(EffectBase):
     max_attempts: int = 3
     delay_ms: int = 0
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultRetryEffect":
+        sub_program = intercept_value(self.sub_program, transform)
+        if sub_program is self.sub_program:
+            return self
+        return replace(self, sub_program=sub_program)
+
 
 @dataclass(frozen=True)
 class ResultSafeEffect(EffectBase):
     """Runs the sub-program and yields a Result for success/failure."""
 
     sub_program: ProgramLike
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultSafeEffect":
+        sub_program = intercept_value(self.sub_program, transform)
+        if sub_program is self.sub_program:
+            return self
+        return replace(self, sub_program=sub_program)
 
 
 @dataclass(frozen=True)
@@ -57,12 +96,25 @@ class ResultUnwrapEffect(EffectBase):
 
     result: Result[Any]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultUnwrapEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class ResultFirstSuccessEffect(EffectBase):
     """Try programs sequentially until one succeeds."""
 
     programs: tuple[ProgramLike, ...]
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "ResultFirstSuccessEffect":
+        programs = intercept_value(self.programs, transform)
+        if programs is self.programs:
+            return self
+        return replace(self, programs=programs)
 
 
 def fail(exc: Exception) -> ResultFailEffect:

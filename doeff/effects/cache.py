@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable
 
 from ..cache_policy import (
     CacheLifecycle,
@@ -21,6 +21,11 @@ class CacheGetEffect(EffectBase):
 
     key: Any
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "CacheGetEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class CachePutEffect(EffectBase):
@@ -29,6 +34,15 @@ class CachePutEffect(EffectBase):
     key: Any
     value: Any
     policy: CachePolicy
+    def __post_init__(self):
+        import cloudpickle
+        cloudpickle.dumps(self.key)
+        # so this, is always running fine!
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "CachePutEffect":
+        return self
 
 
 def cache_get(key: Any) -> CacheGetEffect:

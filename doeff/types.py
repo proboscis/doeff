@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 import traceback
 from pprint import pformat
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, replace
+from abc import ABC, abstractmethod
 from functools import wraps
 from typing import (
     Any,
@@ -25,6 +26,8 @@ from typing import (
     TYPE_CHECKING,
     runtime_checkable,
 )
+
+#from doeff import CachePut
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
@@ -404,29 +407,19 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase:
+class EffectBase(ABC):
     """Base dataclass implementing :class:`Effect` semantics."""
 
     created_at: Optional[EffectCreationContext] = field(
         default=None, compare=False
     )
 
+    @abstractmethod
     def intercept(
         self: E, transform: Callable[[Effect], Effect | "Program"]
     ) -> E:
-        updates: Dict[str, Any] = {}
-        changed = False
-        for f in fields(self):
-            if f.name == "created_at":
-                continue
-            value = getattr(self, f.name)
-            new_value = _intercept_value(value, transform)
-            if new_value is not value:
-                changed = True
-            updates[f.name] = new_value
-        if not changed:
-            return self
-        return replace(self, **updates)
+        """Return a copy where any nested programs are intercepted."""
+        raise NotImplementedError
 
     def with_created_at(
         self: E, created_at: Optional[EffectCreationContext]

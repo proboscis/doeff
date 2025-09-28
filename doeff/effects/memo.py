@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from .base import Effect, EffectBase, create_effect_with_trace
 
@@ -14,6 +14,11 @@ class MemoGetEffect(EffectBase):
 
     key: Any
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "MemoGetEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class MemoPutEffect(EffectBase):
@@ -21,6 +26,11 @@ class MemoPutEffect(EffectBase):
 
     key: Any
     value: Any
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "MemoPutEffect":
+        return self
 
 
 def memo_get(key: Any) -> MemoGetEffect:

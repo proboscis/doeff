@@ -21,6 +21,7 @@ from doeff_gemini import (
     process_unstructured_response,
     structured_llm__gemini,
 )
+from doeff_gemini.structured_llm import GeminiStructuredOutputError
 from doeff_gemini.costs import calculate_cost
 from doeff_gemini.client import track_api_call
 from doeff_gemini.types import APICallMetadata
@@ -39,6 +40,22 @@ class ComplexResponse(BaseModel):
     title: str
     items: list[str]
     metadata: dict[str, Any]
+
+
+class ScoreWithReasoning(BaseModel):
+    symbol: str
+    score: float
+    reasoning: str
+
+
+class ScoreWithReasoningV2(BaseModel):
+    symbol: str
+    score: float
+    reasoning: str
+
+
+class SymbolAssessmentsV2(BaseModel):
+    assessments: list[ScoreWithReasoning]
 
 
 @pytest.mark.asyncio
@@ -135,9 +152,11 @@ async def test_build_generation_config_with_modalities() -> None:
 async def test_process_structured_response_from_text() -> None:
     """Structured responses should parse JSON text when no parsed payload is present."""
 
-    response = MagicMock()
-    response.parsed = None
-    response.text = json.dumps({"answer": "42", "confidence": 0.9})
+    response = SimpleNamespace(
+        parsed=None,
+        text=json.dumps({"answer": "42", "confidence": 0.9}),
+        candidates=None,
+    )
 
     @do
     def flow() -> EffectGenerator[SimpleResponse]:
@@ -172,6 +191,210 @@ async def test_process_structured_response_from_parsed() -> None:
 
     assert result.is_ok
     assert result.value is parsed_response
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_nested_model_from_parsed() -> None:
+    """Nested Pydantic structures should be reused when provided in parsed payload."""
+
+    parsed_response = SymbolAssessmentsV2(
+        assessments=[
+            ScoreWithReasoning(symbol="MSFT", score=0.88, reasoning="High relevance"),
+            ScoreWithReasoning(symbol="GOOG", score=0.73, reasoning="Moderate relevance"),
+        ]
+    )
+    response = SimpleNamespace(parsed=[parsed_response])
+
+    @do
+    def flow() -> EffectGenerator[SymbolAssessmentsV2]:
+        result = yield process_structured_response(response, SymbolAssessmentsV2)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    assert result.value is parsed_response
+    assert len(result.value.assessments) == 2
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_from_json_part() -> None:
+    """Structured responses should leverage JSON parts when available."""
+
+    json_part = SimpleNamespace(json={"answer": "42", "confidence": 0.75})
+    response = SimpleNamespace(
+        parsed=None,
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[json_part]),
+                contents=None,
+            )
+        ],
+        text="",
+    )
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        result = yield process_structured_response(response, SimpleResponse)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    payload = result.value
+    assert isinstance(payload, SimpleResponse)
+    assert payload.answer == "42"
+    assert math.isclose(payload.confidence, 0.75)
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_from_json_part_string_payload() -> None:
+    """String JSON payloads should be parsed after trimming whitespace."""
+
+    json_part = SimpleNamespace(json="  {\n    \"answer\": \"84\", \n    \"confidence\": 0.55\n}  ")
+    response = SimpleNamespace(
+        parsed=None,
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[json_part]),
+                contents=None,
+            )
+        ],
+        text="",
+    )
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        result = yield process_structured_response(response, SimpleResponse)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    payload = result.value
+    assert payload.answer == "84"
+    assert math.isclose(payload.confidence, 0.55)
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_from_json_part_with_model() -> None:
+    """BaseModel payloads embedded in JSON parts should be converted to dicts."""
+
+    json_part = SimpleNamespace(json=SimpleResponse(answer="128", confidence=0.33))
+    response = SimpleNamespace(
+        parsed=None,
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(parts=[json_part]),
+                contents=None,
+            )
+        ],
+        text="",
+    )
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        result = yield process_structured_response(response, SimpleResponse)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    payload = result.value
+    assert payload.answer == "128"
+    assert math.isclose(payload.confidence, 0.33)
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_nested_model_from_json_part() -> None:
+    """Nested Pydantic structures should parse when provided as JSON parts."""
+
+    json_part = SimpleNamespace(
+        json={
+            "assessments": [
+                {"symbol": "AAPL", "score": 0.91, "reasoning": "Strong fundamentals"},
+                {"symbol": "TSLA", "score": 0.52, "reasoning": "Volatile"},
+            ]
+        }
+    )
+    response = SimpleNamespace(
+        parsed=None,
+        candidates=[
+            SimpleNamespace(content=SimpleNamespace(parts=[json_part]), contents=None)
+        ],
+        text="",
+    )
+
+    @do
+    def flow() -> EffectGenerator[SymbolAssessmentsV2]:
+        result = yield process_structured_response(response, SymbolAssessmentsV2)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    payload = result.value
+    assert isinstance(payload, SymbolAssessmentsV2)
+    assert payload.assessments[0].symbol == "AAPL"
+    assert math.isclose(payload.assessments[1].score, 0.52)
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_from_outputs_structure() -> None:
+    """JSON payloads nested under outputs/contents should be discovered."""
+
+    response = SimpleNamespace(
+        parsed=None,
+        outputs=[
+            SimpleNamespace(
+                contents=[
+                    SimpleNamespace(
+                        parts=[SimpleNamespace(json={"answer": "11", "confidence": 0.61})]
+                    )
+                ]
+            )
+        ],
+        candidates=None,
+        text="",
+    )
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        result = yield process_structured_response(response, SimpleResponse)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_ok
+    payload = result.value
+    assert payload.answer == "11"
+    assert math.isclose(payload.confidence, 0.61)
+
+
+@pytest.mark.asyncio
+async def test_process_structured_response_without_json_payload() -> None:
+    """Missing JSON payload should fail with a ValueError, not JSONDecodeError."""
+
+    response = SimpleNamespace(parsed=None, candidates=[], text="No structured data returned")
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        result = yield process_structured_response(response, SimpleResponse)
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(flow())
+
+    assert result.is_err
+    error = result.result.error
+    assert isinstance(error, GeminiStructuredOutputError)
+    assert error.format_name.endswith("SimpleResponse")
 
 
 @pytest.mark.asyncio
