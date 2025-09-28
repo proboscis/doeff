@@ -190,7 +190,7 @@ class CapturedTraceback:
         self,
         *,
         condensed: bool = False,
-        max_lines: int = 12,
+        max_lines: int = 18,
     ) -> list[str]:
         """Return sanitized traceback lines with optional condensation."""
 
@@ -209,20 +209,115 @@ class CapturedTraceback:
             body = sanitized[1:]
 
         if not body:
-            return header
+            return header[:max_lines]
 
         available = max_lines - len(header)
         if available <= 0:
             return header[:max_lines]
 
-        body_tail = body[-available:]
-        return header + body_tail
+        if len(body) <= available:
+            return header + body[:available]
+
+        # For very small budgets prefer the innermost frames closest to the failure.
+        if available <= 4:
+            return header + body[-available:]
+
+        # Reserve one slot for an ellipsis so we can show both outer and inner frames.
+        available_for_frames = available - 1
+        if available_for_frames <= 0:
+            return header + body[-available:]
+
+        tail_min = 4
+        if available_for_frames <= tail_min:
+            return header + body[-available:]
+
+        def _frame_spans() -> list[tuple[int, int]]:
+            spans: list[tuple[int, int]] = []
+            index = 0
+            while index < len(body):
+                line = body[index]
+                if line.lstrip().startswith("File "):
+                    start = index
+                    index += 1
+                    while index < len(body) and not body[index].lstrip().startswith("File "):
+                        index += 1
+                    spans.append((start, index))
+                else:
+                    index += 1
+            return spans
+
+        def _extract_path(line: str) -> str | None:
+            start = line.find('"')
+            if start == -1:
+                return None
+            end = line.find('"', start + 1)
+            if end == -1:
+                return None
+            return line[start + 1 : end]
+
+        def _is_library_path(path: str) -> bool:
+            lowered = path.lower()
+            if "/site-packages/" in lowered:
+                return True
+            if "/python" in lowered and "/repos/" not in lowered:
+                return True
+            return False
+
+        frame_spans = _frame_spans()
+        user_span_end: int | None = None
+        desired_user_frames = 3
+        user_frames_seen = 0
+
+        for start, end in frame_spans:
+            path = _extract_path(body[start])
+            if path and not _is_library_path(path):
+                user_frames_seen += 1
+                user_span_end = end
+                if user_frames_seen >= desired_user_frames:
+                    break
+
+        tail_lines = max(tail_min, available_for_frames // 2)
+        if tail_lines > available_for_frames - 2:
+            tail_lines = max(available_for_frames - 2, 2)
+
+        head_lines = available_for_frames - tail_lines
+        if head_lines < 2:
+            head_lines = 2
+            tail_lines = available_for_frames - head_lines
+
+        if user_span_end is not None and user_span_end > head_lines:
+            extra_needed = user_span_end - head_lines
+            reducible = max(0, tail_lines - tail_min)
+            take = min(extra_needed, reducible)
+            head_lines += take
+            tail_lines -= take
+            extra_needed -= take
+
+            if extra_needed > 0:
+                reducible = max(0, tail_lines - 2)
+                take = min(extra_needed, reducible)
+                head_lines += take
+                tail_lines -= take
+                extra_needed -= take
+
+            if extra_needed > 0:
+                head_lines = min(user_span_end, available_for_frames)
+                tail_lines = available_for_frames - head_lines
+
+        if tail_lines <= 0:
+            return header + body[:available]
+
+        if head_lines + tail_lines >= len(body):
+            return header + body[:available]
+
+        ellipsis_line = "    ..."
+        return header + body[:head_lines] + [ellipsis_line] + body[-tail_lines:]
 
     def format(
         self,
         *,
         condensed: bool = False,
-        max_lines: int = 12,
+        max_lines: int = 18,
     ) -> str:
         """Render the traceback as a single string."""
 
