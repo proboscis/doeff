@@ -1123,8 +1123,8 @@ class _ErrorSection(_BaseSection):
         trace: CapturedTraceback,
         label: str,
     ) -> list[str]:
-        condensed = not self.context.verbose
-        frames = trace.lines(condensed=condensed)
+        # Always include the full sanitized traceback so user frames remain visible.
+        frames = trace.lines(condensed=False)
         if not frames:
             return []
         result = [self.indent(2, f"{label}:")]
