@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from doeff import EffectGenerator, Fail, Log, ProgramInterpreter, Put, Step, do
+from doeff import CachePut, EffectGenerator, Fail, Log, ProgramInterpreter, Put, Step, do
 
 
 @pytest.mark.asyncio
@@ -105,6 +105,32 @@ async def test_display_trace_includes_user_frames():
     assert "helper_outer" in display_output
     assert "helper_middle" in display_output
     assert "tests/test_runresult_display.py" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_primary_effect_shows_creation_stack(monkeypatch):
+    """Closest failing effect should surface its creation stack without verbose."""
+
+    def failing_dumps(value, context):
+        raise TypeError("synthetic cache failure")
+
+    monkeypatch.setattr("doeff.handlers._cloudpickle_dumps", failing_dumps)
+
+    @do
+    def cache_program() -> EffectGenerator[None]:
+        yield CachePut(("bad", object()), "value")
+        return None
+
+    engine = ProgramInterpreter()
+    result = await engine.run(cache_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    assert "Effect 'CachePutEffect' failed" in display_output
+    assert "🔥 Effect Creation Stack Trace:" in display_output
+    assert "cache_program" in display_output
 
 
 @pytest.mark.asyncio

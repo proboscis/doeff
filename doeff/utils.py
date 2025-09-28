@@ -6,6 +6,33 @@ import os
 import sys
 from typing import Optional, TypeVar
 
+
+def _is_site_package(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    return "/site-packages/" in normalized
+
+
+def _is_stdlib(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    if normalized.startswith("<"):
+        return False
+    return (
+        "/lib/python" in normalized
+        or "/frameworks/python.framework" in normalized
+        or "/.local/share/uv/python" in normalized
+    )
+
+
+def _is_doeff_internal(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    return "/doeff/" in normalized
+
+
+def _is_user_frame(path: str) -> bool:
+    if path.startswith("<"):
+        return True
+    return not (_is_site_package(path) or _is_stdlib(path) or _is_doeff_internal(path))
+
 # Environment variable to control debug mode
 DEBUG_EFFECTS = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
 
@@ -40,33 +67,39 @@ def capture_creation_context(skip_frames: int = 2) -> Optional["EffectCreationCo
         except:
             pass
 
-        # Collect stack frames for deeper context if DEBUG is enabled
+        # Collect stack frames so we can show where the effect originated.
         stack_data = []
-        if DEBUG_EFFECTS:
-            current_frame = frame.f_back
-            depth = 0
-            max_depth = 10  # Limit stack depth to avoid too much data
+        current_frame = frame.f_back
+        depth = 0
+        max_depth = 12 if DEBUG_EFFECTS else 8
 
-            while current_frame and depth < max_depth:
-                frame_data = {
-                    "filename": current_frame.f_code.co_filename,
-                    "line": current_frame.f_lineno,
-                    "function": current_frame.f_code.co_name,
-                    "frame": current_frame  # Store the frame object itself
-                }
-                # Try to get code for this frame too
-                try:
-                    import linecache
-                    frame_data["code"] = linecache.getline(
-                        current_frame.f_code.co_filename,
-                        current_frame.f_lineno
-                    ).strip()
-                except:
-                    pass
+        while current_frame and depth < max_depth:
+            frame_filename = current_frame.f_code.co_filename
+            frame_data = {
+                "filename": frame_filename,
+                "line": current_frame.f_lineno,
+                "function": current_frame.f_code.co_name,
+            }
 
-                stack_data.append(frame_data)
-                current_frame = current_frame.f_back
-                depth += 1
+            try:
+                import linecache
+
+                code_line = linecache.getline(frame_filename, current_frame.f_lineno)
+                if code_line:
+                    frame_data["code"] = code_line.strip()
+            except Exception:  # pragma: no cover - best effort only
+                pass
+
+            if DEBUG_EFFECTS:
+                frame_data["frame"] = current_frame
+
+            stack_data.append(frame_data)
+            depth += 1
+
+            if not DEBUG_EFFECTS and _is_user_frame(frame_filename):
+                break
+
+            current_frame = current_frame.f_back
 
         return EffectCreationContext(
             filename=filename,
