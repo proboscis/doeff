@@ -1,0 +1,80 @@
+"""Tests for @do decorator when applied to class and instance methods."""
+
+from __future__ import annotations
+
+import inspect
+from typing import Generator, Any
+
+from doeff import Program, do
+
+
+def _run_program(program: Program[Any]) -> Any:
+    """Execute a program that does not yield external effects."""
+
+    stack = [program.generator_func()]
+    sentinel: Any | None = None
+
+    while stack:
+        current = stack[-1]
+        try:
+            if sentinel is None:
+                yielded = next(current)
+            else:
+                yielded = current.send(sentinel)
+                sentinel = None
+        except StopIteration as exc:
+            stack.pop()
+            sentinel = exc.value
+            continue
+
+        if isinstance(yielded, Program):
+            stack.append(yielded.generator_func())
+            continue
+
+        raise AssertionError(
+            f"Program yielded unsupported value {yielded!r}; these tests expect only nested Programs."
+        )
+
+    return sentinel
+
+
+def test_do_instance_method_signature_and_execution() -> None:
+    class Counter:
+        def __init__(self, base: int) -> None:
+            self.base = base
+
+        @do
+        def increment(self, delta: int) -> Generator[Program[Any], Any, int]:
+            return self.base + delta
+
+    counter = Counter(3)
+
+    # Access via class retains `self` parameter.
+    class_sig = inspect.signature(Counter.increment)
+    assert list(class_sig.parameters.keys()) == ["self", "delta"]
+
+    # Access via instance should behave like a bound method with no explicit self.
+    bound = counter.increment
+    bound_sig = inspect.signature(bound)
+    assert list(bound_sig.parameters.keys()) == ["delta"]
+
+    program = bound(4)
+    assert isinstance(program, Program)
+    assert _run_program(program) == 7
+
+
+def test_do_class_method_signature_and_execution() -> None:
+    class Aggregator:
+        bias = 2
+
+        @classmethod
+        @do
+        def produce(cls, value: int) -> Generator[Program[Any], Any, int]:
+            return cls.bias + value
+
+    class_sig = inspect.signature(Aggregator.produce)
+    assert list(class_sig.parameters.keys()) == ["value"]
+
+    program = Aggregator.produce(5)
+    assert isinstance(program, Program)
+    assert _run_program(program) == 7
