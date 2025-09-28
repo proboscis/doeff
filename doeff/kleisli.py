@@ -209,6 +209,13 @@ class KleisliProgram(Generic[P, T]):
                     object.__setattr__(self, attr, value)
 
 
+    def __get__(self, instance: Any, owner: type | None = None) -> Any:
+        """Support descriptor binding so instance methods hide the explicit self parameter."""
+
+        if instance is None:
+            return self
+        return types.MethodType(self, instance)
+
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Program[T]:
         """
         Call the Kleisli arrow, automatically unwrapping any Program arguments.
