@@ -61,6 +61,8 @@ async def test_display_error_with_traceback():
     assert "Error Chain (most recent first):" in display_output
     assert "Effect 'ResultFailEffect' failed" in display_output
     assert "Caused by: ValueError: Something went wrong in the program" in display_output
+    assert "🔥 Fail Creation Stack Trace:" in display_output
+    assert "failing_program" in display_output
 
     # Verify creation location is shown
     assert "📍 Created at:" in display_output
