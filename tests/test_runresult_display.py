@@ -75,8 +75,8 @@ async def test_display_error_with_traceback():
 
 
 @pytest.mark.asyncio
-async def test_display_condensed_trace_includes_user_frames():
-    """Non-verbose display should include outer user frames when condensed."""
+async def test_display_trace_includes_user_frames():
+    """Display output should show full user stack frames by default."""
 
     def helper_outer() -> None:
         helper_middle()
@@ -99,11 +99,10 @@ async def test_display_condensed_trace_includes_user_frames():
 
     display_output = result.display(verbose=False)
 
-    # Should show user helper frames even in condensed output.
+    # Full traceback should surface user helper frames and source file.
     assert "helper_outer" in display_output
+    assert "helper_middle" in display_output
     assert "tests/test_runresult_display.py" in display_output
-    # Condensed output should indicate that middle frames were omitted.
-    assert "    ..." in display_output
 
 
 @pytest.mark.asyncio
