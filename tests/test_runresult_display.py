@@ -1,5 +1,7 @@
 """Test enhanced RunResult.display() method with stack traces and error details."""
 
+import json
+
 import pytest
 
 from doeff import EffectGenerator, Fail, Log, ProgramInterpreter, Put, Step, do
@@ -70,6 +72,38 @@ async def test_display_error_with_traceback():
 
     # Verify summary shows error status
     assert "Status: ❌ Error" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_condensed_trace_includes_user_frames():
+    """Non-verbose display should include outer user frames when condensed."""
+
+    def helper_outer() -> None:
+        helper_middle()
+
+    def helper_middle() -> None:
+        helper_inner()
+
+    def helper_inner() -> None:
+        json.loads("{\"unterminated\": \"value\"")
+
+    @do
+    def failing_program() -> EffectGenerator[None]:
+        helper_outer()
+        return None
+
+    engine = ProgramInterpreter()
+    result = await engine.run(failing_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Should show user helper frames even in condensed output.
+    assert "helper_outer" in display_output
+    assert "tests/test_runresult_display.py" in display_output
+    # Condensed output should indicate that middle frames were omitted.
+    assert "    ..." in display_output
 
 
 @pytest.mark.asyncio
