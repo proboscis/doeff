@@ -1047,19 +1047,30 @@ class _ErrorSection(_BaseSection):
 
         lines: list[str] = ["Error Chain (most recent first):"]
 
+        primary_effect_idx: int | None = None
+        for primary_index, primary_entry in enumerate(details.entries, start=1):
+            if isinstance(primary_entry, EffectFailureInfo):
+                primary_effect_idx = primary_index
+                break
+
         for idx, entry in enumerate(details.entries, start=1):
             if idx > 1:
                 lines.append("")
 
             if isinstance(entry, EffectFailureInfo):
-                lines.extend(self._render_effect_entry(idx, entry))
+                is_primary = primary_effect_idx is not None and idx == primary_effect_idx
+                lines.extend(self._render_effect_entry(idx, entry, is_primary=is_primary))
             elif isinstance(entry, ExceptionFailureInfo):
                 lines.extend(self._render_exception_entry(idx, entry))
 
         return lines
 
     def _render_effect_entry(
-        self, idx: int, entry: EffectFailureInfo
+        self,
+        idx: int,
+        entry: EffectFailureInfo,
+        *,
+        is_primary: bool,
     ) -> list[str]:
         effect_name = entry.effect.__class__.__name__
         lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
@@ -1069,10 +1080,20 @@ class _ErrorSection(_BaseSection):
             lines.append(self.indent(2, f"📍 Created at: {ctx.format_location()}"))
             if ctx.code:
                 lines.append(self.indent(3, ctx.code))
-            if self.context.verbose and ctx.stack_trace:
-                lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
-                for frame_line in ctx.build_traceback().splitlines():
-                    lines.append(self.indent(3, frame_line))
+            if ctx.stack_trace:
+                if self.context.verbose:
+                    lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
+                    for frame_line in ctx.build_traceback().splitlines():
+                        lines.append(self.indent(3, frame_line))
+                elif is_primary:
+                    label = (
+                        "🔥 Fail Creation Stack Trace:"
+                        if effect_name == "ResultFailEffect"
+                        else "🔥 Effect Creation Stack Trace:"
+                    )
+                    lines.append(self.indent(2, label))
+                    for frame_line in ctx.build_traceback().splitlines():
+                        lines.append(self.indent(3, frame_line))
         else:
             lines.append(self.indent(2, "📍 Created at: <unknown>"))
 
@@ -1098,16 +1119,6 @@ class _ErrorSection(_BaseSection):
                             "🔥 Cause Stack Trace",
                         )
                     )
-
-        show_creation_stack = (
-            not self.context.verbose
-            and ctx is not None
-            and entry.effect.__class__.__name__ == "ResultFailEffect"
-        )
-        if show_creation_stack:
-            lines.append(self.indent(2, "🔥 Fail Creation Stack Trace:"))
-            for frame_line in ctx.build_traceback().splitlines():
-                lines.append(self.indent(3, frame_line))
 
         if entry.runtime_trace:
             lines.extend(
