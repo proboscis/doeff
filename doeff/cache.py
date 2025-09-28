@@ -197,6 +197,19 @@ def cache(
             else:
                 cache_key = (func_name, args_for_key, frozen_kwargs)
 
+            from loguru import logger
+
+            try:
+                import cloudpickle
+                cloudpickle.dumps(cache_key)
+                logger.success(f"cache key serialization check passed for key:{cache_key}")
+            except Exception as e:
+                # we are doing this in order to see what caused the serialization failure
+                # one way, is to store all frame inside the effect.
+                logger.error(f"serializing cache key failed:{cache_key}")
+                # but this is not failing!!!
+                raise e
+
             # yield Log(f"Cache: checking key for {func_name}")
 
             # Define the fallback computation
@@ -205,8 +218,20 @@ def cache(
                 # yield Log(f"Cache miss for {func_name}, computing...")
                 # Execute the original function
                 result: Result = yield Safe(wrapped_func(*args, **kwargs))
+                from loguru import logger
+                logger.warning(f"CachePut with key:{cache_key}")
                 if result.is_ok():
                     # Store in cache with the key
+                    try:
+                        import cloudpickle
+                        cloudpickle.dumps(cache_key)
+                        logger.success(f"cache key serialization check passed for key:{cache_key}")
+                    except Exception as e:
+                        # we are doing this in order to see what caused the serialization failure
+                        # one way, is to store all frame inside the effect.
+                        logger.error(f"serializing cache key failed:{cache_key}")
+                        # but this is not failing!!!
+                        raise e
                     yield CachePut(
                         cache_key,
                         result,
@@ -216,6 +241,7 @@ def cache(
                         metadata=metadata,
                         policy=policy,
                     )
+                    # so we are not reaching here.
                     yield Log(f"Cache: stored result for {func_name}")
                 else:
                     yield Log(f"Computation for {func_name} failed, not caching.")
@@ -225,6 +251,14 @@ def cache(
             # Create a program that tries to get from cache
             @do
             def try_cache_get() -> EffectGenerator[T]:
+                # this is where a bad key is being passed...
+                # however, cache_key serialization check is passing here...
+                try:
+                    cloudpickle.dumps(cache_key)
+                except Exception as e:
+                    logger.error(f"serializing cache key failed:{cache_key}")
+                    raise e
+
                 return (yield CacheGet(cache_key))
 
             # Try to get from cache, recover with computation on miss

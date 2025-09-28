@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from collections.abc import Callable
-from typing import Any, Dict
+from dataclasses import dataclass, replace
+from typing import Any, Callable, Dict
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -17,6 +16,11 @@ class GraphStepEffect(EffectBase):
     value: Any
     meta: Dict[str, Any]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "GraphStepEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class GraphAnnotateEffect(EffectBase):
@@ -24,12 +28,20 @@ class GraphAnnotateEffect(EffectBase):
 
     meta: Dict[str, Any]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "GraphAnnotateEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class GraphSnapshotEffect(EffectBase):
     """Captures the current computation graph and yields it."""
 
-    pass
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "GraphSnapshotEffect":
+        return self
 
 
 @dataclass(frozen=True)
@@ -37,6 +49,14 @@ class GraphCaptureEffect(EffectBase):
     """Runs a program and yields both its value and the graph it produced."""
 
     program: ProgramLike
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "GraphCaptureEffect":
+        program = intercept_value(self.program, transform)
+        if program is self.program:
+            return self
+        return replace(self, program=program)
 
 
 class graph:

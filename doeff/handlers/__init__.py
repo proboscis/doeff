@@ -55,6 +55,27 @@ from doeff.effects import (
 )
 from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
 
+
+def _safe_object_repr(value: Any) -> str:
+    try:
+        return repr(value)
+    except Exception as repr_error:  # pragma: no cover - defensive guard
+        return f"<repr failed: {repr_error!r}>"
+
+
+def _cloudpickle_dumps(value: Any, context: str) -> bytes:
+    try:
+        return cloudpickle.dumps(value)
+    except Exception as exc:
+        value_repr = _safe_object_repr(value)
+        raise TypeError(
+            "Failed to cloudpickle {context}; object type={type_name}; repr={repr}".format(
+                context=context,
+                type_name=type(value).__name__,
+                repr=value_repr,
+            )
+        ) from exc
+
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
 
@@ -582,7 +603,7 @@ class MemoEffectHandler:
     scope = HandlerScope.SHARED
 
     def _serialize_key(self, key: Any) -> str:
-        key_bytes = cloudpickle.dumps(key)
+        key_bytes = _cloudpickle_dumps(key, "memo key")
         return hashlib.sha256(key_bytes).hexdigest()
 
     async def handle_get(self, effect: MemoGetEffect, ctx: ExecutionContext) -> Any:
@@ -630,13 +651,15 @@ class CacheEffectHandler:
         self._lock = asyncio.Lock()
 
     def _serialize_key(self, key: Any) -> tuple[str, bytes]:
-        key_bytes = cloudpickle.dumps(key)
+        key_bytes = _cloudpickle_dumps(key, "cache key")
         key_blob = lzma.compress(key_bytes)
         key_hash = hashlib.sha256(key_blob).hexdigest()
         return key_hash, key_blob
 
     async def handle_get(self, effect: CacheGetEffect, ctx: ExecutionContext) -> Any:
         key_hash, _ = self._serialize_key(effect.key)
+        # hmm, serializing a key is failing here, but i cannot tell what is passing a bad key...
+
         async with self._lock:
             row = self._conn.execute(
                 "SELECT value_blob, expiry FROM cache_entries WHERE key_hash = ?",

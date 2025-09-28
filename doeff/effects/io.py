@@ -15,12 +15,22 @@ class IOPerformEffect(EffectBase):
 
     action: Callable[[], Any]
 
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "IOPerformEffect":
+        return self
+
 
 @dataclass(frozen=True)
 class IOPrintEffect(EffectBase):
     """Emits a message that will be printed to the active output stream."""
 
     message: str
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "IOPrintEffect":
+        return self
 
 
 def perform(action: Callable[[], Any]) -> IOPerformEffect:
