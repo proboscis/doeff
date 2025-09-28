@@ -490,3 +490,34 @@ async def test_intercept_multiple_layers_single_application():
     assert result.is_ok
     for call_ids in counts.values():
         assert len(call_ids) == 1
+
+
+@pytest.mark.asyncio
+async def test_intercept_many_layers_single_application():
+    """Five chained intercept calls still invoke each transform once."""
+
+    @do
+    def simple_program() -> EffectGenerator[None]:
+        yield Log("hello")
+        return None
+
+    names = [f"layer-{idx}" for idx in range(5)]
+    counts: dict[str, list[int]] = {name: [] for name in names}
+
+    def make_transform(name: str) -> Callable[[Effect], Effect]:
+        def _transform(effect: Effect) -> Effect:
+            counts[name].append(id(effect))
+            return effect
+
+        return _transform
+
+    interpreter = ProgramInterpreter()
+    program = simple_program()
+    for name in names:
+        program = program.intercept(make_transform(name))
+
+    result = await interpreter.run(program)
+
+    assert result.is_ok
+    for name in names:
+        assert len(counts[name]) == 1

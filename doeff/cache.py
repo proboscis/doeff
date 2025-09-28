@@ -197,12 +197,12 @@ def cache(
             else:
                 cache_key = (func_name, args_for_key, frozen_kwargs)
 
-            yield Log(f"Cache: checking key for {func_name}")
+            # yield Log(f"Cache: checking key for {func_name}")
 
             # Define the fallback computation
             @do
             def compute_and_cache() -> EffectGenerator[T]:
-                yield Log(f"Cache miss for {func_name}, computing...")
+                # yield Log(f"Cache miss for {func_name}, computing...")
                 # Execute the original function
                 result: Result = yield Safe(wrapped_func(*args, **kwargs))
                 if result.is_ok():

@@ -72,11 +72,34 @@ class ReaderEffectHandler:
     """Handles Reader monad effects."""
     scope = HandlerScope.ISOLATED  # Each parallel execution gets its own environment
 
-    async def handle_ask(self, effect: AskEffect, ctx: ExecutionContext) -> Any:
+    _RESOLUTION_IN_PROGRESS = object()
+
+    async def handle_ask(
+        self,
+        effect: AskEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Any:
         """Handle reader.ask effect."""
         key = effect.key
         if key in ctx.env:
-            return ctx.env[key]
+            value = ctx.env[key]
+            if value is self._RESOLUTION_IN_PROGRESS:
+                raise RuntimeError(f"Cyclic Ask dependency for environment key: {key!r}")
+
+            if isinstance(value, Program):
+                ctx.env[key] = self._RESOLUTION_IN_PROGRESS
+                try:
+                    result = await engine.run(value, ctx)
+                    resolved_value = result.value
+                except Exception:
+                    ctx.env[key] = value
+                    raise
+
+                ctx.env[key] = resolved_value
+                return resolved_value
+
+            return value
 
         resolver = ctx.env.get("__resolver__")
         if resolver is not None:
