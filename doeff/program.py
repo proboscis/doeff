@@ -33,6 +33,7 @@ class Program(Generic[T]):
     The type parameter T represents the return type of the program.
     """
 
+    __doeff_program__ = True
     generator_func: Callable[[], Generator[Effect | Program, Any, T]]
 
     def __iter__(self):

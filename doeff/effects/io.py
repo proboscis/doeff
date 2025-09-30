@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .base import Effect, EffectBase, create_effect_with_trace
+from ._validators import ensure_callable, ensure_str
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,9 @@ class IOPerformEffect(EffectBase):
     """Runs the supplied callable and yields whatever value it returns."""
 
     action: Callable[[], Any]
+
+    def __post_init__(self) -> None:
+        ensure_callable(self.action, name="action")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -26,6 +30,9 @@ class IOPrintEffect(EffectBase):
     """Emits a message that will be printed to the active output stream."""
 
     message: str
+
+    def __post_init__(self) -> None:
+        ensure_str(self.message, name="message")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]

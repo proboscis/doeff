@@ -34,7 +34,13 @@ class CachePutEffect(EffectBase):
     key: Any
     value: Any
     policy: CachePolicy
+
     def __post_init__(self):
+        if not isinstance(self.policy, CachePolicy):
+            raise TypeError(
+                "policy must be CachePolicy, got "
+                f"{type(self.policy).__name__}"
+            )
         import cloudpickle
         cloudpickle.dumps(self.key)
         # so this, is always running fine!

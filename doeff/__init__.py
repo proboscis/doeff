@@ -51,6 +51,7 @@ from doeff.effects import (
     AtomicUpdate,
     # Effects - Writer
     Log,
+    StructuredLog,
     Tell,
     Listen,
     # Effects - Future
@@ -58,6 +59,7 @@ from doeff.effects import (
     Parallel,
     # Effects - Result
     Fail,
+    Finally,
     Catch,
     Recover,
     Safe,
@@ -91,6 +93,8 @@ from doeff.effects import (
     modify,
     tell,
     listen,
+    slog,
+    finally_,
     await_,
     parallel,
     fail,
@@ -207,6 +211,8 @@ __all__ = [  # noqa: RUF022
     "Listen",
     "Local",
     "Log",
+    "StructuredLog",
+    "Finally",
     "Modify",
     "AtomicGet",
     "AtomicUpdate",
@@ -242,6 +248,8 @@ __all__ = [  # noqa: RUF022
     "capture",
     "capture_graph",
     "tell",
+    "slog",
+    "finally_",
     "memo_get",
     "memo_put",
     "cache_get",
