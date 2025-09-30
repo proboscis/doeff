@@ -34,6 +34,7 @@ from doeff.effects import (
     MemoPutEffect,
     ResultCatchEffect,
     ResultFailEffect,
+    ResultFinallyEffect,
     ResultFirstSuccessEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
@@ -307,6 +308,8 @@ class ProgramInterpreter:
             return await self.result_handler.handle_fail(effect)
         if _effect_is(effect, ResultCatchEffect):
             return await self.result_handler.handle_catch(effect, ctx, self)
+        if _effect_is(effect, ResultFinallyEffect):
+            return await self.result_handler.handle_finally(effect, ctx, self)
         if _effect_is(effect, ResultRecoverEffect):
             return await self.result_handler.handle_recover(effect, ctx, self)
         if _effect_is(effect, ResultRetryEffect):

@@ -25,6 +25,7 @@ from doeff import (
     Safe,
     Fail,
     Recover,
+    Finally,
     Retry,
     FirstSuccess,
     CaptureGraph,
@@ -39,6 +40,7 @@ from doeff.effects.result import (
     ResultSafeEffect,
     ResultCatchEffect,
     ResultRecoverEffect,
+    ResultFinallyEffect,
     ResultRetryEffect,
     ResultFirstSuccessEffect,
     ResultFailEffect,
@@ -209,6 +211,26 @@ def _build_recover_program() -> Program:
     return _program()
 
 
+def _build_finally_program() -> Program:
+    @do
+    def sub() -> EffectGenerator[str]:
+        yield Log("sub log")
+        return "sub value"
+
+    @do
+    def finalizer() -> EffectGenerator[None]:
+        yield Log("finalizer log")
+        return None
+
+    @do
+    def _program() -> EffectGenerator[str]:
+        result = yield Finally(sub(), finalizer())
+        yield Log("after finally")
+        return result
+
+    return _program()
+
+
 def _build_retry_program() -> Program:
     attempts: list[int] = []
 
@@ -339,6 +361,12 @@ INTERCEPT_CASES: tuple[InterceptCase, ...] = (
         build_program=_build_recover_program,
         build_context=lambda: None,
         expected=(ResultRecoverEffect, WriterTellEffect, WriterTellEffect),
+    ),
+    InterceptCase(
+        name="finally_with_log",
+        build_program=_build_finally_program,
+        build_context=lambda: None,
+        expected=(ResultFinallyEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
     ),
     InterceptCase(
         name="retry_with_log",

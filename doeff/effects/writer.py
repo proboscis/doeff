@@ -7,6 +7,7 @@ from typing import Callable
 
 from ._program_types import ProgramLike
 from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from ._validators import ensure_program_like
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,9 @@ class WriterListenEffect(EffectBase):
     """Runs the sub-program and yields a ListenResult of its value and log."""
 
     sub_program: ProgramLike
+
+    def __post_init__(self) -> None:
+        ensure_program_like(self.sub_program, name="sub_program")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -56,6 +60,16 @@ def Log(message: object) -> Effect:
     return create_effect_with_trace(WriterTellEffect(message=message), skip_frames=3)
 
 
+def slog(**entries: object) -> WriterTellEffect:
+    payload = dict(entries)
+    return create_effect_with_trace(WriterTellEffect(message=payload))
+
+
+def StructuredLog(**entries: object) -> Effect:
+    payload = dict(entries)
+    return create_effect_with_trace(WriterTellEffect(message=payload), skip_frames=3)
+
+
 __all__ = [
     "WriterTellEffect",
     "WriterListenEffect",
@@ -64,4 +78,6 @@ __all__ = [
     "Tell",
     "Listen",
     "Log",
+    "slog",
+    "StructuredLog",
 ]

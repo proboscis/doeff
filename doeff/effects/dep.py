@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .base import Effect, EffectBase, create_effect_with_trace
+from ._validators import ensure_str
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,9 @@ class DepInjectEffect(EffectBase):
     """Resolves the dependency identified by key and yields the bound object."""
 
     key: str
+
+    def __post_init__(self) -> None:
+        ensure_str(self.key, name="key")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]

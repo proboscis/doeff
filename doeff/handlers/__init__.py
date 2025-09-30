@@ -44,6 +44,7 @@ from doeff.effects import (
     MemoPutEffect,
     ResultCatchEffect,
     ResultFailEffect,
+    ResultFinallyEffect,
     ResultSafeEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
@@ -319,6 +320,49 @@ class ResultEffectHandler:
         if isinstance(pragmatic_result.result, Err):
             error = _unwrap_error(pragmatic_result.result.error)
             return await _run_handler(error)
+
+        return pragmatic_result.value
+
+    async def handle_finally(
+        self,
+        effect: ResultFinallyEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Any:
+        """Handle result.finally effect ensuring finalizer runs on all outcomes."""
+
+        from doeff.program import Program
+
+        async def _run_finalizer() -> None:
+            finalizer_value = effect.finalizer
+
+            if callable(finalizer_value) and not isinstance(finalizer_value, Program):
+                finalizer_value = finalizer_value()
+
+            if finalizer_value is None:
+                return
+
+            try:
+                finalizer_program = Program.from_program_like(finalizer_value)
+            except TypeError:
+                return
+
+            finalizer_result = await engine.run(finalizer_program, ctx)
+            if isinstance(finalizer_result.result, Err):
+                raise finalizer_result.result.error
+
+        sub_program = Program.from_program_like(effect.sub_program)
+
+        try:
+            pragmatic_result = await engine.run(sub_program, ctx)
+        except BaseException:
+            await _run_finalizer()
+            raise
+
+        await _run_finalizer()
+
+        if isinstance(pragmatic_result.result, Err):
+            raise pragmatic_result.result.error
 
         return pragmatic_result.value
 

@@ -7,6 +7,7 @@ from collections.abc import Awaitable
 from typing import Any, Callable, Tuple
 
 from .base import Effect, EffectBase, create_effect_with_trace
+from ._validators import ensure_awaitable, ensure_awaitable_tuple
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,9 @@ class FutureAwaitEffect(EffectBase):
     """Awaits the given awaitable and yields its resolved value."""
 
     awaitable: Awaitable[Any]
+
+    def __post_init__(self) -> None:
+        ensure_awaitable(self.awaitable, name="awaitable")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -26,6 +30,9 @@ class FutureParallelEffect(EffectBase):
     """Runs all awaitables concurrently and yields the collected results list."""
 
     awaitables: Tuple[Awaitable[Any], ...]
+
+    def __post_init__(self) -> None:
+        ensure_awaitable_tuple(self.awaitables, name="awaitables")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]

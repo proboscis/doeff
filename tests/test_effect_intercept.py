@@ -25,6 +25,7 @@ from doeff.effects.result import (
     ResultCatchEffect,
     ResultFailEffect,
     ResultFirstSuccessEffect,
+    ResultFinallyEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
@@ -135,6 +136,21 @@ async def test_gather_effect_intercept_rewrites_each_program() -> None:
     assert result is not base
     messages = [await writer_message(program) for program in result.programs]
     assert all(message.endswith(SUFFIX) for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_result_finally_effect_intercept_rewrites_programs() -> None:
+    base = ResultFinallyEffect(
+        sub_program=writer_program("sub"),
+        finalizer=writer_program("final"),
+    )
+
+    result = base.intercept(tagging_transform)
+
+    assert result is not base
+    assert (await writer_message(result.sub_program)).endswith(SUFFIX)
+    assert isinstance(result.finalizer, Program)
+    assert (await writer_message(result.finalizer)).endswith(SUFFIX)
 
 
 @pytest.mark.asyncio
