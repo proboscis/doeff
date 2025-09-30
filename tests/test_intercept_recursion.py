@@ -1,7 +1,7 @@
 """Test to ensure passing Effect->Program function to intercept doesn't cause recursion errors."""
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 import pytest
 from doeff import ExecutionContext, Program, ProgramInterpreter, do
@@ -14,6 +14,12 @@ class CustomEffect(EffectBase):
     """Custom effect for testing."""
     
     value: str
+
+    def intercept(
+        self,
+        transform: Callable[[Effect], Effect | Program],
+    ) -> "CustomEffect":
+        return self
 
 
 @pytest.mark.asyncio

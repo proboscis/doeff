@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict
 
 from ._program_types import ProgramLike
 from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from ._validators import ensure_dict_str_any, ensure_program_like
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,9 @@ class GraphStepEffect(EffectBase):
 
     value: Any
     meta: Dict[str, Any]
+
+    def __post_init__(self) -> None:
+        ensure_dict_str_any(self.meta, name="meta")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -27,6 +31,9 @@ class GraphAnnotateEffect(EffectBase):
     """Updates metadata on the latest graph step and completes without a value."""
 
     meta: Dict[str, Any]
+
+    def __post_init__(self) -> None:
+        ensure_dict_str_any(self.meta, name="meta")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -49,6 +56,9 @@ class GraphCaptureEffect(EffectBase):
     """Runs a program and yields both its value and the graph it produced."""
 
     program: ProgramLike
+
+    def __post_init__(self) -> None:
+        ensure_program_like(self.program, name="program")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]

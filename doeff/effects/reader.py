@@ -8,6 +8,7 @@ from typing import Callable
 
 from ._program_types import ProgramLike
 from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from ._validators import ensure_env_mapping, ensure_program_like, ensure_str
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,9 @@ class AskEffect(EffectBase):
     """Looks up the environment entry for key and yields the resolved value."""
 
     key: str
+
+    def __post_init__(self) -> None:
+        ensure_str(self.key, name="key")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -28,6 +32,10 @@ class LocalEffect(EffectBase):
 
     env_update: Mapping[str, object]
     sub_program: ProgramLike
+
+    def __post_init__(self) -> None:
+        ensure_env_mapping(self.env_update, name="env_update")
+        ensure_program_like(self.sub_program, name="sub_program")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]

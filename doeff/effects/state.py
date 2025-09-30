@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .base import Effect, EffectBase, create_effect_with_trace
+from ._validators import ensure_callable, ensure_str
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,9 @@ class StateGetEffect(EffectBase):
     """Retrieves the state value for key and yields it."""
 
     key: str
+
+    def __post_init__(self) -> None:
+        ensure_str(self.key, name="key")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -28,6 +32,9 @@ class StatePutEffect(EffectBase):
     key: str
     value: Any
 
+    def __post_init__(self) -> None:
+        ensure_str(self.key, name="key")
+
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
     ) -> "StatePutEffect":
@@ -40,6 +47,10 @@ class StateModifyEffect(EffectBase):
 
     key: str
     func: Callable[[Any], Any]
+
+    def __post_init__(self) -> None:
+        ensure_str(self.key, name="key")
+        ensure_callable(self.func, name="func")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]

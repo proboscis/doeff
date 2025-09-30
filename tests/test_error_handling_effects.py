@@ -23,6 +23,7 @@ from doeff import (
     ProgramInterpreter,
     Put,
     Recover,
+    Finally,
     Safe,
     Retry,
     do,
@@ -563,6 +564,85 @@ async def test_safe_wraps_failing_program() -> None:
     from doeff.types import EffectFailure
 
     assert not isinstance(run_result.value.error, EffectFailure)
+
+
+@pytest.mark.asyncio
+async def test_finally_runs_finalizer_on_success() -> None:
+    """Finally executes the finalizer program when the sub-program succeeds."""
+
+    @do
+    def inner() -> EffectGenerator[int]:
+        yield Log("inner start")
+        return 7
+
+    @do
+    def finalizer() -> EffectGenerator[None]:
+        yield Log("cleanup complete")
+        return None
+
+    @do
+    def program() -> EffectGenerator[int]:
+        result = yield Finally(inner(), finalizer())
+        yield Log(f"after finally {result}")
+        return result
+
+    engine = ProgramInterpreter()
+    run_result = await engine.run(program())
+
+    assert run_result.is_ok
+    assert run_result.value == 7
+    # Logs should include finalizer output before the trailing log
+    assert str(run_result.log[0]) == "inner start"
+    assert str(run_result.log[1]) == "cleanup complete"
+    assert str(run_result.log[2]) == "after finally 7"
+
+
+@pytest.mark.asyncio
+async def test_finally_runs_on_failure() -> None:
+    """Finally executes the finalizer even when the sub-program fails."""
+
+    cleanup: list[str] = []
+
+    def finalizer_callable() -> None:
+        cleanup.append("ran")
+
+    @do
+    def failing() -> EffectGenerator[None]:
+        yield Log("about to fail")
+        yield Fail(RuntimeError("boom"))
+
+    @do
+    def program() -> EffectGenerator[None]:
+        yield Finally(failing(), finalizer_callable)
+        return None
+
+    engine = ProgramInterpreter()
+    run_result = await engine.run(program())
+
+    assert run_result.is_err
+    assert cleanup == ["ran"]
+    assert str(run_result.log[0]) == "about to fail"
+
+
+@pytest.mark.asyncio
+async def test_finally_callable_returning_effect_runs() -> None:
+    """Callable finalizers returning effects should be executed."""
+
+    @do
+    def inner() -> EffectGenerator[int]:
+        return 1
+
+    @do
+    def program() -> EffectGenerator[int]:
+        value = yield Finally(inner(), lambda: Log("callable finalizer"))
+        return value
+
+    engine = ProgramInterpreter()
+    run_result = await engine.run(program())
+
+    assert run_result.is_ok
+    assert run_result.value == 1
+    assert str(run_result.log[0]) == "callable finalizer"
 
 
 if __name__ == "__main__":
