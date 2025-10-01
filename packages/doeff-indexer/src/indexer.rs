@@ -757,12 +757,27 @@ fn analyze_ann_assignment(
     let mut type_usages = Vec::new();
     collect_program_type_usages(&assign.annotation, &mut type_usages);
 
-    // Extract markers from same-line comment
+    // Extract markers from same-line comment or line above
     let lines: Vec<&str> = source.lines().collect();
     let mut markers = Vec::new();
+
+    // Check same line first
     if let Some(source_line) = lines.get(line.saturating_sub(1)) {
         if let Some(marker_str) = extract_marker_from_line(source_line) {
             markers = parse_markers(&marker_str);
+        }
+    }
+
+    // If no markers on same line, check line above
+    if markers.is_empty() && line >= 2 {
+        if let Some(prev_line) = lines.get(line.saturating_sub(2)) {
+            // Only check if it's a comment line (starts with # after whitespace)
+            let trimmed = prev_line.trim_start();
+            if trimmed.starts_with('#') {
+                if let Some(marker_str) = extract_marker_from_line(prev_line) {
+                    markers = parse_markers(&marker_str);
+                }
+            }
         }
     }
 
