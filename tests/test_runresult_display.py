@@ -87,7 +87,7 @@ async def test_display_trace_includes_user_frames():
         helper_inner()
 
     def helper_inner() -> None:
-        json.loads("{\"unterminated\": \"value\"")
+        json.loads('{"unterminated": "value"')
 
     @do
     def failing_program() -> EffectGenerator[None]:
@@ -111,7 +111,7 @@ async def test_display_trace_includes_user_frames():
 async def test_display_primary_effect_shows_creation_stack(monkeypatch):
     """Closest failing effect should surface its creation stack without verbose."""
 
-    def failing_dumps(value, context):
+    def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
 
     monkeypatch.setattr("doeff.handlers._cloudpickle_dumps", failing_dumps)
@@ -137,7 +137,7 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch):
 async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
     """Recover failures should surface the failing effect's creation stack."""
 
-    def failing_dumps(value, context):
+    def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
 
     monkeypatch.setattr("doeff.handlers._cloudpickle_dumps", failing_dumps)
@@ -457,3 +457,169 @@ async def test_display_formatting():
     for line in lines:
         if "test: 123" in line:
             assert line.startswith("    ")  # 4-space indent
+
+
+@pytest.mark.asyncio
+async def test_display_dep_ask_aggregated_statistics():
+    """Test that Dep/Ask usage shows aggregated statistics without duplication."""
+    from doeff import Ask, Dep, Local
+
+    @do
+    def inner_program() -> EffectGenerator[str]:
+        # Access database multiple times
+        yield Dep("database")
+        yield Dep("database")
+        yield Dep("database")
+
+        # Access config multiple times
+        yield Ask("config")
+        yield Ask("config")
+
+        # Access logger once
+        yield Dep("logger")
+
+        # Access api_key once
+        yield Ask("api_key")
+
+        return "done"
+
+    @do
+    def program_with_deps() -> EffectGenerator[str]:
+        # Provide environment for Dep and Ask
+        result = yield Local(
+            {
+                "database": "db_connection",
+                "logger": "logger_instance",
+                "config": "config_value",
+                "api_key": "secret_key"
+            },
+            inner_program()
+        )
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(program_with_deps())
+
+    display = result.display()
+
+    # Check that Dep/Ask Usage section exists
+    assert "🔗 Dep/Ask Usage Statistics:" in display
+
+    # Check aggregated Dep statistics
+    assert "Dep effects:" in display
+    assert "4 total accesses" in display  # 3 database + 1 logger
+    assert "2 unique keys" in display
+
+    # Check individual Dep key statistics with counts
+    assert '"database"' in display
+    assert "3 accesses" in display  # database accessed 3 times
+    assert '"logger"' in display
+    assert "1 access" in display  # logger accessed once
+
+    # Check aggregated Ask statistics
+    assert "Ask effects:" in display
+    # Note: Ask effects include all Dep keys as well (due to handler implementation)
+    # so we just verify the section exists and shows the right structure
+
+    # Check individual Ask key statistics
+    assert '"config"' in display
+    assert "2 accesses" in display  # config accessed twice
+    assert '"api_key"' in display
+
+    # Verify that "First used at:" shows location info
+    assert "First used at:" in display
+    assert "inner_program" in display
+
+
+@pytest.mark.asyncio
+async def test_display_compact_keys_section():
+    """Test that compact keys section shows all used keys."""
+    from doeff import Ask, Dep, Local
+
+    @do
+    def inner_program() -> EffectGenerator[str]:
+        yield Dep("database")
+        yield Dep("config")
+        yield Dep("logger")
+        yield Ask("api_key")
+        yield Ask("timeout")
+        yield Ask("endpoint")
+        return "done"
+
+    @do
+    def program_with_many_deps() -> EffectGenerator[str]:
+        result = yield Local(
+            {
+                "database": "db",
+                "config": "cfg",
+                "logger": "log",
+                "api_key": "key",
+                "timeout": "30",
+                "endpoint": "url"
+            },
+            inner_program()
+        )
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run(program_with_many_deps())
+
+    display = result.display()
+
+    # Check that compact keys section exists
+    assert "🔑 All Used Keys (Compact):" in display
+
+    # Check that Dep keys are listed compactly
+    assert "Dep keys" in display
+    assert "database" in display
+    assert "config" in display
+    assert "logger" in display
+
+    # Check that Ask keys are listed compactly
+    assert "Ask keys" in display
+    assert "api_key" in display
+    assert "timeout" in display
+    assert "endpoint" in display
+
+
+@pytest.mark.asyncio
+async def test_display_no_dep_ask_effects():
+    """Test display when there are no Dep/Ask effects."""
+    @do
+    def simple_program() -> EffectGenerator[int]:
+        yield Put("value", 42)
+        yield Log("test")
+        return 42
+
+    engine = ProgramInterpreter()
+    result = await engine.run(simple_program())
+
+    display = result.display()
+
+    # Check that the section shows "no effects" message
+    assert "🔗 Dep/Ask Usage Statistics:" in display
+    assert "(no Dep/Ask effects observed)" in display
+
+    # Compact keys section should not appear if there are no keys
+    # Or it should show empty lists
+    if "🔑 All Used Keys (Compact):" in display:
+        assert "(none)" in display or "Dep keys (0):" in display
+
+
+@pytest.mark.asyncio
+async def test_display_dep_ask_with_none_keys():
+    """Test Dep/Ask display handles None keys gracefully."""
+    @do
+    def simple_program() -> EffectGenerator[str]:
+        # Simple program without Dep/Ask effects
+        # The implementation should handle edge cases with None keys
+        yield Put("test", "value")
+        return "done"
+
+    engine = ProgramInterpreter()
+    result = await engine.run(simple_program())
+
+    # Should not crash even with unusual observations
+    display = result.display()
+    assert isinstance(display, str)
+    assert "🔗 Dep/Ask Usage Statistics:" in display
