@@ -23,7 +23,7 @@ async def test_error_handler_returning_value():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "Handled: ValueError: Something went wrong"
@@ -52,7 +52,7 @@ async def test_error_handler_returning_program():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "Default value for missing key"
@@ -87,7 +87,7 @@ async def test_conditional_error_handling():
         return result1 + result2 + result3  # -1 + -2 + 42 = 39
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == 39
@@ -108,7 +108,7 @@ async def test_backward_compat_with_value():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "fallback_value"
@@ -134,7 +134,7 @@ async def test_backward_compat_with_program():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "fallback_from_program"
@@ -178,7 +178,7 @@ async def test_error_handler_with_multiple_exception_types():
         return f"{r1},{r2},{r3},{r4}"
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "default_key,default_value,default_index,success"
@@ -192,7 +192,7 @@ async def test_nested_recover_with_handlers():
         yield Fail(ValueError("inner error"))
         return 0
 
-    def inner_handler(exc: Exception) -> int:
+    def inner_handler(_exc: Exception) -> int:
         return 100
 
     @do
@@ -216,7 +216,7 @@ async def test_nested_recover_with_handlers():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == 50  # Outer handler capped the value
@@ -234,7 +234,7 @@ async def test_error_handler_with_state_effects():
         return 0
 
     @do
-    def stateful_handler(exc: Exception) -> EffectGenerator[int]:
+    def stateful_handler(_exc: Exception) -> EffectGenerator[int]:
         # Error handler can access and modify state
         counter = yield Get("counter")
         if counter is None:
@@ -250,7 +250,7 @@ async def test_error_handler_with_state_effects():
         return result + (final_counter or 0)
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == 22  # 11 (from handler) + 11 (from state)
@@ -274,7 +274,7 @@ async def test_lambda_error_handler():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "KeyError: test_key"
@@ -288,7 +288,7 @@ async def test_error_handler_that_returns_none():
         yield Fail(ValueError("error"))
         return "not None"
 
-    def none_handler(exc: Exception) -> None:
+    def none_handler(_exc: Exception) -> None:
         # Explicitly return None
         return None
 
@@ -298,7 +298,7 @@ async def test_error_handler_that_returns_none():
         return "None" if result is None else "not None"
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "None"

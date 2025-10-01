@@ -2,30 +2,33 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from dataclasses import replace
-from typing import Any, Callable, Iterable
+from typing import Any
 
 import pytest
 
 from doeff._vendor import Ok
 from doeff.cache_policy import ensure_cache_policy
-from doeff.program import Program
-from doeff.interpreter import ProgramInterpreter
-
 from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 from doeff.effects.cache import CacheGetEffect, CachePutEffect
 from doeff.effects.dep import DepInjectEffect
 from doeff.effects.future import FutureAwaitEffect, FutureParallelEffect
 from doeff.effects.gather import GatherDictEffect, GatherEffect
-from doeff.effects.graph import GraphAnnotateEffect, GraphCaptureEffect, GraphSnapshotEffect, GraphStepEffect
-from doeff.effects.io import IOPrintEffect, IOPerformEffect
+from doeff.effects.graph import (
+    GraphAnnotateEffect,
+    GraphCaptureEffect,
+    GraphSnapshotEffect,
+    GraphStepEffect,
+)
+from doeff.effects.io import IOPerformEffect, IOPrintEffect
 from doeff.effects.memo import MemoGetEffect, MemoPutEffect
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import (
     ResultCatchEffect,
     ResultFailEffect,
-    ResultFirstSuccessEffect,
     ResultFinallyEffect,
+    ResultFirstSuccessEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
@@ -33,9 +36,9 @@ from doeff.effects.result import (
 )
 from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-
+from doeff.interpreter import ProgramInterpreter
+from doeff.program import Program
 from doeff.types import Effect
-
 
 SUFFIX = "|intercepted"
 
@@ -62,7 +65,7 @@ async def writer_message(program: Program[Any]) -> str:
     """Run ``program`` and return the first writer log entry."""
 
     interpreter = ProgramInterpreter()
-    run_result = await interpreter.run(program)
+    run_result = await interpreter.run_async(program)
     assert run_result.is_ok
     assert run_result.context.log
     return run_result.context.log[0]
@@ -178,7 +181,7 @@ async def test_graph_capture_effect_intercept_rewrites_program() -> None:
 async def test_result_catch_effect_intercept_rewrites_sub_program_and_handler() -> None:
     base = ResultCatchEffect(
         sub_program=writer_program("sub"),
-        handler=lambda exc: writer_program("handler"),
+        handler=lambda _exc: writer_program("handler"),
     )
 
     result = base.intercept(tagging_transform)

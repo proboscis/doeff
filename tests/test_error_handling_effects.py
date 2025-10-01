@@ -12,20 +12,20 @@ from doeff import (
     IO,
     Catch,
     EffectGenerator,
+    Err,
     Fail,
+    Finally,
     Get,
-    Log,
-    Local,
     Listen,
     ListenResult,
+    Local,
+    Log,
     Ok,
-    Err,
     ProgramInterpreter,
     Put,
     Recover,
-    Finally,
-    Safe,
     Retry,
+    Safe,
     do,
 )
 
@@ -48,7 +48,7 @@ async def test_recover_with_fallback_value():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(program_with_recover())
+    result = await engine.run_async(program_with_recover())
 
     assert result.is_ok
     assert result.value == 100
@@ -77,7 +77,7 @@ async def test_recover_with_fallback_program():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_ok
     assert result.value == "fallback_value"
@@ -101,7 +101,7 @@ async def test_recover_on_success():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_ok
     assert result.value == "success"
@@ -133,7 +133,7 @@ async def test_retry_success_on_second_attempt():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_ok
     assert result.value == 2
@@ -160,7 +160,7 @@ async def test_retry_max_attempts_exceeded():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_err
     # Should have attempted twice
@@ -203,7 +203,7 @@ async def test_retry_with_delay():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_ok
     # Check that delay was applied (should be at least 100ms)
@@ -238,7 +238,7 @@ async def test_nested_error_handling():
         return f"outer: {result}"
 
     engine = ProgramInterpreter()
-    result = await engine.run(outer_layer())
+    result = await engine.run_async(outer_layer())
 
     assert result.is_ok
     assert result.value == "outer: middle: recovered"
@@ -271,12 +271,12 @@ async def test_catch_vs_recover():
     engine = ProgramInterpreter()
 
     # Test Catch
-    catch_result = await engine.run(test_catch())
+    catch_result = await engine.run_async(test_catch())
     assert catch_result.is_ok
     assert "Caught: test error" in catch_result.value
 
     # Test Recover
-    recover_result = await engine.run(test_recover())
+    recover_result = await engine.run_async(test_recover())
     assert recover_result.is_ok
     assert recover_result.value == "fallback"
 
@@ -302,7 +302,7 @@ async def test_catch_handler_logs_are_accumulated():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_ok
     assert result.value == 42
@@ -330,7 +330,7 @@ async def test_catch_handler_logs_with_listen():
         return listen_result
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_ok
     assert isinstance(result.value, ListenResult)
@@ -358,7 +358,7 @@ async def test_catch_handler_fail_propagates_error_logs():
         yield Catch(failing_program(), failing_handler)
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_err
 
@@ -393,7 +393,7 @@ async def test_catch_within_local_propagates_logs():
         return 0
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_err
 
@@ -431,7 +431,7 @@ async def test_retry_of_catch_preserves_attempt_logs():
         return 0
 
     engine = ProgramInterpreter()
-    result = await engine.run(main_program())
+    result = await engine.run_async(main_program())
 
     assert result.is_err
 
@@ -455,7 +455,7 @@ async def test_retry_of_catch_preserves_attempt_logs():
 async def test_why_try_except_doesnt_work():
     """
     Demonstrate why try/except doesn't work in @do functions.
-    
+
     This test shows that exceptions from yielded effects are NOT
     caught by try/except blocks in generator functions.
     """
@@ -480,7 +480,7 @@ async def test_why_try_except_doesnt_work():
         return value
 
     engine = ProgramInterpreter()
-    result = await engine.run(program_with_incorrect_try_except())
+    result = await engine.run_async(program_with_incorrect_try_except())
 
     assert result.is_ok
     assert result.value == "properly recovered"
@@ -510,7 +510,7 @@ async def test_recover_with_io_effect():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(safe_io())
+    result = await engine.run_async(safe_io())
 
     assert result.is_ok
     assert result.value == "default_content"
@@ -532,7 +532,7 @@ async def test_safe_wraps_successful_program() -> None:
         return outcome
 
     engine = ProgramInterpreter()
-    run_result = await engine.run(main_program())
+    run_result = await engine.run_async(main_program())
 
     assert run_result.is_ok
     assert isinstance(run_result.value, Ok)
@@ -555,7 +555,7 @@ async def test_safe_wraps_failing_program() -> None:
         return outcome
 
     engine = ProgramInterpreter()
-    run_result = await engine.run(main_program())
+    run_result = await engine.run_async(main_program())
 
     assert run_result.is_ok
     assert isinstance(run_result.value, Err)
@@ -587,7 +587,7 @@ async def test_finally_runs_finalizer_on_success() -> None:
         return result
 
     engine = ProgramInterpreter()
-    run_result = await engine.run(program())
+    run_result = await engine.run_async(program())
 
     assert run_result.is_ok
     assert run_result.value == 7
@@ -617,7 +617,7 @@ async def test_finally_runs_on_failure() -> None:
         return None
 
     engine = ProgramInterpreter()
-    run_result = await engine.run(program())
+    run_result = await engine.run_async(program())
 
     assert run_result.is_err
     assert cleanup == ["ran"]
@@ -638,7 +638,7 @@ async def test_finally_callable_returning_effect_runs() -> None:
         return value
 
     engine = ProgramInterpreter()
-    run_result = await engine.run(program())
+    run_result = await engine.run_async(program())
 
     assert run_result.is_ok
     assert run_result.value == 1

@@ -84,7 +84,7 @@ async def test_reader_ask_effect():  # noqa: PINJ040
         }
     )
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == "key123|postgres://localhost|debug|shh"
 
@@ -123,7 +123,7 @@ async def test_reader_local_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"mode": "dev", "debug": True})
 
-    result = await engine.run(outer_program(), context)
+    result = await engine.run_async(outer_program(), context)
     assert result.is_ok
     orig, inner1, inner2, final = result.value
     assert orig == "dev"
@@ -160,7 +160,7 @@ async def test_state_get_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext(state={"counter": 42})
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == (42, 42, 42, None)
 
@@ -190,7 +190,7 @@ async def test_state_put_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == {"name": "Alice", "age": 30, "city": "NYC"}
     assert result.state == {"name": "Alice", "age": 30, "city": "NYC"}
@@ -210,7 +210,7 @@ async def test_state_modify_effect():  # noqa: PINJ040
         new_counter = yield Modify("counter", lambda x: x * 2)
 
         # Test with capitalized alias
-        new_names = yield Modify("names", lambda xs: xs + ["Bob"])
+        new_names = yield Modify("names", lambda xs: [*xs, "Bob"])
 
         # Test with lowercase (backwards compatibility)
         final_counter = yield modify("counter", lambda x: x + 5)
@@ -220,7 +220,7 @@ async def test_state_modify_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == (20, ["Alice", "Bob"], 25)
     assert result.state["counter"] == 25
@@ -251,7 +251,7 @@ async def test_writer_tell_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.log == [
         "Starting process",
@@ -292,7 +292,7 @@ async def test_writer_listen_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(main_program(), context)
+    result = await engine.run_async(main_program(), context)
     assert result.is_ok
     assert result.value == (42, 3, 42, 3, 42, 3)
     assert result.log == ["Main: starting", "Main: done"]
@@ -327,7 +327,7 @@ async def test_future_await_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == ("fetched: data1", "fetched: data2", "fetched: data3")
 
@@ -358,7 +358,7 @@ async def test_future_parallel_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == ([2, 4, 6], [8, 10], [12, 14, 16])
 
@@ -381,7 +381,7 @@ async def test_result_fail_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_err
     # Unwrap EffectFailure if needed
     error = result.result.error
@@ -396,7 +396,7 @@ async def test_result_fail_effect():  # noqa: PINJ040
         yield Fail(RuntimeError("Capitalized error"))
         return "should not reach"
 
-    result2 = await engine.run(program2(), context)
+    result2 = await engine.run_async(program2(), context)
     assert result2.is_err
     # Unwrap EffectFailure if needed
     error2 = result2.result.error
@@ -444,7 +444,7 @@ async def test_result_catch_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(main_program(), context)
+    result = await engine.run_async(main_program(), context)
     assert result.is_ok
     assert result.value == (
         "recovered from ValueError",
@@ -485,7 +485,7 @@ async def test_io_run_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext(io_allowed=True)
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == ("done1", "done2", "done3")
     assert side_effects == ["effect1", "effect2", "effect3"]
@@ -509,7 +509,7 @@ async def test_io_print_effect(capsys):  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext(io_allowed=True)
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
 
     captured = capsys.readouterr()
@@ -529,7 +529,7 @@ async def test_io_not_allowed():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext(io_allowed=False)
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_err
     # Unwrap EffectFailure if needed
     error = result.result.error
@@ -567,7 +567,7 @@ async def test_graph_step_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert result.value == ("value1", "value2", "value3", "value4")
     assert len(result.graph.steps) == 5  # Includes initial step
@@ -616,7 +616,7 @@ async def test_graph_annotate_effect():  # noqa: PINJ040
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program(), context)
+    result = await engine.run_async(program(), context)
     assert result.is_ok
     assert len(result.graph.steps) == 4  # Includes initial step
 
@@ -717,7 +717,7 @@ async def test_all_effects_integration():  # noqa: PINJ040
         env={"config": {"debug": True, "fail": False}}, io_allowed=True
     )
 
-    result = await engine.run(comprehensive_program(), context)
+    result = await engine.run_async(comprehensive_program(), context)
     assert result.is_ok
     assert result.value["data"] == "async_data"
     assert result.value["results"] == [2, 4, 6]

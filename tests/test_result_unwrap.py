@@ -1,8 +1,8 @@
 import pytest
 
 from doeff import EffectGenerator, ProgramInterpreter, do
-from doeff.effects import Fail, Safe, Unwrap
 from doeff._vendor import Err, Ok
+from doeff.effects import Fail, Safe, Unwrap
 
 
 @do
@@ -35,7 +35,7 @@ def error_program() -> EffectGenerator[int]:
 @pytest.mark.asyncio
 async def test_unwrap_ok():
     engine = ProgramInterpreter()
-    run_result = await engine.run(program_ok())
+    run_result = await engine.run_async(program_ok())
 
     assert run_result.is_ok
     assert run_result.value == 10
@@ -44,7 +44,7 @@ async def test_unwrap_ok():
 @pytest.mark.asyncio
 async def test_unwrap_err():
     engine = ProgramInterpreter()
-    run_result = await engine.run(program_err())
+    run_result = await engine.run_async(program_err())
 
     assert run_result.is_err
     error = run_result.result.error

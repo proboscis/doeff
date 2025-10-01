@@ -23,7 +23,7 @@ async def test_error_handler_that_raises_different_exception():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     # Should fail with the new exception from handler
     assert result.is_err
@@ -51,7 +51,7 @@ async def test_error_handler_program_that_fails():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     # Should fail with the handler's error
     assert result.is_err
@@ -86,7 +86,7 @@ async def test_recover_with_async_effect_in_handler():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "Async handled: error"
@@ -112,7 +112,7 @@ async def test_recover_with_no_args_kleisli_program():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "fallback_value"
@@ -138,7 +138,7 @@ async def test_recover_with_one_arg_kleisli_program():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert "Handled:" in result.value
@@ -155,7 +155,7 @@ async def test_recover_success_path_doesnt_call_handler():
         yield Log("Success path")
         return "success"
 
-    def handler(exc: Exception) -> str:
+    def handler(_exc: Exception) -> str:
         handler_called[0] = True
         return "handler_value"
 
@@ -165,7 +165,7 @@ async def test_recover_success_path_doesnt_call_handler():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "success"
@@ -197,7 +197,7 @@ async def test_recover_with_custom_exception_class():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "Error 404: Not Found"
@@ -242,7 +242,7 @@ async def test_recover_chain_with_multiple_handlers():
         return r1 + r2 + r3
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == 11  # 0 + 1 + 10
@@ -259,7 +259,7 @@ async def test_recover_with_gather():
             yield Fail(ValueError(f"negative: {n}"))
         return n * 2
 
-    def handler(exc: Exception) -> int:
+    def handler(_exc: Exception) -> int:
         return 0  # Default value on error
 
     @do
@@ -279,7 +279,7 @@ async def test_recover_with_gather():
         return results
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == [10, 0, 14, 0]

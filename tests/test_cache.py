@@ -1,11 +1,11 @@
 """Tests for cache effects and decorator."""
 
 import asyncio
-import os
 import sys
 import textwrap
 import time
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 
@@ -14,10 +14,10 @@ from doeff import (
     CacheLifecycle,
     CachePut,
     CacheStorage,
-    MemoGet,
-    MemoPut,
     EffectGenerator,
     ExecutionContext,
+    MemoGet,
+    MemoPut,
     ProgramInterpreter,
     Recover,
     do,
@@ -51,7 +51,7 @@ async def test_cache_put_and_get():
         return value
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "test_value"
@@ -68,7 +68,7 @@ async def test_cache_miss_raises_error():
         return value
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_err
     assert "Cache miss" in str(result.result.error)
@@ -87,7 +87,7 @@ async def test_cache_with_complex_key():
         return value
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "complex_value"
@@ -120,7 +120,7 @@ async def test_cache_ttl_expiry(temp_cache_db):
         return (value1, value2)
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_with_io())
+    result = await engine.run_async(test_with_io())
 
     assert result.is_ok
     assert result.value[0] == "ttl_value"
@@ -143,11 +143,11 @@ async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db):
     def fetch():
         return (yield CacheGet(key))
 
-    await engine.run(store())
+    await engine.run_async(store())
     assert temp_cache_db.exists()
 
     second_engine = ProgramInterpreter()
-    result = await second_engine.run(fetch())
+    result = await second_engine.run_async(fetch())
 
     assert result.is_ok
     assert result.value == {"value": 42}
@@ -164,7 +164,7 @@ async def test_cache_explicit_storage_disk(temp_cache_db):
         yield CachePut("disk_key", "value", storage=CacheStorage.DISK)
         return (yield CacheGet("disk_key"))
 
-    result = await engine.run(store_and_fetch())
+    result = await engine.run_async(store_and_fetch())
 
     assert result.is_ok
     assert result.value == "value"
@@ -187,7 +187,7 @@ async def test_cache_recover_on_miss():
         return value
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "computed_value"
@@ -219,7 +219,7 @@ async def test_basic_cache_decorator(temp_cache_db):
         return (result1, result2, result3, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value[0] == 10  # 5 * 2
@@ -241,12 +241,12 @@ async def test_cache_decorator_persistent_lifecycle(temp_cache_db):
             self.store: dict[Any, Any] = {}
             self.policies: list[Any] = []
 
-        async def handle_get(self, effect, ctx):
+        async def handle_get(self, effect, _ctx):
             if effect.key not in self.store:
                 raise KeyError("miss")
             return self.store[effect.key]
 
-        async def handle_put(self, effect, ctx):
+        async def handle_put(self, effect, _ctx):
             self.store[effect.key] = effect.value
             self.policies.append(effect.policy)
 
@@ -259,14 +259,14 @@ async def test_cache_decorator_persistent_lifecycle(temp_cache_db):
         call_count[0] += 1
         return x * 3
 
-    first = await engine.run(expensive(4))
+    first = await engine.run_async(expensive(4))
     assert first.is_ok
     assert first.value == 12
     assert call_count[0] == 1
     assert cache_handler.policies
     assert cache_handler.policies[-1].lifecycle is CacheLifecycle.PERSISTENT
 
-    second = await engine.run(expensive(4))
+    second = await engine.run_async(expensive(4))
     assert second.is_ok
     assert second.value == 12
     assert call_count[0] == 1  # cache hit
@@ -285,7 +285,7 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db):
         return "value"
 
     engine_one = ProgramInterpreter()
-    first = await engine_one.run(expensive_value())
+    first = await engine_one.run_async(expensive_value())
 
     assert first.is_ok
     assert first.value == "value"
@@ -293,7 +293,7 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db):
     assert temp_cache_db.exists()
 
     engine_two = ProgramInterpreter()
-    second = await engine_two.run(expensive_value())
+    second = await engine_two.run_async(expensive_value())
 
     assert second.is_ok
     assert second.value == "value"
@@ -324,11 +324,11 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
         async def run(mode: str) -> None:
             engine = ProgramInterpreter()
             if mode == "store":
-                result = await engine.run(store())
+                result = await engine.run_async(store())
                 if result.is_err:
                     raise SystemExit(f"store failed: {result.result.error!r}")
             elif mode == "load":
-                result = await engine.run(load())
+                result = await engine.run_async(load())
                 if result.is_err:
                     raise result.result.error
                 if result.value != "persisted":
@@ -341,8 +341,8 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
         """
     )
 
-    env = os.environ.copy()
-    env["DOEFF_CACHE_PATH"] = str(temp_cache_db)
+    # Create minimal env with only the required variable
+    env = {"DOEFF_CACHE_PATH": str(temp_cache_db)}
 
     async def run_mode(mode: str) -> str:
         proc = await asyncio.create_subprocess_exec(
@@ -392,7 +392,7 @@ async def test_cache_with_kwargs(temp_cache_db):
         return (result1, result2, result3, result4, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value[0] == 6   # 5 + 1
@@ -436,7 +436,7 @@ async def test_cache_with_ttl(temp_cache_db):
         return (time1, time2, time3, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value[0] == result.value[1]  # Same cached value
@@ -468,7 +468,7 @@ async def test_cache_key_selector(temp_cache_db):
         return (result1, result2, result3, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value[0] == "User 1"
@@ -507,10 +507,10 @@ async def test_cache_key_hashers_transform_arguments(temp_cache_db):
     extra_one = {"id": "alpha", "note": "first"}
     extra_two = {"note": "first", "id": "alpha"}
 
-    result1 = await interpreter.run(compute(7, payload_one, extra=extra_one), context)
+    result1 = await interpreter.run_async(compute(7, payload_one, extra=extra_one), context)
     assert result1.value == 1
 
-    result2 = await interpreter.run(
+    result2 = await interpreter.run_async(
         compute(7, payload_two, extra=extra_two),
         result1.context,
     )
@@ -535,7 +535,7 @@ async def test_convenience_decorators():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert result.value == "1min"
@@ -554,11 +554,11 @@ async def test_cache_decorator_hits(temp_cache_db):
     interpreter = ProgramInterpreter()
     context = ExecutionContext()
 
-    result1 = await interpreter.run(compute(3), context)
+    result1 = await interpreter.run_async(compute(3), context)
     assert result1.value == 6
     assert calls == [3]
 
-    result2 = await interpreter.run(compute(3), result1.context)
+    result2 = await interpreter.run_async(compute(3), result1.context)
     assert result2.value == 6
     assert calls == [3]
 
@@ -581,15 +581,15 @@ async def test_cache_decorator_expiry(temp_cache_db):
 
     try:
         cache_handler._time = lambda: base_time
-        await interpreter.run(compute(5), context)
+        await interpreter.run_async(compute(5), context)
         assert calls == [5]
 
         cache_handler._time = lambda: base_time + 0.2
-        await interpreter.run(compute(5), context)
+        await interpreter.run_async(compute(5), context)
         assert calls == [5]
 
         cache_handler._time = lambda: base_time + 1.0
-        await interpreter.run(compute(5), context)
+        await interpreter.run_async(compute(5), context)
         assert calls == [5, 5]
     finally:
         cache_handler._time = original_time
@@ -603,7 +603,7 @@ async def test_memo_effects():
         return (yield MemoGet("alpha"))
 
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == 123
@@ -616,7 +616,7 @@ async def test_memo_miss_raises_keyerror():
         return (yield MemoGet("missing"))
 
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_err
     assert "Memo miss" in str(result.result.error)
@@ -643,10 +643,10 @@ async def test_cache_decorator_accepts_pil(temp_cache_db):
     interpreter = ProgramInterpreter()
     context = ExecutionContext()
 
-    result1 = await interpreter.run(compute(image), context)
+    result1 = await interpreter.run_async(compute(image), context)
     assert result1.value == 256
     assert calls == [(16, 16)]
 
-    result2 = await interpreter.run(compute(image), result1.context)
+    result2 = await interpreter.run_async(compute(image), result1.context)
     assert result2.value == 256
     assert calls == [(16, 16)]

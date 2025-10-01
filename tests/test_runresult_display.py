@@ -31,7 +31,7 @@ async def test_display_success():
         return "Success value!"
 
     engine = ProgramInterpreter()
-    result = await engine.run(successful_program())
+    result = await engine.run_async(successful_program())
 
     # Test display output
     display_output = result.display()
@@ -64,7 +64,7 @@ async def test_display_error_with_traceback():
         return "never reached"
 
     engine = ProgramInterpreter()
-    result = await engine.run(failing_program())
+    result = await engine.run_async(failing_program())
 
     # Test display output
     display_output = result.display()
@@ -108,7 +108,7 @@ async def test_display_trace_includes_user_frames():
         return None
 
     engine = ProgramInterpreter()
-    result = await engine.run(failing_program())
+    result = await engine.run_async(failing_program())
 
     assert result.is_err
 
@@ -135,7 +135,7 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch):
         return None
 
     engine = ProgramInterpreter()
-    result = await engine.run(cache_program())
+    result = await engine.run_async(cache_program())
 
     assert result.is_err
 
@@ -171,7 +171,7 @@ async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
         return None
 
     engine = ProgramInterpreter()
-    result = await engine.run(recover_program())
+    result = await engine.run_async(recover_program())
 
     assert result.is_err
 
@@ -204,7 +204,7 @@ async def test_display_nested_error():
         return f"Got {value}"
 
     engine = ProgramInterpreter()
-    result = await engine.run(outer_program())
+    result = await engine.run_async(outer_program())
 
     display_output = result.display()
 
@@ -238,7 +238,7 @@ async def test_display_with_complex_state():
         return {"result": "complex", "data": [1, 2, 3]}
 
     engine = ProgramInterpreter()
-    result = await engine.run(complex_program())
+    result = await engine.run_async(complex_program())
 
     display_output = result.display()
 
@@ -279,7 +279,7 @@ async def test_display_truncation():
         return "done"
 
     engine = ProgramInterpreter()
-    result = await engine.run(long_value_program())
+    result = await engine.run_async(long_value_program())
 
     display_output = result.display()
 
@@ -309,7 +309,7 @@ async def test_display_dep_ask_usage_summary():
         "other": "beta",
     })
 
-    result = await engine.run(dep_ask_program(), context=context)
+    result = await engine.run_async(dep_ask_program(), context=context)
     display = result.display()
 
     assert result.is_ok
@@ -335,7 +335,7 @@ async def test_display_error_types():
         return 0
 
     engine = ProgramInterpreter()
-    result = await engine.run(type_error_program())
+    result = await engine.run_async(type_error_program())
     display = result.display()
 
     assert "Effect 'ResultFailEffect' failed" in display
@@ -352,7 +352,7 @@ async def test_display_error_types():
         yield Fail(CustomError(404, "Not found"))
         return ""
 
-    result2 = await engine.run(custom_error_program())
+    result2 = await engine.run_async(custom_error_program())
     display2 = result2.display()
 
     assert "Effect 'ResultFailEffect' failed" in display2
@@ -385,7 +385,7 @@ async def test_display_verbose_mode():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(program_with_env())
+    result = await engine.run_async(program_with_env())
 
     # Non-verbose shouldn't show environment
     normal_display = result.display(verbose=False)
@@ -412,7 +412,7 @@ async def test_display_with_graph_steps():
         return value
 
     engine = ProgramInterpreter()
-    result = await engine.run(graph_program())
+    result = await engine.run_async(graph_program())
 
     display = result.display()
     assert "🌳 Graph:" in display
@@ -435,7 +435,7 @@ async def test_visualize_graph_ascii():
         return "done"
 
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(graph_program())
+    result = await interpreter.run_async(graph_program())
 
     ascii_view = result.visualize_graph_ascii(max_value_length=20)
 
@@ -465,7 +465,7 @@ async def test_display_empty_result():
         return None
 
     engine = ProgramInterpreter()
-    result = await engine.run(minimal_program())
+    result = await engine.run_async(minimal_program())
 
     display = result.display()
 
@@ -487,7 +487,7 @@ async def test_display_formatting():
         return 42
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     display = result.display(indent=4)  # Test custom indent
 

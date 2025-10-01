@@ -63,7 +63,7 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
         context = ExecutionContext(env={"__resolver__": __resolver__})
 
         # Run the program
-        result = await engine.run(wrapped_program, context)
+        result = await engine.run_async(wrapped_program, context)
 
         # Handle the result
         if result.is_err:
@@ -121,7 +121,7 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
         context = ExecutionContext(env={"__resolver__": __resolver__})
 
         # Run the program and get the result
-        result = await engine.run(wrapped_program, context)
+        result = await engine.run_async(wrapped_program, context)
 
         # Return the full RunResult with both context and result
         return result
