@@ -8,23 +8,19 @@ Each handler is responsible for interpreting specific effects.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from enum import Enum, auto
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict
-
 import hashlib
 import lzma
 import os
 import sqlite3
 import tempfile
+from collections.abc import Callable
+from enum import Enum, auto
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import cloudpickle
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
-from doeff.cache_policy import CachePolicy, CacheStorage
-from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 from doeff.effects import (
     AskEffect,
     AtomicGetEffect,
@@ -45,9 +41,9 @@ from doeff.effects import (
     ResultCatchEffect,
     ResultFailEffect,
     ResultFinallyEffect,
-    ResultSafeEffect,
     ResultRecoverEffect,
     ResultRetryEffect,
+    ResultSafeEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -55,6 +51,8 @@ from doeff.effects import (
     WriterTellEffect,
 )
 from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
+from doeff.program import Program
+from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 
 
 def _safe_object_repr(value: Any) -> str:
@@ -70,18 +68,13 @@ def _cloudpickle_dumps(value: Any, context: str) -> bytes:
     except Exception as exc:
         value_repr = _safe_object_repr(value)
         raise TypeError(
-            "Failed to cloudpickle {context}; object type={type_name}; repr={repr}".format(
-                context=context,
-                type_name=type(value).__name__,
-                repr=value_repr,
-            )
+            f"Failed to cloudpickle {context}; object type={type(value).__name__}; repr={value_repr}"
         ) from exc
+
+# Need Program at runtime for isinstance checks
 
 if TYPE_CHECKING:
     from doeff.interpreter import ProgramInterpreter
-
-# Need Program at runtime for isinstance checks
-from doeff.program import Program
 
 
 class HandlerScope(Enum):
@@ -100,7 +93,7 @@ class ReaderEffectHandler:
         self,
         effect: AskEffect,
         ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
+        engine: ProgramInterpreter,
     ) -> Any:
         """Handle reader.ask effect."""
         key = effect.key
@@ -112,7 +105,7 @@ class ReaderEffectHandler:
             if isinstance(value, Program):
                 ctx.env[key] = self._RESOLUTION_IN_PROGRESS
                 try:
-                    result = await engine.run(value, ctx)
+                    result = await engine.run_async(value, ctx)
                     resolved_value = result.value
                 except Exception:
                     ctx.env[key] = value
@@ -130,14 +123,14 @@ class ReaderEffectHandler:
         raise KeyError(f"Missing environment key: {key}")
 
     async def handle_local(
-        self, effect: LocalEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: LocalEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle reader.local effect."""
         sub_ctx = ctx.copy()
         sub_ctx.env.update(effect.env_update)
         sub_ctx.log = ctx.log  # Share writer log with parent context
         sub_program = Program.from_program_like(effect.sub_program)
-        pragmatic_result = await engine.run(sub_program, sub_ctx)
+        pragmatic_result = await engine.run_async(sub_program, sub_ctx)
 
         # Propagate sub-context graph/state/log updates back to parent context.
         # ``ExecutionContext.copy`` shares the cache and effect observations, but
@@ -246,15 +239,15 @@ class WriterEffectHandler:
         self,
         effect: WriterListenEffect,
         ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
+        engine: ProgramInterpreter,
     ) -> ListenResult:
         """Handle writer.listen effect."""
         from doeff.program import Program
-        
+
         sub_program = Program.from_program_like(effect.sub_program)
         sub_ctx = ctx.copy()
         sub_ctx.log = []  # Fresh log for sub-program
-        pragmatic_result = await engine.run(sub_program, sub_ctx)
+        pragmatic_result = await engine.run_async(sub_program, sub_ctx)
         return ListenResult(value=pragmatic_result.value, log=sub_ctx.log)
 
 
@@ -283,7 +276,7 @@ class ResultEffectHandler:
         raise effect.exception
 
     async def handle_catch(
-        self, effect: ResultCatchEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultCatchEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.catch effect."""
         # Import here to avoid circular import
@@ -302,7 +295,7 @@ class ResultEffectHandler:
 
             if isinstance(handler_result, (Program, EffectBase)):
                 handler_program = Program.from_program_like(handler_result)
-                handler_run = await engine.run(handler_program, ctx)
+                handler_run = await engine.run_async(handler_program, ctx)
                 if isinstance(handler_run.result, Err):
                     raise handler_run.result.error
                 return handler_run.value
@@ -310,7 +303,7 @@ class ResultEffectHandler:
             return handler_result
 
         try:
-            pragmatic_result = await engine.run(sub_program, ctx)
+            pragmatic_result = await engine.run_async(sub_program, ctx)
         except BaseException as exc:  # Handle direct exceptions from the sub-program
             if isinstance(exc, SystemExit):
                 raise
@@ -327,7 +320,7 @@ class ResultEffectHandler:
         self,
         effect: ResultFinallyEffect,
         ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
+        engine: ProgramInterpreter,
     ) -> Any:
         """Handle result.finally effect ensuring finalizer runs on all outcomes."""
 
@@ -347,14 +340,14 @@ class ResultEffectHandler:
             except TypeError:
                 return
 
-            finalizer_result = await engine.run(finalizer_program, ctx)
+            finalizer_result = await engine.run_async(finalizer_program, ctx)
             if isinstance(finalizer_result.result, Err):
                 raise finalizer_result.result.error
 
         sub_program = Program.from_program_like(effect.sub_program)
 
         try:
-            pragmatic_result = await engine.run(sub_program, ctx)
+            pragmatic_result = await engine.run_async(sub_program, ctx)
         except BaseException:
             await _run_finalizer()
             raise
@@ -367,14 +360,14 @@ class ResultEffectHandler:
         return pragmatic_result.value
 
     async def handle_safe(
-        self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.safe effect by capturing the program outcome."""
         from doeff.program import Program
 
         sub_program = Program.from_program_like(effect.sub_program)
 
-        pragmatic_result = await engine.run(sub_program, ctx)
+        pragmatic_result = await engine.run_async(sub_program, ctx)
         result = pragmatic_result.result
 
         if isinstance(result, Err):
@@ -395,7 +388,7 @@ class ResultEffectHandler:
         self,
         effect: ResultFirstSuccessEffect,
         ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
+        engine: ProgramInterpreter,
     ) -> Any:
         """Handle sequential attempts, returning the first successful value."""
 
@@ -412,7 +405,7 @@ class ResultEffectHandler:
             attempt_ctx = base_snapshot.copy()
             attempt_ctx.effect_observations = list(base_snapshot.effect_observations)
 
-            pragmatic_result = await engine.run(candidate, attempt_ctx)
+            pragmatic_result = await engine.run_async(candidate, attempt_ctx)
 
             if isinstance(pragmatic_result.result, Ok):
                 ctx.env = attempt_ctx.env
@@ -432,8 +425,8 @@ class ResultEffectHandler:
     async def handle_unwrap(
         self,
         effect: ResultUnwrapEffect,
-        ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
+        _ctx: ExecutionContext,
+        _engine: ProgramInterpreter,
     ) -> Any:
         """Handle result.unwrap effect by raising or returning the Result."""
 
@@ -449,118 +442,119 @@ class ResultEffectHandler:
         )
 
     async def handle_recover(
-        self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.recover effect - try program, use fallback on error."""
-        from doeff.program import Program
-        import inspect
-        
         sub_program = Program.from_program_like(effect.sub_program)
+        pragmatic_result = await engine.run_async(sub_program, ctx)
 
-        pragmatic_result = await engine.run(sub_program, ctx)
-        
         if isinstance(pragmatic_result.result, Err):
-            error = pragmatic_result.result.error
-            
-            from doeff.types import EffectFailure
-            if isinstance(error, EffectFailure):
-                error = error.cause
-            
-            fallback = effect.fallback
-            
-            # Check if fallback is an error handler function
-            # We need to distinguish between:
-            # 1. Error handlers: callables that take an exception parameter
-            # 2. Thunks: zero-argument callables that return Programs
-            # 3. Programs: which are also callable
-            # 4. KleisliPrograms: @do decorated functions (can be either 1 or 2)
-            if callable(fallback) and not isinstance(fallback, Program):
-                from doeff.kleisli import KleisliProgram
-                
-                # KleisliProgram needs special handling since inspect.signature
-                # doesn't give us the real signature
-                if isinstance(fallback, KleisliProgram):
-                    # Try calling it as an error handler first
-                    handler_result = fallback(error)
-                    if isinstance(handler_result, (Program, EffectBase)):
-                        handler_program = Program.from_program_like(handler_result)
-                        try_result = await engine.run(handler_program, ctx)
-                        if isinstance(try_result.result, Err):
-                            # Check if the error is a TypeError about arguments
-                            inner_error = try_result.result.error
-                            from doeff.types import EffectFailure
-                            if isinstance(inner_error, EffectFailure):
-                                inner_error = inner_error.cause
-                            if isinstance(inner_error, TypeError) and "positional argument" in str(inner_error):
-                                # It failed because it doesn't accept an error arg
-                                # Try as thunk instead
-                                fallback = fallback()
-                            else:
-                                # Some other error - re-raise it
-                                raise inner_error
-                        else:
-                            # Succeeded as error handler
-                            return try_result.value
-                    else:
-                        # Somehow got a non-Program result
-                        return handler_result
-                else:
-                    # Regular callable - check signature
-                    try:
-                        sig = inspect.signature(fallback)
-                        # If it accepts at least one parameter, treat it as an error handler
-                        if len(sig.parameters) > 0:
-                            # It's an error handler - call it with the exception
-                            handler_result = fallback(error)
+            error = self._unwrap_effect_failure(pragmatic_result.result.error)
+            fallback = await self._resolve_fallback(effect.fallback, error, ctx, engine)
+            return await self._execute_fallback(fallback, ctx, engine)
 
-                            if isinstance(handler_result, (Program, EffectBase)):
-                                handler_program = Program.from_program_like(handler_result)
-                                handler_pragmatic_result = await engine.run(handler_program, ctx)
-                                return handler_pragmatic_result.value
+        return pragmatic_result.value
 
-                            return handler_result
-                        else:
-                            # It's a thunk (zero-argument callable) - call it
-                            fallback = fallback()
-                    except (ValueError, TypeError):
-                        # Can't inspect signature, treat as thunk
-                        fallback = fallback()
-            
-            if isinstance(fallback, (Program, EffectBase)):
-                fallback_program = Program.from_program_like(fallback)
-                fallback_result = await engine.run(fallback_program, ctx)
-                return fallback_result.value
+    def _unwrap_effect_failure(self, error: Any) -> Any:
+        """Unwrap EffectFailure to get the underlying cause."""
+        from doeff.types import EffectFailure
+        return error.cause if isinstance(error, EffectFailure) else error
 
+    async def _resolve_fallback(
+        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
+    ) -> Any:
+        """Resolve fallback based on its type (error handler, thunk, or value)."""
+        if not callable(fallback) or isinstance(fallback, Program):
             return fallback
-        else:
-            # Success - return the value
-            return pragmatic_result.value
-    
+
+        from doeff.kleisli import KleisliProgram
+        if isinstance(fallback, KleisliProgram):
+            return await self._handle_kleisli_fallback(fallback, error, ctx, engine)
+
+        return await self._handle_regular_callable(fallback, error, ctx, engine)
+
+    async def _handle_kleisli_fallback(
+        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
+    ) -> Any:
+        """Handle KleisliProgram fallback - try as error handler first, then thunk."""
+        handler_result = fallback(error)
+        if not isinstance(handler_result, (Program, EffectBase)):
+            return handler_result
+
+        handler_program = Program.from_program_like(handler_result)
+        try_result = await engine.run_async(handler_program, ctx)
+
+        if isinstance(try_result.result, Err):
+            inner_error = self._unwrap_effect_failure(try_result.result.error)
+            if isinstance(inner_error, TypeError) and "positional argument" in str(inner_error):
+                # Try as thunk instead
+                return fallback()
+            raise inner_error
+
+        return try_result.value
+
+    async def _handle_regular_callable(
+        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
+    ) -> Any:
+        """Handle regular callable fallback based on signature."""
+        import inspect
+        try:
+            sig = inspect.signature(fallback)
+            if len(sig.parameters) > 0:
+                # Error handler - call with exception
+                return await self._execute_error_handler(fallback(error), ctx, engine)
+            # Thunk - call with no args
+            return fallback()
+        except (ValueError, TypeError):
+            # Can't inspect signature, treat as thunk
+            return fallback()
+
+    async def _execute_error_handler(
+        self, handler_result: Any, ctx: ExecutionContext, engine: ProgramInterpreter
+    ) -> Any:
+        """Execute error handler result if it's a Program."""
+        if isinstance(handler_result, (Program, EffectBase)):
+            handler_program = Program.from_program_like(handler_result)
+            result = await engine.run_async(handler_program, ctx)
+            return result.value
+        return handler_result
+
+    async def _execute_fallback(
+        self, fallback: Any, ctx: ExecutionContext, engine: ProgramInterpreter
+    ) -> Any:
+        """Execute the resolved fallback value."""
+        if isinstance(fallback, (Program, EffectBase)):
+            fallback_program = Program.from_program_like(fallback)
+            result = await engine.run_async(fallback_program, ctx)
+            return result.value
+        return fallback
+
     async def handle_retry(
-        self, effect: ResultRetryEffect, ctx: ExecutionContext, engine: "ProgramInterpreter"
+        self, effect: ResultRetryEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.retry effect - retry program on failure."""
         import asyncio
-        from doeff.program import Program
+
         from doeff._vendor import Ok
-        
+        from doeff.program import Program
+
         max_attempts = effect.max_attempts
         delay_ms = effect.delay_ms
-        
+
         sub_program = Program.from_program_like(effect.sub_program)
-        
+
         last_error = None
         for attempt in range(max_attempts):
-            pragmatic_result = await engine.run(sub_program, ctx)
-            
+            pragmatic_result = await engine.run_async(sub_program, ctx)
+
             if isinstance(pragmatic_result.result, Ok):
                 return pragmatic_result.value
-            
+
             last_error = pragmatic_result.result.error
-            
+
             if attempt < max_attempts - 1 and delay_ms > 0:
                 await asyncio.sleep(delay_ms / 1000.0)
-        
+
         if last_error:
             raise last_error
         raise RuntimeError(f"All {max_attempts} attempts failed")
@@ -603,7 +597,7 @@ class GraphEffectHandler:
         """Handle graph.annotate effect."""
         ctx.graph = ctx.graph.with_last_meta(effect.meta)
 
-    async def handle_snapshot(self, effect: GraphSnapshotEffect, ctx: ExecutionContext):
+    async def handle_snapshot(self, _effect: GraphSnapshotEffect, ctx: ExecutionContext):
         """Return the current computation graph."""
         return ctx.graph
 
@@ -611,7 +605,7 @@ class GraphEffectHandler:
         self,
         effect: GraphCaptureEffect,
         ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
+        engine: ProgramInterpreter,
     ) -> tuple[Any, WGraph]:
         from doeff.program import Program
 
@@ -622,14 +616,14 @@ class GraphEffectHandler:
             state=ctx.state.copy() if ctx.state else {},
             log=[],
             graph=WGraph(
-                last=WStep(inputs=tuple(), output=WNode("_root"), meta={}),
+                last=WStep(inputs=(), output=WNode("_root"), meta={}),
                 steps=frozenset(),
             ),
             io_allowed=ctx.io_allowed,
             cache=ctx.cache,
         )
 
-        result = await engine.run(sub_program, sub_ctx)
+        result = await engine.run_async(sub_program, sub_ctx)
 
         if isinstance(result.result, Err):
             raise result.result.error
@@ -700,7 +694,7 @@ class CacheEffectHandler:
         key_hash = hashlib.sha256(key_blob).hexdigest()
         return key_hash, key_blob
 
-    async def handle_get(self, effect: CacheGetEffect, ctx: ExecutionContext) -> Any:
+    async def handle_get(self, effect: CacheGetEffect, _ctx: ExecutionContext) -> Any:
         key_hash, _ = self._serialize_key(effect.key)
         # hmm, serializing a key is failing here, but i cannot tell what is passing a bad key...
 
@@ -719,7 +713,7 @@ class CacheEffectHandler:
 
         return cloudpickle.loads(lzma.decompress(value_blob))
 
-    async def handle_put(self, effect: CachePutEffect, ctx: ExecutionContext) -> None:
+    async def handle_put(self, effect: CachePutEffect, _ctx: ExecutionContext) -> None:
         key = effect.key
         value = effect.value
         policy = effect.policy
@@ -749,15 +743,15 @@ class CacheEffectHandler:
 
 
 __all__ = [
-    "HandlerScope",
-    "ReaderEffectHandler",
-    "StateEffectHandler",
     "AtomicEffectHandler",
-    "WriterEffectHandler",
-    "FutureEffectHandler",
-    "ResultEffectHandler",
-    "IOEffectHandler",
-    "GraphEffectHandler",
-    "MemoEffectHandler",
     "CacheEffectHandler",
+    "FutureEffectHandler",
+    "GraphEffectHandler",
+    "HandlerScope",
+    "IOEffectHandler",
+    "MemoEffectHandler",
+    "ReaderEffectHandler",
+    "ResultEffectHandler",
+    "StateEffectHandler",
+    "WriterEffectHandler",
 ]

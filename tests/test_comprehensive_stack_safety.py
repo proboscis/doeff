@@ -29,7 +29,7 @@ from doeff import (
 
 
 @pytest.mark.asyncio
-async def test_deep_mixed_monad_chain():
+async def test_deep_mixed_monad_chain():  # noqa: PLR0915
     """Test deep chains using all monad types."""
 
     def deep_mixed_program() -> Generator[Effect, Any, dict]:
@@ -67,11 +67,11 @@ async def test_deep_mixed_monad_chain():
 
             # Result (error handling)
             if i % 1500 == 0:
-                def error_recovery(e):
+                def error_recovery(e, current_i=i):  # Capture i via default argument
                     @do
                     def recover() -> Generator[Effect, Any, int]:
-                        yield tell(f"Recovered from error at {i}: {e}")
-                        return -i
+                        yield tell(f"Recovered from error at {current_i}: {e}")
+                        return -current_i
                     return recover()
 
                 yield catch(maybe_fail(i), error_recovery)
@@ -130,7 +130,7 @@ async def test_deep_mixed_monad_chain():
     context = ExecutionContext(env={"multiplier": 2}, io_allowed=True)
 
     program = Program(deep_mixed_program)
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert result.value["iterations"] == 5000
@@ -152,7 +152,8 @@ async def test_nested_monad_operations():
     def nested_program(depth: int) -> Generator[Effect, Any, int]:
         """Recursively nested program."""
         if depth == 0:
-            if False: yield  # Make it a generator
+            if False:  # Make it a generator
+                yield
             return 1
 
         # Each level uses multiple monad types
@@ -191,7 +192,7 @@ async def test_nested_monad_operations():
 
     # Test with depth 100 (should work fine)
     program = Program(lambda: nested_program(100))
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert result.value == 101  # 1 + 100
@@ -236,7 +237,7 @@ async def test_parallel_async_operations():
     context = ExecutionContext()
 
     program = Program(parallel_program)
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert len(result.value) == 1000  # 100 batches * 10 items
@@ -275,7 +276,7 @@ async def test_monad_composition_patterns():
             return 0
 
         try_result = yield catch(
-            stateful_program(), lambda e: default_program()
+            stateful_program(), lambda _e: default_program()
         )
 
         # Listen + Local pattern (Writer + Reader)
@@ -303,7 +304,7 @@ async def test_monad_composition_patterns():
     context = ExecutionContext(env={"config": {"key": "value"}})
 
     program = Program(composition_program)
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert result.value["try_result"] == 42

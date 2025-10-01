@@ -19,7 +19,7 @@ async def test_slog_emits_dict_entries() -> None:
         return None
 
     engine = ProgramInterpreter()
-    result = await engine.run(program())
+    result = await engine.run_async(program())
 
     assert result.is_ok
     assert result.log == [
@@ -41,7 +41,7 @@ async def test_slog_defensive_copy() -> None:
         return payload
 
     engine = ProgramInterpreter()
-    result = await engine.run(program())
+    result = await engine.run_async(program())
 
     assert result.is_ok
     assert result.log == [

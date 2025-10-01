@@ -38,7 +38,7 @@ async def test_fail_effect_with_creation_trace():
             return "never reached"
 
         engine = ProgramInterpreter()
-        result = await engine.run(failing_program())
+        result = await engine.run_async(failing_program())
 
         # Should have failed
         assert result.is_err
@@ -79,7 +79,7 @@ async def test_ask_effect_missing_key_with_trace():
             return f"Got {value}"
 
         engine = ProgramInterpreter()
-        result = await engine.run(program_with_missing_key())
+        result = await engine.run_async(program_with_missing_key())
 
         # Should have failed
         assert result.is_err
@@ -157,7 +157,7 @@ async def test_nested_program_creation_trace():
             return f"Result: {value}"
 
         engine = ProgramInterpreter()
-        result = await engine.run(outer_program())
+        result = await engine.run_async(outer_program())
 
         assert result.is_err
         error_str = str(result.result.error)
@@ -249,7 +249,7 @@ async def test_display_with_creation_trace():
             return "Should not reach here"
 
         engine = ProgramInterpreter()
-        result = await engine.run(test_program())
+        result = await engine.run_async(test_program())
 
         # Verify the result is an error
         assert result.is_err
@@ -332,7 +332,7 @@ async def test_nested_effect_error_chain():
             return result
 
         engine = ProgramInterpreter()
-        result = await engine.run(process_with_catch())
+        result = await engine.run_async(process_with_catch())
 
         # Should have failed
         assert result.is_err

@@ -10,6 +10,7 @@ license = "MIT"
 [lib]
 name = "doeff_indexer"
 path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]  # cdylib for Python extension, rlib for Rust
 
 [[bin]]
 name = "doeff-indexer"
@@ -25,11 +26,16 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 env_logger = "0.10"
 log = "0.4"
+pyo3 = { version = "0.20", features = ["extension-module"], optional = true }
 rustpython-ast = "0.3"
 rustpython-parser = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 walkdir = "2.5"
+
+[features]
+default = ["python"]
+python = ["pyo3"]
 
 [dev-dependencies]
 tempfile = "3.10"
