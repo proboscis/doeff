@@ -18,7 +18,8 @@ from doeff.types import capture_traceback
 @dataclass
 class RunContext:
     program_path: str
-    interpreter_path: str
+    interpreter_path: str | None
+    env_paths: list[str]
     apply_path: str | None
     transformer_paths: list[str]
     output_format: str
@@ -126,16 +127,69 @@ def _json_safe(value: Any) -> Any:
 
 
 def handle_run(args: argparse.Namespace) -> int:
+    from doeff.cli.discovery import (
+        IndexerBasedDiscovery,
+        StandardEnvMerger,
+        StandardSymbolLoader,
+    )
+    from doeff.effects import Local
+
     context = RunContext(
         program_path=args.program,
         interpreter_path=args.interpreter,
+        env_paths=args.envs or [],
         apply_path=args.apply,
         transformer_paths=args.transform or [],
         output_format=args.format,
     )
 
+    # Initialize discovery services
+    loader = StandardSymbolLoader()
+    discovery = IndexerBasedDiscovery(symbol_loader=loader)
+    merger = StandardEnvMerger(symbol_loader=loader)
+
+    # Auto-discover interpreter if not specified
+    if context.interpreter_path is None:
+        discovered_interp = discovery.find_default_interpreter(context.program_path)
+        if discovered_interp is None:
+            raise RuntimeError(
+                f"No default interpreter found for {context.program_path}. "
+                "Please specify --interpreter or add '# doeff: interpreter, default' marker to an interpreter function."
+            )
+        context = RunContext(
+            program_path=context.program_path,
+            interpreter_path=discovered_interp,
+            env_paths=context.env_paths,
+            apply_path=context.apply_path,
+            transformer_paths=context.transformer_paths,
+            output_format=context.output_format,
+        )
+
+    # Auto-discover envs if not specified
+    if not context.env_paths:
+        discovered_envs = discovery.discover_default_envs(context.program_path)
+        context = RunContext(
+            program_path=context.program_path,
+            interpreter_path=context.interpreter_path,
+            env_paths=discovered_envs,
+            apply_path=context.apply_path,
+            transformer_paths=context.transformer_paths,
+            output_format=context.output_format,
+        )
+
     program_obj = _import_symbol(context.program_path)
     program = _ensure_program(program_obj, "--program")
+
+    # Merge and inject environments if any
+    if context.env_paths:
+        merged_env_program = merger.merge_envs(context.env_paths)
+        # Run the merged env to get the dict
+        temp_interpreter = ProgramInterpreter()
+        env_result = temp_interpreter.run(merged_env_program)
+        merged_env_dict = env_result.value
+        # Wrap program with Local effect to inject environment
+        local_effect = Local(merged_env_dict, program)
+        program = Program.from_effect(local_effect)
 
     if context.apply_path:
         kleisli_obj = _import_symbol(context.apply_path)
@@ -164,6 +218,7 @@ def handle_run(args: argparse.Namespace) -> int:
             "status": "ok",
             "program": context.program_path,
             "interpreter": context.interpreter_path,
+            "envs": context.env_paths,
             "apply": context.apply_path,
             "transformers": context.transformer_paths,
             "result": _json_safe(final_value),
@@ -182,7 +237,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="Execute a Program via an interpreter")
     run_parser.add_argument("--program", required=True, help="Fully-qualified path to the Program instance")
     run_parser.add_argument(
-        "--interpreter", required=True, help="Callable that accepts the Program as its first argument"
+        "--interpreter",
+        help="Callable that accepts the Program as its first argument (auto-discovered if not specified)",
+    )
+    run_parser.add_argument(
+        "--env",
+        action="append",
+        dest="envs",
+        help="Environment dict or Program[dict] to provide values (can be specified multiple times, auto-discovered if not specified)",
     )
     run_parser.add_argument(
         "--apply",
