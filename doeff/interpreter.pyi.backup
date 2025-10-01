@@ -1,0 +1,416 @@
+from typing import Any
+
+T: Any
+logger: Any
+__all__: Any
+
+def _effect_is(effect: Effect, cls) -> bool: ...
+
+def force_eval(prog: Program[T]) -> Program[T]: ...
+
+class ProgramInterpreter:
+    def __init__(self, custom_handlers: dict[str, Any] | None = ...) -> Any: ...
+    def run(self, program: Program[T], context: ExecutionContext | None = ...) -> RunResult[T]: ...
+    async def run_async(self, program: Program[T], context: ExecutionContext | None = ...) -> RunResult[T]: ...
+    def _record_effect_usage(self, effect: Effect, ctx: ExecutionContext) -> None: ...
+    async def _handle_effect(self, effect: Effect, ctx: ExecutionContext) -> Any: ...
+    async def _handle_gather_effect(self, effect: GatherEffect, ctx: ExecutionContext) -> Any: ...
+    async def _handle_gather_dict_effect(self, effect: GatherDictEffect, ctx: ExecutionContext) -> Any: ...
+    async def _run_gather_sequence(self, programs: list[Program], ctx: ExecutionContext) -> list[Any]: ...
+
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+_NO_HANDLER: Any
+
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
+
+# Additional symbols:
