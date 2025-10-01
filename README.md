@@ -155,6 +155,79 @@ bindings = design(
 result = await bindings.provide(injected)
 ```
 
+## CLI Auto-Discovery
+
+The `doeff` CLI can automatically discover default interpreters and environments based on markers in your code, eliminating the need to specify them manually.
+
+### Quick Example
+
+```bash
+# Auto-discovers interpreter and environments
+doeff run --program myapp.features.auth.login_program
+
+# Equivalent to:
+doeff run --program myapp.features.auth.login_program \
+  --interpreter myapp.features.auth.auth_interpreter \
+  --env myapp.base_env \
+  --env myapp.features.features_env \
+  --env myapp.features.auth.auth_env
+```
+
+### Marking Default Interpreters
+
+Add `# doeff: interpreter, default` marker to your interpreter function:
+
+```python
+def my_interpreter(prog: Program[Any]) -> Any:
+    """
+    Custom interpreter for myapp.
+    # doeff: interpreter, default
+    """
+    engine = ProgramInterpreter()
+    return engine.run(prog).value
+```
+
+**Discovery Rules:**
+- CLI searches from program module up to root
+- Selects the **closest** interpreter in the module hierarchy
+- Explicit `--interpreter` overrides auto-discovery
+
+### Marking Default Environments
+
+Add `# doeff: default` marker above environment variables:
+
+```python
+# doeff: default
+base_env: Program[dict] = Program.pure({
+    'db_host': 'localhost',
+    'api_key': 'xxx',
+    'timeout': 10
+})
+```
+
+**Accumulation Rules:**
+- CLI discovers **all** environments in hierarchy (root → program)
+- Later values override earlier values
+- Environments are merged automatically
+
+### Example Structure
+
+```
+myapp/
+  __init__.py          # base_interpreter, base_env
+  features/
+    __init__.py        # features_env (overrides base)
+    auth/
+      __init__.py      # auth_interpreter (closer), auth_env
+      login.py         # login_program uses discovered resources
+```
+
+When running `doeff run --program myapp.features.auth.login.login_program`:
+1. Discovers `auth_interpreter` (closest match)
+2. Discovers and merges: `base_env` → `features_env` → `auth_env`
+3. Injects merged environment into program
+4. Executes with discovered interpreter
+
 ## Development
 
 ```bash
