@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import traceback
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from pprint import pformat
@@ -503,6 +503,84 @@ class EffectObservation:
     context: EffectCreationContext | None = None
 
 
+@dataclass(frozen=True)
+class _EffectTypeSummary:
+    effect_type: str
+    total_calls: int
+    unique_keys: int
+
+
+@dataclass(frozen=True)
+class _EffectKeyUsage:
+    key: str | None
+    count: int
+    first_context: EffectCreationContext | None
+
+
+@dataclass(frozen=True)
+class _EffectUsageSummary:
+    totals: Mapping[str, _EffectTypeSummary]
+    keys: Mapping[str, tuple[_EffectKeyUsage, ...]]
+
+
+def _build_effect_usage_summary(
+    observations: Iterable[EffectObservation],
+) -> _EffectUsageSummary | None:
+    filtered = [
+        obs for obs in observations if obs.effect_type in {"Dep", "Ask"}
+    ]
+    if not filtered:
+        return None
+
+    type_totals: dict[str, dict[str, Any]] = {}
+    key_totals: dict[str, dict[str | None, dict[str, Any]]] = {}
+
+    for obs in filtered:
+        effect_type = obs.effect_type
+        key = obs.key
+
+        type_info = type_totals.setdefault(
+            effect_type,
+            {"total": 0, "keys": set()},
+        )
+        type_info["total"] += 1
+        type_info["keys"].add(key)
+
+        per_type = key_totals.setdefault(effect_type, {})
+        entry = per_type.setdefault(
+            key,
+            {"count": 0, "context": None},
+        )
+        entry["count"] += 1
+        if entry["context"] is None and obs.context is not None:
+            entry["context"] = obs.context
+
+    type_summary: dict[str, _EffectTypeSummary] = {}
+    for effect_type, info in type_totals.items():
+        type_summary[effect_type] = _EffectTypeSummary(
+            effect_type=effect_type,
+            total_calls=info["total"],
+            unique_keys=len(info["keys"]),
+        )
+
+    key_summary: dict[str, tuple[_EffectKeyUsage, ...]] = {}
+    for effect_type, key_map in key_totals.items():
+        sorted_items = sorted(
+            key_map.items(),
+            key=lambda item: (-item[1]["count"], item[0] or ""),
+        )
+        key_summary[effect_type] = tuple(
+            _EffectKeyUsage(
+                key=key,
+                count=data["count"],
+                first_context=data["context"],
+            )
+            for key, data in sorted_items
+        )
+
+    return _EffectUsageSummary(totals=type_summary, keys=key_summary)
+
+
 # ============================================
 # Failure Introspection Types
 # ============================================
@@ -735,11 +813,14 @@ class RunResult(Generic[T]):
     def display(self, verbose: bool = False, indent: int = 2) -> str:
         """Render a human-readable report using structured sections."""
 
+        usage_summary = _build_effect_usage_summary(self.effect_observations)
+
         context = RunResultDisplayContext(
             run_result=self,
             verbose=verbose,
             indent_unit=" " * indent,
             failure_details=self._failure_details(),
+            effect_usage_summary=usage_summary,
         )
         renderer = RunResultDisplayRenderer(context)
         return renderer.render()
@@ -939,6 +1020,7 @@ class RunResultDisplayContext:
     verbose: bool
     indent_unit: str
     failure_details: RunFailureDetails | None
+    effect_usage_summary: _EffectUsageSummary | None = None
 
     def indent(self, level: int, text: str) -> str:
         if not text:
@@ -1191,136 +1273,95 @@ class _LogSection(_BaseSection):
 
 class _EffectUsageSection(_BaseSection):
     def render(self) -> list[str]:
-        from collections import defaultdict
+        summary = self.context.effect_usage_summary
+        lines = ["🔗 Dep/Ask Usage:"]
 
-        rr = self.context.run_result
-        lines = ["🔗 Dep/Ask Usage Statistics:"]
-        observations = [
-            obs
-            for obs in rr.effect_observations
-            if obs.effect_type in {"Dep", "Ask"}
-        ]
-        if not observations:
+        if summary is None:
             lines.append(self.indent(1, "(no Dep/Ask effects observed)"))
             return lines
 
-        # Group observations by (effect_type, key)
-        grouped: dict[tuple[str, str | None], list[EffectObservation]] = defaultdict(list)
-        for obs in observations:
-            grouped[(obs.effect_type, obs.key)].append(obs)
+        preferred_order = ("Ask", "Dep")
+        seen: set[str] = set()
 
-        # Separate Dep and Ask groups
-        dep_groups: dict[str | None, list[EffectObservation]] = {}
-        ask_groups: dict[str | None, list[EffectObservation]] = {}
-
-        for (effect_type, key), obs_list in grouped.items():
-            if effect_type == "Dep":
-                dep_groups[key] = obs_list
-            elif effect_type == "Ask":
-                ask_groups[key] = obs_list
-
-        # Render statistics for each effect type
-        self._render_effect_type_stats(lines, "Dep", dep_groups)
-        self._render_effect_type_stats(lines, "Ask", ask_groups)
-
-        return lines
-
-    def _render_effect_type_stats(
-        self,
-        lines: list[str],
-        effect_type: str,
-        groups: dict[str | None, list[EffectObservation]],
-    ) -> None:
-        """Render statistics for a single effect type (Dep or Ask)."""
-        if not groups:
-            return
-
-        total_accesses = sum(len(obs_list) for obs_list in groups.values())
-        unique_keys = len(groups)
-        lines.append("")
-        summary = (
-            f"{effect_type} effects: {total_accesses} total accesses, "
-            f"{unique_keys} unique keys"
-        )
-        lines.append(self.indent(1, summary))
-
-        # Sort by access count (descending), then by key name
-        sorted_groups = sorted(
-            groups.items(),
-            key=lambda item: (-len(item[1]), str(item[0] or "")),
-        )
-
-        for key, obs_list in sorted_groups:
-            self._render_key_stats(lines, key, obs_list)
-
-    def _render_key_stats(
-        self,
-        lines: list[str],
-        key: str | None,
-        obs_list: list[EffectObservation],
-    ) -> None:
-        """Render statistics for a single key."""
-        count = len(obs_list)
-        access_word = "access" if count == 1 else "accesses"
-        key_display = repr(key) if key is not None else "<unnamed>"
-        lines.append(self.indent(2, f"• {key_display} - {count} {access_word}"))
-
-        # Show first occurrence location
-        first_obs = obs_list[0]
-        if first_obs.context is not None:
-            lines.append(
-                self.indent(3, f"First used at: {first_obs.context.format_location()}")
-            )
-            if first_obs.context.code:
-                lines.append(self.indent(4, first_obs.context.code))
-        else:
-            lines.append(self.indent(3, "First used at: <location unavailable>"))
-
-
-class _CompactKeysSection(_BaseSection):
-    def render(self) -> list[str]:
-        rr = self.context.run_result
-        observations = [
-            obs
-            for obs in rr.effect_observations
-            if obs.effect_type in {"Dep", "Ask"}
-        ]
-
-        if not observations:
-            return []
-
-        # Collect unique keys per effect type
-        dep_keys: set[str] = set()
-        ask_keys: set[str] = set()
-
-        for obs in observations:
-            if obs.key is None:
+        for effect_type in preferred_order:
+            stats = summary.totals.get(effect_type)
+            if stats is None:
                 continue
-            if obs.effect_type == "Dep":
-                dep_keys.add(obs.key)
-            elif obs.effect_type == "Ask":
-                ask_keys.add(obs.key)
+            lines.append(self._format_stats_line(stats))
+            seen.add(effect_type)
 
-        # If no keys found, don't show the section
-        if not dep_keys and not ask_keys:
-            return []
-
-        lines = ["🔑 All Used Keys (Compact):"]
-        lines.append("")
-
-        # Show Dep keys
-        if dep_keys:
-            sorted_dep_keys = sorted(dep_keys)
-            keys_str = ", ".join(sorted_dep_keys)
-            lines.append(self.indent(1, f"Dep keys ({len(dep_keys)}): {keys_str}"))
-
-        # Show Ask keys
-        if ask_keys:
-            sorted_ask_keys = sorted(ask_keys)
-            keys_str = ", ".join(sorted_ask_keys)
-            lines.append(self.indent(1, f"Ask keys ({len(ask_keys)}): {keys_str}"))
+        for effect_type, stats in summary.totals.items():
+            if effect_type in seen:
+                continue
+            lines.append(self._format_stats_line(stats))
 
         return lines
+
+    def _format_stats_line(self, stats: _EffectTypeSummary) -> str:
+        call_label = "call" if stats.total_calls == 1 else "calls"
+        key_label = "key" if stats.unique_keys == 1 else "keys"
+        text = (
+            f"{stats.effect_type}: "
+            f"{stats.total_calls} {call_label}, "
+            f"{stats.unique_keys} unique {key_label}"
+        )
+        return self.indent(1, text)
+
+
+class _EffectKeySummarySection(_BaseSection):
+    def render(self) -> list[str]:
+        summary = self.context.effect_usage_summary
+        if summary is None:
+            return []
+
+        lines = ["🧩 Dep/Ask Keys:"]
+
+        preferred_order = ("Ask", "Dep")
+        seen: set[str] = set()
+        limit = 10
+
+        for effect_type in preferred_order:
+            entries = summary.keys.get(effect_type)
+            if not entries:
+                continue
+            lines.extend(self._render_key_line(effect_type, entries, limit))
+            seen.add(effect_type)
+
+        for effect_type, entries in summary.keys.items():
+            if effect_type in seen or not entries:
+                continue
+            lines.extend(self._render_key_line(effect_type, entries, limit))
+
+        return lines
+
+    def _render_key_line(
+        self,
+        effect_type: str,
+        entries: tuple[_EffectKeyUsage, ...],
+        limit: int,
+    ) -> list[str]:
+        formatted = [
+            self._format_key_entry(entry) for entry in entries[:limit]
+        ]
+        if not formatted:
+            text = f"{effect_type}: (no keys)"
+        else:
+            text = f"{effect_type}: {', '.join(formatted)}"
+
+        lines = [self.indent(1, text)]
+
+        if len(entries) > limit:
+            remaining = len(entries) - limit
+            lines.append(
+                self.indent(1, f"... and {remaining} more keys")
+            )
+
+        return lines
+
+    def _format_key_entry(self, entry: _EffectKeyUsage) -> str:
+        key_label = "<no key>" if entry.key is None else repr(entry.key)
+        suffix = f" (x{entry.count})" if entry.count > 1 else ""
+        return f"{key_label}{suffix}"
 
 
 class _GraphSection(_BaseSection):
@@ -1406,7 +1447,7 @@ class RunResultDisplayRenderer:
             _SharedStateSection(self.context),
             _LogSection(self.context),
             _EffectUsageSection(self.context),
-            _CompactKeysSection(self.context),
+            _EffectKeySummarySection(self.context),
             _GraphSection(self.context),
             _EnvironmentSection(self.context),
             _SummarySection(self.context),
