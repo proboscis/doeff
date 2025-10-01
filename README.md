@@ -2,6 +2,15 @@
 
 A pragmatic free monad implementation that prioritizes usability and Python idioms over theoretical purity. Uses generators for do-notation and supports comprehensive effects including Reader, State, Writer, Future, Result, and IO.
 
+## Documentation
+
+**[📚 Full Documentation](docs/index.md)** - Comprehensive guides, tutorials, and API reference
+
+- [Getting Started](docs/01-getting-started.md) - Installation and first program
+- [Core Concepts](docs/02-core-concepts.md) - Understanding Program and Effect
+- [Effect Guides](docs/index.md#effect-types) - Detailed guides for all effect types
+- [API Reference](docs/13-api-reference.md) - Complete API documentation
+
 ## Features
 
 - **Generator-based do-notation**: Write monadic code that looks like regular Python
