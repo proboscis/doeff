@@ -4,7 +4,20 @@ import json
 
 import pytest
 
-from doeff import CachePut, EffectGenerator, Fail, Log, ProgramInterpreter, Put, Recover, Step, do
+from doeff import (
+    Ask,
+    CachePut,
+    Dep,
+    EffectGenerator,
+    ExecutionContext,
+    Fail,
+    Log,
+    ProgramInterpreter,
+    Put,
+    Recover,
+    Step,
+    do,
+)
 
 
 @pytest.mark.asyncio
@@ -87,7 +100,7 @@ async def test_display_trace_includes_user_frames():
         helper_inner()
 
     def helper_inner() -> None:
-        json.loads("{\"unterminated\": \"value\"")
+        json.loads('{"unterminated": "value"')
 
     @do
     def failing_program() -> EffectGenerator[None]:
@@ -111,7 +124,7 @@ async def test_display_trace_includes_user_frames():
 async def test_display_primary_effect_shows_creation_stack(monkeypatch):
     """Closest failing effect should surface its creation stack without verbose."""
 
-    def failing_dumps(value, context):
+    def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
 
     monkeypatch.setattr("doeff.handlers._cloudpickle_dumps", failing_dumps)
@@ -137,7 +150,7 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch):
 async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
     """Recover failures should surface the failing effect's creation stack."""
 
-    def failing_dumps(value, context):
+    def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
 
     monkeypatch.setattr("doeff.handlers._cloudpickle_dumps", failing_dumps)
@@ -274,6 +287,41 @@ async def test_display_truncation():
     assert "..." in display_output  # Long values should be truncated
     assert "and 10 more entries" in display_output  # Logs should be limited
     assert "and 10 more items" in display_output or "and 11 more items" in display_output  # State should be limited
+
+
+@pytest.mark.asyncio
+async def test_display_dep_ask_usage_summary():
+    """RunResult.display should summarize Dep/Ask effects without duplicates."""
+
+    @do
+    def dep_ask_program() -> EffectGenerator[str]:
+        first = yield Ask("config")
+        second = yield Ask("config")
+        dep_one = yield Dep("service")
+        dep_two = yield Dep("service")
+        extra = yield Ask("other")
+        return f"{first}-{second}-{dep_one}-{dep_two}-{extra}"
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(env={
+        "config": "alpha",
+        "service": "svc",
+        "other": "beta",
+    })
+
+    result = await engine.run(dep_ask_program(), context=context)
+    display = result.display()
+
+    assert result.is_ok
+    assert display.count("Ask key='config' (count=2)") == 1
+    assert "Ask key='service' (count=2)" in display
+    assert "Ask key='other' (count=1)" in display
+    assert "Dep key='service' (count=2)" in display
+
+    assert "🔑 Dep/Ask Keys:" in display
+    keys_section = display.split("🔑 Dep/Ask Keys:", 1)[1]
+    assert "Dep keys: 'service'" in keys_section
+    assert "Ask keys: 'config', 'service', 'other'" in keys_section
 
 
 @pytest.mark.asyncio
