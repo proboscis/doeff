@@ -8,22 +8,17 @@ from __future__ import annotations
 
 import json
 import traceback
-from pprint import pformat
-from dataclasses import dataclass, field, replace
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator, Iterable
+from dataclasses import dataclass, field, replace
 from functools import wraps
+from pprint import pformat
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    Generator,
     Generic,
-    List,
-    Optional,
     Protocol,
     TypeVar,
-    Union,
-    TYPE_CHECKING,
     runtime_checkable,
 )
 
@@ -31,24 +26,41 @@ from typing import (
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
-    from doeff.program import Program
     from phart.styles import NodeStyle
+
+    from doeff.program import Program
 
 # Re-export vendored types for backward compatibility
 from doeff._vendor import (
-    TraceError,
-    trace_err,
-    Ok,
+    NOTHING,
     Err,
-    Result,
+    FrozenDict,
     Maybe,
     Nothing,
-    NOTHING,
+    Ok,
+    Result,
     Some,
+    TraceError,
+    WGraph,
     WNode,
     WStep,
-    WGraph,
+    trace_err,
+)
+
+__VENDORED_EXPORTS = (
+    NOTHING,
+    Err,
     FrozenDict,
+    Maybe,
+    Nothing,
+    Ok,
+    Result,
+    Some,
+    TraceError,
+    WGraph,
+    WNode,
+    WStep,
+    trace_err,
 )
 
 # Type variables
@@ -62,18 +74,18 @@ U = TypeVar("U")
 @dataclass(frozen=True)
 class EffectCreationContext:
     """Context information about where an effect was created."""
-    
+
     filename: str
     line: int
     function: str
     code: str | None = None
-    stack_trace: List[Dict[str, Any]] = field(default_factory=list)
+    stack_trace: list[dict[str, Any]] = field(default_factory=list)
     frame_info: Any = None  # FrameInfo from inspect module
-    
+
     def format_location(self) -> str:
         """Format the creation location as a string."""
-        return f'{self.filename}:{self.line} in {self.function}'
-    
+        return f"{self.filename}:{self.line} in {self.function}"
+
     def format_full(self) -> str:
         """Format the full creation context with stack trace."""
         lines = []
@@ -87,32 +99,32 @@ class EffectCreationContext:
                 if frame.get("code"):
                     lines.append(f'    {frame["code"]}')
         return "\n".join(lines)
-    
+
     def build_traceback(self) -> str:
         """Build a detailed traceback-style output from stored frame information."""
         lines = []
         lines.append("Traceback (most recent call last):")
-        
+
         # Add frames from stack_trace in reverse order (innermost last)
         if self.stack_trace:
             for frame in reversed(self.stack_trace):
-                filename = frame.get('filename', '<unknown>')
-                line_no = frame.get('line', 0)
-                func_name = frame.get('function', '<unknown>')
-                code = frame.get('code', '')
-                
+                filename = frame.get("filename", "<unknown>")
+                line_no = frame.get("line", 0)
+                func_name = frame.get("function", "<unknown>")
+                code = frame.get("code", "")
+
                 lines.append(f'  File "{filename}", line {line_no}, in {func_name}')
                 if code:
-                    lines.append(f'    {code}')
-        
+                    lines.append(f"    {code}")
+
         # Add the immediate creation location
         lines.append(f'  File "{self.filename}", line {self.line}, in {self.function}')
         if self.code:
-            lines.append(f'    {self.code}')
-        
+            lines.append(f"    {self.code}")
+
         return "\n".join(lines)
 
-    def without_frames(self) -> "EffectCreationContext":
+    def without_frames(self) -> EffectCreationContext:
         """Return a sanitized copy without live frame references."""
 
         sanitized_stack: list[dict[str, Any]] = []
@@ -198,123 +210,15 @@ class CapturedTraceback:
         """Return sanitized traceback lines with optional condensation."""
 
         sanitized = self._sanitize_lines()
-        if not condensed or max_lines is None or len(sanitized) <= max_lines:
+        if (
+            not condensed
+            or max_lines is None
+            or len(sanitized) <= max_lines
+            or not sanitized
+        ):
             return sanitized
 
-        if not sanitized:
-            return []
-
-        header: list[str] = []
-        body = sanitized
-
-        if sanitized[0].strip().startswith("Traceback"):
-            header = [sanitized[0]]
-            body = sanitized[1:]
-
-        if not body:
-            return header[:max_lines]
-
-        available = max_lines - len(header)
-        if available <= 0:
-            return header[:max_lines]
-
-        if len(body) <= available:
-            return header + body[:available]
-
-        # For very small budgets prefer the innermost frames closest to the failure.
-        if available <= 4:
-            return header + body[-available:]
-
-        # Reserve one slot for an ellipsis so we can show both outer and inner frames.
-        available_for_frames = available - 1
-        if available_for_frames <= 0:
-            return header + body[-available:]
-
-        tail_min = 4
-        if available_for_frames <= tail_min:
-            return header + body[-available:]
-
-        def _frame_spans() -> list[tuple[int, int]]:
-            spans: list[tuple[int, int]] = []
-            index = 0
-            while index < len(body):
-                line = body[index]
-                if line.lstrip().startswith("File "):
-                    start = index
-                    index += 1
-                    while index < len(body) and not body[index].lstrip().startswith("File "):
-                        index += 1
-                    spans.append((start, index))
-                else:
-                    index += 1
-            return spans
-
-        def _extract_path(line: str) -> str | None:
-            start = line.find('"')
-            if start == -1:
-                return None
-            end = line.find('"', start + 1)
-            if end == -1:
-                return None
-            return line[start + 1 : end]
-
-        def _is_library_path(path: str) -> bool:
-            lowered = path.lower()
-            if "/site-packages/" in lowered:
-                return True
-            if "/python" in lowered and "/repos/" not in lowered:
-                return True
-            return False
-
-        frame_spans = _frame_spans()
-        user_span_end: int | None = None
-        desired_user_frames = 3
-        user_frames_seen = 0
-
-        for start, end in frame_spans:
-            path = _extract_path(body[start])
-            if path and not _is_library_path(path):
-                user_frames_seen += 1
-                user_span_end = end
-                if user_frames_seen >= desired_user_frames:
-                    break
-
-        tail_lines = max(tail_min, available_for_frames // 2)
-        if tail_lines > available_for_frames - 2:
-            tail_lines = max(available_for_frames - 2, 2)
-
-        head_lines = available_for_frames - tail_lines
-        if head_lines < 2:
-            head_lines = 2
-            tail_lines = available_for_frames - head_lines
-
-        if user_span_end is not None and user_span_end > head_lines:
-            extra_needed = user_span_end - head_lines
-            reducible = max(0, tail_lines - tail_min)
-            take = min(extra_needed, reducible)
-            head_lines += take
-            tail_lines -= take
-            extra_needed -= take
-
-            if extra_needed > 0:
-                reducible = max(0, tail_lines - 2)
-                take = min(extra_needed, reducible)
-                head_lines += take
-                tail_lines -= take
-                extra_needed -= take
-
-            if extra_needed > 0:
-                head_lines = min(user_span_end, available_for_frames)
-                tail_lines = available_for_frames - head_lines
-
-        if tail_lines <= 0:
-            return header + body[:available]
-
-        if head_lines + tail_lines >= len(body):
-            return header + body[:available]
-
-        ellipsis_line = "    ..."
-        return header + body[:head_lines] + [ellipsis_line] + body[-tail_lines:]
+        return _condense_traceback_lines(sanitized, max_lines)
 
     def format(
         self,
@@ -325,6 +229,161 @@ class CapturedTraceback:
         """Render the traceback as a single string."""
 
         return "\n".join(self.lines(condensed=condensed, max_lines=max_lines))
+
+def _condense_traceback_lines(lines: list[str], max_lines: int) -> list[str]:
+    header, body = _split_traceback_header(lines)
+    if not body:
+        return header[:max_lines]
+
+    available = max_lines - len(header)
+    if available <= 0:
+        return header[:max_lines]
+
+    fallback = header + body[:available]
+    if len(body) <= available:
+        return fallback
+
+    available_frames = available - 1
+    if available <= 4 or available_frames <= 0:
+        return header + body[-available:]
+
+    head_lines, tail_lines = _choose_head_tail_lengths(body, available_frames)
+    if tail_lines <= 0 or head_lines + tail_lines >= len(body):
+        return fallback
+
+    ellipsis_line = "    ..."
+    return header + body[:head_lines] + [ellipsis_line] + body[-tail_lines:]
+
+
+def _split_traceback_header(lines: list[str]) -> tuple[list[str], list[str]]:
+    if lines and lines[0].strip().startswith("Traceback"):
+        return [lines[0]], lines[1:]
+    return [], lines
+
+
+def _choose_head_tail_lengths(body: list[str], available_frames: int) -> tuple[int, int]:
+    tail_lines = _initial_tail_length(available_frames)
+    available = available_frames
+    if tail_lines >= available:
+        return available, 0
+
+    head_lines = max(2, available - tail_lines)
+    head_lines, tail_lines = _rebalance_for_user_frames(body, head_lines, tail_lines)
+    return head_lines, tail_lines
+
+
+def _initial_tail_length(available_frames: int) -> int:
+    tail_min = 4
+    if available_frames <= tail_min:
+        return available_frames
+
+    tail_lines = max(tail_min, available_frames // 2)
+    if tail_lines > available_frames - 2:
+        return max(available_frames - 2, 2)
+    return tail_lines
+
+
+def _rebalance_for_user_frames(
+    body: list[str],
+    head_lines: int,
+    tail_lines: int,
+    desired_user_frames: int = 3,
+    tail_min: int = 4,
+) -> tuple[int, int]:
+    user_span_end = _find_user_span_end(body, desired_user_frames)
+    available = head_lines + tail_lines
+
+    if user_span_end is None or user_span_end <= head_lines:
+        return head_lines, tail_lines
+
+    head_lines, tail_lines = _grow_head_with_tail(
+        head_lines,
+        tail_lines,
+        user_span_end - head_lines,
+        tail_min,
+    )
+
+    if user_span_end > head_lines:
+        head_lines = min(user_span_end, available)
+        tail_lines = max(0, available - head_lines)
+
+    if head_lines < 2:
+        head_lines = min(2, available)
+        tail_lines = max(0, available - head_lines)
+
+    return head_lines, tail_lines
+
+
+def _grow_head_with_tail(
+    head_lines: int,
+    tail_lines: int,
+    extra_needed: int,
+    tail_min: int,
+) -> tuple[int, int]:
+    if extra_needed <= 0:
+        return head_lines, tail_lines
+
+    reservable = max(0, tail_lines - tail_min)
+    take = min(extra_needed, reservable)
+    head_lines += take
+    tail_lines -= take
+    extra_needed -= take
+
+    if extra_needed > 0:
+        spare_tail = max(0, tail_lines - 2)
+        take = min(extra_needed, spare_tail)
+        head_lines += take
+        tail_lines -= take
+
+    return head_lines, tail_lines
+
+
+def _find_user_span_end(body: list[str], desired: int) -> int | None:
+    frames = _traceback_frame_spans(body)
+    user_frames_seen = 0
+
+    for start, end in frames:
+        path = _extract_traceback_path(body[start])
+        if path and not _is_library_traceback_path(path):
+            user_frames_seen += 1
+            if user_frames_seen >= desired:
+                return end
+
+    return None
+
+
+def _traceback_frame_spans(body: list[str]) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    index = 0
+    while index < len(body):
+        line = body[index]
+        if line.lstrip().startswith("File "):
+            start = index
+            index += 1
+            while index < len(body) and not body[index].lstrip().startswith("File "):
+                index += 1
+            spans.append((start, index))
+        else:
+            index += 1
+    return spans
+
+
+def _extract_traceback_path(line: str) -> str | None:
+    start = line.find('"')
+    if start == -1:
+        return None
+    end = line.find('"', start + 1)
+    if end == -1:
+        return None
+    return line[start + 1 : end]
+
+
+def _is_library_traceback_path(path: str) -> bool:
+    lowered = path.lower()
+    if "/site-packages/" in lowered:
+        return True
+    return "/python" in lowered and "/repos/" not in lowered
+
 
 
 def capture_traceback(exc: BaseException) -> CapturedTraceback:
@@ -347,17 +406,17 @@ def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:
 # ============================================
 
 @dataclass
-class EffectFailure(Exception):
+class EffectFailureError(Exception):
     """Complete error information for a failed effect.
 
     Combines both the runtime traceback (where error occurred) and
     creation context (where effect was created) into a single clean structure.
     """
 
-    effect: "Effect"
+    effect: Effect
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: CapturedTraceback | None = None  # Runtime stack trace where error occurred
-    creation_context: Optional[EffectCreationContext] = None  # Where the effect was created
+    creation_context: EffectCreationContext | None = None  # Where the effect was created
 
     def __str__(self) -> str:
         """Format the error for display."""
@@ -371,7 +430,7 @@ class EffectFailure(Exception):
         lines.append(f"Caused by: {self.cause.__class__.__name__}: {self.cause}")
 
         return "\n".join(lines)
-    
+
     def __post_init__(self):
         """Capture runtime traceback if not provided."""
         if self.creation_context is None:
@@ -382,6 +441,8 @@ class EffectFailure(Exception):
             if captured is None:
                 captured = capture_traceback(self.cause)
             self.runtime_traceback = captured
+
+EffectFailure = EffectFailureError
 
 
 # ============================================
@@ -395,14 +456,14 @@ E = TypeVar("E", bound="EffectBase")
 class Effect(Protocol):
     """Protocol implemented by all effect values."""
 
-    created_at: Optional[EffectCreationContext]
+    created_at: EffectCreationContext | None
 
     def intercept(
-        self, transform: Callable[["Effect"], "Effect | Program"]
-    ) -> "Effect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> Effect:
         """Return a copy where any nested programs are intercepted."""
 
-    def with_created_at(self: E, created_at: Optional[EffectCreationContext]) -> E:
+    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
         """Return a copy with updated creation context."""
 
 
@@ -410,19 +471,19 @@ class Effect(Protocol):
 class EffectBase(ABC):
     """Base dataclass implementing :class:`Effect` semantics."""
 
-    created_at: Optional[EffectCreationContext] = field(
+    created_at: EffectCreationContext | None = field(
         default=None, compare=False
     )
 
     @abstractmethod
     def intercept(
-        self: E, transform: Callable[[Effect], Effect | "Program"]
+        self: E, transform: Callable[[Effect], Effect | Program]
     ) -> E:
         """Return a copy where any nested programs are intercepted."""
         raise NotImplementedError
 
     def with_created_at(
-        self: E, created_at: Optional[EffectCreationContext]
+        self: E, created_at: EffectCreationContext | None
     ) -> E:
         if created_at is self.created_at:
             return self
@@ -432,10 +493,10 @@ class EffectBase(ABC):
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
 if TYPE_CHECKING:
-    EffectGenerator = Generator[Union[Effect, "Program"], Any, T]
+    EffectGenerator = Generator[Effect | "Program", Any, T]
 else:
     # Runtime version to avoid importing Program
-    EffectGenerator = Generator[Union[Effect, Any], Any, T]
+    EffectGenerator = Generator[Effect | Any, Any, T]
 
 
 # ============================================
@@ -459,19 +520,19 @@ class ExecutionContext:
     """
 
     # Reader environment
-    env: Dict[str, Any] = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)
     # State storage
-    state: Dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
     # Writer log
-    log: List[Any] = field(default_factory=list)
+    log: list[Any] = field(default_factory=list)
     # Computation graph
     graph: WGraph = field(default_factory=lambda: WGraph.single(None))
     # IO permission flag
     io_allowed: bool = True
     # Memo storage (shared across parallel executions)
-    cache: Dict[str, Any] = field(default_factory=dict)
+    cache: dict[str, Any] = field(default_factory=dict)
     # Observed effects during run (shared reference)
-    effect_observations: list["EffectObservation"] = field(default_factory=list)
+    effect_observations: list[EffectObservation] = field(default_factory=list)
 
     def copy(self) -> ExecutionContext:
         """Create a shallow copy of the context."""
@@ -485,7 +546,7 @@ class ExecutionContext:
             effect_observations=self.effect_observations,
         )
 
-    def with_env_update(self, updates: Dict[str, Any]) -> ExecutionContext:
+    def with_env_update(self, updates: dict[str, Any]) -> ExecutionContext:
         """Create a new context with updated environment."""
         new_env = self.env.copy()
         new_env.update(updates)
@@ -543,7 +604,7 @@ class RunFailureDetails:
     entries: tuple[FailureEntry, ...]
 
     @classmethod
-    def from_error(cls, error: Any) -> "RunFailureDetails | None":
+    def from_error(cls, error: Any) -> RunFailureDetails | None:
         if not isinstance(error, BaseException):
             return None
 
@@ -622,31 +683,30 @@ class RunResult(Generic[T]):
         """Get the successful value or raise an exception."""
         if isinstance(self.result, Ok):
             return self.result.value
-        else:
-            raise self.result.error
-    
+        raise self.result.error
+
     @property
     def is_ok(self) -> bool:
         """Check if the result is successful."""
         return isinstance(self.result, Ok)
-    
+
     @property
     def is_err(self) -> bool:
         """Check if the result is an error."""
         return isinstance(self.result, Err)
 
     @property
-    def env(self) -> Dict[str, Any]:
+    def env(self) -> dict[str, Any]:
         """Get the final environment."""
         return self.context.env
 
     @property
-    def state(self) -> Dict[str, Any]:
+    def state(self) -> dict[str, Any]:
         """Get the final state."""
         return self.context.state
 
     @property
-    def shared_state(self) -> Dict[str, Any]:
+    def shared_state(self) -> dict[str, Any]:
         """Get shared atomic state captured during execution."""
         store = self.context.cache.get("__atomic_state__")
         if isinstance(store, dict):
@@ -654,7 +714,7 @@ class RunResult(Generic[T]):
         return {}
 
     @property
-    def log(self) -> List[Any]:
+    def log(self) -> list[Any]:
         """Get the accumulated log."""
         return self.context.log
 
@@ -664,7 +724,7 @@ class RunResult(Generic[T]):
         return self.context.graph
 
     @property
-    def effect_observations(self) -> list["EffectObservation"]:
+    def effect_observations(self) -> list[EffectObservation]:
         """Get recorded effect observations."""
         return self.context.effect_observations
 
@@ -696,28 +756,45 @@ class RunResult(Generic[T]):
             return ""
 
         error = self.result.error
+        rendered = self._render_error_detail(error, condensed)
+        if rendered is not None:
+            return rendered
+        return str(error)
 
+    def _render_error_detail(
+        self,
+        error: Any,
+        condensed: bool,
+    ) -> str | None:
         if isinstance(error, TraceError):
             return str(error)
-
         if isinstance(error, EffectFailure):
-            trace = error.runtime_traceback
-            if trace is not None:
-                return trace.format(condensed=condensed)
-            if isinstance(error.cause, BaseException):
-                captured = get_captured_traceback(error.cause)
-                if captured is None:
-                    captured = capture_traceback(error.cause)
-                return captured.format(condensed=condensed)
-            return f"EffectFailure: {error}"
-
+            return self._format_effect_failure_error(error, condensed)
         if isinstance(error, BaseException):
-            captured = get_captured_traceback(error)
-            if captured is None:
-                captured = capture_traceback(error)
-            return captured.format(condensed=condensed)
+            return self._format_exception_error(error, condensed)
+        return None
 
-        return str(error)
+    def _format_effect_failure_error(
+        self,
+        error: EffectFailure,
+        condensed: bool,
+    ) -> str:
+        trace = error.runtime_traceback
+        if trace is not None:
+            return trace.format(condensed=condensed)
+        if isinstance(error.cause, BaseException):
+            return self._format_exception_error(error.cause, condensed)
+        return f"EffectFailure: {error}"
+
+    @staticmethod
+    def _format_exception_error(
+        error: BaseException,
+        condensed: bool,
+    ) -> str:
+        captured = get_captured_traceback(error) or capture_traceback(error)
+        if captured is None:
+            return repr(error)
+        return captured.format(condensed=condensed)
 
     @property
     def formatted_error(self) -> str:
@@ -727,7 +804,7 @@ class RunResult(Generic[T]):
     def __repr__(self) -> str:
         if self.is_ok:
             return (
-                f"RunResult(Ok({repr(self.result.value)}), "
+                f"RunResult(Ok({self.result.value!r}), "
                 f"state={len(self.state)} items, "
                 f"log={len(self.log)} entries)"
             )
@@ -742,11 +819,15 @@ class RunResult(Generic[T]):
     def display(self, verbose: bool = False, indent: int = 2) -> str:
         """Render a human-readable report using structured sections."""
 
+        dep_ask_stats = _DepAskStats.from_observations(
+            self.effect_observations
+        )
         context = RunResultDisplayContext(
             run_result=self,
             verbose=verbose,
             indent_unit=" " * indent,
             failure_details=self._failure_details(),
+            dep_ask_stats=dep_ask_stats,
         )
         renderer = RunResultDisplayRenderer(context)
         return renderer.render()
@@ -754,7 +835,7 @@ class RunResult(Generic[T]):
     def visualize_graph_ascii(
         self,
         *,
-        node_style: "NodeStyle | str" = "square",
+        node_style: NodeStyle | str = "square",
         node_spacing: int = 4,
         margin: int = 1,
         layer_spacing: int = 2,
@@ -762,43 +843,62 @@ class RunResult(Generic[T]):
         use_ascii: bool | None = None,
         max_value_length: int = 32,
         include_ops: bool = True,
-        custom_decorators: Dict[WNode | str, tuple[str, str]] | None = None,
+        custom_decorators: dict[WNode | str, tuple[str, str]] | None = None,
     ) -> str:
-        """Render the computation graph as ASCII art using the phart library.
+        """Render the computation graph as ASCII art using the phart library."""
 
-        Args:
-            node_style: NodeStyle enum or string name recognised by phart.
-            node_spacing: Minimum horizontal spacing between nodes.
-            margin: Padding applied to the rendered canvas.
-            layer_spacing: Vertical spacing between layers.
-            show_arrows: Whether to render arrow heads on edges.
-            use_ascii: Force ASCII-only characters when True.
-            max_value_length: Maximum characters for node value previews.
-            include_ops: Append producing op metadata when available.
-            custom_decorators: Optional mapping of nodes or labels to (prefix, suffix).
+        nx_module, renderer_cls, layout_options_cls, node_style_cls = self._import_phart_dependencies()
 
-        Returns:
-            ASCII diagram of the run graph.
+        steps = self.graph.steps or frozenset({self.graph.last})
+        base_graph, producers = self._build_base_graph(nx_module, steps)
+        label_map = self._build_label_map(
+            nx_module,
+            base_graph,
+            producers,
+            include_ops=include_ops,
+            max_value_length=max_value_length,
+        )
+        phart_graph = self._build_phart_graph(nx_module, base_graph, label_map)
 
-        Raises:
-            ImportError: If phart (and its dependencies) are not installed.
-            ValueError: If ``node_style`` does not resolve to a valid style.
-            TypeError: If ``custom_decorators`` keys are not ``WNode`` or ``str``.
-        """
+        resolved_style, decorator_map = self._resolve_graph_style(
+            node_style,
+            custom_decorators,
+            label_map,
+            node_style_cls,
+        )
 
+        options = layout_options_cls(
+            node_spacing=node_spacing,
+            margin=margin,
+            layer_spacing=layer_spacing,
+            node_style=resolved_style,
+            show_arrows=show_arrows,
+            use_ascii=use_ascii,
+            custom_decorators=decorator_map,
+        )
+
+        renderer = renderer_cls(phart_graph, options=options)
+        return renderer.render()
+
+    @staticmethod
+    def _import_phart_dependencies():
         try:
             import networkx as nx
             from phart.renderer import ASCIIRenderer
             from phart.styles import LayoutOptions, NodeStyle
-        except ImportError as exc:  # pragma: no cover - missing optional dependency
+        except ImportError as exc:  # pragma: no cover - optional dependency
             raise ImportError(
                 "visualize_graph_ascii requires the phart package. Install it via `pip install phart`."
             ) from exc
+        return nx, ASCIIRenderer, LayoutOptions, NodeStyle
 
-        steps = self.graph.steps or frozenset({self.graph.last})
-
+    @staticmethod
+    def _build_base_graph(
+        nx: Any,
+        steps: Iterable[WStep],
+    ) -> tuple[Any, dict[WNode, WStep]]:
         base_graph = nx.DiGraph()
-        producers: Dict[WNode, WStep] = {}
+        producers: dict[WNode, WStep] = {}
 
         for step in steps:
             producers[step.output] = step
@@ -813,24 +913,26 @@ class RunResult(Generic[T]):
                     base_graph.add_node(input_node, value=input_node.value)
                 base_graph.add_edge(input_node, step.output, op=node_meta.get("op"))
 
-        def _preview(value: Any) -> str:
-            preview = repr(value)
-            preview = preview.replace("\n", " ").replace("\r", " ")
-            if len(preview) <= max_value_length:
-                return preview
-            suffix = "..."
-            slice_len = max(0, max_value_length - len(suffix))
-            return f"{preview[:slice_len]}{suffix}"
+        return base_graph, producers
 
+    def _build_label_map(
+        self,
+        nx: Any,
+        base_graph: Any,
+        producers: dict[WNode, WStep],
+        *,
+        include_ops: bool,
+        max_value_length: int,
+    ) -> dict[WNode, str]:
         try:
             ordering = list(nx.topological_sort(base_graph))
         except nx.NetworkXUnfeasible:
             ordering = list(base_graph.nodes)
 
-        label_map: Dict[WNode, str] = {}
+        label_map: dict[WNode, str] = {}
         for index, node in enumerate(ordering):
             node_data = base_graph.nodes[node]
-            preview = _preview(node_data.get("value"))
+            preview = self._preview_graph_value(node_data.get("value"), max_value_length)
             op_label = None
             if include_ops:
                 producer = producers.get(node)
@@ -840,114 +942,229 @@ class RunResult(Generic[T]):
             if op_label:
                 parts.append(f"@{op_label}")
             label_map[node] = " ".join(part for part in parts if part)
+        return label_map
 
+    @staticmethod
+    def _preview_graph_value(value: Any, max_length: int) -> str:
+        preview = repr(value)
+        preview = preview.replace("\n", " ").replace("\r", " ")
+        if len(preview) <= max_length:
+            return preview
+        suffix = "..."
+        slice_len = max(0, max_length - len(suffix))
+        return f"{preview[:slice_len]}{suffix}"
+
+    @staticmethod
+    def _build_phart_graph(
+        nx: Any,
+        base_graph: Any,
+        label_map: dict[WNode, str],
+    ) -> Any:
         phart_graph = nx.DiGraph()
-        for node, label in label_map.items():
+        for label in label_map.values():
             phart_graph.add_node(label)
-
         for src, dst in base_graph.edges:
             phart_graph.add_edge(label_map[src], label_map[dst])
+        return phart_graph
 
+    def _resolve_graph_style(
+        self,
+        node_style: NodeStyle | str,
+        custom_decorators: dict[WNode | str, tuple[str, str]] | None,
+        label_map: dict[WNode, str],
+        node_style_type: Any,
+    ) -> tuple[Any, dict[str, tuple[str, str]] | None]:
+        resolved_style = self._normalize_node_style(node_style, node_style_type)
+        decorator_map = self._prepare_decorators(custom_decorators, label_map)
+        if decorator_map and resolved_style is not node_style_type.CUSTOM:
+            resolved_style = node_style_type.CUSTOM
+        return resolved_style, decorator_map
+
+    @staticmethod
+    def _normalize_node_style(node_style: NodeStyle | str, node_style_type: Any) -> Any:
         if isinstance(node_style, str):
             try:
-                resolved_style = NodeStyle[node_style.upper()]
+                return node_style_type[node_style.upper()]
             except KeyError as err:
-                valid = ", ".join(style.name.lower() for style in NodeStyle)
+                valid = ", ".join(style.name.lower() for style in node_style_type)
                 raise ValueError(
                     f"Unknown node_style '{node_style}'. Valid values: {valid}."
                 ) from err
-        else:
-            resolved_style = node_style
+        return node_style
 
-        decorator_map: Dict[str, tuple[str, str]] | None = None
-        if custom_decorators:
-            decorator_map = {}
-            for key, decorators in custom_decorators.items():
-                if isinstance(key, WNode):
-                    target_label = label_map.get(key)
-                elif isinstance(key, str):
-                    target_label = key
-                else:
-                    raise TypeError("custom_decorators keys must be WNode or str")
-                if target_label:
-                    decorator_map[target_label] = decorators
-            if decorator_map and resolved_style is not NodeStyle.CUSTOM:
-                resolved_style = NodeStyle.CUSTOM
+    @staticmethod
+    def _prepare_decorators(
+        custom_decorators: dict[WNode | str, tuple[str, str]] | None,
+        label_map: dict[WNode, str],
+    ) -> dict[str, tuple[str, str]] | None:
+        if not custom_decorators:
+            return None
 
-        options = LayoutOptions(
-            node_spacing=node_spacing,
-            margin=margin,
-            layer_spacing=layer_spacing,
-            node_style=resolved_style,
-            show_arrows=show_arrows,
-            use_ascii=use_ascii,
-            custom_decorators=decorator_map,
-        )
+        decorator_map: dict[str, tuple[str, str]] = {}
+        for key, decorators in custom_decorators.items():
+            if isinstance(key, WNode):
+                target_label = label_map.get(key)
+            elif isinstance(key, str):
+                target_label = key
+            else:
+                raise TypeError("custom_decorators keys must be WNode or str")
+            if target_label:
+                decorator_map[target_label] = decorators
 
-        renderer = ASCIIRenderer(phart_graph, options=options)
-        return renderer.render()
+        return decorator_map or None
 
-    def _format_value(self, value: Any, indent: int, max_length: int = 200) -> str:
+    def _format_value(self, value: Any, max_length: int = 200) -> str:
         """Format a value for display, handling various types."""
         if value is None:
-            return "None"
-        elif isinstance(value, bool):
-            return str(value)
-        elif isinstance(value, (int, float)):
-            return str(value)
+            formatted = "None"
+        elif isinstance(value, (bool, int, float)):
+            formatted = str(value)
         elif isinstance(value, str):
-            if len(value) > max_length:
-                return f'"{value[:max_length]}..."'
-            return f'"{value}"'
+            formatted = self._format_string_value(value, max_length)
         elif isinstance(value, dict):
-            if not value:
-                return "{}"
-            try:
-                json_str = json.dumps(value, indent=None, default=str)
-                if len(json_str) > max_length:
-                    # Show keys only if too long
-                    keys = list(value.keys())[:5]
-                    keys_str = ", ".join(f'"{k}"' for k in keys)
-                    if len(value) > 5:
-                        keys_str += f", ... ({len(value) - 5} more)"
-                    return f"{{{keys_str}}}"
-                return json_str
-            except:
-                return f"<dict with {len(value)} items>"
+            formatted = self._format_dict_value(value, max_length)
         elif isinstance(value, list):
-            if not value:
-                return "[]"
-            if len(value) > 5:
-                return f"[{len(value)} items]"
-            try:
-                json_str = json.dumps(value, indent=None, default=str)
-                if len(json_str) > max_length:
-                    return f"[{len(value)} items]"
-                return json_str
-            except:
-                return f"<list with {len(value)} items>"
+            formatted = self._format_list_value(value, max_length)
         elif hasattr(value, "__class__"):
-            class_name = value.__class__.__name__
-            if hasattr(value, "__repr__"):
-                repr_str = repr(value)
-                if len(repr_str) > max_length:
-                    return f"<{class_name} object>"
-                return repr_str
-            return f"<{class_name} object>"
+            formatted = self._format_object_value(value, max_length)
         else:
-            str_val = str(value)
-            if len(str_val) > max_length:
-                return str_val[:max_length] + "..."
-            return str_val
+            formatted = self._format_generic_value(value, max_length)
+        return formatted
+
+    def _format_string_value(self, value: str, max_length: int) -> str:
+        if len(value) > max_length:
+            return f'"{value[:max_length]}..."'
+        return f'"{value}"'
+
+    def _format_dict_value(self, value: dict[Any, Any], max_length: int) -> str:
+        if not value:
+            return "{}"
+        try:
+            json_str = json.dumps(value, indent=None, default=str)
+        except Exception:
+            return f"<dict with {len(value)} items>"
+
+        if len(json_str) <= max_length:
+            return json_str
+
+        keys = list(value.keys())[:5]
+        keys_str = ", ".join(f'"{key}"' for key in keys)
+        if len(value) > 5:
+            keys_str += f", ... ({len(value) - 5} more)"
+        return f"{{{keys_str}}}"
+
+    def _format_list_value(self, value: list[Any], max_length: int) -> str:
+        if not value:
+            return "[]"
+        if len(value) > 5:
+            return f"[{len(value)} items]"
+        try:
+            json_str = json.dumps(value, indent=None, default=str)
+        except Exception:
+            return f"<list with {len(value)} items>"
+        if len(json_str) > max_length:
+            return f"[{len(value)} items]"
+        return json_str
+
+    def _format_object_value(self, value: Any, max_length: int) -> str:
+        class_name = value.__class__.__name__
+        if hasattr(value, "__repr__"):
+            repr_str = repr(value)
+            if len(repr_str) <= max_length:
+                return repr_str
+        return f"<{class_name} object>"
+
+    def _format_generic_value(self, value: Any, max_length: int) -> str:
+        text = str(value)
+        if len(text) > max_length:
+            return text[:max_length] + "..."
+        return text
+
+@dataclass(frozen=True)
+class _DepAskUsageRecord:
+    effect_type: str
+    key: str | None
+    count: int
+    first_context: EffectCreationContext | None
+
+
+@dataclass(frozen=True)
+class _DepAskStats:
+    records: tuple[_DepAskUsageRecord, ...]
+    keys_by_type: dict[str, tuple[str | None, ...]]
+
+    @classmethod
+    def from_observations(
+        cls,
+        observations: list[EffectObservation],
+    ) -> _DepAskStats:
+        interesting = {"Dep", "Ask"}
+        records: list[_DepAskUsageRecord] = []
+        record_index: dict[tuple[str, str | None], int] = {}
+        keys_by_type: dict[str, list[str | None]] = {
+            effect_type: [] for effect_type in interesting
+        }
+
+        def _maybe_add_key(effect_type: str, key: str | None) -> None:
+            seen_keys = keys_by_type.setdefault(effect_type, [])
+            if key not in seen_keys:
+                seen_keys.append(key)
+
+        for observation in observations:
+            effect_type = observation.effect_type
+            if effect_type not in interesting:
+                continue
+
+            key = observation.key
+            pair = (effect_type, key)
+            idx = record_index.get(pair)
+
+            if idx is None:
+                record_index[pair] = len(records)
+                records.append(
+                    _DepAskUsageRecord(
+                        effect_type=effect_type,
+                        key=key,
+                        count=0,
+                        first_context=observation.context,
+                    )
+                )
+                _maybe_add_key(effect_type, key)
+                idx = record_index[pair]
+
+            record = records[idx]
+            context = record.first_context or observation.context
+            records[idx] = _DepAskUsageRecord(
+                effect_type=record.effect_type,
+                key=record.key,
+                count=record.count + 1,
+                first_context=context,
+            )
+
+        return cls(
+            records=tuple(records),
+            keys_by_type={
+                effect_type: tuple(keys)
+                for effect_type, keys in keys_by_type.items()
+            },
+        )
+
+    def is_empty(self) -> bool:
+        return not self.records
+
+    def keys_for(self, effect_type: str) -> tuple[str | None, ...]:
+        return self.keys_by_type.get(effect_type, ())
+
 
 @dataclass(frozen=True)
 class RunResultDisplayContext:
     """Shared context for building RunResult display output."""
 
-    run_result: "RunResult[Any]"
+    run_result: RunResult[Any]
     verbose: bool
     indent_unit: str
     failure_details: RunFailureDetails | None
+    dep_ask_stats: _DepAskStats
 
     def indent(self, level: int, text: str) -> str:
         if not text:
@@ -963,10 +1180,8 @@ class _BaseSection:
         return self.context.indent(level, text)
 
     def format_value(self, value: Any, *, max_length: int = 200) -> str:
-        indent_width = len(self.context.indent_unit) or 2
         return self.context.run_result._format_value(
             value,
-            indent_width,
             max_length=max_length,
         )
 
@@ -1067,63 +1282,83 @@ class _ErrorSection(_BaseSection):
     ) -> list[str]:
         effect_name = entry.effect.__class__.__name__
         lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
+        lines.extend(
+            self._render_effect_creation_details(entry, effect_name, is_primary)
+        )
+        lines.extend(self._render_effect_cause(entry))
+        lines.extend(self._render_runtime_trace(entry))
+        return lines
 
+    def _render_effect_creation_details(
+        self,
+        entry: EffectFailureInfo,
+        effect_name: str,
+        is_primary: bool,
+    ) -> list[str]:
         ctx = entry.creation_context
-        if ctx is not None:
-            lines.append(self.indent(2, f"📍 Created at: {ctx.format_location()}"))
-            if ctx.code:
-                lines.append(self.indent(3, ctx.code))
-            if ctx.stack_trace:
-                if self.context.verbose:
-                    lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
-                    for frame_line in ctx.build_traceback().splitlines():
-                        lines.append(self.indent(3, frame_line))
-                else:
-                    show_stack = is_primary or not isinstance(entry.cause, EffectFailure)
-                    if show_stack:
-                        label = (
-                            "🔥 Fail Creation Stack Trace:"
-                            if effect_name == "ResultFailEffect"
-                            else "🔥 Effect Creation Stack Trace:"
-                        )
-                        lines.append(self.indent(2, label))
-                        for frame_line in ctx.build_traceback().splitlines():
-                            lines.append(self.indent(3, frame_line))
-        else:
-            lines.append(self.indent(2, "📍 Created at: <unknown>"))
+        if ctx is None:
+            return [self.indent(2, "📍 Created at: <unknown>")]
 
-        if entry.cause:
-            if isinstance(entry.cause, EffectFailure):
-                lines.append(
-                    self.indent(
-                        2,
-                        "Caused by: EffectFailure (see nested entries)",
-                    )
-                )
-            else:
-                lines.append(
-                    self.indent(
-                        2,
-                        f"Caused by: {entry.cause.__class__.__name__}: {entry.cause}",
-                    )
-                )
-                if entry.cause_trace:
-                    lines.extend(
-                        self._render_trace(
-                            entry.cause_trace,
-                            "🔥 Cause Stack Trace",
-                        )
-                    )
+        lines = [self.indent(2, f"📍 Created at: {ctx.format_location()}")]
+        if ctx.code:
+            lines.append(self.indent(3, ctx.code))
 
-        if entry.runtime_trace:
+        if not ctx.stack_trace:
+            return lines
+
+        trace_lines = ctx.build_traceback().splitlines()
+        if self.context.verbose:
+            lines.append(self.indent(2, "📍 Effect Creation Stack Trace:"))
+            lines.extend(self._indent_creation_trace(trace_lines))
+            return lines
+
+        should_show_stack = is_primary or not isinstance(entry.cause, EffectFailure)
+        if should_show_stack:
+            label = (
+                "🔥 Fail Creation Stack Trace:"
+                if effect_name == "ResultFailEffect"
+                else "🔥 Effect Creation Stack Trace:"
+            )
+            lines.append(self.indent(2, label))
+            lines.extend(self._indent_creation_trace(trace_lines))
+        return lines
+
+    def _indent_creation_trace(self, trace_lines: list[str]) -> list[str]:
+        return [self.indent(3, line) for line in trace_lines]
+
+    def _render_effect_cause(self, entry: EffectFailureInfo) -> list[str]:
+        cause = entry.cause
+        if cause is None:
+            return []
+        if isinstance(cause, EffectFailure):
+            return [
+                self.indent(
+                    2,
+                    "Caused by: EffectFailure (see nested entries)",
+                )
+            ]
+        lines = [
+            self.indent(
+                2,
+                f"Caused by: {cause.__class__.__name__}: {cause}",
+            )
+        ]
+        if entry.cause_trace:
             lines.extend(
                 self._render_trace(
-                    entry.runtime_trace,
-                    "🔥 Execution Stack Trace",
+                    entry.cause_trace,
+                    "🔥 Cause Stack Trace",
                 )
             )
-
         return lines
+
+    def _render_runtime_trace(self, entry: EffectFailureInfo) -> list[str]:
+        if entry.runtime_trace is None:
+            return []
+        return self._render_trace(
+            entry.runtime_trace,
+            "🔥 Execution Stack Trace",
+        )
 
     def _render_exception_entry(
         self, idx: int, entry: ExceptionFailureInfo
@@ -1200,33 +1435,65 @@ class _LogSection(_BaseSection):
 
 class _EffectUsageSection(_BaseSection):
     def render(self) -> list[str]:
-        rr = self.context.run_result
         lines = ["🔗 Dep/Ask Usage:"]
-        observations = [
-            obs
-            for obs in rr.effect_observations
-            if obs.effect_type in {"Dep", "Ask"}
-        ]
-        if not observations:
+        stats = self.context.dep_ask_stats
+        if stats.is_empty():
             lines.append(self.indent(1, "(no Dep/Ask effects observed)"))
             return lines
 
         limit = 40
-        for idx, obs in enumerate(observations[:limit], start=1):
-            key_text = f" key={obs.key!r}" if obs.key is not None else ""
-            lines.append(self.indent(1, f"[{idx}] {obs.effect_type}{key_text}"))
-            if obs.context is not None:
-                lines.append(
-                    self.indent(2, obs.context.format_location())
+        records = stats.records
+
+        for idx, record in enumerate(records[:limit], start=1):
+            key_label = record.key if record.key is not None else None
+            key_text = f" key={key_label!r}" if key_label is not None else " key=None"
+            lines.append(
+                self.indent(
+                    1,
+                    (
+                        f"[{idx}] {record.effect_type}"
+                        f"{key_text} (count={record.count})"
+                    ),
                 )
-                if obs.context.code:
-                    lines.append(self.indent(3, obs.context.code))
+            )
+            context = record.first_context
+            if context is not None:
+                lines.append(
+                    self.indent(2, context.format_location())
+                )
+                if context.code:
+                    lines.append(self.indent(3, context.code))
             else:
                 lines.append(self.indent(2, "<location unavailable>"))
 
-        if len(observations) > limit:
-            remaining = len(observations) - limit
+        if len(records) > limit:
+            remaining = len(records) - limit
             lines.append(self.indent(1, f"... and {remaining} more entries"))
+
+        return lines
+
+
+class _EffectKeysSection(_BaseSection):
+    def render(self) -> list[str]:
+        stats = self.context.dep_ask_stats
+        lines = ["🔑 Dep/Ask Keys:"]
+
+        if stats.is_empty():
+            lines.append(self.indent(1, "(no Dep/Ask keys recorded)"))
+            return lines
+
+        for effect_type in ("Dep", "Ask"):
+            keys = stats.keys_for(effect_type)
+            if keys:
+                formatted = ", ".join(
+                    repr(key) if key is not None else "None"
+                    for key in keys
+                )
+            else:
+                formatted = "(no keys)"
+            lines.append(
+                self.indent(1, f"{effect_type} keys: {formatted}")
+            )
 
         return lines
 
@@ -1314,6 +1581,7 @@ class RunResultDisplayRenderer:
             _SharedStateSection(self.context),
             _LogSection(self.context),
             _EffectUsageSection(self.context),
+            _EffectKeysSection(self.context),
             _GraphSection(self.context),
             _EnvironmentSection(self.context),
             _SummarySection(self.context),
@@ -1340,62 +1608,62 @@ class ListenResult:
     """Result from writer.listen effect."""
 
     value: Any
-    log: List[Any]
-    
+    log: list[Any]
+
     def __iter__(self):
         """Make ListenResult unpackable as a tuple (value, log)."""
         return iter([self.value, self.log])
 
 
-def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program"]) -> Any:
+def _intercept_value(
+    value: Any, transform: Callable[[Effect], Effect | Program]
+) -> Any:
     """Recursively intercept Programs embedded within ``value``."""
 
     from doeff.program import Program  # Local import to avoid circular dependency
-    #from loguru import logger
 
-    if isinstance(value, Program):
-        #logger.info(f"Intercepting Program: {value}")
-        return value.intercept(transform)
+    result = value
+    if isinstance(value, (Program, Effect)):
+        result = value.intercept(transform)
+    elif isinstance(value, dict):
+        result = _intercept_mapping(value, transform)
+    elif isinstance(value, tuple):
+        result = _intercept_tuple(value, transform)
+    elif isinstance(value, list):
+        result = [_intercept_value(item, transform) for item in value]
+    elif isinstance(value, set):
+        result = {_intercept_value(item, transform) for item in value}
+    elif isinstance(value, frozenset):
+        result = frozenset(_intercept_value(item, transform) for item in value)
+    elif callable(value):
+        result = _wrap_callable(value, transform)
 
-    if isinstance(value, Effect):
-        #logger.info(f"Intercepting Effect: {value}")
-        return value.intercept(transform)
+    return result
 
-    if isinstance(value, dict):
-        changed = False
-        new_items: Dict[Any, Any] = {}
-        for key, item in value.items():
-            new_item = _intercept_value(item, transform)
-            if new_item is not item:
-                changed = True
-            new_items[key] = new_item
-        if not changed:
-            return value
-        return new_items
 
-    if isinstance(value, tuple):
-        new_items = tuple(_intercept_value(item, transform) for item in value)
-        if new_items == value:
-            return value
-        return new_items
+def _intercept_mapping(
+    mapping: dict[Any, Any], transform: Callable[[Effect], Effect | Program]
+) -> dict[Any, Any]:
+    changed = False
+    new_items: dict[Any, Any] = {}
+    for key, item in mapping.items():
+        new_item = _intercept_value(item, transform)
+        if new_item is not item:
+            changed = True
+        new_items[key] = new_item
+    return new_items if changed else mapping
 
-    if isinstance(value, list):
-        return [_intercept_value(item, transform) for item in value]
 
-    if isinstance(value, set):
-        return {_intercept_value(item, transform) for item in value}
+def _intercept_tuple(
+    items: tuple[Any, ...], transform: Callable[[Effect], Effect | Program]
+) -> tuple[Any, ...]:
+    new_items = tuple(_intercept_value(item, transform) for item in items)
+    return new_items if new_items != items else items
 
-    if isinstance(value, frozenset):
-        return frozenset(_intercept_value(item, transform) for item in value)
-
-    if callable(value):
-        return _wrap_callable(value, transform)
-
-    return value
 
 
 def _wrap_callable(
-    func: Callable[..., Any], transform: Callable[[Effect], Effect | "Program"]
+    func: Callable[..., Any], transform: Callable[[Effect], Effect | Program]
 ):
     """Wrap callable so that any Program it returns is intercepted."""
 
@@ -1405,29 +1673,27 @@ def _wrap_callable(
         return _intercept_value(result, transform)
 
     return wrapper
-
-
 __all__ = [
-    # Vendored types
-    "TraceError",
-    "trace_err",
-    "Ok",
+    "NOTHING",
+    "Effect",
+    "EffectFailure",
+    "EffectFailureError",
+    "EffectGenerator",
+    "EffectObservation",
     "Err",
-    "Result",
+    "ExecutionContext",
+    "FrozenDict",
+    "ListenResult",
     "Maybe",
     "Nothing",
-    "NOTHING",
+    "Ok",
+    "Program",
+    "Result",
+    "RunResult",
     "Some",
+    "TraceError",
+    "WGraph",
     "WNode",
     "WStep",
-    "WGraph",
-    "FrozenDict",
-    # Core types
-    "Effect",
-    "EffectGenerator",
-    "Program",
-    "ExecutionContext",
-    "EffectObservation",
-    "RunResult",
-    "ListenResult",
+    "trace_err",
 ]
