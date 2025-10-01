@@ -1,5 +1,8 @@
 # Class Architecture: Doeff CLI Enhancement
 
+> **Status**: ✅ IMPLEMENTED - This document describes the original design. Implementation matches this architecture closely.
+> See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) for actual code locations.
+
 ## Design Principles
 
 ### 1. SOLID Principles
@@ -947,33 +950,38 @@ class ProgramInterpreter:
 
 ---
 
-## Migration Path
+## Implementation Results
 
-### Phase 1: ProgramInterpreter (Breaking)
-- Change async → sync
-- Update all callers
-- Release as breaking change
+### Phase 1: ProgramInterpreter (Breaking) ✅ COMPLETED
+- ✅ Changed async → sync (Commit `5d09215`)
+- ✅ Updated all 266 test callers
+- ✅ Released as breaking change
+- **Actual files**: `doeff/interpreter.py`
 
-### Phase 2: Indexer Enhancement
-- Add PyO3 bindings
-- Add variable indexing
-- Add docstring parsing
-- Backward compatible
+### Phase 2: Indexer Enhancement ✅ COMPLETED
+- ✅ Added PyO3 bindings (Commit `5d09215`)
+- ✅ Added variable indexing
+- ✅ Docstring parsing already existed
+- ✅ Backward compatible
+- **Actual files**: `packages/doeff-indexer/src/python_api.rs`
 
-### Phase 3: Discovery Services
-- Add new Python services
-- No changes to existing code
-- Backward compatible
+### Phase 3: Discovery Services ✅ COMPLETED
+- ✅ Added Python discovery services (Commit `e3a2721`)
+- ✅ No changes to existing code
+- ✅ Backward compatible
+- **Actual files**: `doeff/cli/discovery.py`, `tests/test_discovery.py`
 
-### Phase 4: CLI Integration
-- Make --interpreter optional
-- Add --env flag
-- Auto-discovery
-- Backward compatible (existing usage works)
+### Phase 4: CLI Integration ✅ COMPLETED
+- ✅ Made --interpreter optional (Commit `e3a2721`)
+- ✅ Added --env flag with action="append"
+- ✅ Auto-discovery working
+- ✅ Backward compatible (existing usage works)
+- **Actual files**: `doeff/__main__.py`, `tests/test_cli_run.py`
 
-### Phase 5: Effect Enhancement
-- Update Local
-- Backward compatible (dict still works)
+### Phase 5: Effect Enhancement ⏭️ SKIPPED
+- ⏭️ Local effect enhancement not needed
+- ✅ Existing Local + Program composition sufficient
+- **Reason**: @do composition worked perfectly without changes
 
 ---
 
