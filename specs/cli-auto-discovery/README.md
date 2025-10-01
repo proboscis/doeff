@@ -22,6 +22,22 @@
 
 ## Quick Overview
 
+```mermaid
+graph LR
+    A[User runs doeff] --> B[Discovery Phase]
+    B --> C{Interpreter<br/>specified?}
+    C -->|No| D[Auto-discover<br/>interpreter]
+    C -->|Yes| E[Use specified]
+    D --> F[Find envs]
+    E --> F
+    F --> G[Merge envs]
+    G --> H[Execute program]
+
+    style D fill:#90EE90
+    style F fill:#90EE90
+    style G fill:#90EE90
+```
+
 ### What Was Implemented
 
 1. **ProgramInterpreter Sync API** (Phase 1)
@@ -47,6 +63,39 @@
    - Usage examples and marker syntax
 
 ### Key Features
+
+```mermaid
+graph TB
+    subgraph "Module Hierarchy"
+        A[myapp/__init__.py]
+        B[myapp/features/__init__.py]
+        C[myapp/features/auth/__init__.py]
+        D[myapp/features/auth/login.py]
+    end
+
+    subgraph "Discovery Results"
+        E[base_interpreter<br/>base_env]
+        F[features_env]
+        G[auth_interpreter ✓<br/>auth_env]
+        H[login_program]
+    end
+
+    A --> E
+    B --> F
+    C --> G
+    D --> H
+
+    E -.-> I[Merge: base_env]
+    F -.-> I
+    G -.-> I
+    I --> J[Final: auth_env<br/>overrides all]
+
+    G ==> K[Closest interpreter<br/>selected]
+
+    style G fill:#FFD700
+    style K fill:#90EE90
+    style J fill:#87CEEB
+```
 
 #### Interpreter Discovery
 ```python
