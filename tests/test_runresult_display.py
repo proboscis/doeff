@@ -502,33 +502,19 @@ async def test_display_dep_ask_aggregated_statistics():
 
     display = result.display()
 
-    # Check that Dep/Ask Usage section exists
-    assert "🔗 Dep/Ask Usage Statistics:" in display
+    # Check usage summary stats
+    assert "🔗 Dep/Ask Usage:" in display
+    assert "Dep: 4 calls, 2 unique keys" in display
+    assert "Ask: 7 calls, 4 unique keys" in display
 
-    # Check aggregated Dep statistics
-    assert "Dep effects:" in display
-    assert "4 total accesses" in display  # 3 database + 1 logger
-    assert "2 unique keys" in display
-
-    # Check individual Dep key statistics with counts
-    assert '"database"' in display
-    assert "3 accesses" in display  # database accessed 3 times
-    assert '"logger"' in display
-    assert "1 access" in display  # logger accessed once
-
-    # Check aggregated Ask statistics
-    assert "Ask effects:" in display
-    # Note: Ask effects include all Dep keys as well (due to handler implementation)
-    # so we just verify the section exists and shows the right structure
-
-    # Check individual Ask key statistics
-    assert '"config"' in display
-    assert "2 accesses" in display  # config accessed twice
-    assert '"api_key"' in display
-
-    # Verify that "First used at:" shows location info
-    assert "First used at:" in display
-    assert "inner_program" in display
+    # Check key summary output with counts
+    assert "🧩 Dep/Ask Keys:" in display
+    assert "Ask: 'database' (x3)" in display
+    assert "'config' (x2)" in display
+    assert "'api_key'" in display
+    assert "'logger'" in display
+    assert "Dep: 'database' (x3)" in display
+    assert "Dep: 'database' (x3), 'logger'" in display
 
 
 @pytest.mark.asyncio
@@ -566,20 +552,24 @@ async def test_display_compact_keys_section():
 
     display = result.display()
 
-    # Check that compact keys section exists
-    assert "🔑 All Used Keys (Compact):" in display
+    assert "🧩 Dep/Ask Keys:" in display
 
-    # Check that Dep keys are listed compactly
-    assert "Dep keys" in display
-    assert "database" in display
-    assert "config" in display
-    assert "logger" in display
+    raw_lines = display.splitlines()
+    summary_index = raw_lines.index("🧩 Dep/Ask Keys:")
+    key_lines = [line.strip() for line in raw_lines[summary_index + 1 :]]
 
-    # Check that Ask keys are listed compactly
-    assert "Ask keys" in display
-    assert "api_key" in display
-    assert "timeout" in display
-    assert "endpoint" in display
+    ask_line = next(
+        line for line in key_lines if line.startswith("Ask:")
+    )
+    dep_line = next(
+        line for line in key_lines if line.startswith("Dep:")
+    )
+
+    for key in ["api_key", "timeout", "endpoint"]:
+        assert f"'{key}'" in ask_line
+
+    for key in ["database", "config", "logger"]:
+        assert f"'{key}'" in dep_line
 
 
 @pytest.mark.asyncio
@@ -597,13 +587,11 @@ async def test_display_no_dep_ask_effects():
     display = result.display()
 
     # Check that the section shows "no effects" message
-    assert "🔗 Dep/Ask Usage Statistics:" in display
+    assert "🔗 Dep/Ask Usage:" in display
     assert "(no Dep/Ask effects observed)" in display
 
-    # Compact keys section should not appear if there are no keys
-    # Or it should show empty lists
-    if "🔑 All Used Keys (Compact):" in display:
-        assert "(none)" in display or "Dep keys (0):" in display
+    # Key summary section should not appear when there are no observations
+    assert "🧩 Dep/Ask Keys:" not in display
 
 
 @pytest.mark.asyncio
@@ -622,4 +610,4 @@ async def test_display_dep_ask_with_none_keys():
     # Should not crash even with unusual observations
     display = result.display()
     assert isinstance(display, str)
-    assert "🔗 Dep/Ask Usage Statistics:" in display
+    assert "🔗 Dep/Ask Usage:" in display
