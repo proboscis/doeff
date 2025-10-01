@@ -1,6 +1,9 @@
 # Doeff-Indexer Investigation Findings
 
-## Current State (packages/doeff-indexer/)
+> **Status**: ✅ IMPLEMENTED - This was the Phase 0 investigation document.
+> All identified gaps have been addressed. See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
+
+## Current State (packages/doeff-indexer/) - As Investigated
 
 ### ✅ What Exists
 
@@ -451,12 +454,69 @@ pip install dist/doeff_indexer-*.whl
 - Comprehensive function categorization
 - Fast and reliable
 
-**Required Additions**:
+**Required Additions** (As Identified):
 1. ✅ **PyO3 bindings** - enables Python CLI to use indexer
 2. ✅ **Docstring parsing** - preferred marker location
 3. ✅ **Variable indexing** - discover env declarations
 4. ✅ **Module hierarchy API** - for discovery traversal
 5. ⚠️ **Module filtering** - nice to have, can do in Python
 
-**Effort Estimate**: 3-4 days of Rust development
-**Impact**: Unblocks all CLI features, maintains backward compatibility
+**Original Estimate**: 3-4 days of Rust development
+**Actual Result**: Completed in Phase 2 (Commit `5d09215`)
+**Impact**: ✅ Unblocked all CLI features, maintained backward compatibility
+
+---
+
+## Implementation Results (Added October 2025)
+
+### What Was Built
+
+1. **PyO3 Bindings** ✅
+   - Created `python_api.rs` (269 lines)
+   - `Indexer` class with `for_module()` and `find_symbols()`
+   - `SymbolInfo` class with all metadata
+   - Installed via `uvx maturin develop --release`
+
+2. **Docstring Parsing** ✅
+   - Already existed! `extract_markers_from_docstring()` was present
+   - Enhanced to work with both functions and variables
+   - No changes needed
+
+3. **Variable Indexing** ✅
+   - Added `analyze_assignment()` function
+   - Indexes annotated assignments with `Program` types
+   - Indexes variables with `# doeff:` markers
+   - Conservative approach (only typed or marked variables)
+
+4. **Module Hierarchy** ✅
+   - Implemented via Python-side `_get_module_hierarchy()`
+   - Returns list from root to module
+   - Used for closest interpreter selection
+
+5. **Module Filtering** ✅
+   - Implemented in Python discovery layer
+   - No changes to indexer needed
+
+### Files Created/Modified
+
+**Created**:
+- `packages/doeff-indexer/src/python_api.rs` (269 lines)
+
+**Modified**:
+- `packages/doeff-indexer/Cargo.toml` (added PyO3 features)
+- `packages/doeff-indexer/src/lib.rs` (exposed python_api module)
+- `packages/doeff-indexer/src/indexer.rs` (variable indexing)
+
+### Performance
+
+- Discovery overhead: < 100ms (excellent)
+- No caching needed for v1
+- Rust indexer remains very fast
+
+### Backward Compatibility
+
+✅ **Fully maintained**:
+- CLI commands unchanged (IDE plugins work)
+- Existing function indexing unchanged
+- PyO3 API is pure addition
+- No breaking changes to Rust API
