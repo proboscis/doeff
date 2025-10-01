@@ -281,6 +281,10 @@ This means Local effect must be updated to accept Program[dict] as its first arg
 # Implementation
 - default value search feature should be implemented with rust with pyo3 for performance, to be called from python CLI
 
+# Doeff-Indexer
+- We already have doeff-indexer that finds # doeff: ... from func name, but not from docstring. we need to update this indexer as well.
+also, if that indexer can be used from python, we should use it rather than re-implementing the logic in python.
+
 """
 
 if __name__ == "__main__":
