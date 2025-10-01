@@ -1,0 +1,55 @@
+# Pinjected Linter Configuration for doeff project
+
+# Exclude paths from linting
+exclude = [
+    ".venv",
+    "venv",
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".pytest_cache",
+    ".ruff_cache",
+    "node_modules",
+    "tmp",
+]
+
+# Disable all pinjected-specific rules since doeff doesn't use pinjected patterns
+# Only keep stub file generation (PINJ036) for type safety
+enable = [
+    "PINJ036",  # Missing stub file (.pyi) - auto-fixable
+]
+
+# Disable all other pinjected rules since this project doesn't use pinjected
+disable = [
+    "PINJ001",  # Async instance naming
+    "PINJ002",  # Instance defaults
+    "PINJ003",  # Async instance naming
+    "PINJ004",  # Direct instance call
+    "PINJ005",  # Reserved
+    "PINJ006",  # Async injected naming
+    "PINJ007",  # Slash separator position
+    "PINJ008",  # Injected dependency declaration
+    "PINJ009",  # No await in injected
+    "PINJ010",  # Design usage
+    "PINJ011",  # IProxy annotations
+    "PINJ012",  # Dependency cycles
+    "PINJ013",  # Builtin shadowing
+    "PINJ014",  # Missing stub file (replaced by PINJ036)
+    "PINJ015",  # Reserved
+    "PINJ016",  # Missing protocol parameter
+    "PINJ017",  # Missing type annotations
+    "PINJ019",  # No __main__ block
+    "PINJ026",  # a_ prefix type annotations
+    "PINJ027",  # No nested @injected
+    "PINJ028",  # No design() in @injected
+    "PINJ040",  # Test function patterns
+    "PINJ050",  # Environment variables
+    "PINJ053",  # Test class patterns
+    "PINJ054",  # Tuple returns
+]
+
+# Configure stub file generation
+[rules.PINJ036]
+auto_generate = true
+min_public_symbols = 5
