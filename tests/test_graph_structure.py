@@ -18,7 +18,7 @@ def _program() -> EffectGenerator[list[str]]:
 
 async def _run():
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(_program())
+    result = await interpreter.run_async(_program())
     return result.graph
 
 

@@ -31,7 +31,8 @@ async def test_kleisli_basic():
 
     @do
     def add(x: int, y: int) -> Generator[Effect | Program, Any, int]:
-        if False: yield  # Make it a generator
+        if False:  # Make it a generator
+            yield
         return x + y
 
     # Check that add is a KleisliProgram
@@ -43,7 +44,7 @@ async def test_kleisli_basic():
 
     # Run it
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 5
@@ -66,7 +67,7 @@ async def test_kleisli_unwrap_program_args():
     prog = add(prog_x, prog_y)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 30
@@ -91,7 +92,7 @@ async def test_kleisli_mixed_args():
     prog = multiply(prog_x, 3, prog_z)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 30  # 2 * 3 * 5
@@ -116,7 +117,7 @@ async def test_kleisli_kwargs():
     prog = greet(name=prog_name, age=prog_age, city="Tokyo")
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == "Alice is 30 years old and lives in Tokyo"
@@ -135,7 +136,7 @@ async def test_kleisli_respects_program_annotation():
 
     program_arg = Program.pure(42)
     engine = ProgramInterpreter()
-    result = await engine.run(echo(program_arg))
+    result = await engine.run_async(echo(program_arg))
 
     assert result.is_ok
     assert result.value == 42
@@ -171,7 +172,7 @@ async def test_kleisli_with_effects():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(state={"input_x": 5, "input_y": 7})
-    result = await engine.run(prog, context)
+    result = await engine.run_async(prog, context)
 
     assert result.is_ok
     assert result.value == 12
@@ -205,7 +206,7 @@ async def test_kleisli_composition():
     prog_final = stringify(prog_added)  # Unwraps prog_added automatically
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog_final)
+    result = await engine.run_async(prog_final)
 
     assert result.is_ok
     assert result.value == "Result: 20"  # (5 * 2) + 10 = 20
@@ -241,7 +242,7 @@ async def test_kleisli_async():
     prog_result = process_data(prog_data, prog_prefix)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog_result)
+    result = await engine.run_async(prog_result)
 
     assert result.is_ok
     assert result.value == "PROCESSED: Data from https://api.example.com"
@@ -265,7 +266,7 @@ async def test_kleisli_no_args():
     assert isinstance(prog, Program)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 42
@@ -290,7 +291,7 @@ async def test_kleisli_error_propagation():
     prog_result = use_value(prog_fail)  # Should propagate the error
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog_result)
+    result = await engine.run_async(prog_result)
 
     assert result.is_err
     # Unwrap EffectFailure if needed
@@ -323,7 +324,7 @@ async def test_kleisli_all_program_args():
     prog = concat_three(prog_a, prog_b, prog_c)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == "foo-bar-baz"
@@ -343,13 +344,13 @@ async def test_kleisli_partial_application():
     engine = ProgramInterpreter()
 
     prog = part(Program.pure(5))
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
     assert result.is_ok
     assert result.value == 7
 
     part2 = part.partial(Program.pure(8))
     prog2 = part2()
-    result2 = await engine.run(prog2)
+    result2 = await engine.run_async(prog2)
     assert result2.is_ok
     assert result2.value == 10
 
@@ -367,7 +368,7 @@ async def test_kleisli_partial_with_kwargs():
     engine = ProgramInterpreter()
 
     prog = part(Program.pure(6), scale=Program.pure(3))
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 30
@@ -389,7 +390,7 @@ async def test_kleisli_partial_chain_kwargs():
     part3 = part2.partial(c=Program.pure(3))
 
     engine = ProgramInterpreter()
-    result = await engine.run(part3())
+    result = await engine.run_async(part3())
 
     assert result.is_ok
     assert result.value == (1, 2, 3)
@@ -398,7 +399,7 @@ async def test_kleisli_partial_chain_kwargs():
 def test_kleisli_program_preserves_callable_signature():
     """KleisliProgram instances expose the wrapped callable signature."""
 
-    def sample(a: int, b: str = "hi") -> Program[int]:
+    def sample(a: int, _b: str = "hi") -> Program[int]:
         return Program.pure(a)
 
     program = KleisliProgram(sample)
@@ -420,17 +421,21 @@ async def test_kleisli_and_then_operator():
         yield Log(f"Multiplying {value} by {factor}")
         return value * factor
 
-    binder = lambda n: multiply(n, Program.pure(3))
+    def binder(n):
+        return multiply(n, Program.pure(3))
+
     chained = load_number.and_then_k(binder)
     chained_alias = load_number >> binder
 
     engine = ProgramInterpreter()
 
-    result1 = await engine.run(chained(Program.pure(5)))
-    result2 = await engine.run(chained_alias(Program.pure(5)))
+    result1 = await engine.run_async(chained(Program.pure(5)))
+    result2 = await engine.run_async(chained_alias(Program.pure(5)))
 
-    assert result1.is_ok and result1.value == 15
-    assert result2.is_ok and result2.value == 15
+    assert result1.is_ok
+    assert result1.value == 15
+    assert result2.is_ok
+    assert result2.value == 15
     assert result1.log == result2.log
 
 
@@ -445,7 +450,7 @@ async def test_kleisli_fmap():
     mapped = load_number.fmap(lambda n: n * 4)
     engine = ProgramInterpreter()
 
-    result = await engine.run(mapped(Program.pure(6)))
+    result = await engine.run_async(mapped(Program.pure(6)))
 
     assert result.is_ok
     assert result.value == 24

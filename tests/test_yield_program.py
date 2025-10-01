@@ -115,7 +115,7 @@ async def test_basic_program_yield():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(main_program(5), context)
+    result = await engine.run_async(main_program(5), context)
     assert result.is_ok
     assert result.value["input"] == 5
     assert result.value["doubled"] == 10
@@ -141,7 +141,7 @@ async def test_deeply_nested_yields():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(deeply_nested(5, 0), context)
+    result = await engine.run_async(deeply_nested(5, 0), context)
     assert result.is_ok
     # Result should be: base_value(5) + sum(1..5) = 5 + 15 = 20
     assert result.value == 20
@@ -159,7 +159,7 @@ async def test_mixed_yields():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(program_with_mixed_yields(), context)
+    result = await engine.run_async(program_with_mixed_yields(), context)
     assert result.is_ok
     assert result.value == ["step1", 10, "annotated", "Result is 10", "logged"]
 
@@ -207,7 +207,7 @@ async def test_program_yield_with_error():
     context = ExecutionContext()
 
     # Test that error propagates through yielded Program
-    result = await engine.run(failing_program(), context)
+    result = await engine.run_async(failing_program(), context)
     assert result.is_err
     # Unwrap EffectFailure if needed
     error = result.result.error
@@ -218,7 +218,7 @@ async def test_program_yield_with_error():
 
     # Test error handling with yielded Program
     context2 = ExecutionContext()
-    result2 = await engine.run(main_with_error(), context2)
+    result2 = await engine.run_async(main_with_error(), context2)
 
     # The error should be caught by the engine and returned as Err
     # since we can't catch it with try/except around yield
@@ -257,7 +257,7 @@ async def test_state_threading_through_programs():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(main_counter(), context)
+    result = await engine.run_async(main_counter(), context)
     assert result.is_ok
     assert result.value == [1, 2, 3, 3]  # Three increments, then final read
     assert context.state["counter"] == 3

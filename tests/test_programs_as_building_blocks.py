@@ -79,7 +79,7 @@ async def test_catch_with_programs():
         # Test with simple value return from handler
         simple_recovery = yield Catch(
             risky_program(True),
-            lambda e: "simple recovery",  # Handler returns value directly
+            lambda _e: "simple recovery",  # Handler returns value directly
         )
 
         error_handled = yield Get("error_handled")
@@ -92,7 +92,7 @@ async def test_catch_with_programs():
         }
 
     context = ExecutionContext()
-    result = await engine.run(main_catch_test(), context)
+    result = await engine.run_async(main_catch_test(), context)
 
     assert result.is_ok
     assert result.value["success"] == "success"
@@ -138,7 +138,7 @@ async def test_local_with_programs():
         }
 
     context = ExecutionContext(env={"config": "base"})
-    result = await engine.run(main_local_test(), context)
+    result = await engine.run_async(main_local_test(), context)
 
     assert result.is_ok
     assert result.value["result1"] == "Config was: modified"
@@ -168,7 +168,7 @@ async def test_ask_resolves_program_env_value():
         return first, second
 
     context = ExecutionContext(env={"config": config_provider()})
-    result = await engine.run(main_program(), context)
+    result = await engine.run_async(main_program(), context)
 
     assert result.is_ok
     first, second = result.value
@@ -212,7 +212,7 @@ async def test_listen_with_programs():
         }
 
     context = ExecutionContext()
-    result = await engine.run(main_listen_test(), context)
+    result = await engine.run_async(main_listen_test(), context)
 
     assert result.is_ok
     assert result.value["value1"] == 42
@@ -232,7 +232,7 @@ async def test_nested_effects_with_programs():
     @do
     def catch_program() -> Generator[Effect, Any, str]:
         """A program that uses Catch."""
-        result = yield Catch(risky_program(False), lambda e: "caught")
+        result = yield Catch(risky_program(False), lambda _e: "caught")
         return result
 
     @do
@@ -255,7 +255,7 @@ async def test_nested_effects_with_programs():
         return f"Nested result: {value}"
 
     context = ExecutionContext()
-    result = await engine.run(deeply_nested(), context)
+    result = await engine.run_async(deeply_nested(), context)
 
     assert result.is_ok
     assert result.value == "Nested result: success"
@@ -283,7 +283,7 @@ async def test_no_generator_func_access():
 
     # Instead, we use the Program directly with the engine
     engine = ProgramInterpreter()
-    result = await engine.run(program, ExecutionContext())
+    result = await engine.run_async(program, ExecutionContext())
 
     assert result.is_ok
     assert result.value == "done"

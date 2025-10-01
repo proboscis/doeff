@@ -9,22 +9,22 @@ from typing import Any
 import pytest
 
 from doeff import (
+    NOTHING,
     # Effects
     Ask,
     AtomicUpdate,
     Await,
     Effect,
     ExecutionContext,
+    Gather,
     Get,
     Log,
     Maybe,
-    NOTHING,
     Program,
     ProgramInterpreter,
     Put,
-    Step,
     Some,
-    Gather,
+    Step,
     do,
 )
 
@@ -37,7 +37,7 @@ async def test_program_pure():
 
     # Run it
     engine = ProgramInterpreter()
-    result = await engine.run(pure_prog)
+    result = await engine.run_async(pure_prog)
 
     assert result.is_ok
     assert result.value == 42
@@ -58,7 +58,7 @@ async def test_program_map():
     mapped_prog = base_program().map(lambda x: x * 2)
 
     engine = ProgramInterpreter()
-    result = await engine.run(mapped_prog)
+    result = await engine.run_async(mapped_prog)
 
     assert result.is_ok
     assert result.value == 20  # 10 * 2
@@ -82,7 +82,7 @@ async def test_program_map_chain():
     )  # "Result: 16"
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == "Result: 16"
@@ -109,7 +109,7 @@ async def test_program_flat_map():
     prog = Program.pure(5).flat_map(first_program).flat_map(second_program)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == "first=5, second=10"
@@ -147,7 +147,7 @@ async def test_program_flat_map_with_effects():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"config": {"base": 7, "multiplier": 3}})
-    result = await engine.run(prog, context)
+    result = await engine.run_async(prog, context)
 
     assert result.is_ok
     assert result.value == "Final result: 21"
@@ -177,7 +177,7 @@ async def test_map_vs_flat_map():
     flat_mapped = base_prog().flat_map(effect_prog)
 
     engine = ProgramInterpreter()
-    result = await engine.run(flat_mapped)
+    result = await engine.run_async(flat_mapped)
 
     assert result.is_ok
     assert result.value == 20
@@ -185,7 +185,7 @@ async def test_map_vs_flat_map():
 
     # map version would return a Program, not the value
     mapped = base_prog().map(effect_prog)
-    result2 = await engine.run(mapped)
+    result2 = await engine.run_async(mapped)
 
     # The result is a Program object, not the value
     assert result2.is_ok
@@ -197,7 +197,7 @@ async def test_program_collection_builders_dict():
     engine = ProgramInterpreter()
     prog = Program.dict({"a": Program.pure(1), "b": 2}, c=Program.pure(3))
 
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == {"a": 1, "b": 2, "c": 3}
@@ -211,9 +211,9 @@ async def test_program_collection_builders_sequence():
     tuple_prog = Program.tuple(Program.pure("x"), "y", Program.pure("z"))
     set_prog = Program.set(Program.pure(1), 2, 2)
 
-    list_result = await engine.run(list_prog)
-    tuple_result = await engine.run(tuple_prog)
-    set_result = await engine.run(set_prog)
+    list_result = await engine.run_async(list_prog)
+    tuple_result = await engine.run_async(tuple_prog)
+    set_result = await engine.run_async(set_prog)
 
     assert list_result.is_ok
     assert list_result.value == [1, 2, 3]
@@ -240,8 +240,8 @@ async def test_monadic_laws_left_identity():
     prog2 = f(a)
 
     engine = ProgramInterpreter()
-    result1 = await engine.run(prog1)
-    result2 = await engine.run(prog2)
+    result1 = await engine.run_async(prog1)
+    result2 = await engine.run_async(prog2)
 
     assert result1.value == result2.value
     assert result1.log == result2.log
@@ -261,8 +261,8 @@ async def test_monadic_laws_right_identity():
     prog2 = m()
 
     engine = ProgramInterpreter()
-    result1 = await engine.run(prog1)
-    result2 = await engine.run(prog2)
+    result1 = await engine.run_async(prog1)
+    result2 = await engine.run_async(prog2)
 
     assert result1.value == result2.value
     # Note: logs might differ slightly due to execution
@@ -285,7 +285,7 @@ async def test_async_in_flat_map():
     prog = Program.pure(10).flat_map(async_prog)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 20
@@ -323,7 +323,7 @@ async def test_complex_composition():
     )  # Write to z
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 20  # (0 + 10) * 2
@@ -350,7 +350,7 @@ async def test_error_propagation_in_flat_map():
     prog = Program.pure(10).flat_map(lambda _: failing_prog()).flat_map(never_runs)
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_err
     # Unwrap EffectFailure if needed
@@ -386,7 +386,7 @@ async def test_program_first_success_returns_earliest_success():
     )
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == 99
@@ -407,7 +407,7 @@ async def test_program_first_success_raises_last_error_when_all_fail():
     prog = Program.first_success(failing_one(), failing_two())
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_err
     error = result.result.error
@@ -435,7 +435,7 @@ async def test_program_first_some_returns_first_present_value():
     prog = Program.first_some(none_program(), some_program())
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     value = result.value
@@ -453,7 +453,7 @@ async def test_program_first_some_returns_nothing_when_all_none():
     )
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value is NOTHING
@@ -477,7 +477,7 @@ async def test_program_first_success_resets_state_between_attempts():
 
     prog = Program.first_success(mutating_failure(), reader_success())
 
-    result = await engine.run(prog, context)
+    result = await engine.run_async(prog, context)
 
     assert result.is_ok
     assert result.value == 0
@@ -504,7 +504,7 @@ async def test_run_result_display_shows_shared_state():
         return None
 
     engine = ProgramInterpreter()
-    result = await engine.run(run_parallel())
+    result = await engine.run_async(run_parallel())
 
     assert result.is_ok
     assert result.state["shared_counter"] == 2

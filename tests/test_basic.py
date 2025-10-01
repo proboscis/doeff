@@ -16,7 +16,7 @@ def counter_program() -> Program[int]:
 
 async def main():
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(counter_program())
+    result = await interpreter.run_async(counter_program())
 
     print(f"Result: {result.result}")
     print(f"Final state: {result.state}")

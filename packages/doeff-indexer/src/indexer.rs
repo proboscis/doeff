@@ -277,7 +277,7 @@ fn extract_entries(
             }
             Stmt::AnnAssign(assign) => {
                 if let Some(entry) =
-                    analyze_ann_assignment(assign, module_path, file_path, line_index)
+                    analyze_ann_assignment(assign, module_path, file_path, line_index, source)
                 {
                     entries.push(entry);
                 }
@@ -441,6 +441,23 @@ fn parse_markers(marker_str: &str) -> Vec<String> {
         .collect()
 }
 
+fn extract_markers_from_docstring(docstring: &str) -> Vec<String> {
+    // Search for "# doeff:" markers within the docstring
+    let mut markers = Vec::new();
+
+    for line in docstring.lines() {
+        if let Some(marker_str) = extract_marker_from_line(line) {
+            for marker in parse_markers(&marker_str) {
+                if !markers.contains(&marker) {
+                    markers.push(marker);
+                }
+            }
+        }
+    }
+
+    markers
+}
+
 fn analyze_function(
     func: &StmtFunctionDef,
     module_path: &str,
@@ -450,7 +467,13 @@ fn analyze_function(
     item_kind: ItemKind,
 ) -> Option<IndexEntry> {
     let line = line_index.line_number(func.range.start());
-    let markers = extract_markers_from_source(source, line, &func.name, &func.args);
+    let mut markers = extract_markers_from_source(source, line, &func.name, &func.args);
+
+    // Also check docstring for markers
+    if let Some(docstring) = extract_docstring(&func.body) {
+        markers.append(&mut extract_markers_from_docstring(&docstring));
+    }
+
     analyze_callable(
         &func.name,
         &func.decorator_list,
@@ -474,7 +497,13 @@ fn analyze_async_function(
     item_kind: ItemKind,
 ) -> Option<IndexEntry> {
     let line = line_index.line_number(func.range.start());
-    let markers = extract_markers_from_source(source, line, &func.name, &func.args);
+    let mut markers = extract_markers_from_source(source, line, &func.name, &func.args);
+
+    // Also check docstring for markers
+    if let Some(docstring) = extract_docstring(&func.body) {
+        markers.append(&mut extract_markers_from_docstring(&docstring));
+    }
+
     analyze_callable(
         &func.name,
         &func.decorator_list,
@@ -698,6 +727,8 @@ fn analyze_assignment(
     file_path: &Path,
     line_index: &LineIndex,
 ) -> Vec<IndexEntry> {
+    // For now, skip regular assignments (only handle annotated assignments)
+    // Regular assignments are harder to categorize without type information
     let _ = (assign, module_path, file_path, line_index);
     Vec::new()
 }
@@ -707,9 +738,60 @@ fn analyze_ann_assignment(
     module_path: &str,
     file_path: &Path,
     line_index: &LineIndex,
+    source: &str,
 ) -> Option<IndexEntry> {
-    let _ = (assign, module_path, file_path, line_index);
-    None
+    // Extract variable name
+    let name = match &*assign.target {
+        Expr::Name(name_expr) => name_expr.id.to_string(),
+        _ => return None, // Skip complex targets like tuples
+    };
+
+    let line = line_index.line_number(assign.range.start());
+    let qualified_name = if module_path.is_empty() {
+        name.clone()
+    } else {
+        format!("{}.{}", module_path, name)
+    };
+
+    // Check if this looks like a Program type
+    let mut type_usages = Vec::new();
+    collect_program_type_usages(&assign.annotation, &mut type_usages);
+
+    // Extract markers from same-line comment
+    let lines: Vec<&str> = source.lines().collect();
+    let mut markers = Vec::new();
+    if let Some(source_line) = lines.get(line.saturating_sub(1)) {
+        if let Some(marker_str) = extract_marker_from_line(source_line) {
+            markers = parse_markers(&marker_str);
+        }
+    }
+
+    // Only index if it has markers or is a Program type
+    if markers.is_empty() && type_usages.is_empty() {
+        return None;
+    }
+
+    let mut categories = Vec::new();
+    if !markers.is_empty() {
+        categories.push(EntryCategory::HasMarker);
+    }
+
+    Some(IndexEntry {
+        name,
+        qualified_name,
+        file_path: file_path.to_string_lossy().to_string(),
+        line,
+        item_kind: ItemKind::Assignment,
+        categories,
+        decorators: Vec::new(),
+        docstring: None, // Variables don't have docstrings
+        return_annotation: None,
+        program_parameters: Vec::new(),
+        program_interpreter_parameters: Vec::new(),
+        all_parameters: Vec::new(),
+        type_usages,
+        markers,
+    })
 }
 
 fn collect_parameter_info(args: &Arguments) -> Vec<ParameterInfo<'_>> {

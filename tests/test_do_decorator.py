@@ -167,7 +167,7 @@ async def test_simple():
 
     # Note: simple_program(5) returns a Program, not a generator!
     program = simple_program(5)
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert result.value == 15
@@ -183,7 +183,7 @@ async def test_complex():
     )
 
     program = complex_program("Alice")
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     print(f"   Result type: {type(result.result)}")
     print(f"   Result: {result.result}")
@@ -204,7 +204,7 @@ async def test_deep_chain():
 
     # Test with 10,000 iterations
     program = deep_chain_program(10000)
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert result.value == 10000
@@ -260,7 +260,7 @@ async def test_composition():
     context = ExecutionContext()
 
     program = composed_program(5)
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
 
     assert result.is_ok
     assert result.value == 20  # (5 * 2) + 10

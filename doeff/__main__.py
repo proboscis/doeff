@@ -6,8 +6,9 @@ import importlib
 import inspect
 import json
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Optional
+from typing import Any
 
 from doeff import Program, ProgramInterpreter, RunResult
 from doeff.kleisli import KleisliProgram
@@ -18,7 +19,7 @@ from doeff.types import capture_traceback
 class RunContext:
     program_path: str
     interpreter_path: str
-    apply_path: Optional[str]
+    apply_path: str | None
     transformer_paths: list[str]
     output_format: str
 
@@ -85,11 +86,14 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
     # Ensure missing required parameters
     bound.apply_defaults()
     for param in signature.parameters.values():
-        if param.kind in {param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD}:
-            if param.default is inspect._empty and param.name not in bound.arguments:
-                raise TypeError(
-                    f"Interpreter '{func.__name__}' requires argument '{param.name}' which is not provided."
-                )
+        if (
+            param.kind in {param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD}
+            and param.default is inspect._empty
+            and param.name not in bound.arguments
+        ):
+            raise TypeError(
+                f"Interpreter '{func.__name__}' requires argument '{param.name}' which is not provided."
+            )
     result = func(*bound.args, **bound.kwargs)
     if inspect.isawaitable(result):
         return asyncio.run(result)
@@ -99,7 +103,7 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
 def _finalize_result(value: Any) -> Any:
     if isinstance(value, Program):
         interpreter = ProgramInterpreter()
-        run_result = asyncio.run(interpreter.run(value))
+        run_result = interpreter.run(value)
         return _unwrap_run_result(run_result)
     if isinstance(value, RunResult):
         return _unwrap_run_result(value)
@@ -109,7 +113,7 @@ def _finalize_result(value: Any) -> Any:
 def _unwrap_run_result(result: RunResult[Any]) -> Any:
     try:
         return result.value
-    except Exception as exc:  # noqa: BLE001 - surface error context
+    except Exception as exc:
         raise RuntimeError("Program execution failed") from exc
 
 
@@ -146,7 +150,7 @@ def handle_run(args: argparse.Namespace) -> int:
 
     interpreter_obj = _import_symbol(context.interpreter_path)
     if isinstance(interpreter_obj, ProgramInterpreter):
-        result = asyncio.run(interpreter_obj.run(program))
+        result = interpreter_obj.run(program)
         final_value = _unwrap_run_result(result)
     else:
         interpreter_callable = interpreter_obj
@@ -205,7 +209,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
         return args.func(args)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         captured = capture_traceback(exc)
         if getattr(args, "format", "text") == "json":
             payload = {
@@ -216,11 +220,10 @@ def main(argv: Iterable[str] | None = None) -> int:
             if captured is not None:
                 payload["traceback"] = captured.format(condensed=False, max_lines=200)
             print(json.dumps(payload))
+        elif captured is not None:
+            print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
         else:
-            if captured is not None:
-                print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
-            else:
-                print(f"Error: {exc}", file=sys.stderr)
+            print(f"Error: {exc}", file=sys.stderr)
         return 1
 
 """
@@ -244,7 +247,7 @@ def my_interpreter(prog: Program[Any])->Any:
     \"""
     doeff: interpreter, default
     \"""
-    
+
 # some.module.a.__init__.py
 def another_interpreter(prog: Program[Any])->Any:
     \"""

@@ -75,6 +75,11 @@ ignore = [
     "RET504",  # unnecessary assignment before return
     "PLR2004",  # magic value comparison
     "PLR0913",  # too many arguments
+    "PT019",  # fixture without value - pre-existing in tests
+    "E701",  # multiple statements on one line - pre-existing in tests
+    "RUF005",  # list concatenation style - pre-existing in tests
+    "ARG001",  # unused function argument - pre-existing in tests
+    "ARG002",  # unused method argument - pre-existing in tests
 ]
 external = ["PINJ"]
 

@@ -2,52 +2,49 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+
 import pytest
 
-from dataclasses import dataclass
-from typing import Callable, Sequence
-
 from doeff import (
+    Ask,
+    CaptureGraph,
+    Catch,
     EffectGenerator,
     ExecutionContext,
+    Fail,
+    Finally,
+    FirstSuccess,
+    Gather,
+    GatherDict,
+    Get,
+    Listen,
+    Local,
     Log,
     Program,
     ProgramInterpreter,
-    Ask,
-    Listen,
-    Gather,
-    Program,
-    ProgramInterpreter,
-    Ask,
-    Get,
-    Local,
     Put,
-    Safe,
-    Fail,
     Recover,
-    Finally,
     Retry,
-    FirstSuccess,
-    CaptureGraph,
-    GatherDict,
-    Catch,
+    Safe,
     do,
 )
+from doeff.effects.gather import GatherDictEffect, GatherEffect
+from doeff.effects.graph import GraphCaptureEffect
 from doeff.effects.reader import AskEffect, LocalEffect
+from doeff.effects.result import (
+    ResultCatchEffect,
+    ResultFailEffect,
+    ResultFinallyEffect,
+    ResultFirstSuccessEffect,
+    ResultRecoverEffect,
+    ResultRetryEffect,
+    ResultSafeEffect,
+)
 from doeff.effects.state import StateGetEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-from doeff.effects.result import (
-    ResultSafeEffect,
-    ResultCatchEffect,
-    ResultRecoverEffect,
-    ResultFinallyEffect,
-    ResultRetryEffect,
-    ResultFirstSuccessEffect,
-    ResultFailEffect,
-)
-from doeff.effects.gather import GatherEffect, GatherDictEffect
-from doeff.effects.graph import GraphCaptureEffect
-from doeff.types import EffectBase, Effect
+from doeff.types import Effect, EffectBase
 
 
 @dataclass(frozen=True)
@@ -397,7 +394,7 @@ async def test_intercept_effect_with_log_calls(case: InterceptCase) -> None:
     program = case.build_program()
     context = case.build_context()
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(program.intercept(transformer), context)
+    result = await interpreter.run_async(program.intercept(transformer), context)
 
     assert result.is_ok
     assert tuple(seen) == case.expected
@@ -432,7 +429,7 @@ async def test_intercept_rewrites_local_subprogram():
 
     interpreter = ProgramInterpreter()
     context = ExecutionContext(env={"some_key": "intercepted"})
-    result = await interpreter.run(intercepted, context)
+    result = await interpreter.run_async(intercepted, context)
 
     assert result.is_ok
     assert "ask intercepted" in result.log
@@ -455,7 +452,7 @@ async def test_intercept_rewrites_gathered_programs():
 
     interpreter = ProgramInterpreter()
     context = ExecutionContext(env={"key-1": "intercepted", "key-2": "intercepted"})
-    result = await interpreter.run(intercepted, context)
+    result = await interpreter.run_async(intercepted, context)
 
     assert result.is_ok
     assert result.value == ["intercepted", "intercepted"]
@@ -486,7 +483,7 @@ async def test_intercept_visits_each_effect_once():
         return effect
 
     interpreter = ProgramInterpreter()
-    result = await interpreter.run(outer_program().intercept(transformer))
+    result = await interpreter.run_async(outer_program().intercept(transformer))
 
     assert result.is_ok
     assert result.value == "done"
@@ -513,7 +510,7 @@ async def test_intercept_multiple_layers_single_application():
 
     interpreter = ProgramInterpreter()
     program = simple_program().intercept(make_transform("first")).intercept(make_transform("second"))
-    result = await interpreter.run(program)
+    result = await interpreter.run_async(program)
 
     assert result.is_ok
     for call_ids in counts.values():
@@ -544,7 +541,7 @@ async def test_intercept_many_layers_single_application():
     for name in names:
         program = program.intercept(make_transform(name))
 
-    result = await interpreter.run(program)
+    result = await interpreter.run_async(program)
 
     assert result.is_ok
     for name in names:

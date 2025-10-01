@@ -45,7 +45,7 @@ async def test_gather_list():
     prog = gather_test()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == [2, 4, 6]
@@ -84,7 +84,7 @@ async def test_gather_dict():
     prog = gather_dict_test()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == {"first": 4, "second": 9, "third": 16}
@@ -120,7 +120,7 @@ async def test_gather_with_state():
     prog = gather_state_test()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     # In parallel execution, all programs start with counter=None/0, so all return 1
@@ -142,7 +142,7 @@ async def test_gather_empty():
     prog = empty_gather()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == []
@@ -160,7 +160,7 @@ async def test_gather_dict_empty():
     prog = empty_gather_dict()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == {}
@@ -170,13 +170,13 @@ async def test_gather_dict_empty():
 async def test_gather_with_async():
     """Test Gather with async operations."""
 
-    async def fetch_data(id: int) -> str:
+    async def fetch_data(item_id: int) -> str:
         await asyncio.sleep(0.01)
-        return f"Data-{id}"
+        return f"Data-{item_id}"
 
     @do
-    def async_prog(id: int) -> Generator[Effect | Program, Any, str]:
-        data = yield Await(fetch_data(id))
+    def async_prog(item_id: int) -> Generator[Effect | Program, Any, str]:
+        data = yield Await(fetch_data(item_id))
         yield Log(f"Fetched: {data}")
         return data
 
@@ -189,7 +189,7 @@ async def test_gather_with_async():
     prog = gather_async_test()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == ["Data-0", "Data-1", "Data-2"]
@@ -221,7 +221,7 @@ async def test_gather_error_propagation():
     prog = gather_with_error()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_err
     # Unwrap EffectFailure if needed
@@ -252,7 +252,7 @@ async def test_gather_pure_programs():
     prog = gather_pure()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == [10, 20, 30]
@@ -282,7 +282,7 @@ async def test_gather_dict_mixed():
     prog = gather_mixed()
 
     engine = ProgramInterpreter()
-    result = await engine.run(prog)
+    result = await engine.run_async(prog)
 
     assert result.is_ok
     assert result.value == {"pure": 5, "effect": 30, "another_pure": "hello"}
