@@ -223,6 +223,65 @@ def main(argv: Iterable[str] | None = None) -> int:
                 print(f"Error: {exc}", file=sys.stderr)
         return 1
 
+"""
+Feature Update Plan:
+
+- We want to add some way to specify the `default` for `interpreter` and `env`
+# Default Interpreter
+given a program's module path, we find the default interpreter path to use if not specified for doeff run.
+
+# Interpreter
+- We treat a function with a single positional argument of type Program as an interpreter.
+- An interpreter must have `# doeff: interpreter` in its docstring.
+- We find default interpreter by recursively searching from the top-level module down to the module containing the program.
+- If multiple is found, then we use the closest one to the program's module.
+- An interpreter which can be used as default must have `default` after `doeff: ...` in its docstring.
+Example:
+```
+# doeff run some.module.a.b.c.program
+# some.module.__init__.py
+def my_interpreter(prog: Program[Any])->Any:
+    \"""
+    doeff: interpreter, default
+    \"""
+    
+# some.module.a.__init__.py
+def another_interpreter(prog: Program[Any])->Any:
+    \"""
+    doeff: interpreter, default
+    \"""
+# this another_interpreter should be used for some.module.a.b.c.program because it's closer.
+
+# Env Specification
+For doeff run, we want to specify the env to use.
+`--env some.module.env` where `some.module.env` is a dict-like object.
+This is equivalent to wrapping the program with Local effect.
+For example:
+`doeff run --program some.module.a.b.c.program --env some.module.env`
+```python
+# some/module/env.py
+
+default_env:Program[dict] = Program.pure(dict(
+    some_kleisli_service=do_something,
+    config_value = 42
+    ...
+))
+
+# some/module/a/b/c.py
+program: Program[...] = ...
+...
+Then it is equivalent to:
+```
+program:Program[Any] = _import_symbol("some.module.a.b.c:program")
+env_p:Program[dict] = _import_symbol("some.module.env:default_env")
+user_interpreter(Program.from_effect(Local(env, program)))
+```
+This means Local effect must be updated to accept Program[dict] as its first argument, in addition to dict.
+
+# Implementation
+- default value search feature should be implemented with rust with pyo3 for performance, to be called from python CLI
+
+"""
 
 if __name__ == "__main__":
     sys.exit(main())
