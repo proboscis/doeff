@@ -1,6 +1,0 @@
-fixes: Any
-
-def fix_file(filepath: Path, line_fixes: list[tuple[int, str, str]]) -> Any: ...
-
-def main() -> Any: ...
-
