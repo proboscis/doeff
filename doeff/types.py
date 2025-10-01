@@ -8,22 +8,17 @@ from __future__ import annotations
 
 import json
 import traceback
-from pprint import pformat
-from dataclasses import dataclass, field, replace
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Generator
+from dataclasses import dataclass, field, replace
 from functools import wraps
+from pprint import pformat
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    Generator,
     Generic,
-    List,
-    Optional,
     Protocol,
     TypeVar,
-    Union,
-    TYPE_CHECKING,
     runtime_checkable,
 )
 
@@ -31,24 +26,25 @@ from typing import (
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
-    from doeff.program import Program
     from phart.styles import NodeStyle
+
+    from doeff.program import Program
 
 # Re-export vendored types for backward compatibility
 from doeff._vendor import (
-    TraceError,
-    trace_err,
-    Ok,
+    NOTHING,
     Err,
-    Result,
+    FrozenDict,
     Maybe,
     Nothing,
-    NOTHING,
+    Ok,
+    Result,
     Some,
+    TraceError,
+    WGraph,
     WNode,
     WStep,
-    WGraph,
-    FrozenDict,
+    trace_err,
 )
 
 # Type variables
@@ -62,18 +58,18 @@ U = TypeVar("U")
 @dataclass(frozen=True)
 class EffectCreationContext:
     """Context information about where an effect was created."""
-    
+
     filename: str
     line: int
     function: str
     code: str | None = None
-    stack_trace: List[Dict[str, Any]] = field(default_factory=list)
+    stack_trace: list[dict[str, Any]] = field(default_factory=list)
     frame_info: Any = None  # FrameInfo from inspect module
-    
+
     def format_location(self) -> str:
         """Format the creation location as a string."""
-        return f'{self.filename}:{self.line} in {self.function}'
-    
+        return f"{self.filename}:{self.line} in {self.function}"
+
     def format_full(self) -> str:
         """Format the full creation context with stack trace."""
         lines = []
@@ -87,32 +83,32 @@ class EffectCreationContext:
                 if frame.get("code"):
                     lines.append(f'    {frame["code"]}')
         return "\n".join(lines)
-    
+
     def build_traceback(self) -> str:
         """Build a detailed traceback-style output from stored frame information."""
         lines = []
         lines.append("Traceback (most recent call last):")
-        
+
         # Add frames from stack_trace in reverse order (innermost last)
         if self.stack_trace:
             for frame in reversed(self.stack_trace):
-                filename = frame.get('filename', '<unknown>')
-                line_no = frame.get('line', 0)
-                func_name = frame.get('function', '<unknown>')
-                code = frame.get('code', '')
-                
+                filename = frame.get("filename", "<unknown>")
+                line_no = frame.get("line", 0)
+                func_name = frame.get("function", "<unknown>")
+                code = frame.get("code", "")
+
                 lines.append(f'  File "{filename}", line {line_no}, in {func_name}')
                 if code:
-                    lines.append(f'    {code}')
-        
+                    lines.append(f"    {code}")
+
         # Add the immediate creation location
         lines.append(f'  File "{self.filename}", line {self.line}, in {self.function}')
         if self.code:
-            lines.append(f'    {self.code}')
-        
+            lines.append(f"    {self.code}")
+
         return "\n".join(lines)
 
-    def without_frames(self) -> "EffectCreationContext":
+    def without_frames(self) -> EffectCreationContext:
         """Return a sanitized copy without live frame references."""
 
         sanitized_stack: list[dict[str, Any]] = []
@@ -189,7 +185,7 @@ class CapturedTraceback:
 
         return sanitized
 
-    def lines(
+    def lines(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         *,
         condensed: bool = False,
@@ -262,9 +258,7 @@ class CapturedTraceback:
             lowered = path.lower()
             if "/site-packages/" in lowered:
                 return True
-            if "/python" in lowered and "/repos/" not in lowered:
-                return True
-            return False
+            return "/python" in lowered and "/repos/" not in lowered
 
         frame_spans = _frame_spans()
         user_span_end: int | None = None
@@ -347,17 +341,17 @@ def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:
 # ============================================
 
 @dataclass
-class EffectFailure(Exception):
+class EffectFailure(Exception):  # noqa: N818
     """Complete error information for a failed effect.
 
     Combines both the runtime traceback (where error occurred) and
     creation context (where effect was created) into a single clean structure.
     """
 
-    effect: "Effect"
+    effect: Effect
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: CapturedTraceback | None = None  # Runtime stack trace where error occurred
-    creation_context: Optional[EffectCreationContext] = None  # Where the effect was created
+    creation_context: EffectCreationContext | None = None  # Where the effect was created
 
     def __str__(self) -> str:
         """Format the error for display."""
@@ -371,7 +365,7 @@ class EffectFailure(Exception):
         lines.append(f"Caused by: {self.cause.__class__.__name__}: {self.cause}")
 
         return "\n".join(lines)
-    
+
     def __post_init__(self):
         """Capture runtime traceback if not provided."""
         if self.creation_context is None:
@@ -395,14 +389,14 @@ E = TypeVar("E", bound="EffectBase")
 class Effect(Protocol):
     """Protocol implemented by all effect values."""
 
-    created_at: Optional[EffectCreationContext]
+    created_at: EffectCreationContext | None
 
     def intercept(
-        self, transform: Callable[["Effect"], "Effect | Program"]
-    ) -> "Effect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> Effect:
         """Return a copy where any nested programs are intercepted."""
 
-    def with_created_at(self: E, created_at: Optional[EffectCreationContext]) -> E:
+    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
         """Return a copy with updated creation context."""
 
 
@@ -410,19 +404,19 @@ class Effect(Protocol):
 class EffectBase(ABC):
     """Base dataclass implementing :class:`Effect` semantics."""
 
-    created_at: Optional[EffectCreationContext] = field(
+    created_at: EffectCreationContext | None = field(
         default=None, compare=False
     )
 
     @abstractmethod
     def intercept(
-        self: E, transform: Callable[[Effect], Effect | "Program"]
+        self: E, transform: Callable[[Effect], Effect | Program]
     ) -> E:
         """Return a copy where any nested programs are intercepted."""
         raise NotImplementedError
 
     def with_created_at(
-        self: E, created_at: Optional[EffectCreationContext]
+        self: E, created_at: EffectCreationContext | None
     ) -> E:
         if created_at is self.created_at:
             return self
@@ -432,10 +426,10 @@ class EffectBase(ABC):
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
 if TYPE_CHECKING:
-    EffectGenerator = Generator[Union[Effect, "Program"], Any, T]
+    EffectGenerator = Generator[Effect | "Program", Any, T]
 else:
     # Runtime version to avoid importing Program
-    EffectGenerator = Generator[Union[Effect, Any], Any, T]
+    EffectGenerator = Generator[Effect | Any, Any, T]
 
 
 # ============================================
@@ -459,19 +453,19 @@ class ExecutionContext:
     """
 
     # Reader environment
-    env: Dict[str, Any] = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)
     # State storage
-    state: Dict[str, Any] = field(default_factory=dict)
+    state: dict[str, Any] = field(default_factory=dict)
     # Writer log
-    log: List[Any] = field(default_factory=list)
+    log: list[Any] = field(default_factory=list)
     # Computation graph
     graph: WGraph = field(default_factory=lambda: WGraph.single(None))
     # IO permission flag
     io_allowed: bool = True
     # Memo storage (shared across parallel executions)
-    cache: Dict[str, Any] = field(default_factory=dict)
+    cache: dict[str, Any] = field(default_factory=dict)
     # Observed effects during run (shared reference)
-    effect_observations: list["EffectObservation"] = field(default_factory=list)
+    effect_observations: list[EffectObservation] = field(default_factory=list)
 
     def copy(self) -> ExecutionContext:
         """Create a shallow copy of the context."""
@@ -485,7 +479,7 @@ class ExecutionContext:
             effect_observations=self.effect_observations,
         )
 
-    def with_env_update(self, updates: Dict[str, Any]) -> ExecutionContext:
+    def with_env_update(self, updates: dict[str, Any]) -> ExecutionContext:
         """Create a new context with updated environment."""
         new_env = self.env.copy()
         new_env.update(updates)
@@ -543,7 +537,7 @@ class RunFailureDetails:
     entries: tuple[FailureEntry, ...]
 
     @classmethod
-    def from_error(cls, error: Any) -> "RunFailureDetails | None":
+    def from_error(cls, error: Any) -> RunFailureDetails | None:
         if not isinstance(error, BaseException):
             return None
 
@@ -622,31 +616,30 @@ class RunResult(Generic[T]):
         """Get the successful value or raise an exception."""
         if isinstance(self.result, Ok):
             return self.result.value
-        else:
-            raise self.result.error
-    
+        raise self.result.error
+
     @property
     def is_ok(self) -> bool:
         """Check if the result is successful."""
         return isinstance(self.result, Ok)
-    
+
     @property
     def is_err(self) -> bool:
         """Check if the result is an error."""
         return isinstance(self.result, Err)
 
     @property
-    def env(self) -> Dict[str, Any]:
+    def env(self) -> dict[str, Any]:
         """Get the final environment."""
         return self.context.env
 
     @property
-    def state(self) -> Dict[str, Any]:
+    def state(self) -> dict[str, Any]:
         """Get the final state."""
         return self.context.state
 
     @property
-    def shared_state(self) -> Dict[str, Any]:
+    def shared_state(self) -> dict[str, Any]:
         """Get shared atomic state captured during execution."""
         store = self.context.cache.get("__atomic_state__")
         if isinstance(store, dict):
@@ -654,7 +647,7 @@ class RunResult(Generic[T]):
         return {}
 
     @property
-    def log(self) -> List[Any]:
+    def log(self) -> list[Any]:
         """Get the accumulated log."""
         return self.context.log
 
@@ -664,7 +657,7 @@ class RunResult(Generic[T]):
         return self.context.graph
 
     @property
-    def effect_observations(self) -> list["EffectObservation"]:
+    def effect_observations(self) -> list[EffectObservation]:
         """Get recorded effect observations."""
         return self.context.effect_observations
 
@@ -690,7 +683,7 @@ class RunResult(Generic[T]):
                 return f"{exc.__class__.__name__}: {exc}"
         return repr(self.result.error)
 
-    def format_error(self, *, condensed: bool = False) -> str:
+    def format_error(self, *, condensed: bool = False) -> str:  # noqa: PLR0911
         """Return a formatted traceback for the failure if present."""
         if self.is_ok:
             return ""
@@ -727,7 +720,7 @@ class RunResult(Generic[T]):
     def __repr__(self) -> str:
         if self.is_ok:
             return (
-                f"RunResult(Ok({repr(self.result.value)}), "
+                f"RunResult(Ok({self.result.value!r}), "
                 f"state={len(self.state)} items, "
                 f"log={len(self.log)} entries)"
             )
@@ -751,10 +744,10 @@ class RunResult(Generic[T]):
         renderer = RunResultDisplayRenderer(context)
         return renderer.render()
 
-    def visualize_graph_ascii(
+    def visualize_graph_ascii(  # noqa: PLR0912, PLR0915
         self,
         *,
-        node_style: "NodeStyle | str" = "square",
+        node_style: NodeStyle | str = "square",
         node_spacing: int = 4,
         margin: int = 1,
         layer_spacing: int = 2,
@@ -762,7 +755,7 @@ class RunResult(Generic[T]):
         use_ascii: bool | None = None,
         max_value_length: int = 32,
         include_ops: bool = True,
-        custom_decorators: Dict[WNode | str, tuple[str, str]] | None = None,
+        custom_decorators: dict[WNode | str, tuple[str, str]] | None = None,
     ) -> str:
         """Render the computation graph as ASCII art using the phart library.
 
@@ -798,7 +791,7 @@ class RunResult(Generic[T]):
         steps = self.graph.steps or frozenset({self.graph.last})
 
         base_graph = nx.DiGraph()
-        producers: Dict[WNode, WStep] = {}
+        producers: dict[WNode, WStep] = {}
 
         for step in steps:
             producers[step.output] = step
@@ -827,7 +820,7 @@ class RunResult(Generic[T]):
         except nx.NetworkXUnfeasible:
             ordering = list(base_graph.nodes)
 
-        label_map: Dict[WNode, str] = {}
+        label_map: dict[WNode, str] = {}
         for index, node in enumerate(ordering):
             node_data = base_graph.nodes[node]
             preview = _preview(node_data.get("value"))
@@ -842,7 +835,7 @@ class RunResult(Generic[T]):
             label_map[node] = " ".join(part for part in parts if part)
 
         phart_graph = nx.DiGraph()
-        for node, label in label_map.items():
+        for _node, label in label_map.items():
             phart_graph.add_node(label)
 
         for src, dst in base_graph.edges:
@@ -859,7 +852,7 @@ class RunResult(Generic[T]):
         else:
             resolved_style = node_style
 
-        decorator_map: Dict[str, tuple[str, str]] | None = None
+        decorator_map: dict[str, tuple[str, str]] | None = None
         if custom_decorators:
             decorator_map = {}
             for key, decorators in custom_decorators.items():
@@ -887,19 +880,17 @@ class RunResult(Generic[T]):
         renderer = ASCIIRenderer(phart_graph, options=options)
         return renderer.render()
 
-    def _format_value(self, value: Any, indent: int, max_length: int = 200) -> str:
+    def _format_value(self, value: Any, _indent: int, max_length: int = 200) -> str:  # noqa: PLR0911, PLR0912
         """Format a value for display, handling various types."""
         if value is None:
             return "None"
-        elif isinstance(value, bool):
+        if isinstance(value, (bool, int, float)):
             return str(value)
-        elif isinstance(value, (int, float)):
-            return str(value)
-        elif isinstance(value, str):
+        if isinstance(value, str):
             if len(value) > max_length:
                 return f'"{value[:max_length]}..."'
             return f'"{value}"'
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             if not value:
                 return "{}"
             try:
@@ -912,7 +903,7 @@ class RunResult(Generic[T]):
                         keys_str += f", ... ({len(value) - 5} more)"
                     return f"{{{keys_str}}}"
                 return json_str
-            except:
+            except Exception:
                 return f"<dict with {len(value)} items>"
         elif isinstance(value, list):
             if not value:
@@ -924,7 +915,7 @@ class RunResult(Generic[T]):
                 if len(json_str) > max_length:
                     return f"[{len(value)} items]"
                 return json_str
-            except:
+            except Exception:
                 return f"<list with {len(value)} items>"
         elif hasattr(value, "__class__"):
             class_name = value.__class__.__name__
@@ -944,7 +935,7 @@ class RunResult(Generic[T]):
 class RunResultDisplayContext:
     """Shared context for building RunResult display output."""
 
-    run_result: "RunResult[Any]"
+    run_result: RunResult[Any]
     verbose: bool
     indent_unit: str
     failure_details: RunFailureDetails | None
@@ -1058,7 +1049,7 @@ class _ErrorSection(_BaseSection):
 
         return lines
 
-    def _render_effect_entry(
+    def _render_effect_entry(  # noqa: PLR0912
         self,
         idx: int,
         entry: EffectFailureInfo,
@@ -1200,8 +1191,10 @@ class _LogSection(_BaseSection):
 
 class _EffectUsageSection(_BaseSection):
     def render(self) -> list[str]:
+        from collections import defaultdict
+
         rr = self.context.run_result
-        lines = ["🔗 Dep/Ask Usage:"]
+        lines = ["🔗 Dep/Ask Usage Statistics:"]
         observations = [
             obs
             for obs in rr.effect_observations
@@ -1211,22 +1204,121 @@ class _EffectUsageSection(_BaseSection):
             lines.append(self.indent(1, "(no Dep/Ask effects observed)"))
             return lines
 
-        limit = 40
-        for idx, obs in enumerate(observations[:limit], start=1):
-            key_text = f" key={obs.key!r}" if obs.key is not None else ""
-            lines.append(self.indent(1, f"[{idx}] {obs.effect_type}{key_text}"))
-            if obs.context is not None:
-                lines.append(
-                    self.indent(2, obs.context.format_location())
-                )
-                if obs.context.code:
-                    lines.append(self.indent(3, obs.context.code))
-            else:
-                lines.append(self.indent(2, "<location unavailable>"))
+        # Group observations by (effect_type, key)
+        grouped: dict[tuple[str, str | None], list[EffectObservation]] = defaultdict(list)
+        for obs in observations:
+            grouped[(obs.effect_type, obs.key)].append(obs)
 
-        if len(observations) > limit:
-            remaining = len(observations) - limit
-            lines.append(self.indent(1, f"... and {remaining} more entries"))
+        # Separate Dep and Ask groups
+        dep_groups: dict[str | None, list[EffectObservation]] = {}
+        ask_groups: dict[str | None, list[EffectObservation]] = {}
+
+        for (effect_type, key), obs_list in grouped.items():
+            if effect_type == "Dep":
+                dep_groups[key] = obs_list
+            elif effect_type == "Ask":
+                ask_groups[key] = obs_list
+
+        # Render statistics for each effect type
+        self._render_effect_type_stats(lines, "Dep", dep_groups)
+        self._render_effect_type_stats(lines, "Ask", ask_groups)
+
+        return lines
+
+    def _render_effect_type_stats(
+        self,
+        lines: list[str],
+        effect_type: str,
+        groups: dict[str | None, list[EffectObservation]],
+    ) -> None:
+        """Render statistics for a single effect type (Dep or Ask)."""
+        if not groups:
+            return
+
+        total_accesses = sum(len(obs_list) for obs_list in groups.values())
+        unique_keys = len(groups)
+        lines.append("")
+        summary = (
+            f"{effect_type} effects: {total_accesses} total accesses, "
+            f"{unique_keys} unique keys"
+        )
+        lines.append(self.indent(1, summary))
+
+        # Sort by access count (descending), then by key name
+        sorted_groups = sorted(
+            groups.items(),
+            key=lambda item: (-len(item[1]), str(item[0] or "")),
+        )
+
+        for key, obs_list in sorted_groups:
+            self._render_key_stats(lines, key, obs_list)
+
+    def _render_key_stats(
+        self,
+        lines: list[str],
+        key: str | None,
+        obs_list: list[EffectObservation],
+    ) -> None:
+        """Render statistics for a single key."""
+        count = len(obs_list)
+        access_word = "access" if count == 1 else "accesses"
+        key_display = repr(key) if key is not None else "<unnamed>"
+        lines.append(self.indent(2, f"• {key_display} - {count} {access_word}"))
+
+        # Show first occurrence location
+        first_obs = obs_list[0]
+        if first_obs.context is not None:
+            lines.append(
+                self.indent(3, f"First used at: {first_obs.context.format_location()}")
+            )
+            if first_obs.context.code:
+                lines.append(self.indent(4, first_obs.context.code))
+        else:
+            lines.append(self.indent(3, "First used at: <location unavailable>"))
+
+
+class _CompactKeysSection(_BaseSection):
+    def render(self) -> list[str]:
+        rr = self.context.run_result
+        observations = [
+            obs
+            for obs in rr.effect_observations
+            if obs.effect_type in {"Dep", "Ask"}
+        ]
+
+        if not observations:
+            return []
+
+        # Collect unique keys per effect type
+        dep_keys: set[str] = set()
+        ask_keys: set[str] = set()
+
+        for obs in observations:
+            if obs.key is None:
+                continue
+            if obs.effect_type == "Dep":
+                dep_keys.add(obs.key)
+            elif obs.effect_type == "Ask":
+                ask_keys.add(obs.key)
+
+        # If no keys found, don't show the section
+        if not dep_keys and not ask_keys:
+            return []
+
+        lines = ["🔑 All Used Keys (Compact):"]
+        lines.append("")
+
+        # Show Dep keys
+        if dep_keys:
+            sorted_dep_keys = sorted(dep_keys)
+            keys_str = ", ".join(sorted_dep_keys)
+            lines.append(self.indent(1, f"Dep keys ({len(dep_keys)}): {keys_str}"))
+
+        # Show Ask keys
+        if ask_keys:
+            sorted_ask_keys = sorted(ask_keys)
+            keys_str = ", ".join(sorted_ask_keys)
+            lines.append(self.indent(1, f"Ask keys ({len(ask_keys)}): {keys_str}"))
 
         return lines
 
@@ -1314,6 +1406,7 @@ class RunResultDisplayRenderer:
             _SharedStateSection(self.context),
             _LogSection(self.context),
             _EffectUsageSection(self.context),
+            _CompactKeysSection(self.context),
             _GraphSection(self.context),
             _EnvironmentSection(self.context),
             _SummarySection(self.context),
@@ -1340,14 +1433,14 @@ class ListenResult:
     """Result from writer.listen effect."""
 
     value: Any
-    log: List[Any]
-    
+    log: list[Any]
+
     def __iter__(self):
         """Make ListenResult unpackable as a tuple (value, log)."""
         return iter([self.value, self.log])
 
 
-def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program"]) -> Any:
+def _intercept_value(value: Any, transform: Callable[[Effect], Effect | Program]) -> Any:  # noqa: PLR0911
     """Recursively intercept Programs embedded within ``value``."""
 
     from doeff.program import Program  # Local import to avoid circular dependency
@@ -1363,7 +1456,7 @@ def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program
 
     if isinstance(value, dict):
         changed = False
-        new_items: Dict[Any, Any] = {}
+        new_items: dict[Any, Any] = {}
         for key, item in value.items():
             new_item = _intercept_value(item, transform)
             if new_item is not item:
@@ -1395,7 +1488,7 @@ def _intercept_value(value: Any, transform: Callable[[Effect], Effect | "Program
 
 
 def _wrap_callable(
-    func: Callable[..., Any], transform: Callable[[Effect], Effect | "Program"]
+    func: Callable[..., Any], transform: Callable[[Effect], Effect | Program]
 ):
     """Wrap callable so that any Program it returns is intercepted."""
 
@@ -1408,26 +1501,26 @@ def _wrap_callable(
 
 
 __all__ = [
-    # Vendored types
-    "TraceError",
-    "trace_err",
-    "Ok",
-    "Err",
-    "Result",
-    "Maybe",
-    "Nothing",
     "NOTHING",
-    "Some",
-    "WNode",
-    "WStep",
-    "WGraph",
-    "FrozenDict",
     # Core types
     "Effect",
     "EffectGenerator",
-    "Program",
-    "ExecutionContext",
     "EffectObservation",
-    "RunResult",
+    "Err",
+    "ExecutionContext",
+    "FrozenDict",
     "ListenResult",
+    "Maybe",
+    "Nothing",
+    "Ok",
+    "Program",
+    "Result",
+    "RunResult",
+    "Some",
+    # Vendored types
+    "TraceError",
+    "WGraph",
+    "WNode",
+    "WStep",
+    "trace_err",
 ]
