@@ -15,6 +15,8 @@ class IndexerClient(private val project: Project) {
     private val gson = Gson()
     @Volatile
     private var cachedIndexerPath: String? = null
+    @Volatile
+    private var lastExecutedCommand: String? = null
 
     fun queryEntries(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
         CompletableFuture.supplyAsync { runIndexer(typeArgument) }
@@ -256,6 +258,7 @@ class IndexerClient(private val project: Project) {
         val root = project.basePath ?: return emptyList()
         val command = mutableListOf(indexerPath, "index", "--root", root, "--file", filePath)
 
+        lastExecutedCommand = command.joinToString(" ")
         log.debug("Executing doeff-indexer: ${command.joinToString(" ")}")
         val process = ProcessBuilder(command)
             .directory(File(root))
@@ -351,6 +354,8 @@ class IndexerClient(private val project: Project) {
     }
 
     fun lastKnownIndexerPath(): String? = cachedIndexerPath
+
+    fun lastExecutedCommand(): String? = lastExecutedCommand
 
     private fun resolveIndexerPath(): String? {
         cachedIndexerPath?.let { cached ->
