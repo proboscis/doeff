@@ -159,6 +159,8 @@ result = await bindings.provide(injected)
 
 The `doeff` CLI can automatically discover default interpreters and environments based on markers in your code, eliminating the need to specify them manually.
 
+**📖 [Full CLI Auto-Discovery Guide](docs/14-cli-auto-discovery.md)** - Comprehensive documentation with examples, troubleshooting, and best practices.
+
 ### Quick Example
 
 ```bash

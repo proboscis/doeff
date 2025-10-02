@@ -37,6 +37,28 @@ def my_interpreter(program: Program):  # doeff: interpreter
        yield Effect("fetch", url="...")
    ```
 
+### CLI Auto-Discovery Markers
+
+4. **`default`** - Mark default interpreters and environments for CLI auto-discovery
+
+   For interpreters (requires both `interpreter` and `default`):
+   ```python
+   def my_interpreter(program: Program):
+       """# doeff: interpreter, default"""
+       return program.run()
+   ```
+
+   For environments:
+   ```python
+   # doeff: default
+   base_env: Program[dict] = Program.pure({
+       'db_host': 'localhost',
+       'timeout': 10
+   })
+   ```
+
+   See **[CLI Auto-Discovery Guide](14-cli-auto-discovery.md)** for complete documentation.
+
 ### Multiple Markers
 
 Functions can have multiple roles specified with comma-separated markers:
