@@ -29,6 +29,7 @@ dependencies = [
     "pinjected>=0.3.0b0",
     "exceptiongroup>=1.2.0; python_version < '3.11'",
     "doeff-pinjected",
+    "doeff-indexer",
     "cloudpickle>=3.0.0",
     "phart>=1.1.4",
     "numpy>=1.26.0",
@@ -54,6 +55,7 @@ exclude = ["packages/doeff-indexer"]
 
 [tool.uv.sources]
 doeff-pinjected = { workspace = true }
+doeff-indexer = { path = "packages/doeff-indexer" }
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
