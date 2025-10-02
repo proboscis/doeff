@@ -10,6 +10,7 @@ import importlib
 from typing import Any, Protocol
 
 from doeff import Program
+from doeff.cli.profiling import profile
 
 
 class InterpreterDiscovery(Protocol):
@@ -129,13 +130,14 @@ class IndexerBasedDiscovery:
         Args:
             symbol_loader: Custom symbol loader, or None for default
         """
-        try:
-            from doeff_indexer import Indexer
-            self.indexer_class = Indexer
-        except ImportError as e:
-            raise ImportError(
-                "doeff-indexer not found. Install with: pip install doeff-indexer"
-            ) from e
+        with profile("Import doeff_indexer", indent=1):
+            try:
+                from doeff_indexer import Indexer
+                self.indexer_class = Indexer
+            except ImportError as e:
+                raise ImportError(
+                    "doeff-indexer not found. Install with: pip install doeff-indexer"
+                ) from e
 
         self.symbol_loader = symbol_loader or StandardSymbolLoader()
 
@@ -144,61 +146,69 @@ class IndexerBasedDiscovery:
 
         Searches from program module up to root, returns closest match.
         """
-        module_path = self._extract_module_path(program_path)
-        indexer = self.indexer_class.for_module(module_path)
+        with profile("Find default interpreter", indent=1):
+            module_path = self._extract_module_path(program_path)
 
-        # Find all interpreters with default marker
-        symbols = indexer.find_symbols(
-            tags=["interpreter", "default"],
-            symbol_type="function"
-        )
+            with profile("Create indexer", indent=2):
+                indexer = self.indexer_class.for_module(module_path)
 
-        if not symbols:
-            return None
+            # Find all interpreters with default marker
+            with profile("Find interpreter symbols", indent=2):
+                symbols = indexer.find_symbols(
+                    tags=["interpreter", "default"],
+                    symbol_type="function"
+                )
 
-        # Get module hierarchy for program
-        hierarchy = self._get_module_hierarchy(module_path)
+            if not symbols:
+                return None
 
-        # Filter symbols to only those in hierarchy
-        candidates = [
-            s for s in symbols
-            if s.module_path in hierarchy
-        ]
+            # Get module hierarchy for program
+            hierarchy = self._get_module_hierarchy(module_path)
 
-        if not candidates:
-            return None
+            # Filter symbols to only those in hierarchy
+            candidates = [
+                s for s in symbols
+                if s.module_path in hierarchy
+            ]
 
-        # Select closest (rightmost in hierarchy)
-        closest = max(candidates, key=lambda s: hierarchy.index(s.module_path))
-        return closest.full_path
+            if not candidates:
+                return None
+
+            # Select closest (rightmost in hierarchy)
+            closest = max(candidates, key=lambda s: hierarchy.index(s.module_path))
+            return closest.full_path
 
     def discover_default_envs(self, program_path: str) -> list[str]:
         """Find all default environments in module hierarchy.
 
         Returns environments in hierarchy order (root → program).
         """
-        module_path = self._extract_module_path(program_path)
-        indexer = self.indexer_class.for_module(module_path)
+        with profile("Find default environments", indent=1):
+            module_path = self._extract_module_path(program_path)
 
-        # Get module hierarchy
-        hierarchy = self._get_module_hierarchy(module_path)
+            with profile("Create indexer", indent=2):
+                indexer = self.indexer_class.for_module(module_path)
 
-        # Find all env symbols
-        all_symbols = indexer.find_symbols(
-            tags=["default"],
-            symbol_type="variable"
-        )
+            # Get module hierarchy
+            hierarchy = self._get_module_hierarchy(module_path)
 
-        # Filter and order by hierarchy
-        env_paths = []
-        for module in hierarchy:
-            module_envs = [
-                s.full_path for s in all_symbols
-                if s.module_path == module
-            ]
-            env_paths.extend(module_envs)
+            # Find all env symbols
+            with profile("Find env symbols", indent=2):
+                all_symbols = indexer.find_symbols(
+                    tags=["default"],
+                    symbol_type="variable"
+                )
 
-        return env_paths
+            # Filter and order by hierarchy
+            env_paths = []
+            for module in hierarchy:
+                module_envs = [
+                    s.full_path for s in all_symbols
+                    if s.module_path == module
+                ]
+                env_paths.extend(module_envs)
+
+            return env_paths
 
     def validate_interpreter(self, func: Any) -> bool:
         """Validate interpreter signature."""
@@ -270,40 +280,42 @@ class StandardEnvMerger:
 
         Later values override earlier values.
         """
-        from doeff import do
+        with profile("Merge environments", indent=1):
+            from doeff import do
 
-        if not env_sources:
-            return Program.pure({})
+            if not env_sources:
+                return Program.pure({})
 
-        # Load all env sources
-        loaded_envs = [self.symbol_loader.load_symbol(path) for path in env_sources]
+            # Load all env sources
+            with profile(f"Load {len(env_sources)} env sources", indent=2):
+                loaded_envs = [self.symbol_loader.load_symbol(path) for path in env_sources]
 
-        @do
-        def merge() -> dict:
-            """Merge all envs using Program composition."""
-            merged: dict[str, Any] = {}
+            @do
+            def merge() -> dict:
+                """Merge all envs using Program composition."""
+                merged: dict[str, Any] = {}
 
-            for env_source in loaded_envs:
-                if isinstance(env_source, Program):
-                    # Evaluate Program[dict] to get dict
-                    env_dict = yield env_source
-                elif callable(env_source):
-                    # Call function that returns dict or Program[dict]
-                    result = env_source()
-                    if isinstance(result, Program):
-                        env_dict = yield result
+                for env_source in loaded_envs:
+                    if isinstance(env_source, Program):
+                        # Evaluate Program[dict] to get dict
+                        env_dict = yield env_source
+                    elif callable(env_source):
+                        # Call function that returns dict or Program[dict]
+                        result = env_source()
+                        if isinstance(result, Program):
+                            env_dict = yield result
+                        else:
+                            env_dict = result
                     else:
-                        env_dict = result
-                else:
-                    # Plain dict
-                    env_dict = env_source
+                        # Plain dict
+                        env_dict = env_source
 
-                # Merge (later overrides earlier)
-                merged.update(env_dict)
+                    # Merge (later overrides earlier)
+                    merged.update(env_dict)
 
-            return merged
+                return merged
 
-        return merge()
+            return merge()
 
 
 class StandardSymbolLoader:
@@ -326,26 +338,27 @@ class StandardSymbolLoader:
             >>> loader.load_symbol("os.path.join")
             <function join at 0x...>
         """
-        parts = full_path.split(".")
+        with profile(f"Load symbol {full_path}", indent=2):
+            parts = full_path.split(".")
 
-        # Try progressively longer module paths
-        for i in range(len(parts), 0, -1):
-            module_path = ".".join(parts[:i])
-            attr_path = parts[i:]
+            # Try progressively longer module paths
+            for i in range(len(parts), 0, -1):
+                module_path = ".".join(parts[:i])
+                attr_path = parts[i:]
 
-            try:
-                module = importlib.import_module(module_path)
+                try:
+                    module = importlib.import_module(module_path)
 
-                # Navigate through attributes
-                obj = module
-                for attr in attr_path:
-                    obj = getattr(obj, attr)
+                    # Navigate through attributes
+                    obj = module
+                    for attr in attr_path:
+                        obj = getattr(obj, attr)
 
-                return obj
+                    return obj
 
-            except (ImportError, AttributeError):
-                if i == 1:
-                    # Last attempt failed
-                    raise
+                except (ImportError, AttributeError):
+                    if i == 1:
+                        # Last attempt failed
+                        raise
 
-        raise ImportError(f"Could not import {full_path}")
+            raise ImportError(f"Could not import {full_path}")
