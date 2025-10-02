@@ -230,6 +230,38 @@ When running `doeff run --program myapp.features.auth.login.login_program`:
 3. Injects merged environment into program
 4. Executes with discovered interpreter
 
+### Debugging and Profiling
+
+Enable detailed profiling and discovery logging with the `DOEFF_PROFILE` environment variable:
+
+```bash
+export DOEFF_PROFILE=1
+doeff run --program myapp.features.auth.login.login_program
+```
+
+This shows:
+- **Performance metrics**: Time spent on indexing, discovery, symbol loading, and execution
+- **Discovery details**: Which interpreter and environments were discovered and selected
+- **Symbol loading**: Which symbols are being imported and when
+
+Example output:
+```
+[PROFILE]   Import doeff_indexer: 3.45ms
+[PROFILE]   Initialize discovery services: 3.48ms
+[PROFILE]   Find default interpreter: 74.74ms
+[DISCOVERY] Interpreter: myapp.features.auth.auth_interpreter
+[PROFILE]   Find default environments: 57.51ms
+[DISCOVERY] Environments (3):
+[DISCOVERY]   - myapp.base_env
+[DISCOVERY]   - myapp.features.features_env
+[DISCOVERY]   - myapp.features.auth.auth_env
+[PROFILE]   Merge environments: 0.13ms
+[PROFILE]   Load and run interpreter: 0.83ms
+[PROFILE] CLI discovery and execution: 141.23ms
+```
+
+Profiling output goes to **stderr**, so it won't interfere with JSON output or stdout.
+
 ## Development
 
 ```bash
