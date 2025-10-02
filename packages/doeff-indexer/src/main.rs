@@ -144,10 +144,16 @@ fn main() -> Result<()> {
                 // Filter by file if specified
                 if let Some(file_path) = file {
                     let normalized_file = normalize_file_path(&cli.root, &file_path);
+                    log::debug!("Filtering by file: {} (normalized: {})", file_path, normalized_file);
+                    log::debug!("Total entries before filter: {}", index.entries.len());
                     index.entries.retain(|entry| {
-                        entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref)
-                            && file_path_matches(&entry.file_path, &normalized_file)
+                        let matches_criteria = entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref);
+                        let matches_file = file_path_matches(&entry.file_path, &normalized_file);
+                        log::debug!("Entry {}: criteria={}, file={} (entry_path={})",
+                            entry.qualified_name, matches_criteria, matches_file, entry.file_path);
+                        matches_criteria && matches_file
                     });
+                    log::debug!("Total entries after filter: {}", index.entries.len());
                 } else {
                     index.entries.retain(|entry| {
                         entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref)
