@@ -43,14 +43,30 @@ object ProgramExecutionController {
             val matchingSymbol = symbols.find { it.name == targetExpression.name }
 
             if (matchingSymbol == null) {
-                logger.warn("Symbol ${targetExpression.name} not found in indexer for file $filePath")
+                val indexerPath = indexer.lastKnownIndexerPath() ?: "unknown"
+                val commandRun = indexer.lastExecutedCommand() ?: "unknown"
+                logger.warn("Symbol ${targetExpression.name} not found in indexer for file $filePath (found ${symbols.size} symbols total)")
+                logger.debug("Available symbols: ${symbols.map { it.name }.joinToString(", ")}")
+                logger.debug("Indexer binary: $indexerPath")
+                logger.debug("Command executed: $commandRun")
                 ProgramPluginDiagnostics.error(
                     project,
-                    "Symbol ${targetExpression.name} not found in indexer"
-                )
-                showErrorPopup(project, "Doeff Navigation Error",
                     "Symbol ${targetExpression.name} not found in indexer.\n" +
-                    "Make sure the file is a valid Python module with proper type annotations.")
+                    "Found ${symbols.size} symbols in file: ${symbols.map { it.name }.joinToString(", ")}\n" +
+                    "Indexer binary: $indexerPath\n" +
+                    "Command: $commandRun"
+                )
+                val symbolsList = if (symbols.isEmpty()) {
+                    "no symbols"
+                } else {
+                    symbols.take(10).map { it.name }.joinToString(", ")
+                }
+                showErrorPopup(project, "Doeff Navigation Error",
+                    "Symbol '${targetExpression.name}' not found in indexer.\n" +
+                    "Found ${symbols.size} symbols: $symbolsList\n" +
+                    "Indexer: $indexerPath\n" +
+                    "Command: $commandRun\n" +
+                    "File may have been modified - try saving and clicking again.")
                 updateStatusBar(project, "Doeff: Error - Symbol not found")
                 return@findSymbolsByFile
             }
