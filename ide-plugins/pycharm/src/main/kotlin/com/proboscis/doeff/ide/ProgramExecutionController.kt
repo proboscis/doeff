@@ -5,7 +5,6 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.WindowManager
 import com.jetbrains.python.psi.PyFile
@@ -18,33 +17,57 @@ object ProgramExecutionController {
     fun handleNavigation(mouseEvent: MouseEvent?, targetExpression: PyTargetExpression, typeArgument: String) {
         val project = targetExpression.project
         updateStatusBar(project, "Doeff: Analyzing ${targetExpression.name}...")
-        
-        val modulePath = findModulePath(targetExpression)
-        if (modulePath == null) {
-            logger.warn("Unable to determine module path for ${targetExpression.text}")
+
+        // Get the file path from the target expression
+        val pyFile = targetExpression.containingFile as? PyFile
+        val virtualFile = pyFile?.virtualFile
+        val filePath = virtualFile?.path
+
+        if (filePath == null) {
+            logger.warn("Unable to determine file path for ${targetExpression.text}")
             ProgramPluginDiagnostics.error(
                 project,
-                "Unable to determine module path for ${targetExpression.text}"
+                "Unable to determine file path for ${targetExpression.text}"
             )
-            showErrorPopup(project, "Doeff Navigation Error", "Unable to determine module path for ${targetExpression.text}")
-            updateStatusBar(project, "Doeff: Error - Module path not found")
+            showErrorPopup(project, "Doeff Navigation Error", "Unable to determine file path for ${targetExpression.text}")
+            updateStatusBar(project, "Doeff: Error - File path not found")
             return
         }
 
-        val programPath = "$modulePath.${targetExpression.name}"
-        logger.debug("Program gutter navigation for $programPath with type $typeArgument")
-        ProgramPluginDiagnostics.info(
-            project,
-            "Opening doeff runner for $programPath (type $typeArgument)",
-            key = "nav-$programPath"
-        )
-        
-        updateStatusBar(project, "Doeff: Indexing project for $programPath...")
-        showInfoNotification(project, "Doeff Indexing", "Searching for interpreters and transformers...")
-        
         val indexer = IndexerClient(project)
-        // Use the find-interpreters command to get only valid interpreters
-        indexer.findInterpreters(typeArgument) { interpreters ->
+
+        // Query the indexer for symbols in this file to get the correct module path
+        updateStatusBar(project, "Doeff: Looking up symbol in indexer...")
+        indexer.findSymbolsByFile(filePath) { symbols ->
+            // Find the matching symbol by name
+            val matchingSymbol = symbols.find { it.name == targetExpression.name }
+
+            if (matchingSymbol == null) {
+                logger.warn("Symbol ${targetExpression.name} not found in indexer for file $filePath")
+                ProgramPluginDiagnostics.error(
+                    project,
+                    "Symbol ${targetExpression.name} not found in indexer"
+                )
+                showErrorPopup(project, "Doeff Navigation Error",
+                    "Symbol ${targetExpression.name} not found in indexer.\n" +
+                    "Make sure the file is a valid Python module with proper type annotations.")
+                updateStatusBar(project, "Doeff: Error - Symbol not found")
+                return@findSymbolsByFile
+            }
+
+            val programPath = matchingSymbol.qualifiedName
+            logger.debug("Program gutter navigation for $programPath with type $typeArgument")
+            ProgramPluginDiagnostics.info(
+                project,
+                "Opening doeff runner for $programPath (type $typeArgument)",
+                key = "nav-$programPath"
+            )
+
+            updateStatusBar(project, "Doeff: Indexing project for $programPath...")
+            showInfoNotification(project, "Doeff Indexing", "Searching for interpreters and transformers...")
+
+            // Use the find-interpreters command to get only valid interpreters
+            indexer.findInterpreters(typeArgument) { interpreters ->
             if (interpreters.isEmpty()) {
                 logger.warn("No interpreters found in index for type $typeArgument")
                 ProgramPluginDiagnostics.warn(
@@ -101,6 +124,7 @@ object ProgramExecutionController {
                     }
                 }
             }
+            }
         }
     }
 
@@ -116,28 +140,6 @@ object ProgramExecutionController {
             }
         }
         return entry.typeUsages.any { it.matchesType(typeArgument) }
-    }
-
-    private fun findModulePath(targetExpression: PyTargetExpression): String? {
-        val pyFile = targetExpression.containingFile as? PyFile ?: return null
-        val virtualFile = pyFile.virtualFile ?: return null
-        val basePath = targetExpression.project.basePath ?: return null
-        val baseVirtualFile = VfsUtil.findFileByIoFile(java.io.File(basePath), true) ?: return null
-        val relativePath = VfsUtil.getRelativePath(virtualFile, baseVirtualFile) ?: return null
-        val withoutExtension = relativePath.removeSuffix(".py")
-
-        // Strip common Python source directory prefixes (src/, lib/, packages/)
-        // to handle projects with src-layout correctly
-        val sourceDirPrefixes = listOf("src/", "lib/", "packages/")
-        var modulePath = withoutExtension
-        for (prefix in sourceDirPrefixes) {
-            if (modulePath.startsWith(prefix)) {
-                modulePath = modulePath.removePrefix(prefix)
-                break
-            }
-        }
-
-        return modulePath.replace("/", ".").replace("\\", ".")
     }
 
     private fun notify(project: Project, message: String, type: NotificationType) {
