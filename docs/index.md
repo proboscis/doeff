@@ -32,6 +32,10 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 12. **[Patterns](12-patterns.md)** - Best practices and common patterns
 13. **[API Reference](13-api-reference.md)** - Complete API documentation
 
+### CLI Tools
+
+14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
+
 ### Specialized Topics
 
 - **[MARKERS.md](MARKERS.md)** - Marker-based Program manipulation
