@@ -42,6 +42,10 @@ enum Commands {
         /// Filter by doeff marker (e.g. "interpreter", "transform")
         #[arg(long)]
         marker: Option<String>,
+
+        /// Filter by file path (relative or absolute)
+        #[arg(long)]
+        file: Option<String>,
     },
 
     /// Find interpreter functions (with # doeff: interpreter marker or Program -> T signature)
@@ -82,6 +86,37 @@ impl QueryKind {
     }
 }
 
+/// Normalize a file path to handle both relative and absolute paths
+fn normalize_file_path(root: &PathBuf, file_path: &str) -> String {
+    use std::path::Path;
+
+    let path = Path::new(file_path);
+
+    // If path is absolute, use it as-is
+    if path.is_absolute() {
+        return path.to_string_lossy().to_string();
+    }
+
+    // Otherwise, resolve relative to root
+    root.join(path).to_string_lossy().to_string()
+}
+
+/// Check if an entry's file path matches the target file path
+fn file_path_matches(entry_path: &str, target_path: &str) -> bool {
+    use std::path::Path;
+
+    // Normalize both paths for comparison
+    let entry_normalized = Path::new(entry_path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(entry_path).to_path_buf());
+
+    let target_normalized = Path::new(target_path)
+        .canonicalize()
+        .unwrap_or_else(|_| Path::new(target_path).to_path_buf());
+
+    entry_normalized == target_normalized
+}
+
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default())
         .format_timestamp(None)
@@ -99,14 +134,25 @@ fn main() -> Result<()> {
                 kind,
                 type_arg,
                 marker,
+                file,
             }) = cli.command
             {
                 let kind_filter = kind.to_program_kind();
                 let type_arg_ref = type_arg.as_deref();
                 let marker_ref = marker.as_deref();
-                index.entries.retain(|entry| {
-                    entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref)
-                });
+
+                // Filter by file if specified
+                if let Some(file_path) = file {
+                    let normalized_file = normalize_file_path(&cli.root, &file_path);
+                    index.entries.retain(|entry| {
+                        entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref)
+                            && file_path_matches(&entry.file_path, &normalized_file)
+                    });
+                } else {
+                    index.entries.retain(|entry| {
+                        entry_matches_with_markers(entry, kind_filter, type_arg_ref, marker_ref)
+                    });
+                }
             }
         }
 

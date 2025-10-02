@@ -88,6 +88,28 @@ class IndexerClient(private val project: Project) {
             }
     }
 
+    /**
+     * Find all symbols in a specific file using the indexer.
+     * Returns the correct module path for symbols in that file.
+     */
+    fun findSymbolsByFile(filePath: String, onSuccess: (List<IndexEntry>) -> Unit) {
+        CompletableFuture.supplyAsync { runIndexerWithFile(filePath) }
+            .whenComplete { result, throwable ->
+                if (throwable != null) {
+                    notifyError("Failed to query symbols by file", throwable.message ?: "Unknown error", throwable)
+                    log.warn("Error while querying symbols by file", throwable)
+                    return@whenComplete
+                }
+                if (result == null) {
+                    notifyError("doeff-indexer returned no data", "Unexpected empty response", null)
+                    return@whenComplete
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    onSuccess(result)
+                }
+            }
+    }
+
     private fun runIndexerCommand(command: String, typeArgument: String?): List<IndexEntry>? {
         val indexerPath = resolveIndexerPath() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
@@ -180,7 +202,7 @@ class IndexerClient(private val project: Project) {
         // Read output and error streams concurrently to avoid deadlock
         val output = StringBuilder()
         val error = StringBuilder()
-        
+
         // Create threads to read streams
         val outputReader = Thread {
             process.inputStream.bufferedReader().use { reader ->
@@ -192,14 +214,76 @@ class IndexerClient(private val project: Project) {
                 error.append(reader.readText())
             }
         }
-        
+
         // Start reading streams
         outputReader.start()
         errorReader.start()
-        
+
         // Wait for process to complete
         val completed = process.waitFor(30, TimeUnit.SECONDS)
-        
+
+        // Wait for readers to finish
+        outputReader.join(1000)
+        errorReader.join(1000)
+
+        val stdout = output.toString()
+        val stderr = error.toString()
+
+        if (!completed) {
+            process.destroyForcibly()
+            notifyTranscript(command, null, stdout, stderr, "timeout after 30s", isError = true)
+            return emptyList()
+        }
+
+        val exitCode = process.exitValue()
+        if (exitCode != 0) {
+            notifyTranscript(command, exitCode, stdout, stderr, "exit code $exitCode", isError = true)
+            return emptyList()
+        }
+
+        val entries = parseEntries(stdout, stderr)
+        return if (entries != null) {
+            notifyTranscript(command, exitCode, stdout, stderr, "success (${entries.size} entries)", isError = false)
+            entries
+        } else {
+            notifyTranscript(command, exitCode, stdout, stderr, "invalid JSON output", isError = true)
+            emptyList()
+        }
+    }
+
+    private fun runIndexerWithFile(filePath: String): List<IndexEntry>? {
+        val indexerPath = resolveIndexerPath() ?: return emptyList()
+        val root = project.basePath ?: return emptyList()
+        val command = mutableListOf(indexerPath, "index", "--root", root, "--file", filePath)
+
+        log.debug("Executing doeff-indexer: ${command.joinToString(" ")}")
+        val process = ProcessBuilder(command)
+            .directory(File(root))
+            .start()
+
+        // Read output and error streams concurrently to avoid deadlock
+        val output = StringBuilder()
+        val error = StringBuilder()
+
+        // Create threads to read streams
+        val outputReader = Thread {
+            process.inputStream.bufferedReader().use { reader ->
+                output.append(reader.readText())
+            }
+        }
+        val errorReader = Thread {
+            process.errorStream.bufferedReader().use { reader ->
+                error.append(reader.readText())
+            }
+        }
+
+        // Start reading streams
+        outputReader.start()
+        errorReader.start()
+
+        // Wait for process to complete
+        val completed = process.waitFor(30, TimeUnit.SECONDS)
+
         // Wait for readers to finish
         outputReader.join(1000)
         errorReader.join(1000)
