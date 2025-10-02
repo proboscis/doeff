@@ -125,7 +125,19 @@ object ProgramExecutionController {
         val baseVirtualFile = VfsUtil.findFileByIoFile(java.io.File(basePath), true) ?: return null
         val relativePath = VfsUtil.getRelativePath(virtualFile, baseVirtualFile) ?: return null
         val withoutExtension = relativePath.removeSuffix(".py")
-        return withoutExtension.replace("/", ".").replace("\\", ".")
+
+        // Strip common Python source directory prefixes (src/, lib/, packages/)
+        // to handle projects with src-layout correctly
+        val sourceDirPrefixes = listOf("src/", "lib/", "packages/")
+        var modulePath = withoutExtension
+        for (prefix in sourceDirPrefixes) {
+            if (modulePath.startsWith(prefix)) {
+                modulePath = modulePath.removePrefix(prefix)
+                break
+            }
+        }
+
+        return modulePath.replace("/", ".").replace("\\", ".")
     }
 
     private fun notify(project: Project, message: String, type: NotificationType) {
