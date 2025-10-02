@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import Program, ProgramInterpreter, RunResult
+from doeff.cli.profiling import is_profiling_enabled, profile
 from doeff.kleisli import KleisliProgram
 from doeff.types import capture_traceback
 
@@ -134,84 +135,105 @@ def handle_run(args: argparse.Namespace) -> int:
     )
     from doeff.effects import Local
 
-    context = RunContext(
-        program_path=args.program,
-        interpreter_path=args.interpreter,
-        env_paths=args.envs or [],
-        apply_path=args.apply,
-        transformer_paths=args.transform or [],
-        output_format=args.format,
-    )
-
-    # Initialize discovery services
-    loader = StandardSymbolLoader()
-    discovery = IndexerBasedDiscovery(symbol_loader=loader)
-    merger = StandardEnvMerger(symbol_loader=loader)
-
-    # Auto-discover interpreter if not specified
-    if context.interpreter_path is None:
-        discovered_interp = discovery.find_default_interpreter(context.program_path)
-        if discovered_interp is None:
-            raise RuntimeError(
-                f"No default interpreter found for {context.program_path}. "
-                "Please specify --interpreter or add '# doeff: interpreter, default' marker to an interpreter function."
-            )
+    with profile("CLI discovery and execution"):
         context = RunContext(
-            program_path=context.program_path,
-            interpreter_path=discovered_interp,
-            env_paths=context.env_paths,
-            apply_path=context.apply_path,
-            transformer_paths=context.transformer_paths,
-            output_format=context.output_format,
+            program_path=args.program,
+            interpreter_path=args.interpreter,
+            env_paths=args.envs or [],
+            apply_path=args.apply,
+            transformer_paths=args.transform or [],
+            output_format=args.format,
         )
 
-    # Auto-discover envs if not specified
-    if not context.env_paths:
-        discovered_envs = discovery.discover_default_envs(context.program_path)
-        context = RunContext(
-            program_path=context.program_path,
-            interpreter_path=context.interpreter_path,
-            env_paths=discovered_envs,
-            apply_path=context.apply_path,
-            transformer_paths=context.transformer_paths,
-            output_format=context.output_format,
-        )
+        # Initialize discovery services
+        with profile("Initialize discovery services", indent=1):
+            loader = StandardSymbolLoader()
+            discovery = IndexerBasedDiscovery(symbol_loader=loader)
+            merger = StandardEnvMerger(symbol_loader=loader)
 
-    program_obj = _import_symbol(context.program_path)
-    program = _ensure_program(program_obj, "--program")
+        # Auto-discover interpreter if not specified
+        if context.interpreter_path is None:
+            with profile("Auto-discover interpreter", indent=1):
+                discovered_interp = discovery.find_default_interpreter(context.program_path)
+                if discovered_interp is None:
+                    raise RuntimeError(
+                        f"No default interpreter found for {context.program_path}. "
+                        "Please specify --interpreter or add '# doeff: interpreter, default' marker to an interpreter function."
+                    )
+                if is_profiling_enabled():
+                    print(f"[DISCOVERY] Interpreter: {discovered_interp}", file=sys.stderr)
+                context = RunContext(
+                    program_path=context.program_path,
+                    interpreter_path=discovered_interp,
+                    env_paths=context.env_paths,
+                    apply_path=context.apply_path,
+                    transformer_paths=context.transformer_paths,
+                    output_format=context.output_format,
+                )
 
-    # Merge and inject environments if any
-    if context.env_paths:
-        merged_env_program = merger.merge_envs(context.env_paths)
-        # Run the merged env to get the dict
-        temp_interpreter = ProgramInterpreter()
-        env_result = temp_interpreter.run(merged_env_program)
-        merged_env_dict = env_result.value
-        # Wrap program with Local effect to inject environment
-        local_effect = Local(merged_env_dict, program)
-        program = Program.from_effect(local_effect)
+        # Auto-discover envs if not specified
+        if not context.env_paths:
+            with profile("Auto-discover environments", indent=1):
+                discovered_envs = discovery.discover_default_envs(context.program_path)
+                if is_profiling_enabled():
+                    if discovered_envs:
+                        print(f"[DISCOVERY] Environments ({len(discovered_envs)}):", file=sys.stderr)
+                        for env_path in discovered_envs:
+                            print(f"[DISCOVERY]   - {env_path}", file=sys.stderr)
+                    else:
+                        print("[DISCOVERY] Environments: none found", file=sys.stderr)
+                context = RunContext(
+                    program_path=context.program_path,
+                    interpreter_path=context.interpreter_path,
+                    env_paths=discovered_envs,
+                    apply_path=context.apply_path,
+                    transformer_paths=context.transformer_paths,
+                    output_format=context.output_format,
+                )
 
-    if context.apply_path:
-        kleisli_obj = _import_symbol(context.apply_path)
-        kleisli = _ensure_kleisli(kleisli_obj, "--apply")
-        program = kleisli(program)
+        with profile("Load program", indent=1):
+            program_obj = _import_symbol(context.program_path)
+            program = _ensure_program(program_obj, "--program")
 
-    if context.transformer_paths:
-        for transform_path in context.transformer_paths:
-            transformer_obj = _import_symbol(transform_path)
-            transformer = _ensure_transformer(transformer_obj, f"transformer {transform_path}")
-            program = transformer(program)
+        # Merge and inject environments if any
+        if context.env_paths:
+            merged_env_program = merger.merge_envs(context.env_paths)
+            # Run the merged env to get the dict
+            temp_interpreter = ProgramInterpreter()
+            env_result = temp_interpreter.run(merged_env_program)
+            merged_env_dict = env_result.value
+            # Wrap program with Local effect to inject environment
+            local_effect = Local(merged_env_dict, program)
+            program = Program.from_effect(local_effect)
 
-    interpreter_obj = _import_symbol(context.interpreter_path)
-    if isinstance(interpreter_obj, ProgramInterpreter):
-        result = interpreter_obj.run(program)
-        final_value = _unwrap_run_result(result)
-    else:
-        interpreter_callable = interpreter_obj
-        if not callable(interpreter_callable):
-            raise TypeError("--interpreter must resolve to a callable or ProgramInterpreter instance")
-        result = _call_interpreter(interpreter_callable, program)
-        final_value = _finalize_result(result)
+        if context.apply_path:
+            with profile(f"Apply kleisli {context.apply_path}", indent=1):
+                kleisli_obj = _import_symbol(context.apply_path)
+                kleisli = _ensure_kleisli(kleisli_obj, "--apply")
+                program = kleisli(program)
+                if is_profiling_enabled():
+                    print(f"[DISCOVERY] Applied kleisli: {context.apply_path}", file=sys.stderr)
+
+        if context.transformer_paths:
+            for transform_path in context.transformer_paths:
+                with profile(f"Apply transform {transform_path}", indent=1):
+                    transformer_obj = _import_symbol(transform_path)
+                    transformer = _ensure_transformer(transformer_obj, f"transformer {transform_path}")
+                    program = transformer(program)
+                    if is_profiling_enabled():
+                        print(f"[DISCOVERY] Applied transform: {transform_path}", file=sys.stderr)
+
+        with profile("Load and run interpreter", indent=1):
+            interpreter_obj = _import_symbol(context.interpreter_path)
+            if isinstance(interpreter_obj, ProgramInterpreter):
+                result = interpreter_obj.run(program)
+                final_value = _unwrap_run_result(result)
+            else:
+                interpreter_callable = interpreter_obj
+                if not callable(interpreter_callable):
+                    raise TypeError("--interpreter must resolve to a callable or ProgramInterpreter instance")
+                result = _call_interpreter(interpreter_callable, program)
+                final_value = _finalize_result(result)
 
     if context.output_format == "json":
         payload = {
