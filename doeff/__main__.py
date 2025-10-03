@@ -50,12 +50,14 @@ def _resolve_attr(obj: Any, attr_path: str) -> Any:
 
 
 def _ensure_program(obj: Any, description: str) -> Program[Any]:
+    from doeff.types import Program
+
     if isinstance(obj, Program):
-        return obj
+        return obj  # type: ignore[return-value]
     if callable(obj):
         produced = obj()
         if isinstance(produced, Program):
-            return produced
+            return produced  # type: ignore[return-value]
     raise TypeError(f"{description} did not resolve to a Program instance.")
 
 
@@ -103,6 +105,8 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
 
 
 def _finalize_result(value: Any) -> Any:
+    from doeff.types import Program
+
     if isinstance(value, Program):
         interpreter = ProgramInterpreter()
         run_result = interpreter.run(value)

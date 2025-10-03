@@ -4,15 +4,25 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
 import inspect
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from doeff.types import Effect, EffectBase
 
-_PROGRAM_MARKER_ATTR = "__doeff_program__"
+if TYPE_CHECKING:
+    from doeff.program import Program, KleisliProgramCall
 
 
 def _type_name(value: object) -> str:
     return type(value).__name__
+
+
+def _is_program_like(value: object) -> bool:
+    """Check if value is Program, KleisliProgramCall, or Effect."""
+    if isinstance(value, (EffectBase, Effect)):
+        return True
+    # Import here to avoid circular imports
+    from doeff.program import Program, KleisliProgramCall
+    return isinstance(value, (Program, KleisliProgramCall))
 
 
 def ensure_str(value: object, *, name: str) -> None:
@@ -31,17 +41,12 @@ def ensure_optional_callable(value: object | None, *, name: str) -> None:
 
 
 def ensure_program_like(value: object, *, name: str) -> None:
-    if isinstance(value, (EffectBase, Effect)):
-        return
-    if getattr(value, _PROGRAM_MARKER_ATTR, False):
-        return
-    raise TypeError(f"{name} must be Program or Effect, got {_type_name(value)}")
+    if not _is_program_like(value):
+        raise TypeError(f"{name} must be Program or Effect, got {_type_name(value)}")
 
 
 def ensure_program_like_or_thunk(value: object, *, name: str) -> None:
-    if isinstance(value, (EffectBase, Effect)):
-        return
-    if getattr(value, _PROGRAM_MARKER_ATTR, False):
+    if _is_program_like(value):
         return
     if callable(value):
         try:

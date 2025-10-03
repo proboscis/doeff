@@ -27,8 +27,8 @@ from typing import (
 )
 
 from doeff.effects import Gather, GatherDict
-from doeff.program import Program
-from doeff.types import Effect
+from doeff.program import Program, ProgramBase
+from doeff.types import Effect, EffectBase
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -85,10 +85,38 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
     )
 
 
+def _string_annotation_is_effect(annotation_text: str) -> bool:
+    if not annotation_text:
+        return False
+    stripped = annotation_text.strip()
+    if not stripped:
+        return False
+    if "|" in stripped:
+        return any(_string_annotation_is_effect(part) for part in stripped.split("|"))
+    if stripped.startswith("Optional[") and stripped.endswith("]"):
+        return _string_annotation_is_effect(stripped[9:-1])
+    if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
+        return _string_annotation_is_effect(stripped[len("typing.Optional["):-1])
+    if stripped.startswith("Annotated[") and stripped.endswith("]"):
+        inner = stripped[len("Annotated["):-1]
+        first_part = inner.split(",", 1)[0]
+        return _string_annotation_is_effect(first_part)
+    normalized = stripped.replace(" ", "")
+    return (
+        normalized == "Effect"
+        or normalized == "EffectBase"
+        or normalized.startswith("Effect[")
+        or normalized.startswith("doeff.types.Effect")
+        or normalized.startswith("doeff.types.EffectBase")
+    )
+
+
 def _annotation_is_program(annotation: Any) -> bool:
     if annotation is inspect._empty:
         return False
     if annotation is Program:
+        return True
+    if annotation is Program or annotation is ProgramBase:
         return True
     if isinstance(annotation, ForwardRef):
         return _string_annotation_is_program(annotation.__forward_arg__)
@@ -96,6 +124,8 @@ def _annotation_is_program(annotation: Any) -> bool:
         return _string_annotation_is_program(annotation)
     origin = get_origin(annotation)
     if origin is Program:
+        return True
+    if origin is Program or origin is ProgramBase:
         return True
     if origin is Annotated:
         args = get_args(annotation)
@@ -105,6 +135,29 @@ def _annotation_is_program(annotation: Any) -> bool:
     union_type = getattr(types, 'UnionType', None)
     if origin is Union or (union_type is not None and origin is union_type):
         return any(_annotation_is_program(arg) for arg in get_args(annotation))
+    return False
+
+
+def _annotation_is_effect(annotation: Any) -> bool:
+    if annotation is inspect._empty:
+        return False
+    if annotation is Effect or annotation is EffectBase:
+        return True
+    if isinstance(annotation, ForwardRef):
+        return _string_annotation_is_effect(annotation.__forward_arg__)
+    if isinstance(annotation, str):
+        return _string_annotation_is_effect(annotation)
+    origin = get_origin(annotation)
+    if origin is Effect or origin is EffectBase:
+        return True
+    if origin is Annotated:
+        args = get_args(annotation)
+        if args:
+            return _annotation_is_effect(args[0])
+        return False
+    union_type = getattr(types, 'UnionType', None)
+    if origin is Union or (union_type is not None and origin is union_type):
+        return any(_annotation_is_effect(arg) for arg in get_args(annotation))
     return False
 
 
@@ -137,7 +190,9 @@ def _build_auto_unwrap_strategy(kleisli: "KleisliProgram[Any, Any]") -> _AutoUnw
         return strategy
     for param in signature.parameters.values():
         annotation = type_hints.get(param.name, param.annotation)
-        should_unwrap = not _annotation_is_program(annotation)
+        is_program_annotation = _annotation_is_program(annotation)
+        is_effect_annotation = _annotation_is_effect(annotation)
+        should_unwrap = not (is_program_annotation or is_effect_annotation)
         if param.kind in (
             inspect.Parameter.POSITIONAL_ONLY,
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -225,18 +280,22 @@ class KleisliProgram(Generic[P, T]):
         Parameters annotated as Program[...] opt out of auto-unwrapping so the callee
         can manage those Program instances manually.
         """
-
+        args_tuple: tuple[Any, ...] = tuple(args)
+        kwargs_dict: dict[str, Any] = dict(kwargs)
         strategy = _build_auto_unwrap_strategy(self)
 
         @wraps(self.func)
-        def unwrapping_generator() -> Generator[Effect | Program, Any, T]:
+        def unwrapping_generator(
+            *call_args: P.args, **call_kwargs: P.kwargs
+        ) -> Generator[Effect | Program, Any, T]:
+            
             program_args: list[Program[Any]] = []
             program_indices: list[int] = []
-            regular_args: list[Any | None] = list(args)
+            regular_args: list[Any | None] = list(call_args)
 
-            for index, arg in enumerate(args):
+            for index, arg in enumerate(call_args):
                 should_unwrap = strategy.should_unwrap_positional(index)
-                if should_unwrap and isinstance(arg, Program):
+                if should_unwrap and isinstance(arg, ProgramBase):
                     program_args.append(arg)
                     program_indices.append(index)
                     regular_args[index] = None
@@ -246,9 +305,9 @@ class KleisliProgram(Generic[P, T]):
             program_kwargs: dict[str, Program[Any]] = {}
             regular_kwargs: dict[str, Any] = {}
 
-            for key, value in kwargs.items():
+            for key, value in call_kwargs.items():
                 should_unwrap = strategy.should_unwrap_keyword(key)
-                if should_unwrap and isinstance(value, Program):
+                if should_unwrap and isinstance(value, ProgramBase):
                     program_kwargs[key] = value
                 else:
                     regular_kwargs[key] = value
@@ -265,14 +324,36 @@ class KleisliProgram(Generic[P, T]):
                     unwrapped_kwargs = yield GatherDict(program_kwargs)
                     regular_kwargs.update(unwrapped_kwargs)
 
-            result_program = self.func(*regular_args, **regular_kwargs)
+            result = self.func(*regular_args, **regular_kwargs)
 
-            if isinstance(result_program, Program):
-                result = yield result_program
-                return result
-            return result_program
+            if isinstance(result, ProgramBase):
+                resolved = yield result
+                return resolved
 
-        return Program(unwrapping_generator)
+            generator = result
+            try:
+                current = next(generator)
+            except StopIteration as stop_exc:
+                return stop_exc.value
+
+            while True:
+                sent_value = yield current
+                try:
+                    current = generator.send(sent_value)
+                except StopIteration as stop_exc:
+                    return stop_exc.value
+
+        from doeff.program import KleisliProgramCall
+        from doeff.utils import capture_creation_context
+
+        return KleisliProgramCall.create_from_kleisli(
+            generator_func=unwrapping_generator,
+            kleisli=self,
+            args=args_tuple,
+            kwargs=kwargs_dict,
+            function_name=getattr(self, '__name__', '<unknown>'),
+            created_at=capture_creation_context(skip_frames=2)
+        )
     def partial(
         self, /, *args: P.args, **kwargs: P.kwargs
     ) -> "PartiallyAppliedKleisliProgram[P, T]":
@@ -300,7 +381,7 @@ class KleisliProgram(Generic[P, T]):
             def generator() -> Generator[Effect | Program, Any, U]:
                 initial_value = yield self(*args, **kwargs)
                 next_step = binder(initial_value)
-                if not isinstance(next_step, Program):
+                if not isinstance(next_step, ProgramBase):
                     raise TypeError(
                         "binder must return a Program; got "
                         f"{type(next_step).__name__}"
@@ -308,7 +389,8 @@ class KleisliProgram(Generic[P, T]):
                 result = yield next_step
                 return result
 
-            return Program(generator)
+            from doeff.program import KleisliProgramCall
+            return KleisliProgramCall.create_anonymous(generator)
 
         return KleisliProgram(composed)
 
@@ -336,7 +418,8 @@ class KleisliProgram(Generic[P, T]):
                 value = yield self(*args, **kwargs)
                 return mapper(value)
 
-            return Program(generator)
+            from doeff.program import KleisliProgramCall
+            return KleisliProgramCall.create_anonymous(generator)
 
         return KleisliProgram(mapped)
 

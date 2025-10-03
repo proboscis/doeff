@@ -230,8 +230,24 @@ class CapturedTraceback:
 
         return "\n".join(self.lines(condensed=condensed, max_lines=max_lines))
 
+
+@dataclass(frozen=True)
+class _TracebackSplit:
+    """Split traceback into header and body sections."""
+    header: list[str]
+    body: list[str]
+
+
+@dataclass(frozen=True)
+class _HeadTailLengths:
+    """Head and tail line counts for traceback display."""
+    head_lines: int
+    tail_lines: int
+
+
 def _condense_traceback_lines(lines: list[str], max_lines: int) -> list[str]:
-    header, body = _split_traceback_header(lines)
+    split = _split_traceback_header(lines)
+    header, body = split.header, split.body
     if not body:
         return header[:max_lines]
 
@@ -247,29 +263,29 @@ def _condense_traceback_lines(lines: list[str], max_lines: int) -> list[str]:
     if available <= 4 or available_frames <= 0:
         return header + body[-available:]
 
-    head_lines, tail_lines = _choose_head_tail_lengths(body, available_frames)
-    if tail_lines <= 0 or head_lines + tail_lines >= len(body):
+    lengths = _choose_head_tail_lengths(body, available_frames)
+    if lengths.tail_lines <= 0 or lengths.head_lines + lengths.tail_lines >= len(body):
         return fallback
 
     ellipsis_line = "    ..."
-    return header + body[:head_lines] + [ellipsis_line] + body[-tail_lines:]
+    return header + body[:lengths.head_lines] + [ellipsis_line] + body[-lengths.tail_lines:]
 
 
-def _split_traceback_header(lines: list[str]) -> tuple[list[str], list[str]]:
+def _split_traceback_header(lines: list[str]) -> _TracebackSplit:
     if lines and lines[0].strip().startswith("Traceback"):
-        return [lines[0]], lines[1:]
-    return [], lines
+        return _TracebackSplit(header=[lines[0]], body=lines[1:])
+    return _TracebackSplit(header=[], body=lines)
 
 
-def _choose_head_tail_lengths(body: list[str], available_frames: int) -> tuple[int, int]:
+def _choose_head_tail_lengths(body: list[str], available_frames: int) -> _HeadTailLengths:
     tail_lines = _initial_tail_length(available_frames)
     available = available_frames
     if tail_lines >= available:
-        return available, 0
+        return _HeadTailLengths(head_lines=available, tail_lines=0)
 
     head_lines = max(2, available - tail_lines)
-    head_lines, tail_lines = _rebalance_for_user_frames(body, head_lines, tail_lines)
-    return head_lines, tail_lines
+    lengths = _rebalance_for_user_frames(body, head_lines, tail_lines)
+    return lengths
 
 
 def _initial_tail_length(available_frames: int) -> int:
@@ -289,19 +305,20 @@ def _rebalance_for_user_frames(
     tail_lines: int,
     desired_user_frames: int = 3,
     tail_min: int = 4,
-) -> tuple[int, int]:
+) -> _HeadTailLengths:
     user_span_end = _find_user_span_end(body, desired_user_frames)
     available = head_lines + tail_lines
 
     if user_span_end is None or user_span_end <= head_lines:
-        return head_lines, tail_lines
+        return _HeadTailLengths(head_lines=head_lines, tail_lines=tail_lines)
 
-    head_lines, tail_lines = _grow_head_with_tail(
+    lengths = _grow_head_with_tail(
         head_lines,
         tail_lines,
         user_span_end - head_lines,
         tail_min,
     )
+    head_lines, tail_lines = lengths.head_lines, lengths.tail_lines
 
     if user_span_end > head_lines:
         head_lines = min(user_span_end, available)
@@ -311,7 +328,7 @@ def _rebalance_for_user_frames(
         head_lines = min(2, available)
         tail_lines = max(0, available - head_lines)
 
-    return head_lines, tail_lines
+    return _HeadTailLengths(head_lines=head_lines, tail_lines=tail_lines)
 
 
 def _grow_head_with_tail(
@@ -319,9 +336,9 @@ def _grow_head_with_tail(
     tail_lines: int,
     extra_needed: int,
     tail_min: int,
-) -> tuple[int, int]:
+) -> _HeadTailLengths:
     if extra_needed <= 0:
-        return head_lines, tail_lines
+        return _HeadTailLengths(head_lines=head_lines, tail_lines=tail_lines)
 
     reservable = max(0, tail_lines - tail_min)
     take = min(extra_needed, reservable)
@@ -335,7 +352,7 @@ def _grow_head_with_tail(
         head_lines += take
         tail_lines -= take
 
-    return head_lines, tail_lines
+    return _HeadTailLengths(head_lines=head_lines, tail_lines=tail_lines)
 
 
 def _find_user_span_end(body: list[str], desired: int) -> int | None:
@@ -449,6 +466,8 @@ EffectFailure = EffectFailureError
 # Core Effect Type
 # ============================================
 
+from doeff.program import Program, ProgramBase
+
 E = TypeVar("E", bound="EffectBase")
 
 
@@ -468,12 +487,32 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase(ABC):
+class EffectBase(ProgramBase):
     """Base dataclass implementing :class:`Effect` semantics."""
 
     created_at: EffectCreationContext | None = field(
         default=None, compare=False
     )
+
+    def map(self, f: Callable[[Any], Any]) -> Program:
+        """Map a function over the result of this effect (functor map)."""
+        def mapped_gen():
+            value = yield self
+            return f(value)
+
+        from doeff.program import KleisliProgramCall
+        return KleisliProgramCall.create_anonymous(mapped_gen)
+
+    def flat_map(self, f: Callable[[Any], Program]) -> Program:
+        """Monadic bind operation - chain this effect with a program-returning function."""
+        def flatmapped_gen():
+            value = yield self
+            next_prog = f(value)
+            result = yield next_prog
+            return result
+
+        from doeff.program import KleisliProgramCall
+        return KleisliProgramCall.create_anonymous(flatmapped_gen)
 
     @abstractmethod
     def intercept(
@@ -508,6 +547,27 @@ ProgramGenerator = Generator[Effect, Any, T]
 
 
 # ============================================
+# Call Frame - tracks program call stack
+# ============================================
+
+@dataclass(frozen=True)
+class CallFrame:
+    """
+    Represents a single frame in the program call stack.
+
+    Tracks which KleisliProgram was called with what arguments,
+    enabling call tree reconstruction for effect tracking.
+    """
+
+    kleisli: Any  # KleisliProgram (type hint avoided to prevent circular import)
+    function_name: str
+    args: tuple
+    kwargs: dict[str, Any]
+    depth: int  # Depth in the call stack (0 = top-level)
+    created_at: EffectCreationContext | None
+
+
+# ============================================
 # Execution Context
 # ============================================
 
@@ -533,6 +593,8 @@ class ExecutionContext:
     cache: dict[str, Any] = field(default_factory=dict)
     # Observed effects during run (shared reference)
     effect_observations: list[EffectObservation] = field(default_factory=list)
+    # Program call stack for tracking effect sources
+    program_call_stack: list[CallFrame] = field(default_factory=list)
 
     def copy(self) -> ExecutionContext:
         """Create a shallow copy of the context."""
@@ -544,6 +606,7 @@ class ExecutionContext:
             io_allowed=self.io_allowed,
             cache=self.cache,  # Cache is shared reference, not copied
             effect_observations=self.effect_observations,
+            program_call_stack=self.program_call_stack.copy(),  # Copy the call stack list
         )
 
     def with_env_update(self, updates: dict[str, Any]) -> ExecutionContext:
@@ -558,6 +621,7 @@ class ExecutionContext:
             io_allowed=self.io_allowed,
             cache=self.cache,  # Cache is shared
             effect_observations=self.effect_observations,
+            program_call_stack=self.program_call_stack.copy(),
         )
 
 
@@ -568,6 +632,7 @@ class EffectObservation:
     effect_type: str
     key: str | None
     context: EffectCreationContext | None = None
+    call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)
 
 
 # ============================================
@@ -1620,15 +1685,17 @@ def _intercept_value(
 ) -> Any:
     """Recursively intercept Programs embedded within ``value``."""
 
-    from doeff.program import Program  # Local import to avoid circular dependency
+    from doeff.program import Program, KleisliProgramCall  # Local import to avoid circular dependency
 
     result = value
-    if isinstance(value, (Program, Effect)):
+    if isinstance(value, (Program, KleisliProgramCall, Effect)):
         result = value.intercept(transform)
     elif isinstance(value, dict):
         result = _intercept_mapping(value, transform)
     elif isinstance(value, tuple):
-        result = _intercept_tuple(value, transform)
+        # Intercept tuple items directly (inlined to avoid tuple return)
+        new_items = tuple(_intercept_value(item, transform) for item in value)
+        result = new_items if new_items != value else value
     elif isinstance(value, list):
         result = [_intercept_value(item, transform) for item in value]
     elif isinstance(value, set):
@@ -1652,14 +1719,6 @@ def _intercept_mapping(
             changed = True
         new_items[key] = new_item
     return new_items if changed else mapping
-
-
-def _intercept_tuple(
-    items: tuple[Any, ...], transform: Callable[[Effect], Effect | Program]
-) -> tuple[Any, ...]:
-    new_items = tuple(_intercept_value(item, transform) for item in items)
-    return new_items if new_items != items else items
-
 
 
 def _wrap_callable(
@@ -1688,6 +1747,7 @@ __all__ = [
     "Nothing",
     "Ok",
     "Program",
+    "ProgramBase",
     "Result",
     "RunResult",
     "Some",
