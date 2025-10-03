@@ -59,6 +59,7 @@ from doeff.handlers import (
     WriterEffectHandler,
 )
 from doeff.program import Program
+from doeff.types import CallFrame
 from doeff.types import (
     Effect,
     EffectFailure,
@@ -95,14 +96,16 @@ def force_eval(prog: Program[T]) -> Program[T]:
             current = next(gen)
             while True:
                 # If current is a Program, force evaluate it
-                if isinstance(current, Program):
+                from doeff.types import Program as ProgramType
+                if isinstance(current, ProgramType):
                     current = force_eval(current)
                 value = yield current
                 current = gen.send(value)
         except StopIteration as e:
             return e.value
 
-    return Program(forced_generator)
+    from doeff.program import KleisliProgramCall
+    return KleisliProgramCall.create_anonymous(forced_generator)
 
 
 class ProgramInterpreter:
@@ -197,6 +200,7 @@ class ProgramInterpreter:
                 steps=frozenset(),
             ),
             io_allowed=True,
+            program_call_stack=[],  # Initialize call stack
         )
 
         try:
@@ -209,53 +213,77 @@ class ProgramInterpreter:
         self, program: Program[T], ctx: ExecutionContext
     ) -> RunResult[T]:
         """Execute the program's generator loop."""
-        gen = program.generator_func()
+        from doeff.program import KleisliProgramCall
+        from doeff.types import Effect
 
-        # Start the generator
+        # Handle Effect directly (e.g., PureEffect)
+        if isinstance(program, Effect):
+            result = await self._handle_effect(program, ctx)
+            return RunResult(ctx, Ok(result))
+
+        call_frame_pushed = False
+
+        if isinstance(program, KleisliProgramCall):
+            if program.kleisli_source is not None:
+                frame = CallFrame(
+                    kleisli=program.kleisli_source,
+                    function_name=program.function_name,
+                    args=program.args,
+                    kwargs=program.kwargs,
+                    depth=len(ctx.program_call_stack),
+                    created_at=program.created_at,
+                )
+                ctx.program_call_stack.append(frame)
+                call_frame_pushed = True
+            gen = program.to_generator()
+        else:
+            gen = program.generator_func()
+
         try:
             current = next(gen)
         except StopIteration as e:
             return RunResult(ctx, Ok(e.value))
 
-        # Process effects
-        while True:
-            logger.debug(f"effect: {current}")
-            if isinstance(current, Program):
-                # Sub-program - run it recursively
-                sub_result = await self.run_async(current, ctx)
-                if isinstance(sub_result.result, Err):
-                    return sub_result
+        try:
+            while True:
+                logger.debug(f"effect: {current}")
+                from doeff.types import Program as ProgramType
 
-                # Update context with sub-program changes
-                ctx = sub_result.context
+                if isinstance(current, Effect):
+                    try:
+                        value = await self._handle_effect(current, ctx)
+                    except Exception as exc:
+                        runtime_tb = capture_traceback(exc)
+                        effect_failure = EffectFailure(
+                            effect=current,
+                            cause=exc,
+                            runtime_traceback=runtime_tb,
+                            creation_context=current.created_at,
+                        )
+                        return RunResult(ctx, Err(effect_failure))
 
-                # Send sub-program result back
-                try:
-                    current = gen.send(sub_result.value)
-                except StopIteration as e:
-                    return RunResult(ctx, Ok(e.value))
-            elif isinstance(current, Effect):
-                # Handle the effect
-                try:
-                    value = await self._handle_effect(current, ctx)
-                except Exception as exc:
-                    runtime_tb = capture_traceback(exc)
-                    effect_failure = EffectFailure(
-                        effect=current,
-                        cause=exc,
-                        runtime_traceback=runtime_tb,
-                        creation_context=current.created_at,
-                    )
-                    return RunResult(ctx, Err(effect_failure))
+                    try:
+                        current = gen.send(value)
+                    except StopIteration as e:
+                        return RunResult(ctx, Ok(e.value))
 
-                # Send value back
-                try:
-                    current = gen.send(value)
-                except StopIteration as e:
-                    return RunResult(ctx, Ok(e.value))
-            else:
-                # Unknown yield type
-                return RunResult(ctx, Err(TypeError(f"Unknown yield type: {type(current)}")))
+                elif isinstance(current, ProgramType):
+                    sub_result = await self.run_async(current, ctx)
+                    if isinstance(sub_result.result, Err):
+                        return sub_result
+
+                    ctx = sub_result.context
+
+                    try:
+                        current = gen.send(sub_result.value)
+                    except StopIteration as e:
+                        return RunResult(ctx, Ok(e.value))
+
+                else:
+                    return RunResult(ctx, Err(TypeError(f"Unknown yield type: {type(current)}")))
+        finally:
+            if call_frame_pushed:
+                ctx.program_call_stack.pop()
 
     def _record_effect_usage(self, effect: Effect, ctx: ExecutionContext) -> None:
         """Record Dep/Ask effect usage for later inspection."""
@@ -281,11 +309,14 @@ class ProgramInterpreter:
         context_info = getattr(effect, "created_at", None)
         sanitized = context_info.without_frames() if context_info is not None else None
 
+        snapshot = tuple(ctx.program_call_stack)
+
         observations.append(
             EffectObservation(
                 effect_type=effect_type,
                 key=key,
                 context=sanitized,
+                call_stack_snapshot=snapshot,
             )
         )
 
@@ -344,6 +375,10 @@ class ProgramInterpreter:
 
     async def _try_result_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:  # noqa: PLR0911
         """Handle Result monad effects. Returns _NO_HANDLER if not matched."""
+        from doeff.effects.pure import PureEffect
+
+        if _effect_is(effect, PureEffect):
+            return await self.result_handler.handle_pure(effect)
         if _effect_is(effect, ResultFailEffect):
             return await self.result_handler.handle_fail(effect)
         if _effect_is(effect, ResultCatchEffect):
@@ -418,15 +453,14 @@ class ProgramInterpreter:
     async def _run_gather_sequence(
         self, programs: list[Program], ctx: ExecutionContext
     ) -> list[Any]:
+        from doeff.program import KleisliProgramCall
+
         normalized_programs: list[Program] = []
 
         def _enqueue_program(prog_like: Any) -> None:
-            if isinstance(prog_like, Program):
+            from doeff.types import Program as ProgramType
+            if isinstance(prog_like, ProgramType):
                 normalized_programs.append(prog_like)
-                return
-
-            if isinstance(prog_like, Effect):
-                normalized_programs.append(Program.from_program_like(prog_like))
                 return
 
             if isinstance(prog_like, (list, tuple)):

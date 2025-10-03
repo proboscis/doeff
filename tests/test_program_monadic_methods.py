@@ -187,9 +187,10 @@ async def test_map_vs_flat_map():
     mapped = base_prog().map(effect_prog)
     result2 = await engine.run_async(mapped)
 
-    # The result is a Program object, not the value
+    # The result is a Program object (or KleisliProgramCall), not the value
+    from doeff.program import KleisliProgramCall
     assert result2.is_ok
-    assert isinstance(result2.value, Program)
+    assert isinstance(result2.value, (Program, KleisliProgramCall))
 
 
 @pytest.mark.asyncio

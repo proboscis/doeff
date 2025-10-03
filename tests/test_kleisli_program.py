@@ -23,6 +23,7 @@ from doeff import (
     do,
 )
 from doeff.kleisli import PartiallyAppliedKleisliProgram
+from doeff.program import KleisliProgramCall
 
 
 @pytest.mark.asyncio
@@ -38,9 +39,9 @@ async def test_kleisli_basic():
     # Check that add is a KleisliProgram
     assert isinstance(add, KleisliProgram)
 
-    # Calling it should return a Program
+    # Calling it should return a KleisliProgramCall (new architecture)
     prog = add(2, 3)
-    assert isinstance(prog, Program)
+    assert isinstance(prog, (Program, KleisliProgramCall))
 
     # Run it
     engine = ProgramInterpreter()
@@ -130,7 +131,7 @@ async def test_kleisli_respects_program_annotation():
 
     @do
     def echo(program_value: Program[int]) -> Generator[Effect | Program, Any, int]:
-        assert isinstance(program_value, Program)
+        assert isinstance(program_value, (Program, KleisliProgramCall))
         result = yield program_value
         return result
 
@@ -261,9 +262,9 @@ async def test_kleisli_no_args():
     # Should still be a KleisliProgram
     assert isinstance(get_constant, KleisliProgram)
 
-    # Call with no args
+    # Call with no args - returns KleisliProgramCall in new architecture
     prog = get_constant()
-    assert isinstance(prog, Program)
+    assert isinstance(prog, (Program, KleisliProgramCall))
 
     engine = ProgramInterpreter()
     result = await engine.run_async(prog)
