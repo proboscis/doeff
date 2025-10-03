@@ -130,7 +130,9 @@ def do(
             except StopIteration as e:
                 return e.value
 
-        return Program(generator_wrapper)
+        from doeff.program import KleisliProgramCall
+
+        return KleisliProgramCall.create_anonymous(generator_wrapper)
 
     # Return a KleisliProgram that creates Programs lazily
     kleisli_program = KleisliProgram(create_program)

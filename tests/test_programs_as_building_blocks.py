@@ -272,14 +272,15 @@ async def test_no_generator_func_access():
         yield Log("This is a user program")
         return "done"
 
-    # Create a Program
+    # Create a Program (or KleisliProgramCall)
     program = user_program()
 
-    # Verify it's a Program
-    assert isinstance(program, Program)
+    # Verify it's a Program or KleisliProgramCall
+    from doeff.program import KleisliProgramCall
+    assert isinstance(program, (Program, KleisliProgramCall))
 
-    # We should NEVER do this:
-    assert hasattr(program, "generator_func")  # It exists but we don't use it!
+    # We should NEVER do this in user code:
+    assert hasattr(program, "generator_func") or hasattr(program, "to_generator")  # It exists but we don't use it!
 
     # Instead, we use the Program directly with the engine
     engine = ProgramInterpreter()

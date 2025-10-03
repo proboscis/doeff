@@ -5,6 +5,8 @@ This module provides functions to convert Program[T] from the pragmatic
 implementation into pinjected's Injected[T] and IProxy[T] types.
 """
 
+from __future__ import annotations
+
 from typing import TypeVar
 
 from loguru import logger
@@ -12,7 +14,7 @@ from pinjected import AsyncResolver, Injected, IProxy
 
 from doeff.effects import Await, DepInjectEffect
 from doeff.interpreter import ProgramInterpreter
-from doeff.program import Program
+from doeff.program import KleisliProgramCall, Program
 from doeff.types import Effect, ExecutionContext, RunResult
 
 T = TypeVar("T")
@@ -23,7 +25,7 @@ def _program_with_dependency_interception(
 ) -> Program[T]:
     """Attach dependency-resolution interception using ``Program.intercept``."""
 
-    if not isinstance(prog, Program):  # Defensive: keep API expectations clear
+    if not isinstance(prog, (Program, KleisliProgramCall)):  # Defensive: keep API expectations clear
         raise TypeError(
             f"Pinjected bridge expects a Program instance, got {type(prog)!r}"
         )

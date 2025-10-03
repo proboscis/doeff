@@ -11,7 +11,7 @@ from doeff import Program, do
 def _run_program(program: Program[Any]) -> Any:
     """Execute a program that does not yield external effects."""
 
-    stack = [program.generator_func()]
+    stack = [program.to_generator()]
     sentinel: Any | None = None
 
     while stack:
@@ -28,7 +28,7 @@ def _run_program(program: Program[Any]) -> Any:
             continue
 
         if isinstance(yielded, Program):
-            stack.append(yielded.generator_func())
+            stack.append(yielded.to_generator())
             continue
 
         raise AssertionError(
@@ -58,8 +58,10 @@ def test_do_instance_method_signature_and_execution() -> None:
     bound_sig = inspect.signature(bound)
     assert list(bound_sig.parameters.keys()) == ["delta"]
 
+    from doeff.program import KleisliProgramCall
+
     program = bound(4)
-    assert isinstance(program, Program)
+    assert isinstance(program, (Program, KleisliProgramCall))
     assert _run_program(program) == 7
 
 
@@ -72,9 +74,11 @@ def test_do_class_method_signature_and_execution() -> None:
         def produce(cls, value: int) -> Generator[Program[Any], Any, int]:
             return cls.bias + value
 
+    from doeff.program import KleisliProgramCall
+
     class_sig = inspect.signature(Aggregator.produce)
     assert list(class_sig.parameters.keys()) == ["value"]
 
     program = Aggregator.produce(5)
-    assert isinstance(program, Program)
+    assert isinstance(program, (Program, KleisliProgramCall))
     assert _run_program(program) == 7

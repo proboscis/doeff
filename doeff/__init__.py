@@ -120,10 +120,10 @@ from doeff.effects import (
 )
 
 # Import from new modular structure
-from doeff.program import Program
 from doeff.interpreter import ProgramInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
+from doeff.program import Program
 from doeff.graph_snapshot import (
     build_graph_snapshot,
     graph_to_html,
