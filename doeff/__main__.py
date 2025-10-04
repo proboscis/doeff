@@ -7,11 +7,12 @@ import inspect
 import json
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from doeff import Program, ProgramInterpreter, RunResult
-from doeff.cli.profiling import is_profiling_enabled, profile
+from doeff.analysis import EffectCallTree
+from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.kleisli import KleisliProgram
 from doeff.types import capture_traceback
 
@@ -24,6 +25,8 @@ class RunContext:
     apply_path: str | None
     transformer_paths: list[str]
     output_format: str
+    report: bool
+    report_verbose: bool
 
 
 def _import_symbol(path: str) -> Any:
@@ -104,16 +107,16 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
     return result
 
 
-def _finalize_result(value: Any) -> Any:
-    from doeff.types import Program
+def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
+    from doeff.program import Program as ProgramType
 
-    if isinstance(value, Program):
+    if isinstance(value, ProgramType):
         interpreter = ProgramInterpreter()
         run_result = interpreter.run(value)
-        return _unwrap_run_result(run_result)
+        return _unwrap_run_result(run_result), run_result
     if isinstance(value, RunResult):
-        return _unwrap_run_result(value)
-    return value
+        return _unwrap_run_result(value), value
+    return value, None
 
 
 def _unwrap_run_result(result: RunResult[Any]) -> Any:
@@ -131,6 +134,18 @@ def _json_safe(value: Any) -> Any:
         return repr(value)
 
 
+def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
+    observations = getattr(run_result.context, "effect_observations", None)
+    if not observations:
+        return None
+
+    tree = EffectCallTree.from_observations(observations)
+    ascii_tree = tree.visualize_ascii()
+    if ascii_tree == "(no effects)":
+        return None
+    return ascii_tree
+
+
 def handle_run(args: argparse.Namespace) -> int:
     from doeff.cli.discovery import (
         IndexerBasedDiscovery,
@@ -140,6 +155,7 @@ def handle_run(args: argparse.Namespace) -> int:
     from doeff.effects import Local
 
     with profile("CLI discovery and execution"):
+        print_profiling_status()
         context = RunContext(
             program_path=args.program,
             interpreter_path=args.interpreter,
@@ -147,6 +163,8 @@ def handle_run(args: argparse.Namespace) -> int:
             apply_path=args.apply,
             transformer_paths=args.transform or [],
             output_format=args.format,
+            report=getattr(args, "report", False),
+            report_verbose=getattr(args, "report_verbose", False),
         )
 
         # Initialize discovery services
@@ -165,15 +183,8 @@ def handle_run(args: argparse.Namespace) -> int:
                         "Please specify --interpreter or add '# doeff: interpreter, default' marker to an interpreter function."
                     )
                 if is_profiling_enabled():
-                    print(f"[DISCOVERY] Interpreter: {discovered_interp}", file=sys.stderr)
-                context = RunContext(
-                    program_path=context.program_path,
-                    interpreter_path=discovered_interp,
-                    env_paths=context.env_paths,
-                    apply_path=context.apply_path,
-                    transformer_paths=context.transformer_paths,
-                    output_format=context.output_format,
-                )
+                    print(f"[DOEFF][DISCOVERY] Interpreter: {discovered_interp}", file=sys.stderr)
+                context = replace(context, interpreter_path=discovered_interp)
 
         # Auto-discover envs if not specified
         if not context.env_paths:
@@ -181,19 +192,12 @@ def handle_run(args: argparse.Namespace) -> int:
                 discovered_envs = discovery.discover_default_envs(context.program_path)
                 if is_profiling_enabled():
                     if discovered_envs:
-                        print(f"[DISCOVERY] Environments ({len(discovered_envs)}):", file=sys.stderr)
+                        print(f"[DOEFF][DISCOVERY] Environments ({len(discovered_envs)}):", file=sys.stderr)
                         for env_path in discovered_envs:
-                            print(f"[DISCOVERY]   - {env_path}", file=sys.stderr)
+                            print(f"[DOEFF][DISCOVERY]   - {env_path}", file=sys.stderr)
                     else:
-                        print("[DISCOVERY] Environments: none found", file=sys.stderr)
-                context = RunContext(
-                    program_path=context.program_path,
-                    interpreter_path=context.interpreter_path,
-                    env_paths=discovered_envs,
-                    apply_path=context.apply_path,
-                    transformer_paths=context.transformer_paths,
-                    output_format=context.output_format,
-                )
+                        print("[DOEFF][DISCOVERY] Environments: none found", file=sys.stderr)
+                context = replace(context, env_paths=discovered_envs)
 
         with profile("Load program", indent=1):
             program_obj = _import_symbol(context.program_path)
@@ -216,7 +220,7 @@ def handle_run(args: argparse.Namespace) -> int:
                 kleisli = _ensure_kleisli(kleisli_obj, "--apply")
                 program = kleisli(program)
                 if is_profiling_enabled():
-                    print(f"[DISCOVERY] Applied kleisli: {context.apply_path}", file=sys.stderr)
+                    print(f"[DOEFF][DISCOVERY] Applied kleisli: {context.apply_path}", file=sys.stderr)
 
         if context.transformer_paths:
             for transform_path in context.transformer_paths:
@@ -225,19 +229,23 @@ def handle_run(args: argparse.Namespace) -> int:
                     transformer = _ensure_transformer(transformer_obj, f"transformer {transform_path}")
                     program = transformer(program)
                     if is_profiling_enabled():
-                        print(f"[DISCOVERY] Applied transform: {transform_path}", file=sys.stderr)
+                        print(f"[DOEFF][DISCOVERY] Applied transform: {transform_path}", file=sys.stderr)
+
+        run_result: RunResult[Any] | None = None
 
         with profile("Load and run interpreter", indent=1):
             interpreter_obj = _import_symbol(context.interpreter_path)
             if isinstance(interpreter_obj, ProgramInterpreter):
-                result = interpreter_obj.run(program)
-                final_value = _unwrap_run_result(result)
+                run_result = interpreter_obj.run(program)
+                final_value = _unwrap_run_result(run_result)
             else:
                 interpreter_callable = interpreter_obj
                 if not callable(interpreter_callable):
                     raise TypeError("--interpreter must resolve to a callable or ProgramInterpreter instance")
                 result = _call_interpreter(interpreter_callable, program)
-                final_value = _finalize_result(result)
+                final_value, run_result = _finalize_result(result)
+
+    call_tree_ascii = _call_tree_ascii(run_result) if run_result is not None else None
 
     if context.output_format == "json":
         payload = {
@@ -250,9 +258,22 @@ def handle_run(args: argparse.Namespace) -> int:
             "result": _json_safe(final_value),
             "result_type": type(final_value).__name__,
         }
+        if context.report and run_result is not None:
+            payload["report"] = run_result.display(verbose=context.report_verbose)
+            if call_tree_ascii is not None:
+                payload["call_tree"] = call_tree_ascii
         print(json.dumps(payload))
     else:
         print(final_value)
+        if context.report:
+            if run_result is not None:
+                print()  # Blank line before report
+                print(run_result.display(verbose=context.report_verbose))
+            else:
+                print(
+                    "\n(No run report available: interpreter did not return a RunResult)",
+                    file=sys.stderr,
+                )
     return 0
 
 
@@ -286,6 +307,16 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("text", "json"),
         default="text",
         help="Output format (default: text)",
+    )
+    run_parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Print the RunResult report (includes effect call tree).",
+    )
+    run_parser.add_argument(
+        "--report-verbose",
+        action="store_true",
+        help="Use verbose mode when printing the RunResult report.",
     )
     run_parser.set_defaults(func=handle_run)
 

@@ -66,6 +66,44 @@ def test_doeff_run_json_output(extra_args: list[str], expected: int) -> None:
     assert payload["result"] == expected
 
 
+def test_doeff_run_text_report() -> None:
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.ask_program",
+        "--interpreter",
+        "tests.cli_assets.runresult_interpreter",
+        "--env",
+        "tests.cli_assets.sample_env",
+        "--report",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "5" in result.stdout
+    assert "Effect Call Tree" in result.stdout
+
+
+def test_doeff_run_json_report_includes_call_tree() -> None:
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.ask_program",
+        "--interpreter",
+        "tests.cli_assets.runresult_interpreter",
+        "--format",
+        "json",
+        "--env",
+        "tests.cli_assets.sample_env",
+        "--report",
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["result"] == 5
+    assert "report" in payload
+    assert "call_tree" in payload
+    assert "Ask" in payload["call_tree"]
+
+
 def test_doeff_run_missing_interpreter_argument() -> None:
     result = run_cli(
         "--program",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from doeff import Program, ProgramInterpreter, do
+from doeff.effects import Ask
 
 sample_program: Program[int] = Program.pure(5)
 
@@ -19,3 +20,17 @@ def sync_interpreter(program: Program[int]) -> int:
     interpreter = ProgramInterpreter()
     result = interpreter.run(program)
     return result.value
+
+
+@do
+def ask_program() -> Program[int]:
+    value = yield Ask("value")
+    return value
+
+
+def runresult_interpreter(program: Program[int]):
+    interpreter = ProgramInterpreter()
+    return interpreter.run(program)
+
+
+sample_env: Program[dict] = Program.pure({"value": 5})
