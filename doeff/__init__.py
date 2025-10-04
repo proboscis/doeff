@@ -38,6 +38,7 @@ from doeff.types import (
     WGraph,
     FrozenDict,
 )
+from doeff.analysis import EffectCallTree
 
 from doeff.effects import (
     # Effects - Reader
@@ -176,6 +177,7 @@ __all__ = [  # noqa: RUF022
     # Core classes
     "ProgramInterpreter",
     "KleisliProgram",
+    "EffectCallTree",
     # Decorator
     "do",
     # Graph snapshot helpers
