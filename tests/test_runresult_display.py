@@ -54,6 +54,31 @@ async def test_display_success():
 
 
 @pytest.mark.asyncio
+async def test_display_includes_call_tree():
+    """Display should include the effect call tree when observations exist."""
+
+    @do
+    def inner() -> EffectGenerator[int]:
+        value = yield Ask("value")
+        return value
+
+    @do
+    def outer() -> EffectGenerator[int]:
+        return (yield inner())
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(env={"value": 7})
+    result = await engine.run_async(outer(), context)
+
+    output = result.display()
+
+    assert "🌳 Effect Call Tree:" in output
+    assert "outer()" in output
+    assert "inner()" in output
+    assert "Ask('value')" in output
+
+
+@pytest.mark.asyncio
 async def test_display_error_with_traceback():
     """Test display() shows full stack trace for errors."""
     @do

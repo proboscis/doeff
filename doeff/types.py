@@ -1563,6 +1563,25 @@ class _EffectKeysSection(_BaseSection):
         return lines
 
 
+class _CallTreeSection(_BaseSection):
+    def render(self) -> list[str]:
+        observations = self.context.run_result.effect_observations
+        if not observations:
+            return []
+
+        from doeff.analysis import EffectCallTree  # Local import to avoid cycle
+
+        tree = EffectCallTree.from_observations(observations)
+        ascii_tree = tree.visualize_ascii()
+
+        if ascii_tree == "(no effects)":
+            return []
+
+        lines = ["🌳 Effect Call Tree:"]
+        lines.extend(self.indent(1, line) for line in ascii_tree.splitlines())
+        return lines
+
+
 class _GraphSection(_BaseSection):
     def render(self) -> list[str]:
         rr = self.context.run_result
@@ -1647,6 +1666,7 @@ class RunResultDisplayRenderer:
             _LogSection(self.context),
             _EffectUsageSection(self.context),
             _EffectKeysSection(self.context),
+            _CallTreeSection(self.context),
             _GraphSection(self.context),
             _EnvironmentSection(self.context),
             _SummarySection(self.context),
