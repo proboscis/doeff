@@ -304,6 +304,8 @@ class _InterceptedProgram(KleisliProgramCall[T]):
         def generator_func(*_call_args: Any, **_call_kwargs: Any) -> Generator["Effect | Program", Any, T]:
             return self._intercept_generator(base, transforms)
 
+        # NOTE: dataclasses with frozen=True block attribute assignment; use
+        # object.__setattr__ during __init__ to populate the immutable fields.
         object.__setattr__(self, "generator_func", generator_func)
         object.__setattr__(self, "args", args)
         object.__setattr__(self, "kwargs", kwargs)
