@@ -10,6 +10,7 @@ A pragmatic free monad implementation that prioritizes usability and Python idio
 - [Core Concepts](docs/02-core-concepts.md) - Understanding Program and Effect
 - [Effect Guides](docs/index.md#effect-types) - Detailed guides for all effect types
 - [API Reference](docs/13-api-reference.md) - Complete API documentation
+- [Program Architecture Overview](docs/program-architecture-overview.md) - Runtime design and interpreter internals
 
 ## Features
 
