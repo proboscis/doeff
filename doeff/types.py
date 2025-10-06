@@ -1621,14 +1621,38 @@ class _EnvironmentSection(_BaseSection):
         env = self.context.run_result.env
         if not env:
             return []
+
+        # Get all keys requested via Dep or Ask
+        dep_keys = set(self.context.dep_ask_stats.keys_for("Dep"))
+        ask_keys = set(self.context.dep_ask_stats.keys_for("Ask"))
+        requested_keys = dep_keys | ask_keys
+
+        # Separate environment into used and redundant
+        used_items = [(k, v) for k, v in env.items() if k in requested_keys]
+        redundant_items = [(k, v) for k, v in env.items() if k not in requested_keys]
+
         lines = ["🌍 Environment:"]
-        items = list(env.items())
-        for key, value in items[:10]:
-            value_str = self.format_value(value, max_length=100)
-            lines.append(self.indent(1, f"{key}: {value_str}"))
-        if len(items) > 10:
-            remaining = len(items) - 10
-            lines.append(self.indent(1, f"... and {remaining} more items"))
+
+        # Show used environment variables
+        if used_items:
+            lines.append(self.indent(1, "Used:"))
+            for key, value in used_items[:10]:
+                value_str = self.format_value(value, max_length=100)
+                lines.append(self.indent(2, f"{key}: {value_str}"))
+            if len(used_items) > 10:
+                remaining = len(used_items) - 10
+                lines.append(self.indent(2, f"... and {remaining} more items"))
+
+        # Show redundant environment variables (not requested)
+        if redundant_items:
+            lines.append(self.indent(1, "Redundant (not requested):"))
+            for key, value in redundant_items[:10]:
+                value_str = self.format_value(value, max_length=100)
+                lines.append(self.indent(2, f"{key}: {value_str}"))
+            if len(redundant_items) > 10:
+                remaining = len(redundant_items) - 10
+                lines.append(self.indent(2, f"... and {remaining} more items"))
+
         return lines
 
 
