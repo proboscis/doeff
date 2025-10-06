@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib
+import importlib.util
 import inspect
 import json
 import sys
@@ -199,13 +200,37 @@ def handle_run(args: argparse.Namespace) -> int:
                         print("[DOEFF][DISCOVERY] Environments: none found", file=sys.stderr)
                 context = replace(context, env_paths=discovered_envs)
 
+        # Check for ~/.doeff.py and load __default_env__ if present
+        default_env_path = None
+        from pathlib import Path
+        doeff_config_file = Path.home() / ".doeff.py"
+
+        if doeff_config_file.exists():
+            with profile("Load ~/.doeff.py", indent=1):
+                # Load the module dynamically
+                spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
+                if spec and spec.loader:
+                    config_module = importlib.util.module_from_spec(spec)
+                    sys.modules["_doeff_config"] = config_module
+                    spec.loader.exec_module(config_module)
+
+                    if hasattr(config_module, "__default_env__"):
+                        default_env_path = "_doeff_config.__default_env__"
+                        if is_profiling_enabled():
+                            print(f"[DOEFF][DISCOVERY] Found __default_env__ in ~/.doeff.py", file=sys.stderr)
+
         with profile("Load program", indent=1):
             program_obj = _import_symbol(context.program_path)
             program = _ensure_program(program_obj, "--program")
 
         # Merge and inject environments if any
-        if context.env_paths:
-            merged_env_program = merger.merge_envs(context.env_paths)
+        env_sources = []
+        if default_env_path:
+            env_sources.append(default_env_path)
+        env_sources.extend(context.env_paths)
+
+        if env_sources:
+            merged_env_program = merger.merge_envs(env_sources)
             # Run the merged env to get the dict
             temp_interpreter = ProgramInterpreter()
             env_result = temp_interpreter.run(merged_env_program)
