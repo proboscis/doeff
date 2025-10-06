@@ -39,8 +39,8 @@ def test_display_shows_redundant_env_settings():
     interpreter = ProgramInterpreter()
     result = interpreter.run(program, context=initial_context)
 
-    # Get the display output with verbose=True (required for env section)
-    display_output = result.display(verbose=True)
+    # Get the display output (env section shown by default)
+    display_output = result.display()
 
     # Verify the output contains the environment section
     assert "🌍 Environment:" in display_output
@@ -86,7 +86,7 @@ def test_display_no_redundant_when_all_used():
     interpreter = ProgramInterpreter()
     result = interpreter.run(program, context=initial_context)
 
-    display_output = result.display(verbose=True)
+    display_output = result.display()
 
     # Should show Used section
     assert "Used:" in display_output
@@ -124,7 +124,7 @@ def test_display_all_redundant_when_none_used():
     interpreter = ProgramInterpreter()
     result = interpreter.run(my_program, context=initial_context)
 
-    display_output = result.display(verbose=True)
+    display_output = result.display()
 
     # Should show environment section
     assert "🌍 Environment:" in display_output
@@ -138,8 +138,8 @@ def test_display_all_redundant_when_none_used():
     assert "unused2" in display_output
 
 
-def test_display_no_env_section_when_not_verbose():
-    """Verify that environment section is hidden when verbose=False."""
+def test_display_shows_env_section_by_default():
+    """Verify that environment section is shown by default (not just verbose)."""
     from doeff.types import ExecutionContext, WGraph, WStep, WNode
 
     @do
@@ -168,8 +168,11 @@ def test_display_no_env_section_when_not_verbose():
     interpreter = ProgramInterpreter()
     result = interpreter.run(program, context=initial_context)
 
+    # Environment section should appear even when verbose=False
     display_output = result.display(verbose=False)
 
-    # Environment section should not appear when verbose=False
-    assert "🌍 Environment:" not in display_output
-    assert "Redundant (not requested):" not in display_output
+    assert "🌍 Environment:" in display_output
+    assert "Used:" in display_output
+    assert "used_var" in display_output
+    assert "Redundant (not requested):" in display_output
+    assert "unused_var" in display_output

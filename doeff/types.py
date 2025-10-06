@@ -1616,8 +1616,6 @@ class _GraphSection(_BaseSection):
 
 class _EnvironmentSection(_BaseSection):
     def render(self) -> list[str]:
-        if not self.context.verbose:
-            return []
         env = self.context.run_result.env
         if not env:
             return []
