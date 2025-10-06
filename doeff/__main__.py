@@ -216,8 +216,11 @@ def handle_run(args: argparse.Namespace) -> int:
 
                     if hasattr(config_module, "__default_env__"):
                         default_env_path = "_doeff_config.__default_env__"
-                        if is_profiling_enabled():
-                            print(f"[DOEFF][DISCOVERY] Found __default_env__ in ~/.doeff.py", file=sys.stderr)
+                        print(f"[DOEFF][DISCOVERY] Found __default_env__ in ~/.doeff.py", file=sys.stderr)
+                    else:
+                        print(f"[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found", file=sys.stderr)
+        else:
+            print(f"[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found", file=sys.stderr)
 
         with profile("Load program", indent=1):
             program_obj = _import_symbol(context.program_path)
