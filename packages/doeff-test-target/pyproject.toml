@@ -1,0 +1,16 @@
+[project]
+name = "doeff-test-target"
+version = "0.1.0"
+description = "Fixture project for SEDA integration tests"
+requires-python = ">=3.10"
+dependencies = ["doeff>=0.1.0"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = true
+
+[tool.uv.sources]
+doeff = { workspace = true }
