@@ -313,16 +313,11 @@ class StandardEnvMerger:
                         # Plain dict
                         env_dict = env_source
 
-                    # Unwrap any Program values within the dict
-                    unwrapped_dict = {}
-                    for key, value in env_dict.items():
-                        if isinstance(value, (Program, KleisliProgramCall, Effect)):
-                            unwrapped_dict[key] = yield value
-                        else:
-                            unwrapped_dict[key] = value
-
-                    # Merge (later overrides earlier)
-                    merged.update(unwrapped_dict)
+                    # Merge (later overrides earlier) while preserving Program/Effect values.
+                    if isinstance(env_dict, dict):
+                        merged.update(env_dict)
+                    else:
+                        merged.update(dict(env_dict))
 
                 return merged
 
