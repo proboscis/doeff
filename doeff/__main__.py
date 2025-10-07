@@ -8,7 +8,7 @@ import inspect
 import json
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Any
 
 from doeff import Program, ProgramInterpreter, RunResult
@@ -28,6 +28,303 @@ class RunContext:
     output_format: str
     report: bool
     report_verbose: bool
+
+
+@dataclass
+class ResolvedRunContext(RunContext):
+    interpreter_path: str
+    env_paths: list[str]
+
+
+@dataclass
+class RunExecutionResult:
+    final_value: Any
+    run_result: RunResult[Any] | None
+    call_tree_ascii: str | None
+
+
+class SymbolResolver:
+    """Helper for importing symbols while caching module lookups."""
+
+    def __init__(self) -> None:
+        self._cache: dict[str, Any] = {}
+
+    def resolve(self, path: str) -> Any:
+        if path not in self._cache:
+            self._cache[path] = _import_symbol(path)
+        return self._cache[path]
+
+    def program(self, path: str, description: str) -> Program[Any]:
+        obj = self.resolve(path)
+        return _ensure_program(obj, description)
+
+    def kleisli(self, path: str, description: str) -> Callable[[Program[Any]], Program[Any]]:
+        obj = self.resolve(path)
+        return _ensure_kleisli(obj, description)
+
+    def transformer(self, path: str, description: str) -> Callable[[Program[Any]], Program[Any]]:
+        obj = self.resolve(path)
+        return _ensure_transformer(obj, description)
+
+
+class RunServices:
+    def __init__(self) -> None:
+        from doeff.cli.discovery import (
+            IndexerBasedDiscovery,
+            StandardEnvMerger,
+            StandardSymbolLoader,
+        )
+
+        loader = StandardSymbolLoader()
+        self.symbol_loader = loader
+        self.discovery = IndexerBasedDiscovery(symbol_loader=loader)
+        self.merger = StandardEnvMerger(symbol_loader=loader)
+
+
+class ProgramBuilder:
+    def __init__(self, resolver: SymbolResolver, merger: Any) -> None:
+        self._resolver = resolver
+        self._merger = merger
+
+    def load(self, context: ResolvedRunContext) -> Program[Any]:
+        return self._resolver.program(context.program_path, "--program")
+
+    def inject_envs(self, program: Program[Any], env_sources: list[str], *, report_verbose: bool) -> Program[Any]:
+        if not env_sources:
+            return program
+
+        from doeff.effects import Local
+
+        merged_env_program = self._merger.merge_envs(env_sources)
+        temp_interpreter = ProgramInterpreter()
+        env_result = temp_interpreter.run(merged_env_program)
+        if env_result.is_err:
+            diagnostic = env_result.display(verbose=report_verbose)
+            print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
+            print(diagnostic, file=sys.stderr)
+            raise env_result.result.error
+
+        merged_env_dict = env_result.value
+        local_effect = Local(merged_env_dict, program)
+        return Program.from_effect(local_effect)
+
+    def apply_kleisli(
+        self, program: Program[Any], context: ResolvedRunContext
+    ) -> Program[Any]:
+        if not context.apply_path:
+            return program
+        kleisli = self._resolver.kleisli(context.apply_path, "--apply")
+        return kleisli(program)
+
+    def apply_transformer(self, program: Program[Any], transform_path: str) -> Program[Any]:
+        transformer = self._resolver.transformer(
+            transform_path, f"transformer {transform_path}"
+        )
+        return transformer(program)
+
+
+class RunCommand:
+    def __init__(self, context: RunContext) -> None:
+        self._initial_context = context
+        self._resolver = SymbolResolver()
+        self._services: RunServices | None = None
+        self._builder: ProgramBuilder | None = None
+
+    def execute(self) -> tuple[ResolvedRunContext, RunExecutionResult]:
+        with profile("CLI discovery and execution"):
+            print_profiling_status()
+            _ = self.services  # Ensure services are initialized within the profiling block
+            resolved_context = self._resolve_context(self._initial_context)
+            program = self._prepare_program(resolved_context)
+            run_result, final_value = self._run_program(resolved_context, program)
+
+        call_tree_ascii = _call_tree_ascii(run_result) if run_result is not None else None
+        return resolved_context, RunExecutionResult(final_value, run_result, call_tree_ascii)
+
+    def _resolve_context(self, context: RunContext) -> ResolvedRunContext:
+        interpreter_path = context.interpreter_path
+        env_paths = list(context.env_paths)
+
+        if interpreter_path is None:
+            interpreter_path = self._auto_discover_interpreter(context.program_path)
+
+        if not env_paths:
+            env_paths = self._auto_discover_envs(context.program_path)
+
+        return ResolvedRunContext(
+            program_path=context.program_path,
+            interpreter_path=interpreter_path,
+            env_paths=env_paths,
+            apply_path=context.apply_path,
+            transformer_paths=context.transformer_paths,
+            output_format=context.output_format,
+            report=context.report,
+            report_verbose=context.report_verbose,
+        )
+
+    def _prepare_program(self, context: ResolvedRunContext) -> Program[Any]:
+        with profile("Load program", indent=1):
+            program = self.builder.load(context)
+        env_sources = self._resolve_env_sources(context)
+        if env_sources:
+            with profile("Merge environments", indent=1):
+                program = self.builder.inject_envs(
+                    program, env_sources, report_verbose=context.report_verbose
+                )
+
+        if context.apply_path:
+            with profile(f"Apply kleisli {context.apply_path}", indent=1):
+                program = self.builder.apply_kleisli(program, context)
+                if is_profiling_enabled():
+                    print(
+                        f"[DOEFF][DISCOVERY] Applied kleisli: {context.apply_path}",
+                        file=sys.stderr,
+                    )
+
+        for transform_path in context.transformer_paths:
+            with profile(f"Apply transform {transform_path}", indent=1):
+                program = self.builder.apply_transformer(program, transform_path)
+                if is_profiling_enabled():
+                    print(
+                        f"[DOEFF][DISCOVERY] Applied transform: {transform_path}",
+                        file=sys.stderr,
+                    )
+
+        return program
+
+    def _run_program(
+        self, context: ResolvedRunContext, program: Program[Any]
+    ) -> tuple[RunResult[Any] | None, Any]:
+        with profile("Load and run interpreter", indent=1):
+            interpreter_obj = self._resolver.resolve(context.interpreter_path)
+            if isinstance(interpreter_obj, ProgramInterpreter):
+                run_result = interpreter_obj.run(program)
+                final_value = _unwrap_run_result(run_result)
+                return run_result, final_value
+
+            if not callable(interpreter_obj):
+                raise TypeError(
+                    "--interpreter must resolve to a callable or ProgramInterpreter instance"
+                )
+
+            result = _call_interpreter(interpreter_obj, program)
+            final_value, run_result = _finalize_result(result)
+            return run_result, final_value
+
+    def _auto_discover_interpreter(self, program_path: str) -> str:
+        with profile("Auto-discover interpreter", indent=1):
+            discovered = self.services.discovery.find_default_interpreter(program_path)
+            if discovered is None:
+                raise RuntimeError(
+                    f"No default interpreter found for {program_path}. "
+                    "Please specify --interpreter or add '# doeff: interpreter, default' marker to an interpreter function."
+                )
+            if is_profiling_enabled():
+                print(f"[DOEFF][DISCOVERY] Interpreter: {discovered}", file=sys.stderr)
+            return discovered
+
+    def _auto_discover_envs(self, program_path: str) -> list[str]:
+        with profile("Auto-discover environments", indent=1):
+            discovered_envs = self.services.discovery.discover_default_envs(program_path)
+            if is_profiling_enabled():
+                if discovered_envs:
+                    print(
+                        f"[DOEFF][DISCOVERY] Environments ({len(discovered_envs)}):",
+                        file=sys.stderr,
+                    )
+                    for env_path in discovered_envs:
+                        print(f"[DOEFF][DISCOVERY]   - {env_path}", file=sys.stderr)
+                else:
+                    print("[DOEFF][DISCOVERY] Environments: none found", file=sys.stderr)
+            return discovered_envs
+
+    def _resolve_env_sources(self, context: ResolvedRunContext) -> list[str]:
+        sources: list[str] = []
+        default_env_path = self._load_default_env()
+        if default_env_path:
+            sources.append(default_env_path)
+        sources.extend(context.env_paths)
+        return sources
+
+    def _load_default_env(self) -> str | None:
+        from pathlib import Path
+
+        doeff_config_file = Path.home() / ".doeff.py"
+        if not doeff_config_file.exists():
+            print("[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found", file=sys.stderr)
+            return None
+
+        with profile("Load ~/.doeff.py", indent=1):
+            spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
+            if not spec or not spec.loader:
+                print(
+                    "[DOEFF][DISCOVERY] Warning: Unable to load ~/.doeff.py",
+                    file=sys.stderr,
+                )
+                return None
+            config_module = importlib.util.module_from_spec(spec)
+            sys.modules["_doeff_config"] = config_module
+            spec.loader.exec_module(config_module)
+
+            if hasattr(config_module, "__default_env__"):
+                print(
+                    "[DOEFF][DISCOVERY] Found __default_env__ in ~/.doeff.py",
+                    file=sys.stderr,
+                )
+                return "_doeff_config.__default_env__"
+
+            print(
+                "[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found",
+                file=sys.stderr,
+            )
+            return None
+
+    @property
+    def services(self) -> RunServices:
+        if self._services is None:
+            with profile("Initialize discovery services", indent=1):
+                self._services = RunServices()
+        return self._services
+
+    @property
+    def builder(self) -> ProgramBuilder:
+        if self._builder is None:
+            self._builder = ProgramBuilder(self._resolver, self.services.merger)
+        return self._builder
+
+
+def _render_run_output(context: ResolvedRunContext, execution: RunExecutionResult) -> None:
+    final_value = execution.final_value
+    run_result = execution.run_result
+
+    if context.output_format == "json":
+        payload = {
+            "status": "ok",
+            "program": context.program_path,
+            "interpreter": context.interpreter_path,
+            "envs": context.env_paths,
+            "apply": context.apply_path,
+            "transformers": context.transformer_paths,
+            "result": _json_safe(final_value),
+            "result_type": type(final_value).__name__,
+        }
+        if context.report and run_result is not None:
+            payload["report"] = run_result.display(verbose=context.report_verbose)
+            if execution.call_tree_ascii is not None:
+                payload["call_tree"] = execution.call_tree_ascii
+        print(json.dumps(payload))
+        return
+
+    print(final_value)
+    if context.report:
+        if run_result is not None:
+            print()
+            print(run_result.display(verbose=context.report_verbose))
+        else:
+            print(
+                "\n(No run report available: interpreter did not return a RunResult)",
+                file=sys.stderr,
+            )
 
 
 def _import_symbol(path: str) -> Any:
@@ -148,160 +445,20 @@ def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
 
 
 def handle_run(args: argparse.Namespace) -> int:
-    from doeff.cli.discovery import (
-        IndexerBasedDiscovery,
-        StandardEnvMerger,
-        StandardSymbolLoader,
+    context = RunContext(
+        program_path=args.program,
+        interpreter_path=args.interpreter,
+        env_paths=args.envs or [],
+        apply_path=args.apply,
+        transformer_paths=args.transform or [],
+        output_format=args.format,
+        report=getattr(args, "report", False),
+        report_verbose=getattr(args, "report_verbose", False),
     )
-    from doeff.effects import Local
 
-    with profile("CLI discovery and execution"):
-        print_profiling_status()
-        context = RunContext(
-            program_path=args.program,
-            interpreter_path=args.interpreter,
-            env_paths=args.envs or [],
-            apply_path=args.apply,
-            transformer_paths=args.transform or [],
-            output_format=args.format,
-            report=getattr(args, "report", False),
-            report_verbose=getattr(args, "report_verbose", False),
-        )
-
-        # Initialize discovery services
-        with profile("Initialize discovery services", indent=1):
-            loader = StandardSymbolLoader()
-            discovery = IndexerBasedDiscovery(symbol_loader=loader)
-            merger = StandardEnvMerger(symbol_loader=loader)
-
-        # Auto-discover interpreter if not specified
-        if context.interpreter_path is None:
-            with profile("Auto-discover interpreter", indent=1):
-                discovered_interp = discovery.find_default_interpreter(context.program_path)
-                if discovered_interp is None:
-                    raise RuntimeError(
-                        f"No default interpreter found for {context.program_path}. "
-                        "Please specify --interpreter or add '# doeff: interpreter, default' marker to an interpreter function."
-                    )
-                if is_profiling_enabled():
-                    print(f"[DOEFF][DISCOVERY] Interpreter: {discovered_interp}", file=sys.stderr)
-                context = replace(context, interpreter_path=discovered_interp)
-
-        # Auto-discover envs if not specified
-        if not context.env_paths:
-            with profile("Auto-discover environments", indent=1):
-                discovered_envs = discovery.discover_default_envs(context.program_path)
-                if is_profiling_enabled():
-                    if discovered_envs:
-                        print(f"[DOEFF][DISCOVERY] Environments ({len(discovered_envs)}):", file=sys.stderr)
-                        for env_path in discovered_envs:
-                            print(f"[DOEFF][DISCOVERY]   - {env_path}", file=sys.stderr)
-                    else:
-                        print("[DOEFF][DISCOVERY] Environments: none found", file=sys.stderr)
-                context = replace(context, env_paths=discovered_envs)
-
-        # Check for ~/.doeff.py and load __default_env__ if present
-        default_env_path = None
-        from pathlib import Path
-        doeff_config_file = Path.home() / ".doeff.py"
-
-        if doeff_config_file.exists():
-            with profile("Load ~/.doeff.py", indent=1):
-                # Load the module dynamically
-                spec = importlib.util.spec_from_file_location("_doeff_config", doeff_config_file)
-                if spec and spec.loader:
-                    config_module = importlib.util.module_from_spec(spec)
-                    sys.modules["_doeff_config"] = config_module
-                    spec.loader.exec_module(config_module)
-
-                    if hasattr(config_module, "__default_env__"):
-                        default_env_path = "_doeff_config.__default_env__"
-                        print(f"[DOEFF][DISCOVERY] Found __default_env__ in ~/.doeff.py", file=sys.stderr)
-                    else:
-                        print(f"[DOEFF][DISCOVERY] Warning: ~/.doeff.py exists but __default_env__ not found", file=sys.stderr)
-        else:
-            print(f"[DOEFF][DISCOVERY] Warning: ~/.doeff.py not found", file=sys.stderr)
-
-        with profile("Load program", indent=1):
-            program_obj = _import_symbol(context.program_path)
-            program = _ensure_program(program_obj, "--program")
-
-        # Merge and inject environments if any
-        env_sources = []
-        if default_env_path:
-            env_sources.append(default_env_path)
-        env_sources.extend(context.env_paths)
-
-        if env_sources:
-            merged_env_program = merger.merge_envs(env_sources)
-            # Run the merged env to get the dict
-            temp_interpreter = ProgramInterpreter()
-            env_result = temp_interpreter.run(merged_env_program)
-            merged_env_dict = env_result.value
-            # Wrap program with Local effect to inject environment
-            local_effect = Local(merged_env_dict, program)
-            program = Program.from_effect(local_effect)
-
-        if context.apply_path:
-            with profile(f"Apply kleisli {context.apply_path}", indent=1):
-                kleisli_obj = _import_symbol(context.apply_path)
-                kleisli = _ensure_kleisli(kleisli_obj, "--apply")
-                program = kleisli(program)
-                if is_profiling_enabled():
-                    print(f"[DOEFF][DISCOVERY] Applied kleisli: {context.apply_path}", file=sys.stderr)
-
-        if context.transformer_paths:
-            for transform_path in context.transformer_paths:
-                with profile(f"Apply transform {transform_path}", indent=1):
-                    transformer_obj = _import_symbol(transform_path)
-                    transformer = _ensure_transformer(transformer_obj, f"transformer {transform_path}")
-                    program = transformer(program)
-                    if is_profiling_enabled():
-                        print(f"[DOEFF][DISCOVERY] Applied transform: {transform_path}", file=sys.stderr)
-
-        run_result: RunResult[Any] | None = None
-
-        with profile("Load and run interpreter", indent=1):
-            interpreter_obj = _import_symbol(context.interpreter_path)
-            if isinstance(interpreter_obj, ProgramInterpreter):
-                run_result = interpreter_obj.run(program)
-                final_value = _unwrap_run_result(run_result)
-            else:
-                interpreter_callable = interpreter_obj
-                if not callable(interpreter_callable):
-                    raise TypeError("--interpreter must resolve to a callable or ProgramInterpreter instance")
-                result = _call_interpreter(interpreter_callable, program)
-                final_value, run_result = _finalize_result(result)
-
-    call_tree_ascii = _call_tree_ascii(run_result) if run_result is not None else None
-
-    if context.output_format == "json":
-        payload = {
-            "status": "ok",
-            "program": context.program_path,
-            "interpreter": context.interpreter_path,
-            "envs": context.env_paths,
-            "apply": context.apply_path,
-            "transformers": context.transformer_paths,
-            "result": _json_safe(final_value),
-            "result_type": type(final_value).__name__,
-        }
-        if context.report and run_result is not None:
-            payload["report"] = run_result.display(verbose=context.report_verbose)
-            if call_tree_ascii is not None:
-                payload["call_tree"] = call_tree_ascii
-        print(json.dumps(payload))
-    else:
-        print(final_value)
-        if context.report:
-            if run_result is not None:
-                print()  # Blank line before report
-                print(run_result.display(verbose=context.report_verbose))
-            else:
-                print(
-                    "\n(No run report available: interpreter did not return a RunResult)",
-                    file=sys.stderr,
-                )
+    command = RunCommand(context)
+    resolved_context, execution = command.execute()
+    _render_run_output(resolved_context, execution)
     return 0
 
 
