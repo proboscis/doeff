@@ -1,0 +1,36 @@
+# Default effect recognition configuration for SEDA.
+# Extend or override these patterns with a project-level `seda.toml` file.
+
+[effects.ask]
+kind = "ask"
+match = { call = "ask", args = ["literal"] }
+
+[effects.emit]
+kind = "emit"
+match = { call = "emit", args = ["any"] }
+
+[effects.log]
+kind = "log"
+match = { call = "log", args = ["any"] }
+
+[effects.state_get]
+kind = "state:get"
+match = { call = "get_state", args = [] }
+
+[effects.state_set]
+kind = "state:set"
+match = { call = "set_state", args = ["any"] }
+
+[combinators.compose]
+strategy = "union"
+
+[combinators.pipe]
+strategy = "union"
+
+[combinators.partial]
+strategy = "alias"
+
+[limits]
+max_tree_depth = 8
+max_recursions = 16
+
