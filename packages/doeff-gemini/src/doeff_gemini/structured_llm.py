@@ -7,16 +7,19 @@ import io
 import json
 import textwrap
 import time
-from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import BaseModel, ValidationError
 
 from doeff import (
+    Ask,
     Await,
     Catch,
     EffectGenerator,
     Fail,
     Log,
+    Recover,
     Retry,
     Step,
     do,
@@ -54,6 +57,43 @@ def _stringify_for_log(content: Any, limit: int = 500) -> str:
     if len(text) > limit:
         return f"{text[:limit]}..."
     return text
+
+
+_DEFAULT_JSON_FIX_MODEL = "gemini-2.5-pro"
+_DEFAULT_JSON_FIX_MAX_OUTPUT_TOKENS = 2048
+
+
+def _make_gemini_json_fix_sllm(
+    *,
+    model: str,
+    max_output_tokens: int,
+    system_instruction: str | None,
+    safety_settings: list[dict[str, Any]] | None,
+    tools: list[dict[str, Any]] | None,
+    tool_config: dict[str, Any] | None,
+    generation_config_overrides: dict[str, Any] | None,
+) -> Callable[[str, type[BaseModel]], EffectGenerator[Any]]:
+    """Create an ``sllm_for_json_fix`` implementation bound to specific config."""
+
+    @do
+    def _impl(
+        json_text: str, response_format: type[BaseModel]
+    ) -> EffectGenerator[Any]:
+        return (
+            yield _gemini_json_fix(
+                model=model,
+                response_format=response_format,
+                malformed_content=json_text,
+                max_output_tokens=max_output_tokens,
+                system_instruction=system_instruction,
+                safety_settings=safety_settings,
+                tools=tools,
+                tool_config=tool_config,
+                generation_config_overrides=generation_config_overrides,
+            )
+        )
+
+    return _impl
 
 
 def _image_to_part(image: PIL.Image.Image):
@@ -330,7 +370,7 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
 
 
 @do
-def repair_structured_response(
+def _gemini_json_fix(
     *,
     model: str,
     response_format: type[BaseModel],
@@ -342,7 +382,7 @@ def repair_structured_response(
     tool_config: dict[str, Any] | None,
     generation_config_overrides: dict[str, Any] | None,
 ) -> EffectGenerator[Any]:
-    """Attempt to repair malformed JSON by making a focused Gemini call."""
+    """Default Gemini-backed JSON repair routine."""
 
     yield Log("Attempting Gemini structured output repair with second call")
 
@@ -470,6 +510,88 @@ def repair_structured_response(
 
     repaired = yield process_structured_response(response, response_format)
     return repaired
+
+
+@do
+def gemini_sllm_for_json_fix(
+    json_text: str, response_format: type[BaseModel]
+) -> EffectGenerator[Any]:
+    """Default Gemini-based JSON repair using hard-coded configuration."""
+
+    return (
+        yield _gemini_json_fix(
+            model=_DEFAULT_JSON_FIX_MODEL,
+            response_format=response_format,
+            malformed_content=json_text,
+            max_output_tokens=_DEFAULT_JSON_FIX_MAX_OUTPUT_TOKENS,
+            system_instruction=None,
+            safety_settings=None,
+            tools=None,
+            tool_config=None,
+            generation_config_overrides=None,
+        )
+    )
+
+
+@do
+def repair_structured_response(
+    *,
+    model: str,
+    response_format: type[BaseModel],
+    malformed_content: str,
+    max_output_tokens: int,
+    default_sllm: Callable[[str, type[BaseModel]], EffectGenerator[Any]] | None = None,
+) -> EffectGenerator[Any]:
+    """Repair malformed JSON by delegating to an injectable structured LLM."""
+
+    fallback_sllm = default_sllm or gemini_sllm_for_json_fix
+
+    sllm_for_json_fix = yield Recover(Ask("sllm_for_json_fix"), lambda _: fallback_sllm)
+
+    if sllm_for_json_fix is fallback_sllm:
+        yield Log("sllm_for_json_fix not provided. Falling back to default Gemini repair")
+    else:
+        yield Log("Using environment-provided sllm_for_json_fix for structured repair")
+
+    fixed_value = yield sllm_for_json_fix(malformed_content, response_format)
+
+    if fixed_value is None:
+        raise ValueError("sllm_for_json_fix returned None, cannot repair structured response")
+
+    if isinstance(fixed_value, response_format):
+        return fixed_value
+
+    if isinstance(fixed_value, BaseModel):
+        payload: Mapping[str, Any] | None = fixed_value.model_dump()
+    elif isinstance(fixed_value, Mapping):
+        payload = dict(fixed_value)
+    else:
+        if not isinstance(fixed_value, str):
+            fixed_text = str(fixed_value)
+        else:
+            fixed_text = fixed_value
+        try:
+            payload = json.loads(fixed_text)
+        except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
+            preview = _stringify_for_log(fixed_text, limit=200)
+            yield Log(f"sllm_for_json_fix returned non-JSON payload: {preview}")
+            raise ValueError("sllm_for_json_fix returned invalid JSON") from exc
+
+    if payload is None:
+        raise ValueError("sllm_for_json_fix returned empty payload")
+
+    try:
+        if hasattr(response_format, "model_validate"):
+            result = response_format.model_validate(payload)  # type: ignore[attr-defined]
+        else:
+            result = response_format(**payload)
+    except ValidationError as exc:
+        preview = _stringify_for_log(payload, limit=200)
+        yield Log(f"Structured response validation error after repair: {exc}")
+        yield Log(f"Raw content: {preview}")
+        raise
+
+    return result
 
 
 @do
@@ -668,17 +790,22 @@ def structured_llm__gemini(
         @do
         def handle_structured_error(exc: Exception) -> EffectGenerator[Any]:
             if isinstance(exc, GeminiStructuredOutputError):
+                default_sllm = _make_gemini_json_fix_sllm(
+                    model=model,
+                    max_output_tokens=max_output_tokens,
+                    system_instruction=system_instruction,
+                    safety_settings=safety_settings,
+                    tools=tools,
+                    tool_config=tool_config,
+                    generation_config_overrides=generation_config_overrides,
+                )
                 return (
                     yield repair_structured_response(
                         model=model,
                         response_format=response_format,
                         malformed_content=exc.raw_content,
                         max_output_tokens=max_output_tokens,
-                        system_instruction=system_instruction,
-                        safety_settings=safety_settings,
-                        tools=tools,
-                        tool_config=tool_config,
-                        generation_config_overrides=generation_config_overrides,
+                        default_sllm=default_sllm,
                     )
                 )
             raise exc
