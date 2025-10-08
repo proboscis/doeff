@@ -166,11 +166,6 @@ class RunCommand:
         with profile("Load program", indent=1):
             program = self.builder.load(context)
         env_sources = self._resolve_env_sources(context)
-        if env_sources:
-            with profile("Merge environments", indent=1):
-                program = self.builder.inject_envs(
-                    program, env_sources, report_verbose=context.report_verbose
-                )
 
         if context.apply_path:
             with profile(f"Apply kleisli {context.apply_path}", indent=1):
@@ -189,6 +184,12 @@ class RunCommand:
                         f"[DOEFF][DISCOVERY] Applied transform: {transform_path}",
                         file=sys.stderr,
                     )
+
+        if env_sources:
+            with profile("Merge environments", indent=1):
+                program = self.builder.inject_envs(
+                    program, env_sources, report_verbose=context.report_verbose
+                )
 
         return program
 
