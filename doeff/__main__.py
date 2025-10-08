@@ -106,7 +106,7 @@ class ProgramBuilder:
 
         merged_env_dict = env_result.value
         local_effect = Local(merged_env_dict, program)
-        return Program.from_effect(local_effect)
+        return local_effect
 
     def apply_kleisli(
         self, program: Program[Any], context: ResolvedRunContext
@@ -581,7 +581,7 @@ Then it is equivalent to:
 ```
 program:Program[Any] = _import_symbol("some.module.a.b.c:program")
 env_p:Program[dict] = _import_symbol("some.module.env:default_env")
-user_interpreter(Program.from_effect(Local(env, program)))
+user_interpreter(Local(env, program))
 ```
 This means Local effect must be updated to accept Program[dict] as its first argument, in addition to dict.
 

@@ -6,13 +6,13 @@ import inspect
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from doeff._vendor import FrozenDict, Result
 from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
-from doeff.effects.result import Recover, Safe, Fail
-from doeff.effects.writer import Log
+from doeff.effects.result import Recover, Safe
+from doeff.effects.writer import Log, slog
 from doeff.types import EffectGenerator
-from doeff._vendor import FrozenDict, Result
 
 if TYPE_CHECKING:
     from doeff.kleisli import KleisliProgram
@@ -24,7 +24,7 @@ T = TypeVar("T")
 def cache(
     ttl: float | None = None,
     key_func: Callable | None = None,
-    key_hashers: Mapping[str, Callable[[Any], Any] | "KleisliProgram[Any, Any]"] | None = None,
+    key_hashers: Mapping[str, Callable[[Any], Any] | KleisliProgram[Any, Any]] | None = None,
     *,
     lifecycle: CacheLifecycle | str | None = None,
     storage: CacheStorage | str | None = None,
@@ -197,17 +197,13 @@ def cache(
             else:
                 cache_key = (func_name, args_for_key, frozen_kwargs)
 
-            from loguru import logger
 
             try:
                 import cloudpickle
                 cloudpickle.dumps(cache_key)
-                logger.success(f"cache key serialization check passed for key:{cache_key}")
+                yield slog(msg=f"cache key serialization check passed for key:{cache_key}", level="DEBUG")
             except Exception as e:
-                # we are doing this in order to see what caused the serialization failure
-                # one way, is to store all frame inside the effect.
-                logger.error(f"serializing cache key failed:{cache_key}")
-                # but this is not failing!!!
+                yield slog(msg=f"serializing cache key failed:{cache_key}", level="ERROR")
                 raise e
 
             # yield Log(f"Cache: checking key for {func_name}")
@@ -215,21 +211,19 @@ def cache(
             # Define the fallback computation
             @do
             def compute_and_cache() -> EffectGenerator[T]:
-                # yield Log(f"Cache miss for {func_name}, computing...")
+                yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
                 # Execute the original function
                 result: Result = yield Safe(wrapped_func(*args, **kwargs))
-                from loguru import logger
-                logger.warning(f"CachePut with key:{cache_key}")
                 if result.is_ok():
                     # Store in cache with the key
                     try:
                         import cloudpickle
                         cloudpickle.dumps(cache_key)
-                        logger.success(f"cache key serialization check passed for key:{cache_key}")
+                        yield slog(msg=f"cache key serialization check passed for key:{cache_key}")
                     except Exception as e:
                         # we are doing this in order to see what caused the serialization failure
                         # one way, is to store all frame inside the effect.
-                        logger.error(f"serializing cache key failed:{cache_key}")
+                        yield slog(msg=f"serializing cache key failed:{cache_key}", level="ERROR")
                         # but this is not failing!!!
                         raise e
                     yield CachePut(
@@ -256,7 +250,7 @@ def cache(
                 try:
                     cloudpickle.dumps(cache_key)
                 except Exception as e:
-                    logger.error(f"serializing cache key failed:{cache_key}")
+                    yield slog(msg=f"serializing cache key failed:{cache_key}", level="ERROR")
                     raise e
 
                 return (yield CacheGet(cache_key))

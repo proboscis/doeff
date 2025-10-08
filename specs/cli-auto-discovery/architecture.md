@@ -126,7 +126,7 @@ program = _import_symbol("some.module.a.b.c.program")
 accumulated_env = discover_and_merge_default_envs("some.module.a.b.c")
 explicit_envs = [_import_symbol(path) for path in args.env or []]
 final_env = merge_envs([accumulated_env] + explicit_envs)
-wrapped = Program.from_effect(Local(final_env, program))
+wrapped = Local(final_env, program)
 ```
 
 #### 2.6 Local Effect Enhancement
@@ -408,7 +408,7 @@ def handle_run(args: argparse.Namespace) -> int:
 
     if all_env_sources:
         merged_env = merger.merge_envs(all_env_sources)
-        program = Program.from_effect(Local(merged_env, program))
+        program = Local(merged_env, program)
 
     # 3. Transform (existing logic)
     if context.apply_path:
@@ -560,7 +560,7 @@ class ProgramInterpreter:
 
 4. Wrap program:
    merged_env = Program.pure({...merged dict...})
-   wrapped = Program.from_effect(Local(merged_env, program))
+   wrapped = Local(merged_env, program)
 
 5. Execute wrapped program with interpreter
 ```
@@ -582,7 +582,7 @@ User: doeff run --program some.module.a.b.c.program --env custom.env --format js
 ├─────────────────────────────────────────────────────────────┤
 │ • Collect: [base, config, custom.env]                       │
 │ • Merge: base → config → custom (left-to-right)             │
-│ • Wrap: Program.from_effect(Local(merged, program))         │
+│ • Wrap: Local(merged, program)                              │
 └─────────────────────────────────────────────────────────────┘
                             ↓
 ┌─────────────────────────────────────────────────────────────┐

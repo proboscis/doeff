@@ -73,9 +73,9 @@ def my_program(x: int):
 constant_program = Program.pure(42)
 ```
 
-**Method 3: Program.from_effect (single effect)**
+**Method 3: Use an effect directly (single effect)**
 ```python
-log_program = Program.from_effect(Log("test"))
+log_program = Log("test")
 ```
 
 **Method 4: Manual construction (advanced)**
@@ -413,8 +413,8 @@ def result():
 Run programs in sequence, discarding first result:
 
 ```python
-setup = Program.from_effect(Put("ready", True))
-work = Program.from_effect(Get("data"))
+setup = Put("ready", True)
+work = Get("data")
 
 program = setup.then(work)  # Run setup, then work
 ```
@@ -427,9 +427,9 @@ Program.pure(42)  # Program[int]
 Program.of("hello")  # Program[str]
 ```
 
-**from_effect**: Single effect to Program
+**Effects**: Use any effect instance directly when you need a single operation
 ```python
-Program.from_effect(Log("test"))
+single_log = Log("test")
 ```
 
 **lift**: Smart constructor
