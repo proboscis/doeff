@@ -31,7 +31,7 @@ class Program(Generic[T]):
 
 # Everything returns Program
 Program.pure(5)              # Returns Program wrapping generator
-Program.from_effect(Ask("x")) # Returns Program wrapping generator
+Ask("x")                     # Returns Program wrapping generator
 kleisli_program(args)        # Returns Program wrapping generator
 ```
 
@@ -137,7 +137,7 @@ async def handle_effect(self, effect: Effect) -> Any:
 | `kleisli_prog(x=1)` | Nothing (calls KP.__call__) | `KleisliProgramCall` (bound function + args) |
 | `kpcall.to_generator()` | Nothing (calls generator_func with args) | `Generator[Program, Any, T]` (actual generator!) |
 | `Program.pure(5)` | Nothing | `PureEffect(5)` (no generator) |
-| `Program.from_effect(Ask("x"))` | Nothing | `Ask("x")` directly |
+| `Ask("x")` | Nothing | Already a Program |
 | `ask_x.map(f)` | Nothing | `KleisliProgramCall` (wraps in generator function) |
 
 **Distinction:**

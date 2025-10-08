@@ -623,7 +623,7 @@ class RunCommandHandler:
 
         # Wrap with Local effect
         from doeff.effects import Local
-        return Program.from_effect(Local(merged_env, program))
+        return Local(merged_env, program)
 
     def _apply_transforms(
         self,

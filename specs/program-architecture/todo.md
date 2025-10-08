@@ -12,7 +12,7 @@
 | **KleisliProgramCall** | Doesn't exist | **NEW**: Concrete class holding generator instance + call metadata |
 | **Interpreter** | Handles `Effect \| Program` | Handles `Effect \| KleisliProgramCall` |
 | **Program.pure()** | Returns `Program` wrapping generator | Returns `PureEffect` |
-| **Program.from_effect()** | Returns `Program` wrapping generator | Returns the Effect directly |
+| **Program.from_effect()** | Removed (effects are already programs) | Removed |
 | **KleisliProgram.__call__()** | Returns `Program` | Returns `KleisliProgramCall` |
 
 **Key Distinction:**
@@ -178,7 +178,7 @@
 
 ### Phase 3: Migrate Helper Functions (Breaking: Helper Return Types)
 
-**Goal**: `Program.pure`, `Program.from_effect` return Effects directly.
+**Goal**: `Program.pure` returns `PureEffect`; effects can be used directly (no `from_effect`).
 
 #### Tasks
 
@@ -194,7 +194,7 @@
   - Update tests expecting `Program` type
   - Test: `test_program_pure_returns_effect.py`
 
-- [ ] **3.2: Migrate Program.from_effect**
+- [x] **3.2: Remove Program.from_effect**
   - Location: `doeff/program.py:147-154`
   - Change to:
     ```python
@@ -452,7 +452,7 @@ def test_effect_call_tree():
    - **Impact**: Type annotations expecting `Program` still work (Protocol)
    - **Action**: No code changes needed in most cases
 
-2. **Program.from_effect** now returns the Effect directly
+2. **Program.from_effect** removed; effects are already Programs
    - **Impact**: Same as above
    - **Action**: No code changes needed
 

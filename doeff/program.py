@@ -45,10 +45,6 @@ class ProgramBase(ABC, Generic[T]):
         return ProgramBase.pure(value)  # type: ignore[return-value]
 
     @staticmethod
-    def from_effect(effect: "Effect") -> "Effect":
-        return effect
-
-    @staticmethod
     def first_success(*programs: "ProgramLike[T]") -> "KleisliProgramCall[T]":
         if not programs:
             raise ValueError("Program.first_success requires at least one program")

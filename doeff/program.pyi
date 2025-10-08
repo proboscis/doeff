@@ -26,10 +26,6 @@ class ProgramBase(Generic[T]):
     def lift(value: Program[U] | U) -> Program[U]: ...
 
     @staticmethod
-    def from_effect(effect: Effect) -> Effect: ...
-
-
-    @staticmethod
     def first_success(*programs: ProgramLike[T]) -> KleisliProgramCall[T]: ...
 
     @staticmethod
