@@ -1,16 +1,26 @@
 """Tests for the Gemini structured LLM implementation."""
 
+import importlib
 import json
 import math
 import time
 from io import BytesIO
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+
 from PIL import Image
+google_genai = pytest.importorskip("google.genai")
 from doeff_gemini import (
     GeminiImageEditResult,
     build_contents,
@@ -25,10 +35,11 @@ from doeff_gemini.structured_llm import GeminiStructuredOutputError
 from doeff_gemini.costs import calculate_cost
 from doeff_gemini.client import track_api_call
 from doeff_gemini.types import APICallMetadata
-from google.genai import types as genai_types
+genai_types = google_genai.types
 from pydantic import BaseModel
 
 from doeff import EffectGenerator, ExecutionContext, Gather, ProgramInterpreter, do
+structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
 
 class SimpleResponse(BaseModel):
@@ -68,7 +79,7 @@ async def test_build_contents_text_only() -> None:
         return contents
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     contents = result.value
@@ -103,7 +114,7 @@ async def test_build_generation_config_basic() -> None:
         return config
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     config = result.value
@@ -141,7 +152,7 @@ async def test_build_generation_config_with_modalities() -> None:
         )
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     config = result.value
@@ -164,7 +175,7 @@ async def test_process_structured_response_from_text() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     parsed = result.value
@@ -187,7 +198,7 @@ async def test_process_structured_response_from_parsed() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     assert result.value is parsed_response
@@ -211,7 +222,7 @@ async def test_process_structured_response_nested_model_from_parsed() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     assert result.value is parsed_response
@@ -240,7 +251,7 @@ async def test_process_structured_response_from_json_part() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     payload = result.value
@@ -271,7 +282,7 @@ async def test_process_structured_response_from_json_part_string_payload() -> No
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     payload = result.value
@@ -301,7 +312,7 @@ async def test_process_structured_response_from_json_part_with_model() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     payload = result.value
@@ -335,7 +346,7 @@ async def test_process_structured_response_nested_model_from_json_part() -> None
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     payload = result.value
@@ -369,7 +380,7 @@ async def test_process_structured_response_from_outputs_structure() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     payload = result.value
@@ -389,7 +400,7 @@ async def test_process_structured_response_without_json_payload() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_err
     error = result.result.error
@@ -410,10 +421,118 @@ async def test_process_unstructured_response() -> None:
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     assert result.value == "A concise answer"
+
+
+@pytest.mark.asyncio
+async def test_repair_structured_response_uses_default_when_missing(monkeypatch) -> None:
+    """Fallback should call the Gemini-backed repair when no custom SLLM is provided."""
+
+    calls: list[dict[str, Any]] = []
+
+    @do
+    def fake_gemini_json_fix(
+        *,
+        model: str,
+        response_format: type[BaseModel],
+        malformed_content: str,
+        max_output_tokens: int,
+        system_instruction: str | None,
+        safety_settings: list[dict[str, Any]] | None,
+        tools: list[dict[str, Any]] | None,
+        tool_config: dict[str, Any] | None,
+        generation_config_overrides: dict[str, Any] | None,
+    ) -> EffectGenerator[Any]:
+        calls.append(
+            {
+                "model": model,
+                "content": malformed_content,
+                "max_output_tokens": max_output_tokens,
+            }
+        )
+        return response_format(answer="fixed", confidence=0.5)
+
+    monkeypatch.setattr(structured_llm_module, "_gemini_json_fix", fake_gemini_json_fix)
+
+    malformed = json.dumps({"answer": "???", "confidence": 0.0})
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        default_sllm = structured_llm_module._make_gemini_json_fix_sllm(
+            model="gemini-default",
+            max_output_tokens=128,
+            system_instruction=None,
+            safety_settings=None,
+            tools=None,
+            tool_config=None,
+            generation_config_overrides=None,
+        )
+        return (
+            yield structured_llm_module.repair_structured_response(
+                model="gemini-default",
+                response_format=SimpleResponse,
+                malformed_content=malformed,
+                max_output_tokens=128,
+                default_sllm=default_sllm,
+            )
+        )
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(flow())
+
+    assert result.is_ok
+    assert result.value.answer == "fixed"
+    assert calls and calls[0]["model"] == "gemini-default"
+
+
+@pytest.mark.asyncio
+async def test_repair_structured_response_uses_injected_sllm() -> None:
+    """Custom SLLM provided via injection should replace the Gemini fallback."""
+
+    malformed = json.dumps({"answer": "bad", "confidence": 0.1})
+    custom_called = {"value": False}
+
+    @do
+    def custom_fix(json_text: str, response_format: type[BaseModel]) -> EffectGenerator[Any]:
+        custom_called["value"] = True
+        data = json.loads(json_text)
+        data["answer"] = "repaired"
+        data["confidence"] = 0.99
+        return response_format(**data)
+
+    @do
+    def flow() -> EffectGenerator[SimpleResponse]:
+        default_sllm = structured_llm_module._make_gemini_json_fix_sllm(
+            model="unused",
+            max_output_tokens=64,
+            system_instruction=None,
+            safety_settings=None,
+            tools=None,
+            tool_config=None,
+            generation_config_overrides=None,
+        )
+        return (
+            yield structured_llm_module.repair_structured_response(
+                model="unused",
+                response_format=SimpleResponse,
+                malformed_content=malformed,
+                max_output_tokens=64,
+                default_sllm=default_sllm,
+            )
+        )
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(env={"sllm_for_json_fix": custom_fix})
+    result = await engine.run_async(flow(), context)
+
+    assert result.is_ok
+    payload = result.value
+    assert payload.answer == "repaired"
+    assert math.isclose(payload.confidence, 0.99)
+    assert custom_called["value"] is True
 
 
 @pytest.mark.asyncio
@@ -448,7 +567,7 @@ async def test_structured_llm_text_only() -> None:
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"gemini_client": mock_client})
-    result = await engine.run(flow(), context)
+    result = await engine.run_async(flow(), context)
 
     assert result.is_ok
     assert result.value == "Test response"
@@ -494,7 +613,7 @@ async def test_structured_llm_with_pydantic() -> None:
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"gemini_client": mock_client})
-    result = await engine.run(flow(), context)
+    result = await engine.run_async(flow(), context)
 
     assert result.is_ok
     value = result.value
@@ -551,7 +670,7 @@ async def test_process_image_edit_response_success(tmp_path: Path) -> None:
         return (yield process_image_edit_response(response))
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
 
     assert result.is_ok
     payload = result.value
@@ -620,7 +739,7 @@ async def test_edit_image__gemini_success() -> None:
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"gemini_client": client})
-    result = await engine.run(flow(), context)
+    result = await engine.run_async(flow(), context)
 
     assert result.is_ok
     payload = result.value
@@ -679,7 +798,7 @@ async def test_track_api_call_accumulates_under_gather() -> None:
 
     engine = ProgramInterpreter()
     context = ExecutionContext()
-    result = await engine.run(run_parallel(), context)
+    result = await engine.run_async(run_parallel(), context)
 
     assert result.is_ok
     state = result.context.state
