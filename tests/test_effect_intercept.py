@@ -37,7 +37,7 @@ from doeff.effects.result import (
 from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
 from doeff.interpreter import ProgramInterpreter
-from doeff.program import KleisliProgramCall, Program
+from doeff.program import GeneratorProgram, Program
 from doeff.types import Effect
 
 SUFFIX = "|intercepted"
@@ -58,7 +58,7 @@ def writer_program(message: str) -> Program[str]:
         yield WriterTellEffect(message=message)
         return message
 
-    return KleisliProgramCall.create_anonymous(generator)
+    return GeneratorProgram(generator)
 
 
 async def writer_message(program: Program[Any]) -> str:

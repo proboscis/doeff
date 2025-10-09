@@ -26,7 +26,7 @@ from doeff import (
     step,
     tell,
 )
-from doeff.program import KleisliProgramCall
+from doeff.program import GeneratorProgram
 
 
 @pytest.mark.asyncio
@@ -130,7 +130,7 @@ async def test_deep_mixed_monad_chain():  # noqa: PLR0915
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"multiplier": 2}, io_allowed=True)
 
-    program = KleisliProgramCall.create_anonymous(deep_mixed_program)
+    program = GeneratorProgram(deep_mixed_program)
     result = await engine.run_async(program, context)
 
     assert result.is_ok
@@ -192,7 +192,7 @@ async def test_nested_monad_operations():
     context = ExecutionContext()
 
     # Test with depth 100 (should work fine)
-    program = KleisliProgramCall.create_anonymous(lambda: nested_program(100))
+    program = GeneratorProgram(lambda: nested_program(100))
     result = await engine.run_async(program, context)
 
     assert result.is_ok
@@ -237,7 +237,7 @@ async def test_parallel_async_operations():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    program = KleisliProgramCall.create_anonymous(parallel_program)
+    program = GeneratorProgram(parallel_program)
     result = await engine.run_async(program, context)
 
     assert result.is_ok
@@ -304,7 +304,7 @@ async def test_monad_composition_patterns():
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"config": {"key": "value"}})
 
-    program = KleisliProgramCall.create_anonymous(composition_program)
+    program = GeneratorProgram(composition_program)
     result = await engine.run_async(program, context)
 
     assert result.is_ok

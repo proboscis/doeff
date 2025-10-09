@@ -85,20 +85,10 @@ class KleisliProgram(Generic[P, T]):
 
         @wraps(self.func)
         def composed(*args: P.args, **kwargs: P.kwargs) -> Program[U]:
-
-            def generator():
-                initial_value = yield self(*args, **kwargs)
-                next_step = binder(initial_value)
-                if not isinstance(next_step, ProgramBase):
-                    raise TypeError(
-                        "binder must return a Program; got "
-                        f"{type(next_step).__name__}"
-                    )
-                result = yield next_step
-                return result
-
-            from doeff.program import KleisliProgramCall
-            return KleisliProgramCall.create_anonymous(generator)
+            program = self(*args, **kwargs)
+            if not isinstance(program, ProgramBase):
+                raise TypeError("Kleisli program must return a Program")
+            return program.and_then_k(binder)
 
         return KleisliProgram(composed)
 
@@ -117,13 +107,10 @@ class KleisliProgram(Generic[P, T]):
 
         @wraps(self.func)
         def mapped(*args: P.args, **kwargs: P.kwargs) -> Program[U]:
-
-            def generator():
-                value = yield self(*args, **kwargs)
-                return mapper(value)
-
-            from doeff.program import KleisliProgramCall
-            return KleisliProgramCall.create_anonymous(generator)
+            program = self(*args, **kwargs)
+            if not isinstance(program, ProgramBase):
+                raise TypeError("Kleisli program must return a Program")
+            return program.map(mapper)
 
         return KleisliProgram(mapped)
 
