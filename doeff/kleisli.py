@@ -12,7 +12,7 @@ import inspect
 import types
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable as TypingCallable, Generic, ParamSpec, TypeVar
+from typing import Any, Callable as TypingCallable, Generic, ParamSpec, TypeVar, get_type_hints
 
 from doeff.program import Program, ProgramBase
 
@@ -157,3 +157,17 @@ def _safe_signature(target: Any) -> inspect.Signature | None:
 
 
 __all__ = ["KleisliProgram", "PartiallyAppliedKleisliProgram"]
+
+
+def _hydrate_future_annotations() -> None:
+    """Resolve postponed annotations for ParamSpec-aware methods."""
+
+    try:
+        hints = get_type_hints(KleisliProgram.__call__, include_extras=True)
+    except Exception:  # pragma: no cover - defensive guard
+        hints = {}
+    if hints:
+        KleisliProgram.__call__.__annotations__ = hints
+
+
+_hydrate_future_annotations()
