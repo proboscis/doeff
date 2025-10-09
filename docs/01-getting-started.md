@@ -8,6 +8,12 @@ Install doeff using pip:
 pip install doeff
 ```
 
+Optional CLI discovery features rely on the Rust-powered indexer. Install it on demand with:
+
+```bash
+pip install "doeff[indexer]"
+```
+
 For pinjected integration support:
 
 ```bash
