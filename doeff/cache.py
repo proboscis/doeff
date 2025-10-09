@@ -7,17 +7,92 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import FrozenDict, Result
+from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
+from doeff.effects.callstack import ProgramCallStack
 from doeff.effects.result import Recover, Safe
 from doeff.effects.writer import Log, slog
-from doeff.types import EffectGenerator
+from doeff.types import EffectCreationContext, EffectGenerator
+
+
+class CacheComputationError(RuntimeError):
+    """Error raised when the cached computation fails."""
+
+    def __init__(
+        self,
+        func_name: str,
+        call_args: tuple[Any, ...],
+        call_kwargs: dict[str, Any],
+        call_site: EffectCreationContext | None = None,
+    ) -> None:
+        location_suffix = (
+            f" at {call_site.format_location()}" if call_site is not None else ""
+        )
+        message = (
+            f"Cache computation for {func_name} failed"
+            f" with args={call_args!r} kwargs={call_kwargs!r}{location_suffix}"
+        )
+        super().__init__(message)
+        self.func_name = func_name
+        self.call_args = call_args
+        self.call_kwargs = call_kwargs
+        self.call_site = call_site
+
+        if call_site is not None and hasattr(self, "add_note"):
+            self.add_note(
+                f"Cache-decorated call originated at {call_site.format_location()}"
+            )
 
 if TYPE_CHECKING:
     from doeff.kleisli import KleisliProgram
 
 T = TypeVar("T")
+
+
+def _function_identifier(target: Any) -> str:
+    """Return a descriptive identifier for a callable or callable-like object."""
+    module = getattr(target, "__module__", None)
+    qualname = getattr(target, "__qualname__", None)
+    name = getattr(target, "__name__", None)
+
+    parts: list[str] = []
+    if module:
+        parts.append(module)
+    if qualname:
+        parts.append(qualname)
+    elif name:
+        parts.append(name)
+
+    if parts:
+        return ".".join(parts)
+
+    func_attr = getattr(target, "func", None)
+    if func_attr is not None and func_attr is not target:
+        inner = _function_identifier(func_attr)
+        cls = target.__class__
+        return f"{cls.__module__}.{cls.__qualname__}({inner})"
+
+    cls = target.__class__
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _safe_signature(callable_obj: Callable[..., Any] | None) -> inspect.Signature | None:
+    """Return inspect.Signature if possible, otherwise None."""
+    if callable_obj is None:
+        return None
+    try:
+        return inspect.signature(callable_obj)
+    except (ValueError, TypeError):
+        return None
+
+
+def _is_internal_cache_filename(filename: str | None) -> bool:
+    if not filename:
+        return False
+    normalized = filename.replace("\\", "/")
+    return "doeff/cache.py" in normalized
 
 
 @do_wrapper
@@ -71,163 +146,151 @@ def cache(
         the cached value, and the policy hints remain available to custom cache handlers.
     """
     def decorator(func: Callable[..., EffectGenerator[T]]) -> Callable[..., EffectGenerator[T]]:
-        # Check if func is a KleisliProgram (from @do decorator)
         from doeff.kleisli import KleisliProgram
-
-        def _function_identifier(target: Any) -> str:
-            module = getattr(target, "__module__", None)
-            qualname = getattr(target, "__qualname__", None)
-            name = getattr(target, "__name__", None)
-
-            parts: list[str] = []
-            if module:
-                parts.append(module)
-            if qualname:
-                parts.append(qualname)
-            elif name:
-                parts.append(name)
-
-            if parts:
-                return ".".join(parts)
-
-            func_attr = getattr(target, "func", None)
-            if func_attr is not None and func_attr is not target:
-                inner = _function_identifier(func_attr)
-                cls = target.__class__
-                return f"{cls.__module__}.{cls.__qualname__}({inner})"
-
-            cls = target.__class__
-            return f"{cls.__module__}.{cls.__qualname__}"
 
         if isinstance(func, KleisliProgram):
             wrapped_func = func
             signature_source = func.func
-            func_name = _function_identifier(signature_source)
         else:
             wrapped_func = func
             signature_source = func
-            func_name = _function_identifier(func)
 
-        try:
-            signature = inspect.signature(signature_source)
-        except (ValueError, TypeError):
-            signature = None
+        func_name = _function_identifier(signature_source)
+        signature = _safe_signature(signature_source)
 
         @do
-        def wrapper(*args, **kwargs) -> EffectGenerator[T]:
-            # Create cache key as (func_name, args, frozen_kwargs)
-            # The interpreter will handle serialization
-            if signature is not None:
-                try:
-                    bound = signature.bind(*args, **kwargs)
-                except TypeError:
-                    args_for_key = args
-                    kwargs_for_key = dict(kwargs)
-                    if key_hashers:
-                        for name, hasher in key_hashers.items():
-                            if name in kwargs_for_key:
-                                kwargs_for_key[name] = (
-                                    (yield hasher(kwargs_for_key[name]))
-                                    if isinstance(hasher, KleisliProgram)
-                                    else hasher(kwargs_for_key[name])
-                                )
-                else:
-                    bound.apply_defaults()
-                    arguments = bound.arguments.copy()
-                    kwargs_param_name: str | None = None
-                    if key_hashers:
-                        for param_name, param in signature.parameters.items():
-                            if param.kind is inspect.Parameter.VAR_KEYWORD:
-                                kwargs_param_name = param_name
-                                break
-                        if kwargs_param_name and kwargs_param_name in arguments:
-                            arguments[kwargs_param_name] = dict(arguments[kwargs_param_name])
+        def run_hasher(
+            hasher: Callable[[Any], Any] | KleisliProgram[Any, Any],
+            value: Any,
+        ) -> EffectGenerator[Any]:
+            if isinstance(hasher, KleisliProgram):
+                return (yield hasher(value))
+            return hasher(value)
 
-                        for name, hasher in key_hashers.items():
-                            if name in arguments:
-                                arguments[name] = (
-                                    (yield hasher(arguments[name]))
-                                    if isinstance(hasher, KleisliProgram)
-                                    else hasher(arguments[name])
-                                )
-                            elif (
-                                kwargs_param_name
-                                and kwargs_param_name in arguments
-                                and name in arguments[kwargs_param_name]
-                            ):
-                                arguments[kwargs_param_name][name] = (
-                                    (yield hasher(arguments[kwargs_param_name][name]))
-                                    if isinstance(hasher, KleisliProgram)
-                                    else hasher(arguments[kwargs_param_name][name])
-                                )
+        @do
+        def ensure_serializable(
+            key_obj: Any,
+            *,
+            log_success: bool = True,
+            level: str | None = None,
+        ) -> EffectGenerator[None]:
+            try:
+                import cloudpickle
 
-                    args_list: list[Any] = []
-                    kwargs_for_key = {}
-                    for name, param in signature.parameters.items():
-                        value = arguments.get(name)
-                        if param.kind in (
-                            inspect.Parameter.POSITIONAL_ONLY,
-                            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        ):
-                            args_list.append(value)
-                        elif param.kind is inspect.Parameter.VAR_POSITIONAL:
-                            args_list.extend(value or ())
-                        elif param.kind is inspect.Parameter.KEYWORD_ONLY:
-                            kwargs_for_key[name] = value
-                        elif param.kind is inspect.Parameter.VAR_KEYWORD:
-                            if value:
-                                kwargs_for_key.update(value)
-                    args_for_key = tuple(args_list)
-            else:
-                args_for_key = args
-                kwargs_for_key = dict(kwargs)
+                cloudpickle.dumps(key_obj)
+            except Exception as exc:  # pragma: no cover - defensive logging path
+                yield slog(msg=f"serializing cache key failed:{key_obj}", level="ERROR")
+                raise exc
+
+            if log_success:
+                log_kwargs: dict[str, Any] = {"msg": f"cache key serialization check passed for key:{key_obj}"}
+                if level is not None:
+                    log_kwargs["level"] = level
+                yield slog(**log_kwargs)
+
+        @do
+        def build_key_inputs(
+            call_args: tuple[Any, ...],
+            call_kwargs: Mapping[str, Any],
+        ) -> EffectGenerator[tuple[tuple[Any, ...], dict[str, Any]]]:
+            if signature is None:
+                kwargs_for_key = dict(call_kwargs)
                 if key_hashers:
                     for name, hasher in key_hashers.items():
                         if name in kwargs_for_key:
-                            kwargs_for_key[name] = (
-                                (yield hasher(kwargs_for_key[name]))
-                                if isinstance(hasher, KleisliProgram)
-                                else hasher(kwargs_for_key[name])
-                            )
-
-            frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
-
-            if key_func:
-                cache_key = key_func(func_name, args_for_key, frozen_kwargs)
-            else:
-                cache_key = (func_name, args_for_key, frozen_kwargs)
-
+                            kwargs_for_key[name] = yield run_hasher(hasher, kwargs_for_key[name])
+                return tuple(call_args), kwargs_for_key
 
             try:
-                import cloudpickle
-                cloudpickle.dumps(cache_key)
-                yield slog(msg=f"cache key serialization check passed for key:{cache_key}", level="DEBUG")
-            except Exception as e:
-                yield slog(msg=f"serializing cache key failed:{cache_key}", level="ERROR")
-                raise e
+                bound = signature.bind(*call_args, **call_kwargs)
+            except TypeError:
+                kwargs_for_key = dict(call_kwargs)
+                if key_hashers:
+                    for name, hasher in key_hashers.items():
+                        if name in kwargs_for_key:
+                            kwargs_for_key[name] = yield run_hasher(hasher, kwargs_for_key[name])
+                return tuple(call_args), kwargs_for_key
 
-            # yield Log(f"Cache: checking key for {func_name}")
+            bound.apply_defaults()
+            arguments = bound.arguments.copy()
 
-            # Define the fallback computation
+            kwargs_param_name: str | None = None
+            for param_name, param in signature.parameters.items():
+                if param.kind is inspect.Parameter.VAR_KEYWORD:
+                    kwargs_param_name = param_name
+                    break
+
+            if key_hashers:
+                if kwargs_param_name and kwargs_param_name in arguments:
+                    arguments[kwargs_param_name] = dict(arguments[kwargs_param_name])
+
+                for name, hasher in key_hashers.items():
+                    if name in arguments:
+                        arguments[name] = yield run_hasher(hasher, arguments[name])
+                    elif (
+                        kwargs_param_name
+                        and kwargs_param_name in arguments
+                        and name in arguments[kwargs_param_name]
+                    ):
+                        kwarg_bucket = arguments[kwargs_param_name]
+                        kwarg_bucket[name] = yield run_hasher(hasher, kwarg_bucket[name])
+
+            args_list: list[Any] = []
+            kwargs_for_key: dict[str, Any] = {}
+
+            for param_name, param in signature.parameters.items():
+                value = arguments.get(param_name)
+                if param.kind in (
+                    inspect.Parameter.POSITIONAL_ONLY,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                ):
+                    args_list.append(value)
+                elif param.kind is inspect.Parameter.VAR_POSITIONAL:
+                    args_list.extend(value or ())
+                elif param.kind is inspect.Parameter.KEYWORD_ONLY:
+                    kwargs_for_key[param_name] = value
+                elif param.kind is inspect.Parameter.VAR_KEYWORD and value:
+                    kwargs_for_key.update(value)
+
+            return tuple(args_list), kwargs_for_key
+
+        @do
+        def wrapper(*args, **kwargs) -> EffectGenerator[T]:
+            call_site: EffectCreationContext | None = None
+
+            call_stack = yield ProgramCallStack()
+            for frame in reversed(call_stack):
+                created_at = getattr(frame, "created_at", None)
+                if created_at is None:
+                    continue
+                if not _is_internal_cache_filename(created_at.filename):
+                    call_site = created_at
+                    break
+
+            if call_site is None and call_stack:
+                call_site = getattr(call_stack[-1], "created_at", None)
+
+            args_for_key, kwargs_for_key = yield build_key_inputs(tuple(args), dict(kwargs))
+
+            frozen_kwargs = FrozenDict(kwargs_for_key) if kwargs_for_key else FrozenDict()
+            cache_key_obj = (
+                key_func(func_name, args_for_key, frozen_kwargs)
+                if key_func
+                else (func_name, args_for_key, frozen_kwargs)
+            )
+
+            yield ensure_serializable(cache_key_obj, level="DEBUG")
+
             @do
             def compute_and_cache() -> EffectGenerator[T]:
                 yield slog(msg=f"Cache miss for {func_name}, computing...", level="DEBUG")
-                # Execute the original function
-                result: Result = yield Safe(wrapped_func(*args, **kwargs))
+                program_call = wrapped_func(*args, **kwargs)
+                result: Result = yield Safe(program_call)
+
                 if result.is_ok():
-                    # Store in cache with the key
-                    try:
-                        import cloudpickle
-                        cloudpickle.dumps(cache_key)
-                        yield slog(msg=f"cache key serialization check passed for key:{cache_key}")
-                    except Exception as e:
-                        # we are doing this in order to see what caused the serialization failure
-                        # one way, is to store all frame inside the effect.
-                        yield slog(msg=f"serializing cache key failed:{cache_key}", level="ERROR")
-                        # but this is not failing!!!
-                        raise e
+                    yield ensure_serializable(cache_key_obj)
                     yield CachePut(
-                        cache_key,
+                        cache_key_obj,
                         result,
                         ttl,
                         lifecycle=lifecycle,
@@ -235,42 +298,33 @@ def cache(
                         metadata=metadata,
                         policy=policy,
                     )
-                    # so we are not reaching here.
                     yield Log(f"Cache: stored result for {func_name}")
-                else:
-                    yield Log(f"Computation for {func_name} failed, not caching.")
-                    raise result.unwrap_err()
-                return result.unwrap()
+                    return result.unwrap()
 
-            # Create a program that tries to get from cache
+                yield Log(f"Computation for {func_name} failed, not caching.")
+                error = result.unwrap_err()
+                raise CacheComputationError(
+                    func_name,
+                    args,
+                    dict(kwargs),
+                    call_site,
+                ) from error
+
             @do
             def try_cache_get() -> EffectGenerator[T]:
-                # this is where a bad key is being passed...
-                # however, cache_key serialization check is passing here...
-                try:
-                    cloudpickle.dumps(cache_key)
-                except Exception as e:
-                    yield slog(msg=f"serializing cache key failed:{cache_key}", level="ERROR")
-                    raise e
+                yield ensure_serializable(cache_key_obj, log_success=False)
+                return (yield CacheGet(cache_key_obj))
 
-                return (yield CacheGet(cache_key))
-
-            # Try to get from cache, recover with computation on miss
             result = yield Recover(try_cache_get(), compute_and_cache())
-
-            # Log cache hit if we got here without computing
-            # (The log will only appear if CacheGet succeeded)
 
             if isinstance(result, Result):
                 return result.unwrap()
             return result
 
-        # Try to preserve some metadata if possible
         try:
             wrapper.__name__ = getattr(func, "__name__", wrapper.__name__)
             wrapper.__doc__ = getattr(func, "__doc__", wrapper.__doc__)
         except (AttributeError, TypeError):
-            # Can't set attributes on some objects like KleisliProgram
             pass
 
         return wrapper
@@ -331,6 +385,7 @@ def cache_forever(func: Callable[..., EffectGenerator[T]]) -> Callable[..., Effe
 
 
 __all__ = [
+    "CacheComputationError",
     "cache",
     "cache_1hour",
     "cache_1min",

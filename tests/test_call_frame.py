@@ -3,7 +3,7 @@
 import pytest
 
 from doeff import ProgramInterpreter, do
-from doeff.effects import Pure, Ask
+from doeff.effects import Ask, Pure, ProgramCallFrame, ProgramCallStack
 from doeff.program import Program
 from doeff.types import CallFrame, ExecutionContext
 
@@ -210,3 +210,35 @@ def test_call_frame_with_creation_context():
     assert frame.created_at is creation_ctx
     assert frame.created_at.filename == "test.py"
     assert frame.created_at.line == 42
+
+
+@pytest.mark.asyncio
+async def test_program_call_stack_effects():
+    """ProgramCallStack and ProgramCallFrame should reflect nested calls."""
+
+    interpreter = ProgramInterpreter()
+
+    @do
+    def inner() -> Program[list[str]]:
+        stack = yield ProgramCallStack()
+        current = yield ProgramCallFrame()
+        parent = yield ProgramCallFrame(1)
+        names = [frame.function_name for frame in stack]
+        return [
+            ",".join(names),
+            current.function_name,
+            parent.function_name,
+        ]
+
+    @do
+    def outer() -> Program[list[str]]:
+        return (yield inner())
+
+    result = await interpreter.run_async(outer())
+
+    assert result.is_ok
+    names, current_name, parent_name = result.value
+
+    assert names.startswith("outer,inner")
+    assert current_name == "inner"
+    assert parent_name == "outer"
