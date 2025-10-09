@@ -245,28 +245,27 @@ class ProgramBase(ABC, Generic[T]):
     def __call__(self, *args: Any, **kwargs: Any) -> "Program[Any]":
         """Invoke the eventual callable result with the provided arguments."""
 
-        lifted_args = [ProgramBase.lift(arg) for arg in args]
-        lifted_kwargs = {name: ProgramBase.lift(value) for name, value in kwargs.items()}
-
         def invoke_callable(func: Any) -> "Program[Any]":
             if not callable(func):
                 raise TypeError(f"Program result {func!r} is not callable")
+            arg_programs = [ProgramBase.lift(arg) for arg in args]
+            kw_programs = {name: ProgramBase.lift(value) for name, value in kwargs.items()}
 
-            def call_generator() -> Generator["Effect | Program", Any, Any]:
-                resolved_args = []
-                for arg_program in lifted_args:
-                    resolved_args.append((yield arg_program))
+            from doeff.effects import gather, gather_dict
 
-                resolved_kwargs: dict[str, Any] = {}
-                for key, kw_program in lifted_kwargs.items():
-                    resolved_kwargs[key] = (yield kw_program)
+            def gather_inputs() -> Generator["Effect | Program", Any, tuple[list[Any], dict[str, Any]]]:
+                resolved_args = yield gather(*arg_programs)
+                resolved_kwargs = yield gather_dict(kw_programs)
+                return list(resolved_args), dict(resolved_kwargs)
 
+            def call_program() -> Generator["Effect | Program", Any, Any]:
+                resolved_args, resolved_kwargs = yield GeneratorProgram(gather_inputs)
                 result = func(*resolved_args, **resolved_kwargs)
                 if isinstance(result, ProgramBase):
                     return (yield result)
                 return result
 
-            return GeneratorProgram(call_generator)
+            return GeneratorProgram(call_program)
 
         return self.flat_map(invoke_callable)
 
