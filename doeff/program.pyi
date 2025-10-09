@@ -61,12 +61,13 @@ class ProgramProtocol(Protocol[T]):
 
 
 class KleisliProgramCall(ProgramBase[T]):
-    generator_func: Callable[..., Generator[Effect | Program, Any, T]]
+    kleisli_source: Any | None
     args: tuple[Any, ...]
     kwargs: dict[str, Any]
-    kleisli_source: Any | None
     function_name: str
     created_at: Any | None
+    auto_unwrap_strategy: Any | None
+    execution_kernel: Callable[..., Generator[Effect | Program, Any, T]] | None
 
     def to_generator(self) -> Generator[Effect | Program, Any, T]: ...
 
@@ -78,14 +79,7 @@ class KleisliProgramCall(ProgramBase[T]):
         kwargs: dict[str, Any],
         function_name: str,
         created_at: Any | None = ...,
-    ) -> KleisliProgramCall[T]: ...
-
-    @classmethod
-    def create_anonymous(
-        cls,
-        generator_func: Callable[..., Generator[Effect | Program, Any, T]],
-        args: tuple[Any, ...] = ...,
-        kwargs: dict[str, Any] | None = ...,
+        execution_kernel: Callable[..., Generator[Effect | Program, Any, T]] | None = ...,
     ) -> KleisliProgramCall[T]: ...
 
     @classmethod
@@ -96,6 +90,14 @@ class KleisliProgramCall(ProgramBase[T]):
         args: tuple[Any, ...] | None = ...,
         kwargs: dict[str, Any] | None = ...,
     ) -> KleisliProgramCall[T]: ...
+
+
+class GeneratorProgram(ProgramBase[T]):
+    factory: Callable[[], Generator[Effect | Program, Any, T]]
+    created_at: Any | None
+
+    def to_generator(self) -> Generator[Effect | Program, Any, T]: ...
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]: ...
 
 
 class _InterceptedProgram(KleisliProgramCall[T]):

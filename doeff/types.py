@@ -494,26 +494,6 @@ class EffectBase(ProgramBase):
         default=None, compare=False
     )
 
-    def map(self, f: Callable[[Any], Any]) -> Program:
-        """Map a function over the result of this effect (functor map)."""
-        def mapped_gen():
-            value = yield self
-            return f(value)
-
-        from doeff.program import KleisliProgramCall
-        return KleisliProgramCall.create_anonymous(mapped_gen)
-
-    def flat_map(self, f: Callable[[Any], Program]) -> Program:
-        """Monadic bind operation - chain this effect with a program-returning function."""
-        def flatmapped_gen():
-            value = yield self
-            next_prog = f(value)
-            result = yield next_prog
-            return result
-
-        from doeff.program import KleisliProgramCall
-        return KleisliProgramCall.create_anonymous(flatmapped_gen)
-
     @abstractmethod
     def intercept(
         self: E, transform: Callable[[Effect], Effect | Program]

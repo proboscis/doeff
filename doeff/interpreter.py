@@ -91,7 +91,12 @@ def force_eval(prog: Program[T]) -> Program[T]:
     Python's recursion limit (~1000 frames) requires trampolining.
     """
     def forced_generator():
-        gen = prog.generator_func()
+        to_gen = getattr(prog, "to_generator", None)
+        if to_gen is None:
+            raise TypeError(
+                f"Program {prog!r} does not implement to_generator(); cannot force evaluation"
+            )
+        gen = to_gen()
         try:
             current = next(gen)
             while True:
@@ -104,8 +109,8 @@ def force_eval(prog: Program[T]) -> Program[T]:
         except StopIteration as e:
             return e.value
 
-    from doeff.program import KleisliProgramCall
-    return KleisliProgramCall.create_anonymous(forced_generator)
+    from doeff.program import GeneratorProgram
+    return GeneratorProgram(forced_generator)
 
 
 class ProgramInterpreter:
@@ -237,7 +242,12 @@ class ProgramInterpreter:
                 call_frame_pushed = True
             gen = program.to_generator()
         else:
-            gen = program.generator_func()
+            to_gen = getattr(program, "to_generator", None)
+            if to_gen is None:
+                raise TypeError(
+                    f"Program {program!r} does not implement to_generator(); cannot execute"
+                )
+            gen = to_gen()
 
         try:
             current = next(gen)
