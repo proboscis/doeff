@@ -127,7 +127,7 @@ pub fn build_index(root: impl AsRef<Path>) -> Result<Index> {
     let stats = compute_stats(&entries);
 
     Ok(Index {
-        version: "0.1.1".to_string(),
+        version: "0.1.2".to_string(),
         root: canonical_root.to_string_lossy().to_string(),
         generated_at: Utc::now(),
         entries,

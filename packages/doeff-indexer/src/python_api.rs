@@ -259,7 +259,7 @@ fn resolve_module_to_path(module_path: &str) -> PyResult<PathBuf> {
 
 /// Python module definition
 #[pymodule]
-fn doeff_indexer(_py: Python, m: &PyModule) -> PyResult<()> {
+fn doeff_indexer(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Indexer>()?;
     m.add_class::<SymbolInfo>()?;
     Ok(())

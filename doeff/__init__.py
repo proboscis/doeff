@@ -144,7 +144,7 @@ from doeff.cache import (
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # Shorthand alias matching lowercase helpers
 capture = capture_graph
