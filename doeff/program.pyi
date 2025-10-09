@@ -73,7 +73,6 @@ class KleisliProgramCall(ProgramBase[T]):
     @classmethod
     def create_from_kleisli(
         cls,
-        generator_func: Callable[..., Generator[Effect | Program, Any, T]],
         kleisli: Any,
         args: tuple[Any, ...],
         kwargs: dict[str, Any],

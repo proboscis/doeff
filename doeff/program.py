@@ -7,10 +7,25 @@ This module contains the Program wrapper class that represents a lazy computatio
 from __future__ import annotations
 
 import inspect
+import types
 from abc import ABC
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
+from functools import wraps
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ForwardRef,
+    Generic,
+    Protocol,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
     from doeff.effects._program_types import ProgramLike
@@ -19,6 +34,186 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
+
+
+class _AutoUnwrapStrategy:
+    """Describe which arguments should be auto-unwrapped for a Kleisli call."""
+
+    __slots__ = ("positional", "var_positional", "keyword", "var_keyword")
+
+    def __init__(self) -> None:
+        self.positional: list[bool] = []
+        self.var_positional: bool | None = None
+        self.keyword: dict[str, bool] = {}
+        self.var_keyword: bool | None = None
+
+    def should_unwrap_positional(self, index: int) -> bool:
+        if index < len(self.positional):
+            return self.positional[index]
+        if self.var_positional is not None:
+            return self.var_positional
+        return True
+
+    def should_unwrap_keyword(self, name: str) -> bool:
+        if name in self.keyword:
+            return self.keyword[name]
+        if self.var_keyword is not None:
+            return self.var_keyword
+        return True
+
+
+def _string_annotation_is_program(annotation_text: str) -> bool:
+    if not annotation_text:
+        return False
+    stripped = annotation_text.strip()
+    if not stripped:
+        return False
+    if "|" in stripped:
+        return any(_string_annotation_is_program(part) for part in stripped.split("|"))
+    if stripped.startswith("Optional[") and stripped.endswith("]"):
+        return _string_annotation_is_program(stripped[9:-1])
+    if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
+        return _string_annotation_is_program(
+            stripped[len("typing.Optional["):-1]
+        )
+    if stripped.startswith("Annotated[") and stripped.endswith("]"):
+        inner = stripped[len("Annotated["):-1]
+        first_part = inner.split(",", 1)[0]
+        return _string_annotation_is_program(first_part)
+    normalized = stripped.replace(" ", "")
+    return (
+        normalized == "Program"
+        or normalized.startswith("Program[")
+        or normalized.startswith("doeff.program.Program")
+    )
+
+
+def _string_annotation_is_effect(annotation_text: str) -> bool:
+    if not annotation_text:
+        return False
+    stripped = annotation_text.strip()
+    if not stripped:
+        return False
+    if "|" in stripped:
+        return any(_string_annotation_is_effect(part) for part in stripped.split("|"))
+    if stripped.startswith("Optional[") and stripped.endswith("]"):
+        return _string_annotation_is_effect(stripped[9:-1])
+    if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
+        return _string_annotation_is_effect(
+            stripped[len("typing.Optional["):-1]
+        )
+    if stripped.startswith("Annotated[") and stripped.endswith("]"):
+        inner = stripped[len("Annotated["):-1]
+        first_part = inner.split(",", 1)[0]
+        return _string_annotation_is_effect(first_part)
+    normalized = stripped.replace(" ", "")
+    return (
+        normalized == "Effect"
+        or normalized == "EffectBase"
+        or normalized.startswith("Effect[")
+        or normalized.startswith("doeff.types.Effect")
+        or normalized.startswith("doeff.types.EffectBase")
+    )
+
+
+def _annotation_is_program(annotation: Any) -> bool:
+    if annotation is inspect._empty:
+        return False
+
+    program_type = globals().get("Program", ProgramBase)
+
+    if annotation in (program_type, ProgramBase):
+        return True
+    if isinstance(annotation, ForwardRef):
+        return _string_annotation_is_program(annotation.__forward_arg__)
+    if isinstance(annotation, str):
+        return _string_annotation_is_program(annotation)
+    origin = get_origin(annotation)
+    if origin in (program_type, ProgramBase):
+        return True
+    if origin is Annotated:
+        args = get_args(annotation)
+        if args:
+            return _annotation_is_program(args[0])
+        return False
+    union_type = getattr(types, "UnionType", None)
+    if origin is Union or (union_type is not None and origin is union_type):
+        return any(_annotation_is_program(arg) for arg in get_args(annotation))
+    return False
+
+
+def _annotation_is_effect(annotation: Any) -> bool:
+    if annotation is inspect._empty:
+        return False
+    from doeff.types import Effect, EffectBase  # Local import to avoid global dependency
+
+    if annotation in (Effect, EffectBase):
+        return True
+    if isinstance(annotation, ForwardRef):
+        return _string_annotation_is_effect(annotation.__forward_arg__)
+    if isinstance(annotation, str):
+        return _string_annotation_is_effect(annotation)
+    origin = get_origin(annotation)
+    if origin in (Effect, EffectBase):
+        return True
+    if origin is Annotated:
+        args = get_args(annotation)
+        if args:
+            return _annotation_is_effect(args[0])
+        return False
+    union_type = getattr(types, "UnionType", None)
+    if origin is Union or (union_type is not None and origin is union_type):
+        return any(_annotation_is_effect(arg) for arg in get_args(annotation))
+    return False
+
+
+def _safe_get_type_hints(target: Any) -> dict[str, Any]:
+    if target is None:
+        return {}
+    try:
+        return get_type_hints(target, include_extras=True)
+    except Exception:
+        annotations = getattr(target, "__annotations__", None)
+        return dict(annotations) if annotations else {}
+
+
+def _safe_signature(target: Any) -> inspect.Signature | None:
+    try:
+        return inspect.signature(target)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_auto_unwrap_strategy(kleisli: Any) -> _AutoUnwrapStrategy:
+    strategy = _AutoUnwrapStrategy()
+    signature = getattr(kleisli, "__signature__", None)
+    if signature is None:
+        signature = _safe_signature(getattr(kleisli, "func", None))
+    metadata_source = getattr(kleisli, "_metadata_source", None)
+    type_hints = _safe_get_type_hints(metadata_source)
+    if not type_hints:
+        type_hints = _safe_get_type_hints(getattr(kleisli, "func", None))
+    if signature is None:
+        return strategy
+    for param in signature.parameters.values():
+        annotation = type_hints.get(param.name, param.annotation)
+        is_program = _annotation_is_program(annotation)
+        is_effect = _annotation_is_effect(annotation)
+        should_unwrap = not (is_program or is_effect)
+        if param.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            strategy.positional.append(should_unwrap)
+            if param.kind == inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                strategy.keyword[param.name] = should_unwrap
+        elif param.kind == inspect.Parameter.KEYWORD_ONLY:
+            strategy.keyword[param.name] = should_unwrap
+        elif param.kind == inspect.Parameter.VAR_POSITIONAL:
+            strategy.var_positional = should_unwrap
+        elif param.kind == inspect.Parameter.VAR_KEYWORD:
+            strategy.var_keyword = should_unwrap
+    return strategy
 
 
 class ProgramBase(ABC, Generic[T]):
@@ -137,6 +332,32 @@ class ProgramBase(ABC, Generic[T]):
         return KleisliProgramCall.create_anonymous(dict_generator)
 
 
+@dataclass(frozen=True)
+class _GeneratorProgram(ProgramBase[T]):
+    """Program wrapper that produces a generator from a stored factory."""
+
+    _factory: Callable[..., Generator["Effect | Program", Any, T]]
+    _args: tuple[Any, ...]
+    _kwargs: dict[str, Any]
+
+    def generator_func(self) -> Generator["Effect | Program", Any, T]:
+        return self._factory(*self._args, **self._kwargs)
+
+
+def _create_kleisli_from_generator(
+    generator_func: Callable[..., Generator["Effect | Program", Any, T]]
+) -> Any:
+    """Wrap a raw generator function in a KleisliProgram for reuse."""
+
+    from doeff.kleisli import KleisliProgram
+
+    @wraps(generator_func)
+    def kleisli_callable(*args: Any, **kwargs: Any) -> Program[T]:
+        return _GeneratorProgram(generator_func, args, kwargs)
+
+    return KleisliProgram(kleisli_callable)
+
+
 @runtime_checkable
 class ProgramProtocol(Protocol[T]):
     """
@@ -163,49 +384,101 @@ class ProgramProtocol(Protocol[T]):
 
 @dataclass(frozen=True)
 class KleisliProgramCall(ProgramBase, Generic[T]):
-    """
-    Compound computation with bound arguments (partial application).
+    """Bound invocation of a KleisliProgram with captured arguments."""
 
-    Like partial application: holds the generator-creating function + its arguments.
-    Call to_generator() to create the actual generator.
-
-    This is distinct from KleisliProgram:
-    - KleisliProgram: Unbound (holds Callable[P, Generator[Program, Any, T]])
-    - KleisliProgramCall: Bound (holds SAME function + args)
-    """
-
-    generator_func: Callable[..., Generator[Effect | Program, Any, T]]
-    # ^ The generator-creating function (same as in KleisliProgram!)
-    args: tuple  # Bound arguments
+    kleisli_source: Any  # KleisliProgram to execute
+    args: tuple
     kwargs: dict[str, Any]
 
-    # Metadata (source of the call)
-    kleisli_source: Any = None  # The KleisliProgram that created this (type: KleisliProgram | None)
     function_name: str = "<anonymous>"
-    created_at: Any = None  # EffectCreationContext | None
+    created_at: Any = None
+    auto_unwrap_strategy: _AutoUnwrapStrategy | None = None
 
     def to_generator(self) -> Generator[Effect | Program, Any, T]:
-        """Create generator by calling generator_func(*args, **kwargs)."""
-        return self.generator_func(*self.args, **self.kwargs)
+        """Create generator by invoking the captured Kleisli program."""
+
+        from doeff.effects import Gather, GatherDict
+
+        kleisli = self.kleisli_source
+        strategy = self.auto_unwrap_strategy or _build_auto_unwrap_strategy(kleisli)
+
+        args_tuple = self.args
+        kwargs_dict = self.kwargs
+
+        def generator() -> Generator[Effect | Program, Any, T]:
+            program_args: list[ProgramBase[Any]] = []
+            program_indices: list[int] = []
+            regular_args: list[Any | None] = list(args_tuple)
+
+            for index, arg in enumerate(args_tuple):
+                should_unwrap = strategy.should_unwrap_positional(index)
+                if should_unwrap and isinstance(arg, ProgramBase):
+                    program_args.append(arg)
+                    program_indices.append(index)
+                    regular_args[index] = None
+                else:
+                    regular_args[index] = arg
+
+            program_kwargs: dict[str, ProgramBase[Any]] = {}
+            regular_kwargs: dict[str, Any] = {}
+
+            for key, value in kwargs_dict.items():
+                should_unwrap = strategy.should_unwrap_keyword(key)
+                if should_unwrap and isinstance(value, ProgramBase):
+                    program_kwargs[key] = value
+                else:
+                    regular_kwargs[key] = value
+
+            if program_args:
+                unwrapped_args = yield Gather(*program_args)
+                for idx, unwrapped_value in zip(program_indices, unwrapped_args):
+                    regular_args[idx] = unwrapped_value
+
+            if program_kwargs:
+                unwrapped_kwargs = yield GatherDict(program_kwargs)
+                regular_kwargs.update(unwrapped_kwargs)
+
+            final_args = tuple(regular_args)
+            result = kleisli.func(*final_args, **regular_kwargs)
+
+            if isinstance(result, ProgramBase):
+                resolved = yield result
+                return resolved
+
+            generator_obj = result
+            try:
+                current = next(generator_obj)
+            except StopIteration as stop_exc:
+                return stop_exc.value
+
+            while True:
+                sent_value = yield current
+                try:
+                    current = generator_obj.send(sent_value)
+                except StopIteration as stop_exc:
+                    return stop_exc.value
+
+        return generator()
 
     @classmethod
     def create_from_kleisli(
         cls,
-        generator_func: Callable[..., Generator[Effect | Program, Any, T]],
         kleisli: Any,  # KleisliProgram
         args: tuple,
         kwargs: dict[str, Any],
         function_name: str,
         created_at: Any = None,  # EffectCreationContext | None
-    ) -> KleisliProgramCall[T]:
+    ) -> "KleisliProgramCall[T]":
         """Create from KleisliProgram.__call__ (knows its source)."""
+
+        strategy = _build_auto_unwrap_strategy(kleisli)
         return cls(
-            generator_func=generator_func,
+            kleisli_source=kleisli,
             args=tuple(args),
             kwargs=dict(kwargs),
-            kleisli_source=kleisli,
             function_name=function_name,
             created_at=created_at,
+            auto_unwrap_strategy=strategy,
         )
 
     @classmethod
@@ -216,12 +489,14 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         kwargs: dict[str, Any] | None = None,
     ) -> KleisliProgramCall[T]:
         """Create from map/flat_map (no source KleisliProgram)."""
-        return cls(
-            generator_func=generator_func,
-            args=tuple(args),
-            kwargs=dict(kwargs or {}),
-            kleisli_source=None,
-            function_name="<anonymous>",
+        kleisli = _create_kleisli_from_generator(generator_func)
+        bound_args = tuple(args)
+        bound_kwargs = dict(kwargs or {})
+        return cls.create_from_kleisli(
+            kleisli=kleisli,
+            args=bound_args,
+            kwargs=bound_kwargs,
+            function_name=getattr(generator_func, "__name__", "<anonymous>"),
             created_at=None,
         )
 
@@ -234,11 +509,13 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         kwargs: dict[str, Any] | None = None,
     ) -> KleisliProgramCall[T]:
         """Create from transforming another KPCall (preserve metadata)."""
-        return cls(
-            generator_func=generator_func,
-            args=tuple(args) if args is not None else parent.args,
-            kwargs=dict(kwargs) if kwargs is not None else parent.kwargs,
-            kleisli_source=parent.kleisli_source,
+        kleisli = _create_kleisli_from_generator(generator_func)
+        bound_args = tuple(args) if args is not None else parent.args
+        bound_kwargs = dict(kwargs) if kwargs is not None else parent.kwargs
+        return cls.create_from_kleisli(
+            kleisli=kleisli,
+            args=bound_args,
+            kwargs=bound_kwargs,
             function_name=parent.function_name,
             created_at=parent.created_at,
         )
@@ -287,27 +564,30 @@ class _InterceptedProgram(KleisliProgramCall[T]):
         if isinstance(base, KleisliProgramCall):
             args = base.args
             kwargs = base.kwargs
-            kleisli_source = base.kleisli_source
             function_name = base.function_name
             created_at = base.created_at
         else:
             args = ()
             kwargs = {}
-            kleisli_source = None
             function_name = "<intercepted>"
             created_at = getattr(base, "created_at", None)
 
-        def generator_func(*_call_args: Any, **_call_kwargs: Any) -> Generator["Effect | Program", Any, T]:
-            return self._intercept_generator(base, transforms)
+        def intercepted_generator(*_call_args: Any, **_call_kwargs: Any) -> Generator[
+            "Effect | Program", Any, T
+        ]:
+            return _InterceptedProgram._intercept_generator(base, transforms)
+
+        kleisli = _create_kleisli_from_generator(intercepted_generator)
+        strategy = _build_auto_unwrap_strategy(kleisli)
 
         # NOTE: dataclasses with frozen=True block attribute assignment; use
         # object.__setattr__ during __init__ to populate the immutable fields.
-        object.__setattr__(self, "generator_func", generator_func)
+        object.__setattr__(self, "kleisli_source", kleisli)
         object.__setattr__(self, "args", args)
         object.__setattr__(self, "kwargs", kwargs)
-        object.__setattr__(self, "kleisli_source", kleisli_source)
         object.__setattr__(self, "function_name", function_name)
         object.__setattr__(self, "created_at", created_at)
+        object.__setattr__(self, "auto_unwrap_strategy", strategy)
         object.__setattr__(self, "_base_program", base)
         object.__setattr__(self, "_transforms", transforms)
 
