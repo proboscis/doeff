@@ -8,10 +8,12 @@ Install doeff using pip:
 pip install doeff
 ```
 
-Optional CLI discovery features rely on the Rust-powered indexer. Install it on demand with:
+The CLI ships with a Rust-powered indexer used for auto-discovery.
+When you install `doeff`, the indexer is built automatically.
+Make sure a Rust toolchain is available first:
 
 ```bash
-pip install "doeff[indexer]"
+curl https://sh.rustup.rs -sSf | sh
 ```
 
 For pinjected integration support:
