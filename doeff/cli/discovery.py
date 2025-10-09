@@ -136,7 +136,8 @@ class IndexerBasedDiscovery:
                 self.indexer_class = Indexer
             except ImportError as e:
                 raise ImportError(
-                    "doeff-indexer not found. Install with: pip install doeff-indexer"
+                    "doeff-indexer not found. Install the optional extra with: pip install "
+                    "\"doeff[indexer]\""
                 ) from e
 
         self.symbol_loader = symbol_loader or StandardSymbolLoader()

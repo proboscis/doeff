@@ -29,12 +29,14 @@ dependencies = [
     "pinjected>=0.3.0b0",
     "exceptiongroup>=1.2.0; python_version < '3.11'",
     "doeff-pinjected",
-    "doeff-indexer",
     "cloudpickle>=3.0.0",
     "phart>=1.1.4",
     "numpy>=1.26.0",
     "pillow>=11.0.0",
 ]
+
+[project.optional-dependencies]
+indexer = ["doeff-indexer>=0.1.0"]
 
 [project.scripts]
 doeff = "doeff.__main__:main"
