@@ -285,8 +285,7 @@ def test_do_preserves_metadata_and_program_repr():
     assert decorated.__doc__ == metadata_program.__doc__
     assert decorated.__module__ == metadata_program.__module__
     assert decorated.__annotations__ == metadata_program.__annotations__
-    assert decorated.__wrapped__ is metadata_program
-    assert inspect.unwrap(decorated) is metadata_program
+    assert getattr(decorated, "_metadata_source") is metadata_program
     assert inspect.signature(decorated) == inspect.signature(metadata_program)
 
     program_instance = decorated(3)

@@ -106,7 +106,6 @@ def test_create_from_kleisli_constructor():
     kleisli = KleisliProgram(func=gen_func)
 
     kpcall = KleisliProgramCall.create_from_kleisli(
-        generator_func=gen_func,
         kleisli=kleisli,
         args=(42,),
         kwargs={},
@@ -114,10 +113,15 @@ def test_create_from_kleisli_constructor():
         created_at=None
     )
 
-    assert kpcall.generator_func is gen_func
+    assert callable(kpcall.generator_func)
+    assert kpcall.generator_func is not gen_func
     assert kpcall.kleisli_source is kleisli
     assert kpcall.args == (42,)
     assert kpcall.function_name == "test_func"
+
+    gen = kpcall.to_generator()
+    first = next(gen)
+    assert getattr(first, "value", None) == 42
 
 
 def test_create_derived_preserves_metadata():
@@ -138,7 +142,6 @@ def test_create_derived_preserves_metadata():
     )
 
     parent = KleisliProgramCall.create_from_kleisli(
-        generator_func=original_func,
         kleisli=kleisli,
         args=(5,),
         kwargs={},
@@ -160,7 +163,7 @@ def test_create_derived_preserves_metadata():
     assert derived.args == (5,)  # Preserved from parent
     assert derived.kwargs == {}
 
-    # But generator_func is new
+    # But generator_func is new and not the same as parent's
     assert derived.generator_func is derived_func
 
 

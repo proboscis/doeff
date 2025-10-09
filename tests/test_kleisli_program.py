@@ -406,7 +406,7 @@ def test_kleisli_program_preserves_callable_signature():
     program = KleisliProgram(sample)
 
     assert inspect.signature(program) == inspect.signature(sample)
-    assert program.__wrapped__ is sample
+    assert program._metadata_source is sample
 
 
 @pytest.mark.asyncio
