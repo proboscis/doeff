@@ -11,7 +11,6 @@ import types
 from abc import ABC
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from functools import wraps
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -34,7 +33,6 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
-
 
 class _AutoUnwrapStrategy:
     """Describe which arguments should be auto-unwrapped for a Kleisli call."""
@@ -223,6 +221,42 @@ class ProgramBase(ABC, Generic[T]):
         """Allow ``Program[T]`` generic-style annotations."""
         return super().__class_getitem__(item)
 
+    def map(self, f: Callable[[T], U]) -> "Program[U]":
+        """Map a function over this program's result."""
+
+        if not callable(f):
+            raise TypeError("mapper must be callable")
+
+        def factory() -> Generator["Effect | Program", Any, U]:
+            value = yield self
+            return f(value)
+
+        return GeneratorProgram(factory)
+
+    def flat_map(self, f: Callable[[T], "Program[U]"]) -> "Program[U]":
+        """Monadic bind operation."""
+
+        if not callable(f):
+            raise TypeError("binder must be callable returning a Program")
+
+        def factory() -> Generator["Effect | Program", Any, U]:
+            value = yield self
+            next_prog = f(value)
+            if not isinstance(next_prog, ProgramBase):
+                raise TypeError(
+                    "binder must return a Program; got "
+                    f"{type(next_prog).__name__}"
+                )
+            result = yield next_prog
+            return result
+
+        return GeneratorProgram(factory)
+
+    def and_then_k(self, binder: Callable[[T], "Program[U]"]) -> "Program[U]":
+        """Alias for flat_map for Kleisli-style composition."""
+
+        return self.flat_map(binder)
+
     @staticmethod
     def pure(value: T) -> "Program[T]":
         from doeff.effects.pure import PureEffect
@@ -240,7 +274,7 @@ class ProgramBase(ABC, Generic[T]):
         return ProgramBase.pure(value)  # type: ignore[return-value]
 
     @staticmethod
-    def first_success(*programs: "ProgramLike[T]") -> "KleisliProgramCall[T]":
+    def first_success(*programs: "ProgramLike[T]") -> "Program[T]":
         if not programs:
             raise ValueError("Program.first_success requires at least one program")
 
@@ -251,10 +285,10 @@ class ProgramBase(ABC, Generic[T]):
             value = yield effect
             return value
 
-        return KleisliProgramCall.create_anonymous(first_success_generator)
+        return GeneratorProgram(first_success_generator)
 
     @staticmethod
-    def first_some(*programs: "ProgramLike[V]") -> "KleisliProgramCall[Maybe[V]]":
+    def first_some(*programs: "ProgramLike[V]") -> "Program[Maybe[V]]":
         if not programs:
             raise ValueError("Program.first_some requires at least one program")
 
@@ -277,10 +311,10 @@ class ProgramBase(ABC, Generic[T]):
 
             return Maybe.from_optional(None)
 
-        return KleisliProgramCall.create_anonymous(first_some_generator)
+        return GeneratorProgram(first_some_generator)
 
     @staticmethod
-    def sequence(programs: list["Program[T]"]) -> "KleisliProgramCall[list[T]]":
+    def sequence(programs: list["Program[T]"]) -> "Program[list[T]]":
         from doeff.effects import gather
 
         def sequence_generator():
@@ -288,7 +322,7 @@ class ProgramBase(ABC, Generic[T]):
             results = yield effect
             return list(results)
 
-        return KleisliProgramCall.create_anonymous(sequence_generator)
+        return GeneratorProgram(sequence_generator)
 
     @staticmethod
     def traverse(
@@ -299,23 +333,23 @@ class ProgramBase(ABC, Generic[T]):
         return ProgramBase.sequence(programs)
 
     @staticmethod
-    def list(*values: Iterable["Program[U]" | U]) -> "KleisliProgramCall[list[U]]":
+    def list(*values: Iterable["Program[U]" | U]) -> "Program[list[U]]":
         programs = [ProgramBase.lift(value) for value in values]
         return ProgramBase.sequence(programs)
 
     @staticmethod
-    def tuple(*values: Iterable["Program[U]" | U]) -> "KleisliProgramCall[tuple[U, ...]]":
+    def tuple(*values: Iterable["Program[U]" | U]) -> "Program[tuple[U, ...]]":
         return ProgramBase.list(*values).map(lambda items: tuple(items))
 
     @staticmethod
-    def set(*values: Iterable["Program[U]" | U]) -> "KleisliProgramCall[set[U]]":
+    def set(*values: Iterable["Program[U]" | U]) -> "Program[set[U]]":
         return ProgramBase.list(*values).map(lambda items: set(items))
 
     @staticmethod
     def dict(
         *mapping: Mapping[Any, "Program[V]" | V] | Iterable[tuple[Any, "Program[V]" | V]],
         **kwargs: "Program[V]" | V,
-    ) -> "KleisliProgramCall[dict[Any, V]]":
+    ) -> "Program[dict[Any, V]]":
         raw = dict(*mapping, **kwargs)
 
         from doeff.effects import gather_dict
@@ -329,35 +363,23 @@ class ProgramBase(ABC, Generic[T]):
             result = yield effect
             return dict(result)
 
-        return KleisliProgramCall.create_anonymous(dict_generator)
+        return GeneratorProgram(dict_generator)
 
 
-@dataclass(frozen=True)
-class _GeneratorProgram(ProgramBase[T]):
-    """Program wrapper that produces a generator from a stored factory."""
+@dataclass
+class GeneratorProgram(ProgramBase[T]):
+    """Program backed by a generator factory."""
 
-    _factory: Callable[..., Generator["Effect | Program", Any, T]]
-    _args: tuple[Any, ...]
-    _kwargs: dict[str, Any]
+    factory: Callable[[], Generator[Effect | Program, Any, T]]
+    created_at: Any | None = None
 
-    def generator_func(self) -> Generator["Effect | Program", Any, T]:
-        return self._factory(*self._args, **self._kwargs)
+    def to_generator(self) -> Generator[Effect | Program, Any, T]:
+        return self.factory()
 
-
-def _create_kleisli_from_generator(
-    generator_func: Callable[..., Generator["Effect | Program", Any, T]]
-) -> Any:
-    """Wrap a raw generator function in a KleisliProgram for reuse."""
-
-    from doeff.kleisli import KleisliProgram
-
-    @wraps(generator_func)
-    def kleisli_callable(*args: Any, **kwargs: Any) -> Program[T]:
-        return _GeneratorProgram(generator_func, args, kwargs)
-
-    return KleisliProgram(kleisli_callable)
-
-
+    def intercept(
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> "Program[T]":
+        return _InterceptedProgram.compose(self, (transform,))
 @runtime_checkable
 class ProgramProtocol(Protocol[T]):
     """
@@ -382,7 +404,7 @@ class ProgramProtocol(Protocol[T]):
         ...
 
 
-@dataclass(frozen=True)
+@dataclass
 class KleisliProgramCall(ProgramBase, Generic[T]):
     """Bound invocation of a KleisliProgram with captured arguments."""
 
@@ -393,6 +415,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
     function_name: str = "<anonymous>"
     created_at: Any = None
     auto_unwrap_strategy: _AutoUnwrapStrategy | None = None
+    execution_kernel: Callable[..., Generator[Effect | Program, Any, T]] | None = None
 
     def to_generator(self) -> Generator[Effect | Program, Any, T]:
         """Create generator by invoking the captured Kleisli program."""
@@ -400,7 +423,17 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         from doeff.effects import Gather, GatherDict
 
         kleisli = self.kleisli_source
-        strategy = self.auto_unwrap_strategy or _build_auto_unwrap_strategy(kleisli)
+        strategy = self.auto_unwrap_strategy
+        if strategy is None and kleisli is not None:
+            strategy = _build_auto_unwrap_strategy(kleisli)
+        if strategy is None:
+            strategy = _AutoUnwrapStrategy()
+
+        kernel = self.execution_kernel
+        if kernel is None and kleisli is not None:
+            kernel = getattr(kleisli, "func", None)
+        if kernel is None:
+            raise TypeError("Execution kernel unavailable for KleisliProgramCall")
 
         args_tuple = self.args
         kwargs_dict = self.kwargs
@@ -439,7 +472,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
                 regular_kwargs.update(unwrapped_kwargs)
 
             final_args = tuple(regular_args)
-            result = kleisli.func(*final_args, **regular_kwargs)
+            result = kernel(*final_args, **regular_kwargs)
 
             if isinstance(result, ProgramBase):
                 resolved = yield result
@@ -479,25 +512,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
             function_name=function_name,
             created_at=created_at,
             auto_unwrap_strategy=strategy,
-        )
-
-    @classmethod
-    def create_anonymous(
-        cls,
-        generator_func: Callable[..., Generator[Effect | Program, Any, T]],
-        args: tuple = (),
-        kwargs: dict[str, Any] | None = None,
-    ) -> KleisliProgramCall[T]:
-        """Create from map/flat_map (no source KleisliProgram)."""
-        kleisli = _create_kleisli_from_generator(generator_func)
-        bound_args = tuple(args)
-        bound_kwargs = dict(kwargs or {})
-        return cls.create_from_kleisli(
-            kleisli=kleisli,
-            args=bound_args,
-            kwargs=bound_kwargs,
-            function_name=getattr(generator_func, "__name__", "<anonymous>"),
-            created_at=None,
+            execution_kernel=getattr(kleisli, "func", None),
         )
 
     @classmethod
@@ -509,15 +524,16 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         kwargs: dict[str, Any] | None = None,
     ) -> KleisliProgramCall[T]:
         """Create from transforming another KPCall (preserve metadata)."""
-        kleisli = _create_kleisli_from_generator(generator_func)
         bound_args = tuple(args) if args is not None else parent.args
         bound_kwargs = dict(kwargs) if kwargs is not None else parent.kwargs
-        return cls.create_from_kleisli(
-            kleisli=kleisli,
+        return cls(
+            kleisli_source=parent.kleisli_source,
             args=bound_args,
             kwargs=bound_kwargs,
             function_name=parent.function_name,
             created_at=parent.created_at,
+            auto_unwrap_strategy=parent.auto_unwrap_strategy,
+            execution_kernel=generator_func,
         )
 
     def map(self, f: Callable[[T], U]) -> "KleisliProgramCall[U]":
@@ -548,7 +564,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
 
 
 
-@dataclass(frozen=True)
+@dataclass
 class _InterceptedProgram(KleisliProgramCall[T]):
     """Program wrapper that composes multiple intercept transforms exactly once."""
 
@@ -566,30 +582,30 @@ class _InterceptedProgram(KleisliProgramCall[T]):
             kwargs = base.kwargs
             function_name = base.function_name
             created_at = base.created_at
+            strategy = base.auto_unwrap_strategy
+            kleisli_source = base.kleisli_source
         else:
             args = ()
             kwargs = {}
             function_name = "<intercepted>"
             created_at = getattr(base, "created_at", None)
+            strategy = None
+            kleisli_source = None
 
         def intercepted_generator(*_call_args: Any, **_call_kwargs: Any) -> Generator[
             "Effect | Program", Any, T
         ]:
             return _InterceptedProgram._intercept_generator(base, transforms)
 
-        kleisli = _create_kleisli_from_generator(intercepted_generator)
-        strategy = _build_auto_unwrap_strategy(kleisli)
-
-        # NOTE: dataclasses with frozen=True block attribute assignment; use
-        # object.__setattr__ during __init__ to populate the immutable fields.
-        object.__setattr__(self, "kleisli_source", kleisli)
-        object.__setattr__(self, "args", args)
-        object.__setattr__(self, "kwargs", kwargs)
-        object.__setattr__(self, "function_name", function_name)
-        object.__setattr__(self, "created_at", created_at)
-        object.__setattr__(self, "auto_unwrap_strategy", strategy)
-        object.__setattr__(self, "_base_program", base)
-        object.__setattr__(self, "_transforms", transforms)
+        self.kleisli_source = kleisli_source
+        self.args = args
+        self.kwargs = kwargs
+        self.function_name = function_name
+        self.created_at = created_at
+        self.auto_unwrap_strategy = strategy
+        self.execution_kernel = intercepted_generator
+        self._base_program = base
+        self._transforms = transforms
 
     @property
     def base_program(self) -> "Program[T]":
@@ -685,12 +701,12 @@ class _InterceptedProgram(KleisliProgramCall[T]):
         if isinstance(base, KleisliProgramCall):
             return base.to_generator()
 
-        generator_factory = getattr(base, "generator_func", None)
-        if callable(generator_factory):
-            return generator_factory()
+        to_gen = getattr(base, "to_generator", None)
+        if callable(to_gen):
+            return to_gen()
 
         raise TypeError(
-            "Cannot intercept value that does not expose a generator: "
+            "Cannot intercept value that does not expose to_generator(): "
             f"{type(base).__name__}"
         )
 
@@ -719,11 +735,11 @@ class _InterceptedProgram(KleisliProgramCall[T]):
         def lifted(effect: EffectBase) -> "Program[EffectBase]":
             result = transform(effect)
 
-            if isinstance(result, KleisliProgramCall):
-                return result.flat_map(_InterceptedProgram._ensure_effect_program)
-
             if isinstance(result, EffectBase):
                 return Program.pure(result)
+
+            if isinstance(result, ProgramBase):
+                return result.flat_map(_InterceptedProgram._ensure_effect_program)
 
             raise TypeError(
                 "Intercept transform must return Effect or Program yielding Effect, "
@@ -746,4 +762,4 @@ class _InterceptedProgram(KleisliProgramCall[T]):
 
 Program = ProgramBase
 
-__all__ = ["Program", "ProgramProtocol", "KleisliProgramCall"]
+__all__ = ["Program", "ProgramProtocol", "GeneratorProgram", "KleisliProgramCall"]
