@@ -101,11 +101,9 @@ base_env: Program[dict] = Program.pure({
 doeff run --program myapp.features.my_program
 ```
 
-The discovery workflow depends on the optional Rust indexer. Install it when needed with:
-
-```bash
-pip install "doeff[indexer]"
-```
+The discovery workflow depends on the bundled Rust indexer.
+Because it is built locally, make sure Rust (via `rustup`) is installed before running
+`pip install doeff`.
 
 That's it! The CLI automatically:
 - Uses `my_interpreter` (closest default)

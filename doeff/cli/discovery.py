@@ -136,8 +136,8 @@ class IndexerBasedDiscovery:
                 self.indexer_class = Indexer
             except ImportError as e:
                 raise ImportError(
-                    "doeff-indexer not found. Install the optional extra with: pip install "
-                    "\"doeff[indexer]\""
+                    "doeff-indexer not found. Ensure the package is installed (e.g., pip install "
+                    "doeff) and that a Rust toolchain is available to build it."
                 ) from e
 
         self.symbol_loader = symbol_loader or StandardSymbolLoader()

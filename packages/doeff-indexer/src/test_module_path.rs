@@ -50,7 +50,7 @@ mod tests {
         let pyproject_content = r#"
 [project]
 name = "myproject"
-version = "0.1.0"
+version = "0.1.1"
 "#;
         fs::write(root.join("pyproject.toml"), pyproject_content).unwrap();
 
@@ -170,7 +170,7 @@ version = "0.1.0"
         let pyproject_content = r#"
 [project]
 name = "testproject"
-version = "0.1.0"
+version = "0.1.1"
 "#;
         fs::write(root.join("pyproject.toml"), pyproject_content).unwrap();
 
