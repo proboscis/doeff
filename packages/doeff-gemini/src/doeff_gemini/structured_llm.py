@@ -274,7 +274,7 @@ def process_structured_response(
     payload: Any | None = None
     format_name = f"{response_format.__module__}.{response_format.__qualname__}"
 
-    if parsed_candidate:
+    if parsed_candidate: # why dont we just return the parsed???
         if isinstance(parsed_candidate, (list, tuple)):
             non_null = [item for item in parsed_candidate if item is not None]
             candidate = non_null[0] if non_null else None
