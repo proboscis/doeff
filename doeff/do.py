@@ -20,6 +20,53 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
+class DoYieldFunction(KleisliProgram[P, T]):
+    """Specialised KleisliProgram for generator-based @do functions."""
+
+    def __init__(self, func: Callable[P, EffectGenerator[T]]) -> None:
+        @wraps(func)
+        def generator_wrapper(
+            *args: P.args, **kwargs: P.kwargs
+        ) -> Generator[Effect | Program, Any, T]:
+            gen_or_value = func(*args, **kwargs)
+            if not inspect.isgenerator(gen_or_value):
+                return gen_or_value
+
+            gen = gen_or_value
+            try:
+                current = next(gen)
+            except StopIteration as stop_exc:
+                return stop_exc.value
+
+            while True:
+                sent_value = yield current
+                try:
+                    current = gen.send(sent_value)
+                except StopIteration as stop_exc:
+                    return stop_exc.value
+
+        super().__init__(generator_wrapper)
+        self.original_func = func
+
+        for attr in ("__doc__", "__module__", "__name__", "__qualname__", "__annotations__"):
+            value = getattr(func, attr, None)
+            if value is not None:
+                setattr(self, attr, value)
+
+        try:
+            signature = inspect.signature(func)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None:
+            setattr(self, "__signature__", signature)
+
+    @property
+    def original_generator(self) -> Callable[P, EffectGenerator[T]]:
+        """Expose the user-defined generator for downstream tooling."""
+
+        return self.original_func
+
+
 def do(
     func: Callable[P, EffectGenerator[T]],
 ) -> KleisliProgram[P, T]:
@@ -103,57 +150,7 @@ def do(
         Program argument unwrapping.
     """
 
-    @wraps(func)
-    def create_program(*args: P.args, **kwargs: P.kwargs) -> Program[T]:
-        """Create a Program from the generator function."""
-
-        @wraps(func)
-        def generator_wrapper() -> Generator[Effect | Program, Any, T]:
-            # Call the original generator function
-            gen_or_value = func(*args, **kwargs)
-
-            # Check if it's a generator or a direct value
-            if not hasattr(gen_or_value, "__next__"):
-                # Not a generator, must be a direct return value
-                # Create a generator that immediately returns
-                return gen_or_value
-                if False:
-                    yield  # Make this a generator function
-
-            # It's a generator, pass through the generator protocol
-            gen = gen_or_value
-            try:
-                current = next(gen)
-                while True:
-                    value = yield current
-                    current = gen.send(value)
-            except StopIteration as e:
-                return e.value
-
-        from doeff.program import KleisliProgramCall
-
-        return KleisliProgramCall.create_anonymous(generator_wrapper)
-
-    # Return a KleisliProgram that creates Programs lazily
-    kleisli_program = KleisliProgram(create_program)
-
-    # Preserve metadata for introspection on the returned KleisliProgram instance.
-    # We need object.__setattr__ because KleisliProgram is a frozen dataclass.
-    object.__setattr__(kleisli_program, "__wrapped__", func)
-    object.__setattr__(kleisli_program, "__name__", getattr(func, "__name__", kleisli_program.__class__.__name__))
-    object.__setattr__(kleisli_program, "__qualname__", getattr(func, "__qualname__", getattr(func, "__name__", kleisli_program.__class__.__name__)))
-    object.__setattr__(kleisli_program, "__doc__", getattr(func, "__doc__", None))
-    object.__setattr__(kleisli_program, "__module__", getattr(func, "__module__", kleisli_program.__class__.__module__))
-    object.__setattr__(kleisli_program, "__annotations__", getattr(func, "__annotations__", {}))
-
-    try:
-        signature = inspect.signature(func)
-    except (TypeError, ValueError):
-        pass
-    else:
-        object.__setattr__(kleisli_program, "__signature__", signature)
-
-    return kleisli_program
+    return DoYieldFunction(func)
 
 
-__all__ = ["do"]
+__all__ = ["do", "DoYieldFunction"]
