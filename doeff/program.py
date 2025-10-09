@@ -242,6 +242,34 @@ class ProgramBase(ABC, Generic[T]):
 
         return self.map(lambda value: value[key])
 
+    def __call__(self, *args: Any, **kwargs: Any) -> "Program[Any]":
+        """Invoke the eventual callable result with the provided arguments."""
+
+        lifted_args = [ProgramBase.lift(arg) for arg in args]
+        lifted_kwargs = {name: ProgramBase.lift(value) for name, value in kwargs.items()}
+
+        def invoke_callable(func: Any) -> "Program[Any]":
+            if not callable(func):
+                raise TypeError(f"Program result {func!r} is not callable")
+
+            def call_generator() -> Generator["Effect | Program", Any, Any]:
+                resolved_args = []
+                for arg_program in lifted_args:
+                    resolved_args.append((yield arg_program))
+
+                resolved_kwargs: dict[str, Any] = {}
+                for key, kw_program in lifted_kwargs.items():
+                    resolved_kwargs[key] = (yield kw_program)
+
+                result = func(*resolved_args, **resolved_kwargs)
+                if isinstance(result, ProgramBase):
+                    return (yield result)
+                return result
+
+            return GeneratorProgram(call_generator)
+
+        return self.flat_map(invoke_callable)
+
     def map(self, f: Callable[[T], U]) -> "Program[U]":
         """Map a function over this program's result."""
 
