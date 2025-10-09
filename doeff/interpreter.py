@@ -32,6 +32,8 @@ from doeff.effects import (
     LocalEffect,
     MemoGetEffect,
     MemoPutEffect,
+    ProgramCallFrameEffect,
+    ProgramCallStackEffect,
     ResultCatchEffect,
     ResultFailEffect,
     ResultFinallyEffect,
@@ -412,7 +414,27 @@ class ProgramInterpreter:
         result = await self._try_future_io_graph_effects(effect, ctx)
         if result is not _NO_HANDLER:
             return result
+        result = await self._try_callstack_effects(effect, ctx)
+        if result is not _NO_HANDLER:
+            return result
         return await self._try_gather_memo_cache_effects(effect, ctx)
+
+    async def _try_callstack_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
+        """Handle call-stack introspection effects."""
+        if _effect_is(effect, ProgramCallStackEffect):
+            return tuple(ctx.program_call_stack)
+
+        if _effect_is(effect, ProgramCallFrameEffect):
+            depth = getattr(effect, "depth", 0)
+            stack = ctx.program_call_stack
+            if depth >= len(stack):
+                raise IndexError(
+                    f"Program call stack depth {depth} out of range (size={len(stack)})"
+                )
+            # Return the frame without mutating the call stack.
+            return stack[-1 - depth]
+
+        return _NO_HANDLER
 
     async def _try_future_io_graph_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:  # noqa: PLR0911
         """Handle Future/IO/Graph effects. Returns _NO_HANDLER if not matched."""
