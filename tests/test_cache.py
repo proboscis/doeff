@@ -23,7 +23,8 @@ from doeff import (
     do,
 )
 from doeff._vendor import FrozenDict
-from doeff.cache import cache, cache_1min, cache_key
+from doeff.cache import CacheComputationError, cache, cache_1min, cache_key
+from doeff.types import EffectFailureError
 from doeff.handlers import HandlerScope
 
 # Shared fixture ensuring each test uses isolated cache database
@@ -226,6 +227,34 @@ async def test_basic_cache_decorator(temp_cache_db):
     assert result.value[1] == 10  # Cached
     assert result.value[2] == 20  # 10 * 2
     assert result.value[3] == 2    # Called twice (once for 5, once for 10)
+
+
+@pytest.mark.asyncio
+async def test_cache_decorator_failure_includes_call_frame():
+    """Failures should raise CacheComputationError with call-site frame present."""
+
+    @cache()
+    @do
+    def failing_func(x: int) -> EffectGenerator[int]:
+        raise ValueError("boom")
+
+    engine = ProgramInterpreter()
+
+    result = await engine.run_async(failing_func(5))
+
+    assert result.is_err
+
+    failure = result.result.error
+    assert isinstance(failure, EffectFailureError)
+
+    cause = failure.cause
+    assert isinstance(cause, CacheComputationError)
+    assert isinstance(cause.__cause__, ValueError)
+    assert cause.call_site is not None
+    assert (
+        cause.call_site.function == "test_cache_decorator_failure_includes_call_frame"
+    )
+    assert cause.call_site.filename.endswith("test_cache.py")
 
 
 @pytest.mark.asyncio
