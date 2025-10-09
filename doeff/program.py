@@ -221,6 +221,27 @@ class ProgramBase(ABC, Generic[T]):
         """Allow ``Program[T]`` generic-style annotations."""
         return super().__class_getitem__(item)
 
+    def __getattr__(self, name: str) -> "Program[Any]":
+        """Lazily project an attribute from the eventual program result."""
+
+        if name.startswith("__"):
+            raise AttributeError(name)
+
+        def mapper(value: Any) -> Any:
+            try:
+                return getattr(value, name)
+            except AttributeError as exc:  # pragma: no cover - re-raise with context
+                raise AttributeError(
+                    f"{type(value).__name__} object has no attribute '{name}'"
+                ) from exc
+
+        return self.map(mapper)
+
+    def __getitem__(self, key: Any) -> "Program[Any]":
+        """Lazily project an item from the eventual program result."""
+
+        return self.map(lambda value: value[key])
+
     def map(self, f: Callable[[T], U]) -> "Program[U]":
         """Map a function over this program's result."""
 
