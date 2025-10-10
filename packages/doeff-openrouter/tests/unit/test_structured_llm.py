@@ -36,7 +36,7 @@ async def test_build_messages_text_only():
         return (yield build_messages("hello"))
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
     assert result.is_ok
     messages = result.value
     assert len(messages) == 1
@@ -103,7 +103,7 @@ async def test_process_structured_response_uses_parsed_field():
         return (yield process_structured_response(response, DemoModel))
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
     assert result.is_ok
     parsed = result.value
     assert isinstance(parsed, DemoModel)
@@ -142,7 +142,7 @@ async def test_structured_llm_happy_path(monkeypatch):
         ))
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
     assert result.is_ok
     model = result.value
     assert isinstance(model, DemoModel)
@@ -175,7 +175,7 @@ async def test_structured_llm_without_schema(monkeypatch):
         return (yield structured_llm("plain", model="openrouter/demo"))
 
     engine = ProgramInterpreter()
-    result = await engine.run(flow())
+    result = await engine.run_async(flow())
     assert result.is_ok
     assert result.value == "plain text"
 
@@ -205,7 +205,7 @@ async def test_chat_completion_tracks_prompt_state():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openrouter_client": FakeClient()})
-    result = await engine.run(chat_completion(messages=messages, model="demo-model"), context)
+    result = await engine.run_async(chat_completion(messages=messages, model="demo-model"), context)
 
     assert result.is_ok
     assert result.value == response_data

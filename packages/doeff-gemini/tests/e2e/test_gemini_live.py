@@ -61,7 +61,7 @@ async def test_edit_image__gemini_live() -> None:
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env=env)
-    result = await engine.run(flow(), context)
+    result = await engine.run_async(flow(), context)
 
     if not result.is_ok:
         log_summary = "\n".join(str(entry) for entry in result.context.log)
@@ -106,7 +106,7 @@ async def test_structured_llm__gemini_live_with_pydantic() -> None:
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env=env)
-    result = await engine.run(flow(), context)
+    result = await engine.run_async(flow(), context)
 
     if not result.is_ok:
         log_summary = "\n".join(str(entry) for entry in result.context.log)

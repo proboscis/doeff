@@ -292,7 +292,7 @@ async def test_direct_engine_run():  # noqa: PINJ040
     context = ExecutionContext()
     program = direct_program()
 
-    result = await engine.run(program, context)
+    result = await engine.run_async(program, context)
     assert result.is_ok
     assert result.value == 42
 
