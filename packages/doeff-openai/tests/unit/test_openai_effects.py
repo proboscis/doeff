@@ -120,7 +120,7 @@ async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_respo
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openai_client": mock_openai_client})
 
-    result = await engine.run(test_workflow(), context)
+    result = await engine.run_async(test_workflow(), context)
 
     # Verify success
     assert result.is_ok
@@ -180,7 +180,7 @@ async def test_embedding_with_tracking(mock_openai_client, mock_embedding_respon
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openai_client": mock_openai_client})
 
-    result = await engine.run(test_workflow(), context)
+    result = await engine.run_async(test_workflow(), context)
 
     # Verify
     assert result.is_ok
@@ -253,7 +253,7 @@ async def test_cost_tracking():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(test_workflow(), context)
+    result = await engine.run_async(test_workflow(), context)
     print(result.display())
 
     # Verify
@@ -298,7 +298,7 @@ async def test_parallel_operations_with_gather():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(test_workflow(), context)
+    result = await engine.run_async(test_workflow(), context)
 
     # Verify
     assert result.is_ok
@@ -416,7 +416,7 @@ async def test_semantic_search_workflow():
     engine = ProgramInterpreter()
     context = ExecutionContext()
 
-    result = await engine.run(test_workflow(), context)
+    result = await engine.run_async(test_workflow(), context)
 
     # Verify
     assert result.is_ok

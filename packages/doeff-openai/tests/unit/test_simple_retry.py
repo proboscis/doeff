@@ -59,7 +59,7 @@ async def test_simple_success():
     context = ExecutionContext(env={"openai_client": mock_client})
 
     # Run the test
-    result = await engine.run(test_flow(), context)
+    result = await engine.run_async(test_flow(), context)
 
     # Print all logs to debug
     print("\n=== LOGS ===")

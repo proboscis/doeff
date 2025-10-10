@@ -90,7 +90,7 @@ async def test_unstructured_response():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
     print(result.display())
 
     assert result.is_ok
@@ -119,7 +119,7 @@ async def test_structured_response_math():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert isinstance(result.value, MathAnswer)
@@ -165,7 +165,7 @@ def fibonacci(n):
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert isinstance(result.value, CodeAnalysis)
@@ -197,7 +197,7 @@ async def test_with_image():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert isinstance(result.value, ImageDescription)
@@ -238,7 +238,7 @@ async def test_error_handling_invalid_json():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     # This might succeed or fail depending on the model's response
     # But it should handle errors gracefully
@@ -267,7 +267,7 @@ async def test_retry_on_failure():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     # Should still succeed despite token limit
     assert result.is_ok
@@ -289,7 +289,7 @@ async def test_gpt4o_convenience_function():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     assert isinstance(result.value, MathAnswer)
@@ -310,7 +310,7 @@ async def test_gpt5_with_reasoning():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     if result.is_ok:
         assert isinstance(result.value, str)
@@ -338,7 +338,7 @@ async def test_service_tier_parameter():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     # Check that service tier was set
@@ -359,7 +359,7 @@ async def test_cost_tracking():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
 
@@ -397,7 +397,7 @@ async def test_multiple_images():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
     # Should mention seeing two images
@@ -421,7 +421,7 @@ async def test_graph_tracking():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_program())
+    result = await engine.run_async(test_program())
 
     assert result.is_ok
 
