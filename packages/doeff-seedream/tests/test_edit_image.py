@@ -52,7 +52,7 @@ async def test_edit_image_seedream4_decodes_payload():
             "seedream_cost_per_image_usd": 0.05,
         }
     )
-    run_result = await engine.run(_program(), context=context)
+    run_result = await engine.run_async(_program(), context=context)
     assert run_result.is_ok
     value = run_result.value
     assert value.image_bytes == b"dummy-image-bytes"

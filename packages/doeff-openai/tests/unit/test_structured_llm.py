@@ -126,7 +126,7 @@ async def test_build_messages_text_only():
         return messages
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
 
     assert result.is_ok
     assert len(result.value) == 1
@@ -162,7 +162,7 @@ async def test_build_api_parameters_gpt4():
         return params
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
     print(result.display())
 
     assert result.is_ok
@@ -193,7 +193,7 @@ async def test_build_api_parameters_gpt5():
         return params
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
 
     assert result.is_ok
     assert result.value["model"] == "gpt-5"
@@ -225,7 +225,7 @@ async def test_build_api_parameters_structured():
         return params
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
     print(result.display())
 
     assert result.is_ok
@@ -254,7 +254,7 @@ async def test_process_structured_response_success():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
 
     assert result.is_ok
     assert isinstance(result.value, SimpleResponse)
@@ -284,7 +284,7 @@ async def test_process_structured_response_list_payload():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
 
     assert result.is_ok
     assert result.value.answer == "42"
@@ -311,7 +311,7 @@ async def test_process_unstructured_response_with_parts():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
 
     assert result.is_ok
     assert result.value == "Hello world"
@@ -332,7 +332,7 @@ async def test_process_structured_response_invalid_json():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
     print(result.display())
 
     assert result.is_err
@@ -354,7 +354,7 @@ async def test_process_unstructured_response():
         return result
 
     engine = ProgramInterpreter()
-    result = await engine.run(test_flow())
+    result = await engine.run_async(test_flow())
 
     assert result.is_ok
     assert result.value == "This is a test response."
@@ -394,7 +394,7 @@ async def test_structured_llm_text_only():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openai_client": mock_client})
-    result = await engine.run(test_flow(), context)
+    result = await engine.run_async(test_flow(), context)
 
     assert result.is_ok
     assert result.value == "Test response"
@@ -450,7 +450,7 @@ async def test_structured_llm_with_pydantic():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openai_client": mock_client})
-    result = await engine.run(test_flow(), context)
+    result = await engine.run_async(test_flow(), context)
 
     assert result.is_ok
     assert isinstance(result.value, SimpleResponse)
@@ -501,7 +501,7 @@ async def test_gpt5_structured_convenience():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openai_client": mock_client})
-    result = await engine.run(test_flow(), context)
+    result = await engine.run_async(test_flow(), context)
 
     assert result.is_ok
     assert result.value == "GPT-5 response"
@@ -545,7 +545,7 @@ async def test_structured_llm_integration():
 
     # First check if API key is available
     engine = ProgramInterpreter()
-    key_result = await engine.run(get_api_key(), ExecutionContext(env={}))
+    key_result = await engine.run_async(get_api_key(), ExecutionContext(env={}))
 
     if not key_result.is_ok or not key_result.value:
         pytest.skip("OPENAI_API_KEY not set")

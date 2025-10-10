@@ -70,7 +70,7 @@ async def test_retry_tracking_on_failure_then_success():
 
         engine = ProgramInterpreter()
         context = ExecutionContext(env={"openai_client": mock_client})
-        result = await engine.run(test_flow(), context)
+        result = await engine.run_async(test_flow(), context)
 
         # Should eventually succeed on third attempt
         assert result.is_ok
@@ -146,7 +146,7 @@ async def test_retry_exhaustion_tracking():
 
         engine = ProgramInterpreter()
         context = ExecutionContext(env={"openai_client": mock_client})
-        result = await engine.run(test_flow(), context)
+        result = await engine.run_async(test_flow(), context)
 
         # Should fail after all retries
         assert result.is_err
@@ -224,7 +224,7 @@ async def test_no_retry_on_immediate_success():
 
         engine = ProgramInterpreter()
         context = ExecutionContext(env={"openai_client": mock_client})
-        result = await engine.run(test_flow(), context)
+        result = await engine.run_async(test_flow(), context)
 
         # Should succeed immediately
         assert result.is_ok
