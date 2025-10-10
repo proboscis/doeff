@@ -553,7 +553,7 @@ def repair_structured_response(
     else:
         yield Log("Using environment-provided sllm_for_json_fix for structured repair")
 
-    fixed_value = yield sllm_for_json_fix(malformed_content, response_format)
+    fixed_value = yield sllm_for_json_fix(malformed_content, response_format=response_format)
 
     if fixed_value is None:
         raise ValueError("sllm_for_json_fix returned None, cannot repair structured response")
