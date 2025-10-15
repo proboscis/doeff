@@ -263,13 +263,22 @@ class RunCommand:
                     file=sys.stderr,
                 )
                 return None
+
             config_module = importlib.util.module_from_spec(spec)
             sys.modules["_doeff_config"] = config_module
-            spec.loader.exec_module(config_module)
+
+            try:
+                spec.loader.exec_module(config_module)
+            except Exception as exc:  # pragma: no cover - best effort diagnostic
+                print(
+                    f"[DOEFF][DISCOVERY] Error executing ~/.doeff.py: {exc}",
+                    file=sys.stderr,
+                )
+                raise
 
             if hasattr(config_module, "__default_env__"):
                 print(
-                    "[DOEFF][DISCOVERY] Found __default_env__ in ~/.doeff.py",
+                    "[DOEFF][DISCOVERY] Successfully resolved __default_env__ from ~/.doeff.py",
                     file=sys.stderr,
                 )
                 return "_doeff_config.__default_env__"
