@@ -99,7 +99,11 @@ class ProgramBuilder:
         temp_interpreter = ProgramInterpreter()
         env_result = temp_interpreter.run(merged_env_program)
         if env_result.is_err:
-            diagnostic = env_result.display(verbose=report_verbose)
+            diagnostic = env_result.display(verbose=report_verbose).strip()
+            if not diagnostic:
+                diagnostic = env_result.formatted_error.strip()
+            if not diagnostic:
+                diagnostic = repr(env_result.result.error)
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
             print(diagnostic, file=sys.stderr)
             raise env_result.result.error
