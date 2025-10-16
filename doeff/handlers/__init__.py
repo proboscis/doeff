@@ -57,6 +57,7 @@ from doeff.effects.pure import PureEffect
 from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
 from doeff.program import Program
 from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
+from doeff.utils import BoundedLog
 
 
 def _safe_object_repr(value: Any) -> str:
@@ -249,7 +250,10 @@ class WriterEffectHandler:
         """Handle writer.listen effect."""
         sub_program = effect.sub_program
         sub_ctx = ctx.copy()
-        sub_ctx.log = []  # Fresh log for sub-program
+        if isinstance(sub_ctx.log, BoundedLog):
+            sub_ctx.log = sub_ctx.log.spawn_empty()
+        else:  # Defensive: contexts constructed without bounded logs
+            sub_ctx.log = BoundedLog()
         pragmatic_result = await engine.run_async(sub_program, sub_ctx)
         return ListenResult(value=pragmatic_result.value, log=sub_ctx.log)
 
@@ -723,7 +727,7 @@ class GraphEffectHandler:
         sub_ctx = ExecutionContext(
             env=ctx.env.copy() if ctx.env else {},
             state=ctx.state.copy() if ctx.state else {},
-            log=[],
+            log=ctx.log.spawn_empty() if isinstance(ctx.log, BoundedLog) else BoundedLog(),
             graph=WGraph(
                 last=WStep(inputs=(), output=WNode("_root"), meta={}),
                 steps=frozenset(),

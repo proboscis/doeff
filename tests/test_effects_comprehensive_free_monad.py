@@ -262,6 +262,22 @@ async def test_writer_tell_effect():  # noqa: PINJ040
 
 
 @pytest.mark.asyncio
+async def test_writer_log_limit_trims_entries():
+    """ProgramInterpreter trims the writer log when a limit is set."""
+
+    @do
+    def program() -> EffectGenerator[None]:
+        for index in range(5):
+            yield Tell(f"event-{index}")
+
+    engine = ProgramInterpreter(max_log_entries=3)
+    result = await engine.run_async(program(), ExecutionContext())
+
+    assert result.is_ok
+    assert list(result.log) == ["event-2", "event-3", "event-4"]
+
+
+@pytest.mark.asyncio
 async def test_writer_listen_effect():  # noqa: PINJ040
     """Test Listen effect for capturing sub-computation logs."""
 
@@ -296,6 +312,29 @@ async def test_writer_listen_effect():  # noqa: PINJ040
     assert result.is_ok
     assert result.value == (42, 3, 42, 3, 42, 3)
     assert result.log == ["Main: starting", "Main: done"]
+
+
+@pytest.mark.asyncio
+async def test_writer_listen_respects_log_limit():
+    """listen() should surface only the latest entries when a limit is configured."""
+
+    @do
+    def noisy_sub_program() -> EffectGenerator[int]:
+        for index in range(5):
+            yield Tell(f"sub-{index}")
+        return 7
+
+    @do
+    def main() -> EffectGenerator[list[str]]:
+        result, captured = yield Listen(noisy_sub_program())
+        assert result == 7
+        return list(captured)
+
+    engine = ProgramInterpreter(max_log_entries=2)
+    run_result = await engine.run_async(main(), ExecutionContext())
+
+    assert run_result.is_ok
+    assert run_result.value == ["sub-3", "sub-4"]
 
 
 # ============================================
