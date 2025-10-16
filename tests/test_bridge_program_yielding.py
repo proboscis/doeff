@@ -8,6 +8,9 @@ the case where a Program yields another Program, not just Effects.
 
 import pytest
 
+pytest.importorskip("doeff_pinjected", reason="pinjected bridge is optional dependency")
+pytest.importorskip("pinjected", reason="pinjected bridge is optional dependency")
+
 try:  # Python <3.11 needs the backport to use ExceptionGroup in assertions
     ExceptionGroup  # type: ignore[name-defined]
 except NameError:  # pragma: no cover - executed only on Python 3.10
