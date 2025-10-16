@@ -430,7 +430,7 @@ result = yield Catch(
 
 ---
 
-### Retry(program, max_attempts, delay_ms)
+### Retry(program, max_attempts, delay_ms=0, delay_strategy=None)
 
 Retry failed program.
 
@@ -446,7 +446,11 @@ result = yield Retry(
 
 - **`program: Program[T]`** - Program to retry
 - **`max_attempts: int`** - Maximum retry attempts (default: 3)
-- **`delay_ms: int`** - Delay between retries in milliseconds (default: 0)
+- **`delay_ms: int`** - Fixed delay between retries in milliseconds (default: 0)
+- **`delay_strategy: Callable[[int, Exception | None], float | int | None]`** -
+  Optional callback returning the delay in seconds for the next retry.
+  Receives the 1-based attempt number and the last error. Return ``None`` or ``0``
+  to skip waiting for that retry.
 
 **Returns:** First successful result
 
