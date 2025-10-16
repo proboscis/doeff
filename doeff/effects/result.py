@@ -105,11 +105,14 @@ class ResultRetryEffect(EffectBase):
     sub_program: ProgramLike
     max_attempts: int = 3
     delay_ms: int = 0
+    delay_strategy: Callable[[int, Exception | None], float | int | None] | None = None
 
     def __post_init__(self) -> None:
         ensure_program_like(self.sub_program, name="sub_program")
         ensure_positive_int(self.max_attempts, name="max_attempts")
         ensure_non_negative_int(self.delay_ms, name="delay_ms")
+        if self.delay_strategy is not None:
+            ensure_callable(self.delay_strategy, name="delay_strategy")
 
     def intercept(
         self, transform: Callable[[Effect], Effect | "Program"]
@@ -212,10 +215,14 @@ def retry(
     sub_program: ProgramLike,
     max_attempts: int = 3,
     delay_ms: int = 0,
+    delay_strategy: Callable[[int, Exception | None], float | int | None] | None = None,
 ) -> ResultRetryEffect:
     return create_effect_with_trace(
         ResultRetryEffect(
-            sub_program=sub_program, max_attempts=max_attempts, delay_ms=delay_ms
+            sub_program=sub_program,
+            max_attempts=max_attempts,
+            delay_ms=delay_ms,
+            delay_strategy=delay_strategy,
         )
     )
 
@@ -271,10 +278,14 @@ def Retry(
     sub_program: ProgramLike,
     max_attempts: int = 3,
     delay_ms: int = 0,
+    delay_strategy: Callable[[int, Exception | None], float | int | None] | None = None,
 ) -> Effect:
     return create_effect_with_trace(
         ResultRetryEffect(
-            sub_program=sub_program, max_attempts=max_attempts, delay_ms=delay_ms
+            sub_program=sub_program,
+            max_attempts=max_attempts,
+            delay_ms=delay_ms,
+            delay_strategy=delay_strategy,
         ),
         skip_frames=3,
     )

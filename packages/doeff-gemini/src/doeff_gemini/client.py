@@ -420,8 +420,9 @@ def track_api_call(
     )
 
     if error:
-        yield Log(
-            f"Gemini API error: operation={operation}, model={model}, latency={latency_ms:.2f}ms, error={error}"
+        yield slog(
+            msg=f"Gemini API error: operation={operation}, model={model}, latency={latency_ms:.2f}ms, error={error}",level="error",
+            error=error
         )
     else:
         log_line = f"Gemini API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
@@ -429,7 +430,7 @@ def track_api_call(
             log_line += f", tokens={token_usage.total_tokens}"
         if cost_info:
             log_line += f", cost=${cost_info.total_cost:.6f}"
-        yield Log(log_line)
+        yield slog(msg=log_line)
 
     yield Log(
         GeminiAPIPayloadLog(

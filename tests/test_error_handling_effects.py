@@ -5,7 +5,7 @@ These tests verify that the new error handling effects work correctly
 and demonstrate why try/except doesn't work in @do functions.
 """
 
-
+import asyncio
 import pytest
 
 from doeff import (
@@ -214,6 +214,51 @@ async def test_retry_with_delay():
         delay_str = delay_logs[0].split(": ")[1].replace("s", "")
         delay = float(delay_str)
         assert delay >= 0.1  # At least 100ms
+
+
+@pytest.mark.asyncio
+async def test_retry_with_delay_strategy(monkeypatch):
+    """Retry should use delay_strategy when provided."""
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(duration: float):
+        sleep_calls.append(duration)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    recorded_attempts: list[tuple[int, Exception | None]] = []
+
+    def delay_strategy(attempt: int, error: Exception | None) -> float:
+        recorded_attempts.append((attempt, error))
+        return attempt * 0.05
+
+    @do
+    def flaky_program() -> EffectGenerator[int]:
+        attempt = yield Get("attempt")
+        attempt = (attempt or 0) + 1
+        yield Put("attempt", attempt)
+        if attempt < 3:
+            yield Fail(RuntimeError(f"attempt-{attempt} failure"))
+        return attempt
+
+    @do
+    def main_program() -> EffectGenerator[int]:
+        result = yield Retry(
+            flaky_program(),
+            max_attempts=3,
+            delay_strategy=delay_strategy,
+        )
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(main_program())
+
+    assert result.is_ok
+    assert result.value == 3
+    assert sleep_calls == pytest.approx([0.05, 0.10])
+    assert [attempt for attempt, _ in recorded_attempts] == [1, 2]
+    assert all("attempt-" in str(error) for _, error in recorded_attempts)
 
 
 @pytest.mark.asyncio

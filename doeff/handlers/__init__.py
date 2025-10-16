@@ -655,6 +655,7 @@ class ResultEffectHandler:
 
         max_attempts = effect.max_attempts
         delay_ms = effect.delay_ms
+        delay_strategy = effect.delay_strategy
 
         sub_program = effect.sub_program
 
@@ -667,8 +668,26 @@ class ResultEffectHandler:
 
             last_error = pragmatic_result.result.error
 
-            if attempt < max_attempts - 1 and delay_ms > 0:
-                await asyncio.sleep(delay_ms / 1000.0)
+            if attempt < max_attempts - 1:
+                delay_seconds: float | None = None
+                if delay_strategy is not None:
+                    try:
+                        delay_value = delay_strategy(attempt + 1, last_error)  # type: ignore[arg-type]
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "Retry delay_strategy raised an exception"
+                        ) from exc
+                    if delay_value is None:
+                        delay_seconds = None
+                    else:
+                        delay_seconds = float(delay_value)
+                        if delay_seconds < 0:
+                            raise ValueError("Retry delay_strategy must not return a negative delay")
+                elif delay_ms > 0:
+                    delay_seconds = delay_ms / 1000.0
+
+                if delay_seconds is not None and delay_seconds > 0:
+                    await asyncio.sleep(delay_seconds)
 
         if last_error:
             raise last_error

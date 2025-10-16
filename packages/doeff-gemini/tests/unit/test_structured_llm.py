@@ -69,6 +69,30 @@ class SymbolAssessmentsV2(BaseModel):
     assessments: list[ScoreWithReasoning]
 
 
+def test_gemini_random_backoff_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Random backoff should expand the upper bound exponentially."""
+
+    recorded_ranges: list[tuple[float, float]] = []
+
+    def fake_uniform(low: float, high: float) -> float:
+        recorded_ranges.append((low, high))
+        return high
+
+    monkeypatch.setattr(
+        structured_llm_module,
+        "random",
+        SimpleNamespace(uniform=fake_uniform),
+    )
+
+    first_delay = structured_llm_module._gemini_random_backoff(1, None)
+    third_delay = structured_llm_module._gemini_random_backoff(3, None)
+
+    assert recorded_ranges[0] == (1.0, 1.0)
+    assert recorded_ranges[1] == (1.0, 4.0)
+    assert first_delay == 1.0
+    assert third_delay == 4.0
+
+
 @pytest.mark.asyncio
 async def test_build_contents_text_only() -> None:
     """Ensure text-only prompts become a single user content block."""
