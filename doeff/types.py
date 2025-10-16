@@ -46,6 +46,7 @@ from doeff._vendor import (
     WStep,
     trace_err,
 )
+from doeff.utils import BoundedLog
 
 __VENDORED_EXPORTS = (
     NOTHING,
@@ -564,7 +565,7 @@ class ExecutionContext:
     # State storage
     state: dict[str, Any] = field(default_factory=dict)
     # Writer log
-    log: list[Any] = field(default_factory=list)
+    log: BoundedLog = field(default_factory=BoundedLog)
     # Computation graph
     graph: WGraph = field(default_factory=lambda: WGraph.single(None))
     # IO permission flag
@@ -575,6 +576,10 @@ class ExecutionContext:
     effect_observations: list[EffectObservation] = field(default_factory=list)
     # Program call stack for tracking effect sources
     program_call_stack: list[CallFrame] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.log, BoundedLog):
+            self.log = BoundedLog(self.log)
 
     def copy(self) -> ExecutionContext:
         """Create a shallow copy of the context."""
@@ -1695,7 +1700,7 @@ class ListenResult:
     """Result from writer.listen effect."""
 
     value: Any
-    log: list[Any]
+    log: BoundedLog
 
     def __iter__(self):
         """Make ListenResult unpackable as a tuple (value, log)."""

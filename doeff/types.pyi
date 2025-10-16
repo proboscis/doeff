@@ -1,5 +1,7 @@
 from typing import Any
 
+from doeff.utils import BoundedLog
+
 __VENDORED_EXPORTS: Any
 T: Any
 U: Any
@@ -82,7 +84,7 @@ class EffectFailureError:
 
 class ListenResult:
     value: Any
-    log: list[Any]
+    log: BoundedLog
     def __iter__(self) -> Any: ...
 
 class _BaseSection:
@@ -141,7 +143,7 @@ class _EnvironmentSection:
 class ExecutionContext:
     env: dict[str, Any]
     state: dict[str, Any]
-    log: list[Any]
+    log: BoundedLog
     graph: WGraph
     io_allowed: bool
     cache: dict[str, Any]

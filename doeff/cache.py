@@ -298,10 +298,10 @@ def cache(
                         metadata=metadata,
                         policy=policy,
                     )
-                    yield Log(f"Cache: stored result for {func_name}")
+                    yield slog(msg=f"Cache: stored result for {func_name}",level="DEBUG")
                     return result.unwrap()
 
-                yield Log(f"Computation for {func_name} failed, not caching.")
+                yield slog(msg=f"Computation for {func_name} failed, not caching.",level="error")
                 error = result.unwrap_err()
                 raise CacheComputationError(
                     func_name,
