@@ -42,6 +42,7 @@ from doeff.effects import (
     ResultRetryEffect,
     ResultSafeEffect,
     ResultUnwrapEffect,
+    ThreadEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -58,6 +59,7 @@ from doeff.handlers import (
     ReaderEffectHandler,
     ResultEffectHandler,
     StateEffectHandler,
+    ThreadEffectHandler,
     WriterEffectHandler,
 )
 from doeff.program import Program
@@ -130,7 +132,7 @@ class ProgramInterpreter:
 
         Args:
             custom_handlers: Optional dict mapping effect categories to custom handlers.
-                           Keys can be: 'reader', 'state', 'writer', 'future', 'result',
+                           Keys can be: 'reader', 'state', 'writer', 'future', 'thread', 'result',
                            'io', 'graph', 'memo', 'cache'.
                            Values should be handler instances with appropriate handle_* methods.
         """
@@ -141,6 +143,7 @@ class ProgramInterpreter:
             "atomic": AtomicEffectHandler(),
             "writer": WriterEffectHandler(),
             "future": FutureEffectHandler(),
+            "thread": ThreadEffectHandler(),
             "result": ResultEffectHandler(),
             "io": IOEffectHandler(),
             "graph": GraphEffectHandler(),
@@ -158,6 +161,7 @@ class ProgramInterpreter:
         self.atomic_handler = handlers["atomic"]
         self.writer_handler = handlers["writer"]
         self.future_handler = handlers["future"]
+        self.thread_handler = handlers["thread"]
         self.result_handler = handlers["result"]
         self.io_handler = handlers["io"]
         self.graph_handler = handlers["graph"]
@@ -442,6 +446,13 @@ class ProgramInterpreter:
             return await self.future_handler.handle_await(effect)
         if _effect_is(effect, FutureParallelEffect):
             return await self.future_handler.handle_parallel(effect)
+        if _effect_is(effect, ThreadEffect):
+            awaitable = self.thread_handler.handle_thread(effect, ctx, self)
+            if effect.await_result:
+                return await self.future_handler.handle_await(
+                    FutureAwaitEffect(awaitable=awaitable)
+                )
+            return awaitable
         if _effect_is(effect, IOPerformEffect):
             return await self.io_handler.handle_run(effect, ctx)
         if _effect_is(effect, IOPrintEffect):

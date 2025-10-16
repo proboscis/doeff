@@ -13,7 +13,9 @@ import lzma
 import os
 import sqlite3
 import tempfile
-from collections.abc import Callable
+import threading
+from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,6 +46,7 @@ from doeff.effects import (
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
+    ThreadEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -265,6 +268,101 @@ class FutureEffectHandler:
         """Handle future.parallel effect."""
         results = await asyncio.gather(*effect.awaitables)
         return results
+
+
+class ThreadEffectHandler:
+    """Handles executing programs on worker threads."""
+
+    scope = HandlerScope.SHARED
+
+    def __init__(self, *, max_workers: int | None = None) -> None:
+        self._max_workers = max_workers
+        self._executor: ThreadPoolExecutor | None = None
+        self._executor_lock = threading.Lock()
+
+    def _ensure_executor(self) -> ThreadPoolExecutor:
+        executor = self._executor
+        if executor is not None:
+            return executor
+        with self._executor_lock:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=self._max_workers,
+                    thread_name_prefix="doeff-thread-pool",
+                )
+            return self._executor
+
+    def handle_thread(
+        self,
+        effect: ThreadEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Awaitable[Any]:
+        """Return awaitable that executes the nested program on a thread."""
+
+        return self._build_thread_awaitable(effect, ctx, engine)
+
+    def _build_thread_awaitable(
+        self,
+        effect: ThreadEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Awaitable[Any]:
+        loop = asyncio.get_running_loop()
+        sub_ctx = ctx.copy()
+
+        def run_program() -> tuple[Any, ExecutionContext]:
+            pragmatic_result = engine.run(effect.program, sub_ctx)
+            if isinstance(pragmatic_result.result, Err):
+                raise pragmatic_result.result.error
+            return pragmatic_result.value, pragmatic_result.context
+
+        if effect.strategy == "pooled":
+            run_future = loop.run_in_executor(self._ensure_executor(), run_program)
+        else:
+            is_daemon = effect.strategy == "daemon"
+            run_future = self._run_in_thread(loop, run_program, daemon=is_daemon)
+
+        async def wrapper() -> Any:
+            value, result_ctx = await run_future
+            self._merge_context(ctx, result_ctx)
+            return value
+
+        return wrapper()
+
+    def _run_in_thread(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        runner: Callable[[], tuple[Any, ExecutionContext]],
+        *,
+        daemon: bool,
+    ) -> asyncio.Future[tuple[Any, ExecutionContext]]:
+        future: asyncio.Future[tuple[Any, ExecutionContext]] = loop.create_future()
+
+        def target() -> None:
+            try:
+                result = runner()
+            except BaseException as exc:  # pragma: no cover - defensive guard
+                loop.call_soon_threadsafe(future.set_exception, exc)
+            else:
+                loop.call_soon_threadsafe(future.set_result, result)
+
+        thread = threading.Thread(
+            target=target,
+            name="doeff-thread",
+            daemon=daemon,
+        )
+        thread.start()
+        return future
+
+    def _merge_context(self, parent: ExecutionContext, child: ExecutionContext) -> None:
+        parent.env.clear()
+        parent.env.update(child.env)
+        parent.state.clear()
+        parent.state.update(child.state)
+        parent.log.clear()
+        parent.log.extend(child.log)
+        parent.graph = child.graph
 
 
 class ResultEffectHandler:
@@ -764,5 +862,6 @@ __all__ = [
     "ReaderEffectHandler",
     "ResultEffectHandler",
     "StateEffectHandler",
+    "ThreadEffectHandler",
     "WriterEffectHandler",
 ]

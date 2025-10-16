@@ -58,6 +58,7 @@ from doeff.effects import (
     # Effects - Future
     Await,
     Parallel,
+    Thread,
     # Effects - Result
     Fail,
     Finally,
@@ -98,6 +99,7 @@ from doeff.effects import (
     finally_,
     await_,
     parallel,
+    thread,
     fail,
     catch,
     safe,
@@ -219,6 +221,7 @@ __all__ = [  # noqa: RUF022
     "AtomicGet",
     "AtomicUpdate",
     "Parallel",
+    "Thread",
     "Print",
     "Put",
     "Step",
@@ -244,6 +247,7 @@ __all__ = [  # noqa: RUF022
     "atomic_get",
     "atomic_update",
     "parallel",
+    "thread",
     "print_",
     "put",
     "step",

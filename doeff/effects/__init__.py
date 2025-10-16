@@ -73,6 +73,7 @@ from .state import (
     modify,
     put,
 )
+from .thread import Thread, ThreadEffect, ThreadStrategy, thread
 from .writer import (
     Listen,
     Log,
@@ -166,6 +167,9 @@ __all__ = [
     "StateModifyEffect",
     "StatePutEffect",
     "Step",
+    "Thread",
+    "ThreadEffect",
+    "ThreadStrategy",
     "StructuredLog",
     "Tell",
     "Unwrap",
@@ -203,6 +207,7 @@ __all__ = [
     "put",
     "recover",
     "retry",
+    "thread",
     "run",
     "safe",
     "slog",
