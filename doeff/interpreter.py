@@ -72,6 +72,7 @@ from doeff.types import (
     RunResult,
     capture_traceback,
 )
+from doeff.utils import BoundedLog
 
 
 def _effect_is(effect: Effect, cls) -> bool:
@@ -127,7 +128,12 @@ class ProgramInterpreter:
     Effect handlers can be customized by passing custom handlers to __init__.
     """
 
-    def __init__(self, custom_handlers: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        custom_handlers: dict[str, Any] | None = None,
+        *,
+        max_log_entries: int | None = None,
+    ):
         """Initialize effect handlers.
 
         Args:
@@ -135,7 +141,13 @@ class ProgramInterpreter:
                            Keys can be: 'reader', 'state', 'writer', 'future', 'thread', 'result',
                            'io', 'graph', 'memo', 'cache'.
                            Values should be handler instances with appropriate handle_* methods.
+            max_log_entries: Optional cap on the number of writer log entries retained.
         """
+        if max_log_entries is not None and max_log_entries < 0:
+            raise ValueError("max_log_entries must be >= 0 or None")
+
+        self._max_log_entries = max_log_entries
+
         # Initialize default handlers
         handlers = {
             "reader": ReaderEffectHandler(),
@@ -167,6 +179,21 @@ class ProgramInterpreter:
         self.graph_handler = handlers["graph"]
         self.memo_handler = handlers["memo"]
         self.cache_handler = handlers["cache"]
+
+
+    def _new_log_buffer(self) -> BoundedLog:
+        """Return a fresh log buffer respecting the configured limit."""
+
+        return BoundedLog(max_entries=self._max_log_entries)
+
+    def _ensure_log_buffer(self, ctx: ExecutionContext) -> None:
+        """Ensure the execution context uses a bounded log with the configured limit."""
+
+        log = ctx.log
+        if isinstance(log, BoundedLog):
+            log.set_max_entries(self._max_log_entries)
+        else:
+            ctx.log = BoundedLog(log, max_entries=self._max_log_entries)
 
 
     def run(
@@ -205,7 +232,7 @@ class ProgramInterpreter:
         ctx = context or ExecutionContext(
             env={},
             state={},
-            log=[],
+            log=self._new_log_buffer(),
             graph=WGraph(
                 last=WStep(inputs=(), output=WNode("_root"), meta={}),
                 steps=frozenset(),
@@ -213,6 +240,8 @@ class ProgramInterpreter:
             io_allowed=True,
             program_call_stack=[],  # Initialize call stack
         )
+
+        self._ensure_log_buffer(ctx)
 
         try:
             return await self._execute_program_loop(program, ctx)
@@ -523,12 +552,13 @@ class ProgramInterpreter:
             ctx_copy = ExecutionContext(
                 env=ctx.env.copy() if ctx.env else {},
                 state=ctx.state.copy() if ctx.state else {},
-                log=[],
+                log=self._new_log_buffer(),
                 graph=ctx.graph,
                 io_allowed=ctx.io_allowed,
                 cache=ctx.cache,
                 effect_observations=ctx.effect_observations,
             )
+            self._ensure_log_buffer(ctx_copy)
             tasks.append(asyncio.create_task(self.run_async(prog, ctx_copy)))
 
         sub_results = await asyncio.gather(*tasks)
