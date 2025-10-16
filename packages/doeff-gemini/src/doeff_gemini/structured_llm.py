@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import random
 import textwrap
 import time
 from collections.abc import Mapping
@@ -61,6 +62,19 @@ def _stringify_for_log(content: Any, limit: int = 500) -> str:
 
 _DEFAULT_JSON_FIX_MODEL = "gemini-2.5-pro"
 _DEFAULT_JSON_FIX_MAX_OUTPUT_TOKENS = 2048
+_RANDOM_BACKOFF_MIN_DELAY_SECONDS = 1.0
+_RANDOM_BACKOFF_MAX_DELAY_SECONDS = 30.0
+
+
+def _gemini_random_backoff(attempt: int, error: Exception | None) -> float:
+    """Compute a jittered delay before the next Gemini retry attempt."""
+    _ = error  # error currently unused but kept for future heuristics
+    upper = _RANDOM_BACKOFF_MIN_DELAY_SECONDS * (2 ** (attempt - 1))
+    upper = min(
+        _RANDOM_BACKOFF_MAX_DELAY_SECONDS,
+        max(_RANDOM_BACKOFF_MIN_DELAY_SECONDS, upper),
+    )
+    return random.uniform(_RANDOM_BACKOFF_MIN_DELAY_SECONDS, upper)
 
 
 def _make_gemini_json_fix_sllm(
@@ -784,7 +798,11 @@ def structured_llm__gemini(
 
         return (yield Catch(api_call_with_tracking(), handle_error))
 
-    response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
+    response = yield Retry(
+        make_api_call(),
+        max_attempts=max_retries,
+        delay_strategy=_gemini_random_backoff,
+    )
 
     if response_format is not None and issubclass(response_format, BaseModel):
         @do
@@ -952,7 +970,11 @@ def edit_image__gemini(
 
         return (yield Catch(api_call_with_tracking(), handle_error))
 
-    response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
+    response = yield Retry(
+        make_api_call(),
+        max_attempts=max_retries,
+        delay_strategy=_gemini_random_backoff,
+    )
 
     result = yield process_image_edit_response(response)
 

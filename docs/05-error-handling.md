@@ -248,7 +248,7 @@ def with_cache_fallback():
 
 ## Retry Effect
 
-`Retry(sub_program, max_attempts, delay_ms)` retries on failure.
+`Retry(sub_program, max_attempts, delay_ms=0, delay_strategy=None)` retries on failure.
 
 ### Basic Retry
 
@@ -272,6 +272,24 @@ def with_retry():
 
 # Will retry up to 5 times with 100ms delay
 result = await interpreter.run(with_retry())
+```
+
+### Randomized Backoff with delay_strategy
+
+```python
+import random
+
+def jittered_delay(attempt: int, _error: Exception | None) -> float:
+    upper = min(30.0, 2 ** (attempt - 1))
+    return random.uniform(1.0, max(1.0, upper))
+
+@do
+def fetch_with_retry():
+    return (yield Retry(
+        unstable_operation(),
+        max_attempts=5,
+        delay_strategy=jittered_delay,
+    ))
 ```
 
 ### Exponential Backoff (Manual)
