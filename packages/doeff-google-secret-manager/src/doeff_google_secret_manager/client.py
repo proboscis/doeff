@@ -1,0 +1,158 @@
+"""Secret Manager client helpers integrated with doeff effects."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from doeff import Ask, Catch, EffectGenerator, Fail, Get, Log, Put, do
+
+DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = (
+    "https://www.googleapis.com/auth/cloud-platform",
+)
+
+
+class SecretManagerClient:
+    """Lazy wrapper that exposes sync and async Secret Manager clients."""
+
+    def __init__(
+        self,
+        *,
+        project: str | None,
+        credentials: Any | None,
+        client_options: dict[str, Any] | None,
+        extra_client_kwargs: dict[str, Any],
+    ) -> None:
+        self.project = project
+        self.credentials = credentials
+        self.client_options = client_options or {}
+        self._extra_client_kwargs = dict(extra_client_kwargs)
+
+        self._secretmanager_module: Any | None = None
+        self._client: Any | None = None
+        self._async_client: Any | None = None
+
+    def _load_module(self):
+        if self._secretmanager_module is None:
+            from google.cloud import secretmanager  # Imported lazily
+
+            self._secretmanager_module = secretmanager
+        return self._secretmanager_module
+
+    def _build_client_kwargs(self) -> dict[str, Any]:
+        kwargs = dict(self._extra_client_kwargs)
+        if self.credentials is not None:
+            kwargs.setdefault("credentials", self.credentials)
+        if self.client_options:
+            kwargs.setdefault("client_options", self.client_options)
+        return kwargs
+
+    @property
+    def client(self):
+        """Return the synchronous Secret Manager client."""
+        if self._client is None:
+            module = self._load_module()
+            self._client = module.SecretManagerServiceClient(**self._build_client_kwargs())
+        return self._client
+
+    @property
+    def async_client(self):
+        """Return the asynchronous Secret Manager client."""
+        if self._async_client is None:
+            module = self._load_module()
+            self._async_client = module.SecretManagerServiceAsyncClient(
+                **self._build_client_kwargs()
+            )
+        return self._async_client
+
+
+@do
+def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
+    """Retrieve or construct a :class:`SecretManagerClient` using ADC when available."""
+
+    @do
+    def ask(name: str):
+        return (yield Ask(name))
+
+    def ask_optional(name: str) -> EffectGenerator[Any]:
+        return Catch(ask(name), lambda exc: None if isinstance(exc, KeyError) else None)  # type: ignore[arg-type]
+
+    existing_client = yield Catch(
+        ask("secret_manager_client"),
+        lambda exc: None if isinstance(exc, KeyError) else None,
+    )
+    if existing_client:
+        return existing_client
+
+    existing_client = yield Get("secret_manager_client")
+    if existing_client:
+        return existing_client
+
+    project = yield ask_optional("secret_manager_project")
+    if project is None:
+        project = yield Get("secret_manager_project")
+
+    credentials = yield ask_optional("secret_manager_credentials")
+    if credentials is None:
+        credentials = yield Get("secret_manager_credentials")
+
+    client_options = yield ask_optional("secret_manager_client_options")
+    if client_options is None:
+        client_options = yield Get("secret_manager_client_options")
+    if client_options is not None and not isinstance(client_options, dict):
+        yield Log("secret_manager_client_options must be a dict; ignoring provided value")
+        client_options = None
+
+    extra_kwargs = yield ask_optional("secret_manager_client_kwargs")
+    if extra_kwargs is None:
+        extra_kwargs = yield Get("secret_manager_client_kwargs")
+    if not isinstance(extra_kwargs, dict):
+        extra_kwargs = {}
+
+    if credentials is None or project is None:
+        try:
+            from google.auth import default as google_auth_default
+            from google.auth.exceptions import DefaultCredentialsError
+        except ModuleNotFoundError as exc:
+            yield Log(
+                "google-auth is not installed; install google-auth or provide secret_manager_credentials"
+            )
+            yield Fail(exc)
+
+        try:
+            adc_credentials, adc_project = google_auth_default(scopes=DEFAULT_SECRET_MANAGER_SCOPES)
+        except DefaultCredentialsError as exc:
+            yield Log(
+                "Failed to load Google Application Default Credentials for Secret Manager. "
+                "Run 'gcloud auth application-default login' or supply secret_manager_credentials."
+            )
+            yield Fail(exc)
+
+        yield Log("Using Google Application Default Credentials for Secret Manager")
+
+        if credentials is None:
+            credentials = adc_credentials
+        if project is None:
+            project = adc_project
+
+    if not project:
+        yield Log(
+            "Secret Manager project could not be determined. "
+            "Set 'secret_manager_project' or configure ADC with a default project."
+        )
+        yield Fail(ValueError("Secret Manager project is required"))
+
+    client_instance = SecretManagerClient(
+        project=project,
+        credentials=credentials,
+        client_options=client_options,
+        extra_client_kwargs=extra_kwargs,
+    )
+    yield Put("secret_manager_client", client_instance)
+    return client_instance
+
+
+__all__ = [
+    "SecretManagerClient",
+    "get_secret_manager_client",
+    "DEFAULT_SECRET_MANAGER_SCOPES",
+]

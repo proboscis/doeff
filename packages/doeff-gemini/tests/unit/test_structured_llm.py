@@ -92,7 +92,6 @@ def test_gemini_random_backoff_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
     assert first_delay == 1.0
     assert third_delay == 4.0
 
-
 @pytest.mark.asyncio
 async def test_build_contents_text_only() -> None:
     """Ensure text-only prompts become a single user content block."""

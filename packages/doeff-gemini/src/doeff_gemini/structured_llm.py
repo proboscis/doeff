@@ -24,6 +24,7 @@ from doeff import (
     Retry,
     Step,
     do,
+    slog,
 )
 
 from .client import get_gemini_client, track_api_call
@@ -798,10 +799,25 @@ def structured_llm__gemini(
 
         return (yield Catch(api_call_with_tracking(), handle_error))
 
-    response = yield Retry(
-        make_api_call(),
-        max_attempts=max_retries,
-        delay_strategy=_gemini_random_backoff,
+    @do
+    def handle_retry_exhaustion(exc: Exception) -> EffectGenerator[Any]:
+        yield slog(
+            event="gemini.retry_exhausted",
+            level="ERROR",
+            model=model,
+            operation="generate_content",
+            attempts=max_retries,
+            error=str(exc),
+        )
+        raise exc
+
+    response = yield Catch(
+        Retry(
+            make_api_call(),
+            max_attempts=max_retries,
+            delay_strategy=_gemini_random_backoff,
+        ),
+        handle_retry_exhaustion,
     )
 
     if response_format is not None and issubclass(response_format, BaseModel):
@@ -970,10 +986,25 @@ def edit_image__gemini(
 
         return (yield Catch(api_call_with_tracking(), handle_error))
 
-    response = yield Retry(
-        make_api_call(),
-        max_attempts=max_retries,
-        delay_strategy=_gemini_random_backoff,
+    @do
+    def handle_retry_exhaustion(exc: Exception) -> EffectGenerator[Any]:
+        yield slog(
+            event="gemini.retry_exhausted",
+            level="ERROR",
+            model=model,
+            operation="generate_content",
+            attempts=max_retries,
+            error=str(exc),
+        )
+        raise exc
+
+    response = yield Catch(
+        Retry(
+            make_api_call(),
+            max_attempts=max_retries,
+            delay_strategy=_gemini_random_backoff,
+        ),
+        handle_retry_exhaustion,
     )
 
     result = yield process_image_edit_response(response)
