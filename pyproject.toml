@@ -32,6 +32,8 @@ dependencies = [
     "phart>=1.1.4",
     "numpy>=1.26.0",
     "pillow>=11.0.0",
+    "google-cloud-secret-manager>=2.25.0",
+    "google-auth>=2.40.3",
 ]
 
 [project.optional-dependencies]
