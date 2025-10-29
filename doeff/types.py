@@ -1715,7 +1715,7 @@ def _intercept_value(
     from doeff.program import Program, KleisliProgramCall  # Local import to avoid circular dependency
 
     result = value
-    if isinstance(value, (Program, KleisliProgramCall, Effect)):
+    if isinstance(value, (Program, KleisliProgramCall, EffectBase)):
         result = value.intercept(transform)
     elif isinstance(value, dict):
         result = _intercept_mapping(value, transform)

@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 import inspect
 from typing import Any, TYPE_CHECKING
 
-from doeff.types import Effect, EffectBase
+from doeff.types import EffectBase
 
 if TYPE_CHECKING:
     from doeff.program import Program, KleisliProgramCall
@@ -18,7 +18,7 @@ def _type_name(value: object) -> str:
 
 def _is_program_like(value: object) -> bool:
     """Check if value is Program, KleisliProgramCall, or Effect."""
-    if isinstance(value, (EffectBase, Effect)):
+    if isinstance(value, EffectBase):
         return True
     # Import here to avoid circular imports
     from doeff.program import Program, KleisliProgramCall
