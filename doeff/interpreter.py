@@ -254,12 +254,7 @@ class ProgramInterpreter:
     ) -> RunResult[T]:
         """Execute the program's generator loop."""
         from doeff.program import KleisliProgramCall
-        from doeff.types import Effect
-
-        # Handle Effect directly (e.g., PureEffect)
-        if isinstance(program, Effect):
-            result = await self._handle_effect(program, ctx)
-            return RunResult(ctx, Ok(result))
+        from doeff.types import Effect, EffectBase
 
         call_frame_pushed = False
 
@@ -276,6 +271,9 @@ class ProgramInterpreter:
                 ctx.program_call_stack.append(frame)
                 call_frame_pushed = True
             gen = program.to_generator()
+        elif isinstance(program, EffectBase):
+            result = await self._handle_effect(program, ctx)
+            return RunResult(ctx, Ok(result))
         else:
             to_gen = getattr(program, "to_generator", None)
             if to_gen is None:
@@ -294,7 +292,7 @@ class ProgramInterpreter:
                 logger.debug(f"effect: {current}")
                 from doeff.types import Program as ProgramType
 
-                if isinstance(current, Effect):
+                if isinstance(current, EffectBase):
                     try:
                         value = await self._handle_effect(current, ctx)
                     except Exception as exc:

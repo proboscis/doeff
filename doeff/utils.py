@@ -178,16 +178,16 @@ def capture_creation_context(skip_frames: int = 2) -> Optional["EffectCreationCo
         return None
 
 
-E = TypeVar("E", bound="Effect")
+E = TypeVar("E", bound="EffectBase")
 
 
 def create_effect_with_trace(effect: E, skip_frames: int = 3) -> E:
     """Attach creation context metadata to an effect instance."""
 
-    from doeff.types import Effect
+    from doeff.types import EffectBase
 
-    if not isinstance(effect, Effect):  # Defensive
-        raise TypeError(f"Expected Effect, got {type(effect)!r}")
+    if not isinstance(effect, EffectBase):  # Defensive
+        raise TypeError(f"Expected EffectBase, got {type(effect)!r}")
 
     created_at = capture_creation_context(skip_frames=skip_frames)
     return effect.with_created_at(created_at)
