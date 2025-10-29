@@ -76,6 +76,22 @@ async def test_kleisli_program_call_execution():
     assert result.value == 42
 
 
+def test_kleisli_program_call_run_sync():
+    """ProgramInterpreter.run should accept a KleisliProgramCall."""
+
+    def gen_func(x):
+        value = yield Pure(x + 1)
+        return value
+
+    kpcall = _make_call(gen_func, 41)
+
+    interpreter = ProgramInterpreter()
+    result = interpreter.run(kpcall)
+
+    assert result.result == Ok(42)
+    assert result.value == 42
+
+
 @pytest.mark.asyncio
 async def test_kleisli_program_call_with_kwargs():
     """KleisliProgramCall should handle keyword arguments."""
