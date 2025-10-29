@@ -296,19 +296,19 @@ class StandardEnvMerger:
                 """Merge all envs using Program composition."""
                 from doeff.effects import Local
                 from doeff.program import KleisliProgramCall
-                from doeff.types import Effect
+                from doeff.types import EffectBase
 
                 merged: dict[str, Any] = {}
 
                 for env_source in loaded_envs:
                     env_dict: Any
-                    program_like: Program | KleisliProgramCall | Effect | None = None
+                    program_like: Program | KleisliProgramCall | EffectBase | None = None
 
-                    if isinstance(env_source, (Program, KleisliProgramCall, Effect)):
+                    if isinstance(env_source, (Program, KleisliProgramCall, EffectBase)):
                         program_like = env_source
                     elif callable(env_source):
                         result = env_source()
-                        if isinstance(result, (Program, KleisliProgramCall, Effect)):
+                        if isinstance(result, (Program, KleisliProgramCall, EffectBase)):
                             program_like = result
                         else:
                             env_dict = result

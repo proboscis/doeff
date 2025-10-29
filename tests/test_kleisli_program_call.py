@@ -1,11 +1,13 @@
 """Tests for KleisliProgramCall - bound function with args (partial application)."""
 
+from types import MethodType
+
 import pytest
 
 from doeff import ProgramInterpreter
 from doeff.effects import Ask, Pure
 from doeff.program import KleisliProgramCall, _AutoUnwrapStrategy
-from doeff.types import EffectCreationContext, ExecutionContext, Ok
+from doeff.types import Effect, EffectCreationContext, ExecutionContext, Ok
 
 
 def _make_call(gen_func, *args, **kwargs):
@@ -89,6 +91,29 @@ def test_kleisli_program_call_run_sync():
     result = interpreter.run(kpcall)
 
     assert result.result == Ok(42)
+    assert result.value == 42
+
+
+def test_kleisli_program_call_not_misclassified_as_effect():
+    """Ensure KleisliProgramCall is prioritized over Effect protocol checks."""
+
+    def gen_func(x):
+        value = yield Pure(x + 1)
+        return value
+
+    kpcall = _make_call(gen_func, 41)
+
+    def _with_created_at(self, created_at):
+        return self
+
+    kpcall.with_created_at = MethodType(_with_created_at, kpcall)
+
+    assert isinstance(kpcall, KleisliProgramCall)
+    assert isinstance(kpcall, Effect)
+
+    interpreter = ProgramInterpreter()
+    result = interpreter.run(kpcall)
+
     assert result.value == 42
 
 
