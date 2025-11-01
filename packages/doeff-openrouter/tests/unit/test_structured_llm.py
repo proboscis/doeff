@@ -18,6 +18,7 @@ from doeff_openrouter.structured_llm import (
     ensure_strict_schema,
     process_structured_response,
     process_unstructured_response,
+    StructuredOutputParsingError,
     structured_llm,
 )
 
@@ -27,16 +28,19 @@ class DemoModel(BaseModel):
     value: int
 
 
-@pytest.mark.asyncio
-async def test_build_messages_text_only():
+def run_program(program):
+    engine = ProgramInterpreter()
+    return engine.run(program)
+
+
+def test_build_messages_text_only():
     """Building messages without images keeps a single user part."""
 
     @do
     def flow() -> EffectGenerator[Any]:
         return (yield build_messages("hello"))
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    result = run_program(flow())
     assert result.is_ok
     messages = result.value
     assert len(messages) == 1
@@ -66,8 +70,7 @@ def test_ensure_strict_schema_sets_additional_properties():
     assert schema["properties"]["bar"]["additionalProperties"] is False
 
 
-@pytest.mark.asyncio
-async def test_process_unstructured_response_flattens_text():
+def test_process_unstructured_response_flattens_text():
     """Assistant content arrays are flattened into newline separated text."""
     response = {
         "choices": [
@@ -85,9 +88,33 @@ async def test_process_unstructured_response_flattens_text():
     assert text == "Line 1\nLine 2"
 
 
-@pytest.mark.asyncio
-async def test_process_structured_response_uses_parsed_field():
-    """When OpenRouter returns a parsed payload, it is used directly."""
+def test_process_structured_response_requires_string_content_even_with_parsed():
+    """Even when parsed is present we rely on string content."""
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "parsed": {"name": "demo", "value": 42},
+                    "content": '{"name": "demo", "value": 42}',
+                }
+            }
+        ]
+    }
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (yield process_structured_response(response, DemoModel))
+
+    result = run_program(flow())
+    assert result.is_ok
+    parsed = result.value
+    assert isinstance(parsed, DemoModel)
+    assert parsed.name == "demo"
+    assert parsed.value == 42
+
+
+def test_process_structured_response_errors_when_content_missing():
+    """Parsed alone is insufficient without string content."""
     response = {
         "choices": [
             {
@@ -102,26 +129,131 @@ async def test_process_structured_response_uses_parsed_field():
     def flow() -> EffectGenerator[Any]:
         return (yield process_structured_response(response, DemoModel))
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    result = run_program(flow())
+    assert result.is_err
+    error = result.result.error
+    assert isinstance(error, RuntimeError)
+    assert "content" in str(error).lower()
+
+
+def test_process_structured_response_parses_json_string_content():
+    """When the API returns JSON in a string we parse it directly."""
+    payload = {"name": "fallback", "value": 11}
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(payload),
+                }
+            }
+        ]
+    }
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (yield process_structured_response(response, DemoModel))
+
+    result = run_program(flow())
     assert result.is_ok
     parsed = result.value
     assert isinstance(parsed, DemoModel)
-    assert parsed.name == "demo"
-    assert parsed.value == 42
+    assert parsed.name == "fallback"
+    assert parsed.value == 11
 
 
-@pytest.mark.asyncio
-async def test_structured_llm_happy_path(monkeypatch):
+def test_process_structured_response_parses_code_fence_content():
+    """Markdown fences around JSON are stripped before parsing."""
+    payload = {"name": "textual", "value": 13}
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": f"```json\n{json.dumps(payload)}\n```",
+                }
+            }
+        ]
+    }
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (yield process_structured_response(response, DemoModel))
+
+    result = run_program(flow())
+    assert result.is_ok
+    parsed = result.value
+    assert isinstance(parsed, DemoModel)
+    assert parsed.name == "textual"
+    assert parsed.value == 13
+
+
+def test_process_structured_response_errors_when_content_not_json():
+    """Plain string content that is not JSON raises a parsing error."""
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": "not json",
+                }
+            }
+        ]
+    }
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (yield process_structured_response(response, DemoModel))
+
+    result = run_program(flow())
+    assert result.is_err
+    error = result.result.error
+    assert isinstance(error, StructuredOutputParsingError)
+
+
+def test_process_structured_response_errors_when_choices_missing():
+    """Responses without at least one choice are treated as malformed."""
+    response = {"choices": []}
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (yield process_structured_response(response, DemoModel))
+
+    result = run_program(flow())
+    assert result.is_err
+    error = result.result.error
+    assert isinstance(error, RuntimeError)
+    assert "choices" in str(error).lower()
+
+
+def test_process_structured_response_errors_when_content_not_string():
+    """Content must be a string when parsed data is absent."""
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": {"type": "text", "text": '{"name": "bad", "value": 0}'},
+                }
+            }
+        ]
+    }
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        return (yield process_structured_response(response, DemoModel))
+
+    result = run_program(flow())
+    assert result.is_err
+    error = result.result.error
+    assert isinstance(error, RuntimeError)
+    assert "content" in str(error).lower()
+
+
+def test_structured_llm_happy_path(monkeypatch):
     """structured_llm delegates to chat_completion and validates output."""
     payload = {"name": "demo", "value": 7}
     response = {
         "choices": [
             {
                 "message": {
-                    "content": [
-                        {"type": "text", "text": json.dumps(payload)}
-                    ]
+                    "content": json.dumps(payload),
                 }
             }
         ]
@@ -141,16 +273,14 @@ async def test_structured_llm_happy_path(monkeypatch):
             response_format=DemoModel,
         ))
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    result = run_program(flow())
     assert result.is_ok
     model = result.value
     assert isinstance(model, DemoModel)
     assert model.value == 7
 
 
-@pytest.mark.asyncio
-async def test_structured_llm_without_schema(monkeypatch):
+def test_structured_llm_without_schema(monkeypatch):
     """When no schema is provided the helper returns plain text."""
     response = {
         "choices": [
@@ -174,14 +304,12 @@ async def test_structured_llm_without_schema(monkeypatch):
     def flow() -> EffectGenerator[Any]:
         return (yield structured_llm("plain", model="openrouter/demo"))
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    result = run_program(flow())
     assert result.is_ok
     assert result.value == "plain text"
 
 
-@pytest.mark.asyncio
-async def test_chat_completion_tracks_prompt_state():
+def test_chat_completion_tracks_prompt_state():
     """chat_completion should record prompt content in state."""
 
     messages = [{"role": "user", "content": [{"type": "text", "text": "hello router"}]}]
@@ -205,7 +333,7 @@ async def test_chat_completion_tracks_prompt_state():
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={"openrouter_client": FakeClient()})
-    result = await engine.run_async(chat_completion(messages=messages, model="demo-model"), context)
+    result = engine.run(chat_completion(messages=messages, model="demo-model"), context)
 
     assert result.is_ok
     assert result.value == response_data
