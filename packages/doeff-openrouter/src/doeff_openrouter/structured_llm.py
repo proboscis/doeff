@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ValidationError
@@ -114,7 +115,7 @@ def build_messages(
                 data_url = convert_pil_to_base64(image)
             except Exception as exc:  # pragma: no cover - defensive
                 yield Log(f"Failed to encode image {idx + 1}: {exc}")
-                yield Fail(exc)
+                raise exc
             parts.append({"type": "image_url", "image_url": {"url": data_url}})
 
     messages.append({"role": "user", "content": parts})
@@ -201,56 +202,71 @@ def _strip_code_fence(text: str) -> str:
     return candidate.strip()
 
 
+def _first_choice(response: dict[str, Any]) -> Mapping[str, Any]:
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("OpenRouter response did not contain a choices array with entries")
+    first = choices[0]
+    if not isinstance(first, Mapping):
+        raise RuntimeError("OpenRouter response choice payload must be an object")
+    return first
+
+
+def _message_from_choice(choice: Mapping[str, Any]) -> Mapping[str, Any]:
+    message = choice.get("message")
+    if not isinstance(message, Mapping):
+        raise RuntimeError("OpenRouter response choice missing a message object")
+    return message
+
+
+def _validate_with_model(response_format: type[BaseModel], payload: Any) -> BaseModel:
+    if hasattr(response_format, "model_validate"):
+        return response_format.model_validate(payload)  # type: ignore[attr-defined]
+    if hasattr(response_format, "parse_obj"):
+        return response_format.parse_obj(payload)  # type: ignore[attr-defined]
+    return response_format(**payload)
+
+
 @do
 def process_structured_response(
     response: dict[str, Any],
     response_format: type[BaseModel],
 ) -> EffectGenerator[BaseModel]:
     """Parse a structured response into the requested Pydantic model."""
-    choice = _extract_choice(response)
-    if not choice:
+    try:
+        choice = _first_choice(response)
+    except RuntimeError as exc:
         yield Log("OpenRouter response did not contain choices")
-        raise RuntimeError("No choices in OpenRouter response")
-
-    message = choice.get("message", {}) if isinstance(choice, dict) else {}
-    parsed = message.get("parsed")
-    if parsed is not None:
-        yield Log("Using parsed payload embedded in OpenRouter response")
-        if isinstance(parsed, list) and parsed:
-            parsed = parsed[0]
-        if isinstance(parsed, response_format):
-            return parsed
-        if isinstance(parsed, BaseModel):
-            return response_format.model_validate(parsed.model_dump())
-        if isinstance(parsed, dict):
-            return response_format.model_validate(parsed)
-        if isinstance(parsed, str):
-            try:
-                return response_format.model_validate_json(parsed)
-            except ValidationError as exc:
-                yield Log(f"Failed to validate parsed string payload: {exc}")
-
-    json_payload, text_parts = _collect_message_content_parts(message.get("content"))
-    candidate_payload: Any
-    preview_source: str
-    if json_payload is not None:
-        candidate_payload = json_payload
-        preview_source = _stringify_for_log(json_payload)
-    else:
-        text = "\n".join(text_parts).strip()
-        preview_source = _stringify_for_log(text)
-        text = _strip_code_fence(text)
-        try:
-            candidate_payload = json.loads(text)
-        except json.JSONDecodeError as exc:
-            yield Log(f"JSON decoding failed: {exc}. Payload preview: {preview_source}")
-            raise exc
+        raise exc
 
     try:
-        if hasattr(response_format, "model_validate"):
-            result = response_format.model_validate(candidate_payload)  # type: ignore[attr-defined]
-        else:  # pragma: no cover - for legacy pydantic
-            result = response_format(**candidate_payload)
+        message = _message_from_choice(choice)
+    except RuntimeError as exc:
+        yield Log(str(exc))
+        raise
+
+    candidate_payload: Any
+    preview_source = ""
+    parsed = message.get("parsed")
+    if parsed not in (None, {}):
+        yield Log("Ignoring unexpected OpenRouter parsed payload; using content field instead")
+    content = message.get("content")
+    if not isinstance(content, str):
+        raise RuntimeError("OpenRouter structured responses must provide string message content")
+
+    cleaned = _strip_code_fence(content).strip()
+    preview_source = _stringify_for_log(cleaned)
+    if not cleaned:
+        raise RuntimeError("OpenRouter structured responses returned empty content")
+
+    try:
+        candidate_payload = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        yield Log(f"JSON decoding failed: {exc}. Payload preview: {preview_source}")
+        raise StructuredOutputParsingError("OpenRouter response did not contain valid JSON content") from exc
+
+    try:
+        result = _validate_with_model(response_format, candidate_payload)
     except ValidationError as exc:
         yield Log(f"Structured response validation failed: {exc}")
         yield Log(f"Payload preview: {preview_source}")
@@ -319,3 +335,5 @@ __all__ = [
     "process_unstructured_response",
     "structured_llm",
 ]
+class StructuredOutputParsingError(RuntimeError):
+    """Raised when the provider returns content that cannot be parsed as JSON."""
