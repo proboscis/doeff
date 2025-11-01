@@ -210,7 +210,7 @@ def process_structured_response(
     choice = _extract_choice(response)
     if not choice:
         yield Log("OpenRouter response did not contain choices")
-        yield Fail(RuntimeError("No choices in OpenRouter response"))
+        raise RuntimeError("No choices in OpenRouter response")
 
     message = choice.get("message", {}) if isinstance(choice, dict) else {}
     parsed = message.get("parsed")
@@ -244,7 +244,7 @@ def process_structured_response(
             candidate_payload = json.loads(text)
         except json.JSONDecodeError as exc:
             yield Log(f"JSON decoding failed: {exc}. Payload preview: {preview_source}")
-            yield Fail(exc)
+            raise exc
 
     try:
         if hasattr(response_format, "model_validate"):
@@ -254,7 +254,7 @@ def process_structured_response(
     except ValidationError as exc:
         yield Log(f"Structured response validation failed: {exc}")
         yield Log(f"Payload preview: {preview_source}")
-        yield Fail(exc)
+        raise exc
 
     return result
 
