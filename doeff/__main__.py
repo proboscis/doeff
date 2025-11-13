@@ -458,6 +458,67 @@ def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
     return ascii_tree
 
 
+def handle_run_with_script(context: RunContext, script: str | None) -> int:
+    """Execute program and run user script with injected variables.
+
+    Args:
+        context: Run context for program execution
+        script: Script content or "-" to read from stdin
+
+    Returns:
+        Exit code (0 for success, 1 for error)
+    """
+    # Read script from stdin if "-" is specified
+    if script == "-":
+        script = sys.stdin.read()
+
+    if not script or not script.strip():
+        print("Error: No script provided", file=sys.stderr)
+        return 1
+
+    # Execute the program first
+    command = RunCommand(context)
+    resolved_context, execution = command.execute()
+
+    # Extract values to inject
+    # Get the prepared program (with envs, transforms, etc. applied)
+    program = command._prepare_program(resolved_context)
+    value = execution.final_value
+    interpreter_obj = command._resolver.resolve(resolved_context.interpreter_path)
+
+    # Create a namespace for the script execution
+    script_globals = {
+        "__name__": "__main__",
+        "__builtins__": __builtins__,
+        "program": program,
+        "value": value,
+        "interpreter": interpreter_obj,
+        "RunResult": RunResult,
+        "Program": Program,
+        "ProgramInterpreter": ProgramInterpreter,
+    }
+
+    # Add any additional useful imports
+    try:
+        script_globals["sys"] = sys
+        script_globals["json"] = json
+    except NameError:
+        pass
+
+    # Execute the user script
+    try:
+        exec(script, script_globals)
+    except Exception as exc:
+        captured = capture_traceback(exc)
+        if captured is not None:
+            print(captured.format(condensed=False, max_lines=200), file=sys.stderr)
+        else:
+            print(f"Error executing script: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
 def handle_run(args: argparse.Namespace) -> int:
     context = RunContext(
         program_path=args.program,
@@ -470,6 +531,11 @@ def handle_run(args: argparse.Namespace) -> int:
         report_verbose=getattr(args, "report_verbose", False),
     )
 
+    # Check if script is provided (either as positional arg or stdin)
+    script = getattr(args, "script", None)
+    if script == "-" or script is not None:
+        return handle_run_with_script(context, script)
+
     command = RunCommand(context)
     resolved_context, execution = command.execute()
     _render_run_output(resolved_context, execution)
@@ -480,7 +546,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="doeff", description="Utilities for working with doeff programs")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Execute a Program via an interpreter")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Execute a Program via an interpreter",
+        description=(
+            "Execute a Program via an interpreter. Supports auto-discovery of interpreters "
+            "and environments. Optionally execute a Python script after program execution "
+            "with access to 'program', 'value', and 'interpreter' variables.\n\n"
+            "Examples:\n"
+            "  # Basic execution\n"
+            "  doeff run --program myapp.program --interpreter myapp.interpreter\n\n"
+            "  # With auto-discovery\n"
+            "  doeff run --program myapp.features.auth.login_program\n\n"
+            "  # With script execution (heredoc style)\n"
+            "  doeff run --program myapp.program - <<'PY'\n"
+            "  print(f'Value: {value}')\n"
+            "  run_again = interpreter.run(program)\n"
+            "  PY\n\n"
+            "  # With script execution (stdin)\n"
+            "  echo \"print(value)\" | doeff run --program myapp.program -"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     run_parser.add_argument("--program", required=True, help="Fully-qualified path to the Program instance")
     run_parser.add_argument(
         "--interpreter",
@@ -516,6 +603,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--report-verbose",
         action="store_true",
         help="Use verbose mode when printing the RunResult report.",
+    )
+    run_parser.add_argument(
+        "script",
+        nargs="?",
+        help=(
+            "Python script to execute after running the program. Use '-' to read from stdin "
+            "(e.g., with heredoc: doeff run --program myapp.program - <<'PY' ... PY).\n\n"
+            "Available variables in script:\n"
+            "  - program: The executed Program (with envs/transforms applied)\n"
+            "  - value: The final execution result\n"
+            "  - interpreter: The interpreter used (ProgramInterpreter or function)\n"
+            "  - Program, ProgramInterpreter, RunResult: Type classes\n"
+            "  - sys, json: Standard library modules\n\n"
+            "Example:\n"
+            "  doeff run --program myapp.program - <<'PY'\n"
+            "  print(f'Result: {value}')\n"
+            "  if isinstance(interpreter, ProgramInterpreter):\n"
+            "      result = interpreter.run(program)\n"
+            "      print(f'Re-run: {result.value}')\n"
+            "  PY"
+        ),
     )
     run_parser.set_defaults(func=handle_run)
 
