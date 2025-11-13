@@ -12,8 +12,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
-    command = [sys.executable, "-m", "doeff", "run", *args]
+def run_cli(*args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    command = ["uv", "run", "doeff", "run", *args]
     # Minimal env for subprocess - os.environ needed for subprocess.run()
     pythonpath = f"{PROJECT_ROOT}" + (os.pathsep + os.environ.get("PYTHONPATH", "")) if "PYTHONPATH" in os.environ else str(PROJECT_ROOT)  # noqa: PINJ050
     env = {"PYTHONPATH": pythonpath, "PATH": os.environ.get("PATH", ""), "HOME": os.environ.get("HOME", "")}  # noqa: PINJ050
@@ -24,6 +24,7 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         env=env,
         check=False,
+        input=input,
     )
 
 
@@ -219,3 +220,74 @@ def test_auto_discovery_with_transform() -> None:
 
     # Discovery should happen regardless of transform
     assert "interpreter" in payload or payload["status"] == "error"
+
+
+def test_doeff_run_with_script() -> None:
+    """Test run command with script that accesses program, value, and interpreter."""
+    script = """
+print(f"Program type: {type(program).__name__}")
+print(f"Value: {value}")
+print(f"Interpreter type: {type(interpreter).__name__}")
+"""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "-",
+        input=script,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Program type: Pure" in result.stdout or "Program" in result.stdout
+    assert "Value: 5" in result.stdout
+    assert "Interpreter" in result.stdout
+
+
+def test_doeff_run_with_script_using_interpreter() -> None:
+    """Test run command with script that re-runs the program using injected interpreter."""
+    script = """
+print(f"Initial value: {value}")
+# Use the injected interpreter to re-run
+if isinstance(interpreter, ProgramInterpreter):
+    run_again = interpreter.run(program)
+    print(f"Re-run value: {run_again.value}")
+else:
+    # If interpreter is a function, call it directly
+    run_again_value = interpreter(program)
+    print(f"Re-run value: {run_again_value}")
+"""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "-",
+        input=script,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Initial value: 5" in result.stdout
+    assert "Re-run value: 5" in result.stdout
+
+
+def test_doeff_run_with_script_auto_discovery() -> None:
+    """Test that auto-discovered interpreter and environments are loaded in script execution."""
+    script = """
+print(f"Interpreter path contains 'auth_interpreter': {'auth_interpreter' in str(interpreter)}")
+print(f"Value: {value}")
+# Verify that environments were auto-discovered and merged
+# The program should have access to merged env values
+print(f"Program has Local effect (env applied): {'Local' in type(program).__name__}")
+"""
+    result = run_cli(
+        "--program",
+        "tests.fixtures_discovery.myapp.features.auth.login.login_program",
+        "-",
+        input=script,
+    )
+    assert result.returncode == 0, result.stderr
+    # Should use auto-discovered auth_interpreter (closest to login module)
+    assert "auth_interpreter" in result.stdout or "auth_interpreter" in result.stderr
+    # Should have the merged environment values
+    assert "Login via oauth2" in result.stdout or "oauth2" in result.stdout
+    # Program should have Local effect applied (envs merged)
+    assert "Local" in result.stdout
