@@ -533,7 +533,8 @@ def handle_run(args: argparse.Namespace) -> int:
 
     # Check if script is provided (either as positional arg or stdin)
     script = getattr(args, "script", None)
-    if script == "-" or script is not None:
+    # Only handle script if it's "-" (stdin) or a non-empty string
+    if script == "-" or (script is not None and script.strip()):
         return handle_run_with_script(context, script)
 
     command = RunCommand(context)
