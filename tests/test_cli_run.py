@@ -269,6 +269,39 @@ else:
     assert "Re-run value: 5" in result.stdout
 
 
+def test_doeff_run_without_script() -> None:
+    """Test that run command works normally when script is not provided."""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "--format",
+        "json",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["result"] == 5
+
+
+def test_doeff_run_with_empty_script_string() -> None:
+    """Test that run command works normally when empty string is provided as script."""
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "--format",
+        "json",
+        "",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "ok"
+    assert payload["result"] == 5
+
+
 def test_doeff_run_with_script_auto_discovery() -> None:
     """Test that auto-discovered interpreter and environments are loaded in script execution."""
     script = """
