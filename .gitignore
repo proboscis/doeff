@@ -66,3 +66,7 @@ dmypy.json
 # Rust build artifacts
 rust/**/target/
 packages/**/target/
+
+# Local deploy keys
+proboscis_doeff_deploy
+proboscis_doeff_deploy.pub
