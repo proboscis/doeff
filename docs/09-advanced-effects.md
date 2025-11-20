@@ -259,6 +259,19 @@ def parallel_counter():
 
 ## Best Practices
 
+### Accessing the interpreter
+
+If you need the active interpreter instance (for example, to pass it into an
+external framework callback), ask for the special key `__interpreter__`:
+
+```python
+interp = yield ask("__interpreter__")
+# interp is the ProgramInterpreter currently running this Program.
+```
+
+This does not require adding `__interpreter__` to your environment; the
+interpreter responds to this key directly.
+
 ### When to Use Gather
 
 **DO:**
