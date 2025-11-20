@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import * as fs from 'fs';
-import * as path from 'path';
 import { promisify } from 'util';
+import * as path from 'path';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -69,36 +69,6 @@ type RunMode = 'default' | 'options';
 
 const entryCache = new Map<string, CacheEntry<IndexEntry[]>>();
 
-class ProgramDecorationManager implements vscode.Disposable {
-  private readonly decoration: vscode.TextEditorDecorationType;
-
-  constructor(context: vscode.ExtensionContext) {
-    this.decoration = vscode.window.createTextEditorDecorationType({
-      gutterIconPath: vscode.Uri.file(
-        path.join(context.extensionPath, 'resources', 'run.svg')
-      ),
-      gutterIconSize: '80%'
-    });
-  }
-
-  update(editor?: vscode.TextEditor) {
-    if (!editor) {
-      return;
-    }
-    const decorations = extractProgramDeclarations(editor.document).map(
-      (decl) => ({
-        range: decl.range,
-        hoverMessage: 'Run doeff Program'
-      })
-    );
-    editor.setDecorations(this.decoration, decorations);
-  }
-
-  dispose() {
-    this.decoration.dispose();
-  }
-}
-
 class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<void>();
   public readonly onDidChangeCodeLenses = this.emitter.event;
@@ -135,12 +105,10 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
 
 export function activate(context: vscode.ExtensionContext) {
   output.appendLine('doeff-runner activated');
-  const decorationManager = new ProgramDecorationManager(context);
   const codeLensProvider = new ProgramCodeLensProvider();
 
   context.subscriptions.push(
     output,
-    decorationManager,
     codeLensProvider,
     vscode.languages.registerCodeLensProvider(
       { language: 'python' },
@@ -153,7 +121,6 @@ export function activate(context: vscode.ExtensionContext) {
           resource,
           lineNumber,
           'default',
-          decorationManager,
           codeLensProvider
         )
     ),
@@ -164,7 +131,6 @@ export function activate(context: vscode.ExtensionContext) {
           resource,
           lineNumber,
           'options',
-          decorationManager,
           codeLensProvider
         )
     ),
@@ -174,17 +140,13 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (vscode.window.activeTextEditor?.document === event.document) {
-        decorationManager.update(vscode.window.activeTextEditor);
         codeLensProvider.refresh();
       }
     }),
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-      decorationManager.update(editor ?? undefined);
       codeLensProvider.refresh();
     })
   );
-
-  decorationManager.update(vscode.window.activeTextEditor ?? undefined);
 }
 
 export function deactivate() {
@@ -195,7 +157,6 @@ async function runProgram(
   resource: vscode.Uri | string | undefined,
   lineNumber: number | undefined,
   mode: RunMode,
-  decorationManager: ProgramDecorationManager,
   codeLensProvider: ProgramCodeLensProvider
 ) {
   try {
@@ -257,7 +218,6 @@ async function runProgram(
       await runSelection(selection, workspaceFolder);
     }
 
-    decorationManager.update(vscode.window.activeTextEditor ?? undefined);
     codeLensProvider.refresh();
   } catch (error) {
     const message =
