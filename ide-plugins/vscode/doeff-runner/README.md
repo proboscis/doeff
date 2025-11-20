@@ -10,14 +10,17 @@ Run `doeff` `Program` values directly from VS Code. The extension mirrors the Py
 ## How it works
 
 - CodeLens + gutter icons appear on lines annotated with `Program[...]`
-- Clicking **Run doeff Program** invokes `doeff-indexer` to:
+- **Run**: immediately runs `python -m doeff run --program <path>` (doeff chooses the interpreter)
+- **Run with options**: invokes `doeff-indexer` to:
   - resolve the program's qualified name for the current file
   - gather available interpreters, Kleisli programs, and transformers
 - A quick-pick dialog lets you choose the interpreter and optional Kleisli/transformer, then starts `python -m doeff run ...` using the configured interpreter
+- Appends/updates `.vscode/launch.json` so you can tweak the run config
 
 ## Commands
 
-- `doeff-runner.run`: Run the Program at the current line (or supplied line/URI)
+- `doeff-runner.runDefault`: Quick run with defaults
+- `doeff-runner.runOptions`: Run with interpreter/Kleisli/transformer selection
 - `doeff-runner.runConfig`: Launch a prepared selection payload (used internally from the quick pick)
 
 ## Development
