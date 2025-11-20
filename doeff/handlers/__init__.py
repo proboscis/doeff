@@ -104,6 +104,11 @@ class ReaderEffectHandler:
         from doeff.types import Program as ProgramType
 
         key = effect.key
+        if key == "__interpreter__":
+            # Allow programs to access the active interpreter instance for bridging
+            # into non-doeff callbacks (e.g., external frameworks).
+            return engine
+
         if key in ctx.env:
             value = ctx.env[key]
             if value is self._RESOLUTION_IN_PROGRESS:
