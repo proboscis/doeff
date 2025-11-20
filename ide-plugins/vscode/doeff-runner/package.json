@@ -13,15 +13,20 @@
   ],
   "activationEvents": [
     "onLanguage:python",
-    "onCommand:doeff-runner.run",
+    "onCommand:doeff-runner.runDefault",
+    "onCommand:doeff-runner.runOptions",
     "onCommand:doeff-runner.runConfig"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "doeff-runner.run",
-        "title": "Run doeff Program"
+        "command": "doeff-runner.runDefault",
+        "title": "Run doeff Program (default)"
+      },
+      {
+        "command": "doeff-runner.runOptions",
+        "title": "Run doeff Program (select options)"
       },
       {
         "command": "doeff-runner.runConfig",

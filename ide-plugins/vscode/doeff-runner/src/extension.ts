@@ -65,6 +65,8 @@ interface CacheEntry<T> {
   data: T;
 }
 
+type RunMode = 'default' | 'options';
+
 const entryCache = new Map<string, CacheEntry<IndexEntry[]>>();
 
 class ProgramDecorationManager implements vscode.Disposable {
@@ -102,14 +104,24 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   public readonly onDidChangeCodeLenses = this.emitter.event;
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
-    return extractProgramDeclarations(document).map(
-      (decl) =>
+    const lenses: vscode.CodeLens[] = [];
+    for (const decl of extractProgramDeclarations(document)) {
+      lenses.push(
         new vscode.CodeLens(decl.range, {
-          title: 'Run doeff Program',
-          command: 'doeff-runner.run',
+          title: 'Run',
+          command: 'doeff-runner.runDefault',
           arguments: [document.uri, decl.range.start.line]
         })
-    );
+      );
+      lenses.push(
+        new vscode.CodeLens(decl.range, {
+          title: 'Run with options',
+          command: 'doeff-runner.runOptions',
+          arguments: [document.uri, decl.range.start.line]
+        })
+      );
+    }
+    return lenses;
   }
 
   refresh() {
@@ -135,9 +147,26 @@ export function activate(context: vscode.ExtensionContext) {
       codeLensProvider
     ),
     vscode.commands.registerCommand(
-      'doeff-runner.run',
+      'doeff-runner.runDefault',
       (resource?: vscode.Uri | string, lineNumber?: number) =>
-        runProgram(resource, lineNumber, decorationManager, codeLensProvider)
+        runProgram(
+          resource,
+          lineNumber,
+          'default',
+          decorationManager,
+          codeLensProvider
+        )
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.runOptions',
+      (resource?: vscode.Uri | string, lineNumber?: number) =>
+        runProgram(
+          resource,
+          lineNumber,
+          'options',
+          decorationManager,
+          codeLensProvider
+        )
     ),
     vscode.commands.registerCommand(
       'doeff-runner.runConfig',
@@ -165,6 +194,7 @@ export function deactivate() {
 async function runProgram(
   resource: vscode.Uri | string | undefined,
   lineNumber: number | undefined,
+  mode: RunMode,
   decorationManager: ProgramDecorationManager,
   codeLensProvider: ProgramCodeLensProvider
 ) {
@@ -197,11 +227,36 @@ async function runProgram(
       return;
     }
 
-    const selection = await buildSelection(document, declaration, workspaceFolder);
-    if (!selection) {
+    const indexerPath = await locateIndexer();
+    const programEntry = await findProgramEntry(
+      indexerPath,
+      workspaceFolder.uri.fsPath,
+      document.uri.fsPath,
+      declaration.name
+    );
+    if (!programEntry) {
+      vscode.window.showErrorMessage(
+        `doeff-indexer could not find symbol '${declaration.name}' in this file.`
+      );
       return;
     }
-    await runSelection(selection, workspaceFolder);
+    const programPath = programEntry.qualifiedName || declaration.name;
+
+    if (mode === 'default') {
+      await runDefault(programPath, workspaceFolder);
+    } else {
+      const selection = await buildSelection(
+        document,
+        declaration,
+        workspaceFolder,
+        programPath
+      );
+      if (!selection) {
+        return;
+      }
+      await runSelection(selection, workspaceFolder);
+    }
+
     decorationManager.update(vscode.window.activeTextEditor ?? undefined);
     codeLensProvider.refresh();
   } catch (error) {
@@ -210,6 +265,35 @@ async function runProgram(
     output.appendLine(`[error] ${message}`);
     vscode.window.showErrorMessage(`doeff runner failed: ${message}`);
   }
+}
+
+async function runDefault(
+  programPath: string,
+  workspaceFolder?: vscode.WorkspaceFolder
+) {
+  const folder =
+    workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+  const args = ['run', '--program', programPath];
+
+  const debugConfig: vscode.DebugConfiguration = {
+    type: 'python',
+    request: 'launch',
+    name: `doeff: ${programPath}`,
+    module: 'doeff',
+    args,
+    cwd: folder?.uri.fsPath,
+    console: 'integratedTerminal',
+    justMyCode: false
+  };
+
+  if (folder) {
+    persistLaunchConfig(debugConfig, folder);
+  }
+
+  const commandDisplay = `python -m doeff ${args.join(' ')}`;
+  vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
+  output.appendLine(`[info] Command: ${commandDisplay}`);
+  await vscode.debug.startDebugging(folder, debugConfig);
 }
 
 async function runSelection(
@@ -300,24 +384,12 @@ function persistLaunchConfig(
 async function buildSelection(
   document: vscode.TextDocument,
   declaration: ProgramDeclaration,
-  workspaceFolder: vscode.WorkspaceFolder
+  workspaceFolder: vscode.WorkspaceFolder,
+  programPath: string
 ): Promise<RunSelection | undefined> {
   const indexerPath = await locateIndexer();
   const rootPath = workspaceFolder.uri.fsPath;
 
-  const programEntry = await findProgramEntry(
-    indexerPath,
-    rootPath,
-    document.uri.fsPath,
-    declaration.name
-  );
-  if (!programEntry) {
-    vscode.window.showErrorMessage(
-      `doeff-indexer could not find symbol '${declaration.name}' in this file.`
-    );
-    return;
-  }
-  const programPath = programEntry.qualifiedName || declaration.name;
   const programType = declaration.typeArg;
 
   const interpreters = await fetchEntries(
