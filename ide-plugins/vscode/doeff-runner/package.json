@@ -1,0 +1,51 @@
+{
+  "name": "doeff-runner",
+  "displayName": "doeff runner",
+  "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
+  "version": "0.1.0",
+  "publisher": "Proboscis",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onCommand:doeff-runner.run",
+    "onCommand:doeff-runner.runConfig"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "doeff-runner.run",
+        "title": "Run doeff Program"
+      },
+      {
+        "command": "doeff-runner.runConfig",
+        "title": "Run doeff Selection"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.7",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.90.0",
+    "@typescript-eslint/eslint-plugin": "^7.14.1",
+    "@typescript-eslint/parser": "^7.14.1",
+    "@vscode/test-cli": "^0.0.9",
+    "@vscode/test-electron": "^2.4.0",
+    "eslint": "^8.57.0",
+    "typescript": "^5.4.5"
+  }
+}
