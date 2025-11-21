@@ -16,6 +16,15 @@ Example:
     ...     return count + 1
 """
 
+import os as _os
+import sys as _sys
+
+_PKG_DIR = _os.path.dirname(__file__)
+if _PKG_DIR in _sys.path:
+    # Avoid shadowing stdlib modules (e.g., ``types``) when the package directory
+    # itself is placed on sys.path (as happens with some runpy-based launchers).
+    _sys.path = [path for path in _sys.path if path != _PKG_DIR]
+
 # Core types from modular structure
 from doeff.types import (
     ExecutionContext,

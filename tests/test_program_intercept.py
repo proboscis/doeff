@@ -525,7 +525,7 @@ async def test_intercept_many_layers_single_application():
     @do
     def simple_program() -> EffectGenerator[None]:
         yield Log("hello")
-        return Nont
+        return None
 
     names = [f"layer-{idx}" for idx in range(5)]
     counts: dict[str, list[int]] = {name: [] for name in names}
@@ -547,6 +547,48 @@ async def test_intercept_many_layers_single_application():
     assert result.is_ok
     for name in names:
         assert len(counts[name]) == 1
+
+
+@pytest.mark.asyncio
+async def test_intercept_complex_transform_chain_logs_once_per_effect():
+    """Stacked transforms that return Programs should add exactly one extra log per effect."""
+
+    @do
+    def child(idx: int) -> EffectGenerator[int]:
+        yield Log(f"child-{idx}")
+        return idx
+
+    @do
+    def outer() -> EffectGenerator[list[int]]:
+        values = yield Gather(child(1), child(2))
+        yield Log("after-gather")
+        yield Log(f"values: {values}")
+        return list(values)
+
+    call_counts: dict[str, int] = {}
+
+    def make_transform(tag: str) -> Callable[[Effect], Effect | Program]:
+        call_counts[tag] = 0
+
+        @do
+        def bounce(effect: Effect) -> EffectGenerator[Effect]:
+            call_counts[tag] += 1
+            return effect
+
+        def transform(effect: Effect) -> Effect | Program:
+            return bounce(effect)
+
+        return transform
+
+    program = outer().intercept(make_transform("layer1")).intercept(make_transform("layer2"))
+    interpreter = ProgramInterpreter()
+    result = await interpreter.run_async(program)
+
+    assert result.is_ok
+    assert result.value == [1, 2]
+    log_entries = list(result.context.log)
+    assert len(log_entries) == 4
+    assert call_counts["layer1"] == call_counts["layer2"] == 5
 
 
 @pytest.mark.asyncio

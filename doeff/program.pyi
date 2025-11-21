@@ -16,6 +16,8 @@ __all__ = ["Program", "ProgramProtocol", "KleisliProgramCall"]
 class ProgramBase(Generic[T]):
     def __class_getitem__(cls, item) -> Any: ...
 
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]: ...
+
     @staticmethod
     def pure(value: T) -> Program[T]: ...
 
@@ -97,18 +99,13 @@ class GeneratorProgram(ProgramBase[T]):
     created_at: Any | None
 
     def to_generator(self) -> Generator[Effect | Program, Any, T]: ...
-    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]: ...
 
 
-class _InterceptedProgram(KleisliProgramCall[T]):
-    _base_program: Program[T]
-    _transforms: tuple[Callable[[Effect], Effect | Program], ...]
+class _InterceptedProgram(ProgramBase[T]):
+    base_program: Program[T]
+    transforms: tuple[Callable[[Effect], Effect | Program], ...]
 
-    @property
-    def base_program(self) -> Program[T]: ...
-
-    @property
-    def transforms(self) -> tuple[Callable[[Effect], Effect | Program], ...]: ...
+    def to_generator(self) -> Generator[Effect | Program, Any, T]: ...
 
     @classmethod
     def compose(
@@ -116,6 +113,7 @@ class _InterceptedProgram(KleisliProgramCall[T]):
         program: Program[T],
         transforms: tuple[Callable[[Effect], Effect | Program], ...],
     ) -> Program[T]: ...
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]: ...
 
 
 Program = ProgramBase
