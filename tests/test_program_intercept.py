@@ -44,6 +44,7 @@ from doeff.effects.result import (
 )
 from doeff.effects.state import StateGetEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
+from doeff.program import KleisliProgramCall
 from doeff.types import Effect, EffectBase, RunResult
 
 
@@ -564,10 +565,13 @@ async def test_intercept_program_return_with_auto_unwrap_runs_once():
     def passthrough(program):
         return program
 
-    p_base: Program[str] = base_program()
-    p_wrapped = passthrough(p_base)
+    def identity_interceptor(effect: Effect) -> Effect:
+        return effect
+
+    p_base: KleisliProgramCall[str] = base_program()
+    p_wrapped: KleisliProgramCall = passthrough(p_base)
     p_wrapped = passthrough(p_wrapped)
-    p_intercepted: Program[str] = p_wrapped  # No intercept needed to reproduce double execution
+    p_intercepted: Program[str] = p_wrapped.intercept(identity_interceptor)  # type: ignore[arg-type]
 
     interpreter = ProgramInterpreter()
     result: RunResult = await interpreter.run_async(p_intercepted)
