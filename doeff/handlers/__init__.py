@@ -107,7 +107,7 @@ class ReaderEffectHandler:
         if key == "__interpreter__":
             # Allow programs to access the active interpreter instance for bridging
             # into non-doeff callbacks (e.g., external frameworks).
-            return engine
+            return _InterpreterHandle(engine, ctx)
 
         if key in ctx.env:
             value = ctx.env[key]
@@ -372,6 +372,45 @@ class ThreadEffectHandler:
         parent.log.clear()
         parent.log.extend(child.log)
         parent.graph = child.graph
+
+
+class _InterpreterHandle:
+    """Proxy that reuses the current context when re-running programs via Ask(\"__interpreter__\")."""
+
+    def __init__(self, engine: "ProgramInterpreter", ctx: ExecutionContext) -> None:
+        self.engine = engine
+        self._ctx = ctx
+
+    def run(self, program: Program, context: ExecutionContext | None = None) -> RunResult:
+        ctx = self._clone_context(context)
+        return self.engine.run(program, ctx)
+
+    async def run_async(self, program: Program, context: ExecutionContext | None = None) -> RunResult:
+        ctx = self._clone_context(context)
+        return await self.engine.run_async(program, ctx)
+
+    def _clone_context(self, context: ExecutionContext | None) -> ExecutionContext:
+        if context is not None:
+            return context
+
+        max_entries = getattr(self.engine, "_max_log_entries", None)
+        log_copy = BoundedLog(self._ctx.log, max_entries=max_entries)
+
+        return ExecutionContext(
+            env=dict(self._ctx.env) if self._ctx.env else {},
+            state=dict(self._ctx.state) if self._ctx.state else {},
+            log=log_copy,
+            graph=self._ctx.graph,
+            io_allowed=self._ctx.io_allowed,
+            cache=self._ctx.cache,
+            effect_observations=self._ctx.effect_observations,
+            program_call_stack=list(self._ctx.program_call_stack)
+            if getattr(self._ctx, "program_call_stack", None) is not None
+            else [],
+        )
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.engine, name)
 
 
 class ResultEffectHandler:

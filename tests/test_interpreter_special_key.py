@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from doeff import Ask, Local, ProgramInterpreter, do
+from doeff.effects import Await
 from doeff.types import EffectGenerator
 
 
@@ -22,10 +23,10 @@ async def test_interpreter_ask_returns_engine_and_resolves_nested_ask() -> None:
     result = await interpreter.run_async(outer())
 
     assert result.is_ok
-    engine = result.value
-    assert engine is interpreter
+    proxy = result.value
+    assert proxy.engine is interpreter
 
-    nested_result = await engine.run_async(inner())
+    nested_result = await proxy.run_async(inner())
     assert nested_result.is_ok
     assert nested_result.value == "bar"
 
@@ -44,6 +45,29 @@ async def test_cli_discovered_env_available_via_interpreter_ask() -> None:
     result = await interpreter.run_async(read_env_and_interpreter())
 
     assert result.is_ok
-    engine, payload = result.value
-    assert engine is interpreter
+    proxy, payload = result.value
+    assert proxy.engine is interpreter
     assert payload["value"] == "from-default-env"
+
+
+@pytest.mark.asyncio
+async def test_interpreter_handle_reuses_current_env_in_nested_run() -> None:
+    """Interpreter handle returned from Ask('__interpreter__') should preserve Local env."""
+
+    @do
+    def nested() -> EffectGenerator[str]:
+        return (yield Ask("foo"))
+
+    @do
+    def outer() -> EffectGenerator[str]:
+        proxy = yield Ask("__interpreter__")
+        result = yield Await(proxy.run_async(nested()))
+        assert result.is_ok
+        return result.value
+
+    interpreter = ProgramInterpreter()
+    program = Local({"foo": "bar"}, outer())
+    result = await interpreter.run_async(program)
+
+    assert result.is_ok
+    assert result.value == "bar"
