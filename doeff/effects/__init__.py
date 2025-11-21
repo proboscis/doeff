@@ -32,6 +32,7 @@ from .graph import (
     graph,
 )
 from .graph import capture as capture_graph
+from .intercept import InterceptEffect, intercept_program_effect
 from .io import IO, IOPerformEffect, IOPrintEffect, Print, perform, print_, run
 from .memo import MemoGet, MemoGetEffect, MemoPut, MemoPutEffect, memo_get, memo_put
 from .pure import Pure, PureEffect
@@ -134,6 +135,7 @@ __all__ = [
     "GraphCaptureEffect",
     "GraphSnapshotEffect",
     "GraphStepEffect",
+    "InterceptEffect",
     "IOPerformEffect",
     "IOPrintEffect",
     "Listen",
@@ -186,6 +188,7 @@ __all__ = [
     "capture",
     "capture_graph",
     "catch",
+    "intercept_program_effect",
     "fail",
     "finally_",
     "first_success_effect",

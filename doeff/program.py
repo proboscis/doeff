@@ -305,6 +305,16 @@ class ProgramBase(ABC, Generic[T]):
 
         return self.flat_map(binder)
 
+    def intercept(
+        self, transform: Callable[["Effect"], "Effect | Program"]
+    ) -> "Program[T]":
+        """Apply ``transform`` to all effects yielded by this program."""
+
+        if not callable(transform):
+            raise TypeError("transform must be callable")
+
+        return _InterceptedProgram.compose(self, (transform,))
+
     @staticmethod
     def pure(value: T) -> "Program[T]":
         from doeff.effects.pure import PureEffect
@@ -423,11 +433,6 @@ class GeneratorProgram(ProgramBase[T]):
 
     def to_generator(self) -> Generator[Effect | Program, Any, T]:
         return self.factory()
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> "Program[T]":
-        return _InterceptedProgram.compose(self, (transform,))
 @runtime_checkable
 class ProgramProtocol(Protocol[T]):
     """
@@ -604,209 +609,50 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
 
         return KleisliProgramCall.create_derived(flatmapped_gen, parent=self)
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | ProgramProtocol]
-    ) -> KleisliProgramCall[T]:
-        """Apply transform to all yielded effects."""
-        return _InterceptedProgram.compose(self, (transform,))  # type: ignore
-
 
 
 @dataclass
-class _InterceptedProgram(KleisliProgramCall[T]):
-    """Program wrapper that composes multiple intercept transforms exactly once."""
+class _InterceptedProgram(ProgramBase[T]):
+    """Program wrapper that delegates interception to an effect handler."""
 
-    _base_program: "Program[T]" = None  # type: ignore[assignment]
-    _transforms: tuple[Callable[["Effect"], "Effect | Program"], ...] = ()
+    base_program: "Program[T]"
+    transforms: tuple[Callable[["Effect"], "Effect | Program"], ...]
 
-    def __init__(
-        self,
-        base: "Program[T]",
-        transforms: tuple[Callable[["Effect"], "Effect | Program"], ...],
-    ) -> None:
+    def to_generator(self) -> Generator["Effect | Program", Any, T]:
+        from doeff.effects.intercept import intercept_program_effect
 
-        if isinstance(base, KleisliProgramCall):
-            args = base.args
-            kwargs = base.kwargs
-            function_name = base.function_name
-            created_at = base.created_at
-            strategy = base.auto_unwrap_strategy
-            kleisli_source = base.kleisli_source
-        else:
-            args = ()
-            kwargs = {}
-            function_name = "<intercepted>"
-            created_at = getattr(base, "created_at", None)
-            strategy = None
-            kleisli_source = None
+        def generator() -> Generator["Effect | Program", Any, T]:
+            effect = intercept_program_effect(self.base_program, self.transforms)
+            result = yield effect
+            return result
 
-        def intercepted_generator(*_call_args: Any, **_call_kwargs: Any) -> Generator[
-            "Effect | Program", Any, T
-        ]:
-            return _InterceptedProgram._intercept_generator(base, transforms)
-
-        self.kleisli_source = kleisli_source
-        self.args = args
-        self.kwargs = kwargs
-        self.function_name = function_name
-        self.created_at = created_at
-        self.auto_unwrap_strategy = strategy
-        self.execution_kernel = intercepted_generator
-        self._base_program = base
-        self._transforms = transforms
-
-    @property
-    def base_program(self) -> "Program[T]":
-        return self._base_program  # type: ignore[attr-defined]
-
-    @property
-    def transforms(self) -> tuple[Callable[["Effect"], "Effect | Program"], ...]:
-        return self._transforms  # type: ignore[attr-defined]
+        return generator()
 
     @classmethod
     def compose(
         cls,
-        program: "Program[T]" | KleisliProgramCall[T],
+        program: "Program[T]",
         transforms: tuple[Callable[["Effect"], "Effect | Program"], ...],
     ) -> "Program[T]":
         if not transforms:
-            # If no transforms, return as-is (KleisliProgramCall is already a Program)
-            return program  # type: ignore
+            return program
 
-        # KleisliProgramCall is already a Program, use it as base
-        if isinstance(program, KleisliProgramCall):
-            base_program: "Program[T]" = program  # type: ignore[assignment]
-        elif isinstance(program, cls):
+        if isinstance(program, cls):
             base_program = program.base_program
             combined = program.transforms + transforms
-            return cls(base_program, combined)
         else:
             base_program = program
+            combined = transforms
 
-        return cls(base_program, transforms)
+        return cls(base_program=base_program, transforms=combined)
 
     def intercept(
         self, transform: Callable[["Effect"], "Effect | Program"]
     ) -> "Program[T]":
+        if not callable(transform):
+            raise TypeError("transform must be callable")
         return self.compose(self.base_program, self.transforms + (transform,))
 
-    @staticmethod
-    def _intercept_generator(
-        base: "Program[T]",
-        transforms: tuple[Callable[["Effect"], "Effect | Program"], ...],
-    ) -> Generator["Effect | Program", Any, T]:
-        from doeff.types import EffectBase
-
-        gen = _InterceptedProgram._program_to_generator(base)
-        try:
-            current = next(gen)
-        except StopIteration as exc:
-            return exc.value
-
-        kleisli_transform = _InterceptedProgram._compose_kleisli(transforms)
-
-        while True:
-            if isinstance(current, KleisliProgramCall):
-                current = _InterceptedProgram.compose(current, transforms)
-                try:
-                    current = gen.send((yield current))
-                except StopIteration as exc:
-                    return exc.value
-                continue
-
-            if isinstance(current, EffectBase):
-                effect_program = kleisli_transform(current)
-                final_effect = yield effect_program
-
-                if not isinstance(final_effect, EffectBase):
-                    raise TypeError(
-                        "Intercept transform must resolve to an Effect, got "
-                        f"{type(final_effect).__name__}"
-                    )
-
-                nested_effect = final_effect.intercept(
-                    lambda eff: _InterceptedProgram._compose_kleisli(transforms)(eff)
-                )
-                result = yield nested_effect
-                try:
-                    current = gen.send(result)
-                except StopIteration as exc:
-                    return exc.value
-                continue
-
-            value = yield current
-            try:
-                current = gen.send(value)
-            except StopIteration as exc:
-                return exc.value
-
-    @staticmethod
-    def _program_to_generator(
-        base: "Program[T]",
-    ) -> Generator["Effect | Program", Any, T]:
-        """Return a generator for the provided program instance."""
-
-        if isinstance(base, KleisliProgramCall):
-            return base.to_generator()
-
-        to_gen = getattr(base, "to_generator", None)
-        if callable(to_gen):
-            return to_gen()
-
-        raise TypeError(
-            "Cannot intercept value that does not expose to_generator(): "
-            f"{type(base).__name__}"
-        )
-
-    @staticmethod
-    def _compose_kleisli(
-        transforms: tuple[Callable[["Effect"], "Effect | Program"], ...]
-    ) -> Callable[["EffectBase"], "Program[EffectBase]"]:
-        from doeff.types import EffectBase
-
-        lifted = [_InterceptedProgram._lift_transform(transform) for transform in transforms]
-
-        def combined(effect: EffectBase) -> "Program[EffectBase]":
-            program: "Program[EffectBase]" = Program.pure(effect)
-            for lift in lifted:
-                program = program.flat_map(lift)
-            return program
-
-        return combined
-
-    @staticmethod
-    def _lift_transform(
-        transform: Callable[["Effect"], "Effect | Program"]
-    ) -> Callable[["EffectBase"], "Program[EffectBase]"]:
-        from doeff.types import EffectBase
-
-        def lifted(effect: EffectBase) -> "Program[EffectBase]":
-            result = transform(effect)
-
-            if isinstance(result, EffectBase):
-                return Program.pure(result)
-
-            if isinstance(result, ProgramBase):
-                return result.flat_map(_InterceptedProgram._ensure_effect_program)
-
-            raise TypeError(
-                "Intercept transform must return Effect or Program yielding Effect, "
-                f"got {type(result).__name__}"
-            )
-
-        return lifted
-
-
-    @staticmethod
-    def _ensure_effect_program(value: Any) -> "Program[EffectBase]":
-        from doeff.types import EffectBase
-
-        if isinstance(value, EffectBase):
-            return Program.pure(value)
-        raise TypeError(
-            "Intercept transform must resolve to an Effect, got "
-            f"{type(value).__name__}"
-        )
 
 Program = ProgramBase
 

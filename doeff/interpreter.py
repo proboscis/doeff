@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, TypeVar
+from typing import Any, Callable, Generator, TypeVar
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.effects import (
@@ -27,6 +27,7 @@ from doeff.effects import (
     GraphCaptureEffect,
     GraphSnapshotEffect,
     GraphStepEffect,
+    InterceptEffect,
     IOPerformEffect,
     IOPrintEffect,
     LocalEffect,
@@ -367,6 +368,10 @@ class ProgramInterpreter:
         """Dispatch effect to appropriate handler."""
         self._record_effect_usage(effect, ctx)
 
+        result = await self._try_intercept_effect(effect, ctx)
+        if result is not _NO_HANDLER:
+            return result
+
         # Try each category of effects
         result = await self._try_reader_effects(effect, ctx)
         if result is not _NO_HANDLER:
@@ -385,6 +390,26 @@ class ProgramInterpreter:
             return result
 
         raise ValueError(f"Unknown effect: {effect!r}")
+
+    async def _try_intercept_effect(self, effect: Effect, ctx: ExecutionContext) -> Any:
+        """Handle program interception effects."""
+
+        if _effect_is(effect, InterceptEffect):
+            return await self._handle_intercept_effect(effect, ctx)
+        return _NO_HANDLER
+
+    async def _handle_intercept_effect(
+        self, effect: InterceptEffect, ctx: ExecutionContext
+    ) -> Any:
+        """Run a program through the intercept pipeline."""
+
+        intercept_program = _build_intercept_program(effect.program, effect.transforms)
+        sub_result = await self.run_async(intercept_program, ctx)
+
+        if isinstance(sub_result.result, Err):
+            raise sub_result.result.error
+
+        return sub_result.value
 
     async def _try_reader_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
         """Handle Reader/Dep/Ask effects. Returns _NO_HANDLER if not matched."""
@@ -592,6 +617,144 @@ class ProgramInterpreter:
             raise error_to_raise
 
         return results
+
+
+def _build_intercept_program(
+    program: Program[T],
+    transforms: tuple[Callable[[Effect], Effect | Program], ...],
+) -> Program[T]:
+    """Return a program that applies ``transforms`` to every effect in ``program``."""
+
+    from doeff.program import GeneratorProgram
+
+    return GeneratorProgram(
+        lambda: _intercept_generator(program, transforms)
+    )
+
+
+def _intercept_generator(
+    base: Program[T],
+    transforms: tuple[Callable[[Effect], Effect | Program], ...],
+) -> Generator[Effect | Program, Any, T]:
+    """Intercept all effects yielded by ``base``."""
+
+    from doeff.program import ProgramBase, _InterceptedProgram
+    from doeff.types import EffectBase
+
+    gen = _program_to_generator(base)
+    try:
+        current = next(gen)
+    except StopIteration as exc:
+        return exc.value
+
+    transform_chain = _compose_intercept_transforms(transforms)
+
+    while True:
+        if isinstance(current, EffectBase):
+            effect_program = transform_chain(current)
+            final_effect = yield effect_program
+
+            if not isinstance(final_effect, EffectBase):
+                raise TypeError(
+                    "Intercept transform must resolve to an Effect, "
+                    f"got {type(final_effect).__name__}"
+                )
+
+            nested_effect = final_effect.intercept(
+                lambda eff: transform_chain(eff)
+            )
+            result = yield nested_effect
+            try:
+                current = gen.send(result)
+            except StopIteration as exc:
+                return exc.value
+            continue
+
+        if isinstance(current, ProgramBase):
+            wrapped = _InterceptedProgram.compose(current, transforms)
+            try:
+                current = gen.send((yield wrapped))
+            except StopIteration as exc:
+                return exc.value
+            continue
+
+        value = yield current
+        try:
+            current = gen.send(value)
+        except StopIteration as exc:
+            return exc.value
+
+
+def _compose_intercept_transforms(
+    transforms: tuple[Callable[[Effect], Effect | Program], ...]
+) -> Callable[[Effect], Program]:
+    from doeff.program import Program
+    from doeff.types import EffectBase
+
+    lifted = [_lift_intercept_transform(transform) for transform in transforms]
+
+    def combined(effect: EffectBase) -> Program[EffectBase]:
+        program: Program[EffectBase] = Program.pure(effect)
+        for lift in lifted:
+            program = program.flat_map(lift)
+        return program
+
+    return combined
+
+
+def _lift_intercept_transform(
+    transform: Callable[[Effect], Effect | Program]
+) -> Callable[[Effect], Program]:
+    from doeff.program import Program, ProgramBase
+    from doeff.types import EffectBase
+
+    def lifted(effect: EffectBase) -> Program:
+        result = transform(effect)
+
+        if isinstance(result, EffectBase):
+            return Program.pure(result)
+
+        if isinstance(result, ProgramBase):
+            return result.flat_map(_ensure_effect_program)
+
+        raise TypeError(
+            "Intercept transform must return Effect or Program yielding Effect, "
+            f"got {type(result).__name__}"
+        )
+
+    return lifted
+
+
+def _ensure_effect_program(value: Any) -> Program:
+    from doeff.program import Program
+    from doeff.types import EffectBase
+
+    if isinstance(value, EffectBase):
+        return Program.pure(value)
+    raise TypeError(
+        "Intercept transform must resolve to an Effect, "
+        f"got {type(value).__name__}"
+    )
+
+
+def _program_to_generator(
+    base: Program[T],
+) -> Generator[Effect | Program, Any, T]:
+    """Return a generator for the provided program instance."""
+
+    from doeff.program import KleisliProgramCall
+
+    if isinstance(base, KleisliProgramCall):
+        return base.to_generator()
+
+    to_gen = getattr(base, "to_generator", None)
+    if callable(to_gen):
+        return to_gen()
+
+    raise TypeError(
+        "Cannot intercept value that does not expose to_generator(): "
+        f"{type(base).__name__}"
+    )
 
 
 __all__ = ["ProgramInterpreter", "force_eval"]
