@@ -44,7 +44,7 @@ from doeff.effects.result import (
 )
 from doeff.effects.state import StateGetEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-from doeff.types import Effect, EffectBase
+from doeff.types import Effect, EffectBase, RunResult
 
 
 @dataclass(frozen=True)
@@ -524,7 +524,7 @@ async def test_intercept_many_layers_single_application():
     @do
     def simple_program() -> EffectGenerator[None]:
         yield Log("hello")
-        return None
+        return Nont
 
     names = [f"layer-{idx}" for idx in range(5)]
     counts: dict[str, list[int]] = {name: [] for name in names}
@@ -546,3 +546,33 @@ async def test_intercept_many_layers_single_application():
     assert result.is_ok
     for name in names:
         assert len(counts[name]) == 1
+
+
+@pytest.mark.asyncio
+async def test_intercept_program_return_with_auto_unwrap_runs_once():
+    """Intercept transforms that return Programs should not cause double execution after auto-unwrapping."""
+
+    run_order: list[str] = []
+
+    @do
+    def base_program() -> EffectGenerator[str]:
+        run_order.append("base-start")
+        yield Log("base-log")
+        return "ok"
+
+    @do
+    def passthrough(program):
+        return program
+
+    p_base: Program[str] = base_program()
+    p_wrapped = passthrough(p_base)
+    p_wrapped = passthrough(p_wrapped)
+    p_intercepted: Program[str] = p_wrapped  # No intercept needed to reproduce double execution
+
+    interpreter = ProgramInterpreter()
+    result: RunResult = await interpreter.run_async(p_intercepted)
+
+    assert result.is_ok
+    assert result.value == "ok"
+    assert run_order == ["base-start"] # we are failing here, as run_order is now ['base-start', 'base-start','base-start']
+    assert result.log.count("base-log") == 1
