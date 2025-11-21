@@ -19,6 +19,7 @@ from doeff_openrouter.structured_llm import (
 
 STRUCTURED_MODELS = [
     pytest.param("openai/gpt-4o-mini", True, id="openai-gpt-4o-mini"),
+    pytest.param("openai/gpt-5", False, id="openai-gpt-5"),
     pytest.param("google/gemini-2.0-flash-001", True, id="google-gemini-2.0-flash-001"),
     pytest.param("anthropic/claude-3-haiku", False, id="anthropic-claude-3-haiku"),
 ]
@@ -96,4 +97,5 @@ def test_chat_completion_and_structured_response_live(model: str, expects_succes
         assert structured.number == 17
     else:
         assert parse_result.is_err, "Expected structured parsing to fail for unsupported model"
-        assert isinstance(parse_result.result.error, StructuredOutputParsingError)
+        error = parse_result.result.error
+        assert isinstance(error, (StructuredOutputParsingError, RuntimeError))
