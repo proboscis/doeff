@@ -3,7 +3,7 @@
 __version__ = "0.1.0"
 
 from .client import GeminiClient, get_gemini_client, track_api_call
-from .costs import calculate_cost
+from .costs import calculate_cost, gemini_cost_calculator__default
 from .structured_llm import (
     build_contents,
     build_generation_config,
@@ -13,12 +13,21 @@ from .structured_llm import (
     structured_llm__gemini,
     edit_image__gemini,
 )
-from .types import APICallMetadata, CostInfo, TokenUsage, GeminiImageEditResult
+from .types import (
+    APICallMetadata,
+    CostInfo,
+    GeminiCallResult,
+    GeminiCostEstimate,
+    TokenUsage,
+    GeminiImageEditResult,
+)
 
 __all__ = [
     "APICallMetadata",
     "CostInfo",
     "GeminiClient",
+    "GeminiCallResult",
+    "GeminiCostEstimate",
     "TokenUsage",
     "GeminiImageEditResult",
     "__version__",
@@ -32,4 +41,5 @@ __all__ = [
     "edit_image__gemini",
     "track_api_call",
     "calculate_cost",
+    "gemini_cost_calculator__default",
 ]

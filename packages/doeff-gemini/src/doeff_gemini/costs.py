@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .types import CostInfo
+from doeff import Fail, Log, do
+
+from .types import CostInfo, GeminiCallResult, GeminiCostEstimate
 
 
 @dataclass(frozen=True)
@@ -24,6 +26,13 @@ _MODEL_PRICING: dict[str, ModelPricing] = {
     "gemini-2.0-flash": ModelPricing(text_input=1.25, text_output=10.0, image_input=0.0, image_output=0.0),
     "gemini-1.5-flash": ModelPricing(text_input=1.25, text_output=10.0, image_input=0.0, image_output=0.0),
     "gemini-1.5-pro": ModelPricing(text_input=12.50, text_output=150.0, image_input=0.0, image_output=0.0),
+    # Gemini 3 Pro Image (Nano Banana Pro) pricing
+    "gemini-3-pro-image-preview": ModelPricing(
+        text_input=2.00,
+        text_output=12.00,
+        image_input=2.00,
+        image_output=120.00,
+    ),
 }
 
 
@@ -65,4 +74,23 @@ def calculate_cost(model: str, usage: dict[str, int]) -> CostInfo:
     )
 
 
-__all__ = ["calculate_cost", "ModelPricing"]
+@do
+def gemini_cost_calculator__default(
+    call_result: GeminiCallResult,
+) -> GeminiCostEstimate:
+    """Default Kleisli cost calculator backed by the built-in pricing table."""
+
+    usage = call_result.payload.get("usage") if isinstance(call_result.payload, dict) else None
+    if not usage:
+        yield Log("Gemini cost calculation failed: usage metadata missing")
+        yield Fail(ValueError("Gemini usage metadata missing for cost calculation"))
+
+    cost_info = calculate_cost(call_result.model_name, usage)
+    return GeminiCostEstimate(cost_info=cost_info, raw_usage=usage)
+
+
+__all__ = [
+    "calculate_cost",
+    "ModelPricing",
+    "gemini_cost_calculator__default",
+]
