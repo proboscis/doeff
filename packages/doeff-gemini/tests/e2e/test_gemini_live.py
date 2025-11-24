@@ -63,6 +63,8 @@ async def test_edit_image__nanobanana_pro_live() -> None:
             images=[base_image],
             temperature=0.1,
             max_retries=1,
+            aspect_ratio="16:9",
+            image_size="2K",
         )
         return result
 
