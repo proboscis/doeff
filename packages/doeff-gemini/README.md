@@ -46,3 +46,25 @@ When no API key is supplied the integration automatically falls back to
 Application Default Credentials, so running
 `gcloud auth application-default login` once on the machine is sufficient for
 local development.
+
+## Nano Banana Pro (Gemini 3 Pro Image)
+
+Use the official model ID `gemini-3-pro-image-preview` for Nano Banana Pro. Example:
+
+```python
+result = run_with_env(
+    edit_image__gemini(
+        prompt="Add a small yellow banana icon in the center",
+        model="gemini-3-pro-image-preview",
+        images=[...],
+    ),
+    env={"gemini_project": "your-project-id"},
+)
+```
+
+## Cost calculation hook
+
+Cost tracking calls a Kleisli hook if provided via `Ask("gemini_cost_calculator")`,
+falling back to the built-in `gemini_cost_calculator__default` (which uses the
+pricing table in `costs.py`). See `docs/gemini_cost_hook.md` for the hook
+signature and how to override pricing.

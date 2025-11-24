@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from doeff import Result
+
 
 @dataclass(frozen=True)
 class GeminiImageEditResult:
@@ -131,4 +133,28 @@ class APICallMetadata:
         return metadata
 
 
-__all__ = ["APICallMetadata", "TokenUsage", "CostInfo", "GeminiImageEditResult"]
+@dataclass(frozen=True)
+class GeminiCallResult:
+    """Context passed to cost calculators for a Gemini API call."""
+
+    model_name: str
+    payload: dict[str, Any]
+    result: Result[Any]
+
+
+@dataclass(frozen=True)
+class GeminiCostEstimate:
+    """Cost calculation result produced by a Gemini cost calculator."""
+
+    cost_info: CostInfo
+    raw_usage: dict[str, Any] | None = None
+
+
+__all__ = [
+    "APICallMetadata",
+    "TokenUsage",
+    "CostInfo",
+    "GeminiImageEditResult",
+    "GeminiCallResult",
+    "GeminiCostEstimate",
+]

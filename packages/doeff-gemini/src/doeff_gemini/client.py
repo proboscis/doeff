@@ -14,16 +14,19 @@ from doeff import (
     AtomicUpdate,
     Catch,
     EffectGenerator,
+    Err,
     Fail,
     Get,
     Log,
+    Ok,
     Put,
     Step,
     do,
+    slog,
 )
 
-from .costs import calculate_cost
-from .types import APICallMetadata, CostInfo, TokenUsage
+from .costs import gemini_cost_calculator__default
+from .types import APICallMetadata, CostInfo, GeminiCallResult, GeminiCostEstimate, TokenUsage
 
 
 def _serialize_image_for_logging(image: Any) -> dict[str, Any]:
@@ -399,14 +402,90 @@ def track_api_call(
     token_usage = _extract_usage(response) if response and not error else None
     request_id = _extract_request_id(response) if response else None
 
+    @do
+    def _invoke_cost_calculator(
+        calculator, call_result: GeminiCallResult
+    ) -> EffectGenerator[GeminiCostEstimate]:
+        if calculator is None:
+            yield Fail(ValueError("gemini_cost_calculator is missing"))
+
+        if not callable(calculator):
+            yield Fail(
+                TypeError(
+                    "gemini_cost_calculator must be a KleisliProgram[GeminiCallResult, GeminiCostEstimate]"
+                )
+            )
+
+        estimate = yield calculator(call_result)
+
+        if estimate is None:
+            yield Fail(ValueError("gemini_cost_calculator returned None"))
+
+        if not isinstance(estimate, GeminiCostEstimate):
+            yield Fail(
+                TypeError(
+                    "gemini_cost_calculator must return GeminiCostEstimate"
+                )
+            )
+
+        return estimate
+
+    def _build_cost_input() -> GeminiCallResult:
+        usage_for_cost = token_usage.to_cost_usage() if token_usage else None
+        payload = {
+            "operation": operation,
+            "request_summary": request_summary,
+            "request_payload": sanitized_payload,
+            "api_payload": api_payload if api_payload is not None else request_payload,
+            "usage": usage_for_cost,
+            "start_time": start_time,
+            "end_time": end_time,
+            "latency_ms": latency_ms,
+            "prompt_text": prompt_text,
+            "prompt_images": prompt_images,
+        }
+        if token_usage:
+            payload["token_usage"] = token_usage.to_dict()
+        return GeminiCallResult(
+            model_name=model,
+            payload=payload,
+            result=Ok(response) if error is None else Err(error),
+        )
+
     cost_info: CostInfo | None = None
     if token_usage:
-        usage_for_cost = token_usage.to_cost_usage()
-        if usage_for_cost:
-            try:
-                cost_info = calculate_cost(model, usage_for_cost)
-            except ValueError as exc:
-                yield Log(f"Gemini cost calculation unavailable: {exc}")
+        call_result = _build_cost_input()
+
+        calculator = yield Catch(
+            Ask("gemini_cost_calculator"),
+            lambda exc: None if isinstance(exc, KeyError) else Fail(exc),
+        )
+
+        calculator_errors: list[str] = []
+
+        estimate: GeminiCostEstimate | None = None
+        if calculator is not None:
+            estimate = yield Catch(
+                _invoke_cost_calculator(calculator, call_result),
+                lambda exc: (calculator_errors.append(str(exc)) or None),
+            )
+
+        if estimate is None:
+            estimate = yield Catch(
+                _invoke_cost_calculator(gemini_cost_calculator__default, call_result),
+                lambda exc: (calculator_errors.append(str(exc)) or None),
+            )
+
+        if estimate is None:
+            message = (
+                "Failed to calculate Gemini cost. Provide a gemini_cost_calculator "
+                "KleisliProgram[GeminiCallResult, GeminiCostEstimate] via Ask('gemini_cost_calculator'), "
+                "or ensure gemini_cost_calculator__default can handle this model. "
+                f"Errors: {calculator_errors}"
+            )
+            yield Fail(RuntimeError(message))
+        else:
+            cost_info = estimate.cost_info
 
     metadata = APICallMetadata(
         operation=operation,
