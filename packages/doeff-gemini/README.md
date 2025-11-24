@@ -18,6 +18,7 @@ gcloud auth application-default login
 from doeff import do, run_with_env
 from pydantic import BaseModel
 
+from doeff import ExecutionContext, ProgramInterpreter
 from doeff_gemini import structured_llm__gemini
 
 
@@ -38,8 +39,10 @@ def fetch_weather() -> WeatherResponse:
     )
 
 
-result = run_with_env(fetch_weather(), env={"gemini_api_key": "your-api-key"})
-print(result.value)
+engine = ProgramInterpreter()
+ctx = ExecutionContext(env={"gemini_api_key": "your-api-key"})
+run_result = engine.run(fetch_weather(), ctx)
+print(run_result.value)
 ```
 
 When no API key is supplied the integration automatically falls back to
@@ -52,13 +55,15 @@ local development.
 Use the official model ID `gemini-3-pro-image-preview` for Nano Banana Pro. Example:
 
 ```python
-result = run_with_env(
+engine = ProgramInterpreter()
+ctx = ExecutionContext(env={"gemini_api_key": "your-api-key"})
+result = engine.run(
     edit_image__gemini(
         prompt="Add a small yellow banana icon in the center",
         model="gemini-3-pro-image-preview",
         images=[...],
     ),
-    env={"gemini_project": "your-project-id"},
+    ctx,
 )
 ```
 
@@ -68,3 +73,8 @@ Cost tracking calls a Kleisli hook if provided via `Ask("gemini_cost_calculator"
 falling back to the built-in `gemini_cost_calculator__default` (which uses the
 pricing table in `costs.py`). See `docs/gemini_cost_hook.md` for the hook
 signature and how to override pricing.
+
+## Client setup
+
+See `docs/gemini_client_setup.md` for details on how the Gemini client is
+constructed (API key vs ADC) and which environment keys are read.

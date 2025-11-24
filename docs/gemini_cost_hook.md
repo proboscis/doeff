@@ -42,10 +42,9 @@ Included pricing (USD per 1M tokens):
 Bind a Kleisli program in the environment:
 
 ```python
-env = {
-    "gemini_cost_calculator": my_cost_calculator,  # KleisliProgram
-}
-result = run_with_env(my_program(), env=env)
+engine = ProgramInterpreter()
+ctx = ExecutionContext(env={"gemini_cost_calculator": my_cost_calculator})
+result = await engine.run_async(my_program(), ctx)
 ```
 
 Your `my_cost_calculator` receives a `GeminiCallResult` and must return a
