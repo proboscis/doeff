@@ -9,7 +9,7 @@ import random
 import textwrap
 import time
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from pydantic import BaseModel, ValidationError
 
@@ -879,8 +879,8 @@ def edit_image__gemini(
     response_modalities: list[str] | None = None,
     generation_config_overrides: dict[str, Any] | None = None,
     max_retries: int = 3,
-    aspect_ratio: str | None = None,
-    image_size: str | None = None,
+    aspect_ratio: Literal["1:1","2:3","3:2","3:4","4:3","4:5","5:4","9:16","16:9","21:9"] | None = None,
+    image_size: Literal["1K","2K","4K"] | None = None,
 ) -> EffectGenerator[GeminiImageEditResult]:
     """Generate or edit an image using Gemini multimodal models."""
 
