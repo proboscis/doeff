@@ -7,6 +7,12 @@ from typing import Any
 import pytest
 from PIL import Image
 from pydantic import BaseModel
+import sys
+from pathlib import Path
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
 
 from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
 
@@ -36,7 +42,49 @@ def _get_gemini_env_or_skip() -> dict[str, Any]:
         env["gemini_project"] = project
     if credentials:
         env["gemini_credentials"] = credentials
+
     return env
+
+
+@pytest.mark.asyncio
+@pytest.mark.e2e
+async def test_edit_image__nanobanana_pro_live() -> None:
+    """Exercise NanoBanana Pro (Gemini 3 Pro Image) image edit flow."""
+
+    env = _get_gemini_env_or_skip()
+
+    base_image = Image.new("RGB", (256, 256), color=(30, 30, 30))
+
+    @do
+    def flow() -> EffectGenerator[Any]:
+        result = yield edit_image__gemini(
+            prompt="Add a small yellow banana icon in the center of the image",
+            model="gemini-3-pro-image-preview",
+            images=[base_image],
+            temperature=0.1,
+            max_retries=1,
+        )
+        return result
+
+    engine = ProgramInterpreter()
+    context = ExecutionContext(env=env)
+    result = await engine.run_async(flow(), context)
+
+    if not result.is_ok:
+        log_summary = "\n".join(str(entry) for entry in result.context.log)
+        if "permission" in log_summary.lower():
+            pytest.skip("NanoBanana Pro not enabled for current credentials")
+        if "Reauthentication is needed" in log_summary:
+            pytest.skip(
+                "ADC credentials require reauthentication; run 'gcloud auth application-default login'."
+            )
+        if "Internal error encountered" in log_summary:
+            pytest.skip("Gemini API returned 500 Internal error during NanoBanana test")
+        raise AssertionError(log_summary)
+
+    payload = result.value
+    assert payload.image_bytes, "Expected edited image bytes"
+    assert payload.mime_type.startswith("image/"), payload.mime_type
 
 
 @pytest.mark.asyncio
