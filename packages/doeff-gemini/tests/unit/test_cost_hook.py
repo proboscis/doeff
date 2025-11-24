@@ -22,7 +22,9 @@ def _fake_response(usage: dict[str, int]) -> Any:
             text_output_token_count=usage.get("text_output_tokens"),
             image_input_token_count=usage.get("image_input_tokens"),
             image_output_token_count=usage.get("image_output_tokens"),
-            total_token_count=sum(v for v in usage.values() if v is not None),
+            total_token_count=usage.get("total_tokens")
+            if "total_tokens" in usage
+            else sum(v for v in usage.values() if v is not None),
         ),
         response_id="resp-123",
         candidates=[],
@@ -91,6 +93,43 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
     assert total_cost is not None
     # 1M text input tokens at $2 / 1M
     assert total_cost == pytest.approx(2.0)
+
+
+@pytest.mark.asyncio
+async def test_cost_fallback_to_image_tokens_from_total() -> None:
+    """If image output tokens are missing, use remaining total tokens for pricing."""
+
+    usage = {
+        "text_input_tokens": 27,
+        # image_output_tokens intentionally missing
+        "total_tokens": 1418,
+    }
+    response = _fake_response(usage)
+
+    @do
+    def flow():
+        return (
+            yield track_api_call(
+                operation="generate_content",
+                model="gemini-3-pro-image-preview",
+                request_summary={"operation": "test"},
+                request_payload={"text": "banana"},
+                response=response,
+                start_time=time.time(),
+                error=None,
+                api_payload=None,
+            )
+        )
+
+    engine = ProgramInterpreter()
+    ctx = ExecutionContext()
+    result = await engine.run_async(flow(), ctx)
+
+    assert result.is_ok
+    total_cost = ctx.state.get("gemini_total_cost")
+    assert total_cost is not None
+    # Expected: 27 tokens at $2 + 1391 tokens at $120 => ~0.167 USD
+    assert total_cost == pytest.approx(0.167, rel=1e-2)
 
 
 @pytest.mark.asyncio
