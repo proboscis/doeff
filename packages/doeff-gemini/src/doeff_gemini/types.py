@@ -56,6 +56,8 @@ class TokenUsage:
             usage["image_input_tokens"] = self.image_input_tokens
         if self.image_output_tokens is not None:
             usage["image_output_tokens"] = self.image_output_tokens
+        if self.total_tokens is not None:
+            usage["total_tokens"] = self.total_tokens
         return usage or None
 
     def to_dict(self) -> dict[str, int | None]:

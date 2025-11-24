@@ -53,10 +53,21 @@ def calculate_cost(model: str, usage: dict[str, int]) -> CostInfo:
     if pricing is None:
         raise ValueError(f"No pricing information available for model '{model}'")
 
-    text_in_tokens = usage.get("text_input_tokens", 0)
-    text_out_tokens = usage.get("text_output_tokens", 0)
-    image_in_tokens = usage.get("image_input_tokens", 0)
-    image_out_tokens = usage.get("image_output_tokens", 0)
+    text_in_tokens = usage.get("text_input_tokens", 0) or 0
+    text_out_tokens = usage.get("text_output_tokens", 0) or 0
+    image_in_tokens = usage.get("image_input_tokens", 0) or 0
+    image_out_tokens = usage.get("image_output_tokens", 0) or 0
+
+    total_tokens = usage.get("total_tokens")
+    if (
+        pricing.image_output > 0
+        and image_out_tokens == 0
+        and total_tokens is not None
+        and total_tokens > (text_in_tokens + text_out_tokens + image_in_tokens)
+    ):
+        # Image-output token counts are sometimes omitted; treat the remaining
+        # tokens as image output when the model has image-output pricing.
+        image_out_tokens = total_tokens - (text_in_tokens + text_out_tokens + image_in_tokens)
 
     text_in_cost = (text_in_tokens / 1_000_000) * pricing.text_input
     text_out_cost = (text_out_tokens / 1_000_000) * pricing.text_output
