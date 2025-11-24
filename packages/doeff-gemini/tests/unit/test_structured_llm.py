@@ -26,6 +26,7 @@ from doeff_gemini import (
     build_contents,
     build_generation_config,
     edit_image__gemini,
+    image_edit__gemini,
     process_image_edit_response,
     process_structured_response,
     process_unstructured_response,
@@ -91,6 +92,12 @@ def test_gemini_random_backoff_bounds(monkeypatch: pytest.MonkeyPatch) -> None:
     assert recorded_ranges[1] == (1.0, 4.0)
     assert first_delay == 1.0
     assert third_delay == 4.0
+
+
+def test_image_edit_entrypoint_alias() -> None:
+    """Expose image_edit__gemini as an alias to edit_image__gemini."""
+
+    assert image_edit__gemini is edit_image__gemini
 
 @pytest.mark.asyncio
 async def test_build_contents_text_only() -> None:
@@ -171,6 +178,7 @@ async def test_build_generation_config_with_modalities() -> None:
                 response_format=None,
                 response_modalities=["TEXT", "IMAGE"],
                 generation_config_overrides=None,
+                image_config=None,
             )
         )
 
@@ -757,6 +765,8 @@ async def test_edit_image__gemini_success() -> None:
                 images=[Image.open(BytesIO(uploaded))],
                 temperature=0.5,
                 top_k=8,
+                aspect_ratio="16:9",
+                image_size="2K",
             )
         )
 
