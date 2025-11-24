@@ -12,6 +12,7 @@ from .structured_llm import (
     process_unstructured_response,
     structured_llm__gemini,
     edit_image__gemini,
+    image_edit__gemini,
 )
 from .types import (
     APICallMetadata,
@@ -39,6 +40,7 @@ __all__ = [
     "process_image_edit_response",
     "structured_llm__gemini",
     "edit_image__gemini",
+    "image_edit__gemini",
     "track_api_call",
     "calculate_cost",
     "gemini_cost_calculator__default",
