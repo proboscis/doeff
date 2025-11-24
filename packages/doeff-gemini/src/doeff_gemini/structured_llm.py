@@ -237,6 +237,7 @@ def build_generation_config(
     response_format: type[BaseModel] | None,
     response_modalities: list[str] | None = None,
     generation_config_overrides: dict[str, Any] | None,
+    image_config: Any | None = None,
 ) -> EffectGenerator[Any]:
     """Create the :class:`google.genai.types.GenerateContentConfig` payload."""
     from google.genai import types
@@ -263,6 +264,8 @@ def build_generation_config(
         config_data.setdefault("response_mime_type", "application/json")
     if response_modalities:
         config_data["response_modalities"] = response_modalities
+    if image_config is not None:
+        config_data["image_config"] = image_config
     if generation_config_overrides:
         config_data.update({k: v for k, v in generation_config_overrides.items() if v is not None})
 
@@ -876,6 +879,8 @@ def edit_image__gemini(
     response_modalities: list[str] | None = None,
     generation_config_overrides: dict[str, Any] | None = None,
     max_retries: int = 3,
+    aspect_ratio: str | None = None,
+    image_size: str | None = None,
 ) -> EffectGenerator[GeminiImageEditResult]:
     """Generate or edit an image using Gemini multimodal models."""
 
@@ -891,6 +896,14 @@ def edit_image__gemini(
 
     response_modalities = list(response_modalities or ["TEXT", "IMAGE"])
 
+    image_config = None
+    if aspect_ratio or image_size:
+        from google.genai import types
+        image_config = types.ImageConfig(
+            aspect_ratio=aspect_ratio,
+            image_size=image_size,
+        )
+
     generation_config = yield build_generation_config(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
@@ -904,6 +917,7 @@ def edit_image__gemini(
         response_format=None,
         response_modalities=response_modalities,
         generation_config_overrides=generation_config_overrides,
+        image_config=image_config,
     )
 
     generation_config_payload = {
@@ -917,6 +931,8 @@ def edit_image__gemini(
         "tools": tools,
         "tool_config": tool_config,
         "response_modalities": response_modalities,
+        "aspect_ratio": aspect_ratio,
+        "image_size": image_size,
         "generation_config_overrides": generation_config_overrides,
     }
 
@@ -1023,6 +1039,9 @@ def edit_image__gemini(
     return result
 
 
+image_edit__gemini = edit_image__gemini
+
+
 __all__ = [
     "build_contents",
     "build_generation_config",
@@ -1031,4 +1050,5 @@ __all__ = [
     "process_image_edit_response",
     "structured_llm__gemini",
     "edit_image__gemini",
+    "image_edit__gemini",
 ]
