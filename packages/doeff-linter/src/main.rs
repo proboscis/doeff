@@ -5,6 +5,7 @@ use colored::*;
 use doeff_linter::{
     collect_python_files, config, lint_files_parallel, models::Severity, rules,
 };
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 
 #[derive(Parser, Debug)]
@@ -113,7 +114,7 @@ fn main() -> ExitCode {
             print_json(&results);
         }
         _ => {
-            print_text(&results, args.verbose);
+            print_text_grouped(&results);
         }
     }
 
@@ -136,7 +137,35 @@ fn main() -> ExitCode {
     }
 }
 
-fn print_text(results: &[doeff_linter::models::LintResult], verbose: bool) {
+/// Rule descriptions for display
+fn get_rule_description(rule_id: &str) -> &'static str {
+    match rule_id {
+        "DOEFF001" => "Builtin Shadowing",
+        "DOEFF002" => "Mutable Attribute Naming",
+        "DOEFF003" => "Max Mutable Attributes",
+        "DOEFF004" => "No os.environ Access",
+        "DOEFF005" => "No Setter Methods",
+        "DOEFF006" => "No Tuple Returns",
+        "DOEFF007" => "No Mutable Argument Mutations",
+        "DOEFF008" => "No Dataclass Attribute Mutation",
+        "DOEFF009" => "Missing Return Type Annotation",
+        "DOEFF010" => "Test File Placement",
+        _ => "Unknown Rule",
+    }
+}
+
+/// Violation info for grouping
+struct ViolationInfo {
+    file_path: String,
+    line: usize,
+    severity: Severity,
+    message: String,
+}
+
+fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
+    // Group violations by rule ID
+    let mut grouped: BTreeMap<String, Vec<ViolationInfo>> = BTreeMap::new();
+
     for result in results {
         if let Some(error) = &result.error {
             eprintln!("{}: {}", result.file_path.red(), error);
@@ -144,40 +173,84 @@ fn print_text(results: &[doeff_linter::models::LintResult], verbose: bool) {
         }
 
         for v in &result.violations {
-            let severity_str = match v.severity {
-                Severity::Error => "error".red().bold(),
-                Severity::Warning => "warning".yellow().bold(),
-                Severity::Info => "info".blue().bold(),
-            };
+            let line = get_line_from_offset(&result.file_path, v.offset);
+            grouped
+                .entry(v.rule_id.clone())
+                .or_default()
+                .push(ViolationInfo {
+                    file_path: v.file_path.clone(),
+                    line,
+                    severity: v.severity,
+                    message: v.message.clone(),
+                });
+        }
+    }
 
+    // Print grouped output
+    for (rule_id, violations) in &grouped {
+        let description = get_rule_description(rule_id);
+        let count = violations.len();
+        
+        // Determine severity color for header
+        let severity = violations.first().map(|v| v.severity).unwrap_or(Severity::Warning);
+        let header_color = match severity {
+            Severity::Error => "error".red().bold(),
+            Severity::Warning => "warning".yellow().bold(),
+            Severity::Info => "info".blue().bold(),
+        };
+
+        println!(
+            "\n{} {} - {} ({} occurrence{})",
+            header_color,
+            rule_id.cyan().bold(),
+            description.white().bold(),
+            count,
+            if count == 1 { "" } else { "s" }
+        );
+        println!("{}", "─".repeat(60).dimmed());
+
+        for v in violations {
             println!(
-                "{}:{}: {} [{}]: {}",
-                v.file_path,
-                get_line_from_offset(&result.file_path, v.offset),
-                severity_str,
-                v.rule_id.cyan(),
-                v.message
+                "  {}:{}",
+                v.file_path.dimmed(),
+                v.line.to_string().dimmed()
             );
         }
     }
 }
 
 fn print_json(results: &[doeff_linter::models::LintResult]) {
-    let mut violations = Vec::new();
+    // Group by rule for JSON output too
+    let mut grouped: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
 
     for result in results {
         for v in &result.violations {
-            violations.push(serde_json::json!({
-                "file": v.file_path,
-                "line": get_line_from_offset(&result.file_path, v.offset),
-                "rule": v.rule_id,
-                "severity": format!("{}", v.severity),
-                "message": v.message,
-            }));
+            let line = get_line_from_offset(&result.file_path, v.offset);
+            grouped
+                .entry(v.rule_id.clone())
+                .or_default()
+                .push(serde_json::json!({
+                    "file": v.file_path,
+                    "line": line,
+                    "severity": format!("{}", v.severity),
+                    "message": v.message,
+                }));
         }
     }
 
-    println!("{}", serde_json::to_string_pretty(&violations).unwrap_or_default());
+    let output: Vec<serde_json::Value> = grouped
+        .into_iter()
+        .map(|(rule_id, violations)| {
+            serde_json::json!({
+                "rule": rule_id,
+                "description": get_rule_description(&rule_id),
+                "count": violations.len(),
+                "violations": violations,
+            })
+        })
+        .collect();
+
+    println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
 }
 
 fn get_line_from_offset(file_path: &str, offset: usize) -> usize {
@@ -187,6 +260,3 @@ fn get_line_from_offset(file_path: &str, offset: usize) -> usize {
         1
     }
 }
-
-
-
