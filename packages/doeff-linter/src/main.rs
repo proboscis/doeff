@@ -137,20 +137,70 @@ fn main() -> ExitCode {
     }
 }
 
-/// Rule descriptions for display
-fn get_rule_description(rule_id: &str) -> &'static str {
+/// Rule info with description and fix suggestion
+struct RuleInfo {
+    name: &'static str,
+    description: &'static str,
+    fix: &'static str,
+}
+
+fn get_rule_info(rule_id: &str) -> RuleInfo {
     match rule_id {
-        "DOEFF001" => "Builtin Shadowing",
-        "DOEFF002" => "Mutable Attribute Naming",
-        "DOEFF003" => "Max Mutable Attributes",
-        "DOEFF004" => "No os.environ Access",
-        "DOEFF005" => "No Setter Methods",
-        "DOEFF006" => "No Tuple Returns",
-        "DOEFF007" => "No Mutable Argument Mutations",
-        "DOEFF008" => "No Dataclass Attribute Mutation",
-        "DOEFF009" => "Missing Return Type Annotation",
-        "DOEFF010" => "Test File Placement",
-        _ => "Unknown Rule",
+        "DOEFF001" => RuleInfo {
+            name: "Builtin Shadowing",
+            description: "A function parameter or variable shadows a Python builtin (e.g., `list`, `dict`, `id`).",
+            fix: "Rename the variable to avoid shadowing: `items` instead of `list`, `mapping` instead of `dict`.",
+        },
+        "DOEFF002" => RuleInfo {
+            name: "Mutable Attribute Naming",
+            description: "A mutable class attribute (list, dict, set) doesn't follow the `_mut_` naming convention.",
+            fix: "Prefix mutable attributes with `_mut_`: `self._mut_items = []` instead of `self.items = []`.",
+        },
+        "DOEFF003" => RuleInfo {
+            name: "Max Mutable Attributes",
+            description: "A class has too many mutable attributes, indicating potential design issues.",
+            fix: "Refactor the class to reduce mutable state, or split into smaller classes.",
+        },
+        "DOEFF004" => RuleInfo {
+            name: "No os.environ Access",
+            description: "Direct access to `os.environ` breaks dependency injection principles.",
+            fix: "Inject configuration as function parameters or use a config dataclass instead.",
+        },
+        "DOEFF005" => RuleInfo {
+            name: "No Setter Methods",
+            description: "Setter methods (set_*, @property.setter) violate immutability principles.",
+            fix: "Use immutable patterns: return new instances with modified values instead of mutating.",
+        },
+        "DOEFF006" => RuleInfo {
+            name: "No Tuple Returns",
+            description: "Returning raw tuples reduces code readability and type safety.",
+            fix: "Use a dataclass or NamedTuple: `@dataclass class Result: value: int; error: str`.",
+        },
+        "DOEFF007" => RuleInfo {
+            name: "No Mutable Argument Mutations",
+            description: "Mutating function arguments (list.append, dict.update) causes side effects.",
+            fix: "Create a copy first: `items = items.copy(); items.append(x)` or return new collections.",
+        },
+        "DOEFF008" => RuleInfo {
+            name: "No Dataclass Attribute Mutation",
+            description: "Mutating dataclass attributes after creation breaks immutability.",
+            fix: "Use `frozen=True` dataclasses and `dataclasses.replace()` to create modified copies.",
+        },
+        "DOEFF009" => RuleInfo {
+            name: "Missing Return Type Annotation",
+            description: "Functions without return type annotations reduce code clarity and type safety.",
+            fix: "Add return type: `def foo() -> int:` or `def bar() -> None:` for no return value.",
+        },
+        "DOEFF010" => RuleInfo {
+            name: "Test File Placement",
+            description: "Test files should be in a `tests/` directory, not mixed with source code.",
+            fix: "Move test files to a dedicated `tests/` directory at the project root.",
+        },
+        _ => RuleInfo {
+            name: "Unknown Rule",
+            description: "Unknown rule violation.",
+            fix: "Check the documentation for more information.",
+        },
     }
 }
 
@@ -160,6 +210,20 @@ struct ViolationInfo {
     line: usize,
     severity: Severity,
     message: String,
+    source_line: String,
+}
+
+/// Read a specific line from a file
+fn read_source_line(file_path: &str, line_num: usize) -> String {
+    if let Ok(content) = std::fs::read_to_string(file_path) {
+        content
+            .lines()
+            .nth(line_num.saturating_sub(1))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    } else {
+        String::new()
+    }
 }
 
 fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
@@ -174,6 +238,7 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
 
         for v in &result.violations {
             let line = get_line_from_offset(&result.file_path, v.offset);
+            let source_line = read_source_line(&v.file_path, line);
             grouped
                 .entry(v.rule_id.clone())
                 .or_default()
@@ -182,13 +247,14 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
                     line,
                     severity: v.severity,
                     message: v.message.clone(),
+                    source_line,
                 });
         }
     }
 
     // Print grouped output
     for (rule_id, violations) in &grouped {
-        let description = get_rule_description(rule_id);
+        let rule_info = get_rule_info(rule_id);
         let count = violations.len();
         
         // Determine severity color for header
@@ -203,18 +269,24 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
             "\n{} {} - {} ({} occurrence{})",
             header_color,
             rule_id.cyan().bold(),
-            description.white().bold(),
+            rule_info.name.white().bold(),
             count,
             if count == 1 { "" } else { "s" }
         );
-        println!("{}", "─".repeat(60).dimmed());
+        println!("{}", "─".repeat(80).dimmed());
+        println!("  {} {}", "What:".bright_white(), rule_info.description);
+        println!("  {}  {}", "Fix:".bright_green(), rule_info.fix);
+        println!();
 
         for v in violations {
             println!(
-                "  {}:{}",
+                "    {}:{}",
                 v.file_path.dimmed(),
-                v.line.to_string().dimmed()
+                v.line.to_string().yellow()
             );
+            if !v.source_line.is_empty() {
+                println!("      {}", v.source_line.bright_white());
+            }
         }
     }
 }
@@ -226,6 +298,7 @@ fn print_json(results: &[doeff_linter::models::LintResult]) {
     for result in results {
         for v in &result.violations {
             let line = get_line_from_offset(&result.file_path, v.offset);
+            let source_line = read_source_line(&v.file_path, line);
             grouped
                 .entry(v.rule_id.clone())
                 .or_default()
@@ -234,6 +307,7 @@ fn print_json(results: &[doeff_linter::models::LintResult]) {
                     "line": line,
                     "severity": format!("{}", v.severity),
                     "message": v.message,
+                    "source": source_line,
                 }));
         }
     }
@@ -241,9 +315,12 @@ fn print_json(results: &[doeff_linter::models::LintResult]) {
     let output: Vec<serde_json::Value> = grouped
         .into_iter()
         .map(|(rule_id, violations)| {
+            let rule_info = get_rule_info(&rule_id);
             serde_json::json!({
                 "rule": rule_id,
-                "description": get_rule_description(&rule_id),
+                "name": rule_info.name,
+                "description": rule_info.description,
+                "fix": rule_info.fix,
                 "count": violations.len(),
                 "violations": violations,
             })
