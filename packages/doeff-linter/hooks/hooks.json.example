@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": "/path/to/doeff-linter --hook"
+      }
+    ]
+  }
+}
+

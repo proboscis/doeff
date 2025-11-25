@@ -6,7 +6,9 @@ use doeff_linter::{
     collect_python_files, config, lint_files_parallel, models::Severity, rules,
 };
 use std::collections::BTreeMap;
-use std::process::ExitCode;
+use std::io::{self, Read};
+use std::path::Path;
+use std::process::{Command, ExitCode};
 
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
@@ -39,11 +41,172 @@ struct Args {
     /// Show verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Run as Cursor stop hook (reads JSON from stdin, outputs hook response)
+    #[arg(long)]
+    hook: bool,
+
+    /// Only lint git-modified files (tracked and untracked)
+    #[arg(long)]
+    modified: bool,
+}
+
+/// Cursor hook input structure
+#[derive(serde::Deserialize, Debug)]
+struct HookInput {
+    #[allow(dead_code)]
+    status: Option<String>,
+    #[allow(dead_code)]
+    loop_count: Option<u32>,
+    workspace_roots: Option<Vec<String>>,
+}
+
+/// Cursor hook output structure
+#[derive(serde::Serialize)]
+struct HookOutput {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    followup_message: Option<String>,
 }
 
 fn main() -> ExitCode {
     let args = Args::parse();
 
+    if args.hook {
+        return run_as_hook(&args);
+    }
+
+    run_normal(&args)
+}
+
+fn run_as_hook(args: &Args) -> ExitCode {
+    // Read JSON from stdin
+    let mut input = String::new();
+    if let Err(e) = io::stdin().read_to_string(&mut input) {
+        eprintln!("Failed to read stdin: {}", e);
+        // Output empty response and exit
+        println!("{}", serde_json::json!({}));
+        return ExitCode::SUCCESS;
+    }
+
+    // Parse hook input
+    let hook_input: HookInput = match serde_json::from_str(&input) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Failed to parse hook input: {}", e);
+            println!("{}", serde_json::json!({}));
+            return ExitCode::SUCCESS;
+        }
+    };
+
+    // Get paths to lint from workspace_roots or use current directory
+    let paths: Vec<String> = hook_input
+        .workspace_roots
+        .unwrap_or_else(|| vec![".".to_string()]);
+
+    // Load config
+    let config = if args.no_config {
+        None
+    } else {
+        config::load_config(None)
+    };
+
+    // Merge CLI args with config
+    let (enabled_rules, exclude_patterns) = config::merge_config(
+        config.as_ref(),
+        &args.enable,
+        &args.disable,
+        &args.exclude,
+    );
+
+    // Get rules
+    let all_rules = rules::get_enabled_rules(enabled_rules.as_deref());
+
+    // Collect files
+    let files = collect_python_files(&paths, &exclude_patterns);
+
+    if files.is_empty() {
+        // No files to lint, output empty response
+        println!("{}", serde_json::json!({}));
+        return ExitCode::SUCCESS;
+    }
+
+    // Lint files
+    let results = lint_files_parallel(&files, &all_rules);
+
+    // Group and count violations
+    let mut grouped: BTreeMap<String, Vec<ViolationSummary>> = BTreeMap::new();
+    let mut error_count = 0;
+
+    for result in &results {
+        for v in &result.violations {
+            if v.severity == Severity::Error {
+                error_count += 1;
+            }
+            let line = get_line_from_offset(&result.file_path, v.offset);
+            let source_line = read_source_line(&v.file_path, line);
+            grouped
+                .entry(v.rule_id.clone())
+                .or_default()
+                .push(ViolationSummary {
+                    file_path: v.file_path.clone(),
+                    line,
+                    source_line,
+                });
+        }
+    }
+
+    // If there are errors, create a followup message
+    let output = if error_count > 0 {
+        let message = build_followup_message(&grouped);
+        HookOutput {
+            followup_message: Some(message),
+        }
+    } else {
+        HookOutput {
+            followup_message: None,
+        }
+    };
+
+    // Output hook response
+    println!("{}", serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string()));
+    ExitCode::SUCCESS
+}
+
+struct ViolationSummary {
+    file_path: String,
+    line: usize,
+    source_line: String,
+}
+
+fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> String {
+    let mut message = String::from("The doeff-linter found code quality issues that need to be fixed:\n\n");
+
+    for (rule_id, violations) in grouped {
+        let rule_info = get_rule_info(rule_id);
+        message.push_str(&format!("## {} - {}\n", rule_id, rule_info.name));
+        message.push_str(&format!("**Problem:** {}\n", rule_info.description));
+        message.push_str(&format!("**How to fix:** {}\n\n", rule_info.fix));
+
+        // Show up to 5 examples per rule
+        let examples: Vec<_> = violations.iter().take(5).collect();
+        for v in &examples {
+            message.push_str(&format!("- `{}:{}`", v.file_path, v.line));
+            if !v.source_line.is_empty() {
+                message.push_str(&format!(" → `{}`", v.source_line));
+            }
+            message.push('\n');
+        }
+        if violations.len() > 5 {
+            message.push_str(&format!("- ... and {} more\n", violations.len() - 5));
+        }
+        message.push('\n');
+    }
+
+    message.push_str("Please fix these issues following the suggestions above.");
+    message
+}
+
+fn run_normal(args: &Args) -> ExitCode {
     // Load config
     let config = if args.no_config {
         None
@@ -79,7 +242,26 @@ fn main() -> ExitCode {
     }
 
     // Collect files
-    let files = collect_python_files(&args.paths, &exclude_patterns);
+    let files = if args.modified {
+        // Get git-modified files
+        let base_path = args.paths.first().map(|s| s.as_str()).unwrap_or(".");
+        let modified_files = get_git_modified_files(base_path);
+        
+        if args.verbose {
+            eprintln!("Git modified files: {:?}", modified_files);
+        }
+        
+        // Filter by exclude patterns and convert to PathBuf
+        modified_files
+            .into_iter()
+            .filter(|f| {
+                !exclude_patterns.iter().any(|pat| f.contains(pat))
+            })
+            .map(std::path::PathBuf::from)
+            .collect()
+    } else {
+        collect_python_files(&args.paths, &exclude_patterns)
+    };
 
     if args.verbose {
         eprintln!("Found {} Python files", files.len());
@@ -209,6 +391,7 @@ struct ViolationInfo {
     file_path: String,
     line: usize,
     severity: Severity,
+    #[allow(dead_code)]
     message: String,
     source_line: String,
 }
@@ -336,4 +519,48 @@ fn get_line_from_offset(file_path: &str, offset: usize) -> usize {
     } else {
         1
     }
+}
+
+/// Get list of git-modified Python files (both tracked and untracked)
+fn get_git_modified_files(base_path: &str) -> Vec<String> {
+    let mut files = Vec::new();
+
+    // Get modified tracked files (staged and unstaged)
+    // git diff --name-only HEAD (shows all changes vs HEAD)
+    // git diff --name-only (shows unstaged changes)
+    // git diff --name-only --cached (shows staged changes)
+    // We use git status --porcelain to get both
+    if let Ok(output) = Command::new("git")
+        .args(["status", "--porcelain", "-uall"])
+        .current_dir(base_path)
+        .output()
+    {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                // Format: XY filename or XY orig -> renamed
+                // X = staged status, Y = unstaged status
+                // ?? = untracked, M = modified, A = added, etc.
+                if line.len() > 3 {
+                    let file_part = &line[3..];
+                    // Handle renamed files (take the new name after "->")
+                    let filename = if let Some(pos) = file_part.find(" -> ") {
+                        &file_part[pos + 4..]
+                    } else {
+                        file_part
+                    };
+                    
+                    // Only include Python files
+                    if filename.ends_with(".py") {
+                        let full_path = Path::new(base_path).join(filename);
+                        if full_path.exists() {
+                            files.push(full_path.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    files
 }
