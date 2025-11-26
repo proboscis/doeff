@@ -25,5 +25,14 @@ api_key = os.environ["API_KEY"]
 # This should NOT trigger - noqa for DOEFF004
 db_url = os.environ["DB_URL"]  # noqa: DOEFF004
 
+# This should NOT trigger - noqa:DOEFF004 (no space after colon)
+cache_url = os.environ["CACHE_URL"]  # noqa:DOEFF004
+
+# This should NOT trigger - lowercase rule ID
+redis_url = os.environ["REDIS_URL"]  # noqa: doeff004
+
+# This should NOT trigger - multiple rules, no spaces
+queue_url = os.environ["QUEUE_URL"]  # noqa:DOEFF004,DOEFF009
+
 
 
