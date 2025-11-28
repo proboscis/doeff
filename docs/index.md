@@ -36,6 +36,7 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 
 14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
 15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
+16. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
 
 ### Specialized Topics
 

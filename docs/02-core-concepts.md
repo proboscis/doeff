@@ -526,7 +526,7 @@ def create_program() -> Program[int]:
     return Program(gen)
 
 # Interpreter
-async def run_program(prog: Program[T]) -> RunResult[T]:
+async def execute(prog: Program[T]) -> RunResult[T]:
     interpreter = ProgramInterpreter()
     return await interpreter.run(prog)
 ```
