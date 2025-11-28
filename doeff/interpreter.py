@@ -88,48 +88,6 @@ logger = logging.getLogger(__name__)
 # Sentinel value to distinguish "no handler found" from "handler returned None"
 _NO_HANDLER = object()
 
-# Default limit for truncating repr strings in debug logs.
-# This prevents terminal freeze when logging large objects.
-DEFAULT_LOG_REPR_LIMIT = 1000
-
-# Environment key to configure the log repr limit via ask effect.
-# Set to None to disable truncation, or an int for custom limit.
-LOG_REPR_LIMIT_KEY = "__log_repr_limit__"
-
-
-def _truncate_repr(obj: object, limit: int | None) -> str:
-    """
-    Return a truncated repr of obj.
-
-    Args:
-        obj: The object to represent.
-        limit: Maximum length of the repr string. If None, no truncation.
-
-    Returns:
-        The repr string, truncated with a suffix if it exceeds limit.
-        The suffix includes a hint about configuring the limit via env.
-    """
-    text = repr(obj)
-    if limit is None or len(text) <= limit:
-        return text
-    # Truncate and add helpful message about configuration
-    truncated = text[: max(0, limit)]
-    return (
-        f"{truncated}... "
-        f"[truncated {len(text) - limit} chars; "
-        f"set env['{LOG_REPR_LIMIT_KEY}'] to adjust]"
-    )
-
-
-def _get_log_repr_limit(ctx: "ExecutionContext") -> int | None:
-    """
-    Get the log repr limit from the execution context.
-
-    Looks up LOG_REPR_LIMIT_KEY in ctx.env. If not set, returns DEFAULT_LOG_REPR_LIMIT.
-    If set to None explicitly, returns None (no truncation).
-    """
-    return ctx.env.get(LOG_REPR_LIMIT_KEY, DEFAULT_LOG_REPR_LIMIT)
-
 
 def force_eval(prog: Program[T]) -> Program[T]:
     """
@@ -332,9 +290,7 @@ class ProgramInterpreter:
 
         try:
             while True:
-                if logger.isEnabledFor(logging.DEBUG):
-                    limit = _get_log_repr_limit(ctx)
-                    logger.debug(f"effect: {_truncate_repr(current, limit)}")
+                logger.debug(f"effect: {current}")
                 from doeff.types import Program as ProgramType
 
                 if isinstance(current, EffectBase):

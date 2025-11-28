@@ -132,11 +132,7 @@ from doeff.effects import (
 )
 
 # Import from new modular structure
-from doeff.interpreter import (
-    ProgramInterpreter,
-    DEFAULT_LOG_REPR_LIMIT,
-    LOG_REPR_LIMIT_KEY,
-)
+from doeff.interpreter import ProgramInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
 from doeff.program import Program
@@ -196,9 +192,6 @@ __all__ = [  # noqa: RUF022
     "ProgramInterpreter",
     "KleisliProgram",
     "EffectCallTree",
-    # Interpreter configuration
-    "DEFAULT_LOG_REPR_LIMIT",
-    "LOG_REPR_LIMIT_KEY",
     # Decorator
     "do",
     # Graph snapshot helpers
