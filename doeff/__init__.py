@@ -32,6 +32,9 @@ from doeff.types import (
     Effect,
     EffectGenerator,
     ListenResult,
+    # Repr truncation configuration
+    DEFAULT_REPR_LIMIT,
+    REPR_LIMIT_KEY,
     # Vendored types
     Ok,
     Err,
@@ -174,6 +177,9 @@ __all__ = [  # noqa: RUF022
     "CacheLifecycle",
     "CachePolicy",
     "CacheStorage",
+    # Repr truncation configuration
+    "DEFAULT_REPR_LIMIT",
+    "REPR_LIMIT_KEY",
     # Vendored types
     "Ok",
     "Err",
