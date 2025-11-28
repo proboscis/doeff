@@ -4,7 +4,7 @@ A high-performance linter for enforcing code quality and immutability patterns i
 
 ## Features
 
-- **10 specialized rules** for code quality and immutability
+- **11 specialized rules** for code quality and immutability
 - **Configurable via pyproject.toml**
 - **noqa comments** for per-line rule suppression
 - **Fast** - written in Rust for maximum performance
@@ -73,6 +73,7 @@ skip_test_functions = true
 | DOEFF008 | No Dataclass Attribute Mutation | Dataclass instances should be immutable |
 | DOEFF009 | Missing Return Type Annotation | Functions should have return type annotations |
 | DOEFF010 | Test File Placement | Test files must be under `tests/` directory |
+| DOEFF011 | No Flag/Mode Arguments | Use callbacks or protocol objects instead of flag/mode arguments |
 
 ## Inline Suppression
 

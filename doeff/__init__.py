@@ -161,6 +161,9 @@ from doeff.cache import (
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
+# Program runner (CLI-equivalent API)
+from doeff.run import run_program, ProgramRunResult
+
 __version__ = "0.1.7"
 
 # Shorthand alias matching lowercase helpers
@@ -288,4 +291,7 @@ __all__ = [  # noqa: RUF022
     "cache_forever",
     "clear_persistent_cache",
     "persistent_cache_path",
+    # Program runner (CLI-equivalent API)
+    "run_program",
+    "ProgramRunResult",
 ]

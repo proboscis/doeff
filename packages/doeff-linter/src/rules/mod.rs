@@ -13,6 +13,7 @@ pub mod doeff007_no_mutable_argument_mutations;
 pub mod doeff008_no_dataclass_attribute_mutation;
 pub mod doeff009_missing_return_type_annotation;
 pub mod doeff010_test_file_placement;
+pub mod doeff011_no_flag_arguments;
 
 use base::LintRule;
 use std::collections::HashMap;
@@ -30,6 +31,7 @@ pub fn get_all_rules() -> Vec<Box<dyn LintRule>> {
         Box::new(doeff008_no_dataclass_attribute_mutation::NoDataclassAttributeMutationRule::new()),
         Box::new(doeff009_missing_return_type_annotation::MissingReturnTypeAnnotationRule::new()),
         Box::new(doeff010_test_file_placement::TestFilePlacementRule::new()),
+        Box::new(doeff011_no_flag_arguments::NoFlagArgumentsRule::new()),
     ]
 }
 
@@ -69,11 +71,12 @@ mod tests {
     #[test]
     fn test_all_rules_loaded() {
         let rules = get_all_rules();
-        assert_eq!(rules.len(), 10);
+        assert_eq!(rules.len(), 11);
 
         let rule_ids: Vec<_> = rules.iter().map(|r| r.rule_id()).collect();
         assert!(rule_ids.contains(&"DOEFF001"));
         assert!(rule_ids.contains(&"DOEFF010"));
+        assert!(rule_ids.contains(&"DOEFF011"));
     }
 
     #[test]

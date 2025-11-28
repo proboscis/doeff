@@ -378,6 +378,11 @@ fn get_rule_info(rule_id: &str) -> RuleInfo {
             description: "Test files should be in a `tests/` directory, not mixed with source code.",
             fix: "Move test files to a dedicated `tests/` directory at the project root.",
         },
+        "DOEFF011" => RuleInfo {
+            name: "No Flag/Mode Arguments",
+            description: "Functions and dataclasses use flag/mode arguments instead of callbacks or protocol objects.",
+            fix: "Accept a callback or protocol object. Example: instead of `def process(data, use_cache: bool)`, use `def process(data, cache: CacheProtocol)` or `def process(data, get_cached: Callable[[Data], Result])`.",
+        },
         _ => RuleInfo {
             name: "Unknown Rule",
             description: "Unknown rule violation.",
