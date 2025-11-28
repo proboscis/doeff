@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import inspect
+import os
+import tempfile
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import FrozenDict, Result
@@ -332,6 +335,44 @@ def cache(
     return decorator
 
 
+# Environment key used by the cache handler to look up the cache path via Ask effect.
+CACHE_PATH_ENV_KEY = "doeff.cache_path"
+
+
+def persistent_cache_path() -> Path:
+    """Return the default path used by the persistent cache handler.
+
+    When running under the interpreter, provide `{CACHE_PATH_ENV_KEY: Path(...)}` in the
+    environment to override this default. The `CacheEffectHandler` will look up this key
+    at runtime.
+    """
+    return Path(tempfile.gettempdir()) / "doeff_cache.sqlite3"
+
+
+def clear_persistent_cache(path: str | os.PathLike[str] | None = None) -> Path:
+    """Clear entries from the default persistent cache and return the file path."""
+    cache_path = Path(path) if path is not None else persistent_cache_path()
+    if cache_path.is_dir():
+        raise IsADirectoryError(f"Cache path {cache_path} is a directory")
+
+    if not cache_path.exists():
+        return cache_path
+
+    import sqlite3
+
+    conn = sqlite3.connect(cache_path, timeout=5)
+    try:
+        conn.execute("DELETE FROM cache_entries")
+        conn.commit()
+    except sqlite3.Error:
+        conn.close()
+        cache_path.unlink(missing_ok=True)
+        return cache_path
+
+    conn.close()
+    return cache_path
+
+
 def cache_key(*key_args: str) -> Callable:
     """
     Create a key function that selects specific arguments for cache key.
@@ -385,6 +426,7 @@ def cache_forever(func: Callable[..., EffectGenerator[T]]) -> Callable[..., Effe
 
 
 __all__ = [
+    "CACHE_PATH_ENV_KEY",
     "CacheComputationError",
     "cache",
     "cache_1hour",
@@ -392,4 +434,6 @@ __all__ = [
     "cache_5min",
     "cache_forever",
     "cache_key",
+    "clear_persistent_cache",
+    "persistent_cache_path",
 ]
