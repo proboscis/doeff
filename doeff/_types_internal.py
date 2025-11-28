@@ -69,6 +69,42 @@ T = TypeVar("T")
 U = TypeVar("U")
 
 # ============================================
+# Repr Truncation Configuration
+# ============================================
+
+# Default limit for truncating repr strings in RunResult.__repr__.
+# This prevents terminal freeze when displaying large objects.
+DEFAULT_REPR_LIMIT = 1000
+
+# Environment key to configure the repr limit via ask effect.
+# Set to None to disable truncation, or an int for custom limit (1000-10000 recommended).
+REPR_LIMIT_KEY = "__repr_limit__"
+
+
+def _truncate_repr(obj: object, limit: int | None) -> str:
+    """
+    Return a truncated repr of obj.
+
+    Args:
+        obj: The object to represent.
+        limit: Maximum length of the repr string. If None, no truncation.
+
+    Returns:
+        The repr string, truncated with a suffix if it exceeds limit.
+        The suffix includes a hint about configuring the limit via env.
+    """
+    text = repr(obj)
+    if limit is None or len(text) <= limit:
+        return text
+    # Truncate and add helpful message about configuration
+    truncated = text[: max(0, limit)]
+    return (
+        f"{truncated}... "
+        f"[truncated {len(text) - limit} chars; "
+        f"set env['{REPR_LIMIT_KEY}'] to adjust]"
+    )
+
+# ============================================
 # Effect Creation Context
 # ============================================
 
@@ -852,9 +888,11 @@ class RunResult(Generic[T]):
         return self.format_error()
 
     def __repr__(self) -> str:
+        limit = self.context.env.get(REPR_LIMIT_KEY, DEFAULT_REPR_LIMIT)
         if self.is_ok:
+            value_repr = _truncate_repr(self.result.value, limit)
             return (
-                f"RunResult(Ok({self.result.value!r}), "
+                f"RunResult(Ok({value_repr}), "
                 f"state={len(self.state)} items, "
                 f"log={len(self.log)} entries)"
             )
