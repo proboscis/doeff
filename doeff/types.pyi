@@ -1,10 +1,10 @@
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from doeff.utils import BoundedLog
 
 __VENDORED_EXPORTS: Any
-T: Any
-U: Any
+T = TypeVar("T")
+U = TypeVar("U")
 
 # Repr truncation configuration
 DEFAULT_REPR_LIMIT: int
@@ -174,7 +174,7 @@ class _ErrorSection:
     def _render_exception_entry(self, idx: int, entry: ExceptionFailureInfo) -> list[str]: ...
     def _render_trace(self, trace: CapturedTraceback, label: str) -> list[str]: ...
 
-class RunResult:
+class RunResult(Generic[T]):
     context: ExecutionContext
     result: Result[T]
     def value(self) -> T: ...

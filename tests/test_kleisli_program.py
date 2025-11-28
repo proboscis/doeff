@@ -458,6 +458,22 @@ async def test_kleisli_fmap():
     assert result.log == []
 
 
+def test_kleisli_program_frozen():
+    """KleisliProgram is a frozen dataclass for immutability."""
+    from dataclasses import FrozenInstanceError
+
+    @do
+    def sample_prog(x: int) -> Generator[Effect | Program, Any, int]:
+        if False:
+            yield
+        return x
+
+    assert isinstance(sample_prog, KleisliProgram)
+
+    with pytest.raises(FrozenInstanceError):
+        sample_prog.func = lambda x: x  # type: ignore[misc]
+
+
 if __name__ == "__main__":
     # Run tests
     pytest.main([__file__, "-v"])

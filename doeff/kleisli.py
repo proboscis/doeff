@@ -7,12 +7,13 @@ unwrapping of Program arguments for natural composition.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import inspect
 import types
+from collections.abc import Callable
+from collections.abc import Callable as TypingCallable
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable as TypingCallable, Generic, ParamSpec, TypeVar, get_type_hints
+from typing import Any, Generic, ParamSpec, TypeVar, get_type_hints
 
 from doeff.program import Program, ProgramBase
 
@@ -21,7 +22,7 @@ T = TypeVar("T")
 U = TypeVar("U")
 
 
-@dataclass
+@dataclass(frozen=True)
 class KleisliProgram(Generic[P, T]):
     """
     Thin wrapper around a callable representing a Kleisli arrow.
@@ -36,23 +37,23 @@ class KleisliProgram(Generic[P, T]):
 
     def __post_init__(self) -> None:
         wrapped = getattr(self.func, "__wrapped__", self.func)
-        self._metadata_source = wrapped
+        object.__setattr__(self, "_metadata_source", wrapped)
 
         signature = _safe_signature(wrapped) or _safe_signature(self.func)
         if signature is not None and not hasattr(self, "__signature__"):
-            self.__signature__ = signature  # type: ignore[attr-defined]
+            object.__setattr__(self, "__signature__", signature)
 
         annotations = getattr(wrapped, "__annotations__", None)
         if annotations is None:
             annotations = getattr(self.func, "__annotations__", None)
         if annotations is not None and not hasattr(self, "__annotations__"):
-            self.__annotations__ = dict(annotations)  # type: ignore[attr-defined]
+            object.__setattr__(self, "__annotations__", dict(annotations))
 
         for attr in ("__name__", "__qualname__", "__doc__", "__module__"):
             if not hasattr(self, attr):
                 value = getattr(wrapped, attr, getattr(self.func, attr, None))
                 if value is not None:
-                    setattr(self, attr, value)
+                    object.__setattr__(self, attr, value)
 
     def __get__(self, instance: Any, owner: type | None = None) -> Any:
         if instance is None:
@@ -73,13 +74,13 @@ class KleisliProgram(Generic[P, T]):
 
     def partial(
         self, /, *args: P.args, **kwargs: P.kwargs
-    ) -> "PartiallyAppliedKleisliProgram[P, T]":
+    ) -> PartiallyAppliedKleisliProgram[P, T]:
         return PartiallyAppliedKleisliProgram(self, args, kwargs)
 
     def and_then_k(
         self,
         binder: TypingCallable[[T], Program[U]],
-    ) -> "KleisliProgram[P, U]":
+    ) -> KleisliProgram[P, U]:
         if not callable(binder):
             raise TypeError("binder must be callable returning a Program")
 
@@ -95,13 +96,13 @@ class KleisliProgram(Generic[P, T]):
     def __rshift__(
         self,
         binder: TypingCallable[[T], Program[U]],
-    ) -> "KleisliProgram[P, U]":
+    ) -> KleisliProgram[P, U]:
         return self.and_then_k(binder)
 
     def fmap(
         self,
         mapper: TypingCallable[[T], U],
-    ) -> "KleisliProgram[P, U]":
+    ) -> KleisliProgram[P, U]:
         if not callable(mapper):
             raise TypeError("mapper must be callable")
 
@@ -143,7 +144,7 @@ class PartiallyAppliedKleisliProgram(KleisliProgram[P, T]):
 
     def partial(
         self, /, *args: Any, **kwargs: Any
-    ) -> "PartiallyAppliedKleisliProgram[P, T]":
+    ) -> PartiallyAppliedKleisliProgram[P, T]:
         merged_args = self._pre_args + args
         merged_kwargs = {**self._pre_kwargs, **kwargs}
         return PartiallyAppliedKleisliProgram(self._base, merged_args, merged_kwargs)
