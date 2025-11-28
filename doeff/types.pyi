@@ -5,6 +5,12 @@ from doeff.utils import BoundedLog
 __VENDORED_EXPORTS: Any
 T: Any
 U: Any
+
+# Repr truncation configuration
+DEFAULT_REPR_LIMIT: int
+REPR_LIMIT_KEY: str
+
+def _truncate_repr(obj: object, limit: int | None) -> str: ...
 _TRACEBACK_ATTR: Any
 EffectFailure: Any
 E: Any
