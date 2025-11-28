@@ -7,10 +7,13 @@ interpreters and environments based on # doeff: markers in the codebase.
 from __future__ import annotations
 
 import importlib
+import logging
 from typing import Any, Protocol
 
 from doeff import Program
 from doeff.cli.profiling import profile
+
+logger = logging.getLogger(__name__)
 
 
 class InterpreterDiscovery(Protocol):
@@ -151,7 +154,16 @@ class IndexerBasedDiscovery:
             module_path = self._extract_module_path(program_path)
 
             with profile("Create indexer", indent=2):
-                indexer = self.indexer_class.for_module(module_path)
+                try:
+                    indexer = self.indexer_class.for_module(module_path)
+                except RuntimeError as e:
+                    logger.warning(
+                        "Failed to create indexer for module %s: %s. "
+                        "Skipping interpreter discovery.",
+                        module_path,
+                        e,
+                    )
+                    return None
 
             # Find all interpreters with default marker
             with profile("Find interpreter symbols", indent=2):
@@ -188,7 +200,16 @@ class IndexerBasedDiscovery:
             module_path = self._extract_module_path(program_path)
 
             with profile("Create indexer", indent=2):
-                indexer = self.indexer_class.for_module(module_path)
+                try:
+                    indexer = self.indexer_class.for_module(module_path)
+                except RuntimeError as e:
+                    logger.warning(
+                        "Failed to create indexer for module %s: %s. "
+                        "Skipping environment discovery.",
+                        module_path,
+                        e,
+                    )
+                    return []
 
             # Get module hierarchy
             hierarchy = self._get_module_hierarchy(module_path)
