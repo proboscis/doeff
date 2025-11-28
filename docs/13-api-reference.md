@@ -944,6 +944,53 @@ async def run(
 
 ---
 
+### run_program(program, *, interpreter=None, envs=None, apply=None, transform=None, report=False, report_verbose=False, quiet=False, load_default_env=True)
+
+Run a Program from Python with the same discovery defaults as `doeff run`.
+
+```python
+from doeff import run_program
+
+result = run_program("pkg.features.login_program", quiet=True, report=True)
+assert result.value == "ok"
+```
+
+**Parameters:**
+
+- **`program`** (`str | Program`) - Program path (enables discovery) or Program instance.
+- **`interpreter`** (`str | ProgramInterpreter | callable | None`) - Override interpreter.
+- **`envs`** (`list[str | Program[dict] | Mapping] | None`) - Environments to merge.
+- **`apply`** (`str | KleisliProgram | callable | None`) - Kleisli applied before run.
+- **`transform`** (`list[str | callable] | None`) - Additional Program transformers.
+- **`report` / `report_verbose`** - Print RunResult report (string-path mode).
+- **`quiet`** - Suppress discovery stderr output.
+- **`load_default_env`** - Load `~/.doeff.py::__default_env__` when running with object inputs.
+
+**Returns:** ProgramRunResult with final value, RunResult, and discovery metadata
+
+**See:** [Python run_program API](16-run-program-api.md)
+
+---
+
+### ProgramRunResult
+
+Result container returned by `run_program()`.
+
+```python
+from doeff import ProgramRunResult
+```
+
+**Fields:**
+
+- **`value`** - Final Program value (None on errors; inspect `run_result`).
+- **`run_result`** - Full RunResult with context/log/graph data.
+- **`interpreter_path`** - Resolved interpreter path or description of callable used.
+- **`env_sources`** - Environment sources applied (`<dict>`, `<Program[dict]>`, or paths).
+- **`applied_kleisli`** - Description of applied Kleisli (if any).
+- **`applied_transforms`** - Descriptions of applied transformers.
+
+---
+
 ## KleisliProgram
 
 Auto-unwrapping Program composition.
