@@ -146,12 +146,15 @@ from doeff.graph_snapshot import (
 
 # Import cache decorator
 from doeff.cache import (
+    CACHE_PATH_ENV_KEY,
     cache,
     cache_key,
     cache_1min,
     cache_5min,
     cache_1hour,
     cache_forever,
+    clear_persistent_cache,
+    persistent_cache_path,
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
@@ -270,10 +273,13 @@ __all__ = [  # noqa: RUF022
     "cache_get",
     "cache_put",
     # Cache decorator
+    "CACHE_PATH_ENV_KEY",
     "cache",
     "cache_key",
     "cache_1min",
     "cache_5min",
     "cache_1hour",
     "cache_forever",
+    "clear_persistent_cache",
+    "persistent_cache_path",
 ]
