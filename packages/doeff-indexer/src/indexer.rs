@@ -156,8 +156,18 @@ fn scan_root(root: &Path) -> Result<Vec<IndexEntry>> {
     {
         let entry = entry?;
         if entry.file_type().is_file() && is_python_file(entry.path()) {
-            let mut file_entries = parse_python_file(entry.path(), root)?;
-            entries.append(&mut file_entries);
+            match parse_python_file(entry.path(), root) {
+                Ok(mut file_entries) => {
+                    entries.append(&mut file_entries);
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Skipping file {}: {}",
+                        entry.path().display(),
+                        e
+                    );
+                }
+            }
         }
     }
     Ok(entries)
