@@ -1,6 +1,7 @@
 """Tests for cache effects and decorator."""
 
 import asyncio
+import sqlite3
 import sys
 import textwrap
 import time
@@ -23,7 +24,15 @@ from doeff import (
     do,
 )
 from doeff._vendor import FrozenDict
-from doeff.cache import CacheComputationError, cache, cache_1min, cache_key
+from doeff.cache import (
+    CACHE_PATH_ENV_KEY,
+    CacheComputationError,
+    cache,
+    cache_1min,
+    cache_key,
+    clear_persistent_cache,
+    persistent_cache_path,
+)
 from doeff.types import EffectFailureError
 from doeff.handlers import HandlerScope
 
@@ -31,11 +40,52 @@ from doeff.handlers import HandlerScope
 
 
 @pytest.fixture
-def temp_cache_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "cache.sqlite3"
-    monkeypatch.setenv("DOEFF_CACHE_PATH", str(db_path))
-    yield db_path
-    monkeypatch.delenv("DOEFF_CACHE_PATH", raising=False)
+def temp_cache_db(tmp_path):
+    """Return a temporary cache database path for test isolation."""
+    return tmp_path / "cache.sqlite3"
+
+
+@pytest.fixture
+def cache_context(temp_cache_db):
+    """Return an ExecutionContext configured with the temp cache path."""
+    return ExecutionContext(env={CACHE_PATH_ENV_KEY: temp_cache_db})
+
+
+def test_persistent_cache_path_returns_default():
+    """persistent_cache_path returns the default temp directory path."""
+    import tempfile
+    from pathlib import Path
+
+    expected = Path(tempfile.gettempdir()) / "doeff_cache.sqlite3"
+    assert persistent_cache_path() == expected
+
+
+@pytest.mark.asyncio
+async def test_clear_persistent_cache(temp_cache_db, cache_context):
+    @do
+    def cache_roundtrip():
+        yield CachePut("clear-key", "value", lifecycle=CacheLifecycle.PERSISTENT)
+        return (yield CacheGet("clear-key"))
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(cache_roundtrip(), cache_context)
+
+    assert result.is_ok
+    assert result.value == "value"
+
+    with sqlite3.connect(temp_cache_db) as conn:
+        count_before = conn.execute("SELECT COUNT(*) FROM cache_entries").fetchone()[0]
+
+    assert count_before == 1
+
+    cleared_path = clear_persistent_cache(temp_cache_db)
+
+    assert cleared_path == temp_cache_db
+
+    with sqlite3.connect(temp_cache_db) as conn:
+        count_after = conn.execute("SELECT COUNT(*) FROM cache_entries").fetchone()[0]
+
+    assert count_after == 0
 
 # Test cache effects directly
 
@@ -129,7 +179,7 @@ async def test_cache_ttl_expiry(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db):
+async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context):
     """Cache entries with persistent lifecycle persist across interpreter instances."""
 
     engine = ProgramInterpreter()
@@ -144,18 +194,20 @@ async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db):
     def fetch():
         return (yield CacheGet(key))
 
-    await engine.run_async(store())
+    await engine.run_async(store(), cache_context)
     assert temp_cache_db.exists()
 
+    # Second engine with same cache path via context
+    second_context = ExecutionContext(env={CACHE_PATH_ENV_KEY: temp_cache_db})
     second_engine = ProgramInterpreter()
-    result = await second_engine.run_async(fetch())
+    result = await second_engine.run_async(fetch(), second_context)
 
     assert result.is_ok
     assert result.value == {"value": 42}
 
 
 @pytest.mark.asyncio
-async def test_cache_explicit_storage_disk(temp_cache_db):
+async def test_cache_explicit_storage_disk(temp_cache_db, cache_context):
     """Explicit disk storage hint should persist values on disk."""
 
     engine = ProgramInterpreter()
@@ -165,7 +217,7 @@ async def test_cache_explicit_storage_disk(temp_cache_db):
         yield CachePut("disk_key", "value", storage=CacheStorage.DISK)
         return (yield CacheGet("disk_key"))
 
-    result = await engine.run_async(store_and_fetch())
+    result = await engine.run_async(store_and_fetch(), cache_context)
 
     assert result.is_ok
     assert result.value == "value"
@@ -197,7 +249,7 @@ async def test_cache_recover_on_miss():
 # Test the @cache decorator
 
 @pytest.mark.asyncio
-async def test_basic_cache_decorator(temp_cache_db):
+async def test_basic_cache_decorator(temp_cache_db, cache_context):
     """Test basic caching with decorator."""
 
     call_count = [0]
@@ -220,7 +272,7 @@ async def test_basic_cache_decorator(temp_cache_db):
         return (result1, result2, result3, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    result = await engine.run_async(test_program(), cache_context)
 
     assert result.is_ok
     assert result.value[0] == 10  # 5 * 2
@@ -302,7 +354,7 @@ async def test_cache_decorator_persistent_lifecycle(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db):
+async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cache_context):
     """Persistent lifecycle hint should keep data across interpreter instances."""
 
     call_count = [0]
@@ -314,15 +366,17 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db):
         return "value"
 
     engine_one = ProgramInterpreter()
-    first = await engine_one.run_async(expensive_value())
+    first = await engine_one.run_async(expensive_value(), cache_context)
 
     assert first.is_ok
     assert first.value == "value"
     assert call_count[0] == 1
     assert temp_cache_db.exists()
 
+    # Second engine with same cache path via context
+    second_context = ExecutionContext(env={CACHE_PATH_ENV_KEY: temp_cache_db})
     engine_two = ProgramInterpreter()
-    second = await engine_two.run_async(expensive_value())
+    second = await engine_two.run_async(expensive_value(), second_context)
 
     assert second.is_ok
     assert second.value == "value"
@@ -332,13 +386,26 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db):
 
 @pytest.mark.asyncio
 async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
-    """Persistent lifecycle cache survives across different Python processes."""
+    """Persistent lifecycle cache survives across different Python processes.
+
+    Cache path is passed via command-line argument and set in context using
+    CACHE_PATH_ENV_KEY.
+    """
 
     script = textwrap.dedent(
         """
         import asyncio
         import sys
-        from doeff import CacheGet, CachePut, CacheLifecycle, ProgramInterpreter, do
+        from pathlib import Path
+        from doeff import (
+            CACHE_PATH_ENV_KEY,
+            CacheGet,
+            CachePut,
+            CacheLifecycle,
+            ExecutionContext,
+            ProgramInterpreter,
+            do,
+        )
 
         CACHE_KEY = ("cross_process", 42)
 
@@ -350,14 +417,15 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
         def load():
             return (yield CacheGet(CACHE_KEY))
 
-        async def run(mode: str) -> None:
+        async def run(mode: str, cache_path: str) -> None:
+            context = ExecutionContext(env={CACHE_PATH_ENV_KEY: Path(cache_path)})
             engine = ProgramInterpreter()
             if mode == "store":
-                result = await engine.run_async(store())
+                result = await engine.run_async(store(), context)
                 if result.is_err:
                     raise SystemExit(f"store failed: {result.result.error!r}")
             elif mode == "load":
-                result = await engine.run_async(load())
+                result = await engine.run_async(load(), context)
                 if result.is_err:
                     raise result.result.error
                 if result.value != "persisted":
@@ -366,12 +434,9 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
                 raise SystemExit(f"unknown mode: {mode}")
 
         if __name__ == "__main__":
-            asyncio.run(run(sys.argv[1]))
+            asyncio.run(run(sys.argv[1], sys.argv[2]))
         """
     )
-
-    # Create minimal env with only the required variable
-    env = {"DOEFF_CACHE_PATH": str(temp_cache_db)}
 
     async def run_mode(mode: str) -> str:
         proc = await asyncio.create_subprocess_exec(
@@ -379,7 +444,7 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
             "-c",
             script,
             mode,
-            env=env,
+            str(temp_cache_db),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -397,7 +462,7 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_with_kwargs(temp_cache_db):
+async def test_cache_with_kwargs(temp_cache_db, cache_context):
     """Test caching with keyword arguments."""
 
     call_count = [0]
@@ -421,7 +486,7 @@ async def test_cache_with_kwargs(temp_cache_db):
         return (result1, result2, result3, result4, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    result = await engine.run_async(test_program(), cache_context)
 
     assert result.is_ok
     assert result.value[0] == 6   # 5 + 1
@@ -474,7 +539,7 @@ async def test_cache_with_ttl(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_key_selector(temp_cache_db):
+async def test_cache_key_selector(temp_cache_db, cache_context):
     """Test custom cache key selection."""
 
     call_count = [0]
@@ -497,7 +562,7 @@ async def test_cache_key_selector(temp_cache_db):
         return (result1, result2, result3, call_count[0])
 
     engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    result = await engine.run_async(test_program(), cache_context)
 
     assert result.is_ok
     assert result.value[0] == "User 1"
@@ -507,7 +572,7 @@ async def test_cache_key_selector(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_key_hashers_transform_arguments(temp_cache_db):
+async def test_cache_key_hashers_transform_arguments(temp_cache_db, cache_context):
     """Test key_hashers applies transformations for positional and keyword args."""
 
     calls = []
@@ -529,14 +594,13 @@ async def test_cache_key_hashers_transform_arguments(temp_cache_db):
         return payload["value"]
 
     interpreter = ProgramInterpreter()
-    context = ExecutionContext()
 
     payload_one = {"value": 1, "other": 99}
     payload_two = {"other": 99, "value": 1}
     extra_one = {"id": "alpha", "note": "first"}
     extra_two = {"note": "first", "id": "alpha"}
 
-    result1 = await interpreter.run_async(compute(7, payload_one, extra=extra_one), context)
+    result1 = await interpreter.run_async(compute(7, payload_one, extra=extra_one), cache_context)
     assert result1.value == 1
 
     result2 = await interpreter.run_async(
@@ -571,7 +635,7 @@ async def test_convenience_decorators():
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_hits(temp_cache_db):
+async def test_cache_decorator_hits(temp_cache_db, cache_context):
     calls = []
 
     @cache()
@@ -581,9 +645,8 @@ async def test_cache_decorator_hits(temp_cache_db):
         return x * 2
 
     interpreter = ProgramInterpreter()
-    context = ExecutionContext()
 
-    result1 = await interpreter.run_async(compute(3), context)
+    result1 = await interpreter.run_async(compute(3), cache_context)
     assert result1.value == 6
     assert calls == [3]
 
@@ -593,7 +656,7 @@ async def test_cache_decorator_hits(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_expiry(temp_cache_db):
+async def test_cache_decorator_expiry(temp_cache_db, cache_context):
     calls = []
 
     @cache(ttl=0.5)
@@ -603,22 +666,21 @@ async def test_cache_decorator_expiry(temp_cache_db):
         return x * 2
 
     interpreter = ProgramInterpreter()
-    context = ExecutionContext()
     cache_handler = interpreter.cache_handler
     base_time = 1000.0
     original_time = cache_handler._time
 
     try:
         cache_handler._time = lambda: base_time
-        await interpreter.run_async(compute(5), context)
+        await interpreter.run_async(compute(5), cache_context)
         assert calls == [5]
 
         cache_handler._time = lambda: base_time + 0.2
-        await interpreter.run_async(compute(5), context)
+        await interpreter.run_async(compute(5), cache_context)
         assert calls == [5]
 
         cache_handler._time = lambda: base_time + 1.0
-        await interpreter.run_async(compute(5), context)
+        await interpreter.run_async(compute(5), cache_context)
         assert calls == [5, 5]
     finally:
         cache_handler._time = original_time
@@ -656,7 +718,7 @@ if __name__ == "__main__":
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_accepts_pil(temp_cache_db):
+async def test_cache_decorator_accepts_pil(temp_cache_db, cache_context):
     from PIL import Image
 
     calls = []
@@ -670,9 +732,8 @@ async def test_cache_decorator_accepts_pil(temp_cache_db):
     image = Image.new("RGB", (16, 16), color="red")
 
     interpreter = ProgramInterpreter()
-    context = ExecutionContext()
 
-    result1 = await interpreter.run_async(compute(image), context)
+    result1 = await interpreter.run_async(compute(image), cache_context)
     assert result1.value == 256
     assert calls == [(16, 16)]
 

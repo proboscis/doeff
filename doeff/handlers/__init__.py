@@ -10,9 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import lzma
-import os
 import sqlite3
-import tempfile
 import threading
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import cloudpickle
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
+from doeff.cache import CACHE_PATH_ENV_KEY, persistent_cache_path
 from doeff.effects import (
     AskEffect,
     AtomicGetEffect,
@@ -832,19 +831,35 @@ class MemoEffectHandler:
 
 
 class CacheEffectHandler:
-    """Persistent cache backed by SQLite/LZMA storage."""
+    """Persistent cache backed by SQLite/LZMA storage.
+
+    The cache path is determined lazily on first use. The handler looks for
+    ``CACHE_PATH_ENV_KEY`` (``"doeff.cache_path"``) in the execution context's
+    environment. If not present, it falls back to :func:`persistent_cache_path`.
+    """
 
     scope = HandlerScope.SHARED
 
-    def __init__(self):
+    def __init__(self) -> None:
         import time
 
         self._time = time.time
-        db_path = os.environ.get("DOEFF_CACHE_PATH")
-        if db_path:
-            self._db_path = Path(db_path)
+        self._db_path: Path | None = None
+        self._conn: sqlite3.Connection | None = None
+        self._lock = asyncio.Lock()
+
+    def _ensure_connection(self, ctx: ExecutionContext) -> sqlite3.Connection:
+        """Lazily initialize the SQLite connection using the context's environment."""
+        if self._conn is not None:
+            return self._conn
+
+        # Look up cache path from context environment, fall back to default
+        env_path = ctx.env.get(CACHE_PATH_ENV_KEY)
+        if env_path is not None:
+            self._db_path = Path(env_path) if not isinstance(env_path, Path) else env_path
         else:
-            self._db_path = Path(tempfile.gettempdir()) / "doeff_cache.sqlite3"
+            self._db_path = persistent_cache_path()
+
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(
             self._db_path,
@@ -862,7 +877,7 @@ class CacheEffectHandler:
             """
         )
         self._conn.commit()
-        self._lock = asyncio.Lock()
+        return self._conn
 
     def _serialize_key(self, key: Any) -> tuple[str, bytes]:
         key_bytes = _cloudpickle_dumps(key, "cache key")
@@ -870,12 +885,12 @@ class CacheEffectHandler:
         key_hash = hashlib.sha256(key_blob).hexdigest()
         return key_hash, key_blob
 
-    async def handle_get(self, effect: CacheGetEffect, _ctx: ExecutionContext) -> Any:
+    async def handle_get(self, effect: CacheGetEffect, ctx: ExecutionContext) -> Any:
         key_hash, _ = self._serialize_key(effect.key)
-        # hmm, serializing a key is failing here, but i cannot tell what is passing a bad key...
+        conn = self._ensure_connection(ctx)
 
         async with self._lock:
-            row = self._conn.execute(
+            row = conn.execute(
                 "SELECT value_blob, expiry FROM cache_entries WHERE key_hash = ?",
                 (key_hash,),
             ).fetchone()
@@ -889,7 +904,7 @@ class CacheEffectHandler:
 
         return cloudpickle.loads(lzma.decompress(value_blob))
 
-    async def handle_put(self, effect: CachePutEffect, _ctx: ExecutionContext) -> None:
+    async def handle_put(self, effect: CachePutEffect, ctx: ExecutionContext) -> None:
         key = effect.key
         value = effect.value
         policy = effect.policy
@@ -901,15 +916,18 @@ class CacheEffectHandler:
 
         key_hash, key_blob = self._serialize_key(key)
         value_blob = lzma.compress(cloudpickle.dumps(value))
+        conn = self._ensure_connection(ctx)
 
         async with self._lock:
-            self._conn.execute(
+            conn.execute(
                 "REPLACE INTO cache_entries (key_hash, expiry, key_blob, value_blob) VALUES (?, ?, ?, ?)",
                 (key_hash, expiry, key_blob, value_blob),
             )
-            self._conn.commit()
+            conn.commit()
 
     async def _delete_entry(self, key_hash: str) -> None:
+        if self._conn is None:
+            return
         async with self._lock:
             self._conn.execute(
                 "DELETE FROM cache_entries WHERE key_hash = ?",
