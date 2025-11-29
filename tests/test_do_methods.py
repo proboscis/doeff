@@ -82,3 +82,24 @@ def test_do_class_method_signature_and_execution() -> None:
     program = Aggregator.produce(5)
     assert isinstance(program, (Program, KleisliProgramCall))
     assert _run_program(program) == 7
+
+
+def test_do_static_method_signature_and_execution() -> None:
+    class Math:
+        @staticmethod
+        @do
+        def double(value: int) -> Generator[Program[Any], Any, int]:
+            return value * 2
+
+    from doeff.program import KleisliProgramCall
+
+    class_sig = inspect.signature(Math.double)
+    assert list(class_sig.parameters.keys()) == ["value"]
+
+    math = Math()
+    bound_sig = inspect.signature(math.double)
+    assert list(bound_sig.parameters.keys()) == ["value"]
+
+    program = math.double(3)
+    assert isinstance(program, (Program, KleisliProgramCall))
+    assert _run_program(program) == 6
