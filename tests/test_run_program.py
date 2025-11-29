@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Program, ProgramInterpreter, ProgramRunResult, do, run_program
+from doeff import ExecutionContext, Program, ProgramInterpreter, ProgramRunResult, do, run_program
 from doeff.effects import Ask
 
 
@@ -303,3 +303,26 @@ class TestRunProgramResult:
         assert result.run_result is not None
         assert result.run_result.context is not None
 
+
+class TestEnvAliasResolution:
+    """Tests for resolving Program-like env values lazily via Ask."""
+
+    def test_env_value_program_like_is_resolved_on_ask(self) -> None:
+        """Ensure env entries containing Programs/Effects are executed on demand."""
+
+        @do
+        def program():
+            return (yield Ask("api_key"))
+
+        ctx = ExecutionContext(
+            env={
+                "api_key": Ask("api_key__internal"),
+                "api_key__internal": "secret_value",
+            }
+        )
+
+        interpreter = ProgramInterpreter()
+        result = interpreter.run(program(), ctx)
+
+        assert result.value == "secret_value"
+        assert result.context.env["api_key"] == "secret_value"

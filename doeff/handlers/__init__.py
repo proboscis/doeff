@@ -100,6 +100,7 @@ class ReaderEffectHandler:
         engine: ProgramInterpreter,
     ) -> Any:
         """Handle reader.ask effect."""
+        from doeff.program import ProgramBase
         from doeff.types import Program as ProgramType
 
         key = effect.key
@@ -113,7 +114,7 @@ class ReaderEffectHandler:
             if value is self._RESOLUTION_IN_PROGRESS:
                 raise RuntimeError(f"Cyclic Ask dependency for environment key: {key!r}")
 
-            if isinstance(value, ProgramType):
+            if isinstance(value, (ProgramType, ProgramBase)):
                 ctx.env[key] = self._RESOLUTION_IN_PROGRESS
                 try:
                     result = await engine.run_async(value, ctx)
