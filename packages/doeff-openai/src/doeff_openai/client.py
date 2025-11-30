@@ -12,6 +12,7 @@ from openai.types.chat import ChatCompletion
 
 from doeff import (
     Ask,
+    AtomicUpdate,
     EffectGenerator,
     Get,
     Log,
@@ -316,45 +317,55 @@ def track_api_call(
             {**graph_metadata, "phase": "error"}
         )
 
-    # Track API call in state
-    api_calls = yield Get("openai_api_calls")
-    if api_calls is None:
-        api_calls = []
-
-    # Add this call to the list
-    api_calls.append(
-        {
-            "operation": operation,
-            "model": model,
-            "timestamp": metadata.timestamp.isoformat(),
-            "latency_ms": latency_ms,
-            "error": str(error) if error else None,
-            "tokens": {
-                "prompt": token_usage.prompt_tokens if token_usage else 0,
-                "completion": token_usage.completion_tokens if token_usage else 0,
-                "total": token_usage.total_tokens if token_usage else 0,
-            }
-            if token_usage
-            else None,
-            "cost": cost_info.total_cost if cost_info else None,
-            "prompt_text": prompt_text,
-            "prompt_images": prompt_images,
-            "prompt_messages": prompt_messages,
+    # Track API call in state using AtomicUpdate for thread-safe parallel execution
+    call_entry = {
+        "operation": operation,
+        "model": model,
+        "timestamp": metadata.timestamp.isoformat(),
+        "latency_ms": latency_ms,
+        "error": str(error) if error else None,
+        "tokens": {
+            "prompt": token_usage.prompt_tokens if token_usage else 0,
+            "completion": token_usage.completion_tokens if token_usage else 0,
+            "total": token_usage.total_tokens if token_usage else 0,
         }
-    )
-    yield Put("openai_api_calls", api_calls)
+        if token_usage
+        else None,
+        "cost": cost_info.total_cost if cost_info else None,
+        "prompt_text": prompt_text,
+        "prompt_images": prompt_images,
+        "prompt_messages": prompt_messages,
+    }
 
-    # Track cumulative cost in state
+    def _append_call(current: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+        entries = list(current) if current else []
+        entries.append(call_entry)
+        return entries
+
+    yield AtomicUpdate("openai_api_calls", _append_call, default_factory=list)
+
+    # Track cumulative cost in state using AtomicUpdate for thread-safe parallel execution
     if cost_info:
-        current_total = yield Get("total_openai_cost")
-        new_total = (current_total or 0.0) + cost_info.total_cost
-        yield Put("total_openai_cost", new_total)
+        def _increment_total(current: float | None) -> float:
+            return (current or 0.0) + cost_info.total_cost
+
+        yield AtomicUpdate(
+            "total_openai_cost",
+            _increment_total,
+            default_factory=lambda: 0.0,
+        )
 
         # Also track per-model costs
         model_cost_key = f"openai_cost_{model}"
-        current_model_cost = yield Get(model_cost_key)
-        new_model_cost = (current_model_cost or 0.0) + cost_info.total_cost
-        yield Put(model_cost_key, new_model_cost)
+
+        def _increment_model(current: float | None) -> float:
+            return (current or 0.0) + cost_info.total_cost
+
+        yield AtomicUpdate(
+            model_cost_key,
+            _increment_model,
+            default_factory=lambda: 0.0,
+        )
 
     return metadata
 
