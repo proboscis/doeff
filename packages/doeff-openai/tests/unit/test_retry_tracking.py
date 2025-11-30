@@ -87,28 +87,23 @@ async def test_retry_tracking_on_failure_then_success():
         assert len(api_call_logs) == 3
 
         # Should have logs for the two failures
-        # NOTE: Due to a bug in doeff's Catch implementation, error handlers are called twice,
-        # resulting in 4 error logs instead of 2 (2 per failure)
         failure_logs = [log for log in log_messages if "OpenAI API error" in log]
-        assert len(failure_logs) == 4  # Should be 2, but Catch calls handler twice
+        assert len(failure_logs) == 2
 
         # Check state for API call tracking
         assert "openai_api_calls" in result.state
         api_calls = result.state["openai_api_calls"]
 
-        # Should have tracked all attempts (5 due to double error handling: 2 failures × 2 + 1 success)
-        # NOTE: Due to the Catch bug, each failure is tracked twice
-        assert len(api_calls) == 5  # Should be 3, but Catch calls handler twice per error
+        # Should have tracked all 3 attempts (2 failures + 1 success)
+        assert len(api_calls) == 3
 
-        # First four should have errors (2 errors, each tracked twice)
+        # First two should have errors
         assert api_calls[0]["error"] is not None
         assert api_calls[1]["error"] is not None
-        assert api_calls[2]["error"] is not None
-        assert api_calls[3]["error"] is not None
 
         # Last should be successful
-        assert api_calls[4]["error"] is None
-        assert api_calls[4]["tokens"]["total"] == 100
+        assert api_calls[2]["error"] is None
+        assert api_calls[2]["tokens"]["total"] == 100
 
 
 @pytest.mark.asyncio
@@ -161,22 +156,19 @@ async def test_retry_exhaustion_tracking():
         api_call_logs = [log for log in log_messages if "Making OpenAI API call" in log]
         assert len(api_call_logs) == 3
 
-        # Should have logs for all failures
-        # NOTE: Due to a bug in doeff's Catch implementation, error handlers are called twice,
-        # resulting in 6 error logs instead of 3 (2 per failure)
+        # Should have logs for all 3 failures
         failure_logs = [log for log in log_messages if "OpenAI API error" in log]
-        assert len(failure_logs) == 6  # Should be 3, but Catch calls handler twice
+        assert len(failure_logs) == 3
 
         # Check state for API call tracking
         assert "openai_api_calls" in result.state
         api_calls = result.state["openai_api_calls"]
 
-        # Should have tracked all failed attempts (6 due to double error handling: 3 failures × 2)
-        # NOTE: Due to the Catch bug, each failure is tracked twice
-        assert len(api_calls) == 6  # Should be 3, but Catch calls handler twice per error
+        # Should have tracked all 3 failed attempts
+        assert len(api_calls) == 3
 
         # All should have errors
-        for i in range(6):
+        for i in range(3):
             assert api_calls[i]["error"] is not None
             assert "Persistent API Error" in str(api_calls[i]["error"])
 
