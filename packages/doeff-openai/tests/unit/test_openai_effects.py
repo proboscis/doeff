@@ -425,5 +425,96 @@ async def test_semantic_search_workflow():
     assert result.value[0][1] >= result.value[1][1]
 
 
+@pytest.mark.asyncio
+async def test_track_api_call_accumulates_under_gather():
+    """Test that track_api_call properly accumulates costs under parallel Gather execution.
+    
+    This is a regression test for the race condition where Get/Put was used
+    instead of AtomicUpdate, causing only the last call's cost to be recorded.
+    """
+    import math
+    import time
+    from types import SimpleNamespace
+    
+    from doeff_openai.client import track_api_call
+    
+    model = "gpt-4"
+    
+    # Define multiple API calls with different token counts
+    call_defs = [
+        {"request_id": "req-1", "prompt": "First", "input": 100, "output": 50},
+        {"request_id": "req-2", "prompt": "Second", "input": 200, "output": 100},
+        {"request_id": "req-3", "prompt": "Third", "input": 150, "output": 75},
+    ]
+    
+    def _fake_response(call: dict[str, Any]) -> Any:
+        """Create a fake OpenAI response with usage metadata."""
+        resp = MagicMock()
+        resp.id = call["request_id"]
+        resp.usage = MagicMock()
+        resp.usage.prompt_tokens = call["input"]
+        resp.usage.completion_tokens = call["output"]
+        resp.usage.total_tokens = call["input"] + call["output"]
+        resp.choices = [MagicMock()]
+        resp.choices[0].finish_reason = "stop"
+        return resp
+    
+    @do
+    def invoke(call: dict[str, Any]) -> EffectGenerator[Any]:
+        response = _fake_response(call)
+        start_time = time.time() - 0.01
+        return (
+            yield track_api_call(
+                operation="chat.completion",
+                model=model,
+                request_payload={"messages": [{"role": "user", "content": call["prompt"]}]},
+                response=response,
+                start_time=start_time,
+                error=None,
+            )
+        )
+    
+    @do
+    def run_parallel() -> EffectGenerator[list[Any]]:
+        return (yield Gather(*(invoke(call) for call in call_defs)))
+    
+    engine = ProgramInterpreter()
+    context = ExecutionContext()
+    result = await engine.run_async(run_parallel(), context)
+    
+    assert result.is_ok
+    state = result.context.state
+    
+    # Verify all API calls were tracked
+    api_calls = state.get("openai_api_calls")
+    assert api_calls is not None, "openai_api_calls should not be None"
+    assert len(api_calls) == 3, f"Expected 3 API calls, got {len(api_calls)}"
+    
+    # Calculate expected total cost
+    expected_total = sum(
+        calculate_cost(
+            model,
+            TokenUsage(
+                prompt_tokens=call["input"],
+                completion_tokens=call["output"],
+                total_tokens=call["input"] + call["output"],
+            ),
+        ).total_cost
+        for call in call_defs
+    )
+    
+    # Verify total cost accumulation
+    actual_total = state.get("total_openai_cost", 0.0)
+    assert math.isclose(actual_total, expected_total, rel_tol=1e-9), (
+        f"Expected total cost {expected_total}, got {actual_total}"
+    )
+    
+    # Verify per-model cost accumulation
+    model_cost = state.get(f"openai_cost_{model}", 0.0)
+    assert math.isclose(model_cost, expected_total, rel_tol=1e-9), (
+        f"Expected model cost {expected_total}, got {model_cost}"
+    )
+
+
 # if __name__ == "__main__":
 #     pytest.main([__file__, "-v"])

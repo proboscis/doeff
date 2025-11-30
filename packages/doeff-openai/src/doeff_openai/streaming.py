@@ -7,11 +7,10 @@ from typing import Any, Callable
 from openai.types.chat import ChatCompletionChunk
 
 from doeff import (
+    AtomicUpdate,
     Await,
     EffectGenerator,
-    Get,
     Log,
-    Put,
     Step,
     do,
 )
@@ -128,10 +127,15 @@ def process_stream(
         }
     )
 
-    # Update cumulative costs
-    current_total = yield Get("total_openai_cost")
-    new_total = (current_total or 0.0) + cost_info.total_cost
-    yield Put("total_openai_cost", new_total)
+    # Update cumulative costs using AtomicUpdate for thread-safe parallel execution
+    def _increment_total(current: float | None) -> float:
+        return (current or 0.0) + cost_info.total_cost
+
+    yield AtomicUpdate(
+        "total_openai_cost",
+        _increment_total,
+        default_factory=lambda: 0.0,
+    )
 
     yield Log(
         f"Stream complete: chunks={total_chunks}, tokens={token_usage.total_tokens}, "
