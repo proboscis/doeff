@@ -28,6 +28,15 @@ pub struct Config {
     /// Git integration settings
     #[serde(default)]
     pub git: GitConfig,
+
+    /// Path to log file for recording lint results (JSON Lines format)
+    /// Defaults to ".doeff-lint.jsonl"
+    #[serde(default = "default_log_file")]
+    pub log_file: Option<String>,
+}
+
+fn default_log_file() -> Option<String> {
+    Some(".doeff-lint.jsonl".to_string())
 }
 
 /// Git integration configuration
@@ -130,21 +139,8 @@ pub fn load_config(path: Option<&Path>) -> Option<Config> {
     Some(config)
 }
 
-/// Get all available rule IDs
-pub fn get_all_rule_ids() -> Vec<String> {
-    vec![
-        "DOEFF001".to_string(),
-        "DOEFF002".to_string(),
-        "DOEFF003".to_string(),
-        "DOEFF004".to_string(),
-        "DOEFF005".to_string(),
-        "DOEFF006".to_string(),
-        "DOEFF007".to_string(),
-        "DOEFF008".to_string(),
-        "DOEFF009".to_string(),
-        "DOEFF010".to_string(),
-    ]
-}
+// Re-export get_all_rule_ids from rules module
+pub use crate::rules::get_all_rule_ids;
 
 /// Merge command line arguments with config file settings
 /// CLI arguments take precedence
