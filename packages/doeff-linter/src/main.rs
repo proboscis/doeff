@@ -3,7 +3,7 @@
 use clap::Parser;
 use colored::*;
 use doeff_linter::{
-    collect_python_files, config, lint_files_parallel, models::Severity, rules,
+    collect_python_files, config, lint_files_parallel, logging::{LintLogEntry, LintLogger}, models::Severity, rules,
 };
 use std::collections::BTreeMap;
 use std::io::{self, Read};
@@ -49,6 +49,15 @@ struct Args {
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
     modified: bool,
+
+    /// Log violations to a file (JSON Lines format) for later analysis
+    /// Defaults to ".doeff-lint.jsonl". Use --no-log to disable.
+    #[arg(long, default_value = ".doeff-lint.jsonl")]
+    log_file: Option<String>,
+
+    /// Disable logging to file
+    #[arg(long)]
+    no_log: bool,
 }
 
 /// Cursor hook input structure
@@ -152,6 +161,25 @@ fn run_as_hook(args: &Args) -> ExitCode {
                     line,
                     source_line,
                 });
+        }
+    }
+
+    // Log results (enabled by default, use --no-log to disable)
+    if !args.no_log {
+        let log_file = args.log_file.clone().or_else(|| config.as_ref().and_then(|c| c.log_file.clone()));
+        if let Some(log_path) = log_file {
+            let enabled_rule_ids: Vec<String> = all_rules.iter().map(|r| r.rule_id().to_string()).collect();
+            let log_entry = LintLogEntry::from_results(&results, "hook", Some(enabled_rule_ids));
+            match LintLogger::new(&log_path) {
+                Ok(mut logger) => {
+                    if let Err(e) = logger.log(&log_entry) {
+                        eprintln!("Warning: Failed to write to log file: {}", e);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to create log file: {}", e);
+                }
+            }
         }
     }
 
@@ -300,6 +328,28 @@ fn run_normal(args: &Args) -> ExitCode {
         }
     }
 
+    // Log results (enabled by default, use --no-log to disable)
+    if !args.no_log {
+        let log_file = args.log_file.clone().or_else(|| config.as_ref().and_then(|c| c.log_file.clone()));
+        if let Some(log_path) = log_file {
+            let run_mode = if args.modified { "modified" } else { "normal" };
+            let enabled_rule_ids: Vec<String> = all_rules.iter().map(|r| r.rule_id().to_string()).collect();
+            let log_entry = LintLogEntry::from_results(&results, run_mode, Some(enabled_rule_ids));
+            match LintLogger::new(&log_path) {
+                Ok(mut logger) => {
+                    if let Err(e) = logger.log(&log_entry) {
+                        eprintln!("Warning: Failed to write to log file: {}", e);
+                    } else if args.verbose {
+                        eprintln!("Logged {} violations to {}", log_entry.total_violations, log_path);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Failed to create log file: {}", e);
+                }
+            }
+        }
+    }
+
     // Print summary
     let total = error_count + warning_count + info_count;
     if total > 0 {
@@ -382,6 +432,21 @@ fn get_rule_info(rule_id: &str) -> RuleInfo {
             name: "No Flag/Mode Arguments",
             description: "Functions and dataclasses use flag/mode arguments instead of callbacks or protocol objects.",
             fix: "Accept a callback or protocol object. Example: instead of `def process(data, use_cache: bool)`, use `def process(data, cache: CacheProtocol)` or `def process(data, get_cached: Callable[[Data], Result])`.",
+        },
+        "DOEFF012" => RuleInfo {
+            name: "No Append Loop Pattern",
+            description: "Empty list initialization followed by for-loop append obscures the data transformation pipeline.",
+            fix: "Use list comprehension: `data = [process(x) for x in items]`. For complex logic, extract to a named function. If mutation is required (queue/stack ops, BFS/DFS, dynamic algorithms), add `# noqa: DOEFF012` to the for-loop line.",
+        },
+        "DOEFF013" => RuleInfo {
+            name: "Prefer Maybe Monad",
+            description: "Optional[X] or X | None type annotations should use doeff's Maybe monad for explicit null handling.",
+            fix: "Use `Maybe[X]` instead of `Optional[X]`. Import with `from doeff import Maybe, Some, NOTHING`. Use `Maybe.from_optional(value)` to convert existing Optional values.",
+        },
+        "DOEFF014" => RuleInfo {
+            name: "No Try-Except Blocks",
+            description: "Using try-except blocks hides error handling flow. Use doeff's error handling effects instead.",
+            fix: "Use `Safe(program)` to get a Result, `program.recover(fallback)` for fallbacks, `program.first_success(alt1, alt2)` for alternatives, or `Catch(program, handler)` to transform errors.",
         },
         _ => RuleInfo {
             name: "Unknown Rule",

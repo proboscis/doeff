@@ -4,10 +4,11 @@ A high-performance linter for enforcing code quality and immutability patterns i
 
 ## Features
 
-- **11 specialized rules** for code quality and immutability
+- **14 specialized rules** for code quality and immutability
 - **Configurable via pyproject.toml**
 - **noqa comments** for per-line rule suppression
 - **Fast** - written in Rust for maximum performance
+- **JSON Lines logging** for violation tracking and statistics
 
 ## Installation
 
@@ -50,6 +51,9 @@ disable = ["DOEFF004"]
 # Exclude paths
 exclude = [".venv", "build", "tests/fixtures"]
 
+# Log violations to a file for later analysis (JSON Lines format)
+log_file = ".doeff-lint.jsonl"
+
 # Rule-specific configuration
 [tool.doeff-linter.rules.DOEFF003]
 max_mutable_attributes = 3
@@ -74,6 +78,9 @@ skip_test_functions = true
 | DOEFF009 | Missing Return Type Annotation | Functions should have return type annotations |
 | DOEFF010 | Test File Placement | Test files must be under `tests/` directory |
 | DOEFF011 | No Flag/Mode Arguments | Use callbacks or protocol objects instead of flag/mode arguments |
+| DOEFF012 | No Append Loop Pattern | Use list comprehension instead of empty list + for loop append |
+| DOEFF013 | Prefer Maybe Monad | Use `Maybe[T]` instead of `Optional[T]` or `T \| None` |
+| DOEFF014 | No Try-Except Blocks | Use doeff's error handling effects instead of try-except |
 
 ## Inline Suppression
 
@@ -88,6 +95,31 @@ def dict():  # noqa: DOEFF001
 data["key"] = value  # noqa
 ```
 
+### File-Level Suppression
+
+Suppress rules for an entire file by placing `noqa: file` at the top of the file (before any code):
+
+```python
+# noqa: file=DOEFF001
+"""This module intentionally uses builtin names as function names."""
+
+def dict():  # No violation reported
+    return {}
+
+def list():  # No violation reported
+    return []
+```
+
+File-level noqa variants:
+
+```python
+# noqa: file              # Suppress ALL rules for entire file
+# noqa: file=DOEFF001     # Suppress specific rule for entire file
+# noqa: file=DOEFF001,DOEFF002  # Suppress multiple rules for entire file
+```
+
+**Note:** File-level noqa must appear before any code. Only comments, blank lines, and module docstrings are allowed to precede it.
+
 ## CLI Options
 
 ```
@@ -101,11 +133,82 @@ Options:
       --disable <RULES>      Disable specific rules (comma-separated)
       --exclude <PATTERNS>   Exclude paths matching patterns
       --output-format <FMT>  Output format: text, json [default: text]
+      --log-file <PATH>      Log violations to file [default: .doeff-lint.jsonl]
+      --no-log               Disable logging to file
+      --modified             Only lint git-modified files
       --no-config            Ignore pyproject.toml configuration
       --hook                 Run as Cursor stop hook
   -v, --verbose              Show verbose output
   -h, --help                 Print help
   -V, --version              Print version
+```
+
+## Logging and Statistics
+
+The linter logs all detected violations to a file in JSON Lines format by default for later analysis and statistics tracking.
+
+**Default log file:** `.doeff-lint.jsonl`
+
+### Disable Logging
+
+```bash
+doeff-linter --no-log
+```
+
+### Custom Log File Path
+
+Via CLI:
+```bash
+doeff-linter --log-file custom-path.jsonl
+```
+
+Via `pyproject.toml`:
+```toml
+[tool.doeff-linter]
+log_file = "custom-path.jsonl"
+```
+
+### Log Format
+
+Each line in the log file is a JSON object containing:
+
+```json
+{
+  "timestamp": 1733126639,
+  "datetime": "2025-12-02T07:23:59Z",
+  "files_scanned": 42,
+  "total_violations": 15,
+  "error_count": 3,
+  "warning_count": 12,
+  "info_count": 0,
+  "run_mode": "normal",
+  "enabled_rules": ["DOEFF001", "DOEFF002", ...],
+  "violations": [
+    {
+      "rule_id": "DOEFF006",
+      "file_path": "src/utils.py",
+      "line": 42,
+      "severity": "error",
+      "message": "...",
+      "source_line": "def parse() -> tuple:"
+    }
+  ]
+}
+```
+
+### Analyzing Logs
+
+Since the log file uses JSON Lines format (one JSON object per line), you can easily analyze it with tools like `jq`:
+
+```bash
+# Count violations by rule
+cat .doeff-lint.jsonl | jq -s '[.[].violations[]] | group_by(.rule_id) | map({rule: .[0].rule_id, count: length})'
+
+# Get total violations over time
+cat .doeff-lint.jsonl | jq '{date: .datetime, total: .total_violations}'
+
+# Find most frequent violation locations
+cat .doeff-lint.jsonl | jq -s '[.[].violations[]] | group_by(.file_path) | map({file: .[0].file_path, count: length}) | sort_by(-.count) | .[0:10]'
 ```
 
 ## Cursor Integration (Stop Hook)
