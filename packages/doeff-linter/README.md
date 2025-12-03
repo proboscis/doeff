@@ -196,9 +196,59 @@ Each line in the log file is a JSON object containing:
 }
 ```
 
-### Analyzing Logs
+### CLI Statistics
 
-Since the log file uses JSON Lines format (one JSON object per line), you can easily analyze it with tools like `jq`:
+View statistics from the log file:
+
+```bash
+doeff-linter stats
+doeff-linter stats --trend    # Include daily trend
+doeff-linter stats custom.jsonl  # Use custom log file
+```
+
+Example output:
+```
+════════════════════════════════════════════════════════════
+ DOEFF-LINTER STATISTICS 
+════════════════════════════════════════════════════════════
+
+📊 Overview
+  Total lint runs:      42
+  Total files scanned:  156
+  Total violations:     234
+
+🎯 By Severity
+  Errors:   12 (5.1%)
+  Warnings: 220 (94.0%)
+  Info:     2 (0.9%)
+
+📋 By Rule
+  DOEFF014    89  ████████████████████
+  DOEFF013    67  ███████████████
+  DOEFF012    34  ████████
+  ...
+```
+
+### HTML Report
+
+Generate an interactive HTML dashboard:
+
+```bash
+doeff-linter report
+doeff-linter report -o my-report.html
+doeff-linter report --open  # Open in browser after generation
+```
+
+The report includes:
+- Summary statistics cards
+- Violations by rule (bar chart)
+- Severity distribution (donut chart)
+- Top files by violations
+- Daily activity trend
+
+### Raw Log Analysis
+
+You can also analyze logs with `jq`:
 
 ```bash
 # Count violations by rule
