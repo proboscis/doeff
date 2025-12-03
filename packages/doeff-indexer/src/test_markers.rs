@@ -134,10 +134,48 @@ class Manager:
     }
 
     #[test]
-    fn test_marker_not_on_wrong_line() {
+    fn test_marker_on_comment_line_before_function() {
+        // Markers on comment lines immediately before function should be detected
         let source = r#"
 # doeff: interpreter
-# This marker is not on the function definition
+# This marker is on a comment line before the function
+def regular_function(x: int):
+    return x * 2
+"#;
+        let markers = extract_markers_from_source(source, 4, "regular_function", &default_args());
+        assert_eq!(markers, vec!["interpreter".to_string()]);
+    }
+
+    #[test]
+    fn test_marker_on_decorator_line() {
+        // Markers on decorator lines should be detected
+        let source = r#"
+@do  # doeff: kleisli
+def kleisli_func(x: int):
+    yield Effect("test")
+"#;
+        let markers = extract_markers_from_source(source, 3, "kleisli_func", &default_args());
+        assert_eq!(markers, vec!["kleisli".to_string()]);
+    }
+
+    #[test]
+    fn test_marker_in_function_body_comment() {
+        // Markers in comment lines at the start of function body should be detected
+        let source = r#"
+def some_function(x: int):
+    # doeff: kleisli
+    return x * 2
+"#;
+        let markers = extract_markers_from_source(source, 2, "some_function", &default_args());
+        assert_eq!(markers, vec!["kleisli".to_string()]);
+    }
+
+    #[test]
+    fn test_marker_separated_by_code() {
+        // Markers separated from function by actual code should NOT be detected
+        let source = r#"
+# doeff: interpreter
+x = 42
 def regular_function(x: int):
     return x * 2
 "#;

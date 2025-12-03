@@ -372,29 +372,21 @@ pub(crate) fn extract_markers_from_source(
     let mut markers = Vec::new();
     let lines: Vec<&str> = source.lines().collect();
 
-    // Look at the function definition line and the line above for markers
     // func_line is 1-based, convert to 0-based for array indexing
     let line_idx = func_line.saturating_sub(1);
 
-    // Check the function definition line itself (for inline comments)
-    if line_idx < lines.len() {
-        if let Some(marker_str) = extract_marker_from_line(lines[line_idx]) {
-            for marker in parse_markers(&marker_str) {
-                if !markers.contains(&marker) {
-                    markers.push(marker);
-                }
-            }
-        }
-    }
+    // === BACKWARD SCAN ===
+    // Scan backward from the function definition to find:
+    // 1. Decorator lines with markers: @decorator # doeff: marker
+    // 2. Standalone comment lines with markers: # doeff: marker
+    // Stop at non-decorator, non-comment, non-blank lines
+    if line_idx > 0 {
+        let mut scan_idx = line_idx - 1;
+        loop {
+            if let Some(line) = lines.get(scan_idx) {
+                let trimmed = line.trim();
 
-    // Also check parameter lines for inline markers
-    // This handles cases like:
-    // def some_transform( # doeff: transform
-    //     tgt: Program):
-    for i in line_idx..lines.len().min(line_idx + 10) {
-        if let Some(line) = lines.get(i) {
-            let lower_line = line.to_lowercase();
-            if lower_line.contains("# doeff:") {
+                // Check for markers on this line
                 if let Some(marker_str) = extract_marker_from_line(line) {
                     for marker in parse_markers(&marker_str) {
                         if !markers.contains(&marker) {
@@ -402,19 +394,86 @@ pub(crate) fn extract_markers_from_source(
                         }
                     }
                 }
-            }
 
-            // Stop if we hit the end of function signature (colon not in comment)
-            if line.contains(':') && !line.trim_start().starts_with('#') {
+                // Continue scanning if this is a decorator, comment, or blank line
+                let is_decorator = trimmed.starts_with('@');
+                let is_comment = trimmed.starts_with('#');
+                let is_blank = trimmed.is_empty();
+
+                if !is_decorator && !is_comment && !is_blank {
+                    // Hit actual code - stop backward scan
+                    break;
+                }
+            } else {
                 break;
             }
 
-            // Stop if we hit another function definition
+            if scan_idx == 0 {
+                break;
+            }
+            scan_idx -= 1;
+        }
+    }
+
+    // === FORWARD SCAN (SIGNATURE AND BODY) ===
+    // Check the function definition line and parameter lines for inline markers
+    // This handles cases like:
+    // def some_transform( # doeff: transform
+    //     tgt: Program):
+    // Also scan the first few comment lines in the function body
+    let mut signature_ended = false;
+    for i in line_idx..lines.len().min(line_idx + 10) {
+        if let Some(line) = lines.get(i) {
+            // Check for markers on this line
+            if let Some(marker_str) = extract_marker_from_line(line) {
+                for marker in parse_markers(&marker_str) {
+                    if !markers.contains(&marker) {
+                        markers.push(marker);
+                    }
+                }
+            }
+
+            let trimmed = line.trim();
+
+            // Stop if we hit another function definition (after the first line)
             if i > line_idx
-                && (line.trim_start().starts_with("def ")
-                    || line.trim_start().starts_with("async def "))
+                && (trimmed.starts_with("def ") || trimmed.starts_with("async def "))
             {
                 break;
+            }
+
+            // Check if we hit the end of function signature
+            // A signature ends when we find a line with `:` that ends the code part
+            // (ignoring any inline comment)
+            if !signature_ended && !trimmed.starts_with('#') {
+                // Extract the code part (before any comment)
+                let code_part = if let Some(comment_idx) = line.find('#') {
+                    &line[..comment_idx]
+                } else {
+                    line
+                };
+
+                // Check if the code part ends with `:` (signature end)
+                // This handles: `def foo():`, `def foo(): # comment`, `    ) -> int:`
+                let code_trimmed = code_part.trim_end();
+                if code_trimmed.ends_with(':') {
+                    signature_ended = true;
+                    continue;
+                }
+            }
+
+            // After signature ended, scan for body comment markers
+            if signature_ended {
+                // Only continue if this is a comment-only line, blank, or docstring
+                let is_comment_only = trimmed.starts_with('#');
+                let is_blank = trimmed.is_empty();
+                let is_docstring_start =
+                    trimmed.starts_with("\"\"\"") || trimmed.starts_with("'''");
+
+                if !is_comment_only && !is_blank && !is_docstring_start {
+                    // Hit actual code in function body - stop scanning
+                    break;
+                }
             }
         }
     }
