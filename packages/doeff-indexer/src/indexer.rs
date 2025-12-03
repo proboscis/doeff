@@ -483,15 +483,35 @@ pub(crate) fn extract_markers_from_source(
 
 fn extract_marker_from_line(line: &str) -> Option<String> {
     // Look for "# doeff: <marker>" pattern (case-insensitive)
+    // Handle variations:
+    //   "# doeff: marker"
+    //   "#doeff: marker"
+    //   "#  doeff:  marker"
     let lower_line = line.to_lowercase();
-    if let Some(idx) = lower_line.find("# doeff:") {
-        // Get the original case substring for markers
-        let marker_part = &line[idx + 8..]; // Skip "# doeff:"
-                                            // Return the entire marker string (may contain multiple markers)
-        Some(marker_part.trim().to_string())
-    } else {
-        None
+
+    // Find the '#' character first
+    let hash_idx = lower_line.find('#')?;
+
+    // Get the part after '#' and check for 'doeff:'
+    let after_hash = &lower_line[hash_idx + 1..];
+    let trimmed_after_hash = after_hash.trim_start();
+
+    if !trimmed_after_hash.starts_with("doeff:") {
+        return None;
     }
+
+    // Find the position of "doeff:" in the original line
+    // Calculate the offset: hash_idx + 1 + (whitespace before doeff) + 6 (len of "doeff:")
+    let whitespace_len = after_hash.len() - trimmed_after_hash.len();
+    let marker_start = hash_idx + 1 + whitespace_len + 6; // 6 = len("doeff:")
+
+    if marker_start >= line.len() {
+        return Some(String::new());
+    }
+
+    // Get the original case substring for markers
+    let marker_part = &line[marker_start..];
+    Some(marker_part.trim().to_string())
 }
 
 fn parse_markers(marker_str: &str) -> Vec<String> {
