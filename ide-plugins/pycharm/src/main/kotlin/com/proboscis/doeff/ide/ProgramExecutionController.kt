@@ -5,8 +5,8 @@ import com.intellij.notification.NotificationType
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.wm.StatusBar
 import com.intellij.openapi.wm.WindowManager
+import com.intellij.psi.PsiDocumentManager
 import com.jetbrains.python.psi.PyFile
 import com.jetbrains.python.psi.PyTargetExpression
 import java.awt.event.MouseEvent
@@ -82,8 +82,16 @@ object ProgramExecutionController {
             updateStatusBar(project, "Doeff: Indexing project for $programPath...")
             showInfoNotification(project, "Doeff Indexing", "Searching for interpreters and transformers...")
 
+            // Calculate target line for proximity sorting
+            val targetLine = pyFile?.let { file ->
+                PsiDocumentManager.getInstance(project).getDocument(file)
+                    ?.getLineNumber(targetExpression.textOffset)?.plus(1)
+            } ?: 0
+            logger.debug("Using proximity sorting: file=$filePath, line=$targetLine")
+
             // Use the find-interpreters command to get only valid interpreters
-            indexer.findInterpreters(typeArgument) { interpreters ->
+            // Pass proximity information for sorting results by closeness to the target
+            indexer.findInterpreters(typeArgument, filePath, targetLine) { interpreters ->
             if (interpreters.isEmpty()) {
                 logger.warn("No interpreters found in index for type $typeArgument")
                 ProgramPluginDiagnostics.warn(
@@ -101,9 +109,11 @@ object ProgramExecutionController {
             }
 
             // Get Kleisli functions using the dedicated command
-            indexer.findKleisli(typeArgument) { kleisli ->
+            // Pass proximity information for sorting results by closeness to the target
+            indexer.findKleisli(typeArgument, filePath, targetLine) { kleisli ->
                 // Get transformers using the dedicated command
-                indexer.findTransforms(typeArgument) { transformers ->
+                // Pass proximity information for sorting results by closeness to the target
+                indexer.findTransforms(typeArgument, filePath, targetLine) { transformers ->
                     updateStatusBar(project, "Doeff: Found ${interpreters.size} interpreters, ${kleisli.size} kleisli, ${transformers.size} transformers")
                     
                     val dialog = ProgramSelectionDialog(
