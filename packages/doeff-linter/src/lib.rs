@@ -9,7 +9,9 @@ pub mod config;
 pub mod logging;
 pub mod models;
 pub mod noqa;
+pub mod report;
 pub mod rules;
+pub mod stats;
 pub mod utils;
 
 use models::{LintResult, RuleContext, Violation};

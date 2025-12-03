@@ -1,9 +1,12 @@
 //! doeff-linter CLI
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use colored::*;
 use doeff_linter::{
-    collect_python_files, config, lint_files_parallel, logging::{LintLogEntry, LintLogger}, models::Severity, rules,
+    collect_python_files, config, lint_files_parallel,
+    logging::{LintLogEntry, LintLogger},
+    models::Severity,
+    report, rules, stats,
 };
 use std::collections::BTreeMap;
 use std::io::{self, Read};
@@ -13,7 +16,11 @@ use std::process::{Command, ExitCode};
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
 #[command(version, about = "A linter for enforcing code quality and immutability patterns")]
-struct Args {
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    // Global options that also work without subcommand (for backward compatibility)
     /// Files or directories to lint
     #[arg(default_value = ".")]
     paths: Vec<String>,
@@ -60,6 +67,35 @@ struct Args {
     no_log: bool,
 }
 
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Show statistics from lint log file
+    Stats {
+        /// Path to the log file
+        #[arg(default_value = ".doeff-lint.jsonl")]
+        log_file: String,
+
+        /// Show daily trend information
+        #[arg(long)]
+        trend: bool,
+    },
+
+    /// Generate HTML report from lint log file
+    Report {
+        /// Path to the log file
+        #[arg(default_value = ".doeff-lint.jsonl")]
+        log_file: String,
+
+        /// Output HTML file path
+        #[arg(short, long, default_value = "doeff-lint-report.html")]
+        output: String,
+
+        /// Open the report in browser after generation
+        #[arg(long)]
+        open: bool,
+    },
+}
+
 /// Cursor hook input structure
 #[derive(serde::Deserialize, Debug)]
 struct HookInput {
@@ -78,16 +114,119 @@ struct HookOutput {
 }
 
 fn main() -> ExitCode {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    if args.hook {
-        return run_as_hook(&args);
+    match cli.command {
+        Some(Commands::Stats { log_file, trend }) => run_stats(&log_file, trend),
+        Some(Commands::Report {
+            log_file,
+            output,
+            open,
+        }) => run_report(&log_file, &output, open),
+        None => {
+            if cli.hook {
+                run_as_hook(&cli)
+            } else {
+                run_normal(&cli)
+            }
+        }
     }
-
-    run_normal(&args)
 }
 
-fn run_as_hook(args: &Args) -> ExitCode {
+fn run_stats(log_file: &str, show_trend: bool) -> ExitCode {
+    let path = Path::new(log_file);
+
+    if !path.exists() {
+        eprintln!(
+            "{} Log file not found: {}",
+            "Error:".red().bold(),
+            log_file
+        );
+        eprintln!(
+            "Run {} first to generate the log file.",
+            "doeff-linter".cyan()
+        );
+        return ExitCode::from(1);
+    }
+
+    match stats::LogStats::from_log_file(path) {
+        Ok(log_stats) => {
+            stats::print_stats(&log_stats);
+            if show_trend {
+                stats::print_trend(&log_stats);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{} Failed to read log file: {}", "Error:".red().bold(), e);
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_report(log_file: &str, output: &str, open_browser: bool) -> ExitCode {
+    let log_path = Path::new(log_file);
+
+    if !log_path.exists() {
+        eprintln!(
+            "{} Log file not found: {}",
+            "Error:".red().bold(),
+            log_file
+        );
+        eprintln!(
+            "Run {} first to generate the log file.",
+            "doeff-linter".cyan()
+        );
+        return ExitCode::from(1);
+    }
+
+    let log_stats = match stats::LogStats::from_log_file(log_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{} Failed to read log file: {}", "Error:".red().bold(), e);
+            return ExitCode::from(1);
+        }
+    };
+
+    let output_path = Path::new(output);
+
+    match report::generate_html_report(&log_stats, output_path) {
+        Ok(()) => {
+            println!(
+                "{} Generated report: {}",
+                "✓".green().bold(),
+                output.cyan()
+            );
+
+            if open_browser {
+                let abs_path = std::fs::canonicalize(output_path)
+                    .unwrap_or_else(|_| output_path.to_path_buf());
+                let url = format!("file://{}", abs_path.display());
+
+                #[cfg(target_os = "macos")]
+                let _ = Command::new("open").arg(&url).spawn();
+
+                #[cfg(target_os = "linux")]
+                let _ = Command::new("xdg-open").arg(&url).spawn();
+
+                #[cfg(target_os = "windows")]
+                let _ = Command::new("cmd").args(["/c", "start", &url]).spawn();
+            }
+
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!(
+                "{} Failed to generate report: {}",
+                "Error:".red().bold(),
+                e
+            );
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run_as_hook(args: &Cli) -> ExitCode {
     // Read JSON from stdin
     let mut input = String::new();
     if let Err(e) = io::stdin().read_to_string(&mut input) {
@@ -120,12 +259,8 @@ fn run_as_hook(args: &Args) -> ExitCode {
     };
 
     // Merge CLI args with config
-    let (enabled_rules, exclude_patterns) = config::merge_config(
-        config.as_ref(),
-        &args.enable,
-        &args.disable,
-        &args.exclude,
-    );
+    let (enabled_rules, exclude_patterns) =
+        config::merge_config(config.as_ref(), &args.enable, &args.disable, &args.exclude);
 
     // Get rules
     let all_rules = rules::get_enabled_rules(enabled_rules.as_deref());
@@ -166,9 +301,13 @@ fn run_as_hook(args: &Args) -> ExitCode {
 
     // Log results (enabled by default, use --no-log to disable)
     if !args.no_log {
-        let log_file = args.log_file.clone().or_else(|| config.as_ref().and_then(|c| c.log_file.clone()));
+        let log_file = args
+            .log_file
+            .clone()
+            .or_else(|| config.as_ref().and_then(|c| c.log_file.clone()));
         if let Some(log_path) = log_file {
-            let enabled_rule_ids: Vec<String> = all_rules.iter().map(|r| r.rule_id().to_string()).collect();
+            let enabled_rule_ids: Vec<String> =
+                all_rules.iter().map(|r| r.rule_id().to_string()).collect();
             let log_entry = LintLogEntry::from_results(&results, "hook", Some(enabled_rule_ids));
             match LintLogger::new(&log_path) {
                 Ok(mut logger) => {
@@ -196,7 +335,10 @@ fn run_as_hook(args: &Args) -> ExitCode {
     };
 
     // Output hook response
-    println!("{}", serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string()));
+    println!(
+        "{}",
+        serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_string())
+    );
     ExitCode::SUCCESS
 }
 
@@ -207,7 +349,8 @@ struct ViolationSummary {
 }
 
 fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> String {
-    let mut message = String::from("The doeff-linter found code quality issues that need to be fixed:\n\n");
+    let mut message =
+        String::from("The doeff-linter found code quality issues that need to be fixed:\n\n");
 
     for (rule_id, violations) in grouped {
         let rule_info = get_rule_info(rule_id);
@@ -234,7 +377,7 @@ fn build_followup_message(grouped: &BTreeMap<String, Vec<ViolationSummary>>) -> 
     message
 }
 
-fn run_normal(args: &Args) -> ExitCode {
+fn run_normal(args: &Cli) -> ExitCode {
     // Load config
     let config = if args.no_config {
         None
@@ -243,12 +386,8 @@ fn run_normal(args: &Args) -> ExitCode {
     };
 
     // Merge CLI args with config
-    let (enabled_rules, exclude_patterns) = config::merge_config(
-        config.as_ref(),
-        &args.enable,
-        &args.disable,
-        &args.exclude,
-    );
+    let (enabled_rules, exclude_patterns) =
+        config::merge_config(config.as_ref(), &args.enable, &args.disable, &args.exclude);
 
     if args.verbose {
         eprintln!("Enabled rules: {:?}", enabled_rules);
@@ -274,17 +413,15 @@ fn run_normal(args: &Args) -> ExitCode {
         // Get git-modified files
         let base_path = args.paths.first().map(|s| s.as_str()).unwrap_or(".");
         let modified_files = get_git_modified_files(base_path);
-        
+
         if args.verbose {
             eprintln!("Git modified files: {:?}", modified_files);
         }
-        
+
         // Filter by exclude patterns and convert to PathBuf
         modified_files
             .into_iter()
-            .filter(|f| {
-                !exclude_patterns.iter().any(|pat| f.contains(pat))
-            })
+            .filter(|f| !exclude_patterns.iter().any(|pat| f.contains(pat)))
             .map(std::path::PathBuf::from)
             .collect()
     } else {
@@ -330,17 +467,24 @@ fn run_normal(args: &Args) -> ExitCode {
 
     // Log results (enabled by default, use --no-log to disable)
     if !args.no_log {
-        let log_file = args.log_file.clone().or_else(|| config.as_ref().and_then(|c| c.log_file.clone()));
+        let log_file = args
+            .log_file
+            .clone()
+            .or_else(|| config.as_ref().and_then(|c| c.log_file.clone()));
         if let Some(log_path) = log_file {
             let run_mode = if args.modified { "modified" } else { "normal" };
-            let enabled_rule_ids: Vec<String> = all_rules.iter().map(|r| r.rule_id().to_string()).collect();
+            let enabled_rule_ids: Vec<String> =
+                all_rules.iter().map(|r| r.rule_id().to_string()).collect();
             let log_entry = LintLogEntry::from_results(&results, run_mode, Some(enabled_rule_ids));
             match LintLogger::new(&log_path) {
                 Ok(mut logger) => {
                     if let Err(e) = logger.log(&log_entry) {
                         eprintln!("Warning: Failed to write to log file: {}", e);
                     } else if args.verbose {
-                        eprintln!("Logged {} violations to {}", log_entry.total_violations, log_path);
+                        eprintln!(
+                            "Logged {} violations to {}",
+                            log_entry.total_violations, log_path
+                        );
                     }
                 }
                 Err(e) => {
@@ -509,9 +653,12 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
     for (rule_id, violations) in &grouped {
         let rule_info = get_rule_info(rule_id);
         let count = violations.len();
-        
+
         // Determine severity color for header
-        let severity = violations.first().map(|v| v.severity).unwrap_or(Severity::Warning);
+        let severity = violations
+            .first()
+            .map(|v| v.severity)
+            .unwrap_or(Severity::Warning);
         let header_color = match severity {
             Severity::Error => "error".red().bold(),
             Severity::Warning => "warning".yellow().bold(),
@@ -580,7 +727,10 @@ fn print_json(results: &[doeff_linter::models::LintResult]) {
         })
         .collect();
 
-    println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&output).unwrap_or_default()
+    );
 }
 
 fn get_line_from_offset(file_path: &str, offset: usize) -> usize {
@@ -619,7 +769,7 @@ fn get_git_modified_files(base_path: &str) -> Vec<String> {
                     } else {
                         file_part
                     };
-                    
+
                     // Only include Python files
                     if filename.ends_with(".py") {
                         let full_path = Path::new(base_path).join(filename);
