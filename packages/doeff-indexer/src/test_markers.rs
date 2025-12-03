@@ -99,6 +99,28 @@ def interpreter(program: Program):  # doeff:   interpreter  ,  transform
     }
 
     #[test]
+    fn test_marker_with_space_after_hash() {
+        // Handle "#   doeff:" with extra spaces between # and doeff
+        let source = r#"
+def interpreter(program: Program):  #   doeff:   interpreter  
+    pass
+"#;
+        let markers = extract_markers_from_source(source, 2, "interpreter", &default_args());
+        assert_eq!(markers, vec!["interpreter".to_string()]);
+    }
+
+    #[test]
+    fn test_marker_no_space_after_hash() {
+        // Handle "#doeff:" with no space after #
+        let source = r#"
+def interpreter(program: Program):  #doeff: interpreter
+    pass
+"#;
+        let markers = extract_markers_from_source(source, 2, "interpreter", &default_args());
+        assert_eq!(markers, vec!["interpreter".to_string()]);
+    }
+
+    #[test]
     fn test_async_function_marker() {
         let source = r#"
 async def async_interpreter(  # doeff: interpreter
