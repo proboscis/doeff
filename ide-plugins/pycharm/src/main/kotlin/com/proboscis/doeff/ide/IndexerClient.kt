@@ -37,7 +37,16 @@ class IndexerClient(private val project: Project) {
     }
     
     fun findInterpreters(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
-        CompletableFuture.supplyAsync { runIndexerCommand("find-interpreters", typeArgument) }
+        findInterpreters(typeArgument, null, 0, onSuccess)
+    }
+
+    fun findInterpreters(
+        typeArgument: String?,
+        proximityFile: String?,
+        proximityLine: Int,
+        onSuccess: (List<IndexEntry>) -> Unit
+    ) {
+        CompletableFuture.supplyAsync { runIndexerCommand("find-interpreters", typeArgument, proximityFile, proximityLine) }
             .whenComplete { result, throwable ->
                 if (throwable != null) {
                     notifyError("Failed to find interpreters", throwable.message ?: "Unknown error", throwable)
@@ -55,7 +64,16 @@ class IndexerClient(private val project: Project) {
     }
     
     fun findTransforms(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
-        CompletableFuture.supplyAsync { runIndexerCommand("find-transforms", typeArgument) }
+        findTransforms(typeArgument, null, 0, onSuccess)
+    }
+
+    fun findTransforms(
+        typeArgument: String?,
+        proximityFile: String?,
+        proximityLine: Int,
+        onSuccess: (List<IndexEntry>) -> Unit
+    ) {
+        CompletableFuture.supplyAsync { runIndexerCommand("find-transforms", typeArgument, proximityFile, proximityLine) }
             .whenComplete { result, throwable ->
                 if (throwable != null) {
                     notifyError("Failed to find transforms", throwable.message ?: "Unknown error", throwable)
@@ -73,7 +91,16 @@ class IndexerClient(private val project: Project) {
     }
     
     fun findKleisli(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
-        CompletableFuture.supplyAsync { runIndexerCommand("find-kleisli", typeArgument) }
+        findKleisli(typeArgument, null, 0, onSuccess)
+    }
+
+    fun findKleisli(
+        typeArgument: String?,
+        proximityFile: String?,
+        proximityLine: Int,
+        onSuccess: (List<IndexEntry>) -> Unit
+    ) {
+        CompletableFuture.supplyAsync { runIndexerCommand("find-kleisli", typeArgument, proximityFile, proximityLine) }
             .whenComplete { result, throwable ->
                 if (throwable != null) {
                     notifyError("Failed to find Kleisli functions", throwable.message ?: "Unknown error", throwable)
@@ -112,7 +139,12 @@ class IndexerClient(private val project: Project) {
             }
     }
 
-    private fun runIndexerCommand(command: String, typeArgument: String?): List<IndexEntry>? {
+    private fun runIndexerCommand(
+        command: String,
+        typeArgument: String?,
+        proximityFile: String? = null,
+        proximityLine: Int = 0
+    ): List<IndexEntry>? {
         val indexerPath = resolveIndexerPath() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
         val commandList = mutableListOf(indexerPath, command, "--root", root)
@@ -127,6 +159,16 @@ class IndexerClient(private val project: Project) {
             commandList.add(trimmedType)
         } else if (!supportsTypeArg && !trimmedType.isNullOrEmpty()) {
             log.debug("Skipping type-arg '$trimmedType' for command $command – not supported")
+        }
+
+        // Add proximity sorting parameters if provided
+        if (!proximityFile.isNullOrEmpty()) {
+            commandList.add("--proximity-file")
+            commandList.add(proximityFile)
+            if (proximityLine > 0) {
+                commandList.add("--proximity-line")
+                commandList.add(proximityLine.toString())
+            }
         }
 
         log.debug("Executing doeff-indexer: ${commandList.joinToString(" ")}")
