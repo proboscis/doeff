@@ -18,6 +18,12 @@ pub mod doeff012_no_append_loop;
 pub mod doeff013_prefer_maybe_monad;
 pub mod doeff014_no_try_except;
 pub mod doeff015_no_zero_arg_program;
+pub mod doeff016_no_relative_import;
+pub mod doeff017_no_program_type_param;
+pub mod doeff018_no_ask_in_try;
+pub mod doeff019_no_ask_with_fallback;
+pub mod doeff020_program_naming_convention;
+pub mod doeff021_no_dunder_all;
 
 use base::LintRule;
 use std::collections::HashMap;
@@ -40,6 +46,12 @@ pub fn get_all_rules() -> Vec<Box<dyn LintRule>> {
         Box::new(doeff013_prefer_maybe_monad::PreferMaybeMonadRule::new()),
         Box::new(doeff014_no_try_except::NoTryExceptRule::new()),
         Box::new(doeff015_no_zero_arg_program::NoZeroArgProgramRule::new()),
+        Box::new(doeff016_no_relative_import::NoRelativeImportRule::new()),
+        Box::new(doeff017_no_program_type_param::NoProgramTypeParamRule::new()),
+        Box::new(doeff018_no_ask_in_try::NoAskInTryRule::new()),
+        Box::new(doeff019_no_ask_with_fallback::NoAskWithFallbackRule::new()),
+        Box::new(doeff020_program_naming_convention::ProgramNamingConventionRule::new()),
+        Box::new(doeff021_no_dunder_all::NoDunderAllRule::new()),
     ]
 }
 
@@ -79,7 +91,7 @@ mod tests {
     #[test]
     fn test_all_rules_loaded() {
         let rules = get_all_rules();
-        assert_eq!(rules.len(), 15);
+        assert_eq!(rules.len(), 21);
 
         let rule_ids: Vec<_> = rules.iter().map(|r| r.rule_id()).collect();
         assert!(rule_ids.contains(&"DOEFF001"));
@@ -89,6 +101,12 @@ mod tests {
         assert!(rule_ids.contains(&"DOEFF013"));
         assert!(rule_ids.contains(&"DOEFF014"));
         assert!(rule_ids.contains(&"DOEFF015"));
+        assert!(rule_ids.contains(&"DOEFF016"));
+        assert!(rule_ids.contains(&"DOEFF017"));
+        assert!(rule_ids.contains(&"DOEFF018"));
+        assert!(rule_ids.contains(&"DOEFF019"));
+        assert!(rule_ids.contains(&"DOEFF020"));
+        assert!(rule_ids.contains(&"DOEFF021"));
     }
 
     #[test]
