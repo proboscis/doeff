@@ -14,6 +14,10 @@ pub mod doeff008_no_dataclass_attribute_mutation;
 pub mod doeff009_missing_return_type_annotation;
 pub mod doeff010_test_file_placement;
 pub mod doeff011_no_flag_arguments;
+pub mod doeff012_no_append_loop;
+pub mod doeff013_prefer_maybe_monad;
+pub mod doeff014_no_try_except;
+pub mod doeff015_no_zero_arg_program;
 
 use base::LintRule;
 use std::collections::HashMap;
@@ -32,6 +36,10 @@ pub fn get_all_rules() -> Vec<Box<dyn LintRule>> {
         Box::new(doeff009_missing_return_type_annotation::MissingReturnTypeAnnotationRule::new()),
         Box::new(doeff010_test_file_placement::TestFilePlacementRule::new()),
         Box::new(doeff011_no_flag_arguments::NoFlagArgumentsRule::new()),
+        Box::new(doeff012_no_append_loop::NoAppendLoopRule::new()),
+        Box::new(doeff013_prefer_maybe_monad::PreferMaybeMonadRule::new()),
+        Box::new(doeff014_no_try_except::NoTryExceptRule::new()),
+        Box::new(doeff015_no_zero_arg_program::NoZeroArgProgramRule::new()),
     ]
 }
 
@@ -71,12 +79,16 @@ mod tests {
     #[test]
     fn test_all_rules_loaded() {
         let rules = get_all_rules();
-        assert_eq!(rules.len(), 11);
+        assert_eq!(rules.len(), 15);
 
         let rule_ids: Vec<_> = rules.iter().map(|r| r.rule_id()).collect();
         assert!(rule_ids.contains(&"DOEFF001"));
         assert!(rule_ids.contains(&"DOEFF010"));
         assert!(rule_ids.contains(&"DOEFF011"));
+        assert!(rule_ids.contains(&"DOEFF012"));
+        assert!(rule_ids.contains(&"DOEFF013"));
+        assert!(rule_ids.contains(&"DOEFF014"));
+        assert!(rule_ids.contains(&"DOEFF015"));
     }
 
     #[test]
