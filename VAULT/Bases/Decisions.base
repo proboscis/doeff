@@ -1,0 +1,19 @@
+filters: file.inFolder("Decisions")
+properties:
+  id:
+    displayName: ID
+  status:
+    displayName: Status
+  date:
+    displayName: Date
+  outcome:
+    displayName: Outcome
+views:
+  - type: table
+    name: All Decisions
+    order:
+      - id
+      - status
+      - date
+      - outcome
+

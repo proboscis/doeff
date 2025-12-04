@@ -1,0 +1,25 @@
+filters: file.inFolder("Designs")
+properties:
+  id:
+    displayName: ID
+  status:
+    displayName: Status
+  type:
+    displayName: Type
+  module:
+    displayName: Module
+  code_path:
+    displayName: Code Path
+views:
+  - type: table
+    name: All Designs
+    order:
+      - id
+      - status
+      - type
+      - module
+    columnSize:
+      note.id: 132
+      note.status: 120
+      note.type: 115
+
