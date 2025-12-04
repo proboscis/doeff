@@ -1,0 +1,54 @@
+filters: file.inFolder("Tasks")
+properties:
+  id:
+    displayName: ID
+  status:
+    displayName: Status
+  priority:
+    displayName: Priority
+  related-project:
+    displayName: Project
+  due-date:
+    displayName: Due Date
+views:
+  - type: table
+    name: All Tasks
+    order:
+      - id
+      - status
+      - priority
+      - related-project
+      - due-date
+      - file.name
+  - type: table
+    name: Todo
+    order:
+      - id
+      - priority
+      - related-project
+      - file.name
+    filter:
+      - field: status
+        operator: is
+        value: todo
+  - type: table
+    name: In Progress
+    order:
+      - id
+      - priority
+      - related-project
+      - file.name
+    filter:
+      - field: status
+        operator: is
+        value: in-progress
+  - type: table
+    name: Done
+    order:
+      - id
+      - file.name
+    filter:
+      - field: status
+        operator: is
+        value: done
+

@@ -1,0 +1,26 @@
+{
+  "types": {
+    "id": "text",
+    "title": "text",
+    "status": "text",
+    "module": "text",
+    "code_path": "text",
+    "version": "text",
+    "priority": "text",
+    "due-date": "date",
+    "created": "date",
+    "updated": "date",
+    "related-feature": "multitext",
+    "related-spec": "multitext",
+    "related-task": "multitext",
+    "related-design": "multitext",
+    "related-project": "text",
+    "severity": "text",
+    "type": "text",
+    "date": "date",
+    "outcome": "text",
+    "participants": "multitext",
+    "tags": "tags"
+  }
+}
+

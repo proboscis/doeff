@@ -1,0 +1,26 @@
+filters: file.inFolder("Specs")
+properties:
+  id:
+    displayName: ID
+  status:
+    displayName: Status
+  module:
+    displayName: Module
+  code_path:
+    displayName: Code Path
+  version:
+    displayName: Version
+views:
+  - type: table
+    name: All Specs
+    order:
+      - id
+      - status
+      - module
+      - version
+      - file.name
+    columnSize:
+      note.id: 145
+      note.status: 105
+      note.module: 113
+
