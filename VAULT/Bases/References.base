@@ -1,0 +1,10 @@
+filters: file.inFolder("References")
+properties:
+  type:
+    displayName: Type
+  module:
+    displayName: Module
+views:
+  - type: table
+    name: All References
+
