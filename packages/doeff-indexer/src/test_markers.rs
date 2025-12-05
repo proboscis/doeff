@@ -205,6 +205,43 @@ def regular_function(x: int):
         assert!(markers.is_empty());
     }
 
+    #[test]
+    fn test_marker_after_noqa_comment() {
+        // Handle "# noqa: DOEFF017 # doeff: transform" pattern
+        // The doeff marker should be detected even after noqa comment
+        let source = r#"
+def visualize_optimization_steps(  # noqa: DOEFF017 # doeff: transform
+    program: Program
+):
+    pass
+"#;
+        let markers =
+            extract_markers_from_source(source, 2, "visualize_optimization_steps", &default_args());
+        assert_eq!(markers, vec!["transform".to_string()]);
+    }
+
+    #[test]
+    fn test_marker_after_noqa_single_line() {
+        // Handle noqa followed by doeff marker on def line
+        let source = r#"
+def process_data(x: int):  # noqa: E501 # doeff: kleisli
+    return x * 2
+"#;
+        let markers = extract_markers_from_source(source, 2, "process_data", &default_args());
+        assert_eq!(markers, vec!["kleisli".to_string()]);
+    }
+
+    #[test]
+    fn test_marker_after_multiple_comments() {
+        // Handle multiple comment sections before doeff marker
+        let source = r#"
+def complex_func(x: int):  # type: ignore # noqa # doeff: interpreter
+    return x * 2
+"#;
+        let markers = extract_markers_from_source(source, 2, "complex_func", &default_args());
+        assert_eq!(markers, vec!["interpreter".to_string()]);
+    }
+
     fn default_args() -> ast::Arguments {
         ast::Arguments::empty(TextRange::default().into())
     }

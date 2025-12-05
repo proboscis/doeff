@@ -487,31 +487,42 @@ fn extract_marker_from_line(line: &str) -> Option<String> {
     //   "# doeff: marker"
     //   "#doeff: marker"
     //   "#  doeff:  marker"
+    //   "# noqa: DOEFF017 # doeff: transform"  (marker after noqa comment)
     let lower_line = line.to_lowercase();
 
-    // Find the '#' character first
-    let hash_idx = lower_line.find('#')?;
+    // Find all '#' characters and check each one for "doeff:" pattern
+    // This handles cases where noqa or other comments precede the doeff marker
+    let mut search_start = 0;
+    while let Some(relative_hash_idx) = lower_line[search_start..].find('#') {
+        let hash_idx = search_start + relative_hash_idx;
 
-    // Get the part after '#' and check for 'doeff:'
-    let after_hash = &lower_line[hash_idx + 1..];
-    let trimmed_after_hash = after_hash.trim_start();
+        // Get the part after '#' and check for 'doeff:'
+        let after_hash = &lower_line[hash_idx + 1..];
+        let trimmed_after_hash = after_hash.trim_start();
 
-    if !trimmed_after_hash.starts_with("doeff:") {
-        return None;
+        if trimmed_after_hash.starts_with("doeff:") {
+            // Found the doeff marker!
+            // Calculate the position in the original line
+            let whitespace_len = after_hash.len() - trimmed_after_hash.len();
+            let marker_start = hash_idx + 1 + whitespace_len + 6; // 6 = len("doeff:")
+
+            if marker_start >= line.len() {
+                return Some(String::new());
+            }
+
+            // Get the original case substring for markers
+            let marker_part = &line[marker_start..];
+            return Some(marker_part.trim().to_string());
+        }
+
+        // Move past this '#' and continue searching
+        search_start = hash_idx + 1;
+        if search_start >= lower_line.len() {
+            break;
+        }
     }
 
-    // Find the position of "doeff:" in the original line
-    // Calculate the offset: hash_idx + 1 + (whitespace before doeff) + 6 (len of "doeff:")
-    let whitespace_len = after_hash.len() - trimmed_after_hash.len();
-    let marker_start = hash_idx + 1 + whitespace_len + 6; // 6 = len("doeff:")
-
-    if marker_start >= line.len() {
-        return Some(String::new());
-    }
-
-    // Get the original case substring for markers
-    let marker_part = &line[marker_start..];
-    Some(marker_part.trim().to_string())
+    None
 }
 
 fn parse_markers(marker_str: &str) -> Vec<String> {
