@@ -13,6 +13,30 @@ use std::process::{Command, ExitCode};
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
 #[command(version, about = "A linter for enforcing code quality and immutability patterns")]
+#[command(after_help = r#"SUPPRESSING RULES:
+  Use noqa comments to suppress rules on specific lines or entire files.
+
+  Line-level suppression:
+    def dict():  # noqa: DOEFF001        Suppress specific rule
+    def list():  # noqa                  Suppress all rules on this line
+    x = 1  # noqa: DOEFF001, DOEFF002    Suppress multiple rules
+
+  File-level suppression (must appear before any code):
+    # noqa: file                         Suppress all rules for entire file
+    # noqa: file=DOEFF001                Suppress specific rule for entire file
+    # noqa: file=DOEFF001,DOEFF002       Suppress multiple rules for entire file
+
+  Notes:
+    - Rule IDs are case-insensitive (doeff001 = DOEFF001)
+    - File-level noqa must appear before any code (comments/docstrings allowed before it)
+
+EXAMPLES:
+  doeff-linter .                         Lint current directory
+  doeff-linter --enable DOEFF001         Enable only specific rule
+  doeff-linter --disable DOEFF001        Disable specific rule
+  doeff-linter --modified                Lint only git-modified files
+  doeff-linter --output-format json      Output in JSON format
+"#)]
 struct Args {
     /// Files or directories to lint
     #[arg(default_value = ".")]
