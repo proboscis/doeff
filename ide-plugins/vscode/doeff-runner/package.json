@@ -15,7 +15,9 @@
     "onLanguage:python",
     "onCommand:doeff-runner.runDefault",
     "onCommand:doeff-runner.runOptions",
-    "onCommand:doeff-runner.runConfig"
+    "onCommand:doeff-runner.runConfig",
+    "onCommand:doeff-runner.runWithKleisli",
+    "onCommand:doeff-runner.runWithTransform"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -31,6 +33,14 @@
       {
         "command": "doeff-runner.runConfig",
         "title": "Run doeff Selection"
+      },
+      {
+        "command": "doeff-runner.runWithKleisli",
+        "title": "Run doeff Program with Kleisli"
+      },
+      {
+        "command": "doeff-runner.runWithTransform",
+        "title": "Run doeff Program with Transform"
       }
     ]
   },
