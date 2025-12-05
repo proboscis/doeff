@@ -69,29 +69,173 @@ type RunMode = 'default' | 'options';
 
 const entryCache = new Map<string, CacheEntry<IndexEntry[]>>();
 
+interface ToolCache {
+  typeArg: string;
+  entries: IndexEntry[];
+  timestamp: number;
+}
+
+// Visual prefixes for different tool categories
+const TOOL_PREFIX = {
+  run: '▶',
+  runWithOptions: '▶⚙',
+  kleisli: '🔗',
+  transform: '🔀'
+};
+
 class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<void>();
   public readonly onDidChangeCodeLenses = this.emitter.event;
+  private kleisliCache = new Map<string, ToolCache>();
+  private transformCache = new Map<string, ToolCache>();
+  private pendingFetches = new Set<string>();
+  private readonly CACHE_TTL_MS = 30000; // 30 seconds before background refresh
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
-    for (const decl of extractProgramDeclarations(document)) {
+    const declarations = extractProgramDeclarations(document);
+
+    const workspaceFolder =
+      vscode.workspace.getWorkspaceFolder(document.uri) ??
+      vscode.workspace.workspaceFolders?.[0];
+
+    for (const decl of declarations) {
+      // Standard Run button
       lenses.push(
         new vscode.CodeLens(decl.range, {
-          title: 'Run',
+          title: `${TOOL_PREFIX.run} Run`,
+          tooltip: 'Run with default interpreter',
           command: 'doeff-runner.runDefault',
           arguments: [document.uri, decl.range.start.line]
         })
       );
+      // Run with options button
       lenses.push(
         new vscode.CodeLens(decl.range, {
-          title: 'Run with options',
+          title: `${TOOL_PREFIX.runWithOptions} Options`,
+          tooltip: 'Run with custom interpreter, kleisli, and transformer selection',
           command: 'doeff-runner.runOptions',
           arguments: [document.uri, decl.range.start.line]
         })
       );
+
+      if (workspaceFolder) {
+        const rootPath = workspaceFolder.uri.fsPath;
+
+        // Add Kleisli tool buttons
+        const kleisliTools = this.getToolsSync('kleisli', rootPath, decl.typeArg);
+        for (const kleisli of kleisliTools) {
+          lenses.push(
+            new vscode.CodeLens(decl.range, {
+              title: `${TOOL_PREFIX.kleisli} ${kleisli.name}`,
+              tooltip: kleisli.docstring
+                ? `[Kleisli] ${kleisli.qualifiedName}\n\n${kleisli.docstring}`
+                : `[Kleisli] ${kleisli.qualifiedName}`,
+              command: 'doeff-runner.runWithKleisli',
+              arguments: [
+                document.uri,
+                decl.range.start.line,
+                kleisli.qualifiedName
+              ]
+            })
+          );
+        }
+
+        // Add Transform tool buttons
+        const transformTools = this.getToolsSync('transform', rootPath, decl.typeArg);
+        for (const transform of transformTools) {
+          lenses.push(
+            new vscode.CodeLens(decl.range, {
+              title: `${TOOL_PREFIX.transform} ${transform.name}`,
+              tooltip: transform.docstring
+                ? `[Transform] ${transform.qualifiedName}\n\n${transform.docstring}`
+                : `[Transform] ${transform.qualifiedName}`,
+              command: 'doeff-runner.runWithTransform',
+              arguments: [
+                document.uri,
+                decl.range.start.line,
+                transform.qualifiedName
+              ]
+            })
+          );
+        }
+      }
     }
     return lenses;
+  }
+
+  /**
+   * Synchronously returns cached tool entries.
+   * Triggers background refresh if cache is stale.
+   */
+  private getToolsSync(
+    toolType: 'kleisli' | 'transform',
+    rootPath: string,
+    typeArg: string
+  ): IndexEntry[] {
+    const cache = toolType === 'kleisli' ? this.kleisliCache : this.transformCache;
+    const cacheKey = `${toolType}:${rootPath}:${typeArg}`;
+    const cached = cache.get(cacheKey);
+    const now = Date.now();
+
+    // Return cached data if available (even if stale)
+    if (cached) {
+      // Trigger background refresh if stale
+      if (now - cached.timestamp > this.CACHE_TTL_MS) {
+        this.refreshToolsInBackground(toolType, rootPath, typeArg, cacheKey);
+      }
+      return cached.entries;
+    }
+
+    // No cache - trigger background fetch and return empty for now
+    this.refreshToolsInBackground(toolType, rootPath, typeArg, cacheKey);
+    return [];
+  }
+
+  /**
+   * Fetches tool data in background and refreshes CodeLens when done.
+   */
+  private refreshToolsInBackground(
+    toolType: 'kleisli' | 'transform',
+    rootPath: string,
+    typeArg: string,
+    cacheKey: string
+  ): void {
+    // Avoid duplicate fetches
+    if (this.pendingFetches.has(cacheKey)) {
+      return;
+    }
+    this.pendingFetches.add(cacheKey);
+
+    const cache = toolType === 'kleisli' ? this.kleisliCache : this.transformCache;
+    const command = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
+
+    // Fire and forget - fetch in background
+    (async () => {
+      try {
+        const indexerPath = await locateIndexer();
+        const entries = await fetchEntries(
+          indexerPath,
+          rootPath,
+          command,
+          typeArg
+        );
+        const oldCached = cache.get(cacheKey);
+        cache.set(cacheKey, {
+          typeArg,
+          entries,
+          timestamp: Date.now()
+        });
+        // Only refresh if entries changed
+        if (!oldCached || JSON.stringify(oldCached.entries) !== JSON.stringify(entries)) {
+          this.refresh();
+        }
+      } catch {
+        // Silently ignore errors - keep old cache if available
+      } finally {
+        this.pendingFetches.delete(cacheKey);
+      }
+    })();
   }
 
   refresh() {
@@ -138,12 +282,34 @@ export function activate(context: vscode.ExtensionContext) {
       'doeff-runner.runConfig',
       (selection: RunSelection) => runSelection(selection)
     ),
+    vscode.commands.registerCommand(
+      'doeff-runner.runWithKleisli',
+      (resource?: vscode.Uri | string, lineNumber?: number, kleisliQualifiedName?: string) =>
+        runProgramWithTool(
+          resource,
+          lineNumber,
+          'kleisli',
+          kleisliQualifiedName,
+          codeLensProvider
+        )
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.runWithTransform',
+      (resource?: vscode.Uri | string, lineNumber?: number, transformQualifiedName?: string) =>
+        runProgramWithTool(
+          resource,
+          lineNumber,
+          'transform',
+          transformQualifiedName,
+          codeLensProvider
+        )
+    ),
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (vscode.window.activeTextEditor?.document === event.document) {
         codeLensProvider.refresh();
       }
     }),
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
+    vscode.window.onDidChangeActiveTextEditor(() => {
       codeLensProvider.refresh();
     })
   );
@@ -218,6 +384,110 @@ async function runProgram(
       await runSelection(selection, workspaceFolder);
     }
 
+    codeLensProvider.refresh();
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Unknown error running doeff.';
+    output.appendLine(`[error] ${message}`);
+    vscode.window.showErrorMessage(`doeff runner failed: ${message}`);
+  }
+}
+
+async function runProgramWithTool(
+  resource: vscode.Uri | string | undefined,
+  lineNumber: number | undefined,
+  toolType: 'kleisli' | 'transform',
+  toolQualifiedName: string | undefined,
+  codeLensProvider: ProgramCodeLensProvider
+) {
+  try {
+    await vscode.workspace.saveAll();
+    const document = await resolveDocument(resource);
+    if (!document) {
+      vscode.window.showErrorMessage('No active Python document to run.');
+      return;
+    }
+
+    const targetLine =
+      typeof lineNumber === 'number'
+        ? lineNumber
+        : vscode.window.activeTextEditor?.selection.active.line ?? 0;
+
+    const declaration = findDeclarationAtLine(document, targetLine);
+    if (!declaration) {
+      vscode.window.showErrorMessage(
+        'No doeff Program annotation found on this line.'
+      );
+      return;
+    }
+
+    const workspaceFolder =
+      vscode.workspace.getWorkspaceFolder(document.uri) ??
+      vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      vscode.window.showErrorMessage('Open a workspace folder to run doeff.');
+      return;
+    }
+
+    const indexerPath = await locateIndexer();
+    const programEntry = await findProgramEntry(
+      indexerPath,
+      workspaceFolder.uri.fsPath,
+      document.uri.fsPath,
+      declaration.name
+    );
+    if (!programEntry) {
+      vscode.window.showErrorMessage(
+        `doeff-indexer could not find symbol '${declaration.name}' in this file.`
+      );
+      return;
+    }
+    const programPath = programEntry.qualifiedName || declaration.name;
+
+    // Find default interpreter
+    const interpreters = await fetchEntries(
+      indexerPath,
+      workspaceFolder.uri.fsPath,
+      'find-interpreters',
+      declaration.typeArg
+    );
+    if (!interpreters.length) {
+      vscode.window.showErrorMessage(
+        `No doeff interpreters were found. Cannot run with ${toolType}.`
+      );
+      return;
+    }
+
+    // Use the first interpreter as default
+    const defaultInterpreter = interpreters[0];
+
+    // Find the tool entry for validation
+    const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
+    const tools = await fetchEntries(
+      indexerPath,
+      workspaceFolder.uri.fsPath,
+      toolCommand,
+      declaration.typeArg
+    );
+    const toolEntry = tools.find(
+      (t) => t.qualifiedName === toolQualifiedName
+    );
+    if (!toolEntry && toolQualifiedName) {
+      vscode.window.showErrorMessage(
+        `${toolType} tool '${toolQualifiedName}' not found.`
+      );
+      return;
+    }
+
+    const selection: RunSelection = {
+      programPath,
+      programType: declaration.typeArg,
+      interpreter: defaultInterpreter,
+      kleisli: toolType === 'kleisli' ? toolEntry : undefined,
+      transformer: toolType === 'transform' ? toolEntry : undefined
+    };
+
+    await runSelection(selection, workspaceFolder);
     codeLensProvider.refresh();
   } catch (error) {
     const message =
