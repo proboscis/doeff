@@ -88,6 +88,9 @@ ignore = [
 ]
 external = ["PINJ"]
 
+[tool.doeff-linter]
+disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None patterns
+
 [dependency-groups]
 dev = [
     "pytest>=8.1.1",

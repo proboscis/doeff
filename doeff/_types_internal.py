@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import traceback
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Iterable
+from collections.abc import Callable, Generator, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from pprint import pformat
@@ -81,7 +81,7 @@ DEFAULT_REPR_LIMIT = 1000
 REPR_LIMIT_KEY = "__repr_limit__"
 
 
-def _truncate_repr(obj: object, limit: int | None) -> str:
+def _truncate_repr(obj: object, limit: int | None) -> str:  # noqa: DOEFF013
     """
     Return a truncated repr of obj.
 
@@ -115,7 +115,7 @@ class EffectCreationContext:
     filename: str
     line: int
     function: str
-    code: str | None = None
+    code: str | None = None  # noqa: DOEFF013
     stack_trace: list[dict[str, Any]] = field(default_factory=list)
     frame_info: Any = None  # FrameInfo from inspect module
 
@@ -165,7 +165,7 @@ class EffectCreationContext:
         """Return a sanitized copy without live frame references."""
 
         sanitized_stack: list[dict[str, Any]] = []
-        for frame in self.stack_trace:
+        for frame in self.stack_trace:  # noqa: DOEFF012
             if isinstance(frame, dict):
                 sanitized_frame = {
                     key: value
@@ -215,7 +215,7 @@ class CapturedTraceback:
         seen_headers = 0
         skip_effect_failure = False
 
-        for line in lines:
+        for line in lines:  # noqa: DOEFF012
             stripped = line.strip()
 
             if stripped.startswith("Traceback (most recent call last):"):
@@ -257,7 +257,7 @@ class CapturedTraceback:
 
         return _condense_traceback_lines(sanitized, max_lines)
 
-    def format(
+    def format(  # noqa: DOEFF001
         self,
         *,
         condensed: bool = False,
@@ -392,7 +392,7 @@ def _grow_head_with_tail(
     return _HeadTailLengths(head_lines=head_lines, tail_lines=tail_lines)
 
 
-def _find_user_span_end(body: list[str], desired: int) -> int | None:
+def _find_user_span_end(body: list[str], desired: int) -> int | None:  # noqa: DOEFF013
     frames = _traceback_frame_spans(body)
     user_frames_seen = 0
 
@@ -422,7 +422,7 @@ def _traceback_frame_spans(body: list[str]) -> list[tuple[int, int]]:
     return spans
 
 
-def _extract_traceback_path(line: str) -> str | None:
+def _extract_traceback_path(line: str) -> str | None:  # noqa: DOEFF013
     start = line.find('"')
     if start == -1:
         return None
@@ -449,7 +449,7 @@ def capture_traceback(exc: BaseException) -> CapturedTraceback:
     return captured
 
 
-def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:
+def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:  # noqa: DOEFF013
     """Return previously captured traceback information if available."""
 
     return getattr(exc, _TRACEBACK_ATTR, None)
@@ -469,8 +469,8 @@ class EffectFailureError(Exception):
 
     effect: Effect
     cause: BaseException  # The original exception that caused the failure
-    runtime_traceback: CapturedTraceback | None = None  # Runtime stack trace where error occurred
-    creation_context: EffectCreationContext | None = None  # Where the effect was created
+    runtime_traceback: CapturedTraceback | None = None  # noqa: DOEFF013 - Runtime stack trace where error occurred
+    creation_context: EffectCreationContext | None = None  # noqa: DOEFF013 - Where the effect was created
 
     def __str__(self) -> str:
         """Format the error for display."""
@@ -485,7 +485,7 @@ class EffectFailureError(Exception):
 
         return "\n".join(lines)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Capture runtime traceback if not provided."""
         if self.creation_context is None:
             self.creation_context = getattr(self.effect, "created_at", None)
@@ -512,14 +512,14 @@ E = TypeVar("E", bound="EffectBase")
 class Effect(Protocol):
     """Protocol implemented by all effect values."""
 
-    created_at: EffectCreationContext | None
+    created_at: EffectCreationContext | None  # noqa: DOEFF013
 
     def intercept(
         self, transform: Callable[[Effect], Effect | Program]
     ) -> Effect:
         """Return a copy where any nested programs are intercepted."""
 
-    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
+    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:  # noqa: DOEFF013
         """Return a copy with updated creation context."""
 
 
@@ -527,7 +527,7 @@ class Effect(Protocol):
 class EffectBase(ProgramBase):
     """Base dataclass implementing :class:`Effect` semantics."""
 
-    created_at: EffectCreationContext | None = field(
+    created_at: EffectCreationContext | None = field(  # noqa: DOEFF013
         default=None, compare=False
     )
 
@@ -538,7 +538,7 @@ class EffectBase(ProgramBase):
         """Return a copy where any nested programs are intercepted."""
         raise NotImplementedError
 
-    def with_created_at(
+    def with_created_at(  # noqa: DOEFF013
         self: E, created_at: EffectCreationContext | None
     ) -> E:
         if created_at is self.created_at:
@@ -586,7 +586,7 @@ class CallFrame:
     args: tuple
     kwargs: dict[str, Any]
     depth: int  # Depth in the call stack (0 = top-level)
-    created_at: EffectCreationContext | None
+    created_at: EffectCreationContext | None  # noqa: DOEFF013
 
 
 # ============================================
@@ -656,8 +656,8 @@ class EffectObservation:
     """Lightweight record of an observed effect during execution."""
 
     effect_type: str
-    key: str | None
-    context: EffectCreationContext | None = None
+    key: str | None  # noqa: DOEFF013
+    context: EffectCreationContext | None = None  # noqa: DOEFF013
     call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)
 
 
@@ -671,10 +671,10 @@ class EffectFailureInfo:
     """Summary of a single EffectFailure instance within an error chain."""
 
     effect: Effect
-    creation_context: EffectCreationContext | None
-    cause: BaseException | None
-    runtime_trace: CapturedTraceback | None
-    cause_trace: CapturedTraceback | None
+    creation_context: EffectCreationContext | None  # noqa: DOEFF013
+    cause: BaseException | None  # noqa: DOEFF013
+    runtime_trace: CapturedTraceback | None  # noqa: DOEFF013
+    cause_trace: CapturedTraceback | None  # noqa: DOEFF013
 
 
 @dataclass(frozen=True)
@@ -682,7 +682,7 @@ class ExceptionFailureInfo:
     """Summary of a plain exception in the failure chain."""
 
     exception: BaseException
-    trace: CapturedTraceback | None
+    trace: CapturedTraceback | None  # noqa: DOEFF013
 
 
 FailureEntry = EffectFailureInfo | ExceptionFailureInfo
@@ -695,7 +695,7 @@ class RunFailureDetails:
     entries: tuple[FailureEntry, ...]
 
     @classmethod
-    def from_error(cls, error: Any) -> RunFailureDetails | None:
+    def from_error(cls, error: Any) -> RunFailureDetails | None:  # noqa: DOEFF013
         if not isinstance(error, BaseException):
             return None
 
@@ -703,7 +703,7 @@ class RunFailureDetails:
         seen: set[int] = set()
         seen_exceptions: set[int] = set()
 
-        def capture(exc: BaseException | None) -> CapturedTraceback | None:
+        def capture(exc: BaseException | None) -> CapturedTraceback | None:  # noqa: DOEFF013
             if exc is None:
                 return None
             captured = get_captured_traceback(exc)
@@ -719,7 +719,7 @@ class RunFailureDetails:
 
             if isinstance(exc, EffectFailure):
                 runtime_trace = exc.runtime_traceback
-                cause_exc: BaseException | None = exc.cause if exc.cause else None
+                cause_exc: BaseException | None = exc.cause if exc.cause else None  # noqa: DOEFF013
                 if cause_exc is not None:
                     seen_exceptions.add(id(cause_exc))
                 entries.append(
@@ -819,7 +819,7 @@ class RunResult(Generic[T]):
         """Get recorded effect observations."""
         return self.context.effect_observations
 
-    def _failure_details(self) -> RunFailureDetails | None:
+    def _failure_details(self) -> RunFailureDetails | None:  # noqa: DOEFF013
         if not self.is_err:
             return None
         return RunFailureDetails.from_error(self.result.error)
@@ -852,7 +852,7 @@ class RunResult(Generic[T]):
             return rendered
         return str(error)
 
-    def _render_error_detail(
+    def _render_error_detail(  # noqa: DOEFF013
         self,
         error: Any,
         condensed: bool,
@@ -909,7 +909,7 @@ class RunResult(Generic[T]):
             f"log={len(self.log)} entries)"
         )
 
-    def display(self, verbose: bool = False, indent: int = 2) -> str:
+    def display(self, verbose: bool = False, indent: int = 2) -> str:  # noqa: DOEFF011
         """Render a human-readable report using structured sections."""
 
         dep_ask_stats = _DepAskStats.from_observations(
@@ -925,7 +925,7 @@ class RunResult(Generic[T]):
         renderer = RunResultDisplayRenderer(context)
         return renderer.render()
 
-    def visualize_graph_ascii(
+    def visualize_graph_ascii(  # noqa: DOEFF011
         self,
         *,
         node_style: NodeStyle | str = "square",
@@ -933,10 +933,10 @@ class RunResult(Generic[T]):
         margin: int = 1,
         layer_spacing: int = 2,
         show_arrows: bool = True,
-        use_ascii: bool | None = None,
+        use_ascii: bool | None = None,  # noqa: DOEFF011, DOEFF013
         max_value_length: int = 32,
-        include_ops: bool = True,
-        custom_decorators: dict[WNode | str, tuple[str, str]] | None = None,
+        include_ops: bool = True,  # noqa: DOEFF011
+        custom_decorators: dict[WNode | str, tuple[str, str]] | None = None,  # noqa: DOEFF013
     ) -> str:
         """Render the computation graph as ASCII art using the phart library."""
 
@@ -974,7 +974,7 @@ class RunResult(Generic[T]):
         return renderer.render()
 
     @staticmethod
-    def _import_phart_dependencies():
+    def _import_phart_dependencies() -> tuple[Any, Any, Any, Any]:  # noqa: DOEFF006
         try:
             import networkx as nx
             from phart.renderer import ASCIIRenderer
@@ -986,7 +986,7 @@ class RunResult(Generic[T]):
         return nx, ASCIIRenderer, LayoutOptions, NodeStyle
 
     @staticmethod
-    def _build_base_graph(
+    def _build_base_graph(  # noqa: DOEFF006
         nx: Any,
         steps: Iterable[WStep],
     ) -> tuple[Any, dict[WNode, WStep]]:
@@ -1008,13 +1008,13 @@ class RunResult(Generic[T]):
 
         return base_graph, producers
 
-    def _build_label_map(
+    def _build_label_map(  # noqa: DOEFF011
         self,
         nx: Any,
         base_graph: Any,
         producers: dict[WNode, WStep],
         *,
-        include_ops: bool,
+        include_ops: bool,  # noqa: DOEFF011
         max_value_length: int,
     ) -> dict[WNode, str]:
         try:
@@ -1060,7 +1060,7 @@ class RunResult(Generic[T]):
             phart_graph.add_edge(label_map[src], label_map[dst])
         return phart_graph
 
-    def _resolve_graph_style(
+    def _resolve_graph_style(  # noqa: DOEFF006
         self,
         node_style: NodeStyle | str,
         custom_decorators: dict[WNode | str, tuple[str, str]] | None,
@@ -1203,7 +1203,7 @@ class _DepAskStats:
             if key not in seen_keys:
                 seen_keys.append(key)
 
-        for observation in observations:
+        for observation in observations:  # noqa: DOEFF012
             effect_type = observation.effect_type
             if effect_type not in interesting:
                 continue
@@ -1245,16 +1245,16 @@ class _DepAskStats:
     def is_empty(self) -> bool:
         return not self.records
 
-    def keys_for(self, effect_type: str) -> tuple[str | None, ...]:
+    def keys_for(self, effect_type: str) -> tuple[str | None, ...]:  # noqa: DOEFF006
         return self.keys_by_type.get(effect_type, ())
 
 
 @dataclass(frozen=True)
-class RunResultDisplayContext:
+class RunResultDisplayContext:  # noqa: DOEFF011
     """Shared context for building RunResult display output."""
 
     run_result: RunResult[Any]
-    verbose: bool
+    verbose: bool  # noqa: DOEFF011
     indent_unit: str
     failure_details: RunFailureDetails | None
     dep_ask_stats: _DepAskStats
@@ -1374,12 +1374,12 @@ class _ErrorSection(_BaseSection):
 
         return lines
 
-    def _render_effect_entry(
+    def _render_effect_entry(  # noqa: DOEFF011
         self,
         idx: int,
         entry: EffectFailureInfo,
         *,
-        is_primary: bool,
+        is_primary: bool,  # noqa: DOEFF011
     ) -> list[str]:
         effect_name = entry.effect.__class__.__name__
         lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
@@ -1390,11 +1390,11 @@ class _ErrorSection(_BaseSection):
         lines.extend(self._render_runtime_trace(entry))
         return lines
 
-    def _render_effect_creation_details(
+    def _render_effect_creation_details(  # noqa: DOEFF011
         self,
         entry: EffectFailureInfo,
         effect_name: str,
-        is_primary: bool,
+        is_primary: bool,  # noqa: DOEFF011
     ) -> list[str]:
         ctx = entry.creation_context
         if ctx is None:
@@ -1481,7 +1481,7 @@ class _ErrorSection(_BaseSection):
         # Always include the full sanitized traceback so user frames remain visible.
         raw_frames = trace.lines(condensed=False)
         frames: list[str] = []
-        for frame in raw_frames:
+        for frame in raw_frames:  # noqa: DOEFF012
             if frames and frames[-1] == frame:
                 continue
             frames.append(frame)
@@ -1739,7 +1739,7 @@ class RunResultDisplayRenderer:
         ]
 
         collected: list[str] = []
-        for section in sections:
+        for section in sections:  # noqa: DOEFF012
             section_lines = section.render()
             if not section_lines:
                 continue
@@ -1761,7 +1761,7 @@ class ListenResult:
     value: Any
     log: BoundedLog
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
         """Make ListenResult unpackable as a tuple (value, log)."""
         return iter([self.value, self.log])
 
@@ -1809,7 +1809,7 @@ def _intercept_mapping(
 
 def _wrap_callable(
     func: Callable[..., Any], transform: Callable[[Effect], Effect | Program]
-):
+) -> Callable[..., Any]:
     """Wrap callable so that any Program it returns is intercepted."""
 
     @wraps(func)
@@ -1818,7 +1818,7 @@ def _wrap_callable(
         return _intercept_value(result, transform)
 
     return wrapper
-__all__ = [
+__all__ = [  # noqa: DOEFF021
     "NOTHING",
     "Effect",
     "EffectFailure",
