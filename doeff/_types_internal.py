@@ -545,6 +545,11 @@ class EffectBase(ProgramBase):
             return self
         return replace(self, created_at=created_at)
 
+    def to_generator(self) -> Generator[Effect | Program, Any, Any]:
+        """An Effect is a single-step program that yields itself."""
+        result = yield self
+        return result
+
 
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
