@@ -21,6 +21,7 @@ from doeff import (
     Local,
     Log,
     Ok,
+    Program,
     ProgramInterpreter,
     Put,
     Recover,
@@ -688,6 +689,472 @@ async def test_finally_callable_returning_effect_runs() -> None:
     assert run_result.is_ok
     assert run_result.value == 1
     assert str(run_result.log[0]) == "callable finalizer"
+
+
+# =============================================================================
+# Native try-except tests (GitHub Issue #2)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_native_try_except_catches_effect_error():
+    """Native try-except should catch errors from yielded effects."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            yield Fail(ValueError("test error"))
+            return "unreachable"
+        except ValueError as e:
+            return f"caught: {e}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught: test error"
+
+
+@pytest.mark.asyncio
+async def test_native_try_except_catches_subprogram_error():
+    """Native try-except should catch errors from sub-programs."""
+
+    @do
+    def failing_subprogram() -> EffectGenerator[int]:
+        yield Program.pure(1)
+        raise ValueError("subprogram error")
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            x = yield failing_subprogram()
+            return f"got: {x}"
+        except ValueError as e:
+            return f"caught: {e}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught: subprogram error"
+
+
+@pytest.mark.asyncio
+async def test_nested_try_except():
+    """Nested try-except blocks should work correctly."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            try:
+                yield Fail(ValueError("inner error"))
+                return "unreachable"
+            except TypeError:
+                return "caught TypeError"
+        except ValueError as e:
+            return f"caught ValueError: {e}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught ValueError: inner error"
+
+
+@pytest.mark.asyncio
+async def test_try_finally_executes_on_exception():
+    """finally block should execute when exception is caught."""
+
+    cleanup_executed = []
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            yield Fail(ValueError("error"))
+            return "unreachable"
+        except ValueError:
+            return "caught"
+        finally:
+            cleanup_executed.append(True)
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught"
+    assert cleanup_executed == [True]
+
+
+@pytest.mark.asyncio
+async def test_uncaught_exception_becomes_err():
+    """Uncaught exceptions should still become Err results."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            yield Fail(ValueError("test error"))
+            return "unreachable"
+        except TypeError:
+            # Only catching TypeError, not ValueError
+            return "caught TypeError"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_err
+    # The error should be ValueError since it wasn't caught
+    assert isinstance(result.result.error.cause, ValueError)
+
+
+@pytest.mark.asyncio
+async def test_exception_reraise():
+    """Re-raised exceptions should propagate correctly."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            yield Fail(ValueError("original"))
+        except ValueError:
+            raise RuntimeError("re-raised")
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_err
+    # Should have the new RuntimeError
+    assert isinstance(result.result.error.cause, RuntimeError)
+    assert str(result.result.error.cause) == "re-raised"
+
+
+@pytest.mark.asyncio
+async def test_safe_catch_recover_still_work():
+    """Effect-based error handling should still work alongside try-except."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        # Effect-based handling
+        value1 = yield Recover(
+            Fail(ValueError("error1")),
+            fallback="recovered1"
+        )
+
+        # Native try-except
+        try:
+            yield Fail(ValueError("error2"))
+            value2 = "unreachable"
+        except ValueError:
+            value2 = "caught2"
+
+        return f"{value1}, {value2}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "recovered1, caught2"
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_multiple_yields():
+    """try-except should work with multiple yields inside."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        results = []
+        try:
+            results.append((yield Program.pure(1)))
+            results.append((yield Program.pure(2)))
+            yield Fail(ValueError("after yields"))
+        except ValueError:
+            return f"caught after {results}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught after [1, 2]"
+
+
+# =============================================================================
+# Comprehensive tests: try-except with various effect combinations
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_state_effects():
+    """try-except should work alongside state effects (Get/Put)."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        yield Put("counter", 0)
+
+        try:
+            yield Put("counter", 1)
+            yield Fail(ValueError("after state change"))
+        except ValueError:
+            counter = yield Get("counter")
+            return f"caught, counter={counter}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught, counter=1"
+    assert result.state.get("counter") == 1
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_log_effects():
+    """try-except should work alongside log effects."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        yield Log("before try")
+
+        try:
+            yield Log("inside try")
+            yield Fail(ValueError("error"))
+        except ValueError as e:
+            yield Log(f"caught: {e}")
+            return "handled"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "handled"
+    log_messages = [str(entry) for entry in result.log]
+    assert "before try" in log_messages[0]
+    assert "inside try" in log_messages[1]
+    assert "caught: error" in log_messages[2]
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_io_effect():
+    """try-except should work with IO effects that fail."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        def failing_io() -> None:
+            raise OSError("disk full")
+
+        try:
+            yield IO(failing_io)
+            return "unreachable"
+        except OSError as e:
+            return f"caught IO error: {e}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught IO error: disk full"
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_nested_subprograms():
+    """try-except should catch errors from deeply nested subprograms."""
+
+    @do
+    def level3() -> EffectGenerator[int]:
+        yield Log("level3")
+        raise ValueError("deep error")
+
+    @do
+    def level2() -> EffectGenerator[int]:
+        yield Log("level2")
+        return (yield level3())
+
+    @do
+    def level1() -> EffectGenerator[int]:
+        yield Log("level1")
+        return (yield level2())
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            value = yield level1()
+            return f"got: {value}"
+        except ValueError as e:
+            return f"caught from nested: {e}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught from nested: deep error"
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_recover_fallback():
+    """try-except and Recover should work together."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        # First, use Recover for one error
+        val1 = yield Recover(
+            Fail(ValueError("error1")),
+            fallback="recovered1"
+        )
+
+        # Then, use try-except for another error
+        try:
+            yield Fail(ValueError("error2"))
+            val2 = "unreachable"
+        except ValueError:
+            val2 = "caught2"
+
+        # Finally, another Recover
+        val3 = yield Recover(
+            Fail(ValueError("error3")),
+            fallback="recovered3"
+        )
+
+        return f"{val1}, {val2}, {val3}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "recovered1, caught2, recovered3"
+
+
+@pytest.mark.asyncio
+async def test_try_except_inside_catch_handler():
+    """try-except should work inside a Catch handler."""
+
+    @do
+    def error_handler(e: Exception) -> EffectGenerator[str]:
+        try:
+            yield Fail(RuntimeError("handler error"))
+            return "unreachable"
+        except RuntimeError:
+            return f"handler caught its own error, original: {e}"
+
+    @do
+    def program() -> EffectGenerator[str]:
+        result = yield Catch(
+            Fail(ValueError("original error")),
+            error_handler
+        )
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert "handler caught its own error" in result.value
+    assert "original error" in result.value
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_finally_and_effects():
+    """try-except-finally should work with effects in finally block."""
+
+    cleanup_log = []
+
+    @do
+    def program() -> EffectGenerator[str]:
+        try:
+            yield Log("in try")
+            yield Fail(ValueError("error"))
+            return "unreachable"
+        except ValueError:
+            yield Log("in except")
+            return "caught"
+        finally:
+            cleanup_log.append("finally executed")
+            # Note: yields in finally are tricky, so we use a side effect here
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught"
+    assert cleanup_log == ["finally executed"]
+
+
+@pytest.mark.asyncio
+async def test_try_except_preserves_context():
+    """try-except should preserve execution context across error handling."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        yield Put("before_try", True)
+
+        try:
+            yield Put("in_try", True)
+            yield Fail(ValueError("error"))
+        except ValueError:
+            yield Put("in_except", True)
+            before = yield Get("before_try")
+            in_try = yield Get("in_try")
+            return f"before={before}, in_try={in_try}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "before=True, in_try=True"
+    assert result.state.get("in_except") is True
+
+
+@pytest.mark.asyncio
+async def test_multiple_try_except_blocks():
+    """Multiple sequential try-except blocks should all work."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        results = []
+
+        try:
+            yield Fail(ValueError("error1"))
+        except ValueError:
+            results.append("caught1")
+
+        try:
+            yield Fail(TypeError("error2"))
+        except TypeError:
+            results.append("caught2")
+
+        try:
+            yield Fail(RuntimeError("error3"))
+        except RuntimeError:
+            results.append("caught3")
+
+        return ", ".join(results)
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "caught1, caught2, caught3"
+
+
+@pytest.mark.asyncio
+async def test_try_except_with_safe_effect():
+    """try-except should work alongside Safe effect."""
+
+    @do
+    def program() -> EffectGenerator[str]:
+        # Safe wraps the result in Ok/Err
+        safe_result = yield Safe(Fail(ValueError("safe error")))
+        assert isinstance(safe_result, Err)
+
+        # try-except catches the error directly
+        try:
+            yield Fail(ValueError("try error"))
+            direct_result = "unreachable"
+        except ValueError:
+            direct_result = "caught directly"
+
+        return f"safe={type(safe_result).__name__}, direct={direct_result}"
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "safe=Err, direct=caught directly"
 
 
 if __name__ == "__main__":

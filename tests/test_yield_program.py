@@ -220,9 +220,12 @@ async def test_program_yield_with_error():
     context2 = ExecutionContext()
     result2 = await engine.run_async(main_with_error(), context2)
 
-    # The error should be caught by the engine and returned as Err
-    # since we can't catch it with try/except around yield
-    assert result2.is_err
+    # With native try-except support, the error should be caught by the
+    # try-except block in main_with_error and handled successfully
+    assert result2.is_ok
+    assert result2.value == "Handled error"
+    # The log should contain the error message from the except block
+    assert any("Caught error" in str(entry) for entry in result2.log)
 
     print("✅ Error handling test passed")
 
