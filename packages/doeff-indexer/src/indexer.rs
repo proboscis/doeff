@@ -1535,6 +1535,51 @@ pub fn find_transforms(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
         .collect()
 }
 
+// Type filtering for transform functions - matches on first Program parameter
+pub fn find_transforms_with_type<'a>(
+    entries: &'a [IndexEntry],
+    type_arg: &str,
+) -> Vec<&'a IndexEntry> {
+    let trimmed = type_arg.trim();
+    let effective_type = if let Some(inner) = extract_program_inner_type(trimmed) {
+        inner
+    } else {
+        trimmed.to_string()
+    };
+
+    find_transforms(entries)
+        .into_iter()
+        .filter(|entry| transform_parameter_matches(entry, &effective_type))
+        .collect()
+}
+
+fn transform_parameter_matches(entry: &IndexEntry, target_type: &str) -> bool {
+    // Transforms take Program[T] as first parameter and return Program[U]
+    // Match if the first parameter's Program type argument matches target_type
+    let required_params: Vec<&ParameterRef> = entry
+        .all_parameters
+        .iter()
+        .filter(|param| param.is_required)
+        .collect();
+
+    if required_params.is_empty() {
+        return false;
+    }
+
+    if let Some(param) = required_params.first() {
+        if let Some(annotation) = &param.annotation {
+            // For transforms, the parameter is Program[T], so we need to extract T
+            if let Some(inner_type) = extract_program_inner_type(annotation) {
+                return annotation_matches(&inner_type, target_type);
+            }
+            // Also allow direct type matching
+            return annotation_matches(annotation, target_type);
+        }
+    }
+
+    false
+}
+
 pub fn find_kleisli(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     // STRICT MODE for find-kleisli command: Only functions with explicit "kleisli" marker
     entries
