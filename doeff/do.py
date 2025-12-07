@@ -39,7 +39,17 @@ class DoYieldFunction(KleisliProgram[P, T]):
                 return stop_exc.value
 
             while True:
-                sent_value = yield current
+                try:
+                    sent_value = yield current
+                except GeneratorExit:
+                    gen.close()
+                    raise
+                except BaseException as e:
+                    try:
+                        current = gen.throw(e)
+                    except StopIteration as stop_exc:
+                        return stop_exc.value
+                    continue
                 try:
                     current = gen.send(sent_value)
                 except StopIteration as stop_exc:
@@ -88,41 +98,36 @@ def do(
     lazy evaluation. The KleisliProgram wrapper delays generator creation until
     execution time, achieving the laziness we need.
     
-    CRITICAL ERROR HANDLING WARNING:
-    DO NOT use try/except blocks inside @do functions with yield statements!
-    
-    Due to Python's generator protocol, exceptions don't propagate normally
-    when yielding effects. A try/except block around a yield will NOT catch
-    exceptions from the yielded effect. Instead, use effect-based error handling:
-    
-    WRONG (will not work as expected):
+    ERROR HANDLING:
+    Native Python try/except blocks work inside @do functions! Exceptions from
+    yielded effects and sub-programs will be caught by surrounding try blocks:
+
+    NATIVE TRY-EXCEPT (works as expected):
         @do
         def my_program():
             try:
                 value = yield some_effect()
                 return value
             except Exception as e:
-                # This will NEVER catch exceptions from some_effect()!
+                # This WILL catch exceptions from some_effect()!
                 return default_value
-    
-    CORRECT (use Catch, Recover, or Retry effects):
+
+    EFFECT-BASED ALTERNATIVES (for complex error handling):
         @do
         def my_program():
             # Option 1: Recover with fallback value
             value = yield Recover(some_effect(), fallback=default_value)
-            
+
             # Option 2: Catch and handle error
             value = yield Catch(some_effect(), lambda e: default_value)
-            
+
             # Option 3: Retry on failure
             value = yield Retry(some_effect(), max_attempts=3)
-            
+
             return value
-    
-    The effect system provides these error handling effects:
-    - Catch: Try a program and handle errors with a function
-    - Recover: Try a program and use a fallback value on error
-    - Retry: Retry a program multiple times on failure
+
+    Both approaches work. Use native try-except for simple cases and effect-based
+    handlers (Catch, Recover, Retry) for complex error handling with composition.
 
     TYPE SIGNATURE CHANGE:
     @do changes: (args) -> EffectGenerator[T]
@@ -153,4 +158,4 @@ def do(
     return DoYieldFunction(func)
 
 
-__all__ = ["do", "DoYieldFunction"]
+__all__ = ["do", "DoYieldFunction"]  # noqa: DOEFF021

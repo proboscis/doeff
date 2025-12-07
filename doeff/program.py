@@ -538,7 +538,17 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
                 return stop_exc.value
 
             while True:
-                sent_value = yield current
+                try:
+                    sent_value = yield current
+                except GeneratorExit:
+                    generator_obj.close()
+                    raise
+                except BaseException as e:
+                    try:
+                        current = generator_obj.throw(e)
+                    except StopIteration as stop_exc:
+                        return stop_exc.value
+                    continue
                 try:
                     current = generator_obj.send(sent_value)
                 except StopIteration as stop_exc:
@@ -656,4 +666,4 @@ class _InterceptedProgram(ProgramBase[T]):
 
 Program = ProgramBase
 
-__all__ = ["GeneratorProgram", "KleisliProgramCall", "Program", "ProgramProtocol"]
+__all__ = ["GeneratorProgram", "KleisliProgramCall", "Program", "ProgramProtocol"]  # noqa: DOEFF021
