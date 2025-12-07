@@ -23,10 +23,10 @@ from doeff.types import Effect, EffectBase
 class TestToGeneratorReturnTypes:
     """Verify to_generator returns Generator, not GeneratorProgram."""
 
-    def test_generator_program_to_generator_returns_generator(self):
+    def test_generator_program_to_generator_returns_generator(self) -> None:
         """GeneratorProgram.to_generator should return a Generator."""
 
-        def factory():
+        def factory() -> Generator[Effect, Any, int]:
             yield Pure(42)
             return 42
 
@@ -41,11 +41,11 @@ class TestToGeneratorReturnTypes:
             "GeneratorProgram.to_generator() should return Generator, not GeneratorProgram"
         )
 
-    def test_kleisli_program_call_to_generator_returns_generator(self):
+    def test_kleisli_program_call_to_generator_returns_generator(self) -> None:
         """KleisliProgramCall.to_generator should return a Generator."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Effect, Any, int]:
             x = yield Pure(42)
             return x
 
@@ -62,11 +62,11 @@ class TestToGeneratorReturnTypes:
             "KleisliProgramCall.to_generator() should return Generator, not GeneratorProgram"
         )
 
-    def test_intercepted_program_to_generator_returns_generator(self):
+    def test_intercepted_program_to_generator_returns_generator(self) -> None:
         """_InterceptedProgram.to_generator should return a Generator."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Effect, Any, int]:
             x = yield Pure(42)
             return x
 
@@ -144,11 +144,11 @@ class TestEffectToGenerator:
 class TestProgramBaseGetattr:
     """Test ProgramBase.__getattr__ behavior."""
 
-    def test_getattr_creates_projection_program(self):
+    def test_getattr_creates_projection_program(self) -> None:
         """__getattr__ creates a program that projects attributes from result."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Any, Any, dict[str, Any]]:
             return {"name": "test", "value": 42}
 
         prog = my_program()
@@ -179,7 +179,7 @@ class TestProgramBaseGetattr:
 class TestToGeneratorSignatures:
     """Test that all to_generator methods have consistent signatures."""
 
-    def test_all_program_subclasses_have_to_generator(self):
+    def test_all_program_subclasses_have_to_generator(self) -> None:
         """All concrete Program subclasses should have to_generator."""
         concrete_classes = [GeneratorProgram, KleisliProgramCall, _InterceptedProgram]
 
@@ -197,11 +197,11 @@ class TestToGeneratorSignatures:
 class TestToGeneratorBehavior:
     """Test to_generator behavior across different program types."""
 
-    def test_generator_program_factory_called_each_time(self):
+    def test_generator_program_factory_called_each_time(self) -> None:
         """Each to_generator call should create a fresh generator."""
         call_count = 0
 
-        def factory():
+        def factory() -> Generator[Effect, Any, int]:
             nonlocal call_count
             call_count += 1
             yield Pure(call_count)
@@ -219,11 +219,11 @@ class TestToGeneratorBehavior:
         next(gen2)  # Triggers factory execution
         assert call_count == 2, "Factory should be called for each to_generator"
 
-    def test_kleisli_program_creates_fresh_generator(self):
+    def test_kleisli_program_creates_fresh_generator(self) -> None:
         """KleisliProgramCall.to_generator should create fresh generators."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Effect, Any, int]:
             x = yield Pure(42)
             return x
 
@@ -234,11 +234,11 @@ class TestToGeneratorBehavior:
 
         assert gen1 is not gen2, "to_generator should return new generator each call"
 
-    def test_mapped_program_to_generator_returns_generator(self):
+    def test_mapped_program_to_generator_returns_generator(self) -> None:
         """Mapped programs should return Generators from to_generator."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Any, Any, int]:
             return 42
 
         prog = my_program().map(lambda x: x * 2)
@@ -250,15 +250,15 @@ class TestToGeneratorBehavior:
             f"Mapped program.to_generator() returned {type(result).__name__}"
         )
 
-    def test_flat_mapped_program_to_generator_returns_generator(self):
+    def test_flat_mapped_program_to_generator_returns_generator(self) -> None:
         """Flat-mapped programs should return Generators from to_generator."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Any, Any, int]:
             return 42
 
         @do
-        def next_program(x):
+        def next_program(x: int) -> Generator[Any, Any, int]:
             return x * 2
 
         prog = my_program().flat_map(next_program)
@@ -273,10 +273,10 @@ class TestToGeneratorBehavior:
 class TestLocalEffectSubProgram:
     """Specific tests for LocalEffect sub_program handling."""
 
-    def test_local_effect_with_generator_program(self):
+    def test_local_effect_with_generator_program(self) -> None:
         """LocalEffect can wrap GeneratorProgram."""
 
-        def factory():
+        def factory() -> Generator[Effect, Any, int]:
             yield Pure(42)
             return 42
 
@@ -286,11 +286,11 @@ class TestLocalEffectSubProgram:
         assert effect.sub_program is gp
         assert isinstance(effect.sub_program, GeneratorProgram)
 
-    def test_local_effect_with_kleisli_program_call(self):
+    def test_local_effect_with_kleisli_program_call(self) -> None:
         """LocalEffect can wrap KleisliProgramCall."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Any, Any, int]:
             return 42
 
         kpc = my_program()
@@ -299,7 +299,7 @@ class TestLocalEffectSubProgram:
         assert effect.sub_program is kpc
         assert isinstance(effect.sub_program, KleisliProgramCall)
 
-    def test_local_effect_with_effect(self):
+    def test_local_effect_with_effect(self) -> None:
         """LocalEffect can wrap Effect."""
         inner = Pure(42)
         effect = local({"key": "value"}, inner)
@@ -311,7 +311,7 @@ class TestLocalEffectSubProgram:
 class TestProgramBaseNoToGenerator:
     """Verify ProgramBase doesn't define to_generator (subclasses do)."""
 
-    def test_program_base_to_generator_not_in_dict(self):
+    def test_program_base_to_generator_not_in_dict(self) -> None:
         """ProgramBase should not define to_generator in its __dict__."""
         assert "to_generator" not in ProgramBase.__dict__, (
             "ProgramBase should not define to_generator - subclasses should"
@@ -346,7 +346,7 @@ class TestEffectBaseToGeneratorFix:
         """Programs with actual to_generator should return Generator."""
 
         @do
-        def my_program():
+        def my_program() -> Generator[Any, Any, int]:
             return 42
 
         prog = my_program()
