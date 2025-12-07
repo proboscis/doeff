@@ -1,3 +1,4 @@
+from collections.abc import Callable, Generator
 from typing import Any, Generic, TypeVar
 
 from doeff.utils import BoundedLog
@@ -234,6 +235,7 @@ class EffectBase:
     created_at: EffectCreationContext | None
     def intercept(self: E, transform: Callable[Any, Effect | Program]) -> E: ...
     def with_created_at(self: E, created_at: EffectCreationContext | None) -> E: ...
+    def to_generator(self) -> Generator[Effect | Program, Any, Any]: ...
 
 class RunFailureDetails:
     entries: tuple[FailureEntry, Any]
