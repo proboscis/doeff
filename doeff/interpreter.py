@@ -105,15 +105,29 @@ def force_eval(prog: Program[T]) -> Program[T]:
         gen = to_gen()
         try:
             current = next(gen)
-            while True:
-                # If current is a Program, force evaluate it
-                from doeff.types import Program as ProgramType
-                if isinstance(current, ProgramType):
-                    current = force_eval(current)
-                value = yield current
-                current = gen.send(value)
         except StopIteration as e:
             return e.value
+
+        while True:
+            # If current is a Program, force evaluate it
+            from doeff.types import Program as ProgramType
+            if isinstance(current, ProgramType):
+                current = force_eval(current)
+            try:
+                value = yield current
+            except GeneratorExit:
+                gen.close()
+                raise
+            except BaseException as e:
+                try:
+                    current = gen.throw(e)
+                except StopIteration as stop_exc:
+                    return stop_exc.value
+                continue
+            try:
+                current = gen.send(value)
+            except StopIteration as e:
+                return e.value
 
     from doeff.program import GeneratorProgram
     return GeneratorProgram(forced_generator)
@@ -304,7 +318,25 @@ class ProgramInterpreter:
                             runtime_traceback=runtime_tb,
                             creation_context=current.created_at,
                         )
-                        return RunResult(ctx, Err(effect_failure))
+                        # Throw into generator to enable native try-except
+                        try:
+                            current = gen.throw(exc)
+                            continue
+                        except StopIteration as e:
+                            return RunResult(ctx, Ok(e.value))
+                        except Exception as uncaught:
+                            if uncaught is exc:
+                                # Exception was not caught by generator
+                                return RunResult(ctx, Err(effect_failure))
+                            # New exception from catch block
+                            new_tb = capture_traceback(uncaught)
+                            new_failure = EffectFailure(
+                                effect=current,
+                                cause=uncaught,
+                                runtime_traceback=new_tb,
+                                creation_context=current.created_at,
+                            )
+                            return RunResult(ctx, Err(new_failure))
 
                     try:
                         current = gen.send(value)
@@ -314,7 +346,24 @@ class ProgramInterpreter:
                 elif isinstance(current, ProgramType):
                     sub_result = await self.run_async(current, ctx)
                     if isinstance(sub_result.result, Err):
-                        return sub_result
+                        # Extract exception from EffectFailure if present
+                        error = sub_result.result.error
+                        exc = error.cause if isinstance(error, EffectFailure) else error
+                        if not isinstance(exc, BaseException):
+                            exc = Exception(str(exc))
+                        # Throw into generator to enable native try-except
+                        try:
+                            current = gen.throw(exc)
+                            ctx = sub_result.context
+                            continue
+                        except StopIteration as e:
+                            return RunResult(ctx, Ok(e.value))
+                        except Exception as uncaught:
+                            if uncaught is exc:
+                                # Exception was not caught by generator
+                                return sub_result
+                            # New exception from catch block
+                            return RunResult(ctx, Err(uncaught))
 
                     ctx = sub_result.context
 
@@ -649,10 +698,28 @@ def _intercept_generator(
 
     transform_chain = _compose_intercept_transforms(transforms)
 
+    def _forward_exception(e: BaseException) -> bool | T:  # noqa: DOEFF014
+        """Forward exception to inner generator, return new current or re-raise."""
+        nonlocal current
+        try:
+            current = gen.throw(e)
+            return True  # Continue with new current
+        except StopIteration as stop_exc:
+            return stop_exc.value  # Return value
+
     while True:
         if isinstance(current, EffectBase):
             effect_program = transform_chain(current)
-            final_effect = yield effect_program
+            try:
+                final_effect = yield effect_program
+            except GeneratorExit:
+                gen.close()
+                raise
+            except BaseException as e:
+                result = _forward_exception(e)
+                if result is True:
+                    continue
+                return result
 
             if not isinstance(final_effect, EffectBase):
                 raise TypeError(
@@ -663,7 +730,16 @@ def _intercept_generator(
             nested_effect = final_effect.intercept(
                 lambda eff: transform_chain(eff)
             )
-            result = yield nested_effect
+            try:
+                result = yield nested_effect
+            except GeneratorExit:
+                gen.close()
+                raise
+            except BaseException as e:
+                fwd_result = _forward_exception(e)
+                if fwd_result is True:
+                    continue
+                return fwd_result
             try:
                 current = gen.send(result)
             except StopIteration as exc:
@@ -673,12 +749,31 @@ def _intercept_generator(
         if isinstance(current, ProgramBase):
             wrapped = _InterceptedProgram.compose(current, transforms)
             try:
-                current = gen.send((yield wrapped))
+                yielded_value = yield wrapped
+            except GeneratorExit:
+                gen.close()
+                raise
+            except BaseException as e:
+                result = _forward_exception(e)
+                if result is True:
+                    continue
+                return result
+            try:
+                current = gen.send(yielded_value)
             except StopIteration as exc:
                 return exc.value
             continue
 
-        value = yield current
+        try:
+            value = yield current
+        except GeneratorExit:
+            gen.close()
+            raise
+        except BaseException as e:
+            result = _forward_exception(e)
+            if result is True:
+                continue
+            return result
         try:
             current = gen.send(value)
         except StopIteration as exc:
@@ -757,4 +852,4 @@ def _program_to_generator(
     )
 
 
-__all__ = ["ProgramInterpreter", "force_eval"]
+__all__ = ["ProgramInterpreter", "force_eval"]  # noqa: DOEFF021

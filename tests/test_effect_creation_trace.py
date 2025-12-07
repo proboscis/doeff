@@ -353,8 +353,9 @@ async def test_nested_effect_error_chain():
 
         # Should NOT have massive duplication
         error_count = display.count("Expecting value: line 1 column 1")
-        # It can appear up to 4 times now (error chain entries plus handler log)
-        assert error_count <= 4, f"Error message repeated {error_count} times, should be <= 4"
+        # It can appear up to 5 times now (error chain entries plus handler log
+        # plus exception forwarding for native try-except support)
+        assert error_count <= 5, f"Error message repeated {error_count} times, should be <= 5"
 
         # Verbose mode should show stack trace
         verbose_display = result.display(verbose=True)
