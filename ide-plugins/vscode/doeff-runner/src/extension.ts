@@ -38,6 +38,7 @@ interface IndexEntry {
   qualifiedName: string;
   filePath: string;
   line: number;
+  itemKind: string; // 'function' | 'async_function' | 'assignment'
   categories: string[];
   programParameters: IndexParameter[];
   interpreterParameters: IndexParameter[];
@@ -83,6 +84,513 @@ const TOOL_PREFIX = {
   transform: '🔀'
 };
 
+// =============================================================================
+// State Store for sharing state between TreeView and CodeLens
+// =============================================================================
+
+type ActionType =
+  | { kind: 'run' }
+  | { kind: 'runWithOptions' }
+  | { kind: 'kleisli'; toolQualifiedName: string }
+  | { kind: 'transform'; toolQualifiedName: string };
+
+interface ActionPreference {
+  entrypointQualifiedName: string;
+  defaultAction: ActionType;
+}
+
+class DoeffStateStore {
+  private _onStateChange = new vscode.EventEmitter<void>();
+  readonly onStateChange = this._onStateChange.event;
+
+  constructor(private context: vscode.ExtensionContext) {}
+
+  getPreferences(): ActionPreference[] {
+    return this.context.workspaceState.get<ActionPreference[]>('actionPreferences', []);
+  }
+
+  getDefaultAction(qualifiedName: string): ActionType | undefined {
+    const prefs = this.getPreferences();
+    return prefs.find(p => p.entrypointQualifiedName === qualifiedName)?.defaultAction;
+  }
+
+  async setDefaultAction(qualifiedName: string, action: ActionType): Promise<void> {
+    const prefs = this.getPreferences();
+    const updated = prefs.filter(p => p.entrypointQualifiedName !== qualifiedName);
+    updated.push({ entrypointQualifiedName: qualifiedName, defaultAction: action });
+    await this.context.workspaceState.update('actionPreferences', updated);
+    this._onStateChange.fire();
+  }
+
+  async clearDefaultAction(qualifiedName: string): Promise<void> {
+    const prefs = this.getPreferences();
+    const updated = prefs.filter(p => p.entrypointQualifiedName !== qualifiedName);
+    await this.context.workspaceState.update('actionPreferences', updated);
+    this._onStateChange.fire();
+  }
+
+  dispose(): void {
+    this._onStateChange.dispose();
+  }
+}
+
+// =============================================================================
+// TreeView Types and Provider
+// =============================================================================
+
+type TreeNode = ModuleNode | EntrypointNode | ActionNode;
+
+interface ModuleNode {
+  type: 'module';
+  modulePath: string;
+  displayName: string;
+  entries: IndexEntry[];
+}
+
+interface EntrypointNode {
+  type: 'entrypoint';
+  entry: IndexEntry;
+}
+
+interface ActionNode {
+  type: 'action';
+  actionType: ActionType;
+  parentEntry: IndexEntry;
+  tool?: IndexEntry;
+}
+
+class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
+  private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  private _onFilterChange = new vscode.EventEmitter<string>();
+  readonly onFilterChange = this._onFilterChange.event;
+
+  private indexCache: IndexEntry[] = [];
+  private kleisliCache = new Map<string, IndexEntry[]>();
+  private filterText = '';
+  private transformCache = new Map<string, IndexEntry[]>();
+  private cacheTimestamp = 0;
+  private readonly CACHE_TTL_MS = 30000;
+  private refreshing = false;
+
+  constructor(
+    private stateStore: DoeffStateStore
+  ) {}
+
+  getTreeItem(element: TreeNode): vscode.TreeItem {
+    switch (element.type) {
+      case 'module':
+        return this.createModuleTreeItem(element);
+      case 'entrypoint':
+        return this.createEntrypointTreeItem(element);
+      case 'action':
+        return this.createActionTreeItem(element);
+    }
+  }
+
+  private createModuleTreeItem(node: ModuleNode): vscode.TreeItem {
+    const item = new vscode.TreeItem(
+      node.displayName,
+      vscode.TreeItemCollapsibleState.Expanded
+    );
+    item.iconPath = new vscode.ThemeIcon('folder');
+    item.contextValue = 'module';
+    return item;
+  }
+
+  private createEntrypointTreeItem(node: EntrypointNode): vscode.TreeItem {
+    const entry = node.entry;
+    const typeArg = this.extractTypeArg(entry);
+    const label = typeArg ? `${entry.name}: Program[${typeArg}]` : entry.name;
+
+    const defaultAction = this.stateStore.getDefaultAction(entry.qualifiedName);
+    const item = new vscode.TreeItem(
+      label,
+      vscode.TreeItemCollapsibleState.Collapsed
+    );
+    item.iconPath = new vscode.ThemeIcon('symbol-function');
+    item.contextValue = 'entrypoint';
+    item.tooltip = entry.docstring
+      ? `${entry.qualifiedName}\n\n${entry.docstring}`
+      : entry.qualifiedName;
+    item.description = defaultAction ? this.getActionLabel(defaultAction) : undefined;
+    item.command = {
+      command: 'doeff-runner.revealEntrypoint',
+      title: 'Go to Definition',
+      arguments: [entry]
+    };
+    return item;
+  }
+
+  private createActionTreeItem(node: ActionNode): vscode.TreeItem {
+    const label = this.getActionLabel(node.actionType);
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+
+    const defaultAction = this.stateStore.getDefaultAction(node.parentEntry.qualifiedName);
+    const isDefault = this.actionsEqual(defaultAction, node.actionType);
+
+    switch (node.actionType.kind) {
+      case 'run':
+        item.iconPath = new vscode.ThemeIcon('play');
+        item.command = {
+          command: 'doeff-runner.runFromTree',
+          title: 'Run',
+          arguments: [node.parentEntry, node.actionType]
+        };
+        break;
+      case 'runWithOptions':
+        item.iconPath = new vscode.ThemeIcon('settings-gear');
+        item.command = {
+          command: 'doeff-runner.runFromTree',
+          title: 'Run with Options',
+          arguments: [node.parentEntry, node.actionType]
+        };
+        break;
+      case 'kleisli':
+        item.iconPath = new vscode.ThemeIcon('link');
+        item.tooltip = node.tool?.docstring
+          ? `[Kleisli] ${node.tool.qualifiedName}\n\n${node.tool.docstring}`
+          : `[Kleisli] ${node.actionType.toolQualifiedName}`;
+        item.command = {
+          command: 'doeff-runner.runFromTree',
+          title: 'Run with Kleisli',
+          arguments: [node.parentEntry, node.actionType]
+        };
+        break;
+      case 'transform':
+        item.iconPath = new vscode.ThemeIcon('arrow-swap');
+        item.tooltip = node.tool?.docstring
+          ? `[Transform] ${node.tool.qualifiedName}\n\n${node.tool.docstring}`
+          : `[Transform] ${node.actionType.toolQualifiedName}`;
+        item.command = {
+          command: 'doeff-runner.runFromTree',
+          title: 'Run with Transform',
+          arguments: [node.parentEntry, node.actionType]
+        };
+        break;
+    }
+
+    item.contextValue = 'action';
+    if (isDefault) {
+      item.description = '★ default';
+    }
+    return item;
+  }
+
+  private getActionLabel(action: ActionType): string {
+    switch (action.kind) {
+      case 'run':
+        return `${TOOL_PREFIX.run} Run`;
+      case 'runWithOptions':
+        return `${TOOL_PREFIX.runWithOptions} Options`;
+      case 'kleisli': {
+        const kleisliName = action.toolQualifiedName.split('.').pop() ?? action.toolQualifiedName;
+        return `${TOOL_PREFIX.kleisli} ${kleisliName}`;
+      }
+      case 'transform': {
+        const transformName = action.toolQualifiedName.split('.').pop() ?? action.toolQualifiedName;
+        return `${TOOL_PREFIX.transform} ${transformName}`;
+      }
+    }
+  }
+
+  private actionsEqual(a: ActionType | undefined, b: ActionType): boolean {
+    if (!a) return false;
+    if (a.kind !== b.kind) return false;
+    if (a.kind === 'kleisli' && b.kind === 'kleisli') {
+      return a.toolQualifiedName === b.toolQualifiedName;
+    }
+    if (a.kind === 'transform' && b.kind === 'transform') {
+      return a.toolQualifiedName === b.toolQualifiedName;
+    }
+    return true;
+  }
+
+  async getChildren(element?: TreeNode): Promise<TreeNode[]> {
+    if (!element) {
+      // Root: return module nodes
+      return this.getModuleNodes();
+    }
+
+    switch (element.type) {
+      case 'module':
+        return element.entries.map(entry => ({
+          type: 'entrypoint' as const,
+          entry
+        }));
+      case 'entrypoint':
+        return this.getActionNodes(element.entry);
+      case 'action':
+        return [];
+    }
+  }
+
+  private async getModuleNodes(): Promise<ModuleNode[]> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return [];
+    }
+
+    await this.ensureIndexLoaded(workspaceFolder.uri.fsPath);
+
+    // Filter to only entrypoints: global variables (assignments) with Program[T] type
+    let entrypoints = this.indexCache.filter(entry =>
+      entry.itemKind === 'assignment' &&
+      entry.typeUsages.some(usage => usage.kind === 'program')
+    );
+
+    // Apply text filter if set (searches name, qualifiedName, and type arguments)
+    if (this.filterText) {
+      entrypoints = entrypoints.filter(entry => {
+        // Check name and qualifiedName
+        if (entry.name.toLowerCase().includes(this.filterText) ||
+            entry.qualifiedName.toLowerCase().includes(this.filterText)) {
+          return true;
+        }
+        // Check type arguments (e.g., Program[MyType] -> matches "mytype")
+        for (const usage of entry.typeUsages) {
+          if (usage.kind === 'program') {
+            for (const typeArg of usage.typeArguments) {
+              if (typeArg.toLowerCase().includes(this.filterText)) {
+                return true;
+              }
+            }
+            // Also check the raw type string
+            if (usage.raw.toLowerCase().includes(this.filterText)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+    }
+
+    // Group by module (directory path)
+    const grouped = new Map<string, IndexEntry[]>();
+    for (const entry of entrypoints) {
+      const modulePath = this.getModulePath(entry, workspaceFolder.uri.fsPath);
+      const existing = grouped.get(modulePath) ?? [];
+      existing.push(entry);
+      grouped.set(modulePath, existing);
+    }
+
+    // Convert to ModuleNodes
+    const modules: ModuleNode[] = [];
+    for (const [modulePath, entries] of grouped) {
+      modules.push({
+        type: 'module',
+        modulePath,
+        displayName: modulePath || '(root)',
+        entries: entries.sort((a, b) => a.name.localeCompare(b.name))
+      });
+    }
+
+    return modules.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  private async getActionNodes(entry: IndexEntry): Promise<ActionNode[]> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return [];
+    }
+
+    const rootPath = workspaceFolder.uri.fsPath;
+    const typeArg = this.extractTypeArg(entry);
+    const actions: ActionNode[] = [];
+
+    // Use entry location for proximity-based sorting
+    const proximity: ProximityContext = {
+      filePath: entry.filePath,
+      line: entry.line
+    };
+
+    // Standard actions
+    actions.push({
+      type: 'action',
+      actionType: { kind: 'run' },
+      parentEntry: entry
+    });
+    actions.push({
+      type: 'action',
+      actionType: { kind: 'runWithOptions' },
+      parentEntry: entry
+    });
+
+    // Only show kleisli/transform tools if the Program has a type argument
+    // Untyped Program (no type arg) shouldn't show tools since we don't know the output type
+    if (typeArg) {
+      // Load kleisli tools (sorted by proximity)
+      const kleisliTools = await this.getKleisliTools(rootPath, typeArg, proximity);
+      for (const tool of kleisliTools) {
+        actions.push({
+          type: 'action',
+          actionType: { kind: 'kleisli', toolQualifiedName: tool.qualifiedName },
+          parentEntry: entry,
+          tool
+        });
+      }
+
+      // Load transform tools (sorted by proximity)
+      const transformTools = await this.getTransformTools(rootPath, typeArg, proximity);
+      for (const tool of transformTools) {
+        actions.push({
+          type: 'action',
+          actionType: { kind: 'transform', toolQualifiedName: tool.qualifiedName },
+          parentEntry: entry,
+          tool
+        });
+      }
+    }
+
+    return actions;
+  }
+
+  private async ensureIndexLoaded(rootPath: string): Promise<void> {
+    const now = Date.now();
+    if (this.indexCache.length > 0 && now - this.cacheTimestamp < this.CACHE_TTL_MS) {
+      return;
+    }
+
+    if (this.refreshing) {
+      return;
+    }
+
+    this.refreshing = true;
+    try {
+      const indexerPath = await locateIndexer();
+      const entries = await this.fetchAllEntries(indexerPath, rootPath);
+      this.indexCache = entries;
+      this.cacheTimestamp = now;
+    } catch (error) {
+      output.appendLine(`[error] Failed to load index: ${error}`);
+    } finally {
+      this.refreshing = false;
+    }
+  }
+
+  private async fetchAllEntries(indexerPath: string, rootPath: string): Promise<IndexEntry[]> {
+    const cacheKey = `index:${rootPath}`;
+    return queryIndexer(indexerPath, cacheKey, rootPath, [
+      'index',
+      '--root',
+      rootPath
+    ]);
+  }
+
+  private async getKleisliTools(
+    rootPath: string,
+    typeArg: string,
+    proximity?: ProximityContext
+  ): Promise<IndexEntry[]> {
+    const proxKey = proximity ? `:${proximity.filePath}:${proximity.line}` : '';
+    const cacheKey = `kleisli:${typeArg}${proxKey}`;
+    const cached = this.kleisliCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const indexerPath = await locateIndexer();
+      const entries = await fetchEntries(indexerPath, rootPath, 'find-kleisli', typeArg, proximity);
+      this.kleisliCache.set(cacheKey, entries);
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  private async getTransformTools(
+    rootPath: string,
+    typeArg: string,
+    proximity?: ProximityContext
+  ): Promise<IndexEntry[]> {
+    const proxKey = proximity ? `:${proximity.filePath}:${proximity.line}` : '';
+    const cacheKey = `transform:${typeArg}${proxKey}`;
+    const cached = this.transformCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const indexerPath = await locateIndexer();
+      const entries = await fetchEntries(indexerPath, rootPath, 'find-transforms', typeArg, proximity);
+      this.transformCache.set(cacheKey, entries);
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private getModulePath(entry: IndexEntry, _rootPath: string): string {
+    // Extract module path from qualified name (e.g., "src.module.func" -> "src.module")
+    const parts = entry.qualifiedName.split('.');
+    parts.pop(); // Remove function name
+    return parts.join('.');
+  }
+
+  private extractTypeArg(entry: IndexEntry): string {
+    // Extract type argument from type_usages
+    // Returns empty string if no type argument (untyped Program)
+    // Returns the actual type if specified (e.g., 'MyType', 'Any')
+    for (const usage of entry.typeUsages) {
+      if (usage.kind === 'program' && usage.typeArguments.length > 0) {
+        return usage.typeArguments[0];
+      }
+    }
+    return '';  // No type argument specified
+  }
+
+  refresh(): void {
+    this.indexCache = [];
+    this.kleisliCache.clear();
+    this.transformCache.clear();
+    this.cacheTimestamp = 0;
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  invalidateFile(_filePath: string): void {
+    // For now, just refresh everything
+    // Could be optimized to only refresh affected entries
+    this.refresh();
+  }
+
+  setFilter(text: string): void {
+    this.filterText = text.toLowerCase();
+    this._onFilterChange.fire(this.filterText);
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  clearFilter(): void {
+    this.filterText = '';
+    this._onFilterChange.fire('');
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  getFilterText(): string {
+    return this.filterText;
+  }
+
+  async getAllEntrypoints(): Promise<IndexEntry[]> {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      return [];
+    }
+    await this.ensureIndexLoaded(workspaceFolder.uri.fsPath);
+    return this.indexCache.filter(entry =>
+      entry.itemKind === 'assignment' &&
+      entry.typeUsages.some(usage => usage.kind === 'program')
+    );
+  }
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
+    this._onFilterChange.dispose();
+  }
+}
+
 class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly emitter = new vscode.EventEmitter<void>();
   public readonly onDidChangeCodeLenses = this.emitter.event;
@@ -90,6 +598,8 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   private transformCache = new Map<string, ToolCache>();
   private pendingFetches = new Set<string>();
   private readonly CACHE_TTL_MS = 30000; // 30 seconds before background refresh
+
+  constructor(private stateStore?: DoeffStateStore) {}
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
@@ -100,6 +610,15 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
       vscode.workspace.workspaceFolders?.[0];
 
     for (const decl of declarations) {
+      // Check if there's a default action set via TreeView
+      const qualifiedName = this.getQualifiedNameForDeclaration(document, decl);
+      const defaultAction = qualifiedName ? this.stateStore?.getDefaultAction(qualifiedName) : undefined;
+
+      // Show default action first if set
+      if (defaultAction) {
+        lenses.push(this.createDefaultActionLens(decl, defaultAction, document.uri));
+      }
+
       // Standard Run button
       lenses.push(
         new vscode.CodeLens(decl.range, {
@@ -119,11 +638,19 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
         })
       );
 
-      if (workspaceFolder) {
+      // Only show kleisli/transform tools if the Program has a type argument
+      // Untyped Program shouldn't show tools since we don't know the output type
+      if (workspaceFolder && decl.typeArg) {
         const rootPath = workspaceFolder.uri.fsPath;
 
-        // Add Kleisli tool buttons
-        const kleisliTools = this.getToolsSync('kleisli', rootPath, decl.typeArg);
+        // Use program location for proximity-based sorting
+        const proximity: ProximityContext = {
+          filePath: document.uri.fsPath,
+          line: decl.range.start.line + 1  // Convert 0-indexed to 1-indexed
+        };
+
+        // Add Kleisli tool buttons (sorted by proximity)
+        const kleisliTools = this.getToolsSync('kleisli', rootPath, decl.typeArg, proximity);
         for (const kleisli of kleisliTools) {
           lenses.push(
             new vscode.CodeLens(decl.range, {
@@ -141,8 +668,8 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
           );
         }
 
-        // Add Transform tool buttons
-        const transformTools = this.getToolsSync('transform', rootPath, decl.typeArg);
+        // Add Transform tool buttons (sorted by proximity)
+        const transformTools = this.getToolsSync('transform', rootPath, decl.typeArg, proximity);
         for (const transform of transformTools) {
           lenses.push(
             new vscode.CodeLens(decl.range, {
@@ -164,6 +691,69 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
     return lenses;
   }
 
+  private createDefaultActionLens(
+    decl: ProgramDeclaration,
+    action: ActionType,
+    uri: vscode.Uri
+  ): vscode.CodeLens {
+    let title: string;
+    let command: string;
+    let args: unknown[];
+
+    switch (action.kind) {
+      case 'run':
+        title = `★ ${TOOL_PREFIX.run} Run`;
+        command = 'doeff-runner.runDefault';
+        args = [uri, decl.range.start.line];
+        break;
+      case 'runWithOptions':
+        title = `★ ${TOOL_PREFIX.runWithOptions} Options`;
+        command = 'doeff-runner.runOptions';
+        args = [uri, decl.range.start.line];
+        break;
+      case 'kleisli': {
+        const kleisliName = action.toolQualifiedName.split('.').pop() ?? action.toolQualifiedName;
+        title = `★ ${TOOL_PREFIX.kleisli} ${kleisliName}`;
+        command = 'doeff-runner.runWithKleisli';
+        args = [uri, decl.range.start.line, action.toolQualifiedName];
+        break;
+      }
+      case 'transform': {
+        const transformName = action.toolQualifiedName.split('.').pop() ?? action.toolQualifiedName;
+        title = `★ ${TOOL_PREFIX.transform} ${transformName}`;
+        command = 'doeff-runner.runWithTransform';
+        args = [uri, decl.range.start.line, action.toolQualifiedName];
+        break;
+      }
+    }
+
+    return new vscode.CodeLens(decl.range, {
+      title,
+      tooltip: 'Default action (set via Explorer)',
+      command,
+      arguments: args
+    });
+  }
+
+  private getQualifiedNameForDeclaration(
+    document: vscode.TextDocument,
+    decl: ProgramDeclaration
+  ): string | undefined {
+    // Try to compute qualified name from file path
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+    if (!workspaceFolder) {
+      return undefined;
+    }
+
+    const relativePath = path.relative(workspaceFolder.uri.fsPath, document.uri.fsPath);
+    const modulePath = relativePath
+      .replace(/\.py$/, '')
+      .replace(/\//g, '.')
+      .replace(/\\/g, '.');
+
+    return `${modulePath}.${decl.name}`;
+  }
+
   /**
    * Synchronously returns cached tool entries.
    * Triggers background refresh if cache is stale.
@@ -171,10 +761,12 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   private getToolsSync(
     toolType: 'kleisli' | 'transform',
     rootPath: string,
-    typeArg: string
+    typeArg: string,
+    proximity?: ProximityContext
   ): IndexEntry[] {
     const cache = toolType === 'kleisli' ? this.kleisliCache : this.transformCache;
-    const cacheKey = `${toolType}:${rootPath}:${typeArg}`;
+    const proxKey = proximity ? `:${proximity.filePath}:${proximity.line}` : '';
+    const cacheKey = `${toolType}:${rootPath}:${typeArg}${proxKey}`;
     const cached = cache.get(cacheKey);
     const now = Date.now();
 
@@ -182,13 +774,13 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
     if (cached) {
       // Trigger background refresh if stale
       if (now - cached.timestamp > this.CACHE_TTL_MS) {
-        this.refreshToolsInBackground(toolType, rootPath, typeArg, cacheKey);
+        this.refreshToolsInBackground(toolType, rootPath, typeArg, cacheKey, proximity);
       }
       return cached.entries;
     }
 
     // No cache - trigger background fetch and return empty for now
-    this.refreshToolsInBackground(toolType, rootPath, typeArg, cacheKey);
+    this.refreshToolsInBackground(toolType, rootPath, typeArg, cacheKey, proximity);
     return [];
   }
 
@@ -199,7 +791,8 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
     toolType: 'kleisli' | 'transform',
     rootPath: string,
     typeArg: string,
-    cacheKey: string
+    cacheKey: string,
+    proximity?: ProximityContext
   ): void {
     // Avoid duplicate fetches
     if (this.pendingFetches.has(cacheKey)) {
@@ -218,7 +811,8 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
           indexerPath,
           rootPath,
           command,
-          typeArg
+          typeArg,
+          proximity
         );
         const oldCached = cache.get(cacheKey);
         cache.set(cacheKey, {
@@ -249,15 +843,53 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
 
 export function activate(context: vscode.ExtensionContext) {
   output.appendLine('doeff-runner activated');
-  const codeLensProvider = new ProgramCodeLensProvider();
+
+  // Create state store for sharing state between TreeView and CodeLens
+  const stateStore = new DoeffStateStore(context);
+
+  // Create providers
+  const codeLensProvider = new ProgramCodeLensProvider(stateStore);
+  const treeProvider = new DoeffProgramsProvider(stateStore);
+
+  // Create TreeView
+  const treeView = vscode.window.createTreeView('doeff-programs', {
+    treeDataProvider: treeProvider,
+    showCollapseAll: true
+  });
+
+  // Subscribe to filter changes to update TreeView message
+  treeProvider.onFilterChange((filterText) => {
+    if (filterText) {
+      treeView.message = `🔍 Filter: "${filterText}"`;
+    } else {
+      treeView.message = undefined;
+    }
+  });
+
+  // Subscribe to state changes to refresh CodeLens
+  stateStore.onStateChange(() => {
+    codeLensProvider.refresh();
+    treeProvider.refresh();
+  });
+
+  // File watcher for auto-refresh
+  const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.py');
+  fileWatcher.onDidChange(uri => treeProvider.invalidateFile(uri.fsPath));
+  fileWatcher.onDidCreate(uri => treeProvider.invalidateFile(uri.fsPath));
+  fileWatcher.onDidDelete(uri => treeProvider.invalidateFile(uri.fsPath));
 
   context.subscriptions.push(
     output,
+    stateStore,
     codeLensProvider,
+    treeProvider,
+    treeView,
+    fileWatcher,
     vscode.languages.registerCodeLensProvider(
       { language: 'python' },
       codeLensProvider
     ),
+    // Existing commands
     vscode.commands.registerCommand(
       'doeff-runner.runDefault',
       (resource?: vscode.Uri | string, lineNumber?: number) =>
@@ -304,6 +936,120 @@ export function activate(context: vscode.ExtensionContext) {
           codeLensProvider
         )
     ),
+    // New TreeView commands
+    vscode.commands.registerCommand(
+      'doeff-runner.refreshExplorer',
+      () => treeProvider.refresh()
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.revealEntrypoint',
+      async (entry: IndexEntry) => {
+        const uri = vscode.Uri.file(entry.filePath);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        const position = new vscode.Position(entry.line - 1, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter
+        );
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.runFromTree',
+      async (entry: IndexEntry, actionType: ActionType) => {
+        await runFromTreeView(entry, actionType, codeLensProvider);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.setDefaultAction',
+      async (node: ActionNode) => {
+        await stateStore.setDefaultAction(
+          node.parentEntry.qualifiedName,
+          node.actionType
+        );
+        vscode.window.showInformationMessage(
+          `Set default action for ${node.parentEntry.name}`
+        );
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.clearDefaultAction',
+      async (node: EntrypointNode) => {
+        await stateStore.clearDefaultAction(node.entry.qualifiedName);
+        vscode.window.showInformationMessage(
+          `Cleared default action for ${node.entry.name}`
+        );
+      }
+    ),
+    // Search/filter commands
+    vscode.commands.registerCommand(
+      'doeff-runner.searchEntrypoints',
+      async () => {
+        const entrypoints = await treeProvider.getAllEntrypoints();
+        if (entrypoints.length === 0) {
+          vscode.window.showInformationMessage('No entrypoints found in workspace.');
+          return;
+        }
+
+        const items = entrypoints.map(entry => ({
+          label: entry.name,
+          description: entry.qualifiedName,
+          detail: entry.docstring,
+          entry
+        }));
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Search entrypoints...',
+          matchOnDescription: true,
+          matchOnDetail: true
+        });
+
+        if (selected) {
+          // Reveal the entrypoint in editor
+          const uri = vscode.Uri.file(selected.entry.filePath);
+          const document = await vscode.workspace.openTextDocument(uri);
+          const editor = await vscode.window.showTextDocument(document);
+          const position = new vscode.Position(selected.entry.line - 1, 0);
+          editor.selection = new vscode.Selection(position, position);
+          editor.revealRange(
+            new vscode.Range(position, position),
+            vscode.TextEditorRevealType.InCenter
+          );
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.filterEntrypoints',
+      async () => {
+        const currentFilter = treeProvider.getFilterText();
+        const input = await vscode.window.showInputBox({
+          prompt: 'Filter entrypoints by name',
+          value: currentFilter,
+          placeHolder: 'Enter filter text (leave empty to clear)'
+        });
+
+        if (input === undefined) {
+          return; // Cancelled
+        }
+
+        if (input === '') {
+          treeProvider.clearFilter();
+          vscode.window.showInformationMessage('Filter cleared');
+        } else {
+          treeProvider.setFilter(input);
+          vscode.window.showInformationMessage(`Filtering by: ${input}`);
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.clearFilter',
+      () => {
+        treeProvider.clearFilter();
+        vscode.window.showInformationMessage('Filter cleared');
+      }
+    ),
+    // Document/editor change handlers
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (vscode.window.activeTextEditor?.document === event.document) {
         codeLensProvider.refresh();
@@ -311,8 +1057,132 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.window.onDidChangeActiveTextEditor(() => {
       codeLensProvider.refresh();
+    }),
+    // Sync TreeView selection with editor
+    vscode.window.onDidChangeTextEditorSelection((event) => {
+      const document = event.textEditor.document;
+      if (document.languageId !== 'python') {
+        return;
+      }
+      const line = event.selections[0].active.line;
+      const declaration = findDeclarationAtLine(document, line);
+      if (declaration) {
+        // Could reveal in tree view, but requires finding the node
+        // Skipped for now to avoid performance impact
+      }
     })
   );
+}
+
+async function runFromTreeView(
+  entry: IndexEntry,
+  actionType: ActionType,
+  codeLensProvider: ProgramCodeLensProvider
+): Promise<void> {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('Open a workspace folder to run doeff.');
+    return;
+  }
+
+  try {
+    await vscode.workspace.saveAll();
+
+    switch (actionType.kind) {
+      case 'run':
+        await runDefault(entry.qualifiedName, workspaceFolder);
+        break;
+      case 'runWithOptions': {
+        // Open the file and trigger runOptions
+        const uri = vscode.Uri.file(entry.filePath);
+        const document = await vscode.workspace.openTextDocument(uri);
+        await vscode.window.showTextDocument(document);
+        await runProgram(uri, entry.line - 1, 'options', codeLensProvider);
+        break;
+      }
+      case 'kleisli':
+        await runWithToolFromTree(
+          entry,
+          'kleisli',
+          actionType.toolQualifiedName,
+          workspaceFolder
+        );
+        break;
+      case 'transform':
+        await runWithToolFromTree(
+          entry,
+          'transform',
+          actionType.toolQualifiedName,
+          workspaceFolder
+        );
+        break;
+    }
+
+    codeLensProvider.refresh();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    output.appendLine(`[error] ${message}`);
+    vscode.window.showErrorMessage(`doeff runner failed: ${message}`);
+  }
+}
+
+async function runWithToolFromTree(
+  entry: IndexEntry,
+  toolType: 'kleisli' | 'transform',
+  toolQualifiedName: string,
+  workspaceFolder: vscode.WorkspaceFolder
+): Promise<void> {
+  const indexerPath = await locateIndexer();
+  const typeArg = entry.typeUsages.find(u => u.kind === 'program')?.typeArguments[0] ?? 'Any';
+
+  // Use entry's location for proximity-based sorting
+  const proximity: ProximityContext = {
+    filePath: entry.filePath,
+    line: entry.line
+  };
+
+  // Find interpreter (sorted by proximity to the entrypoint)
+  const interpreters = await fetchEntries(
+    indexerPath,
+    workspaceFolder.uri.fsPath,
+    'find-interpreters',
+    typeArg,
+    proximity
+  );
+
+  if (!interpreters.length) {
+    vscode.window.showErrorMessage('No doeff interpreters found.');
+    return;
+  }
+
+  // First interpreter is now the closest one
+  const interpreter = interpreters[0];
+
+  // Find tool (sorted by proximity)
+  const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
+  const tools = await fetchEntries(
+    indexerPath,
+    workspaceFolder.uri.fsPath,
+    toolCommand,
+    typeArg,
+    proximity
+  );
+
+  const tool = tools.find(t => t.qualifiedName === toolQualifiedName);
+  if (!tool) {
+    vscode.window.showErrorMessage(`${toolType} '${toolQualifiedName}' not found.`);
+    return;
+  }
+
+  const selection: RunSelection = {
+    programPath: entry.qualifiedName,
+    programType: typeArg,
+    interpreter,
+    kleisli: toolType === 'kleisli' ? tool : undefined,
+    transformer: toolType === 'transform' ? tool : undefined
+  };
+
+  await runSelection(selection, workspaceFolder);
 }
 
 export function deactivate() {
@@ -444,12 +1314,19 @@ async function runProgramWithTool(
     }
     const programPath = programEntry.qualifiedName || declaration.name;
 
-    // Find default interpreter
+    // Use program location for proximity-based sorting
+    const proximity: ProximityContext = {
+      filePath: document.uri.fsPath,
+      line: targetLine + 1  // Convert 0-indexed to 1-indexed
+    };
+
+    // Find interpreter (sorted by proximity to the program)
     const interpreters = await fetchEntries(
       indexerPath,
       workspaceFolder.uri.fsPath,
       'find-interpreters',
-      declaration.typeArg
+      declaration.typeArg,
+      proximity
     );
     if (!interpreters.length) {
       vscode.window.showErrorMessage(
@@ -458,16 +1335,17 @@ async function runProgramWithTool(
       return;
     }
 
-    // Use the first interpreter as default
+    // First interpreter is now the closest one
     const defaultInterpreter = interpreters[0];
 
-    // Find the tool entry for validation
+    // Find the tool entry for validation (sorted by proximity)
     const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
     const tools = await fetchEntries(
       indexerPath,
       workspaceFolder.uri.fsPath,
       toolCommand,
-      declaration.typeArg
+      declaration.typeArg,
+      proximity
     );
     const toolEntry = tools.find(
       (t) => t.qualifiedName === toolQualifiedName
@@ -622,11 +1500,18 @@ async function buildSelection(
 
   const programType = declaration.typeArg;
 
+  // Use program location for proximity-based sorting
+  const proximity: ProximityContext = {
+    filePath: document.uri.fsPath,
+    line: declaration.range.start.line + 1  // Convert 0-indexed to 1-indexed
+  };
+
   const interpreters = await fetchEntries(
     indexerPath,
     rootPath,
     'find-interpreters',
-    programType
+    programType,
+    proximity
   );
   if (!interpreters.length) {
     vscode.window.showErrorMessage(
@@ -638,13 +1523,15 @@ async function buildSelection(
     indexerPath,
     rootPath,
     'find-kleisli',
-    programType
+    programType,
+    proximity
   );
   const transformers = await fetchEntries(
     indexerPath,
     rootPath,
     'find-transforms',
-    programType
+    programType,
+    proximity
   );
 
   const interpreterChoice = await selectEntry(
@@ -731,7 +1618,8 @@ function parseProgramDeclaration(
     return;
   }
   const name = match[1];
-  const typeArg = match[2]?.trim() || 'Any';
+  // Return empty string for untyped Program, actual type for Program[T]
+  const typeArg = match[2]?.trim() || '';
   const range = new vscode.Range(
     new vscode.Position(lineNumber, 0),
     new vscode.Position(lineNumber, line.length)
@@ -793,19 +1681,31 @@ async function findProgramEntry(
   return entries.find((entry) => entry.name === name);
 }
 
+interface ProximityContext {
+  filePath: string;
+  line: number;
+}
+
 async function fetchEntries(
   indexerPath: string,
   rootPath: string,
   command: string,
-  typeArg: string
+  typeArg: string,
+  proximity?: ProximityContext
 ): Promise<IndexEntry[]> {
   const trimmedType = typeArg.trim();
-  const cacheKey = `${command}:${rootPath}:${trimmedType || 'Any'}`;
+  const proxKey = proximity ? `:${proximity.filePath}:${proximity.line}` : '';
+  const cacheKey = `${command}:${rootPath}:${trimmedType || 'Any'}${proxKey}`;
   const args = [command, '--root', rootPath];
   const supportsTypeArg =
-    command === 'find-kleisli' || command === 'find-interceptors';
+    command === 'find-kleisli' || command === 'find-transforms' || command === 'find-interceptors';
   if (supportsTypeArg && trimmedType && trimmedType.toLowerCase() !== 'any') {
     args.push('--type-arg', trimmedType);
+  }
+  // Pass proximity information for sorting by closest match
+  if (proximity) {
+    args.push('--proximity-file', proximity.filePath);
+    args.push('--proximity-line', String(proximity.line));
   }
   const entries = await queryIndexer(indexerPath, cacheKey, rootPath, args);
   return filterEntriesForType(entries, trimmedType);
@@ -873,6 +1773,7 @@ function normalizeEntries(entries: any[]): IndexEntry[] {
     qualifiedName: entry.qualified_name ?? entry.qualifiedName ?? '',
     filePath: entry.file_path ?? entry.filePath ?? '',
     line: entry.line ?? 0,
+    itemKind: entry.item_kind ?? entry.itemKind ?? 'function',
     categories: entry.categories ?? [],
     programParameters: normalizeParams(
       entry.program_parameters ?? entry.programParameters ?? []
@@ -912,7 +1813,12 @@ function filterEntriesForType(
   typeArg: string
 ): IndexEntry[] {
   const normalizedType = typeArg.trim();
-  if (!normalizedType || normalizedType.toLowerCase() === 'any') {
+  // Empty type means unspecified - return empty (caller should handle this case)
+  if (!normalizedType) {
+    return [];
+  }
+  // Explicit 'Any' means match all entries
+  if (normalizedType.toLowerCase() === 'any') {
     return entries;
   }
   const filtered = entries.filter((entry) => matchesType(entry, normalizedType));

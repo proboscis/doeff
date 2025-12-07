@@ -5,7 +5,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use doeff_indexer::{
     build_index, entry_matches_with_markers, find_interceptors, find_interpreters, find_kleisli,
-    find_kleisli_with_type, find_transforms, IndexEntry, ProgramTypeKind,
+    find_kleisli_with_type, find_transforms, find_transforms_with_type, IndexEntry, ProgramTypeKind,
 };
 
 #[derive(Parser, Debug)]
@@ -61,6 +61,10 @@ enum Commands {
 
     /// Find transform functions (with # doeff: transform marker or Program -> Program signature)
     FindTransforms {
+        /// Filter by type argument (for example "User")
+        #[arg(long)]
+        type_arg: Option<String>,
+
         /// Sort by proximity to this file path (closest first)
         #[arg(long)]
         proximity_file: Option<String>,
@@ -273,10 +277,16 @@ fn main() -> Result<()> {
             }
         }
 
-        Some(Commands::FindTransforms { proximity_file, proximity_line }) => {
+        Some(Commands::FindTransforms { type_arg, proximity_file, proximity_line }) => {
             // Filter to only transforms using marker-aware logic
-            let transforms = find_transforms(&index.entries);
-            index.entries = transforms.into_iter().cloned().collect();
+            if let Some(type_arg_ref) = type_arg.as_deref() {
+                // Use type filtering for transforms (matches first parameter)
+                let transforms = find_transforms_with_type(&index.entries, type_arg_ref);
+                index.entries = transforms.into_iter().cloned().collect();
+            } else {
+                let transforms = find_transforms(&index.entries);
+                index.entries = transforms.into_iter().cloned().collect();
+            }
 
             // Sort by proximity if file is specified
             if let Some(ref file) = proximity_file {
