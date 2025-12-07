@@ -32,7 +32,7 @@ Python の native `try-except` を `@do` 関数内で使用できるようにす
 ### Out of Scope
 
 - Effect-based handlers の変更（互換性のため維持）
-- Linter rule DOEFF014 の削除（別途検討）
+- ~~Linter rule DOEFF014 の削除（別途検討）~~ → Updated to Info severity (TASK-CORE-006)
 
 ## 3. Related Tasks
 
@@ -47,6 +47,10 @@ Python の native `try-except` を `@do` 関数内で使用できるようにす
 
 - [[TASK-CORE-005]] — Documentation update & Tests
 
+### Linter Updates
+
+- [[TASK-CORE-006]] — Update DOEFF014 linter rule
+
 ## 4. Related Issues
 
 - [GitHub Issue #2](https://github.com/CyberAgentAILab/doeff/issues/2) — Generator wrapper doesn't forward errors
@@ -57,7 +61,7 @@ Python の native `try-except` を `@do` 関数内で使用できるようにす
 |--------|-------|
 | 計画済み | 0 |
 | 進行中 | 0 |
-| 完了 | 5 |
+| 完了 | 6 |
 
 ### Task Progress
 
@@ -68,6 +72,7 @@ Python の native `try-except` を `@do` 関数内で使用できるようにす
 | TASK-CORE-003 | force_eval & _intercept_generator | ✅ done |
 | TASK-CORE-004 | Interpreter loop | ✅ done |
 | TASK-CORE-005 | Docs & Tests | ✅ done |
+| TASK-CORE-006 | DOEFF014 linter rule update | ✅ done |
 
 ## 6. Risks / Blockers
 
