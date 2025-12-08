@@ -118,10 +118,16 @@ def _annotation_is_program(annotation: Any) -> bool:
     if annotation is inspect._empty:
         return False
 
+    from doeff.types import EffectBase as EffectBaseType
+
     program_type = globals().get("Program", ProgramBase)
 
     if annotation in (program_type, ProgramBase):
         return True
+    # Check for subclasses of ProgramBase (excluding EffectBase subclasses)
+    if isinstance(annotation, type) and issubclass(annotation, ProgramBase):
+        if not issubclass(annotation, EffectBaseType):
+            return True
     if isinstance(annotation, ForwardRef):
         return _string_annotation_is_program(annotation.__forward_arg__)
     if isinstance(annotation, str):
@@ -129,6 +135,10 @@ def _annotation_is_program(annotation: Any) -> bool:
     origin = get_origin(annotation)
     if origin in (program_type, ProgramBase):
         return True
+    # Check origin for subclasses (e.g., MyProgram[T])
+    if isinstance(origin, type) and issubclass(origin, ProgramBase):
+        if not issubclass(origin, EffectBaseType):
+            return True
     if origin is Annotated:
         args = get_args(annotation)
         if args:
@@ -147,12 +157,18 @@ def _annotation_is_effect(annotation: Any) -> bool:
 
     if annotation in (Effect, EffectBase):
         return True
+    # Check for subclasses of EffectBase
+    if isinstance(annotation, type) and issubclass(annotation, EffectBase):
+        return True
     if isinstance(annotation, ForwardRef):
         return _string_annotation_is_effect(annotation.__forward_arg__)
     if isinstance(annotation, str):
         return _string_annotation_is_effect(annotation)
     origin = get_origin(annotation)
     if origin in (Effect, EffectBase):
+        return True
+    # Check origin for subclasses (e.g., MyEffect[T])
+    if isinstance(origin, type) and issubclass(origin, EffectBase):
         return True
     if origin is Annotated:
         args = get_args(annotation)
