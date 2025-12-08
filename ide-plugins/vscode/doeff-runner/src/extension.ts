@@ -9,7 +9,8 @@ const execFileAsync = promisify(cp.execFile);
 const CACHE_TTL_MS = 5000;
 const PROGRAM_REGEX =
   /^\s*([A-Za-z_]\w*)\s*:\s*(?:["']?Program(?:\s*\[\s*([^\]]+)\s*\])?["']?)/;
-const INDEXER_CANDIDATES = [
+// Fallback paths for doeff-indexer binary (used if not found in Python env)
+const INDEXER_FALLBACK_CANDIDATES = [
   '/usr/local/bin/doeff-indexer',
   '/usr/bin/doeff-indexer',
   `${process.env.HOME ?? ''}/.cargo/bin/doeff-indexer`,
@@ -1640,19 +1641,107 @@ async function resolveDocument(
 }
 
 async function locateIndexer(): Promise<string> {
+  // 1. Check environment variable first
   const envPath = process.env.DOEFF_INDEXER_PATH;
   if (envPath && isExecutable(envPath)) {
+    output.appendLine(`[info] Using indexer from DOEFF_INDEXER_PATH: ${envPath}`);
     return envPath;
   }
-  for (const candidate of INDEXER_CANDIDATES) {
+
+  // 2. Try to find indexer in Python environment (preferred)
+  const pythonEnvIndexer = await findIndexerInPythonEnv();
+  if (pythonEnvIndexer) {
+    output.appendLine(`[info] Using indexer from Python environment: ${pythonEnvIndexer}`);
+    return pythonEnvIndexer;
+  }
+
+  // 3. Fall back to system paths
+  for (const candidate of INDEXER_FALLBACK_CANDIDATES) {
     if (candidate && isExecutable(candidate)) {
+      output.appendLine(`[info] Using indexer from system path: ${candidate}`);
       return candidate;
     }
   }
+
   vscode.window.showErrorMessage(
-    'doeff-indexer not found. Install it (cargo install --path packages/doeff-indexer) or set DOEFF_INDEXER_PATH.'
+    'doeff-indexer not found. Install with "pip install doeff" or set DOEFF_INDEXER_PATH.'
   );
   throw new Error('doeff-indexer not found');
+}
+
+/**
+ * Find doeff-indexer binary in the Python environment.
+ * This looks for the binary in the same directory as the Python interpreter.
+ */
+async function findIndexerInPythonEnv(): Promise<string | undefined> {
+  const pythonPath = await getPythonInterpreter();
+  if (!pythonPath) {
+    return undefined;
+  }
+
+  const binDir = path.dirname(pythonPath);
+  const indexerPath = path.join(binDir, 'doeff-indexer');
+
+  if (isExecutable(indexerPath)) {
+    return indexerPath;
+  }
+
+  // Windows: check for .exe extension
+  const indexerPathExe = indexerPath + '.exe';
+  if (isExecutable(indexerPathExe)) {
+    return indexerPathExe;
+  }
+
+  return undefined;
+}
+
+/**
+ * Get the Python interpreter path from VSCode Python extension or settings.
+ */
+async function getPythonInterpreter(): Promise<string | undefined> {
+  try {
+    // Try to get from VSCode Python extension
+    const pythonExt = vscode.extensions.getExtension('ms-python.python');
+    if (pythonExt) {
+      if (!pythonExt.isActive) {
+        await pythonExt.activate();
+      }
+      // Try the newer API first
+      const execDetails = pythonExt.exports?.settings?.getExecutionDetails?.(
+        vscode.workspace.workspaceFolders?.[0]?.uri
+      );
+      if (execDetails?.execCommand?.[0]) {
+        return execDetails.execCommand[0];
+      }
+    }
+
+    // Fall back to workspace settings
+    const config = vscode.workspace.getConfiguration('python');
+    const pythonPath = config.get<string>('defaultInterpreterPath');
+    if (pythonPath && fs.existsSync(pythonPath)) {
+      return pythonPath;
+    }
+
+    // Try common virtual env locations relative to workspace
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      const venvCandidates = [
+        path.join(workspaceFolder.uri.fsPath, '.venv', 'bin', 'python'),
+        path.join(workspaceFolder.uri.fsPath, '.venv', 'Scripts', 'python.exe'),
+        path.join(workspaceFolder.uri.fsPath, 'venv', 'bin', 'python'),
+        path.join(workspaceFolder.uri.fsPath, 'venv', 'Scripts', 'python.exe'),
+      ];
+      for (const candidate of venvCandidates) {
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  } catch (error) {
+    output.appendLine(`[warn] Failed to get Python interpreter: ${error}`);
+  }
+
+  return undefined;
 }
 
 function isExecutable(target: string): boolean {

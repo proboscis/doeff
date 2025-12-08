@@ -412,14 +412,23 @@ class IndexerClient(private val project: Project) {
     }
 
     private fun locateIndexerInternal(): String? {
+        // 1. Check environment variable first
         System.getenv("DOEFF_INDEXER_PATH")?.takeIf { it.isNotBlank() }?.let { path ->
             val file = File(path)
             if (file.canExecute()) {
+                log.info("Using indexer from DOEFF_INDEXER_PATH: $path")
                 return file.absolutePath
             }
         }
 
-        val candidates = listOf(
+        // 2. Try to find indexer in Python environment (preferred)
+        findIndexerInPythonEnv()?.let { indexerPath ->
+            log.info("Using indexer from Python environment: $indexerPath")
+            return indexerPath
+        }
+
+        // 3. Fall back to system paths
+        val fallbackCandidates = listOf(
             "/usr/local/bin/doeff-indexer",
             "/usr/bin/doeff-indexer",
             "${System.getProperty("user.home")}/.cargo/bin/doeff-indexer",
@@ -427,15 +436,60 @@ class IndexerClient(private val project: Project) {
             "/opt/homebrew/bin/doeff-indexer"
         )
 
-        return candidates.firstOrNull { File(it).canExecute() }
-            ?: run {
-                notifyError(
-                    "doeff-indexer not found",
-                    "Install with 'cargo install --path packages/doeff-indexer' or set DOEFF_INDEXER_PATH",
-                    null
-                )
-                null
+        fallbackCandidates.firstOrNull { File(it).canExecute() }?.let { path ->
+            log.info("Using indexer from system path: $path")
+            return path
+        }
+
+        notifyError(
+            "doeff-indexer not found",
+            "Install with 'pip install doeff' or set DOEFF_INDEXER_PATH",
+            null
+        )
+        return null
+    }
+
+    /**
+     * Find doeff-indexer binary in the Python environment.
+     * This looks for the binary in the same directory as the Python interpreter.
+     */
+    private fun findIndexerInPythonEnv(): String? {
+        try {
+            // Try to get Python SDK from project
+            val sdk = com.intellij.openapi.projectRoots.ProjectJdkTable.getInstance()
+                .allJdks
+                .firstOrNull { it.sdkType.name.contains("Python", ignoreCase = true) }
+
+            val pythonHome = sdk?.homePath?.let { File(it).parent }
+            if (pythonHome != null) {
+                // Check for indexer binary in the same bin directory
+                val indexerPath = File(pythonHome, "doeff-indexer")
+                if (indexerPath.canExecute()) {
+                    return indexerPath.absolutePath
+                }
+                // Windows: check for .exe extension
+                val indexerPathExe = File(pythonHome, "doeff-indexer.exe")
+                if (indexerPathExe.canExecute()) {
+                    return indexerPathExe.absolutePath
+                }
             }
+
+            // Try common virtual env locations relative to project
+            project.basePath?.let { basePath ->
+                val venvCandidates = listOf(
+                    File(basePath, ".venv/bin/doeff-indexer"),
+                    File(basePath, ".venv/Scripts/doeff-indexer.exe"),
+                    File(basePath, "venv/bin/doeff-indexer"),
+                    File(basePath, "venv/Scripts/doeff-indexer.exe")
+                )
+                venvCandidates.firstOrNull { it.canExecute() }?.let {
+                    return it.absolutePath
+                }
+            }
+        } catch (e: Exception) {
+            log.warn("Failed to find indexer in Python environment", e)
+        }
+        return null
     }
 
     private fun notifyError(title: String, message: String, throwable: Throwable?) {

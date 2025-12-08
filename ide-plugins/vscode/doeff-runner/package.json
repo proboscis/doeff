@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "Proboscis",
   "license": "Apache-2.0",
   "engines": {
@@ -17,10 +17,28 @@
     "onCommand:doeff-runner.runOptions",
     "onCommand:doeff-runner.runConfig",
     "onCommand:doeff-runner.runWithKleisli",
-    "onCommand:doeff-runner.runWithTransform"
+    "onCommand:doeff-runner.runWithTransform",
+    "onView:doeff-programs"
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "doeff-explorer",
+          "title": "doeff",
+          "icon": "$(symbol-method)"
+        }
+      ]
+    },
+    "views": {
+      "doeff-explorer": [
+        {
+          "id": "doeff-programs",
+          "name": "Programs"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "doeff-runner.runDefault",
@@ -41,8 +59,82 @@
       {
         "command": "doeff-runner.runWithTransform",
         "title": "Run doeff Program with Transform"
+      },
+      {
+        "command": "doeff-runner.refreshExplorer",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "doeff-runner.revealEntrypoint",
+        "title": "Go to Definition"
+      },
+      {
+        "command": "doeff-runner.runFromTree",
+        "title": "Run"
+      },
+      {
+        "command": "doeff-runner.setDefaultAction",
+        "title": "Set as Default",
+        "icon": "$(star)"
+      },
+      {
+        "command": "doeff-runner.clearDefaultAction",
+        "title": "Clear Default Action",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "doeff-runner.searchEntrypoints",
+        "title": "Search Entrypoints",
+        "icon": "$(search)"
+      },
+      {
+        "command": "doeff-runner.filterEntrypoints",
+        "title": "Filter Entrypoints",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "doeff-runner.clearFilter",
+        "title": "Clear Filter",
+        "icon": "$(close)"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "doeff-runner.searchEntrypoints",
+          "when": "view == doeff-programs",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.filterEntrypoints",
+          "when": "view == doeff-programs",
+          "group": "navigation@2"
+        },
+        {
+          "command": "doeff-runner.refreshExplorer",
+          "when": "view == doeff-programs",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "doeff-runner.setDefaultAction",
+          "when": "view == doeff-programs && viewItem == action",
+          "group": "inline"
+        },
+        {
+          "command": "doeff-runner.clearDefaultAction",
+          "when": "view == doeff-programs && viewItem == entrypoint",
+          "group": "inline"
+        },
+        {
+          "command": "doeff-runner.revealEntrypoint",
+          "when": "view == doeff-programs && viewItem == entrypoint",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
