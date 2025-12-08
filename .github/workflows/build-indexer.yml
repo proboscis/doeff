@@ -1,0 +1,149 @@
+name: Build doeff-indexer
+
+on:
+  push:
+    tags:
+      - 'doeff-indexer-v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to PyPI'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: packages/doeff-indexer
+          manylinux: auto
+          before-script-linux: |
+            # Build the native binary first (without Python feature)
+            cargo build --release --no-default-features
+            mkdir -p python/doeff_indexer/bin
+            cp target/release/doeff-indexer python/doeff_indexer/bin/
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: packages/doeff-indexer/dist/*.whl
+
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}-apple-darwin
+
+      - name: Build native binary
+        working-directory: packages/doeff-indexer
+        run: |
+          cargo build --release --no-default-features --target ${{ matrix.target }}-apple-darwin
+          mkdir -p python/doeff_indexer/bin
+          cp target/${{ matrix.target }}-apple-darwin/release/doeff-indexer python/doeff_indexer/bin/
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          working-directory: packages/doeff-indexer
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-macos-${{ matrix.target }}
+          path: packages/doeff-indexer/dist/*.whl
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build native binary
+        working-directory: packages/doeff-indexer
+        shell: bash
+        run: |
+          cargo build --release --no-default-features
+          mkdir -p python/doeff_indexer/bin
+          cp target/release/doeff-indexer.exe python/doeff_indexer/bin/
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          args: --release --out dist
+          working-directory: packages/doeff-indexer
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-windows
+          path: packages/doeff-indexer/dist/*.whl
+
+  # Build source distribution
+  sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+          working-directory: packages/doeff-indexer
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: packages/doeff-indexer/dist/*.tar.gz
+
+  publish:
+    name: Publish to PyPI
+    needs: [build-linux, build-macos, build-windows, sdist]
+    runs-on: ubuntu-latest
+    # Only publish on tag push or manual trigger with publish=true
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    environment: pypi
+    permissions:
+      id-token: write  # Required for trusted publishing
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
