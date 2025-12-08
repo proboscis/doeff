@@ -24,6 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -33,9 +38,17 @@ jobs:
           manylinux: auto
           before-script-linux: |
             # Build the native binary first (without Python feature)
-            cargo build --release --no-default-features
-            mkdir -p python/doeff_indexer/bin
-            cp target/release/doeff-indexer python/doeff_indexer/bin/
+            # For cross-compilation, binary goes to target/<arch>/release/
+            if [ "${{ matrix.target }}" = "aarch64" ]; then
+              rustup target add aarch64-unknown-linux-gnu
+              cargo build --release --no-default-features --target aarch64-unknown-linux-gnu
+              mkdir -p python/doeff_indexer/bin
+              cp target/aarch64-unknown-linux-gnu/release/doeff-indexer python/doeff_indexer/bin/
+            else
+              cargo build --release --no-default-features
+              mkdir -p python/doeff_indexer/bin
+              cp target/release/doeff-indexer python/doeff_indexer/bin/
+            fi
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -80,6 +93,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
