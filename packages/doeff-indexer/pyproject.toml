@@ -12,6 +12,13 @@ authors = [
     {name = "doeff contributors"}
 ]
 
+[project.scripts]
+doeff-indexer = "doeff_indexer._cli:main"
+
 [tool.maturin]
 features = ["python"]
 module-name = "doeff_indexer"
+python-source = "python"
+include = [
+    { path = "python/doeff_indexer/bin/*", format = "wheel" }
+]

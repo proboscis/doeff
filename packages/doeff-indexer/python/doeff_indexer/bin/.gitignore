@@ -1,0 +1,3 @@
+# Ignore platform-specific binaries (added during CI build)
+doeff-indexer
+doeff-indexer.exe
