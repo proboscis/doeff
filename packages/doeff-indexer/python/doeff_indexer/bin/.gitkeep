@@ -1,0 +1,3 @@
+# This directory will contain platform-specific binaries during wheel build
+# The actual binaries are not committed to git
+
