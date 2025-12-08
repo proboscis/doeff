@@ -7,6 +7,7 @@ from typing import Any
 
 from doeff import Effect, ExecutionContext, Program, ProgramInterpreter, do
 from doeff.effects import Ask
+from doeff.effects.reader import AskEffect
 from doeff.program import ProgramBase
 from doeff.types import EffectBase
 
@@ -125,3 +126,29 @@ def test_do_varargs_effect_annotation_preserves_effect_instances():
 
     assert result.is_ok
     assert result.value == [1, 2, 3]
+
+
+# =============================================================================
+# Subclass annotation tests - subclasses of EffectBase should also be excluded
+# =============================================================================
+
+
+@do
+def execute_ask_effect(e: AskEffect) -> Generator[Effect | Program, Any, Any]:
+    """AskEffect (subclass of EffectBase) annotated param should not be auto-unwrapped."""
+    assert isinstance(e, AskEffect), f"Expected AskEffect, got {type(e)}"
+    val = yield e
+    return val
+
+
+def test_do_effect_subclass_annotation_preserves_effect_instance():
+    """Param annotated with EffectBase subclass should not be auto-unwrapped."""
+    interpreter = ProgramInterpreter()
+
+    ask_effect = Ask("key")
+    program = execute_ask_effect(ask_effect)
+    ctx = ExecutionContext(env={"key": 99})
+    result = interpreter.run(program, ctx)
+
+    assert result.is_ok
+    assert result.value == 99
