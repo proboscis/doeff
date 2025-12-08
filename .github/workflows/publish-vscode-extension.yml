@@ -1,0 +1,55 @@
+name: Publish VSCode Extension
+
+on:
+  push:
+    tags:
+      - 'vscode-v*'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish to VS Code Marketplace'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: ide-plugins/vscode/doeff-runner
+        run: npm ci
+
+      - name: Compile extension
+        working-directory: ide-plugins/vscode/doeff-runner
+        run: npm run compile
+
+      - name: Install vsce
+        run: npm install -g @vscode/vsce
+
+      - name: Package extension
+        working-directory: ide-plugins/vscode/doeff-runner
+        run: vsce package
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: ide-plugins/vscode/doeff-runner/*.vsix
+
+      - name: Publish to VS Code Marketplace
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        working-directory: ide-plugins/vscode/doeff-runner
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: vsce publish -p $VSCE_PAT
