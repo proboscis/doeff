@@ -18,18 +18,20 @@ permissions:
 jobs:
   # Build doeff-indexer for all platforms
   build-indexer-macos-x64:
-    runs-on: macos-13  # Intel Mac
+    runs-on: macos-latest  # Use arm64 runner with cross-compilation
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build indexer
+        with:
+          targets: x86_64-apple-darwin
+      - name: Build indexer for x64
         working-directory: packages/doeff-indexer
-        run: cargo build --release --no-default-features
+        run: cargo build --release --no-default-features --target x86_64-apple-darwin
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: indexer-darwin-x64
-          path: packages/doeff-indexer/target/release/doeff-indexer
+          path: packages/doeff-indexer/target/x86_64-apple-darwin/release/doeff-indexer
 
   build-indexer-macos-arm64:
     runs-on: macos-14  # Apple Silicon
