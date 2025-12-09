@@ -597,6 +597,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   public readonly onDidChangeCodeLenses = this.emitter.event;
   private kleisliCache = new Map<string, ToolCache>();
   private transformCache = new Map<string, ToolCache>();
+  private fileIndexCache = new Map<string, { entries: IndexEntry[]; timestamp: number }>();
   private pendingFetches = new Set<string>();
   private readonly CACHE_TTL_MS = 30000; // 30 seconds before background refresh
 
@@ -604,57 +605,77 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
-    const declarations = extractProgramDeclarations(document);
 
     const workspaceFolder =
       vscode.workspace.getWorkspaceFolder(document.uri) ??
       vscode.workspace.workspaceFolders?.[0];
 
-    for (const decl of declarations) {
+    if (!workspaceFolder) {
+      return lenses;
+    }
+
+    // Use indexer output instead of regex-based detection
+    const entries = this.getFileEntriesSync(workspaceFolder.uri.fsPath, document.uri.fsPath);
+
+    // Filter to only Program assignments (not function parameters)
+    const programEntries = entries.filter(entry =>
+      entry.itemKind === 'assignment' &&
+      entry.typeUsages.some(usage => usage.kind === 'program')
+    );
+
+    for (const entry of programEntries) {
+      const lineNumber = entry.line - 1; // Convert 1-indexed to 0-indexed
+      const range = new vscode.Range(
+        new vscode.Position(lineNumber, 0),
+        new vscode.Position(lineNumber, 1)
+      );
+
+      // Extract type argument from type_usages
+      const typeArg = this.extractTypeArg(entry);
+
       // Check if there's a default action set via TreeView
-      const qualifiedName = this.getQualifiedNameForDeclaration(document, decl);
-      const defaultAction = qualifiedName ? this.stateStore?.getDefaultAction(qualifiedName) : undefined;
+      const defaultAction = this.stateStore?.getDefaultAction(entry.qualifiedName);
 
       // Show default action first if set
       if (defaultAction) {
-        lenses.push(this.createDefaultActionLens(decl, defaultAction, document.uri));
+        lenses.push(this.createDefaultActionLensFromEntry(entry, range, defaultAction, document.uri));
       }
 
       // Standard Run button
       lenses.push(
-        new vscode.CodeLens(decl.range, {
+        new vscode.CodeLens(range, {
           title: `${TOOL_PREFIX.run} Run`,
           tooltip: 'Run with default interpreter',
           command: 'doeff-runner.runDefault',
-          arguments: [document.uri, decl.range.start.line]
+          arguments: [document.uri, lineNumber]
         })
       );
       // Run with options button
       lenses.push(
-        new vscode.CodeLens(decl.range, {
+        new vscode.CodeLens(range, {
           title: `${TOOL_PREFIX.runWithOptions} Options`,
           tooltip: 'Run with custom interpreter, kleisli, and transformer selection',
           command: 'doeff-runner.runOptions',
-          arguments: [document.uri, decl.range.start.line]
+          arguments: [document.uri, lineNumber]
         })
       );
 
       // Only show kleisli/transform tools if the Program has a type argument
       // Untyped Program shouldn't show tools since we don't know the output type
-      if (workspaceFolder && decl.typeArg) {
+      if (typeArg) {
         const rootPath = workspaceFolder.uri.fsPath;
 
         // Use program location for proximity-based sorting
         const proximity: ProximityContext = {
           filePath: document.uri.fsPath,
-          line: decl.range.start.line + 1  // Convert 0-indexed to 1-indexed
+          line: entry.line
         };
 
         // Add Kleisli tool buttons (sorted by proximity)
-        const kleisliTools = this.getToolsSync('kleisli', rootPath, decl.typeArg, proximity);
+        const kleisliTools = this.getToolsSync('kleisli', rootPath, typeArg, proximity);
         for (const kleisli of kleisliTools) {
           lenses.push(
-            new vscode.CodeLens(decl.range, {
+            new vscode.CodeLens(range, {
               title: `${TOOL_PREFIX.kleisli} ${kleisli.name}`,
               tooltip: kleisli.docstring
                 ? `[Kleisli] ${kleisli.qualifiedName}\n\n${kleisli.docstring}`
@@ -662,7 +683,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
               command: 'doeff-runner.runWithKleisli',
               arguments: [
                 document.uri,
-                decl.range.start.line,
+                lineNumber,
                 kleisli.qualifiedName
               ]
             })
@@ -670,10 +691,10 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
         }
 
         // Add Transform tool buttons (sorted by proximity)
-        const transformTools = this.getToolsSync('transform', rootPath, decl.typeArg, proximity);
+        const transformTools = this.getToolsSync('transform', rootPath, typeArg, proximity);
         for (const transform of transformTools) {
           lenses.push(
-            new vscode.CodeLens(decl.range, {
+            new vscode.CodeLens(range, {
               title: `${TOOL_PREFIX.transform} ${transform.name}`,
               tooltip: transform.docstring
                 ? `[Transform] ${transform.qualifiedName}\n\n${transform.docstring}`
@@ -681,7 +702,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
               command: 'doeff-runner.runWithTransform',
               arguments: [
                 document.uri,
-                decl.range.start.line,
+                lineNumber,
                 transform.qualifiedName
               ]
             })
@@ -692,11 +713,87 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
     return lenses;
   }
 
-  private createDefaultActionLens(
-    decl: ProgramDeclaration,
+  private extractTypeArg(entry: IndexEntry): string {
+    for (const usage of entry.typeUsages) {
+      if (usage.kind === 'program' && usage.typeArguments.length > 0) {
+        return usage.typeArguments[0];
+      }
+    }
+    return '';
+  }
+
+  /**
+   * Synchronously returns cached index entries for a file.
+   * Triggers background refresh if cache is stale.
+   */
+  private getFileEntriesSync(rootPath: string, filePath: string): IndexEntry[] {
+    const cacheKey = `file:${filePath}`;
+    const cached = this.fileIndexCache.get(cacheKey);
+    const now = Date.now();
+
+    // Return cached data if available (even if stale)
+    if (cached) {
+      // Trigger background refresh if stale
+      if (now - cached.timestamp > this.CACHE_TTL_MS) {
+        this.refreshFileIndexInBackground(rootPath, filePath, cacheKey);
+      }
+      return cached.entries;
+    }
+
+    // No cache - trigger background fetch and return empty for now
+    this.refreshFileIndexInBackground(rootPath, filePath, cacheKey);
+    return [];
+  }
+
+  /**
+   * Fetches file index in background and refreshes CodeLens when done.
+   */
+  private refreshFileIndexInBackground(
+    rootPath: string,
+    filePath: string,
+    cacheKey: string
+  ): void {
+    // Avoid duplicate fetches
+    if (this.pendingFetches.has(cacheKey)) {
+      return;
+    }
+    this.pendingFetches.add(cacheKey);
+
+    // Fire and forget - fetch in background
+    (async () => {
+      try {
+        const indexerPath = await locateIndexer();
+        const entries = await queryIndexer(indexerPath, cacheKey, rootPath, [
+          'index',
+          '--root',
+          rootPath,
+          '--file',
+          filePath
+        ]);
+        const oldCached = this.fileIndexCache.get(cacheKey);
+        this.fileIndexCache.set(cacheKey, {
+          entries,
+          timestamp: Date.now()
+        });
+        // Only refresh if entries changed
+        if (!oldCached || JSON.stringify(oldCached.entries) !== JSON.stringify(entries)) {
+          this.refresh();
+        }
+      } catch {
+        // Silently ignore errors - keep old cache if available
+      } finally {
+        this.pendingFetches.delete(cacheKey);
+      }
+    })();
+  }
+
+  private createDefaultActionLensFromEntry(
+    entry: IndexEntry,
+    range: vscode.Range,
     action: ActionType,
     uri: vscode.Uri
   ): vscode.CodeLens {
+    const lineNumber = entry.line - 1; // Convert 1-indexed to 0-indexed
     let title: string;
     let command: string;
     let args: unknown[];
@@ -705,54 +802,35 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
       case 'run':
         title = `★ ${TOOL_PREFIX.run} Run`;
         command = 'doeff-runner.runDefault';
-        args = [uri, decl.range.start.line];
+        args = [uri, lineNumber];
         break;
       case 'runWithOptions':
         title = `★ ${TOOL_PREFIX.runWithOptions} Options`;
         command = 'doeff-runner.runOptions';
-        args = [uri, decl.range.start.line];
+        args = [uri, lineNumber];
         break;
       case 'kleisli': {
         const kleisliName = action.toolQualifiedName.split('.').pop() ?? action.toolQualifiedName;
         title = `★ ${TOOL_PREFIX.kleisli} ${kleisliName}`;
         command = 'doeff-runner.runWithKleisli';
-        args = [uri, decl.range.start.line, action.toolQualifiedName];
+        args = [uri, lineNumber, action.toolQualifiedName];
         break;
       }
       case 'transform': {
         const transformName = action.toolQualifiedName.split('.').pop() ?? action.toolQualifiedName;
         title = `★ ${TOOL_PREFIX.transform} ${transformName}`;
         command = 'doeff-runner.runWithTransform';
-        args = [uri, decl.range.start.line, action.toolQualifiedName];
+        args = [uri, lineNumber, action.toolQualifiedName];
         break;
       }
     }
 
-    return new vscode.CodeLens(decl.range, {
+    return new vscode.CodeLens(range, {
       title,
       tooltip: 'Default action (set via Explorer)',
       command,
       arguments: args
     });
-  }
-
-  private getQualifiedNameForDeclaration(
-    document: vscode.TextDocument,
-    decl: ProgramDeclaration
-  ): string | undefined {
-    // Try to compute qualified name from file path
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
-    if (!workspaceFolder) {
-      return undefined;
-    }
-
-    const relativePath = path.relative(workspaceFolder.uri.fsPath, document.uri.fsPath);
-    const modulePath = relativePath
-      .replace(/\.py$/, '')
-      .replace(/\//g, '.')
-      .replace(/\\/g, '.');
-
-    return `${modulePath}.${decl.name}`;
   }
 
   /**
@@ -1618,6 +1696,23 @@ function parseProgramDeclaration(
   if (!match) {
     return;
   }
+
+  // Skip if this looks like a function parameter
+  // 1. Check if line ends with ',' or ')' after the annotation (typical for function args)
+  const afterAnnotation = code.slice(match.index + match[0].length).trim();
+  if (afterAnnotation.endsWith(',') || afterAnnotation.endsWith(')')) {
+    return;
+  }
+
+  // 2. Check if there are unmatched opening parens before the variable name
+  //    This indicates we're inside a function signature like: def foo(arg: Program[T])
+  const beforeMatch = code.slice(0, match.index);
+  const openParens = (beforeMatch.match(/\(/g) || []).length;
+  const closeParens = (beforeMatch.match(/\)/g) || []).length;
+  if (openParens > closeParens) {
+    return; // Inside parentheses, likely a function parameter
+  }
+
   const name = match[1];
   // Return empty string for untyped Program, actual type for Program[T]
   const typeArg = match[2]?.trim() || '';
