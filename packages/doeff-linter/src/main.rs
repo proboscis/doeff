@@ -3,7 +3,7 @@
 use clap::Parser;
 use colored::*;
 use doeff_linter::{
-    collect_python_files, config, lint_files_parallel, logging::{LintLogEntry, LintLogger}, models::Severity, rules,
+    collect_python_files_with_options, config, lint_files_parallel, logging::{LintLogEntry, LintLogger}, models::Severity, rules,
 };
 use std::collections::BTreeMap;
 use std::io::{self, Read};
@@ -73,6 +73,11 @@ struct Args {
     /// Only lint git-modified files (tracked and untracked)
     #[arg(long)]
     modified: bool,
+
+    /// Apply exclusion rules even to explicitly specified file paths
+    /// By default, exclude patterns only apply when scanning directories
+    #[arg(long)]
+    force_exclude: bool,
 
     /// Log violations to a file (JSON Lines format) for later analysis
     /// Defaults to ".doeff-lint.jsonl". Use --no-log to disable.
@@ -154,8 +159,8 @@ fn run_as_hook(args: &Args) -> ExitCode {
     // Get rules
     let all_rules = rules::get_enabled_rules(enabled_rules.as_deref());
 
-    // Collect files
-    let files = collect_python_files(&paths, &exclude_patterns);
+    // Collect files (hook mode always respects exclusions)
+    let files = collect_python_files_with_options(&paths, &exclude_patterns, true);
 
     if files.is_empty() {
         // No files to lint, output empty response
@@ -277,6 +282,7 @@ fn run_normal(args: &Args) -> ExitCode {
     if args.verbose {
         eprintln!("Enabled rules: {:?}", enabled_rules);
         eprintln!("Exclude patterns: {:?}", exclude_patterns);
+        eprintln!("Force exclude: {}", args.force_exclude);
     }
 
     // Get rules
@@ -304,6 +310,7 @@ fn run_normal(args: &Args) -> ExitCode {
         }
         
         // Filter by exclude patterns and convert to PathBuf
+        // Modified mode always applies exclusions (like force_exclude)
         modified_files
             .into_iter()
             .filter(|f| {
@@ -312,7 +319,7 @@ fn run_normal(args: &Args) -> ExitCode {
             .map(std::path::PathBuf::from)
             .collect()
     } else {
-        collect_python_files(&args.paths, &exclude_patterns)
+        collect_python_files_with_options(&args.paths, &exclude_patterns, args.force_exclude)
     };
 
     if args.verbose {
@@ -613,24 +620,42 @@ fn print_text_grouped(results: &[doeff_linter::models::LintResult]) {
     }
 }
 
+/// Violation location info for JSON output
+struct ViolationLocation {
+    file: String,
+    line: usize,
+    severity: Severity,
+    source: String,
+    /// Optional case-specific detail (for future extensibility)
+    /// Can contain variable-specific info extracted from the violation message
+    detail: Option<String>,
+}
+
 fn print_json(results: &[doeff_linter::models::LintResult]) {
-    // Group by rule for JSON output too
-    let mut grouped: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
+    // Group by rule for JSON output
+    // Message is now per-rule, not per-violation
+    let mut grouped: BTreeMap<String, Vec<ViolationLocation>> = BTreeMap::new();
 
     for result in results {
         for v in &result.violations {
             let line = get_line_from_offset(&result.file_path, v.offset);
             let source_line = read_source_line(&v.file_path, line);
+            
+            // Extract case-specific detail if the message contains variable-specific info
+            // For now, we don't include detail (keeping it simple per user request)
+            // Future: parse v.message to extract variable names or other context
+            let detail = extract_violation_detail(&v.message);
+            
             grouped
                 .entry(v.rule_id.clone())
                 .or_default()
-                .push(serde_json::json!({
-                    "file": v.file_path,
-                    "line": line,
-                    "severity": format!("{}", v.severity),
-                    "message": v.message,
-                    "source": source_line,
-                }));
+                .push(ViolationLocation {
+                    file: v.file_path.clone(),
+                    line,
+                    severity: v.severity,
+                    source: source_line,
+                    detail,
+                });
         }
     }
 
@@ -638,18 +663,62 @@ fn print_json(results: &[doeff_linter::models::LintResult]) {
         .into_iter()
         .map(|(rule_id, violations)| {
             let rule_info = get_rule_info(&rule_id);
+            let severity = violations.first().map(|v| v.severity).unwrap_or(Severity::Warning);
+            
+            // Build violation entries - only include detail if present
+            let violation_entries: Vec<serde_json::Value> = violations
+                .iter()
+                .map(|v| {
+                    let mut entry = serde_json::json!({
+                        "file": v.file,
+                        "line": v.line,
+                        "source": v.source,
+                    });
+                    // Only include detail if it has meaningful content
+                    if let Some(ref detail) = v.detail {
+                        entry.as_object_mut().unwrap().insert(
+                            "detail".to_string(),
+                            serde_json::Value::String(detail.clone()),
+                        );
+                    }
+                    entry
+                })
+                .collect();
+            
             serde_json::json!({
                 "rule": rule_id,
                 "name": rule_info.name,
-                "description": rule_info.description,
+                "severity": format!("{}", severity),
+                "message": rule_info.description,
                 "fix": rule_info.fix,
                 "count": violations.len(),
-                "violations": violations,
+                "violations": violation_entries,
             })
         })
         .collect();
 
     println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+}
+
+/// Extract case-specific detail from a violation message
+/// Returns Some(detail) if there's meaningful context-specific info,
+/// None if the message is just a generic rule description
+fn extract_violation_detail(message: &str) -> Option<String> {
+    // For now, we return None to keep the output simple
+    // Future: parse messages to extract variable names, etc.
+    // Examples of patterns we could extract:
+    // - "Consider refactoring: 'data' is initialized..." -> extract "data"
+    // - "Parameter 'list' shadows builtin" -> extract "list"
+    
+    // Currently disabled per user request - message is at rule level only
+    // To enable, uncomment and implement pattern matching:
+    // if message.contains("'") {
+    //     // Extract quoted variable/parameter names
+    //     ...
+    // }
+    
+    let _ = message; // silence unused warning
+    None
 }
 
 fn get_line_from_offset(file_path: &str, offset: usize) -> usize {

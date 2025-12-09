@@ -3,9 +3,8 @@
   "hooks": {
     "stop": [
       {
-        "command": "/path/to/doeff-linter --hook"
+        "command": "doeff-linter --hook"
       }
     ]
   }
 }
-

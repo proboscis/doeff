@@ -48,7 +48,7 @@ disable = ["DOEFF004"]
 # Or enable only specific rules
 # enable = ["DOEFF001", "DOEFF002", "DOEFF007"]
 
-# Exclude paths
+# Exclude paths (applies to directory scanning by default)
 exclude = [".venv", "build", "tests/fixtures"]
 
 # Log violations to a file for later analysis (JSON Lines format)
@@ -132,6 +132,7 @@ Options:
       --enable <RULES>       Enable specific rules (comma-separated)
       --disable <RULES>      Disable specific rules (comma-separated)
       --exclude <PATTERNS>   Exclude paths matching patterns
+      --force-exclude        Apply exclusion rules to explicit file paths
       --output-format <FMT>  Output format: text, json [default: text]
       --log-file <PATH>      Log violations to file [default: .doeff-lint.jsonl]
       --no-log               Disable logging to file
@@ -142,6 +143,24 @@ Options:
   -h, --help                 Print help
   -V, --version              Print version
 ```
+
+## Exclusion Behavior
+
+By default, exclusion patterns from `pyproject.toml` (and `--exclude`) only apply when **scanning directories**. When you explicitly specify file paths, those files are linted regardless of exclusion patterns.
+
+Use `--force-exclude` to apply exclusion rules even to explicitly specified files:
+
+```bash
+# Without --force-exclude: .venv/lib/foo.py will be linted
+doeff-linter .venv/lib/foo.py
+
+# With --force-exclude: .venv/lib/foo.py will be excluded (if .venv is in exclude list)
+doeff-linter --force-exclude .venv/lib/foo.py
+```
+
+This is useful when piping file lists from external tools (like `git diff`, IDE file watchers, etc.) that may include files you want to exclude.
+
+**Note:** The `--modified` mode always applies exclusions, similar to `--force-exclude`.
 
 ## Logging and Statistics
 
@@ -295,11 +314,13 @@ cp target/release/doeff-linter ~/.local/bin/
 
 When the Cursor agent completes a task:
 1. The linter receives the workspace paths via stdin
-2. It scans all Python files for violations
+2. It scans all Python files for violations (respecting `exclude` patterns from `pyproject.toml`)
 3. If errors are found, it sends a `followup_message` asking the agent to fix them
 4. The agent automatically continues to fix the identified issues
 
 The hook only triggers follow-up for **errors** (not warnings), preventing infinite loops while ensuring critical issues are addressed.
+
+**Note:** The hook mode automatically applies exclusion rules from `pyproject.toml` to all files (equivalent to `--force-exclude`).
 
 ### Example Output
 

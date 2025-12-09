@@ -150,13 +150,30 @@ fn check_stmt_recursive(
 }
 
 /// Collect Python files from paths
+///
+/// When `force_exclude` is true, exclusion patterns are also applied to explicitly
+/// specified file paths. By default (force_exclude = false), exclusions only apply
+/// when scanning directories.
 pub fn collect_python_files(paths: &[String], exclude_patterns: &[String]) -> Vec<std::path::PathBuf> {
+    collect_python_files_with_options(paths, exclude_patterns, false)
+}
+
+/// Collect Python files from paths with explicit force_exclude option
+pub fn collect_python_files_with_options(
+    paths: &[String],
+    exclude_patterns: &[String],
+    force_exclude: bool,
+) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
 
     for path in paths {
         let p = Path::new(path);
         if p.is_file() {
             if p.extension().map_or(false, |e| e == "py") {
+                // When force_exclude is true, apply exclusion to explicit file paths
+                if force_exclude && should_exclude(p, exclude_patterns) {
+                    continue;
+                }
                 files.push(p.to_path_buf());
             }
         } else if p.is_dir() {
