@@ -11,31 +11,81 @@ codebase. The tool scans Python modules for:
 Each indexed item includes detected type-argument usage so you can query for specific
 `Program`/`KleisliProgram` generics.
 
-## Building
+## Installation
+
+### Via pip (Recommended)
+
+The easiest way to install `doeff-indexer` is via pip. This installs both the CLI binary and the
+Python API:
+
+```bash
+pip install doeff-indexer
+```
+
+After installation, the `doeff-indexer` command will be available in your Python environment:
+
+```bash
+doeff-indexer --version
+```
+
+### From Source (Development)
+
+For development, you can build from source:
 
 ```bash
 cd packages/doeff-indexer
-cargo build --release
+
+# Build the Rust binary only (no Python features)
+cargo build --release --no-default-features
+
+# Or build with Python bindings (requires maturin)
+maturin develop
 ```
 
-## Usage
+## CLI Usage
 
 ```bash
 # Print JSON index for the repository root
-cargo run --release -- --root .. --pretty
+doeff-indexer index --root . --pretty
 
-# Filter by Program type argument
-cargo run --release -- --root .. --kind program --type-arg int --pretty
+# Find interpreter functions
+doeff-indexer find-interpreters --root .
 
-# Filter by Kleisli programs (any type argument)
-cargo run --release -- --root .. --kind kleisli
+# Find Kleisli functions matching a type argument
+doeff-indexer find-kleisli --root . --type-arg MyType
+
+# Find transform functions
+doeff-indexer find-transforms --root .
 
 # Write index to a file
-cargo run --release -- --root .. --output index.json
+doeff-indexer index --root . --output index.json
 ```
 
-Omit `--type-arg` (or set it to `Any`) to match every `Program`/`KleisliProgram` regardless of the
-captured type parameter.
+## Python API
+
+The indexer also provides a Python API for programmatic access:
+
+```python
+from doeff_indexer import Indexer, SymbolInfo
+
+# Create an indexer for a module
+indexer = Indexer.for_module("myproject.core")
+
+# Find symbols with specific tags
+symbols = indexer.find_symbols(
+    tags=["doeff", "interpreter", "default"],
+    symbol_type="function"
+)
+
+for sym in symbols:
+    print(f"{sym.full_path} at line {sym.line_number}")
+```
+
+## IDE Integration
+
+Both VSCode and PyCharm plugins automatically discover `doeff-indexer` from your Python
+environment. If you have `doeff` installed via pip, the plugins will use the bundled binary
+without any additional configuration.
 
 ## Testing
 
