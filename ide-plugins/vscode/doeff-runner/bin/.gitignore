@@ -1,0 +1,3 @@
+# Ignore all binaries (they are downloaded during CI)
+doeff-indexer-*
+!.gitkeep

@@ -923,6 +923,9 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
 export function activate(context: vscode.ExtensionContext) {
   output.appendLine('doeff-runner activated');
 
+  // Store extension context for bundled binary access
+  extensionContext = context;
+
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);
 
@@ -1735,22 +1738,63 @@ async function resolveDocument(
   return vscode.window.activeTextEditor?.document;
 }
 
+/**
+ * Get the path to the bundled doeff-indexer binary for the current platform.
+ */
+function getBundledIndexerPath(context: vscode.ExtensionContext): string | undefined {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  let binaryName: string;
+  if (platform === 'win32') {
+    binaryName = 'doeff-indexer-windows-x64.exe';
+  } else if (platform === 'darwin') {
+    binaryName = arch === 'arm64'
+      ? 'doeff-indexer-darwin-arm64'
+      : 'doeff-indexer-darwin-x64';
+  } else if (platform === 'linux') {
+    binaryName = arch === 'arm64'
+      ? 'doeff-indexer-linux-arm64'
+      : 'doeff-indexer-linux-x64';
+  } else {
+    return undefined;
+  }
+
+  const bundledPath = path.join(context.extensionPath, 'bin', binaryName);
+  if (isExecutable(bundledPath)) {
+    return bundledPath;
+  }
+  return undefined;
+}
+
+// Extension context stored for access to bundled binaries
+let extensionContext: vscode.ExtensionContext | undefined;
+
 async function locateIndexer(): Promise<string> {
-  // 1. Check environment variable first
+  // 1. Check for bundled binary first (fastest, no dependencies)
+  if (extensionContext) {
+    const bundledPath = getBundledIndexerPath(extensionContext);
+    if (bundledPath) {
+      output.appendLine(`[info] Using bundled indexer: ${bundledPath}`);
+      return bundledPath;
+    }
+  }
+
+  // 2. Check environment variable
   const envPath = process.env.DOEFF_INDEXER_PATH;
   if (envPath && isExecutable(envPath)) {
     output.appendLine(`[info] Using indexer from DOEFF_INDEXER_PATH: ${envPath}`);
     return envPath;
   }
 
-  // 2. Try to find indexer in Python environment (preferred)
+  // 3. Try to find indexer in Python environment
   const pythonEnvIndexer = await findIndexerInPythonEnv();
   if (pythonEnvIndexer) {
     output.appendLine(`[info] Using indexer from Python environment: ${pythonEnvIndexer}`);
     return pythonEnvIndexer;
   }
 
-  // 3. Fall back to system paths
+  // 4. Fall back to system paths
   for (const candidate of INDEXER_FALLBACK_CANDIDATES) {
     if (candidate && isExecutable(candidate)) {
       output.appendLine(`[info] Using indexer from system path: ${candidate}`);
@@ -1759,7 +1803,7 @@ async function locateIndexer(): Promise<string> {
   }
 
   vscode.window.showErrorMessage(
-    'doeff-indexer not found. Install with "pip install doeff" or set DOEFF_INDEXER_PATH.'
+    'doeff-indexer not found. The bundled binary may be missing for your platform.'
   );
   throw new Error('doeff-indexer not found');
 }
