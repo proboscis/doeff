@@ -6,6 +6,10 @@
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CyberAgentAILab/doeff.git"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },

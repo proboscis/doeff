@@ -16,7 +16,93 @@ permissions:
   contents: read
 
 jobs:
-  build-and-publish:
+  # Build doeff-indexer for all platforms
+  build-indexer-macos-x64:
+    runs-on: macos-13  # Intel Mac
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build indexer
+        working-directory: packages/doeff-indexer
+        run: cargo build --release --no-default-features
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: indexer-darwin-x64
+          path: packages/doeff-indexer/target/release/doeff-indexer
+
+  build-indexer-macos-arm64:
+    runs-on: macos-14  # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build indexer
+        working-directory: packages/doeff-indexer
+        run: cargo build --release --no-default-features
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: indexer-darwin-arm64
+          path: packages/doeff-indexer/target/release/doeff-indexer
+
+  build-indexer-linux-x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build indexer
+        working-directory: packages/doeff-indexer
+        run: cargo build --release --no-default-features
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: indexer-linux-x64
+          path: packages/doeff-indexer/target/release/doeff-indexer
+
+  build-indexer-linux-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+      - name: Install cross-compilation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Build indexer
+        working-directory: packages/doeff-indexer
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: cargo build --release --no-default-features --target aarch64-unknown-linux-gnu
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: indexer-linux-arm64
+          path: packages/doeff-indexer/target/aarch64-unknown-linux-gnu/release/doeff-indexer
+
+  build-indexer-windows-x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build indexer
+        working-directory: packages/doeff-indexer
+        run: cargo build --release --no-default-features
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: indexer-windows-x64
+          path: packages/doeff-indexer/target/release/doeff-indexer.exe
+
+  # Package and publish extension with all binaries
+  publish-extension:
+    needs:
+      - build-indexer-macos-x64
+      - build-indexer-macos-arm64
+      - build-indexer-linux-x64
+      - build-indexer-linux-arm64
+      - build-indexer-windows-x64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +111,61 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+
+      - name: Create bin directory
+        run: mkdir -p ide-plugins/vscode/doeff-runner/bin
+
+      # Download all indexer binaries
+      - name: Download macOS x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: indexer-darwin-x64
+          path: ide-plugins/vscode/doeff-runner/bin/
+
+      - name: Rename macOS x64 binary
+        run: mv ide-plugins/vscode/doeff-runner/bin/doeff-indexer ide-plugins/vscode/doeff-runner/bin/doeff-indexer-darwin-x64
+
+      - name: Download macOS arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: indexer-darwin-arm64
+          path: ide-plugins/vscode/doeff-runner/bin/
+
+      - name: Rename macOS arm64 binary
+        run: mv ide-plugins/vscode/doeff-runner/bin/doeff-indexer ide-plugins/vscode/doeff-runner/bin/doeff-indexer-darwin-arm64
+
+      - name: Download Linux x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: indexer-linux-x64
+          path: ide-plugins/vscode/doeff-runner/bin/
+
+      - name: Rename Linux x64 binary
+        run: mv ide-plugins/vscode/doeff-runner/bin/doeff-indexer ide-plugins/vscode/doeff-runner/bin/doeff-indexer-linux-x64
+
+      - name: Download Linux arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: indexer-linux-arm64
+          path: ide-plugins/vscode/doeff-runner/bin/
+
+      - name: Rename Linux arm64 binary
+        run: mv ide-plugins/vscode/doeff-runner/bin/doeff-indexer ide-plugins/vscode/doeff-runner/bin/doeff-indexer-linux-arm64
+
+      - name: Download Windows x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: indexer-windows-x64
+          path: ide-plugins/vscode/doeff-runner/bin/
+
+      - name: Rename Windows x64 binary
+        run: mv ide-plugins/vscode/doeff-runner/bin/doeff-indexer.exe ide-plugins/vscode/doeff-runner/bin/doeff-indexer-windows-x64.exe
+
+      - name: Make binaries executable
+        run: chmod +x ide-plugins/vscode/doeff-runner/bin/doeff-indexer-*
+
+      - name: List bundled binaries
+        run: ls -la ide-plugins/vscode/doeff-runner/bin/
 
       - name: Install dependencies
         working-directory: ide-plugins/vscode/doeff-runner
