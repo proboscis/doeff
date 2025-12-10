@@ -14,7 +14,7 @@ pub mod rules;
 pub mod stats;
 pub mod utils;
 
-use models::{LintResult, RuleContext, Violation};
+use models::{LintResult, RuleContext, Severity, Violation};
 use noqa::{offset_to_line, NoqaDirectives};
 use rayon::prelude::*;
 use rules::base::LintRule;
@@ -52,6 +52,18 @@ pub fn lint_source(
     let noqa = NoqaDirectives::parse(source);
     let mut result = LintResult::new(file_path.to_string());
 
+    // Add noqa parsing warnings as violations
+    for warning in &noqa.warnings {
+        let offset = line_to_offset(source, warning.line);
+        result.violations.push(Violation::new(
+            "NOQA001".to_string(),
+            format!("{}\n  Suggestion: {}", warning.message, warning.suggestion),
+            offset,
+            file_path.to_string(),
+            Severity::Warning,
+        ));
+    }
+
     if let Mod::Module(module) = &ast {
         for stmt in &module.body {
             check_stmt_recursive(stmt, file_path, source, &ast, rules, &noqa, &mut result.violations);
@@ -59,6 +71,15 @@ pub fn lint_source(
     }
 
     result
+}
+
+/// Convert line number (1-indexed) to byte offset
+fn line_to_offset(source: &str, line: usize) -> usize {
+    source
+        .lines()
+        .take(line.saturating_sub(1))
+        .map(|l| l.len() + 1) // +1 for newline
+        .sum()
 }
 
 fn check_stmt_recursive(
