@@ -85,6 +85,9 @@ const TOOL_PREFIX = {
   transform: '🔀'
 };
 
+// Maximum number of tools to show directly in CodeLens before showing "+X more" button
+const MAX_VISIBLE_TOOLS = 3;
+
 // =============================================================================
 // State Store for sharing state between TreeView and CodeLens
 // =============================================================================
@@ -671,9 +674,12 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
           line: entry.line
         };
 
-        // Add Kleisli tool buttons (sorted by proximity)
+        // Add Kleisli tool buttons (sorted by proximity, limited to MAX_VISIBLE_TOOLS)
         const kleisliTools = this.getToolsSync('kleisli', rootPath, typeArg, proximity);
-        for (const kleisli of kleisliTools) {
+        const visibleKleisli = kleisliTools.slice(0, MAX_VISIBLE_TOOLS);
+        const hiddenKleisliCount = kleisliTools.length - visibleKleisli.length;
+
+        for (const kleisli of visibleKleisli) {
           lenses.push(
             new vscode.CodeLens(range, {
               title: `${TOOL_PREFIX.kleisli} ${kleisli.name}`,
@@ -690,9 +696,24 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
           );
         }
 
-        // Add Transform tool buttons (sorted by proximity)
+        // Show "+X more" button if there are hidden Kleisli tools
+        if (hiddenKleisliCount > 0) {
+          lenses.push(
+            new vscode.CodeLens(range, {
+              title: `${TOOL_PREFIX.kleisli} +${hiddenKleisliCount} more`,
+              tooltip: `Show ${hiddenKleisliCount} more Kleisli tools`,
+              command: 'doeff-runner.showMoreKleisli',
+              arguments: [document.uri, lineNumber, typeArg]
+            })
+          );
+        }
+
+        // Add Transform tool buttons (sorted by proximity, limited to MAX_VISIBLE_TOOLS)
         const transformTools = this.getToolsSync('transform', rootPath, typeArg, proximity);
-        for (const transform of transformTools) {
+        const visibleTransform = transformTools.slice(0, MAX_VISIBLE_TOOLS);
+        const hiddenTransformCount = transformTools.length - visibleTransform.length;
+
+        for (const transform of visibleTransform) {
           lenses.push(
             new vscode.CodeLens(range, {
               title: `${TOOL_PREFIX.transform} ${transform.name}`,
@@ -705,6 +726,18 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
                 lineNumber,
                 transform.qualifiedName
               ]
+            })
+          );
+        }
+
+        // Show "+X more" button if there are hidden Transform tools
+        if (hiddenTransformCount > 0) {
+          lenses.push(
+            new vscode.CodeLens(range, {
+              title: `${TOOL_PREFIX.transform} +${hiddenTransformCount} more`,
+              tooltip: `Show ${hiddenTransformCount} more Transform tools`,
+              command: 'doeff-runner.showMoreTransforms',
+              arguments: [document.uri, lineNumber, typeArg]
             })
           );
         }
@@ -1017,6 +1050,19 @@ export function activate(context: vscode.ExtensionContext) {
           transformQualifiedName,
           codeLensProvider
         )
+    ),
+    // "Show more" commands for CodeLens overflow
+    vscode.commands.registerCommand(
+      'doeff-runner.showMoreKleisli',
+      async (uri: vscode.Uri, lineNumber: number, typeArg: string) => {
+        await showMoreTools(uri, lineNumber, typeArg, 'kleisli', codeLensProvider);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.showMoreTransforms',
+      async (uri: vscode.Uri, lineNumber: number, typeArg: string) => {
+        await showMoreTools(uri, lineNumber, typeArg, 'transform', codeLensProvider);
+      }
     ),
     // New TreeView commands
     vscode.commands.registerCommand(
@@ -1454,6 +1500,75 @@ async function runProgramWithTool(
       error instanceof Error ? error.message : 'Unknown error running doeff.';
     output.appendLine(`[error] ${message}`);
     vscode.window.showErrorMessage(`doeff runner failed: ${message}`);
+  }
+}
+
+async function showMoreTools(
+  uri: vscode.Uri,
+  lineNumber: number,
+  typeArg: string,
+  toolType: 'kleisli' | 'transform',
+  codeLensProvider: ProgramCodeLensProvider
+): Promise<void> {
+  const workspaceFolder =
+    vscode.workspace.getWorkspaceFolder(uri) ??
+    vscode.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
+    vscode.window.showErrorMessage('Open a workspace folder to run doeff.');
+    return;
+  }
+
+  try {
+    const indexerPath = await locateIndexer();
+    const rootPath = workspaceFolder.uri.fsPath;
+
+    // Use the CodeLens location for proximity-based sorting
+    const proximity: ProximityContext = {
+      filePath: uri.fsPath,
+      line: lineNumber + 1 // Convert 0-indexed to 1-indexed
+    };
+
+    // Fetch all tools
+    const command = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
+    const tools = await fetchEntries(indexerPath, rootPath, command, typeArg, proximity);
+
+    if (tools.length === 0) {
+      vscode.window.showInformationMessage(`No ${toolType} tools found for type ${typeArg}.`);
+      return;
+    }
+
+    // Show QuickPick with all tools
+    const toolLabel = toolType === 'kleisli' ? 'Kleisli' : 'Transform';
+    const prefix = toolType === 'kleisli' ? TOOL_PREFIX.kleisli : TOOL_PREFIX.transform;
+    const items = tools.map((tool) => ({
+      label: `${prefix} ${tool.name}`,
+      description: tool.qualifiedName,
+      detail: tool.docstring,
+      tool
+    }));
+
+    const selected = await vscode.window.showQuickPick(items, {
+      placeHolder: `Select ${toolLabel} tool to run`,
+      matchOnDescription: true,
+      matchOnDetail: true
+    });
+
+    if (!selected) {
+      return; // User cancelled
+    }
+
+    // Run with selected tool
+    await runProgramWithTool(
+      uri,
+      lineNumber,
+      toolType,
+      selected.tool.qualifiedName,
+      codeLensProvider
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    output.appendLine(`[error] ${message}`);
+    vscode.window.showErrorMessage(`Failed to show ${toolType} tools: ${message}`);
   }
 }
 
