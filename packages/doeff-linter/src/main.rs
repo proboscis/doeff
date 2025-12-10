@@ -20,6 +20,7 @@ use std::process::{Command, ExitCode};
     def dict():  # noqa: DOEFF001        Suppress specific rule
     def list():  # noqa                  Suppress all rules on this line
     x = 1  # noqa: DOEFF001, DOEFF002    Suppress multiple rules
+    y = 2  # noqa: DOEFF001 - reason     Suppress with explanation
 
   File-level suppression (must appear before any code):
     # noqa: file                         Suppress all rules for entire file
@@ -523,6 +524,16 @@ fn get_rule_info(rule_id: &str) -> RuleInfo {
             name: "Pipeline Marker Required",
             description: "@do functions used to create Program entrypoints must have `# doeff: pipeline` marker.",
             fix: "Add `# doeff: pipeline` marker after @do decorator, def line, or in docstring to acknowledge pipeline-oriented programming.",
+        },
+        "DOEFF024" => RuleInfo {
+            name: "No Recover with Ask",
+            description: "Using `recover()` with `ask()` defeats dependency injection.",
+            fix: "Ensure dependencies are properly provided instead of using fallbacks.",
+        },
+        "NOQA001" => RuleInfo {
+            name: "Malformed noqa Comment",
+            description: "The noqa comment format appears incorrect and may not suppress the intended rule.",
+            fix: "Use ` - ` (space-dash-space) to separate the rule ID from explanation. Example: `# noqa: DOEFF001 - reason`",
         },
         _ => RuleInfo {
             name: "Unknown Rule",
