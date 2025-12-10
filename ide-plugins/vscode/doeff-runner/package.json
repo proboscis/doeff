@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -23,6 +23,8 @@
     "onCommand:doeff-runner.runConfig",
     "onCommand:doeff-runner.runWithKleisli",
     "onCommand:doeff-runner.runWithTransform",
+    "onCommand:doeff-runner.showMoreKleisli",
+    "onCommand:doeff-runner.showMoreTransforms",
     "onView:doeff-programs"
   ],
   "main": "./out/extension.js",
@@ -64,6 +66,14 @@
       {
         "command": "doeff-runner.runWithTransform",
         "title": "Run doeff Program with Transform"
+      },
+      {
+        "command": "doeff-runner.showMoreKleisli",
+        "title": "Show More Kleisli Tools"
+      },
+      {
+        "command": "doeff-runner.showMoreTransforms",
+        "title": "Show More Transform Tools"
       },
       {
         "command": "doeff-runner.refreshExplorer",
