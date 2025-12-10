@@ -1,6 +1,7 @@
 //! DOEFF019: No ask with Fallback Pattern
 //!
 //! Forbid using `ask` effect with fallback patterns like `arg or (yield ask(...))`.
+//! Also forbid calling `ask` with extra arguments like `ask("x", 0)`.
 //! The `ask` effect should be the ONLY way to obtain the value to reduce complexity.
 
 use crate::models::{RuleContext, Severity, Violation};
@@ -32,6 +33,22 @@ impl NoAskWithFallbackRule {
             }
         }
         false
+    }
+
+    /// Check if an expression is `ask(...)` call with extra arguments (misuse pattern)
+    /// Returns Some((offset, arg_count)) if ask is called with more than 1 argument
+    fn is_ask_with_extra_args(expr: &Expr) -> Option<(usize, usize)> {
+        if let Expr::Call(call) = expr {
+            if let Expr::Name(name) = &*call.func {
+                if name.id.as_str() == "ask" {
+                    let total_args = call.args.len() + call.keywords.len();
+                    if total_args > 1 {
+                        return Some((call.range.start().to_usize(), total_args));
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Check if an expression is a fallback pattern with ask
@@ -86,6 +103,36 @@ Fix: Remove the fallback and use ask as the sole source:
                 offset,
                 file_path.to_string(),
                 Severity::Warning,
+            ));
+        }
+
+        // Check if ask is called with extra arguments (e.g., ask("x", 0))
+        if let Some((offset, arg_count)) = Self::is_ask_with_extra_args(expr) {
+            let message = format!(
+                "\
+'ask' effect is called with {} arguments, but it only accepts 1 (the key).
+
+Problem: 'ask(\"key\", default_value)' is not supported. The 'ask' effect does not
+accept a default value because doeff discourages fallback patterns. If the value
+is not found, it should be a coding mistake that needs to be fixed.
+
+Fix: Use ask with only the key:
+  # Before
+  value = yield ask(\"key\", 0)  # Wrong: default is not supported
+  
+  # After
+  value = yield ask(\"key\")  # Correct: single argument only
+
+If you need the value to be optional, ensure it's provided in the environment.",
+                arg_count
+            );
+
+            violations.push(Violation::new(
+                "DOEFF019".to_string(),
+                message,
+                offset,
+                file_path.to_string(),
+                Severity::Error,
             ));
         }
 
@@ -553,6 +600,160 @@ def outer():
 async def async_do(arg=None):
     arg = arg or (yield ask("arg"))
     return arg
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+    }
+
+    // Tests for ask with extra arguments
+
+    #[test]
+    fn test_ask_with_default_value() {
+        let code = r#"
+@do
+def get_value():
+    value = yield ask("key", 0)
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("2 arguments"));
+        assert!(violations[0].message.contains("only accepts 1"));
+    }
+
+    #[test]
+    fn test_ask_with_string_default() {
+        let code = r#"
+@do
+def get_value():
+    value = yield ask("key", "default")
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("2 arguments"));
+    }
+
+    #[test]
+    fn test_ask_with_none_default() {
+        let code = r#"
+@do
+def get_value():
+    value = yield ask("key", None)
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn test_ask_with_keyword_default() {
+        let code = r#"
+@do
+def get_value():
+    value = yield ask("key", default=0)
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("2 arguments"));
+    }
+
+    #[test]
+    fn test_ask_with_multiple_extra_args() {
+        let code = r#"
+@do
+def get_value():
+    value = yield ask("key", 0, "extra")
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("3 arguments"));
+    }
+
+    #[test]
+    fn test_ask_single_arg_allowed() {
+        let code = r#"
+@do
+def get_value():
+    value = yield ask("key")
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_ask_with_variable_key_allowed() {
+        let code = r#"
+@do
+def get_value(key_name):
+    value = yield ask(key_name)
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_ask_with_extra_arg_in_nested_function() {
+        let code = r#"
+def outer():
+    @do
+    def inner():
+        value = yield ask("key", 42)
+        return value
+    return inner
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+    }
+
+    #[test]
+    fn test_multiple_ask_with_extra_args() {
+        let code = r#"
+@do
+def get_values():
+    a = yield ask("a", 0)
+    b = yield ask("b", "default")
+    return a + b
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 2);
+    }
+
+    #[test]
+    fn test_other_function_with_two_args_allowed() {
+        // Other functions with two arguments should not trigger this rule
+        let code = r#"
+def get_value():
+    value = some_function("key", 0)
+    return value
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_ask_in_list_comprehension_with_extra_arg() {
+        let code = r#"
+@do
+def get_values():
+    values = [ask("key", i) for i in range(3)]
+    return values
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);  // Single ask call in AST
+    }
+
+    #[test]
+    fn test_ask_without_yield_with_extra_arg() {
+        // Even without yield, ask with extra args should be flagged
+        let code = r#"
+def get_value():
+    effect = ask("key", 0)
+    return effect
 "#;
         let violations = check_code(code);
         assert_eq!(violations.len(), 1);
