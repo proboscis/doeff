@@ -80,9 +80,12 @@ interface ToolCache {
 // Visual prefixes for different tool categories
 const TOOL_PREFIX = {
   run: '▶',
+  debug: '🐛',
   runWithOptions: '▶⚙',
   kleisli: '🔗',
-  transform: '🔀'
+  transform: '🔀',
+  toggleOn: '[🐛]',
+  toggleOff: '[▶]'
 };
 
 // Maximum number of tools to show directly in CodeLens before showing "+X more" button
@@ -108,6 +111,22 @@ class DoeffStateStore {
   readonly onStateChange = this._onStateChange.event;
 
   constructor(private context: vscode.ExtensionContext) {}
+
+  // Debug mode state
+  getDebugMode(): boolean {
+    return this.context.workspaceState.get<boolean>('debugMode', true);
+  }
+
+  async setDebugMode(enabled: boolean): Promise<void> {
+    await this.context.workspaceState.update('debugMode', enabled);
+    this._onStateChange.fire();
+  }
+
+  async toggleDebugMode(): Promise<boolean> {
+    const current = this.getDebugMode();
+    await this.setDebugMode(!current);
+    return !current;
+  }
 
   getPreferences(): ActionPreference[] {
     return this.context.workspaceState.get<ActionPreference[]>('actionPreferences', []);
@@ -228,7 +247,8 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
   }
 
   private createActionTreeItem(node: ActionNode): vscode.TreeItem {
-    const label = this.getActionLabel(node.actionType);
+    const debugMode = this.stateStore.getDebugMode();
+    const label = this.getActionLabel(node.actionType, debugMode);
     const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
 
     const defaultAction = this.stateStore.getDefaultAction(node.parentEntry.qualifiedName);
@@ -236,10 +256,11 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
 
     switch (node.actionType.kind) {
       case 'run':
-        item.iconPath = new vscode.ThemeIcon('play');
+        // Use 'debug' icon when in debug mode, 'play' when in run mode
+        item.iconPath = new vscode.ThemeIcon(debugMode ? 'debug-start' : 'play');
         item.command = {
           command: 'doeff-runner.runFromTree',
-          title: 'Run',
+          title: debugMode ? 'Debug' : 'Run',
           arguments: [node.parentEntry, node.actionType]
         };
         break;
@@ -282,10 +303,14 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
     return item;
   }
 
-  private getActionLabel(action: ActionType): string {
+  private getActionLabel(action: ActionType, debugMode?: boolean): string {
     switch (action.kind) {
-      case 'run':
-        return `${TOOL_PREFIX.run} Run`;
+      case 'run': {
+        const useDebug = debugMode ?? this.stateStore.getDebugMode();
+        const prefix = useDebug ? TOOL_PREFIX.debug : TOOL_PREFIX.run;
+        const label = useDebug ? 'Debug' : 'Run';
+        return `${prefix} ${label}`;
+      }
       case 'runWithOptions':
         return `${TOOL_PREFIX.runWithOptions} Options`;
       case 'kleisli': {
@@ -604,7 +629,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   private pendingFetches = new Set<string>();
   private readonly CACHE_TTL_MS = 30000; // 30 seconds before background refresh
 
-  constructor(private stateStore?: DoeffStateStore) {}
+  constructor(private stateStore: DoeffStateStore) {}
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
@@ -626,6 +651,9 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
       entry.typeUsages.some(usage => usage.kind === 'program')
     );
 
+    // Get current debug mode
+    const debugMode = this.stateStore.getDebugMode();
+
     for (const entry of programEntries) {
       const lineNumber = entry.line - 1; // Convert 1-indexed to 0-indexed
       const range = new vscode.Range(
@@ -637,18 +665,30 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
       const typeArg = this.extractTypeArg(entry);
 
       // Check if there's a default action set via TreeView
-      const defaultAction = this.stateStore?.getDefaultAction(entry.qualifiedName);
+      const defaultAction = this.stateStore.getDefaultAction(entry.qualifiedName);
+
+      // Debug mode toggle button (first)
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: debugMode ? TOOL_PREFIX.toggleOn : TOOL_PREFIX.toggleOff,
+          tooltip: debugMode ? 'Debug mode ON (click to switch to Run mode)' : 'Run mode (click to switch to Debug mode)',
+          command: 'doeff-runner.toggleDebugMode',
+          arguments: []
+        })
+      );
 
       // Show default action first if set
       if (defaultAction) {
-        lenses.push(this.createDefaultActionLensFromEntry(entry, range, defaultAction, document.uri));
+        lenses.push(this.createDefaultActionLensFromEntry(entry, range, defaultAction, document.uri, debugMode));
       }
 
-      // Standard Run button
+      // Standard Run/Debug button (label changes based on debug mode)
+      const runLabel = debugMode ? `${TOOL_PREFIX.debug} Debug` : `${TOOL_PREFIX.run} Run`;
+      const runTooltip = debugMode ? 'Debug with default interpreter' : 'Run with default interpreter';
       lenses.push(
         new vscode.CodeLens(range, {
-          title: `${TOOL_PREFIX.run} Run`,
-          tooltip: 'Run with default interpreter',
+          title: runLabel,
+          tooltip: runTooltip,
           command: 'doeff-runner.runDefault',
           arguments: [document.uri, lineNumber]
         })
@@ -824,7 +864,8 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
     entry: IndexEntry,
     range: vscode.Range,
     action: ActionType,
-    uri: vscode.Uri
+    uri: vscode.Uri,
+    debugMode: boolean
   ): vscode.CodeLens {
     const lineNumber = entry.line - 1; // Convert 1-indexed to 0-indexed
     let title: string;
@@ -832,11 +873,14 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
     let args: unknown[];
 
     switch (action.kind) {
-      case 'run':
-        title = `★ ${TOOL_PREFIX.run} Run`;
+      case 'run': {
+        const runPrefix = debugMode ? TOOL_PREFIX.debug : TOOL_PREFIX.run;
+        const runLabel = debugMode ? 'Debug' : 'Run';
+        title = `★ ${runPrefix} ${runLabel}`;
         command = 'doeff-runner.runDefault';
         args = [uri, lineNumber];
         break;
+      }
       case 'runWithOptions':
         title = `★ ${TOOL_PREFIX.runWithOptions} Options`;
         command = 'doeff-runner.runOptions';
@@ -972,19 +1016,32 @@ export function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true
   });
 
-  // Subscribe to filter changes to update TreeView message
-  treeProvider.onFilterChange((filterText) => {
+  // Helper to update TreeView message based on debug mode and filter
+  const updateTreeViewMessage = () => {
+    const debugMode = stateStore.getDebugMode();
+    const filterText = treeProvider.getFilterText();
+    const modeIndicator = debugMode ? '🐛 Debug' : '▶ Run';
+    
     if (filterText) {
-      treeView.message = `🔍 Filter: "${filterText}"`;
+      treeView.message = `${modeIndicator} | 🔍 "${filterText}"`;
     } else {
-      treeView.message = undefined;
+      treeView.message = `${modeIndicator} mode`;
     }
+  };
+
+  // Subscribe to filter changes to update TreeView message
+  treeProvider.onFilterChange(() => {
+    updateTreeViewMessage();
   });
 
-  // Subscribe to state changes to refresh CodeLens
+  // Initialize TreeView message
+  updateTreeViewMessage();
+
+  // Subscribe to state changes to refresh CodeLens and TreeView
   stateStore.onStateChange(() => {
     codeLensProvider.refresh();
     treeProvider.refresh();
+    updateTreeViewMessage();
   });
 
   // File watcher for auto-refresh
@@ -1012,7 +1069,8 @@ export function activate(context: vscode.ExtensionContext) {
           resource,
           lineNumber,
           'default',
-          codeLensProvider
+          codeLensProvider,
+          stateStore
         )
     ),
     vscode.commands.registerCommand(
@@ -1022,12 +1080,13 @@ export function activate(context: vscode.ExtensionContext) {
           resource,
           lineNumber,
           'options',
-          codeLensProvider
+          codeLensProvider,
+          stateStore
         )
     ),
     vscode.commands.registerCommand(
       'doeff-runner.runConfig',
-      (selection: RunSelection) => runSelection(selection)
+      (selection: RunSelection) => runSelection(selection, undefined, stateStore.getDebugMode())
     ),
     vscode.commands.registerCommand(
       'doeff-runner.runWithKleisli',
@@ -1037,7 +1096,8 @@ export function activate(context: vscode.ExtensionContext) {
           lineNumber,
           'kleisli',
           kleisliQualifiedName,
-          codeLensProvider
+          codeLensProvider,
+          stateStore
         )
     ),
     vscode.commands.registerCommand(
@@ -1048,20 +1108,30 @@ export function activate(context: vscode.ExtensionContext) {
           lineNumber,
           'transform',
           transformQualifiedName,
-          codeLensProvider
+          codeLensProvider,
+          stateStore
         )
     ),
     // "Show more" commands for CodeLens overflow
     vscode.commands.registerCommand(
       'doeff-runner.showMoreKleisli',
       async (uri: vscode.Uri, lineNumber: number, typeArg: string) => {
-        await showMoreTools(uri, lineNumber, typeArg, 'kleisli', codeLensProvider);
+        await showMoreTools(uri, lineNumber, typeArg, 'kleisli', codeLensProvider, stateStore);
       }
     ),
     vscode.commands.registerCommand(
       'doeff-runner.showMoreTransforms',
       async (uri: vscode.Uri, lineNumber: number, typeArg: string) => {
-        await showMoreTools(uri, lineNumber, typeArg, 'transform', codeLensProvider);
+        await showMoreTools(uri, lineNumber, typeArg, 'transform', codeLensProvider, stateStore);
+      }
+    ),
+    // Toggle debug mode command
+    vscode.commands.registerCommand(
+      'doeff-runner.toggleDebugMode',
+      async () => {
+        const newMode = await stateStore.toggleDebugMode();
+        const modeLabel = newMode ? 'Debug' : 'Run';
+        vscode.window.showInformationMessage(`doeff: Switched to ${modeLabel} mode`);
       }
     ),
     // New TreeView commands
@@ -1086,7 +1156,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand(
       'doeff-runner.runFromTree',
       async (entry: IndexEntry, actionType: ActionType) => {
-        await runFromTreeView(entry, actionType, codeLensProvider);
+        await runFromTreeView(entry, actionType, codeLensProvider, stateStore);
       }
     ),
     vscode.commands.registerCommand(
@@ -1205,7 +1275,8 @@ export function activate(context: vscode.ExtensionContext) {
 async function runFromTreeView(
   entry: IndexEntry,
   actionType: ActionType,
-  codeLensProvider: ProgramCodeLensProvider
+  codeLensProvider: ProgramCodeLensProvider,
+  stateStore: DoeffStateStore
 ): Promise<void> {
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -1213,19 +1284,21 @@ async function runFromTreeView(
     return;
   }
 
+  const debugMode = stateStore.getDebugMode();
+
   try {
     await vscode.workspace.saveAll();
 
     switch (actionType.kind) {
       case 'run':
-        await runDefault(entry.qualifiedName, workspaceFolder);
+        await runDefault(entry.qualifiedName, workspaceFolder, debugMode);
         break;
       case 'runWithOptions': {
         // Open the file and trigger runOptions
         const uri = vscode.Uri.file(entry.filePath);
         const document = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(document);
-        await runProgram(uri, entry.line - 1, 'options', codeLensProvider);
+        await runProgram(uri, entry.line - 1, 'options', codeLensProvider, stateStore);
         break;
       }
       case 'kleisli':
@@ -1233,7 +1306,8 @@ async function runFromTreeView(
           entry,
           'kleisli',
           actionType.toolQualifiedName,
-          workspaceFolder
+          workspaceFolder,
+          debugMode
         );
         break;
       case 'transform':
@@ -1241,7 +1315,8 @@ async function runFromTreeView(
           entry,
           'transform',
           actionType.toolQualifiedName,
-          workspaceFolder
+          workspaceFolder,
+          debugMode
         );
         break;
     }
@@ -1258,7 +1333,8 @@ async function runWithToolFromTree(
   entry: IndexEntry,
   toolType: 'kleisli' | 'transform',
   toolQualifiedName: string,
-  workspaceFolder: vscode.WorkspaceFolder
+  workspaceFolder: vscode.WorkspaceFolder,
+  debugMode: boolean = true
 ): Promise<void> {
   const indexerPath = await locateIndexer();
   const typeArg = entry.typeUsages.find(u => u.kind === 'program')?.typeArguments[0] ?? 'Any';
@@ -1310,7 +1386,7 @@ async function runWithToolFromTree(
     transformer: toolType === 'transform' ? tool : undefined
   };
 
-  await runSelection(selection, workspaceFolder);
+  await runSelection(selection, workspaceFolder, debugMode);
 }
 
 export function deactivate() {
@@ -1321,7 +1397,8 @@ async function runProgram(
   resource: vscode.Uri | string | undefined,
   lineNumber: number | undefined,
   mode: RunMode,
-  codeLensProvider: ProgramCodeLensProvider
+  codeLensProvider: ProgramCodeLensProvider,
+  stateStore: DoeffStateStore
 ) {
   try {
     await vscode.workspace.saveAll();
@@ -1367,8 +1444,10 @@ async function runProgram(
     }
     const programPath = programEntry.qualifiedName || declaration.name;
 
+    const debugMode = stateStore.getDebugMode();
+
     if (mode === 'default') {
-      await runDefault(programPath, workspaceFolder);
+      await runDefault(programPath, workspaceFolder, debugMode);
     } else {
       const selection = await buildSelection(
         document,
@@ -1379,7 +1458,7 @@ async function runProgram(
       if (!selection) {
         return;
       }
-      await runSelection(selection, workspaceFolder);
+      await runSelection(selection, workspaceFolder, debugMode);
     }
 
     codeLensProvider.refresh();
@@ -1396,7 +1475,8 @@ async function runProgramWithTool(
   lineNumber: number | undefined,
   toolType: 'kleisli' | 'transform',
   toolQualifiedName: string | undefined,
-  codeLensProvider: ProgramCodeLensProvider
+  codeLensProvider: ProgramCodeLensProvider,
+  stateStore: DoeffStateStore
 ) {
   try {
     await vscode.workspace.saveAll();
@@ -1493,7 +1573,8 @@ async function runProgramWithTool(
       transformer: toolType === 'transform' ? toolEntry : undefined
     };
 
-    await runSelection(selection, workspaceFolder);
+    const debugMode = stateStore.getDebugMode();
+    await runSelection(selection, workspaceFolder, debugMode);
     codeLensProvider.refresh();
   } catch (error) {
     const message =
@@ -1508,7 +1589,8 @@ async function showMoreTools(
   lineNumber: number,
   typeArg: string,
   toolType: 'kleisli' | 'transform',
-  codeLensProvider: ProgramCodeLensProvider
+  codeLensProvider: ProgramCodeLensProvider,
+  stateStore: DoeffStateStore
 ): Promise<void> {
   const workspaceFolder =
     vscode.workspace.getWorkspaceFolder(uri) ??
@@ -1563,7 +1645,8 @@ async function showMoreTools(
       lineNumber,
       toolType,
       selected.tool.qualifiedName,
-      codeLensProvider
+      codeLensProvider,
+      stateStore
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -1574,7 +1657,8 @@ async function showMoreTools(
 
 async function runDefault(
   programPath: string,
-  workspaceFolder?: vscode.WorkspaceFolder
+  workspaceFolder?: vscode.WorkspaceFolder,
+  debugMode: boolean = true
 ) {
   const folder =
     workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
@@ -1595,15 +1679,17 @@ async function runDefault(
     persistLaunchConfig(debugConfig, folder);
   }
 
+  const modeLabel = debugMode ? 'Debugging' : 'Running';
   const commandDisplay = `python -m doeff ${args.join(' ')}`;
-  vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
-  output.appendLine(`[info] Command: ${commandDisplay}`);
-  await vscode.debug.startDebugging(folder, debugConfig);
+  vscode.window.showInformationMessage(`${modeLabel}: ${commandDisplay}`);
+  output.appendLine(`[info] ${modeLabel}: ${commandDisplay}`);
+  await vscode.debug.startDebugging(folder, debugConfig, { noDebug: !debugMode });
 }
 
 async function runSelection(
   selection: RunSelection | undefined,
-  workspaceFolder?: vscode.WorkspaceFolder
+  workspaceFolder?: vscode.WorkspaceFolder,
+  debugMode: boolean = true
 ) {
   if (!selection) {
     vscode.window.showErrorMessage('No doeff selection to run.');
@@ -1641,13 +1727,14 @@ async function runSelection(
     persistLaunchConfig(debugConfig, folder);
   }
 
+  const modeLabel = debugMode ? 'Debugging' : 'Running';
   output.appendLine(
-    `[info] Launching doeff run for ${selection.programPath} with interpreter ${selection.interpreter.qualifiedName}`
+    `[info] ${modeLabel} doeff for ${selection.programPath} with interpreter ${selection.interpreter.qualifiedName}`
   );
   const commandDisplay = `python -m doeff ${args.join(' ')}`;
-  vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
+  vscode.window.showInformationMessage(`${modeLabel}: ${commandDisplay}`);
   output.appendLine(`[info] Command: ${commandDisplay}`);
-  await vscode.debug.startDebugging(folder, debugConfig);
+  await vscode.debug.startDebugging(folder, debugConfig, { noDebug: !debugMode });
 }
 
 function persistLaunchConfig(
@@ -1816,9 +1903,12 @@ function parseProgramDeclaration(
   }
 
   // Skip if this looks like a function parameter
-  // 1. Check if line ends with ',' or ')' after the annotation (typical for function args)
+  // 1. Check if line ends with ',' or ')' after the annotation WITHOUT an '=' sign
+  //    (typical for function args like `def foo(arg: Program[T])`)
+  //    But allow assignments where RHS ends with ')' like `x: Program[T] = foo()`
   const afterAnnotation = code.slice(match.index + match[0].length).trim();
-  if (afterAnnotation.endsWith(',') || afterAnnotation.endsWith(')')) {
+  const hasAssignment = afterAnnotation.includes('=');
+  if (!hasAssignment && (afterAnnotation.endsWith(',') || afterAnnotation.endsWith(')'))) {
     return;
   }
 
