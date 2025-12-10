@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -25,6 +25,7 @@
     "onCommand:doeff-runner.runWithTransform",
     "onCommand:doeff-runner.showMoreKleisli",
     "onCommand:doeff-runner.showMoreTransforms",
+    "onCommand:doeff-runner.toggleDebugMode",
     "onView:doeff-programs"
   ],
   "main": "./out/extension.js",
@@ -112,10 +113,20 @@
         "command": "doeff-runner.clearFilter",
         "title": "Clear Filter",
         "icon": "$(close)"
+      },
+      {
+        "command": "doeff-runner.toggleDebugMode",
+        "title": "Toggle Debug Mode",
+        "icon": "$(bug)"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "doeff-runner.toggleDebugMode",
+          "when": "view == doeff-programs",
+          "group": "navigation@0"
+        },
         {
           "command": "doeff-runner.searchEntrypoints",
           "when": "view == doeff-programs",
