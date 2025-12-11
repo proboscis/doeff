@@ -118,8 +118,43 @@
         "command": "doeff-runner.toggleDebugMode",
         "title": "Toggle Debug Mode",
         "icon": "$(bug)"
+      },
+      {
+        "command": "doeff-runner.inspectEnvKey",
+        "title": "Inspect Environment Key",
+        "icon": "$(search)"
+      },
+      {
+        "command": "doeff-runner.resolveEnvKey",
+        "title": "Resolve Key at Runtime",
+        "icon": "$(play)"
       }
     ],
+    "configuration": {
+      "title": "doeff Runner",
+      "properties": {
+        "doeff-runner.envInspector.showUserConfig": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show ~/.doeff.py in environment chain"
+        },
+        "doeff-runner.envInspector.askTimeout": {
+          "type": "number",
+          "default": 10000,
+          "description": "Timeout in milliseconds for runtime ask(key) execution"
+        },
+        "doeff-runner.envInspector.cacheEnvChain": {
+          "type": "boolean",
+          "default": true,
+          "description": "Cache environment chain results"
+        },
+        "doeff-runner.envInspector.defaultCollapsed": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start environment chain nodes collapsed"
+        }
+      }
+    },
     "menus": {
       "view/title": [
         {
@@ -158,6 +193,21 @@
           "command": "doeff-runner.revealEntrypoint",
           "when": "view == doeff-programs && viewItem == entrypoint",
           "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.inspectEnvKey",
+          "when": "view == doeff-programs && viewItem == envChain",
+          "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.inspectEnvKey",
+          "when": "view == doeff-programs && viewItem == envSource",
+          "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.resolveEnvKey",
+          "when": "view == doeff-programs && viewItem == envKey",
+          "group": "inline"
         }
       ]
     }
