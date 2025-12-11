@@ -5,7 +5,7 @@ module: vscode
 status: pending
 priority: high
 due-date:
-related-project:
+related-project: PROJECT-VSCODE-001
 related-spec: SPEC-VSCODE-001
 related-feature:
 code_path: ide-plugins/vscode/doeff-runner/src/
