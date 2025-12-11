@@ -21,25 +21,32 @@ const INDEXER_FALLBACK_CANDIDATES = [
 const output = vscode.window.createOutputChannel('doeff-runner');
 
 // Terminal management for non-debug runs
-let doeffTerminal: vscode.Terminal | undefined;
+function createTerminal(name: string, cwd?: string): vscode.Terminal {
+  return vscode.window.createTerminal({ name, cwd });
+}
 
-function getOrCreateTerminal(cwd?: string): vscode.Terminal {
-  // Check if existing terminal is still valid
-  if (doeffTerminal) {
-    const isAlive = vscode.window.terminals.includes(doeffTerminal);
-    if (!isAlive) {
-      doeffTerminal = undefined;
-    }
+// Build a descriptive name for run/debug sessions
+// Format: <Run/Debug>-<entrypoint>-><kleisli>-><transform>
+function buildSessionName(
+  mode: 'Run' | 'Debug',
+  programPath: string,
+  kleisli?: string,
+  transformer?: string
+): string {
+  // Extract just the entrypoint name from qualified path
+  const entrypoint = programPath.split('.').pop() ?? programPath;
+  let name = `${mode}-${entrypoint}`;
+
+  if (kleisli) {
+    const kleisliName = kleisli.split('.').pop() ?? kleisli;
+    name += `->${kleisliName}`;
+  }
+  if (transformer) {
+    const transformName = transformer.split('.').pop() ?? transformer;
+    name += `->${transformName}`;
   }
 
-  if (!doeffTerminal) {
-    doeffTerminal = vscode.window.createTerminal({
-      name: 'doeff',
-      cwd
-    });
-  }
-
-  return doeffTerminal;
+  return name;
 }
 
 interface IndexParameter {
@@ -2057,13 +2064,14 @@ async function runDefault(
     workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
   const args = ['run', '--program', programPath];
   const commandDisplay = `python -m doeff ${args.join(' ')}`;
+  const sessionName = buildSessionName(debugMode ? 'Debug' : 'Run', programPath);
 
   if (debugMode) {
     // Debug mode: use VSCode debug infrastructure with debugpy
     const debugConfig: vscode.DebugConfiguration = {
       type: 'python',
       request: 'launch',
-      name: `doeff: ${programPath}`,
+      name: sessionName,
       module: 'doeff',
       args,
       cwd: folder?.uri.fsPath,
@@ -2080,7 +2088,7 @@ async function runDefault(
     await vscode.debug.startDebugging(folder, debugConfig);
   } else {
     // Run mode: use terminal directly without debugpy
-    const terminal = getOrCreateTerminal(folder?.uri.fsPath);
+    const terminal = createTerminal(sessionName, folder?.uri.fsPath);
     vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
     output.appendLine(`[info] Running: ${commandDisplay}`);
     terminal.sendText(commandDisplay);
@@ -2116,6 +2124,12 @@ async function runSelection(
 
   const commandDisplay = `python -m doeff ${args.join(' ')}`;
   const modeLabel = debugMode ? 'Debugging' : 'Running';
+  const sessionName = buildSessionName(
+    debugMode ? 'Debug' : 'Run',
+    selection.programPath,
+    selection.kleisli?.qualifiedName,
+    selection.transformer?.qualifiedName
+  );
   output.appendLine(
     `[info] ${modeLabel} doeff for ${selection.programPath} with interpreter ${selection.interpreter.qualifiedName}`
   );
@@ -2125,7 +2139,7 @@ async function runSelection(
     const debugConfig: vscode.DebugConfiguration = {
       type: 'python',
       request: 'launch',
-      name: `doeff: ${selection.programPath}`,
+      name: sessionName,
       module: 'doeff',
       args,
       cwd: folder?.uri.fsPath,
@@ -2142,7 +2156,7 @@ async function runSelection(
     await vscode.debug.startDebugging(folder, debugConfig);
   } else {
     // Run mode: use terminal directly without debugpy
-    const terminal = getOrCreateTerminal(folder?.uri.fsPath);
+    const terminal = createTerminal(sessionName, folder?.uri.fsPath);
     vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
     output.appendLine(`[info] Command: ${commandDisplay}`);
     terminal.sendText(commandDisplay);
