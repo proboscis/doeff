@@ -20,6 +20,28 @@ const INDEXER_FALLBACK_CANDIDATES = [
 
 const output = vscode.window.createOutputChannel('doeff-runner');
 
+// Terminal management for non-debug runs
+let doeffTerminal: vscode.Terminal | undefined;
+
+function getOrCreateTerminal(cwd?: string): vscode.Terminal {
+  // Check if existing terminal is still valid
+  if (doeffTerminal) {
+    const isAlive = vscode.window.terminals.includes(doeffTerminal);
+    if (!isAlive) {
+      doeffTerminal = undefined;
+    }
+  }
+
+  if (!doeffTerminal) {
+    doeffTerminal = vscode.window.createTerminal({
+      name: 'doeff',
+      cwd
+    });
+  }
+
+  return doeffTerminal;
+}
+
 interface IndexParameter {
   name: string;
   annotation?: string;
@@ -110,7 +132,7 @@ class DoeffStateStore {
   private _onStateChange = new vscode.EventEmitter<void>();
   readonly onStateChange = this._onStateChange.event;
 
-  constructor(private context: vscode.ExtensionContext) {}
+  constructor(private context: vscode.ExtensionContext) { }
 
   // Debug mode state
   getDebugMode(): boolean {
@@ -161,7 +183,7 @@ class DoeffStateStore {
 // TreeView Types and Provider
 // =============================================================================
 
-type TreeNode = ModuleNode | EntrypointNode | ActionNode;
+type TreeNode = ModuleNode | EntrypointNode | ActionNode | EnvChainNode | EnvSourceNode | EnvKeyNode;
 
 interface ModuleNode {
   type: 'module';
@@ -182,6 +204,63 @@ interface ActionNode {
   tool?: IndexEntry;
 }
 
+// =============================================================================
+// Env Chain Types (for Implicit Environment Inspector)
+// =============================================================================
+
+interface EnvChainEntry {
+  qualifiedName: string;
+  filePath: string;
+  line: number;
+  keys: string[];
+  staticValues?: Record<string, unknown>;
+  isUserConfig?: boolean;
+}
+
+interface EnvChainResult {
+  program: string;
+  envChain: EnvChainEntry[];
+}
+
+interface EnvChainNode {
+  type: 'envChain';
+  parentEntry: IndexEntry;
+  entries: EnvChainEntry[];
+}
+
+interface EnvSourceNode {
+  type: 'envSource';
+  entry: EnvChainEntry;
+  parentEntry: IndexEntry;
+  allEnvEntries: EnvChainEntry[]; // For override detection
+}
+
+interface EnvKeyNode {
+  type: 'envKey';
+  key: string;
+  value: unknown | null;
+  isFinal: boolean;
+  overriddenBy?: string;
+  envEntry: EnvChainEntry;
+  parentEntry: IndexEntry;
+}
+
+// =============================================================================
+// Key Inspector Types
+// =============================================================================
+
+interface KeyResolution {
+  key: string;
+  finalValue: unknown | null;
+  chain: Array<{
+    envQualifiedName: string;
+    value: unknown | null;
+    isOverridden: boolean;
+  }>;
+  runtimeValue?: unknown;
+  runtimeError?: string;
+}
+
 class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -199,7 +278,7 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
 
   constructor(
     private stateStore: DoeffStateStore
-  ) {}
+  ) { }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
     switch (element.type) {
@@ -209,6 +288,12 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
         return this.createEntrypointTreeItem(element);
       case 'action':
         return this.createActionTreeItem(element);
+      case 'envChain':
+        return this.createEnvChainTreeItem(element);
+      case 'envSource':
+        return this.createEnvSourceTreeItem(element);
+      case 'envKey':
+        return this.createEnvKeyTreeItem(element);
     }
   }
 
@@ -303,6 +388,67 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
     return item;
   }
 
+  private createEnvChainTreeItem(node: EnvChainNode): vscode.TreeItem {
+    const keyCount = node.entries.reduce((sum, e) => sum + e.keys.length, 0);
+    const sourceCount = node.entries.length;
+    const label = keyCount > 0
+      ? `📦 Environment (${keyCount} keys, ${sourceCount} sources)`
+      : `📦 Environment (${sourceCount} sources)`;
+
+    const item = new vscode.TreeItem(
+      label,
+      vscode.TreeItemCollapsibleState.Collapsed
+    );
+    item.iconPath = new vscode.ThemeIcon('package');
+    item.contextValue = 'envChain';
+    item.tooltip = 'Click to expand environment chain';
+    return item;
+  }
+
+  private createEnvSourceTreeItem(node: EnvSourceNode): vscode.TreeItem {
+    const entry = node.entry;
+    const icon = entry.isUserConfig ? '🏠' : '📄';
+    const keyInfo = entry.keys.length > 0 ? ` (${entry.keys.length} keys)` : '';
+    const label = `${icon} ${entry.qualifiedName}${keyInfo}`;
+
+    const item = new vscode.TreeItem(
+      label,
+      entry.keys.length > 0
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None
+    );
+    item.iconPath = entry.isUserConfig
+      ? new vscode.ThemeIcon('home')
+      : new vscode.ThemeIcon('file-code');
+    item.contextValue = 'envSource';
+    item.tooltip = entry.filePath;
+    item.command = {
+      command: 'vscode.open',
+      title: 'Go to File',
+      arguments: [
+        vscode.Uri.file(entry.filePath),
+        { selection: new vscode.Range(entry.line - 1, 0, entry.line - 1, 0) }
+      ]
+    };
+    return item;
+  }
+
+  private createEnvKeyTreeItem(node: EnvKeyNode): vscode.TreeItem {
+    const valueDisplay = node.value !== null
+      ? JSON.stringify(node.value)
+      : '<dynamic>';
+    const marker = node.isFinal ? '★' : `⚠️↓ overridden by ${node.overriddenBy}`;
+    const label = `🔑 ${node.key} = ${valueDisplay} ${marker}`;
+
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = new vscode.ThemeIcon('key');
+    item.contextValue = 'envKey';
+    item.tooltip = node.isFinal
+      ? `Final value from ${node.envEntry.qualifiedName}`
+      : `Overridden by ${node.overriddenBy}`;
+    return item;
+  }
+
   private getActionLabel(action: ActionType, debugMode?: boolean): string {
     switch (action.kind) {
       case 'run': {
@@ -352,7 +498,51 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
         return this.getActionNodes(element.entry);
       case 'action':
         return [];
+      case 'envChain':
+        return element.entries.map(entry => ({
+          type: 'envSource' as const,
+          entry,
+          parentEntry: element.parentEntry,
+          allEnvEntries: element.entries
+        }));
+      case 'envSource':
+        return this.getEnvKeyNodes(element);
+      case 'envKey':
+        return [];
     }
+  }
+
+  private getEnvKeyNodes(node: EnvSourceNode): EnvKeyNode[] {
+    const keys = node.entry.keys;
+    const staticValues = node.entry.staticValues ?? {};
+
+    return keys.map(key => {
+      const value = staticValues[key] ?? null;
+
+      // Check if this key is overridden by a later env in the chain
+      const thisEnvIndex = node.allEnvEntries.findIndex(
+        e => e.qualifiedName === node.entry.qualifiedName
+      );
+
+      let overriddenBy: string | undefined;
+      for (let i = thisEnvIndex + 1; i < node.allEnvEntries.length; i++) {
+        const laterEnv = node.allEnvEntries[i];
+        if (laterEnv.keys.includes(key)) {
+          overriddenBy = laterEnv.qualifiedName;
+          break;
+        }
+      }
+
+      return {
+        type: 'envKey' as const,
+        key,
+        value,
+        isFinal: !overriddenBy,
+        overriddenBy,
+        envEntry: node.entry,
+        parentEntry: node.parentEntry
+      };
+    });
   }
 
   private async getModuleNodes(): Promise<ModuleNode[]> {
@@ -374,7 +564,7 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       entrypoints = entrypoints.filter(entry => {
         // Check name and qualifiedName
         if (entry.name.toLowerCase().includes(this.filterText) ||
-            entry.qualifiedName.toLowerCase().includes(this.filterText)) {
+          entry.qualifiedName.toLowerCase().includes(this.filterText)) {
           return true;
         }
         // Check type arguments (e.g., Program[MyType] -> matches "mytype")
@@ -418,7 +608,7 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
     return modules.sort((a, b) => a.displayName.localeCompare(b.displayName));
   }
 
-  private async getActionNodes(entry: IndexEntry): Promise<ActionNode[]> {
+  private async getActionNodes(entry: IndexEntry): Promise<TreeNode[]> {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       return [];
@@ -472,7 +662,41 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       }
     }
 
-    return actions;
+    // Add environment chain node
+    const result: TreeNode[] = [...actions];
+    try {
+      const envChain = await this.getEnvChain(rootPath, entry.qualifiedName);
+      if (envChain.length > 0) {
+        result.push({
+          type: 'envChain',
+          parentEntry: entry,
+          entries: envChain
+        });
+      }
+    } catch (error) {
+      output.appendLine(`[warning] Failed to load env chain for ${entry.qualifiedName}: ${error}`);
+    }
+
+    return result;
+  }
+
+  private envChainCache = new Map<string, EnvChainEntry[]>();
+
+  private async getEnvChain(rootPath: string, programQualifiedName: string): Promise<EnvChainEntry[]> {
+    const cacheKey = `envchain:${programQualifiedName}`;
+    const cached = this.envChainCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const indexerPath = await locateIndexer();
+      const result = await queryEnvChain(indexerPath, rootPath, programQualifiedName);
+      this.envChainCache.set(cacheKey, result);
+      return result;
+    } catch {
+      return [];
+    }
   }
 
   private async ensureIndexLoaded(rootPath: string): Promise<void> {
@@ -629,7 +853,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   private pendingFetches = new Set<string>();
   private readonly CACHE_TTL_MS = 30000; // 30 seconds before background refresh
 
-  constructor(private stateStore: DoeffStateStore) {}
+  constructor(private stateStore: DoeffStateStore) { }
 
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
@@ -1021,7 +1245,7 @@ export function activate(context: vscode.ExtensionContext) {
     const debugMode = stateStore.getDebugMode();
     const filterText = treeProvider.getFilterText();
     const modeIndicator = debugMode ? '🐛 Debug' : '▶ Run';
-    
+
     if (filterText) {
       treeView.message = `${modeIndicator} | 🔍 "${filterText}"`;
     } else {
@@ -1245,6 +1469,175 @@ export function activate(context: vscode.ExtensionContext) {
       () => {
         treeProvider.clearFilter();
         vscode.window.showInformationMessage('Filter cleared');
+      }
+    ),
+    // Key Inspector commands
+    vscode.commands.registerCommand(
+      'doeff-runner.inspectEnvKey',
+      async (entryArg?: IndexEntry | EnvSourceNode) => {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+          vscode.window.showErrorMessage('No workspace folder open');
+          return;
+        }
+
+        // Determine program and env chain
+        let programEntry: IndexEntry | undefined;
+        let envChain: EnvChainEntry[] = [];
+
+        if (entryArg && 'type' in entryArg && entryArg.type === 'envSource') {
+          programEntry = entryArg.parentEntry;
+          envChain = entryArg.allEnvEntries;
+        } else if (entryArg && 'qualifiedName' in entryArg) {
+          programEntry = entryArg as IndexEntry;
+        }
+
+        // If no entry provided, ask user to select a program
+        if (!programEntry) {
+          const indexerPath = await locateIndexer();
+          const allEntries = await fetchEntries(indexerPath, workspaceFolder.uri.fsPath, 'index', '', undefined);
+          const programs = allEntries.filter(e =>
+            e.itemKind === 'assignment' &&
+            e.typeUsages.some(u => u.kind === 'program')
+          );
+
+          const selected = await vscode.window.showQuickPick(
+            programs.map(p => ({
+              label: p.name,
+              description: p.qualifiedName,
+              entry: p
+            })),
+            { placeHolder: 'Select a program to inspect environment' }
+          );
+
+          if (!selected) return;
+          programEntry = selected.entry;
+        }
+
+        // Fetch env chain if not already provided
+        if (envChain.length === 0) {
+          const indexerPath = await locateIndexer();
+          envChain = await queryEnvChain(indexerPath, workspaceFolder.uri.fsPath, programEntry.qualifiedName);
+        }
+
+        // Collect all keys from the env chain
+        const allKeys = new Set<string>();
+        for (const env of envChain) {
+          for (const key of env.keys) {
+            allKeys.add(key);
+          }
+        }
+
+        if (allKeys.size === 0) {
+          vscode.window.showInformationMessage(
+            'No keys found in environment chain. Keys may be dynamic.',
+            'Refresh Keys'
+          ).then(action => {
+            if (action === 'Refresh Keys') {
+              vscode.commands.executeCommand('doeff-runner.refreshEnvKeys', programEntry);
+            }
+          });
+          return;
+        }
+
+        // Show QuickPick with all keys
+        interface KeyQuickPickItem extends vscode.QuickPickItem {
+          key: string;
+          resolution: KeyResolution;
+        }
+
+        const items: KeyQuickPickItem[] = Array.from(allKeys).map(key => {
+          // Build resolution chain for this key
+          const chain: KeyResolution['chain'] = [];
+          let finalValue: unknown | null = null;
+          let finalEnv = '';
+
+          for (let i = 0; i < envChain.length; i++) {
+            const env = envChain[i];
+            if (env.keys.includes(key)) {
+              const value = env.staticValues?.[key] ?? null;
+              const isLast = !envChain.slice(i + 1).some(e => e.keys.includes(key));
+              chain.push({
+                envQualifiedName: env.qualifiedName,
+                value,
+                isOverridden: !isLast
+              });
+              if (isLast) {
+                finalValue = value;
+                finalEnv = env.qualifiedName;
+              }
+            }
+          }
+
+          const resolution: KeyResolution = { key, finalValue, chain };
+
+          const valueStr = finalValue !== null ? JSON.stringify(finalValue) : '<dynamic>';
+          const markers = chain.length > 1 ? ` (${chain.length} sources)` : '';
+
+          return {
+            label: `🔑 ${key}`,
+            description: `= ${valueStr}${markers}`,
+            detail: `Final from: ${finalEnv}`,
+            key,
+            resolution
+          };
+        });
+
+        const selected = await vscode.window.showQuickPick(items, {
+          placeHolder: 'Select a key to see resolution chain',
+          matchOnDescription: true
+        });
+
+        if (!selected) return;
+
+        // Show resolution details in a new document
+        const content = formatKeyResolution(selected.resolution, programEntry.qualifiedName);
+        const doc = await vscode.workspace.openTextDocument({
+          content,
+          language: 'markdown'
+        });
+        await vscode.window.showTextDocument(doc, { preview: true });
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.resolveEnvKey',
+      async (keyNode?: EnvKeyNode) => {
+        if (!keyNode) {
+          vscode.window.showErrorMessage('No key selected');
+          return;
+        }
+
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+          vscode.window.showErrorMessage('No workspace folder open');
+          return;
+        }
+
+        // Execute ask(key) at runtime
+        const key = keyNode.key;
+
+        vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `Resolving ${key}...` },
+          async () => {
+            try {
+              const askCode = `from doeff.core import ask; print(ask("${key}"))`;
+              const { stdout, stderr } = await execFileAsync('python3', ['-c', askCode], {
+                cwd: workspaceFolder.uri.fsPath,
+                timeout: 10000
+              });
+
+              if (stderr.trim()) {
+                output.appendLine(`[warn] ask("${key}") stderr: ${stderr.trim()}`);
+              }
+
+              const runtimeValue = stdout.trim();
+              vscode.window.showInformationMessage(`${key} = ${runtimeValue}`);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Failed to resolve key';
+              vscode.window.showErrorMessage(`Failed to resolve ${key}: ${message}`);
+            }
+          }
+        );
       }
     ),
     // Document/editor change handlers
@@ -1663,27 +2056,36 @@ async function runDefault(
   const folder =
     workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
   const args = ['run', '--program', programPath];
-
-  const debugConfig: vscode.DebugConfiguration = {
-    type: 'python',
-    request: 'launch',
-    name: `doeff: ${programPath}`,
-    module: 'doeff',
-    args,
-    cwd: folder?.uri.fsPath,
-    console: 'integratedTerminal',
-    justMyCode: false
-  };
-
-  if (folder) {
-    persistLaunchConfig(debugConfig, folder);
-  }
-
-  const modeLabel = debugMode ? 'Debugging' : 'Running';
   const commandDisplay = `python -m doeff ${args.join(' ')}`;
-  vscode.window.showInformationMessage(`${modeLabel}: ${commandDisplay}`);
-  output.appendLine(`[info] ${modeLabel}: ${commandDisplay}`);
-  await vscode.debug.startDebugging(folder, debugConfig, { noDebug: !debugMode });
+
+  if (debugMode) {
+    // Debug mode: use VSCode debug infrastructure with debugpy
+    const debugConfig: vscode.DebugConfiguration = {
+      type: 'python',
+      request: 'launch',
+      name: `doeff: ${programPath}`,
+      module: 'doeff',
+      args,
+      cwd: folder?.uri.fsPath,
+      console: 'integratedTerminal',
+      justMyCode: false
+    };
+
+    if (folder) {
+      persistLaunchConfig(debugConfig, folder);
+    }
+
+    vscode.window.showInformationMessage(`Debugging: ${commandDisplay}`);
+    output.appendLine(`[info] Debugging: ${commandDisplay}`);
+    await vscode.debug.startDebugging(folder, debugConfig);
+  } else {
+    // Run mode: use terminal directly without debugpy
+    const terminal = getOrCreateTerminal(folder?.uri.fsPath);
+    vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
+    output.appendLine(`[info] Running: ${commandDisplay}`);
+    terminal.sendText(commandDisplay);
+    terminal.show();
+  }
 }
 
 async function runSelection(
@@ -1712,29 +2114,40 @@ async function runSelection(
     args.push('--transform', selection.transformer.qualifiedName);
   }
 
-  const debugConfig: vscode.DebugConfiguration = {
-    type: 'python',
-    request: 'launch',
-    name: `doeff: ${selection.programPath}`,
-    module: 'doeff',
-    args,
-    cwd: folder?.uri.fsPath,
-    console: 'integratedTerminal',
-    justMyCode: false
-  };
-
-  if (folder) {
-    persistLaunchConfig(debugConfig, folder);
-  }
-
+  const commandDisplay = `python -m doeff ${args.join(' ')}`;
   const modeLabel = debugMode ? 'Debugging' : 'Running';
   output.appendLine(
     `[info] ${modeLabel} doeff for ${selection.programPath} with interpreter ${selection.interpreter.qualifiedName}`
   );
-  const commandDisplay = `python -m doeff ${args.join(' ')}`;
-  vscode.window.showInformationMessage(`${modeLabel}: ${commandDisplay}`);
-  output.appendLine(`[info] Command: ${commandDisplay}`);
-  await vscode.debug.startDebugging(folder, debugConfig, { noDebug: !debugMode });
+
+  if (debugMode) {
+    // Debug mode: use VSCode debug infrastructure with debugpy
+    const debugConfig: vscode.DebugConfiguration = {
+      type: 'python',
+      request: 'launch',
+      name: `doeff: ${selection.programPath}`,
+      module: 'doeff',
+      args,
+      cwd: folder?.uri.fsPath,
+      console: 'integratedTerminal',
+      justMyCode: false
+    };
+
+    if (folder) {
+      persistLaunchConfig(debugConfig, folder);
+    }
+
+    vscode.window.showInformationMessage(`Debugging: ${commandDisplay}`);
+    output.appendLine(`[info] Command: ${commandDisplay}`);
+    await vscode.debug.startDebugging(folder, debugConfig);
+  } else {
+    // Run mode: use terminal directly without debugpy
+    const terminal = getOrCreateTerminal(folder?.uri.fsPath);
+    vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
+    output.appendLine(`[info] Command: ${commandDisplay}`);
+    terminal.sendText(commandDisplay);
+    terminal.show();
+  }
 }
 
 function persistLaunchConfig(
@@ -2119,6 +2532,44 @@ interface ProximityContext {
   line: number;
 }
 
+function formatKeyResolution(resolution: KeyResolution, programName: string): string {
+  const lines: string[] = [
+    `# Key Resolution: \`${resolution.key}\``,
+    '',
+    `**Program:** \`${programName}\``,
+    '',
+    `**Final Value:** ${resolution.finalValue !== null ? `\`${JSON.stringify(resolution.finalValue)}\`` : '`<dynamic>`'}`,
+    ''
+  ];
+
+  if (resolution.chain.length > 0) {
+    lines.push('## Override Chain');
+    lines.push('');
+    for (const entry of resolution.chain) {
+      const valueStr = entry.value !== null ? JSON.stringify(entry.value) : '<dynamic>';
+      const marker = entry.isOverridden ? '⚠️↓ overridden' : '★ final';
+      lines.push(`- \`${entry.envQualifiedName}\`: ${valueStr} (${marker})`);
+    }
+    lines.push('');
+  }
+
+  if (resolution.runtimeValue !== undefined) {
+    lines.push('## Runtime Value');
+    lines.push('');
+    lines.push(`\`\`\``);
+    lines.push(JSON.stringify(resolution.runtimeValue, null, 2));
+    lines.push(`\`\`\``);
+  } else if (resolution.runtimeError) {
+    lines.push('## Runtime Error');
+    lines.push('');
+    lines.push(`\`\`\``);
+    lines.push(resolution.runtimeError);
+    lines.push(`\`\`\``);
+  }
+
+  return lines.join('\n');
+}
+
 async function fetchEntries(
   indexerPath: string,
   rootPath: string,
@@ -2175,6 +2626,36 @@ async function queryIndexer(
   return parsed;
 }
 
+async function queryEnvChain(
+  indexerPath: string,
+  rootPath: string,
+  programQualifiedName: string
+): Promise<EnvChainEntry[]> {
+  const args = [
+    'find-env-chain',
+    '--root', rootPath,
+    '--program', programQualifiedName
+  ];
+
+  try {
+    const stdout = await executeIndexer(indexerPath, args, rootPath);
+    const result: EnvChainResult = JSON.parse(stdout);
+    // Convert snake_case from Rust to camelCase for TypeScript
+    return result.envChain?.map(entry => ({
+      qualifiedName: entry.qualifiedName ?? (entry as unknown as Record<string, string>).qualified_name,
+      filePath: entry.filePath ?? (entry as unknown as Record<string, string>).file_path,
+      line: entry.line,
+      keys: entry.keys ?? [],
+      staticValues: entry.staticValues ?? (entry as unknown as Record<string, unknown>).static_values as Record<string, unknown> | undefined,
+      isUserConfig: entry.isUserConfig ?? (entry as unknown as Record<string, boolean>).is_user_config
+    })) ?? [];
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to query env chain';
+    output.appendLine(`[error] queryEnvChain failed: ${message}`);
+    return [];
+  }
+}
+
 async function executeIndexer(
   indexerPath: string,
   args: string[],
@@ -2213,9 +2694,9 @@ function normalizeEntries(entries: any[]): IndexEntry[] {
     ),
     interpreterParameters: normalizeParams(
       entry.program_interpreter_parameters ??
-        entry.interpreter_parameters ??
-        entry.interpreterParameters ??
-        []
+      entry.interpreter_parameters ??
+      entry.interpreterParameters ??
+      []
     ),
     typeUsages: normalizeTypeUsages(entry.type_usages ?? entry.typeUsages ?? []),
     docstring: entry.docstring ?? undefined,
