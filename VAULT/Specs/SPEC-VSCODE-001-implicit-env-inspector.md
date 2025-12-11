@@ -458,6 +458,13 @@ __doeff_inspect_result_type = "Any"
 2. Improve static analysis accuracy
 3. Add configuration options
 
+### 5.1 Tasks
+
+- [[TASK-VSCODE-006-indexer-env-chain]] — Indexer find-env-chain コマンド実装
+- [[TASK-VSCODE-007-env-chain-treeview]] — EnvChainNode TreeView 統合
+- [[TASK-VSCODE-008-key-inspector]] — Key Inspector 実装
+- [[TASK-VSCODE-009-env-inspector-polish]] — Env Inspector ポリッシュ
+
 ## 6. Design Decisions
 
 - **D1**: Runtime ask execution uses the default (or user-specified) interpreter
