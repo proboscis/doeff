@@ -2,7 +2,7 @@
 id: TASK-LINTER-005
 title: DOEFF020 program-naming-convention ルール実装
 module: linter
-status: todo
+status: done
 priority: medium
 assignee: 
 due-date: 
@@ -23,11 +23,11 @@ tags: [task, linter, doeff020]
 
 ## Acceptance Criteria
 
-- [ ] `data_program: Program = ...` を検出して警告
-- [ ] `some_program: Program[T] = ...` を検出して警告
-- [ ] `p_data: Program = ...` は許可
-- [ ] `p_result: Program[T] = ...` は許可
-- [ ] ユニットテスト 5 件以上
+- [x] `data_program: Program = ...` を検出して警告
+- [x] `some_program: Program[T] = ...` を検出して警告
+- [x] `p_data: Program = ...` は許可
+- [x] `p_result: Program[T] = ...` は許可
+- [x] ユニットテスト 5 件以上 (10件実装済み)
 
 ## Implementation Notes
 
@@ -75,10 +75,10 @@ Fix: Rename the variable:
 
 ## Subtasks
 
-- [ ] `doeff020_program_naming_convention.rs` 作成
-- [ ] mod.rs に登録
-- [ ] DOEFF020.md ドキュメント作成
-- [ ] cargo test 実行
+- [x] `doeff020_program_naming_convention.rs` 作成
+- [x] mod.rs に登録
+- [x] DOEFF020.md ドキュメント作成
+- [x] cargo test 実行
 
 ## Related
 
@@ -89,5 +89,10 @@ Fix: Rename the variable:
 
 ### 2025-12-04
 - タスク作成
+- DOEFF020 ルール実装完了
+  - `doeff020_program_naming_convention.rs` を作成
+  - mod.rs に登録
+  - DOEFF020.md ドキュメント作成
+  - テスト 10 件全てパス
 
 
