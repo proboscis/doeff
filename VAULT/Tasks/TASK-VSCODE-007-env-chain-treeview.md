@@ -2,7 +2,7 @@
 id: TASK-VSCODE-007
 title: EnvChainNode TreeView 統合
 module: vscode
-status: pending
+status: completed
 priority: high
 due-date:
 related-project: PROJECT-VSCODE-001
@@ -22,13 +22,13 @@ VSCode doeff-runner の TreeView に Environment Chain ノードを追加し、�
 
 ## Acceptance Criteria
 
-- [ ] 各 Program エントリーポイントの下に「📦 Environment」ノードが表示される
-- [ ] Environment ノードは折りたたみ可能（デフォルト: 折りたたみ）
-- [ ] 各 env ソース（~/.doeff.py, project envs）がサブノードとして表示
-- [ ] 各 env ノードの下にキー一覧が表示される
-- [ ] オーバーライドされたキーには ⚠️↓ マーカーが表示される
-- [ ] 最終値を持つキーには ★ マーカーが表示される
-- [ ] env ノードをクリックで該当ファイル/行にジャンプ
+- [x] 各 Program エントリーポイントの下に「📦 Environment」ノードが表示される
+- [x] Environment ノードは折りたたみ可能（デフォルト: 折りたたみ）
+- [x] 各 env ソース（~/.doeff.py, project envs）がサブノードとして表示
+- [x] 各 env ノードの下にキー一覧が表示される
+- [x] オーバーライドされたキーには ⚠️↓ マーカーが表示される
+- [x] 最終値を持つキーには ★ マーカーが表示される
+- [x] env ノードをクリックで該当ファイル/行にジャンプ
 
 ## Implementation Notes
 
@@ -98,12 +98,12 @@ class EnvChainProvider {
 
 ## Subtasks
 
-- [ ] EnvChainEntry, EnvChainNode, EnvSourceNode, EnvKeyNode 型定義
-- [ ] EnvChainProvider クラス実装（indexer 呼び出し）
-- [ ] DoeffProgramsProvider に env chain ノードを追加
-- [ ] オーバーライド判定ロジック実装（★ / ⚠️↓ 表示）
-- [ ] 折りたたみ状態管理
-- [ ] ファイルジャンプ機能（env ソースノード用）
+- [x] EnvChainEntry, EnvChainNode, EnvSourceNode, EnvKeyNode 型定義
+- [x] EnvChainProvider クラス実装（indexer 呼び出し）
+- [x] DoeffProgramsProvider に env chain ノードを追加
+- [x] オーバーライド判定ロジック実装（★ / ⚠️↓ 表示）
+- [x] 折りたたみ状態管理
+- [x] ファイルジャンプ機能（env ソースノード用）
 
 ## Related
 

@@ -2,7 +2,7 @@
 id: TASK-LINTER-003
 title: DOEFF018 no-ask-in-try ルール実装
 module: linter
-status: todo
+status: done
 priority: high
 assignee: 
 due-date: 
@@ -23,10 +23,10 @@ tags: [task, linter, doeff018]
 
 ## Acceptance Criteria
 
-- [ ] try ブロック内の `yield ask(...)` を検出してエラー
-- [ ] try ブロック外の `yield ask(...)` は許可
-- [ ] ネストした try も検出
-- [ ] ユニットテスト 5 件以上
+- [x] try ブロック内の `yield ask(...)` を検出してエラー
+- [x] try ブロック外の `yield ask(...)` は許可
+- [x] ネストした try も検出
+- [x] ユニットテスト 5 件以上 (10件実装)
 
 ## Implementation Notes
 
@@ -67,10 +67,10 @@ Fix: Remove the try/except and ensure the dependency is properly injected:
 
 ## Subtasks
 
-- [ ] `doeff018_no_ask_in_try.rs` 作成
-- [ ] mod.rs に登録
-- [ ] DOEFF018.md ドキュメント作成
-- [ ] cargo test 実行
+- [x] `doeff018_no_ask_in_try.rs` 作成
+- [x] mod.rs に登録
+- [x] DOEFF018.md ドキュメント作成
+- [x] cargo test 実行
 
 ## Related
 
@@ -82,5 +82,10 @@ Fix: Remove the try/except and ensure the dependency is properly injected:
 
 ### 2025-12-04
 - タスク作成
+- DOEFF018 ルール実装完了
+  - `packages/doeff-linter/src/rules/doeff018_no_ask_in_try.rs` 作成
+  - `mod.rs` に登録 (17個目のルール)
+  - `packages/doeff-linter/docs/rules/DOEFF018.md` ドキュメント作成
+  - 10件のユニットテストすべてパス
 
 

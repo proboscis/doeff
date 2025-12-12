@@ -2,7 +2,7 @@
 id: TASK-VSCODE-009
 title: Env Inspector ポリッシュ
 module: vscode
-status: pending
+status: in-progress
 priority: low
 due-date:
 related-project: PROJECT-VSCODE-001
@@ -24,8 +24,8 @@ Env Inspector 機能の UX を改善し、ホバー情報、静的解析精度�
 
 - [ ] Program 変数へのホバーで env chain サマリーを表示
 - [ ] `Program.pure({...})` の静的解析精度向上
-- [ ] 設定オプション（タイムアウト、~/.doeff.py 表示切り替え等）
-- [ ] パフォーマンス最適化（キャッシュ）
+- [x] 設定オプション（タイムアウト、~/.doeff.py 表示切り替え等）
+- [x] パフォーマンス最適化（キャッシュ）
 
 ## Implementation Notes
 
@@ -72,9 +72,9 @@ Click to inspect environment →
 ## Subtasks
 
 - [ ] HoverProvider 実装（env chain サマリー表示）
-- [ ] 設定スキーマ定義と package.json への追加
+- [x] 設定スキーマ定義と package.json への追加
 - [ ] 静的解析パターンの拡張
-- [ ] env chain キャッシュ機構実装
+- [x] env chain キャッシュ機構実装
 - [ ] ファイル変更監視とキャッシュ無効化
 - [ ] ドキュメント作成
 

@@ -2,7 +2,7 @@
 id: TASK-LINTER-002
 title: DOEFF017 no-program-type-param ルール実装
 module: linter
-status: todo
+status: done
 priority: high
 assignee: 
 due-date: 
@@ -23,11 +23,11 @@ tags: [task, linter, doeff017]
 
 ## Acceptance Criteria
 
-- [ ] `def f(data: Program[T])` を検出してエラー
-- [ ] `def f(data: Program)` を検出してエラー
-- [ ] `def f(data: T)` は許可
-- [ ] `@do` デコレータ付き関数のみを対象
-- [ ] ユニットテスト 5 件以上
+- [x] `def f(data: Program[T])` を検出してエラー
+- [x] `def f(data: Program)` を検出してエラー
+- [x] `def f(data: T)` は許可
+- [x] `@do` デコレータ付き関数のみを対象
+- [x] ユニットテスト 5 件以上 (12件実装)
 
 ## Implementation Notes
 
@@ -67,10 +67,10 @@ Fix: Change the parameter type from 'Program[{T}]' to '{T}':
 
 ## Subtasks
 
-- [ ] `doeff017_no_program_type_param.rs` 作成
-- [ ] mod.rs に登録
-- [ ] DOEFF017.md ドキュメント作成
-- [ ] cargo test 実行
+- [x] `doeff017_no_program_type_param.rs` 作成
+- [x] mod.rs に登録
+- [x] DOEFF017.md ドキュメント作成
+- [x] cargo test 実行
 
 ## Related
 
@@ -81,5 +81,15 @@ Fix: Change the parameter type from 'Program[{T}]' to '{T}':
 
 ### 2025-12-04
 - タスク作成
+- `doeff017_no_program_type_param.rs` 実装完了
+  - `@do` デコレータの検出
+  - 関数引数の `Program[T]` 型検出
+  - Union型 (`Program[T] | None`) の対応
+  - async関数対応
+  - keyword-only引数対応
+- mod.rs にルール登録
+- DOEFF017.md ドキュメント作成
+- cargo test 全12テストパス
+- タスク完了
 
 
