@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use doeff_indexer::{
-    build_index, entry_matches_with_markers, find_interceptors, find_interpreters, find_kleisli,
-    find_kleisli_with_type, find_transforms, find_transforms_with_type, IndexEntry, ProgramTypeKind,
+    build_index, entry_matches_with_markers, find_all_envs_for_program, find_interceptors,
+    find_interpreters, find_kleisli, find_kleisli_with_type, find_transforms,
+    find_transforms_with_type, IndexEntry, ProgramTypeKind,
 };
 
 #[derive(Parser, Debug)]
@@ -102,6 +103,13 @@ enum Commands {
         /// Sort by proximity to this line number (used with --proximity-file)
         #[arg(long, default_value_t = 0)]
         proximity_line: usize,
+    },
+
+    /// Find the environment chain for a program entrypoint
+    FindEnvChain {
+        /// Qualified name of the program (e.g., "src.features.auth.login_program")
+        #[arg(long)]
+        program: String,
     },
 }
 
@@ -339,6 +347,31 @@ fn main() -> Result<()> {
                 let normalized = normalize_file_path(&cli.root, file);
                 sort_by_proximity(&mut index.entries, &normalized, proximity_line);
             }
+        }
+
+        Some(Commands::FindEnvChain { program }) => {
+            // Find environment chain for the specified program
+            let result = find_all_envs_for_program(&index.entries, &program);
+
+            // Output env chain result directly (different format than index)
+            let json = if cli.pretty {
+                serde_json::to_string_pretty(&result)?
+            } else {
+                serde_json::to_string(&result)?
+            };
+
+            if let Some(output_path) = cli.output {
+                if let Some(parent) = output_path.parent() {
+                    if !parent.as_os_str().is_empty() {
+                        fs::create_dir_all(parent)?;
+                    }
+                }
+                fs::write(&output_path, json)?;
+            } else {
+                println!("{}", json);
+            }
+
+            return Ok(());
         }
     }
 

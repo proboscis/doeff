@@ -98,6 +98,20 @@ def _is_internal_cache_filename(filename: str | None) -> bool:
     return "doeff/cache.py" in normalized
 
 
+def _truncate_for_log(obj: Any, max_len: int = 200) -> str:
+    """Truncate object representation for logging to avoid massive log output."""
+    try:
+        repr_str = repr(obj)
+    except Exception:
+        repr_str = f"<{type(obj).__name__} (repr failed)>"
+
+    if len(repr_str) <= max_len:
+        return repr_str
+
+    half = (max_len - 5) // 2  # Reserve 5 chars for "..."
+    return f"{repr_str[:half]}...{repr_str[-half:]}"
+
+
 @do_wrapper
 def cache(
     ttl: float | None = None,
@@ -182,11 +196,13 @@ def cache(
 
                 cloudpickle.dumps(key_obj)
             except Exception as exc:  # pragma: no cover - defensive logging path
-                yield slog(msg=f"serializing cache key failed:{key_obj}", level="ERROR")
+                truncated_key = _truncate_for_log(key_obj)
+                yield slog(msg=f"serializing cache key failed:{truncated_key}", level="ERROR")
                 raise exc
 
             if log_success:
-                log_kwargs: dict[str, Any] = {"msg": f"cache key serialization check passed for key:{key_obj}"}
+                truncated_key = _truncate_for_log(key_obj)
+                log_kwargs: dict[str, Any] = {"msg": f"cache key serialization check passed for key:{truncated_key}"}
                 if level is not None:
                     log_kwargs["level"] = level
                 yield slog(**log_kwargs)
