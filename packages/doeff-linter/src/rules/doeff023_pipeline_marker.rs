@@ -6,7 +6,7 @@
 
 use crate::models::{RuleContext, Severity, Violation};
 use crate::rules::base::LintRule;
-use rustpython_ast::{Expr, Mod, Stmt};
+use rustpython_ast::{Expr, Mod, Stmt, StmtAsyncFunctionDef, StmtFunctionDef};
 use std::collections::HashMap;
 
 pub struct PipelineMarkerRule;
@@ -66,10 +66,9 @@ impl PipelineMarkerRule {
             .count()
     }
 
-    /// Check if a function has the pipeline marker in any of the allowed locations
-    fn has_pipeline_marker(func: &rustpython_ast::StmtFunctionDef, source: &str) -> bool {
+    /// Check if a function has the pipeline marker in surrounding lines
+    fn check_marker_in_lines(source: &str, func_offset: usize) -> bool {
         let lines: Vec<&str> = source.lines().collect();
-        let func_offset = func.range.start().to_usize();
         let func_line = Self::offset_to_line(source, func_offset);
 
         // Check lines around the function definition (decorator line, def line, and docstring)
@@ -86,8 +85,12 @@ impl PipelineMarkerRule {
             }
         }
 
-        // Also check docstring content
-        if let Some(first_stmt) = func.body.first() {
+        false
+    }
+
+    /// Check if a docstring contains the pipeline marker
+    fn check_marker_in_docstring(body: &[Stmt]) -> bool {
+        if let Some(first_stmt) = body.first() {
             if let Stmt::Expr(expr_stmt) = first_stmt {
                 if let Expr::Constant(constant) = &*expr_stmt.value {
                     if let Some(s) = constant.value.as_str() {
@@ -98,27 +101,55 @@ impl PipelineMarkerRule {
                 }
             }
         }
-
         false
     }
 
-    /// Collect all @do decorated functions in the module
+    /// Check if a sync function has the pipeline marker in any of the allowed locations
+    fn has_pipeline_marker(func: &StmtFunctionDef, source: &str) -> bool {
+        let func_offset = func.range.start().to_usize();
+        Self::check_marker_in_lines(source, func_offset)
+            || Self::check_marker_in_docstring(&func.body)
+    }
+
+    /// Check if an async function has the pipeline marker in any of the allowed locations
+    fn has_pipeline_marker_async(func: &StmtAsyncFunctionDef, source: &str) -> bool {
+        let func_offset = func.range.start().to_usize();
+        Self::check_marker_in_lines(source, func_offset)
+            || Self::check_marker_in_docstring(&func.body)
+    }
+
+    /// Collect all @do decorated functions in the module (both sync and async)
     fn collect_do_functions(ast: &Mod, source: &str) -> HashMap<String, DoFunctionInfo> {
         let mut do_functions = HashMap::new();
 
         if let Mod::Module(module) = ast {
             for stmt in &module.body {
-                if let Stmt::FunctionDef(func) = stmt {
-                    if Self::has_do_decorator(&func.decorator_list) {
-                        let has_marker = Self::has_pipeline_marker(func, source);
-                        do_functions.insert(
-                            func.name.to_string(),
-                            DoFunctionInfo {
-                                has_pipeline_marker: has_marker,
-                                offset: func.range.start().to_usize(),
-                            },
-                        );
+                match stmt {
+                    Stmt::FunctionDef(func) => {
+                        if Self::has_do_decorator(&func.decorator_list) {
+                            let has_marker = Self::has_pipeline_marker(func, source);
+                            do_functions.insert(
+                                func.name.to_string(),
+                                DoFunctionInfo {
+                                    has_pipeline_marker: has_marker,
+                                    offset: func.range.start().to_usize(),
+                                },
+                            );
+                        }
                     }
+                    Stmt::AsyncFunctionDef(func) => {
+                        if Self::has_do_decorator(&func.decorator_list) {
+                            let has_marker = Self::has_pipeline_marker_async(func, source);
+                            do_functions.insert(
+                                func.name.to_string(),
+                                DoFunctionInfo {
+                                    has_pipeline_marker: has_marker,
+                                    offset: func.range.start().to_usize(),
+                                },
+                            );
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -467,6 +498,80 @@ p_result: Program[int] = process_x(p_input)
         assert!(violations[0].message.contains("Option 1"));
         assert!(violations[0].message.contains("Option 2"));
         assert!(violations[0].message.contains("Option 3"));
+    }
+
+    #[test]
+    fn test_async_do_function_without_marker_violation() {
+        let code = r#"
+@do
+async def async_process(data):
+    return data
+
+p_result: Program[int] = async_process(p_input)
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("async_process"));
+        assert!(violations[0].message.contains("p_result"));
+    }
+
+    #[test]
+    fn test_async_do_function_with_marker_on_do_line() {
+        let code = r#"
+@do  # doeff: pipeline
+async def async_process(data):
+    return data
+
+p_result: Program[int] = async_process(p_input)
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_async_do_function_with_marker_on_def_line() {
+        let code = r#"
+@do
+async def async_process(data):  # doeff: pipeline
+    return data
+
+p_result: Program[int] = async_process(p_input)
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_async_do_function_with_marker_in_docstring() {
+        let code = r#"
+@do
+async def async_process(data):
+    """doeff: pipeline"""
+    return data
+
+p_result: Program[int] = async_process(p_input)
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 0);
+    }
+
+    #[test]
+    fn test_mixed_sync_and_async_functions() {
+        let code = r#"
+@do  # doeff: pipeline
+def sync_func(data):
+    return data
+
+@do
+async def async_func(data):
+    return data
+
+p_sync: Program[int] = sync_func(p_input)
+p_async: Program[int] = async_func(p_input)
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("async_func"));
     }
 }
 
