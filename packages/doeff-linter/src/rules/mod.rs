@@ -26,6 +26,7 @@ pub mod doeff020_program_naming_convention;
 pub mod doeff021_no_dunder_all;
 pub mod doeff022_prefer_do_function;
 pub mod doeff023_pipeline_marker;
+pub mod doeff024_no_recover_ask;
 
 use base::LintRule;
 use std::collections::HashMap;
@@ -56,6 +57,7 @@ pub fn get_all_rules() -> Vec<Box<dyn LintRule>> {
         Box::new(doeff021_no_dunder_all::NoDunderAllRule::new()),
         Box::new(doeff022_prefer_do_function::PreferDoFunctionRule::new()),
         Box::new(doeff023_pipeline_marker::PipelineMarkerRule::new()),
+        Box::new(doeff024_no_recover_ask::NoRecoverAskRule::new()),
     ]
 }
 
@@ -95,7 +97,7 @@ mod tests {
     #[test]
     fn test_all_rules_loaded() {
         let rules = get_all_rules();
-        assert_eq!(rules.len(), 23);
+        assert_eq!(rules.len(), 24);
 
         let rule_ids: Vec<_> = rules.iter().map(|r| r.rule_id()).collect();
         assert!(rule_ids.contains(&"DOEFF001"));
@@ -113,6 +115,7 @@ mod tests {
         assert!(rule_ids.contains(&"DOEFF021"));
         assert!(rule_ids.contains(&"DOEFF022"));
         assert!(rule_ids.contains(&"DOEFF023"));
+        assert!(rule_ids.contains(&"DOEFF024"));
     }
 
     #[test]
