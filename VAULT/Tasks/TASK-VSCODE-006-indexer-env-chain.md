@@ -2,7 +2,7 @@
 id: TASK-VSCODE-006
 title: Indexer find-env-chain コマンド実装
 module: indexer
-status: pending
+status: completed
 priority: high
 due-date:
 related-project: PROJECT-VSCODE-001
@@ -22,11 +22,11 @@ doeff-indexer に `find-env-chain` コマンドを追加し、指定された Pr
 
 ## Acceptance Criteria
 
-- [ ] `doeff-indexer find-env-chain --root <path> --program <qualified_name>` コマンドが動作する
-- [ ] ~/.doeff.py (ユーザーレベル設定) の検出と解析
-- [ ] `# doeff: default` マーカー付き env のモジュール階層に従った収集
-- [ ] `Program.pure({...})` パターンからの静的値抽出
-- [ ] JSON 形式での出力（EnvChainEntry 配列）
+- [x] `doeff-indexer find-env-chain --root <path> --program <qualified_name>` コマンドが動作する
+- [x] ~/.doeff.py (ユーザーレベル設定) の検出と解析
+- [x] `# doeff: default` マーカー付き env のモジュール階層に従った収集
+- [ ] `Program.pure({...})` パターンからの静的値抽出 (Deferred)
+- [x] JSON 形式での出力（EnvChainEntry 配列）
 
 ## Implementation Notes
 
@@ -94,11 +94,11 @@ computed_env: Program[dict] = load_config_from_file()
 
 ## Subtasks
 
-- [ ] `find-env-chain` サブコマンドを CLI に追加
-- [ ] モジュール階層を辿って env を収集するロジック実装
-- [ ] ~/.doeff.py の検出と解析
-- [ ] `Program.pure({...})` パターンの AST 解析による静的値抽出
-- [ ] EnvChainEntry 構造体の定義と JSON シリアライズ
+- [x] `find-env-chain` サブコマンドを CLI に追加
+- [x] モジュール階層を辿って env を収集するロジック実装
+- [x] ~/.doeff.py の検出と解析
+- [ ] `Program.pure({...})` パターンの AST 解析による静的値抽出 (Deferred)
+- [x] EnvChainEntry 構造体の定義と JSON シリアライズ
 - [ ] ユニットテスト
 
 ## Related

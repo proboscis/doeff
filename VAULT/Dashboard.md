@@ -49,7 +49,7 @@ const statusColor = (status) => {
 };
 
 const progressBar = (done, total) => {
-  if (total === 0) return "-";
+  if (total === 0) return `<span style="color:#6b7280;">-</span>`;
   const pct = Math.round(done / total * 100);
   const color = pct >= 80 ? "#22c55e" : pct >= 50 ? "#eab308" : "#f97316";
   return `<div style="display:flex;align-items:center;gap:8px;">
@@ -65,6 +65,8 @@ const statusBadge = (status) => {
   return `<span style="background:${color}22;color:${color};padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600;">${status}</span>`;
 };
 
+const emptyCell = `<span style="color:#6b7280;">-</span>`;
+
 const rows = projects.map(p => {
   const projectTasks = tasks.filter(t => t["related-project"] === p.id);
   const done = projectTasks.filter(t => t.status === "done").length;
@@ -76,8 +78,8 @@ const rows = projects.map(p => {
     statusBadge(p.status),
     `${done} / ${total}`,
     progressBar(done, total),
-    p.owner || "-",
-    p["target-date"] || "-"
+    p.owner || emptyCell,
+    p["target-date"] || emptyCell
   ];
 });
 
@@ -105,6 +107,8 @@ SORT related-project ASC
 ```dataviewjs
 const tasks = dv.pages('"Tasks"').where(t => t.status === "todo");
 
+const emptyCell = `<span style="color:#6b7280;">-</span>`;
+
 const priorityBadge = (priority) => {
   const colors = {
     "high": "#ef4444",
@@ -119,8 +123,8 @@ const rows = tasks.sort(t => t.priority === "high" ? 0 : t.priority === "medium"
   .map(t => [
     t.file.link,
     t.title,
-    t["related-project"] || "-",
-    priorityBadge(t.priority),
+    t["related-project"] || emptyCell,
+    priorityBadge(t.priority)
   ]);
 
 dv.table(["ID", "Task", "Project", "Priority"], rows);
@@ -145,6 +149,8 @@ LIMIT 10
 ```dataviewjs
 const issues = dv.pages('"Issues"').where(i => i.status === "open");
 
+const emptyCell = `<span style="color:#6b7280;">-</span>`;
+
 const severityBadge = (severity) => {
   const colors = {
     "critical": "#dc2626",
@@ -160,7 +166,7 @@ const rows = issues.sort(i => i.severity === "critical" ? 0 : i.severity === "hi
   .map(i => [
     i.file.link,
     i.title,
-    i["related-project"] || "-",
+    i["related-project"] || emptyCell,
     severityBadge(i.severity)
   ]);
 
