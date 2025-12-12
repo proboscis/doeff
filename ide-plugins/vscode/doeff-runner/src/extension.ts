@@ -2015,8 +2015,15 @@ async function showMoreTools(
     const tools = await fetchEntries(indexerPath, rootPath, command, typeArg, proximity);
 
     if (tools.length === 0) {
-      vscode.window.showInformationMessage(`No ${toolType} tools found for type ${typeArg}.`);
+      const suffix = typeArg.trim() ? `for type ${typeArg}` : 'in workspace';
+      vscode.window.showInformationMessage(`No ${toolType} tools found ${suffix}.`);
       return;
+    }
+
+    if (!typeArg.trim()) {
+      vscode.window.showInformationMessage(
+        `No type argument specified on this Program. Showing all ${toolType} tools; add Program[T] to enable filtering.`
+      );
     }
 
     // Show QuickPick with all tools
@@ -2229,6 +2236,11 @@ async function buildSelection(
       'No doeff interpreters were found. Check the "doeff-runner" output for indexer details.'
     );
     return;
+  }
+  if (!programType.trim()) {
+    vscode.window.showInformationMessage(
+      'No type argument specified on this Program. Kleisli/Transform tools will be shown unfiltered. Add Program[T] to enable filtering.'
+    );
   }
   const kleisli = await fetchEntries(
     indexerPath,
@@ -2606,7 +2618,12 @@ async function fetchEntries(
     args.push('--proximity-line', String(proximity.line));
   }
   const entries = await queryIndexer(indexerPath, cacheKey, rootPath, args);
-  return filterEntriesForType(entries, trimmedType);
+  // Only apply client-side type filtering for tool-like commands.
+  // Interpreters should be discoverable even for untyped Programs.
+  if (supportsTypeArg && trimmedType && trimmedType.toLowerCase() !== 'any') {
+    return filterEntriesForType(entries, trimmedType);
+  }
+  return entries;
 }
 
 async function queryIndexer(
