@@ -1408,15 +1408,41 @@ fn identify_program_kind(expr: &Expr) -> Option<ProgramTypeKind> {
     }
 }
 
+/// Strip surrounding quotes (single or double) from a type string.
+/// This handles Python's forward reference syntax: Program["T"] or Program['T']
+/// which is used to avoid circular import issues.
+fn strip_string_quotes(s: &str) -> String {
+    let trimmed = s.trim();
+    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn extract_type_arguments(slice: &Expr) -> Vec<String> {
+    // Helper to extract and strip quotes (for forward reference compatibility)
+    let extract_and_strip = |e: &Expr| strip_string_quotes(&expr_to_string(e));
+
     match slice {
-        Expr::Tuple(tuple) => tuple.elts.iter().map(expr_to_string).collect(),
-        Expr::List(list) => list.elts.iter().map(expr_to_string).collect(),
+        Expr::Tuple(tuple) => tuple.elts.iter().map(extract_and_strip).collect(),
+        Expr::List(list) => list.elts.iter().map(extract_and_strip).collect(),
         Expr::Constant(expr_const) => match &expr_const.value {
-            Constant::Tuple(values) => values.iter().map(|value| format!("{:?}", value)).collect(),
-            _ => vec![expr_to_string(slice)],
+            Constant::Tuple(values) => values
+                .iter()
+                .map(|value| {
+                    // For string constants, extract the inner value without quotes
+                    match value {
+                        Constant::Str(s) => s.clone(),
+                        _ => format!("{:?}", value),
+                    }
+                })
+                .collect(),
+            _ => vec![extract_and_strip(slice)],
         },
-        _ => vec![expr_to_string(slice)],
+        _ => vec![extract_and_strip(slice)],
     }
 }
 
@@ -1541,10 +1567,11 @@ pub fn find_transforms_with_type<'a>(
     type_arg: &str,
 ) -> Vec<&'a IndexEntry> {
     let trimmed = type_arg.trim();
+    // Extract inner type from Program[T] or strip quotes from direct type like "User"
     let effective_type = if let Some(inner) = extract_program_inner_type(trimmed) {
-        inner
+        inner // Already stripped by extract_program_inner_type
     } else {
-        trimmed.to_string()
+        strip_string_quotes(trimmed)
     };
 
     find_transforms(entries)
@@ -1599,10 +1626,11 @@ pub fn find_kleisli_with_type<'a>(
     type_arg: &str,
 ) -> Vec<&'a IndexEntry> {
     let trimmed = type_arg.trim();
+    // Extract inner type from Program[T] or strip quotes from direct type like "User"
     let effective_type = if let Some(inner) = extract_program_inner_type(trimmed) {
-        inner
+        inner // Already stripped by extract_program_inner_type
     } else {
-        trimmed.to_string()
+        strip_string_quotes(trimmed)
     };
 
     find_kleisli(entries)
@@ -1648,8 +1676,10 @@ fn annotation_matches(annotation: &str, target_type: &str) -> bool {
         return true;
     }
 
-    let normalized_target = target_type.trim();
-    annotation.contains(normalized_target)
+    // Strip quotes from both sides for forward reference compatibility
+    let normalized_target = strip_string_quotes(target_type);
+    let normalized_annotation = strip_string_quotes(annotation);
+    normalized_annotation.contains(&normalized_target)
 }
 
 fn is_any_type(value: &str) -> bool {
@@ -1683,7 +1713,8 @@ fn extract_program_inner_type(type_arg: &str) -> Option<String> {
                 }
                 ']' => {
                     if depth == 1 {
-                        return Some(inner.trim().to_string());
+                        // Strip quotes from the extracted inner type
+                        return Some(strip_string_quotes(&inner));
                     }
                     depth -= 1;
                     inner.push(']');
@@ -1711,3 +1742,196 @@ pub fn find_interceptors(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
         })
         .collect()
 }
+
+// =============================================================================
+// Env Chain Types and Functions (for Implicit Environment Inspector)
+// =============================================================================
+
+/// An entry in the environment chain representing a default env source
+#[derive(Debug, Clone, Serialize)]
+pub struct EnvChainEntry {
+    /// Qualified name of the env (e.g., "src.base_env" or "~/.doeff")
+    pub qualified_name: String,
+    /// Absolute path to the file containing this env
+    pub file_path: String,
+    /// Line number where the env is defined
+    pub line: usize,
+    /// Keys provided by this env (may be empty if dynamic)
+    pub keys: Vec<String>,
+    /// Static values extracted from Program.pure({...}) pattern
+    pub static_values: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// True if this is the user-level config (~/.doeff.py)
+    pub is_user_config: bool,
+}
+
+/// Result of finding the environment chain for a program
+#[derive(Debug, Clone, Serialize)]
+pub struct EnvChainResult {
+    /// The qualified name of the program that was queried
+    pub program: String,
+    /// The environment chain in loading order (user config first, then root -> leaf)
+    pub env_chain: Vec<EnvChainEntry>,
+}
+
+/// Find entries with the "default" marker (implicit env definitions)
+pub fn find_default_envs(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry
+                .markers
+                .iter()
+                .any(|m| m.eq_ignore_ascii_case("default"))
+        })
+        .collect()
+}
+
+/// Find the environment chain for a given program entrypoint.
+/// 
+/// This identifies which implicit environments would be loaded when running
+/// the specified program, based on module hierarchy.
+pub fn find_env_chain(
+    entries: &[IndexEntry],
+    program_qualified_name: &str,
+) -> Option<EnvChainResult> {
+    // Find the target program entry (validates program exists)
+    let _program_entry = entries
+        .iter()
+        .find(|e| e.qualified_name == program_qualified_name)?;
+
+    // Get all default envs
+    let default_envs = find_default_envs(entries);
+
+    // Build the module path hierarchy from program location
+    // e.g., "src.features.auth.login_program" -> ["src", "src.features", "src.features.auth"]
+    let parts: Vec<&str> = program_qualified_name.split('.').collect();
+    let mut module_prefixes: Vec<String> = Vec::new();
+
+    // Build all parent module paths (including the module containing the program)
+    for i in 1..parts.len() {
+        module_prefixes.push(parts[..i].join("."));
+    }
+
+    // Collect envs that are in the module hierarchy (root to leaf order)
+    let mut env_chain: Vec<EnvChainEntry> = Vec::new();
+
+    // First, check for user-level config (~/.doeff.py)
+    if let Some(user_config) = find_user_config_env() {
+        env_chain.push(user_config);
+    }
+
+    // Then add project envs in module hierarchy order (root -> leaf)
+    for prefix in &module_prefixes {
+        for env_entry in &default_envs {
+            // Check if this env's module path matches or is a parent of the target
+            let env_module = get_module_path(&env_entry.qualified_name);
+            if env_module == *prefix || prefix.starts_with(&format!("{}.", env_module)) || env_module.starts_with(&format!("{}.", prefix)) || env_module == "" && prefix.is_empty() {
+                // Check if we already have this env
+                if !env_chain.iter().any(|e| e.qualified_name == env_entry.qualified_name) {
+                    let entry = create_env_chain_entry(env_entry);
+                    env_chain.push(entry);
+                }
+            }
+        }
+    }
+
+    // Also check root-level envs (empty module path)
+    for env_entry in &default_envs {
+        let env_module = get_module_path(&env_entry.qualified_name);
+        if env_module.is_empty() || module_prefixes.iter().any(|p| p.starts_with(&env_module) || env_module.starts_with(p)) {
+            if !env_chain.iter().any(|e| e.qualified_name == env_entry.qualified_name) {
+                let entry = create_env_chain_entry(env_entry);
+                env_chain.push(entry);
+            }
+        }
+    }
+
+    // Sort by module depth (root envs first, more specific envs later)
+    env_chain.sort_by(|a, b| {
+        // User config always first
+        if a.is_user_config && !b.is_user_config {
+            return std::cmp::Ordering::Less;
+        }
+        if !a.is_user_config && b.is_user_config {
+            return std::cmp::Ordering::Greater;
+        }
+        // Sort by depth (number of dots in qualified name)
+        let a_depth = a.qualified_name.matches('.').count();
+        let b_depth = b.qualified_name.matches('.').count();
+        a_depth.cmp(&b_depth)
+    });
+
+    Some(EnvChainResult {
+        program: program_qualified_name.to_string(),
+        env_chain,
+    })
+}
+
+/// Find all envs that would apply to the given program (regardless of hierarchy)
+pub fn find_all_envs_for_program(
+    entries: &[IndexEntry],
+    program_qualified_name: &str,
+) -> EnvChainResult {
+    find_env_chain(entries, program_qualified_name).unwrap_or_else(|| EnvChainResult {
+        program: program_qualified_name.to_string(),
+        env_chain: Vec::new(),
+    })
+}
+
+fn get_module_path(qualified_name: &str) -> String {
+    let parts: Vec<&str> = qualified_name.split('.').collect();
+    if parts.len() <= 1 {
+        String::new()
+    } else {
+        parts[..parts.len() - 1].join(".")
+    }
+}
+
+fn create_env_chain_entry(entry: &IndexEntry) -> EnvChainEntry {
+    // Try to extract static values from Program.pure({...}) pattern
+    // For now, we just mark as None - static value extraction can be enhanced later
+    EnvChainEntry {
+        qualified_name: entry.qualified_name.clone(),
+        file_path: entry.file_path.clone(),
+        line: entry.line,
+        keys: Vec::new(), // TODO: Extract keys from static analysis
+        static_values: None, // TODO: Extract from Program.pure({...})
+        is_user_config: false,
+    }
+}
+
+fn find_user_config_env() -> Option<EnvChainEntry> {
+    // Check for ~/.doeff.py
+    let home = std::env::var("HOME").ok()?;
+    let doeff_config_path = format!("{}/.doeff.py", home);
+
+    if !std::path::Path::new(&doeff_config_path).exists() {
+        return None;
+    }
+
+    // Try to parse the file and find __default_env__
+    let source = fs::read_to_string(&doeff_config_path).ok()?;
+
+    // Look for __default_env__ assignment
+    let mut line_number = 0;
+    for (idx, line) in source.lines().enumerate() {
+        if line.contains("__default_env__") && line.contains("=") {
+            line_number = idx + 1;
+            break;
+        }
+    }
+
+    if line_number == 0 {
+        return None; // No __default_env__ found
+    }
+
+    Some(EnvChainEntry {
+        qualified_name: "~/.doeff".to_string(),
+        file_path: doeff_config_path,
+        line: line_number,
+        keys: Vec::new(), // TODO: Extract keys
+        static_values: None, // TODO: Extract values
+        is_user_config: true,
+    })
+}
+
