@@ -945,7 +945,7 @@ mod tests {
 
         let content = std::fs::read_to_string(&output).unwrap();
         assert!(content.contains("doeff-linter Report"));
-        assert!(content.contains("Chart.js"));
+        assert!(content.contains("chart.js"));
         assert!(content.contains("Rules Reference"));
     }
     
