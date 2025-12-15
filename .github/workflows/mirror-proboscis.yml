@@ -38,5 +38,5 @@ jobs:
           git remote remove proboscis 2>/dev/null || true
           git remote add proboscis git@github.com:proboscis/doeff.git
 
-          git push --prune proboscis "refs/heads/*:refs/heads/*"
-          git push --prune proboscis "refs/tags/*:refs/tags/*"
+          git push --force --prune proboscis "refs/heads/*:refs/heads/*"
+          git push --force --prune proboscis "refs/tags/*:refs/tags/*"
