@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Hashable, Mapping
 import inspect
 from typing import Any, TYPE_CHECKING
 
@@ -28,6 +28,15 @@ def _is_program_like(value: object) -> bool:
 def ensure_str(value: object, *, name: str) -> None:
     if not isinstance(value, str):
         raise TypeError(f"{name} must be str, got {_type_name(value)}")
+
+
+def ensure_hashable(value: object, *, name: str) -> None:
+    if not isinstance(value, Hashable):
+        raise TypeError(f"{name} must be hashable, got {_type_name(value)}")
+    try:
+        hash(value)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        raise TypeError(f"{name} must be hashable, got {_type_name(value)}") from exc
 
 
 def ensure_callable(value: object, *, name: str) -> None:
@@ -84,8 +93,7 @@ def ensure_env_mapping(values: object, *, name: str) -> None:
     if not isinstance(values, Mapping):
         raise TypeError(f"{name} must be mapping, got {_type_name(values)}")
     for key in values.keys():
-        if not isinstance(key, str):
-            raise TypeError(f"{name} keys must be str, got {_type_name(key)}")
+        ensure_hashable(key, name=f"{name} key")
 
 
 def ensure_dict_str_any(value: object, *, name: str) -> None:
@@ -131,6 +139,7 @@ def ensure_non_empty_tuple(values: object, *, name: str) -> None:
 
 __all__ = [
     "ensure_str",
+    "ensure_hashable",
     "ensure_callable",
     "ensure_optional_callable",
     "ensure_program_like",

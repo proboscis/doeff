@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import traceback
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Generator, Iterable, Iterator
+from collections.abc import Callable, Generator, Hashable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from pprint import pformat
@@ -18,6 +18,7 @@ from typing import (
     Any,
     Generic,
     Protocol,
+    TypeAlias,
     TypeVar,
     runtime_checkable,
 )
@@ -67,6 +68,9 @@ __VENDORED_EXPORTS = (
 # Type variables
 T = TypeVar("T")
 U = TypeVar("U")
+
+# Reader environment key type (ask/local).
+EnvKey: TypeAlias = Hashable
 
 # ============================================
 # Repr Truncation Configuration
@@ -602,7 +606,7 @@ class ExecutionContext:
     """
 
     # Reader environment
-    env: dict[str, Any] = field(default_factory=dict)
+    env: dict[Any, Any] = field(default_factory=dict)
     # State storage
     state: dict[str, Any] = field(default_factory=dict)
     # Writer log
@@ -635,7 +639,7 @@ class ExecutionContext:
             program_call_stack=self.program_call_stack.copy(),  # Copy the call stack list
         )
 
-    def with_env_update(self, updates: dict[str, Any]) -> ExecutionContext:
+    def with_env_update(self, updates: dict[Any, Any]) -> ExecutionContext:
         """Create a new context with updated environment."""
         new_env = self.env.copy()
         new_env.update(updates)
@@ -656,7 +660,7 @@ class EffectObservation:
     """Lightweight record of an observed effect during execution."""
 
     effect_type: str
-    key: str | None  # noqa: DOEFF013
+    key: EnvKey | None  # noqa: DOEFF013
     context: EffectCreationContext | None = None  # noqa: DOEFF013
     call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)
 
@@ -787,7 +791,7 @@ class RunResult(Generic[T]):
         return isinstance(self.result, Err)
 
     @property
-    def env(self) -> dict[str, Any]:
+    def env(self) -> dict[Any, Any]:
         """Get the final environment."""
         return self.context.env
 
@@ -1176,7 +1180,7 @@ class RunResult(Generic[T]):
 @dataclass(frozen=True)
 class _DepAskUsageRecord:
     effect_type: str
-    key: str | None
+    key: EnvKey | None
     count: int
     first_context: EffectCreationContext | None
 
@@ -1184,7 +1188,7 @@ class _DepAskUsageRecord:
 @dataclass(frozen=True)
 class _DepAskStats:
     records: tuple[_DepAskUsageRecord, ...]
-    keys_by_type: dict[str, tuple[str | None, ...]]
+    keys_by_type: dict[str, tuple[EnvKey | None, ...]]
 
     @classmethod
     def from_observations(
@@ -1193,12 +1197,12 @@ class _DepAskStats:
     ) -> _DepAskStats:
         interesting = {"Dep", "Ask"}
         records: list[_DepAskUsageRecord] = []
-        record_index: dict[tuple[str, str | None], int] = {}
-        keys_by_type: dict[str, list[str | None]] = {
+        record_index: dict[tuple[str, EnvKey | None], int] = {}
+        keys_by_type: dict[str, list[EnvKey | None]] = {
             effect_type: [] for effect_type in interesting
         }
 
-        def _maybe_add_key(effect_type: str, key: str | None) -> None:
+        def _maybe_add_key(effect_type: str, key: EnvKey | None) -> None:
             seen_keys = keys_by_type.setdefault(effect_type, [])
             if key not in seen_keys:
                 seen_keys.append(key)
@@ -1245,7 +1249,7 @@ class _DepAskStats:
     def is_empty(self) -> bool:
         return not self.records
 
-    def keys_for(self, effect_type: str) -> tuple[str | None, ...]:  # noqa: DOEFF006
+    def keys_for(self, effect_type: str) -> tuple[EnvKey | None, ...]:  # noqa: DOEFF006
         return self.keys_by_type.get(effect_type, ())
 
 
@@ -1820,6 +1824,7 @@ def _wrap_callable(
     return wrapper
 __all__ = [  # noqa: DOEFF021
     "NOTHING",
+    "EnvKey",
     "Effect",
     "EffectFailure",
     "EffectFailureError",
