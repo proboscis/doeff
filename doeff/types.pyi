@@ -1,11 +1,12 @@
-from collections.abc import Callable, Generator
-from typing import Any, Generic, TypeVar
+from collections.abc import Callable, Generator, Hashable
+from typing import Any, Generic, TypeAlias, TypeVar
 
 from doeff.utils import BoundedLog
 
 __VENDORED_EXPORTS: Any
 T = TypeVar("T")
 U = TypeVar("U")
+EnvKey: TypeAlias = Hashable
 
 # Repr truncation configuration
 DEFAULT_REPR_LIMIT: int
@@ -53,15 +54,16 @@ def _wrap_callable(func: Callable[Any, Any], transform: Callable[Any, Effect | P
 
 class EffectObservation:
     effect_type: str
-    key: str | None
+    key: EnvKey | None
     context: EffectCreationContext | None
+    call_stack_snapshot: tuple[CallFrame, ...]
 
 class _DepAskStats:
     records: tuple[_DepAskUsageRecord, Any]
-    keys_by_type: dict[str, tuple[str | None, Any]]
+    keys_by_type: dict[str, tuple[EnvKey | None, Any]]
     def from_observations(cls, observations: list[EffectObservation]) -> _DepAskStats: ...
     def is_empty(self) -> bool: ...
-    def keys_for(self, effect_type: str) -> tuple[str | None, Any]: ...
+    def keys_for(self, effect_type: str) -> tuple[EnvKey | None, Any]: ...
 
 class RunResultDisplayContext:
     run_result: RunResult[Any]
@@ -148,7 +150,7 @@ class _EnvironmentSection:
     def render(self) -> list[str]: ...
 
 class ExecutionContext:
-    env: dict[str, Any]
+    env: dict[Any, Any]
     state: dict[str, Any]
     log: BoundedLog
     graph: WGraph
@@ -157,7 +159,7 @@ class ExecutionContext:
     effect_observations: list[EffectObservation]
     program_call_stack: list[CallFrame]
     def copy(self) -> ExecutionContext: ...
-    def with_env_update(self, updates: dict[str, Any]) -> ExecutionContext: ...
+    def with_env_update(self, updates: dict[Any, Any]) -> ExecutionContext: ...
 
 class _SummarySection:
     def render(self) -> list[str]: ...
@@ -181,7 +183,7 @@ class RunResult(Generic[T]):
     def value(self) -> T: ...
     def is_ok(self) -> bool: ...
     def is_err(self) -> bool: ...
-    def env(self) -> dict[str, Any]: ...
+    def env(self) -> dict[Any, Any]: ...
     def state(self) -> dict[str, Any]: ...
     def shared_state(self) -> dict[str, Any]: ...
     def log(self) -> list[Any]: ...
@@ -249,4 +251,3 @@ class _TracebackSplit:
 class _HeadTailLengths:
     head_lines: int
     tail_lines: int
-

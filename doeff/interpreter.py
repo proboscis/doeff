@@ -66,6 +66,7 @@ from doeff.handlers import (
 from doeff.program import Program
 from doeff.types import CallFrame
 from doeff.types import (
+    EnvKey,
     Effect,
     EffectFailure,
     EffectObservation,
@@ -387,7 +388,7 @@ class ProgramInterpreter:
             return
 
         effect_type: str | None = None
-        key: str | None = None
+        key: EnvKey | None = None
 
         if _effect_is(effect, DepInjectEffect):
             effect_type = "Dep"

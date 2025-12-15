@@ -132,7 +132,7 @@ class ReaderEffectHandler:
         if resolver is not None:
             return await resolver.provide(key)
 
-        raise KeyError(f"Missing environment key: {key}")
+        raise KeyError(f"Missing environment key: {key!r}")
 
     async def handle_local(
         self, effect: LocalEffect, ctx: ExecutionContext, engine: ProgramInterpreter
