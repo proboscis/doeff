@@ -10,7 +10,7 @@ import sys
 from collections import OrderedDict
 from typing import Iterable, Sequence
 
-DEFAULT_VERSIONS: tuple[str, ...] = ("3.10", "3.11", "3.12", "3.13", "3.14t")
+DEFAULT_VERSIONS: tuple[str, ...] = ("3.10", "3.11", "3.12")
 DEFAULT_COMMAND: Sequence[str] = (
     "python",
     "-c",
