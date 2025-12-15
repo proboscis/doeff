@@ -18,5 +18,8 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v1
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Verify Python versions
         run: python tools/test_python_versions.py
