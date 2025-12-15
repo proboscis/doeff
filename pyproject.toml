@@ -54,10 +54,10 @@ build-backend = "hatchling.build"
 
 [tool.uv.workspace]
 members = ["packages/*"]
-exclude = ["packages/doeff-indexer"]
 
 [tool.uv.sources]
 doeff-pinjected = { workspace = true }
+doeff-indexer = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
