@@ -27,6 +27,7 @@ pub mod doeff021_no_dunder_all;
 pub mod doeff022_prefer_do_function;
 pub mod doeff023_pipeline_marker;
 pub mod doeff024_no_recover_ask;
+pub mod doeff030_ask_result_type_annotation;
 pub mod doeff031_no_redundant_do_wrapper_entrypoint;
 
 use base::LintRule;
@@ -59,6 +60,7 @@ pub fn get_all_rules() -> Vec<Box<dyn LintRule>> {
         Box::new(doeff022_prefer_do_function::PreferDoFunctionRule::new()),
         Box::new(doeff023_pipeline_marker::PipelineMarkerRule::new()),
         Box::new(doeff024_no_recover_ask::NoRecoverAskRule::new()),
+        Box::new(doeff030_ask_result_type_annotation::AskResultTypeAnnotationRule::new()),
         Box::new(
             doeff031_no_redundant_do_wrapper_entrypoint::NoRedundantDoWrapperEntrypointRule::new(),
         ),
@@ -101,7 +103,7 @@ mod tests {
     #[test]
     fn test_all_rules_loaded() {
         let rules = get_all_rules();
-        assert_eq!(rules.len(), 25);
+        assert_eq!(rules.len(), 26);
 
         let rule_ids: Vec<_> = rules.iter().map(|r| r.rule_id()).collect();
         assert!(rule_ids.contains(&"DOEFF001"));
@@ -120,6 +122,7 @@ mod tests {
         assert!(rule_ids.contains(&"DOEFF022"));
         assert!(rule_ids.contains(&"DOEFF023"));
         assert!(rule_ids.contains(&"DOEFF024"));
+        assert!(rule_ids.contains(&"DOEFF030"));
         assert!(rule_ids.contains(&"DOEFF031"));
     }
 

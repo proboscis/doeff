@@ -530,6 +530,11 @@ fn get_rule_info(rule_id: &str) -> RuleInfo {
             description: "Using `recover()` with `ask()` defeats dependency injection.",
             fix: "Ensure dependencies are properly provided instead of using fallbacks.",
         },
+        "DOEFF030" => RuleInfo {
+            name: "Ask Result Type Annotation",
+            description: "Results of `yield ask(...)` must be assigned to typed variables, and callable injections must use Protocol keys with @impl providers.",
+            fix: "Use `value: Type = yield ask(\"key\")`. For callable injection, define a Protocol, ask with that Protocol, and provide an `@impl(Protocol)` function.",
+        },
         "DOEFF031" => RuleInfo {
             name: "No Redundant @do Wrapper Entrypoints",
             description: "Avoid creating Program entrypoints by calling @do wrappers that only forward args to a single yielded call and return it.",
