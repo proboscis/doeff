@@ -2070,11 +2070,11 @@ async function runDefault(
   const folder =
     workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
   const args = ['run', '--program', programPath];
-  const commandDisplay = `python -m doeff ${args.join(' ')}`;
   const sessionName = buildSessionName(debugMode ? 'Debug' : 'Run', programPath);
 
   if (debugMode) {
     // Debug mode: use VSCode debug infrastructure with debugpy
+    const commandDisplay = `python -m doeff ${args.join(' ')}`;
     const debugConfig: vscode.DebugConfiguration = {
       type: 'python',
       request: 'launch',
@@ -2094,11 +2094,13 @@ async function runDefault(
     output.appendLine(`[info] Debugging: ${commandDisplay}`);
     await vscode.debug.startDebugging(folder, debugConfig);
   } else {
-    // Run mode: use terminal directly without debugpy
+    // Run mode: use terminal directly without debugpy, respecting IDE's Python selection
+    const pythonPath = await getPythonInterpreter() ?? 'python';
+    const command = `"${pythonPath}" -m doeff ${args.join(' ')}`;
     const terminal = createTerminal(sessionName, folder?.uri.fsPath);
-    vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
-    output.appendLine(`[info] Running: ${commandDisplay}`);
-    terminal.sendText(commandDisplay);
+    vscode.window.showInformationMessage(`Running: ${command}`);
+    output.appendLine(`[info] Running: ${command}`);
+    terminal.sendText(command);
     terminal.show();
   }
 }
@@ -2129,7 +2131,6 @@ async function runSelection(
     args.push('--transform', selection.transformer.qualifiedName);
   }
 
-  const commandDisplay = `python -m doeff ${args.join(' ')}`;
   const modeLabel = debugMode ? 'Debugging' : 'Running';
   const sessionName = buildSessionName(
     debugMode ? 'Debug' : 'Run',
@@ -2143,6 +2144,7 @@ async function runSelection(
 
   if (debugMode) {
     // Debug mode: use VSCode debug infrastructure with debugpy
+    const commandDisplay = `python -m doeff ${args.join(' ')}`;
     const debugConfig: vscode.DebugConfiguration = {
       type: 'python',
       request: 'launch',
@@ -2162,11 +2164,13 @@ async function runSelection(
     output.appendLine(`[info] Command: ${commandDisplay}`);
     await vscode.debug.startDebugging(folder, debugConfig);
   } else {
-    // Run mode: use terminal directly without debugpy
+    // Run mode: use terminal directly without debugpy, respecting IDE's Python selection
+    const pythonPath = await getPythonInterpreter() ?? 'python';
+    const command = `"${pythonPath}" -m doeff ${args.join(' ')}`;
     const terminal = createTerminal(sessionName, folder?.uri.fsPath);
-    vscode.window.showInformationMessage(`Running: ${commandDisplay}`);
-    output.appendLine(`[info] Command: ${commandDisplay}`);
-    terminal.sendText(commandDisplay);
+    vscode.window.showInformationMessage(`Running: ${command}`);
+    output.appendLine(`[info] Command: ${command}`);
+    terminal.sendText(command);
     terminal.show();
   }
 }

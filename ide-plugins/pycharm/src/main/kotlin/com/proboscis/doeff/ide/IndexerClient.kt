@@ -139,6 +139,87 @@ class IndexerClient(private val project: Project) {
             }
     }
 
+    fun findEnvChain(programQualifiedName: String, onSuccess: (EnvChainResult) -> Unit) {
+        CompletableFuture.supplyAsync { runEnvChain(programQualifiedName) }
+            .whenComplete { result, throwable ->
+                if (throwable != null) {
+                    notifyError(
+                        "Failed to query env chain",
+                        throwable.message ?: "Unknown error",
+                        throwable
+                    )
+                    log.warn("Error while querying env chain", throwable)
+                    return@whenComplete
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    onSuccess(result)
+                }
+            }
+    }
+
+    private fun runEnvChain(programQualifiedName: String): EnvChainResult {
+        val indexerPath = resolveIndexerPath() ?: return EnvChainResult(programQualifiedName, emptyList())
+        val root = project.basePath ?: return EnvChainResult(programQualifiedName, emptyList())
+        val command = mutableListOf(indexerPath, "find-env-chain", "--root", root, "--program", programQualifiedName)
+
+        lastExecutedCommand = command.joinToString(" ")
+        log.debug("Executing doeff-indexer: ${command.joinToString(" ")}")
+        val process = ProcessBuilder(command)
+            .directory(File(root))
+            .start()
+
+        val output = StringBuilder()
+        val error = StringBuilder()
+        val outputReader = Thread {
+            process.inputStream.bufferedReader().use { reader ->
+                output.append(reader.readText())
+            }
+        }
+        val errorReader = Thread {
+            process.errorStream.bufferedReader().use { reader ->
+                error.append(reader.readText())
+            }
+        }
+
+        outputReader.start()
+        errorReader.start()
+
+        val completed = process.waitFor(30, TimeUnit.SECONDS)
+        outputReader.join(1000)
+        errorReader.join(1000)
+
+        val stdout = output.toString()
+        val stderr = error.toString()
+
+        if (!completed) {
+            process.destroyForcibly()
+            notifyTranscript(command, null, stdout, stderr, "timeout after 30s", isError = true)
+            return EnvChainResult(programQualifiedName, emptyList())
+        }
+
+        val exitCode = process.exitValue()
+        if (exitCode != 0) {
+            notifyTranscript(command, exitCode, stdout, stderr, "exit code $exitCode", isError = true)
+            return EnvChainResult(programQualifiedName, emptyList())
+        }
+
+        val result = parseEnvChain(stdout)
+        return if (result != null) {
+            notifyTranscript(
+                command,
+                exitCode,
+                stdout,
+                stderr,
+                "success (${result.envChain.size} sources)",
+                isError = false
+            )
+            result
+        } else {
+            notifyTranscript(command, exitCode, stdout, stderr, "invalid JSON output", isError = true)
+            EnvChainResult(programQualifiedName, emptyList())
+        }
+    }
+
     private fun runIndexerCommand(
         command: String,
         typeArgument: String?,
@@ -364,6 +445,15 @@ class IndexerClient(private val project: Project) {
             payload.entries
         } catch (ex: JsonSyntaxException) {
             log.warn("Failed to parse indexer output: $stdout", ex)
+            null
+        }
+    }
+
+    private fun parseEnvChain(stdout: String): EnvChainResult? {
+        return try {
+            gson.fromJson(stdout, EnvChainResult::class.java)
+        } catch (ex: JsonSyntaxException) {
+            log.warn("Failed to parse env-chain output: $stdout", ex)
             null
         }
     }
