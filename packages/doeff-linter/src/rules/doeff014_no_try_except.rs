@@ -173,7 +173,7 @@ def risky_operation():
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("Safe"));
         assert!(violations[0].message.contains("recover"));
-        assert!(violations[0].message.contains("first_success"));
+        assert!(violations[0].message.contains("Catch"));
     }
 
     #[test]
@@ -372,6 +372,5 @@ def match_with_try(value):
         assert_eq!(violations.len(), 1);
     }
 }
-
 
 

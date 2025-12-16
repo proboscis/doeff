@@ -530,6 +530,11 @@ fn get_rule_info(rule_id: &str) -> RuleInfo {
             description: "Using `recover()` with `ask()` defeats dependency injection.",
             fix: "Ensure dependencies are properly provided instead of using fallbacks.",
         },
+        "DOEFF031" => RuleInfo {
+            name: "No Redundant @do Wrapper Entrypoints",
+            description: "Avoid creating Program entrypoints by calling @do wrappers that only forward args to a single yielded call and return it.",
+            fix: "Replace `p_x: Program[...] = wrapper(...)` with `p_x: Program[...] = underlying(...)` using the same arguments. If the wrapper is intentional (naming/tracing), add `# noqa: DOEFF031`.",
+        },
         "NOQA001" => RuleInfo {
             name: "Malformed noqa Comment",
             description: "The noqa comment format appears incorrect and may not suppress the intended rule.",
