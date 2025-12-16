@@ -172,6 +172,8 @@
   },
   "active": "b4b019001b1ed95a",
   "lastOpenFiles": [
+    "Issues/ISSUE-CORE-401-program-yield-intercept-transform.md",
+    "Issues/ISSUE-INDEXER-001-obsidian-impl-registry-generator.md",
     "Projects/PROJECT-VSCODE-001-implicit-env-inspector.md",
     "Dashboard.md",
     "NanoBanana.md",
@@ -198,8 +200,6 @@
     "Tasks/TASK-VSCODE-003-entrypoint-indexing.md",
     "Tasks/TASK-VSCODE-002-treeview-provider.md",
     "Features/FEAT-VSCODE-002-entrypoint-explorer.md",
-    "Tasks/TASK-VSCODE-001-kleisli-codelens.md",
-    "Features/FEAT-VSCODE-001-kleisli-buttons.md",
-    "Tasks/TASK-LINTER-017-pipeline-marker.md"
+    "Tasks/TASK-VSCODE-001-kleisli-codelens.md"
   ]
 }

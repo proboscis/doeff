@@ -7,15 +7,14 @@ Run `doeff` `Program` values directly from VS Code. The extension mirrors the Py
 - VS Code Python extension
 - `doeff` installed in the active Python environment (`pip install doeff`)
 
-The extension automatically discovers `doeff-indexer` from your Python environment. No additional
-configuration is needed if you have `doeff` installed via pip.
+The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linux, Windows). No additional configuration is needed in most cases.
 
 ### Binary Discovery Order
 
-1. `DOEFF_INDEXER_PATH` environment variable (if set)
-2. Python environment bin directory (from the Python extension)
-3. Common virtual env locations (`.venv/bin/`, `venv/bin/`)
-4. System paths (`/usr/local/bin/`, `~/.cargo/bin/`, etc.)
+1. **Bundled binary** (platform-specific binary included with the extension)
+2. `DOEFF_INDEXER_PATH` environment variable (if set)
+3. Python environment bin directory (from the Python extension)
+4. System paths (`/usr/local/bin/`, `~/.cargo/bin/`, `~/.local/bin/`, etc.)
 
 ## How it works
 

@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
