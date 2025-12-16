@@ -1,5 +1,6 @@
 package com.proboscis.doeff.ide
 
+import com.google.gson.JsonElement
 import com.google.gson.annotations.SerializedName
 
 enum class IndexEntryCategory {
@@ -87,3 +88,17 @@ fun ProgramTypeUsage.matchesType(typeName: String): Boolean {
     }
     return typeArguments.any { it.equals(typeName, ignoreCase = true) }
 }
+
+data class EnvChainEntry(
+    @SerializedName("qualified_name") val qualifiedName: String,
+    @SerializedName("file_path") val filePath: String,
+    val line: Int,
+    val keys: List<String>,
+    @SerializedName("static_values") val staticValues: Map<String, JsonElement>?,
+    @SerializedName("is_user_config") val isUserConfig: Boolean,
+)
+
+data class EnvChainResult(
+    val program: String,
+    @SerializedName("env_chain") val envChain: List<EnvChainEntry>,
+)
