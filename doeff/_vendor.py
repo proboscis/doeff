@@ -10,7 +10,7 @@ import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final, Generic, NoReturn, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Final, Generic, NoReturn, TypeVar, cast, overload
 
 from frozendict import frozendict
 
@@ -120,9 +120,7 @@ class Result(Generic[T_co]):
             return result
         return cast(Result[U], self)
 
-    def and_then_k(
-        self, kleisli: KleisliProgram[[T_co], U]
-    ) -> Program[U]:
+    def and_then_k(self, kleisli: KleisliProgram[[T_co], U]) -> Program[U]:
         """Chain a Kleisli program on success.
 
         If this is ``Ok``, calls the Kleisli program with the value.
@@ -151,9 +149,7 @@ class Result(Generic[T_co]):
 
         return GeneratorProgram(fail_generator)
 
-    def recover_k(
-        self, kleisli: KleisliProgram[[Exception], T_co]
-    ) -> Program[T_co]:
+    def recover_k(self, kleisli: KleisliProgram[[Exception], T_co]) -> Program[T_co]:
         """Recover from an error using a Kleisli program.
 
         If this is ``Ok``, returns a pure ``Program`` with the value.
@@ -259,12 +255,14 @@ def trace_err(e: BaseException, created_at: str | None = None) -> TraceError:
 @dataclass(frozen=True)
 class Ok(Result[T], Generic[T]):
     """Success result."""
+
     value: T
 
 
 @dataclass(frozen=True)
 class Err(Result[NoReturn]):
     """Error result."""
+
     error: Exception
 
 
@@ -369,6 +367,41 @@ class Maybe(Generic[T_co]):
             return NOTHING
         return Some(value)
 
+    @overload
+    def __or__(self, other: Maybe[U]) -> Maybe[T_co | U]: ...
+
+    @overload
+    def __or__(self, other: object) -> Any: ...
+
+    def __or__(self, other: object) -> Any:
+        """
+        Return the first ``Some`` between ``self`` and ``other``.
+
+        This enables the common fallback pattern:
+
+        >>> from doeff import NOTHING, Some
+        >>> (NOTHING | Some(0)).unwrap()
+        0
+        """
+
+        if not isinstance(other, Maybe):
+            return NotImplemented
+
+        if isinstance(self, Some):
+            return self
+        return other
+
+    @overload
+    def __ror__(self, other: Maybe[U]) -> Maybe[T_co | U]: ...
+
+    @overload
+    def __ror__(self, other: object) -> Any: ...
+
+    def __ror__(self, other: object) -> Any:
+        if not isinstance(other, Maybe):
+            return NotImplemented
+        return other.__or__(self)
+
     def __bool__(self) -> bool:
         """Truthiness matches :meth:`is_some`."""
 
@@ -399,12 +432,14 @@ class Nothing(Maybe[NoReturn]):
 
 NOTHING: Final[Maybe[NoReturn]] = Nothing()
 
+
 # =========================================================
 # Graph (Minimal Implementation)
 # =========================================================
 @dataclass(frozen=True)
 class WNode:
     """A node in the computation graph."""
+
     value: Any
 
     def __hash__(self) -> int:
@@ -415,6 +450,7 @@ class WNode:
 @dataclass(frozen=True)
 class WStep:
     """A computation step in the graph."""
+
     inputs: tuple[WNode, ...]
     output: WNode
     meta: dict[str, Any] = field(default_factory=dict)
@@ -427,6 +463,7 @@ class WStep:
 @dataclass(frozen=True)
 class WGraph:
     """Computation graph tracking dependencies."""
+
     last: WStep = field(default_factory=lambda: WStep((), WNode(None)))
     steps: frozenset[WStep] = field(default_factory=frozenset)
 
@@ -442,11 +479,7 @@ class WGraph:
         # Merge new metadata with existing metadata instead of replacing
         merged_meta = {**self.last.meta, **meta} if self.last.meta else meta
         # Create a new last step with merged metadata
-        new_last = WStep(
-            inputs=self.last.inputs,
-            output=self.last.output,
-            meta=merged_meta
-        )
+        new_last = WStep(inputs=self.last.inputs, output=self.last.output, meta=merged_meta)
         # Update the steps set - remove old last, add new last
         new_steps = (self.steps - {self.last}) | {new_last}
         return WGraph(last=new_last, steps=new_steps)

@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import Err, Maybe, NOTHING, Ok, Some
+from doeff import NOTHING, Err, Maybe, Ok, Some
 
 
 def test_maybe_from_optional_and_truthiness():
@@ -46,12 +46,12 @@ def test_maybe_ok_or_helpers():
     err_instance = ValueError("missing")
     err_result = nothing.ok_or(err_instance)
     assert isinstance(err_result, Err)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="missing"):
         err_result.unwrap()
 
     lazy_result = nothing.ok_or_else(lambda: RuntimeError("boom"))
     assert isinstance(lazy_result, Err)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="boom"):
         lazy_result.unwrap()
 
 
@@ -61,3 +61,10 @@ def test_maybe_to_optional_conversion():
 
     assert some.to_optional() == 10
     assert nothing.to_optional() is None
+
+
+def test_maybe_or_operator_prefers_first_some():
+    assert (NOTHING | Some(0)).unwrap() == 0
+    assert (Some(0) | NOTHING).unwrap() == 0
+    assert (Some(1) | Some(0)).unwrap() == 1
+    assert (NOTHING | NOTHING) is NOTHING
