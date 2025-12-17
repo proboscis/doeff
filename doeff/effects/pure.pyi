@@ -1,8 +1,16 @@
-__all__: Any
+from __future__ import annotations
 
-def Pure(value: Any) -> Effect: ...
+from collections.abc import Callable
+from typing import Any
 
-class PureEffect:
+from doeff.effects.base import Effect, EffectBase
+from doeff.program import Program
+
+class PureEffect(EffectBase):
     value: Any
-    def intercept(self, transform: Callable[Any, Effect | Program]) -> PureEffect: ...
 
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> PureEffect: ...
+
+def Pure(value: Any) -> Effect: ...  # noqa: N802
+
+__all__ = ["Pure", "PureEffect"]

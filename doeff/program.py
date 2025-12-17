@@ -34,6 +34,7 @@ T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
 
+
 class _AutoUnwrapStrategy:
     """Describe which arguments should be auto-unwrapped for a Kleisli call."""
 
@@ -71,11 +72,9 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
     if stripped.startswith("Optional[") and stripped.endswith("]"):
         return _string_annotation_is_program(stripped[9:-1])
     if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
-        return _string_annotation_is_program(
-            stripped[len("typing.Optional["):-1]
-        )
+        return _string_annotation_is_program(stripped[len("typing.Optional[") : -1])
     if stripped.startswith("Annotated[") and stripped.endswith("]"):
-        inner = stripped[len("Annotated["):-1]
+        inner = stripped[len("Annotated[") : -1]
         first_part = inner.split(",", 1)[0]
         return _string_annotation_is_program(first_part)
     normalized = stripped.replace(" ", "")
@@ -97,11 +96,9 @@ def _string_annotation_is_effect(annotation_text: str) -> bool:
     if stripped.startswith("Optional[") and stripped.endswith("]"):
         return _string_annotation_is_effect(stripped[9:-1])
     if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
-        return _string_annotation_is_effect(
-            stripped[len("typing.Optional["):-1]
-        )
+        return _string_annotation_is_effect(stripped[len("typing.Optional[") : -1])
     if stripped.startswith("Annotated[") and stripped.endswith("]"):
-        inner = stripped[len("Annotated["):-1]
+        inner = stripped[len("Annotated[") : -1]
         first_part = inner.split(",", 1)[0]
         return _string_annotation_is_effect(first_part)
     normalized = stripped.replace(" ", "")
@@ -269,7 +266,9 @@ class ProgramBase(ABC, Generic[T]):
 
             from doeff.effects import gather, gather_dict
 
-            def gather_inputs() -> Generator[Effect | Program, Any, tuple[list[Any], dict[str, Any]]]:
+            def gather_inputs() -> Generator[
+                Effect | Program, Any, tuple[list[Any], dict[str, Any]]
+            ]:
                 resolved_args = yield gather(*arg_programs)
                 resolved_kwargs = yield gather_dict(kw_programs)
                 return list(resolved_args), dict(resolved_kwargs)
@@ -307,10 +306,7 @@ class ProgramBase(ABC, Generic[T]):
             value = yield self
             next_prog = f(value)
             if not isinstance(next_prog, ProgramBase):
-                raise TypeError(
-                    "binder must return a Program; got "
-                    f"{type(next_prog).__name__}"
-                )
+                raise TypeError(f"binder must return a Program; got {type(next_prog).__name__}")
             result = yield next_prog
             return result
 
@@ -321,9 +317,7 @@ class ProgramBase(ABC, Generic[T]):
 
         return self.flat_map(binder)
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> Program[T]:
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]:
         """Apply ``transform`` to all effects yielded by this program."""
 
         if not callable(transform):
@@ -373,9 +367,7 @@ class ProgramBase(ABC, Generic[T]):
                 if isinstance(candidate, (ProgramBase, EffectBase)):
                     normalized = candidate
                 else:
-                    raise TypeError(
-                        "Program.first_some expects Program or Effect candidates"
-                    )
+                    raise TypeError("Program.first_some expects Program or Effect candidates")
                 value = yield normalized
 
                 maybe = value if isinstance(value, Maybe) else Maybe.from_optional(value)
@@ -402,21 +394,21 @@ class ProgramBase(ABC, Generic[T]):
     def traverse(
         items: list[T],
         func: Callable[[T], Program[U]],
-    ) -> KleisliProgramCall[list[U]]:
+    ) -> Program[list[U]]:
         programs = [func(item) for item in items]
         return ProgramBase.sequence(programs)
 
     @staticmethod
-    def list(*values: Iterable[Program[U] | U]) -> Program[list[U]]:
+    def list(*values: Program[U] | U) -> Program[list[U]]:
         programs = [ProgramBase.lift(value) for value in values]
         return ProgramBase.sequence(programs)
 
     @staticmethod
-    def tuple(*values: Iterable[Program[U] | U]) -> Program[tuple[U, ...]]:
+    def tuple(*values: Program[U] | U) -> Program[tuple[U, ...]]:
         return ProgramBase.list(*values).map(lambda items: tuple(items))
 
     @staticmethod
-    def set(*values: Iterable[Program[U] | U]) -> Program[set[U]]:
+    def set(*values: Program[U] | U) -> Program[set[U]]:
         return ProgramBase.list(*values).map(lambda items: set(items))
 
     @staticmethod
@@ -429,10 +421,7 @@ class ProgramBase(ABC, Generic[T]):
         from doeff.effects import gather_dict
 
         def dict_generator():
-            program_map = {
-                key: ProgramBase.lift(value)
-                for key, value in raw.items()
-            }
+            program_map = {key: ProgramBase.lift(value) for key, value in raw.items()}
             effect = gather_dict(program_map)
             result = yield effect
             return dict(result)
@@ -449,6 +438,8 @@ class GeneratorProgram(ProgramBase[T]):
 
     def to_generator(self) -> Generator[Effect | Program, Any, T]:
         return self.factory()
+
+
 @runtime_checkable
 class ProgramProtocol(Protocol[T]):
     """
@@ -636,7 +627,6 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         return KleisliProgramCall.create_derived(flatmapped_gen, parent=self)
 
 
-
 @dataclass
 class _InterceptedProgram(ProgramBase[T]):
     """Program wrapper that delegates interception to an effect handler."""
@@ -672,9 +662,7 @@ class _InterceptedProgram(ProgramBase[T]):
 
         return cls(base_program=base_program, transforms=combined)
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> Program[T]:
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]:
         if not callable(transform):
             raise TypeError("transform must be callable")
         return self.compose(self.base_program, self.transforms + (transform,))
