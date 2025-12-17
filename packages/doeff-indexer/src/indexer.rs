@@ -1777,12 +1777,8 @@ pub struct EnvChainResult {
 pub fn find_default_envs(entries: &[IndexEntry]) -> Vec<&IndexEntry> {
     entries
         .iter()
-        .filter(|entry| {
-            entry
-                .markers
-                .iter()
-                .any(|m| m.eq_ignore_ascii_case("default"))
-        })
+        .filter(|entry| entry.item_kind == ItemKind::Assignment)
+        .filter(|entry| entry.markers.iter().any(|m| m.eq_ignore_ascii_case("default")))
         .collect()
 }
 
@@ -1802,17 +1798,24 @@ pub fn find_env_chain(
     // Get all default envs
     let default_envs = find_default_envs(entries);
 
-    // Build the module path hierarchy from program location
-    // e.g., "src.features.auth.login_program" -> ["src", "src.features", "src.features.auth"]
-    let parts: Vec<&str> = program_qualified_name.split('.').collect();
+    // Build the module path hierarchy from program location.
+    // e.g., "a.b.c.p_entrypoint" -> ["a", "a.b", "a.b.c"]
+    let program_module = get_module_path(program_qualified_name);
+    let parts: Vec<&str> = program_module
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect();
     let mut module_prefixes: Vec<String> = Vec::new();
 
-    // Build all parent module paths (including the module containing the program)
-    for i in 1..parts.len() {
+    for i in 1..=parts.len() {
         module_prefixes.push(parts[..i].join("."));
     }
 
-    // Collect envs that are in the module hierarchy (root to leaf order)
+    if module_prefixes.is_empty() {
+        module_prefixes.push(String::new());
+    }
+
+    // Collect envs that are in the module hierarchy (root to leaf order).
     let mut env_chain: Vec<EnvChainEntry> = Vec::new();
 
     // First, check for user-level config (~/.doeff.py)
@@ -1820,29 +1823,15 @@ pub fn find_env_chain(
         env_chain.push(user_config);
     }
 
-    // Then add project envs in module hierarchy order (root -> leaf)
-    for prefix in &module_prefixes {
-        for env_entry in &default_envs {
-            // Check if this env's module path matches or is a parent of the target
-            let env_module = get_module_path(&env_entry.qualified_name);
-            if env_module == *prefix || prefix.starts_with(&format!("{}.", env_module)) || env_module.starts_with(&format!("{}.", prefix)) || env_module == "" && prefix.is_empty() {
-                // Check if we already have this env
-                if !env_chain.iter().any(|e| e.qualified_name == env_entry.qualified_name) {
-                    let entry = create_env_chain_entry(env_entry);
-                    env_chain.push(entry);
-                }
-            }
-        }
-    }
-
-    // Also check root-level envs (empty module path)
     for env_entry in &default_envs {
         let env_module = get_module_path(&env_entry.qualified_name);
-        if env_module.is_empty() || module_prefixes.iter().any(|p| p.starts_with(&env_module) || env_module.starts_with(p)) {
-            if !env_chain.iter().any(|e| e.qualified_name == env_entry.qualified_name) {
-                let entry = create_env_chain_entry(env_entry);
-                env_chain.push(entry);
-            }
+        if module_prefixes.contains(&env_module)
+            && !env_chain
+                .iter()
+                .any(|existing| existing.qualified_name == env_entry.qualified_name)
+        {
+            let entry = create_env_chain_entry(env_entry);
+            env_chain.push(entry);
         }
     }
 
@@ -1934,4 +1923,3 @@ fn find_user_config_env() -> Option<EnvChainEntry> {
         is_user_config: true,
     })
 }
-

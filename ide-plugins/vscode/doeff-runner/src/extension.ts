@@ -224,10 +224,24 @@ interface EnvChainEntry {
   isUserConfig?: boolean;
 }
 
-interface EnvChainResult {
+type RawEnvChainEntry = Partial<{
+  qualifiedName: string;
+  qualified_name: string;
+  filePath: string;
+  file_path: string;
+  line: number;
+  keys: string[];
+  staticValues: Record<string, unknown> | null;
+  static_values: Record<string, unknown> | null;
+  isUserConfig: boolean;
+  is_user_config: boolean;
+}>;
+
+type RawEnvChainResult = Partial<{
   program: string;
-  envChain: EnvChainEntry[];
-}
+  envChain: RawEnvChainEntry[];
+  env_chain: RawEnvChainEntry[];
+}>;
 
 interface EnvChainNode {
   type: 'envChain';
@@ -689,6 +703,54 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
 
   private envChainCache = new Map<string, EnvChainEntry[]>();
 
+  private modulePathFromQualifiedName(qualifiedName: string): string {
+    const lastDot = qualifiedName.lastIndexOf('.');
+    return lastDot >= 0 ? qualifiedName.slice(0, lastDot) : '';
+  }
+
+  private modulePrefixesForProgram(programQualifiedName: string): Set<string> {
+    const programModule = this.modulePathFromQualifiedName(programQualifiedName);
+    const parts = programModule.split('.').filter(Boolean);
+    const prefixes = new Set<string>();
+
+    if (parts.length === 0) {
+      prefixes.add('');
+      return prefixes;
+    }
+
+    for (let i = 1; i <= parts.length; i++) {
+      prefixes.add(parts.slice(0, i).join('.'));
+    }
+    return prefixes;
+  }
+
+  private filterEnvChain(programQualifiedName: string, envChain: EnvChainEntry[]): EnvChainEntry[] {
+    if (envChain.length === 0) {
+      return envChain;
+    }
+
+    const showUserConfig = vscode.workspace
+      .getConfiguration()
+      .get<boolean>('doeff-runner.envInspector.showUserConfig', true);
+
+    const modulePrefixes = this.modulePrefixesForProgram(programQualifiedName);
+    const byQualifiedName = new Map(this.indexCache.map(entry => [entry.qualifiedName, entry]));
+
+    return envChain.filter(entry => {
+      if (entry.isUserConfig) {
+        return showUserConfig;
+      }
+
+      const indexed = byQualifiedName.get(entry.qualifiedName);
+      if (indexed && indexed.itemKind !== 'assignment') {
+        return false;
+      }
+
+      const envModule = this.modulePathFromQualifiedName(entry.qualifiedName);
+      return modulePrefixes.has(envModule);
+    });
+  }
+
   private async getEnvChain(rootPath: string, programQualifiedName: string): Promise<EnvChainEntry[]> {
     const cacheKey = `envchain:${programQualifiedName}`;
     const cached = this.envChainCache.get(cacheKey);
@@ -697,10 +759,12 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
     }
 
     try {
+      await this.ensureIndexLoaded(rootPath);
       const indexerPath = await locateIndexer();
       const result = await queryEnvChain(indexerPath, rootPath, programQualifiedName);
-      this.envChainCache.set(cacheKey, result);
-      return result;
+      const filtered = this.filterEnvChain(programQualifiedName, result);
+      this.envChainCache.set(cacheKey, filtered);
+      return filtered;
     } catch {
       return [];
     }
@@ -2674,16 +2738,27 @@ async function queryEnvChain(
 
   try {
     const stdout = await executeIndexer(indexerPath, args, rootPath);
-    const result: EnvChainResult = JSON.parse(stdout);
-    // Convert snake_case from Rust to camelCase for TypeScript
-    return result.envChain?.map(entry => ({
-      qualifiedName: entry.qualifiedName ?? (entry as unknown as Record<string, string>).qualified_name,
-      filePath: entry.filePath ?? (entry as unknown as Record<string, string>).file_path,
-      line: entry.line,
-      keys: entry.keys ?? [],
-      staticValues: entry.staticValues ?? (entry as unknown as Record<string, unknown>).static_values as Record<string, unknown> | undefined,
-      isUserConfig: entry.isUserConfig ?? (entry as unknown as Record<string, boolean>).is_user_config
-    })) ?? [];
+    const result = JSON.parse(stdout) as RawEnvChainResult;
+
+    // Convert snake_case from Rust to camelCase for TypeScript.
+    // Note: doeff-indexer currently emits `env_chain` (snake_case) at the top level.
+    const rawEnvChain = result.envChain ?? result.env_chain ?? [];
+    return rawEnvChain.map((entry): EnvChainEntry => {
+      const staticValuesRaw = entry.staticValues ?? entry.static_values ?? undefined;
+      const staticValues =
+        staticValuesRaw && typeof staticValuesRaw === 'object'
+          ? (staticValuesRaw as Record<string, unknown>)
+          : undefined;
+
+      return {
+        qualifiedName: entry.qualifiedName ?? entry.qualified_name ?? '',
+        filePath: entry.filePath ?? entry.file_path ?? '',
+        line: entry.line ?? 0,
+        keys: entry.keys ?? [],
+        staticValues,
+        isUserConfig: entry.isUserConfig ?? entry.is_user_config
+      };
+    }).filter(entry => entry.qualifiedName && entry.filePath);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to query env chain';
     output.appendLine(`[error] queryEnvChain failed: ${message}`);
