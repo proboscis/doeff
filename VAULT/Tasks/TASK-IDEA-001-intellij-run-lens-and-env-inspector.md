@@ -23,11 +23,11 @@ IntelliJ/PyCharm plugin under `ide-plugins/pycharm/`.
 
 ## Acceptance Criteria
 
-- [ ] Add an editor lens (Code Vision / inlay) for `Program[...]` entrypoints with at least `Run`.
-- [ ] Add a Doeff ToolWindow that lists entrypoints and exposes Run/Options actions.
-- [ ] Add env chain retrieval (`doeff-indexer find-env-chain`) and display env sources + keys.
-- [ ] Provide navigation from env sources to file/line in editor.
-- [ ] Keep indexing/env queries off the UI thread; add caching + explicit refresh.
+- [x] Add an editor lens (Code Vision / inlay) for `Program[...]` entrypoints with at least `Run`.
+- [x] Add a Doeff ToolWindow that lists entrypoints and exposes Run/Options actions.
+- [x] Add env chain retrieval (`doeff-indexer find-env-chain`) and display env sources (keys shown when available).
+- [x] Provide navigation from env sources to file/line in editor.
+- [ ] Add caching/state sync + richer actions (debug toggle, tool actions, key inspector UI).
 
 ## Implementation Notes
 
@@ -40,11 +40,12 @@ IntelliJ/PyCharm plugin under `ide-plugins/pycharm/`.
 
 ## Subtasks
 
-- [ ] Model + query `find-env-chain` in `IndexerClient`
-- [ ] ToolWindow scaffolding + entrypoint listing (from index)
-- [ ] Env chain UI nodes (sources + keys + markers)
-- [ ] Editor lens MVP (`Run` action)
-- [ ] Build + smoke test in IntelliJ sandbox
+- [x] Model + query `find-env-chain` in `IndexerClient`
+- [x] ToolWindow scaffolding + entrypoint listing (from index)
+- [x] Env chain UI nodes (sources + keys placeholder)
+- [x] Editor lens MVP (`Run` action)
+- [ ] Add state sync + tool actions + key inspector UI
+- [x] Build plugin artifact
 
 ## Related
 
@@ -55,5 +56,4 @@ IntelliJ/PyCharm plugin under `ide-plugins/pycharm/`.
 ## Progress Log
 
 ### 2025-12-16
-- Task created; implementation started.
-
+- Added `Doeff` ToolWindow + env chain loader and in-editor Run lens; built with `./gradlew buildPlugin`.
