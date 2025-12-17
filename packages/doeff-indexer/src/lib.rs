@@ -17,3 +17,5 @@ pub use indexer::{
 mod test_markers;
 #[cfg(test)]
 mod test_module_path;
+#[cfg(test)]
+mod test_env_chain;

@@ -121,7 +121,14 @@ workflow: Program[int] = Program.pure(5)
         .iter()
         .all(|entry| !entry.qualified_name.ends_with("execute")));
 
-    assert!(entries
+    let workflow = entries
         .iter()
-        .all(|entry| !entry.qualified_name.ends_with("workflow")));
+        .find(|entry| entry.qualified_name.ends_with("workflow"))
+        .expect("workflow entry");
+    assert_eq!(workflow.item_kind, ItemKind::Assignment);
+    assert!(type_usage_contains(
+        &workflow.type_usages,
+        ProgramTypeKind::Program,
+        "int"
+    ));
 }
