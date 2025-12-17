@@ -154,6 +154,79 @@ object ProgramExecutionController {
         }
     }
 
+    fun runProgram(project: Project, programEntry: IndexEntry, typeArgument: String) {
+        val programPath = programEntry.qualifiedName
+        updateStatusBar(project, "Doeff: Indexing project for $programPath...")
+        showInfoNotification(project, "Doeff Indexing", "Searching for interpreters and transformers...")
+
+        val indexer = IndexerClient(project)
+        val proximityFile = programEntry.filePath
+        val proximityLine = programEntry.line
+
+        indexer.findInterpreters(typeArgument, proximityFile, proximityLine) { interpreters ->
+            if (interpreters.isEmpty()) {
+                logger.warn("No interpreters found in index for type $typeArgument")
+                ProgramPluginDiagnostics.warn(
+                    project,
+                    "No interpreters found for doeff type $typeArgument",
+                    key = "no-interpreter-$typeArgument"
+                )
+                showErrorPopup(
+                    project,
+                    "No Interpreters Found",
+                    "No doeff interpreters found for type '$typeArgument'.\n" +
+                        "Make sure you have functions that:\n" +
+                        "- Accept a Program parameter, or\n" +
+                        "- Are marked with # doeff: interpreter"
+                )
+                updateStatusBar(project, "Doeff: No interpreters found")
+                return@findInterpreters
+            }
+
+            indexer.findKleisli(typeArgument, proximityFile, proximityLine) { kleisli ->
+                indexer.findTransforms(typeArgument, proximityFile, proximityLine) { transformers ->
+                    updateStatusBar(
+                        project,
+                        "Doeff: Found ${interpreters.size} interpreters, ${kleisli.size} kleisli, ${transformers.size} transformers"
+                    )
+
+                    val dialog = ProgramSelectionDialog(
+                        project = project,
+                        programPath = programPath,
+                        programType = typeArgument,
+                        indexerPath = indexer.lastKnownIndexerPath(),
+                        interpreters = interpreters,
+                        kleisliPrograms = kleisli,
+                        transformers = transformers
+                    )
+
+                    if (dialog.showAndGet()) {
+                        val selection = dialog.buildSelection()
+                        if (selection != null) {
+                            logger.debug("Launching run configuration for ${selection.programPath}")
+                            val interpreterName = selection.interpreter.qualifiedName
+                            ProgramPluginDiagnostics.info(
+                                project,
+                                "Launching doeff run for ${selection.programPath} with interpreter $interpreterName",
+                                key = "run-${selection.programPath}-$interpreterName"
+                            )
+                            updateStatusBar(project, "Doeff: Launching ${selection.programPath}...")
+                            DoEffRunConfigurationHelper(project).run(selection)
+                        } else {
+                            logger.warn("Dialog returned no selection")
+                            ProgramPluginDiagnostics.warn(
+                                project,
+                                "doeff run dialog closed without a selection for $programPath",
+                                key = "no-selection-$programPath"
+                            )
+                            updateStatusBar(project, "Doeff: Cancelled")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private fun usageMatchesType(entry: IndexEntry, typeArgument: String): Boolean {
         if (typeArgument.equals("Any", ignoreCase = true)) {
             return true

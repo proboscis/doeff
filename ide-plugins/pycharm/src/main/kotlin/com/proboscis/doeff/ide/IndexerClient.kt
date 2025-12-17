@@ -19,11 +19,29 @@ class IndexerClient(private val project: Project) {
     private var lastExecutedCommand: String? = null
 
     fun queryEntries(typeArgument: String?, onSuccess: (List<IndexEntry>) -> Unit) {
-        CompletableFuture.supplyAsync { runIndexer(typeArgument) }
+        CompletableFuture.supplyAsync { runIndex(typeArgument = typeArgument) }
             .whenComplete { result, throwable ->
                 if (throwable != null) {
                     notifyError("Failed to query doeff-indexer", throwable.message ?: "Unknown error", throwable)
                     log.warn("Error while querying doeff-indexer", throwable)
+                    return@whenComplete
+                }
+                if (result == null) {
+                    notifyError("doeff-indexer returned no data", "Unexpected empty response", null)
+                    return@whenComplete
+                }
+                ApplicationManager.getApplication().invokeLater {
+                    onSuccess(result)
+                }
+            }
+    }
+
+    fun indexPrograms(onSuccess: (List<IndexEntry>) -> Unit) {
+        CompletableFuture.supplyAsync { runIndex(kind = "program") }
+            .whenComplete { result, throwable ->
+                if (throwable != null) {
+                    notifyError("Failed to index doeff programs", throwable.message ?: "Unknown error", throwable)
+                    log.warn("Error while indexing doeff programs", throwable)
                     return@whenComplete
                 }
                 if (result == null) {
@@ -310,15 +328,15 @@ class IndexerClient(private val project: Project) {
     }
     
     private fun runIndexer(typeArgument: String?): List<IndexEntry>? {
+        return runIndex(typeArgument = typeArgument)
+    }
+
+    private fun runIndexerWithFile(filePath: String): List<IndexEntry>? {
         val indexerPath = resolveIndexerPath() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
-        val command = mutableListOf(indexerPath, "--root", root, "--kind", "any")
-        val trimmedType = typeArgument?.trim()?.takeUnless { it.equals("Any", ignoreCase = true) }
-        if (!trimmedType.isNullOrEmpty()) {
-            command.add("--type-arg")
-            command.add(trimmedType)
-        }
+        val command = mutableListOf(indexerPath, "index", "--root", root, "--file", filePath)
 
+        lastExecutedCommand = command.joinToString(" ")
         log.debug("Executing doeff-indexer: ${command.joinToString(" ")}")
         val process = ProcessBuilder(command)
             .directory(File(root))
@@ -376,10 +394,35 @@ class IndexerClient(private val project: Project) {
         }
     }
 
-    private fun runIndexerWithFile(filePath: String): List<IndexEntry>? {
+    private fun runIndex(
+        kind: String? = null,
+        typeArgument: String? = null,
+        marker: String? = null,
+        filePath: String? = null,
+    ): List<IndexEntry>? {
         val indexerPath = resolveIndexerPath() ?: return emptyList()
         val root = project.basePath ?: return emptyList()
-        val command = mutableListOf(indexerPath, "index", "--root", root, "--file", filePath)
+        val command = mutableListOf(indexerPath, "index", "--root", root)
+
+        kind?.trim()?.takeIf { it.isNotBlank() }?.let {
+            command.add("--kind")
+            command.add(it)
+        }
+
+        typeArgument?.trim()?.takeUnless { it.equals("Any", ignoreCase = true) }?.let {
+            command.add("--type-arg")
+            command.add(it)
+        }
+
+        marker?.trim()?.takeIf { it.isNotBlank() }?.let {
+            command.add("--marker")
+            command.add(it)
+        }
+
+        filePath?.trim()?.takeIf { it.isNotBlank() }?.let {
+            command.add("--file")
+            command.add(it)
+        }
 
         lastExecutedCommand = command.joinToString(" ")
         log.debug("Executing doeff-indexer: ${command.joinToString(" ")}")
@@ -387,11 +430,9 @@ class IndexerClient(private val project: Project) {
             .directory(File(root))
             .start()
 
-        // Read output and error streams concurrently to avoid deadlock
         val output = StringBuilder()
         val error = StringBuilder()
 
-        // Create threads to read streams
         val outputReader = Thread {
             process.inputStream.bufferedReader().use { reader ->
                 output.append(reader.readText())
@@ -403,14 +444,10 @@ class IndexerClient(private val project: Project) {
             }
         }
 
-        // Start reading streams
         outputReader.start()
         errorReader.start()
 
-        // Wait for process to complete
         val completed = process.waitFor(30, TimeUnit.SECONDS)
-
-        // Wait for readers to finish
         outputReader.join(1000)
         errorReader.join(1000)
 

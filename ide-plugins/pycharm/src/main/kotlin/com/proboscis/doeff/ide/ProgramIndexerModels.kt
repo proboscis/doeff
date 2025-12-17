@@ -63,6 +63,7 @@ data class IndexEntry(
     @SerializedName("qualified_name") val qualifiedName: String,
     @SerializedName("file_path") val filePath: String,
     val line: Int,
+    @SerializedName("item_kind") val itemKind: String? = null,
     val categories: List<String>,
     @SerializedName("program_parameters") val programParameters: List<IndexParameter>,
     @SerializedName("program_interpreter_parameters") val interpreterParameters: List<IndexParameter>,
