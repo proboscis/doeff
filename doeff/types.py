@@ -13,6 +13,46 @@ from __future__ import annotations
 import os
 import sys
 
+if __name__ != "types":
+    from typing import TYPE_CHECKING
+
+    if TYPE_CHECKING:
+        from doeff._types_internal import (  # noqa: F401
+            DEFAULT_REPR_LIMIT,
+            NOTHING,
+            REPR_LIMIT_KEY,
+            CallFrame,
+            CapturedTraceback,
+            Effect,
+            EffectBase,
+            EffectCreationContext,
+            EffectFailure,
+            EffectFailureError,
+            EffectGenerator,
+            EffectObservation,
+            EnvKey,
+            Err,
+            ExecutionContext,
+            FrozenDict,
+            ListenResult,
+            Maybe,
+            Nothing,
+            Ok,
+            Program,
+            ProgramBase,
+            Result,
+            RunResult,
+            Some,
+            TraceError,
+            WGraph,
+            WNode,
+            WStep,
+            _intercept_value,
+            capture_traceback,
+            get_captured_traceback,
+            trace_err,
+        )
+
 if os.environ.get("DOEFF_DEBUG_TYPES"):
     print(
         f"[doeff.types] __name__={__name__} sys.path0={sys.path[0]}",
@@ -26,7 +66,7 @@ def _load_stdlib_types() -> None:
     stdlib_types_path = os.path.join(os.path.dirname(os.__file__), "types.py")
 
     try:
-        with open(stdlib_types_path, "r", encoding="utf-8") as handle:
+        with open(stdlib_types_path, encoding="utf-8") as handle:
             source = handle.read()
     except OSError:  # pragma: no cover - defensive fallback
         mapping_proxy_type = type(type.__dict__)
