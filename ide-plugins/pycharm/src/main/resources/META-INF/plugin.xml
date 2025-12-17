@@ -9,6 +9,8 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <codeInsight.lineMarkerProvider language="Python" implementationClass="com.proboscis.doeff.ide.ProgramGutterIconProvider"/>
+        <codeInsight.inlayProvider language="Python" implementationClass="com.proboscis.doeff.ide.DoeffRunLensInlayProvider" id="DoeffRunLens" enabledByDefault="true"/>
+        <toolWindow id="Doeff" anchor="right" factoryClass="com.proboscis.doeff.ide.DoeffToolWindowFactory"/>
         <notificationGroup id="doeff.plugin" displayType="BALLOON" isLogByDefault="true"/>
         <startupActivity implementation="com.proboscis.doeff.ide.ProgramPluginStartup"/>
     </extensions>
