@@ -390,6 +390,113 @@ impl NoAppendLoopRule {
         false
     }
 
+    /// Check if an expression contains a yield
+    fn expr_contains_yield(expr: &Expr) -> bool {
+        match expr {
+            Expr::Yield(_) | Expr::YieldFrom(_) => true,
+            Expr::Call(call) => {
+                Self::expr_contains_yield(&call.func)
+                    || call.args.iter().any(|arg| Self::expr_contains_yield(arg))
+                    || call.keywords.iter().any(|kw| Self::expr_contains_yield(&kw.value))
+            }
+            Expr::List(list) => list.elts.iter().any(|e| Self::expr_contains_yield(e)),
+            Expr::Tuple(tuple) => tuple.elts.iter().any(|e| Self::expr_contains_yield(e)),
+            Expr::Dict(dict) => {
+                dict.keys.iter().filter_map(|k| k.as_ref()).any(|k| Self::expr_contains_yield(k))
+                    || dict.values.iter().any(|v| Self::expr_contains_yield(v))
+            }
+            Expr::BinOp(binop) => {
+                Self::expr_contains_yield(&binop.left) || Self::expr_contains_yield(&binop.right)
+            }
+            Expr::UnaryOp(unaryop) => Self::expr_contains_yield(&unaryop.operand),
+            Expr::Compare(cmp) => {
+                Self::expr_contains_yield(&cmp.left)
+                    || cmp.comparators.iter().any(|c| Self::expr_contains_yield(c))
+            }
+            Expr::IfExp(ifexp) => {
+                Self::expr_contains_yield(&ifexp.test)
+                    || Self::expr_contains_yield(&ifexp.body)
+                    || Self::expr_contains_yield(&ifexp.orelse)
+            }
+            Expr::Subscript(sub) => {
+                Self::expr_contains_yield(&sub.value) || Self::expr_contains_yield(&sub.slice)
+            }
+            Expr::Attribute(attr) => Self::expr_contains_yield(&attr.value),
+            Expr::Starred(starred) => Self::expr_contains_yield(&starred.value),
+            Expr::Await(aw) => Self::expr_contains_yield(&aw.value),
+            Expr::FormattedValue(fv) => Self::expr_contains_yield(&fv.value),
+            Expr::JoinedStr(js) => js.values.iter().any(|v| Self::expr_contains_yield(v)),
+            _ => false,
+        }
+    }
+
+    /// Recursively check if a body contains yield expressions (indicating @do function context)
+    fn body_contains_yield(body: &[Stmt]) -> bool {
+        for stmt in body {
+            match stmt {
+                Stmt::Expr(expr_stmt) => {
+                    if Self::expr_contains_yield(&expr_stmt.value) {
+                        return true;
+                    }
+                }
+                Stmt::Assign(assign) => {
+                    if Self::expr_contains_yield(&assign.value) {
+                        return true;
+                    }
+                }
+                Stmt::AnnAssign(ann_assign) => {
+                    if let Some(value) = &ann_assign.value {
+                        if Self::expr_contains_yield(value) {
+                            return true;
+                        }
+                    }
+                }
+                Stmt::If(if_stmt) => {
+                    if Self::expr_contains_yield(&if_stmt.test)
+                        || Self::body_contains_yield(&if_stmt.body)
+                        || Self::body_contains_yield(&if_stmt.orelse)
+                    {
+                        return true;
+                    }
+                }
+                Stmt::For(for_stmt) => {
+                    if Self::body_contains_yield(&for_stmt.body) {
+                        return true;
+                    }
+                }
+                Stmt::While(while_stmt) => {
+                    if Self::expr_contains_yield(&while_stmt.test)
+                        || Self::body_contains_yield(&while_stmt.body)
+                    {
+                        return true;
+                    }
+                }
+                Stmt::With(with_stmt) => {
+                    if Self::body_contains_yield(&with_stmt.body) {
+                        return true;
+                    }
+                }
+                Stmt::Try(try_stmt) => {
+                    if Self::body_contains_yield(&try_stmt.body)
+                        || Self::body_contains_yield(&try_stmt.orelse)
+                        || Self::body_contains_yield(&try_stmt.finalbody)
+                    {
+                        return true;
+                    }
+                    for handler in &try_stmt.handlers {
+                        if let rustpython_ast::ExceptHandler::ExceptHandler(h) = handler {
+                            if Self::body_contains_yield(&h.body) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Count the number of statements in a for loop body (for detecting "long" loops)
     fn count_body_statements(body: &[Stmt]) -> usize {
         let mut count = 0;
@@ -468,21 +575,48 @@ impl NoAppendLoopRule {
                         }
 
                         let body_size = Self::count_body_statements(&for_stmt.body);
-                        let message = if body_size > 3 {
+                        let has_yield = Self::body_contains_yield(&for_stmt.body);
+
+                        let message = if has_yield {
+                            // @do function context with yield - suggest gather pattern
                             format!(
-                                "Consider refactoring: '{}' is initialized as empty list and populated via for-loop with {} statements. \
-                                 Extract the loop body into a named function and use list comprehension: \
-                                 `{} = [process_item(x) for x in iterable]`. \
-                                 If this is intentional (e.g., queue/stack operations, complex algorithm), add `# noqa: DOEFF012`",
-                                var_name, body_size, var_name
+                                "Refactor append loop for '{}' into pipeline style using gather. \
+                                 Extract the loop body into a separate @do function:\n\n\
+                                 \x20   @do\n\
+                                 \x20   def process_item(item):\n\
+                                 \x20       data = yield do_something(item)\n\
+                                 \x20       yield slog(...)\n\
+                                 \x20       return data\n\n\
+                                 \x20   {} = yield gather(*[process_item(x) for x in items])\n\n\
+                                 This eliminates mutable state and enables parallel execution. \
+                                 Use `# noqa: DOEFF012` only as last resort for true stateful accumulation.",
+                                var_name, var_name
+                            )
+                        } else if body_size > 3 {
+                            // Complex loop without yield - suggest extracting function
+                            format!(
+                                "Refactor append loop for '{}' ({} statements) into pipeline style. \
+                                 Extract the loop body into a focused function:\n\n\
+                                 \x20   def process_item(x):\n\
+                                 \x20       # ... transformation logic ...\n\
+                                 \x20       return result\n\n\
+                                 \x20   {} = [process_item(x) for x in items]\n\
+                                 \x20   # or: {} = list(map(process_item, items))\n\n\
+                                 Benefits: composable, testable, reusable transformations. \
+                                 Use `# noqa: DOEFF012` only as last resort for true mutation patterns.",
+                                var_name, body_size, var_name, var_name
                             )
                         } else {
+                            // Simple loop without yield
                             format!(
-                                "Consider using list comprehension instead of append loop for '{}'. \
-                                 Replace `{} = []; for x in items: {}.append(expr)` with \
-                                 `{} = [expr for x in items]`. \
-                                 If mutation is required (e.g., queue/stack, dynamic algorithm), add `# noqa: DOEFF012`",
-                                var_name, var_name, var_name, var_name
+                                "Prefer pipeline style over append loop for '{}'. \
+                                 Extract the transformation into a local function:\n\n\
+                                 \x20   def process_item(x):\n\
+                                 \x20       ...\n\
+                                 \x20       return result\n\n\
+                                 \x20   {} = [process_item(x) for x in items]\n\n\
+                                 Use `# noqa: DOEFF012` only as last resort for true mutation patterns.",
+                                var_name, var_name
                             )
                         };
 
@@ -599,7 +733,9 @@ for item in items:
         let violations = check_code(code);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("data"));
-        assert!(violations[0].message.contains("list comprehension"));
+        assert!(violations[0].message.contains("pipeline style"));
+        assert!(violations[0].message.contains("process_item"));
+        assert!(violations[0].message.contains("last resort"));
     }
 
     #[test]
@@ -617,7 +753,25 @@ for item in processing_target:
         let violations = check_code(code);
         assert_eq!(violations.len(), 1);
         assert!(violations[0].message.contains("Extract"));
-        assert!(violations[0].message.contains("named function"));
+        assert!(violations[0].message.contains("focused function"));
+        assert!(violations[0].message.contains("composable, testable, reusable"));
+    }
+
+    #[test]
+    fn test_yield_context_suggests_gather() {
+        let code = r#"
+results = []
+for item in items:
+    data = yield do_something(item)
+    yield slog(data)
+    results.append(data)
+"#;
+        let violations = check_code(code);
+        assert_eq!(violations.len(), 1);
+        assert!(violations[0].message.contains("gather"));
+        assert!(violations[0].message.contains("@do"));
+        assert!(violations[0].message.contains("eliminates mutable state"));
+        assert!(violations[0].message.contains("parallel execution"));
     }
 
     #[test]
