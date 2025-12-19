@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.6.19",
+  "version": "0.6.20",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -252,6 +252,16 @@
           ],
           "default": "alpha",
           "description": "Playlist item order (alpha sorts by name; manual preserves file order and enables drag & drop sorting)."
+        },
+        "doeff-runner.worktrees.autoAddToWorkspace": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "always",
+            "never"
+          ],
+          "default": "prompt",
+          "description": "When opening entrypoints from other git worktrees, optionally add that worktree folder to the current workspace (enables features like Go to Definition)."
         }
       }
     },
