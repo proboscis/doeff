@@ -19,18 +19,32 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 ## How it works
 
 - CodeLens appears on lines annotated with `Program[...]`
-- **Run**: immediately runs `python -m doeff run --program <path>` (doeff chooses the interpreter)
+- **Run**: runs `uv run doeff run --program <path>` (fallback: `python -m doeff run --program <path>`)
 - **Run with options**: invokes `doeff-indexer` to:
   - resolve the program's qualified name for the current file
   - gather available interpreters, Kleisli programs, and transformers
 - A quick-pick dialog lets you choose the interpreter and optional Kleisli/transformer, then starts `python -m doeff run ...` using the configured interpreter
+- **➕ Playlist**: saves a worktree-aware execution unit (branch + optional commit pin); edit tools later in the Playlists view
 - Appends/updates `.vscode/launch.json` so you can tweak the run config
+
+## Playlists (Worktree-aware)
+
+- **Programs (All Worktrees)** view indexes all `git worktree` checkouts and lets you add any Program to a playlist.
+- **Playlists** are stored in `.git/doeff/playlists.json` (shared across all worktrees).
+- Running a pinned item can create a temporary detached worktree at the pinned commit when needed.
+- Playlist item: click to **Go to Definition**; use the inline ▶ action to Run/Debug.
 
 ## Commands
 
 - `doeff-runner.runDefault`: Quick run with defaults
 - `doeff-runner.runOptions`: Run with interpreter/Kleisli/transformer selection
 - `doeff-runner.runConfig`: Launch a prepared selection payload (used internally from the quick pick)
+- `doeff-runner.addToPlaylist`: Add a Program to a playlist
+- `doeff-runner.pickProgram`: Pick a Program across all worktrees
+- `doeff-runner.pickAndRun`: Pick and run a Program across all worktrees
+- `doeff-runner.pickAndAddToPlaylist`: Pick a Program and add it to a playlist
+- `doeff-runner.pickPlaylistItem`: Pick a playlist item (reveal)
+- `doeff-runner.pickAndRunPlaylistItem`: Pick and run a playlist item
 
 ## Development
 
