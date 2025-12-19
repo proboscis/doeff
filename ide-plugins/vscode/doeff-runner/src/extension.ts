@@ -1,8 +1,19 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
+import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { promisify } from 'util';
 import * as path from 'path';
+import { parseGitWorktreeListPorcelain, type GitWorktreeInfo } from './worktrees';
+import {
+  type PlaylistItemV2,
+  type PlaylistV2,
+  type PlaylistsFileV2,
+  formatBranchCommitTag,
+  parsePlaylistsJsonV2,
+  playlistArgsToDoeffRunArgs
+} from './playlists';
+import { multiTokenFuzzyMatch } from './search';
 
 const execFileAsync = promisify(cp.execFile);
 
@@ -25,17 +36,78 @@ function createTerminal(name: string, cwd?: string): vscode.Terminal {
   return vscode.window.createTerminal({ name, cwd });
 }
 
+let uvAvailableCache: boolean | undefined;
+
+async function isUvAvailable(): Promise<boolean> {
+  if (uvAvailableCache !== undefined) {
+    return uvAvailableCache;
+  }
+  try {
+    await execFileAsync('uv', ['--version'], { maxBuffer: 1024 * 1024 });
+    uvAvailableCache = true;
+  } catch {
+    uvAvailableCache = false;
+  }
+  return uvAvailableCache;
+}
+
+function findGitWorktreeRootSync(startPath: string): string | undefined {
+  // Best-effort: walk upwards looking for a `.git` file/dir (worktree root).
+  // This enables CodeLens + run actions for files opened outside the VSCode workspace.
+  let current = startPath;
+  try {
+    if (fs.existsSync(startPath) && !fs.statSync(startPath).isDirectory()) {
+      current = path.dirname(startPath);
+    }
+  } catch {
+    current = path.dirname(startPath);
+  }
+
+  let parent = path.dirname(current);
+  while (current !== parent) {
+    const gitMarker = path.join(current, '.git');
+    if (fs.existsSync(gitMarker)) {
+      return current;
+    }
+    current = parent;
+    parent = path.dirname(current);
+  }
+
+  // Check filesystem root once as well.
+  if (fs.existsSync(path.join(current, '.git'))) {
+    return current;
+  }
+
+  return undefined;
+}
+
+function resolveRootPathForUri(uri: vscode.Uri): string | undefined {
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  if (folder) {
+    return folder.uri.fsPath;
+  }
+  if (uri.scheme === 'file') {
+    const gitRoot = findGitWorktreeRootSync(uri.fsPath);
+    if (gitRoot) {
+      return gitRoot;
+    }
+  }
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+}
+
 // Build a descriptive name for run/debug sessions
 // Format: <Run/Debug>-<entrypoint>-><kleisli>-><transform>
 function buildSessionName(
   mode: 'Run' | 'Debug',
   programPath: string,
   kleisli?: string,
-  transformer?: string
+  transformer?: string,
+  branch?: string
 ): string {
   // Extract just the entrypoint name from qualified path
   const entrypoint = programPath.split('.').pop() ?? programPath;
-  let name = `${mode}-${entrypoint}`;
+  const prefix = mode === 'Debug' ? 'd' : 'p';
+  let name = `${prefix}_${entrypoint}`;
 
   if (kleisli) {
     const kleisliName = kleisli.split('.').pop() ?? kleisli;
@@ -46,7 +118,7 @@ function buildSessionName(
     name += `->${transformName}`;
   }
 
-  return name;
+  return branch ? `[${branch}](${name})` : name;
 }
 
 interface IndexParameter {
@@ -245,12 +317,14 @@ type RawEnvChainResult = Partial<{
 
 interface EnvChainNode {
   type: 'envChain';
+  rootPath: string;
   parentEntry: IndexEntry;
   entries: EnvChainEntry[];
 }
 
 interface EnvSourceNode {
   type: 'envSource';
+  rootPath: string;
   entry: EnvChainEntry;
   parentEntry: IndexEntry;
   allEnvEntries: EnvChainEntry[]; // For override detection
@@ -258,12 +332,182 @@ interface EnvSourceNode {
 
 interface EnvKeyNode {
   type: 'envKey';
+  rootPath: string;
   key: string;
   value: unknown | null;
   isFinal: boolean;
   overriddenBy?: string;
   envEntry: EnvChainEntry;
   parentEntry: IndexEntry;
+}
+
+function createEnvChainTreeItem(node: EnvChainNode): vscode.TreeItem {
+  const keyCount = node.entries.reduce((sum, e) => sum + e.keys.length, 0);
+  const sourceCount = node.entries.length;
+  const label = keyCount > 0
+    ? `📦 Environment (${keyCount} keys, ${sourceCount} sources)`
+    : `📦 Environment (${sourceCount} sources)`;
+
+  const item = new vscode.TreeItem(
+    label,
+    vscode.TreeItemCollapsibleState.Collapsed
+  );
+  item.iconPath = new vscode.ThemeIcon('package');
+  item.contextValue = 'envChain';
+  item.tooltip = 'Click to expand environment chain';
+  return item;
+}
+
+function createEnvSourceTreeItem(node: EnvSourceNode): vscode.TreeItem {
+  const entry = node.entry;
+  const icon = entry.isUserConfig ? '🏠' : '📄';
+  const keyInfo = entry.keys.length > 0 ? ` (${entry.keys.length} keys)` : '';
+  const label = `${icon} ${entry.qualifiedName}${keyInfo}`;
+
+  const item = new vscode.TreeItem(
+    label,
+    entry.keys.length > 0
+      ? vscode.TreeItemCollapsibleState.Collapsed
+      : vscode.TreeItemCollapsibleState.None
+  );
+  item.iconPath = entry.isUserConfig
+    ? new vscode.ThemeIcon('home')
+    : new vscode.ThemeIcon('file-code');
+  item.contextValue = 'envSource';
+  item.tooltip = entry.filePath;
+  item.command = {
+    command: 'vscode.open',
+    title: 'Go to File',
+    arguments: [
+      vscode.Uri.file(entry.filePath),
+      { selection: new vscode.Range(entry.line - 1, 0, entry.line - 1, 0) }
+    ]
+  };
+  return item;
+}
+
+function createEnvKeyTreeItem(node: EnvKeyNode): vscode.TreeItem {
+  const valueDisplay = node.value !== null
+    ? JSON.stringify(node.value)
+    : '<dynamic>';
+  const marker = node.isFinal ? '★' : `⚠️↓ overridden by ${node.overriddenBy}`;
+  const label = `🔑 ${node.key} = ${valueDisplay} ${marker}`;
+
+  const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+  item.iconPath = new vscode.ThemeIcon('key');
+  item.contextValue = 'envKey';
+  item.tooltip = node.isFinal
+    ? `Final value from ${node.envEntry.qualifiedName}`
+    : `Overridden by ${node.overriddenBy}`;
+  return item;
+}
+
+function getEnvKeyNodes(node: EnvSourceNode): EnvKeyNode[] {
+  const keys = node.entry.keys;
+  const staticValues = node.entry.staticValues ?? {};
+
+  return keys.map(key => {
+    const value = staticValues[key] ?? null;
+
+    // Check if this key is overridden by a later env in the chain
+    const thisEnvIndex = node.allEnvEntries.findIndex(
+      e => e.qualifiedName === node.entry.qualifiedName
+    );
+
+    let overriddenBy: string | undefined;
+    for (let i = thisEnvIndex + 1; i < node.allEnvEntries.length; i++) {
+      const laterEnv = node.allEnvEntries[i];
+      if (laterEnv.keys.includes(key)) {
+        overriddenBy = laterEnv.qualifiedName;
+        break;
+      }
+    }
+
+    return {
+      type: 'envKey' as const,
+      rootPath: node.rootPath,
+      key,
+      value,
+      isFinal: !overriddenBy,
+      overriddenBy,
+      envEntry: node.entry,
+      parentEntry: node.parentEntry
+    };
+  });
+}
+
+function modulePathFromQualifiedName(qualifiedName: string): string {
+  const lastDot = qualifiedName.lastIndexOf('.');
+  return lastDot >= 0 ? qualifiedName.slice(0, lastDot) : '';
+}
+
+function modulePrefixesForProgram(programQualifiedName: string): Set<string> {
+  const programModule = modulePathFromQualifiedName(programQualifiedName);
+  const parts = programModule.split('.').filter(Boolean);
+  const prefixes = new Set<string>();
+
+  if (parts.length === 0) {
+    prefixes.add('');
+    return prefixes;
+  }
+
+  for (let i = 1; i <= parts.length; i++) {
+    prefixes.add(parts.slice(0, i).join('.'));
+  }
+  return prefixes;
+}
+
+function filterEnvChain(
+  programQualifiedName: string,
+  envChain: EnvChainEntry[],
+  indexEntries: IndexEntry[]
+): EnvChainEntry[] {
+  if (envChain.length === 0) {
+    return envChain;
+  }
+
+  const showUserConfig = vscode.workspace
+    .getConfiguration()
+    .get<boolean>('doeff-runner.envInspector.showUserConfig', true);
+
+  const modulePrefixes = modulePrefixesForProgram(programQualifiedName);
+  const byQualifiedName = new Map(indexEntries.map(entry => [entry.qualifiedName, entry]));
+
+  return envChain.filter(entry => {
+    if (entry.isUserConfig) {
+      return showUserConfig;
+    }
+
+    const indexed = byQualifiedName.get(entry.qualifiedName);
+    if (indexed && indexed.itemKind !== 'assignment') {
+      return false;
+    }
+
+    const envModule = modulePathFromQualifiedName(entry.qualifiedName);
+    return modulePrefixes.has(envModule);
+  });
+}
+
+const ENV_CHAIN_CACHE_TTL_MS = 5000;
+const envChainCache = new Map<string, CacheEntry<EnvChainEntry[]>>();
+
+async function getEnvChainForRoot(rootPath: string, programQualifiedName: string): Promise<EnvChainEntry[]> {
+  const cacheKey = `envchain:${rootPath}:${programQualifiedName}`;
+  const cached = envChainCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < ENV_CHAIN_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const indexerPath = await locateIndexer();
+
+  const [indexEntries, rawEnvChain] = await Promise.all([
+    queryIndexer(indexerPath, `index:${rootPath}`, rootPath, ['index', '--root', rootPath]),
+    queryEnvChain(indexerPath, rootPath, programQualifiedName)
+  ]);
+
+  const filtered = filterEnvChain(programQualifiedName, rawEnvChain, indexEntries);
+  envChainCache.set(cacheKey, { timestamp: Date.now(), data: filtered });
+  return filtered;
 }
 
 // =============================================================================
@@ -310,11 +554,11 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       case 'action':
         return this.createActionTreeItem(element);
       case 'envChain':
-        return this.createEnvChainTreeItem(element);
+        return createEnvChainTreeItem(element);
       case 'envSource':
-        return this.createEnvSourceTreeItem(element);
+        return createEnvSourceTreeItem(element);
       case 'envKey':
-        return this.createEnvKeyTreeItem(element);
+        return createEnvKeyTreeItem(element);
     }
   }
 
@@ -338,6 +582,7 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       label,
       vscode.TreeItemCollapsibleState.Collapsed
     );
+    const uri = vscode.Uri.file(entry.filePath);
     item.iconPath = new vscode.ThemeIcon('symbol-function');
     item.contextValue = 'entrypoint';
     item.tooltip = entry.docstring
@@ -345,10 +590,14 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       : entry.qualifiedName;
     item.description = defaultAction ? this.getActionLabel(defaultAction) : undefined;
     item.command = {
-      command: 'doeff-runner.revealEntrypoint',
+      command: 'vscode.open',
       title: 'Go to Definition',
-      arguments: [entry]
+      arguments: [
+        uri,
+        { selection: new vscode.Range(entry.line - 1, 0, entry.line - 1, 0) }
+      ]
     };
+    item.resourceUri = uri;
     return item;
   }
 
@@ -409,67 +658,6 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
     return item;
   }
 
-  private createEnvChainTreeItem(node: EnvChainNode): vscode.TreeItem {
-    const keyCount = node.entries.reduce((sum, e) => sum + e.keys.length, 0);
-    const sourceCount = node.entries.length;
-    const label = keyCount > 0
-      ? `📦 Environment (${keyCount} keys, ${sourceCount} sources)`
-      : `📦 Environment (${sourceCount} sources)`;
-
-    const item = new vscode.TreeItem(
-      label,
-      vscode.TreeItemCollapsibleState.Collapsed
-    );
-    item.iconPath = new vscode.ThemeIcon('package');
-    item.contextValue = 'envChain';
-    item.tooltip = 'Click to expand environment chain';
-    return item;
-  }
-
-  private createEnvSourceTreeItem(node: EnvSourceNode): vscode.TreeItem {
-    const entry = node.entry;
-    const icon = entry.isUserConfig ? '🏠' : '📄';
-    const keyInfo = entry.keys.length > 0 ? ` (${entry.keys.length} keys)` : '';
-    const label = `${icon} ${entry.qualifiedName}${keyInfo}`;
-
-    const item = new vscode.TreeItem(
-      label,
-      entry.keys.length > 0
-        ? vscode.TreeItemCollapsibleState.Collapsed
-        : vscode.TreeItemCollapsibleState.None
-    );
-    item.iconPath = entry.isUserConfig
-      ? new vscode.ThemeIcon('home')
-      : new vscode.ThemeIcon('file-code');
-    item.contextValue = 'envSource';
-    item.tooltip = entry.filePath;
-    item.command = {
-      command: 'vscode.open',
-      title: 'Go to File',
-      arguments: [
-        vscode.Uri.file(entry.filePath),
-        { selection: new vscode.Range(entry.line - 1, 0, entry.line - 1, 0) }
-      ]
-    };
-    return item;
-  }
-
-  private createEnvKeyTreeItem(node: EnvKeyNode): vscode.TreeItem {
-    const valueDisplay = node.value !== null
-      ? JSON.stringify(node.value)
-      : '<dynamic>';
-    const marker = node.isFinal ? '★' : `⚠️↓ overridden by ${node.overriddenBy}`;
-    const label = `🔑 ${node.key} = ${valueDisplay} ${marker}`;
-
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    item.iconPath = new vscode.ThemeIcon('key');
-    item.contextValue = 'envKey';
-    item.tooltip = node.isFinal
-      ? `Final value from ${node.envEntry.qualifiedName}`
-      : `Overridden by ${node.overriddenBy}`;
-    return item;
-  }
-
   private getActionLabel(action: ActionType, debugMode?: boolean): string {
     switch (action.kind) {
       case 'run': {
@@ -522,48 +710,16 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       case 'envChain':
         return element.entries.map(entry => ({
           type: 'envSource' as const,
+          rootPath: element.rootPath,
           entry,
           parentEntry: element.parentEntry,
           allEnvEntries: element.entries
         }));
       case 'envSource':
-        return this.getEnvKeyNodes(element);
+        return getEnvKeyNodes(element);
       case 'envKey':
         return [];
     }
-  }
-
-  private getEnvKeyNodes(node: EnvSourceNode): EnvKeyNode[] {
-    const keys = node.entry.keys;
-    const staticValues = node.entry.staticValues ?? {};
-
-    return keys.map(key => {
-      const value = staticValues[key] ?? null;
-
-      // Check if this key is overridden by a later env in the chain
-      const thisEnvIndex = node.allEnvEntries.findIndex(
-        e => e.qualifiedName === node.entry.qualifiedName
-      );
-
-      let overriddenBy: string | undefined;
-      for (let i = thisEnvIndex + 1; i < node.allEnvEntries.length; i++) {
-        const laterEnv = node.allEnvEntries[i];
-        if (laterEnv.keys.includes(key)) {
-          overriddenBy = laterEnv.qualifiedName;
-          break;
-        }
-      }
-
-      return {
-        type: 'envKey' as const,
-        key,
-        value,
-        isFinal: !overriddenBy,
-        overriddenBy,
-        envEntry: node.entry,
-        parentEntry: node.parentEntry
-      };
-    });
   }
 
   private async getModuleNodes(): Promise<ModuleNode[]> {
@@ -690,6 +846,7 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       if (envChain.length > 0) {
         result.push({
           type: 'envChain',
+          rootPath,
           parentEntry: entry,
           entries: envChain
         });
@@ -703,54 +860,6 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
 
   private envChainCache = new Map<string, EnvChainEntry[]>();
 
-  private modulePathFromQualifiedName(qualifiedName: string): string {
-    const lastDot = qualifiedName.lastIndexOf('.');
-    return lastDot >= 0 ? qualifiedName.slice(0, lastDot) : '';
-  }
-
-  private modulePrefixesForProgram(programQualifiedName: string): Set<string> {
-    const programModule = this.modulePathFromQualifiedName(programQualifiedName);
-    const parts = programModule.split('.').filter(Boolean);
-    const prefixes = new Set<string>();
-
-    if (parts.length === 0) {
-      prefixes.add('');
-      return prefixes;
-    }
-
-    for (let i = 1; i <= parts.length; i++) {
-      prefixes.add(parts.slice(0, i).join('.'));
-    }
-    return prefixes;
-  }
-
-  private filterEnvChain(programQualifiedName: string, envChain: EnvChainEntry[]): EnvChainEntry[] {
-    if (envChain.length === 0) {
-      return envChain;
-    }
-
-    const showUserConfig = vscode.workspace
-      .getConfiguration()
-      .get<boolean>('doeff-runner.envInspector.showUserConfig', true);
-
-    const modulePrefixes = this.modulePrefixesForProgram(programQualifiedName);
-    const byQualifiedName = new Map(this.indexCache.map(entry => [entry.qualifiedName, entry]));
-
-    return envChain.filter(entry => {
-      if (entry.isUserConfig) {
-        return showUserConfig;
-      }
-
-      const indexed = byQualifiedName.get(entry.qualifiedName);
-      if (indexed && indexed.itemKind !== 'assignment') {
-        return false;
-      }
-
-      const envModule = this.modulePathFromQualifiedName(entry.qualifiedName);
-      return modulePrefixes.has(envModule);
-    });
-  }
-
   private async getEnvChain(rootPath: string, programQualifiedName: string): Promise<EnvChainEntry[]> {
     const cacheKey = `envchain:${programQualifiedName}`;
     const cached = this.envChainCache.get(cacheKey);
@@ -762,7 +871,7 @@ class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode
       await this.ensureIndexLoaded(rootPath);
       const indexerPath = await locateIndexer();
       const result = await queryEnvChain(indexerPath, rootPath, programQualifiedName);
-      const filtered = this.filterEnvChain(programQualifiedName, result);
+      const filtered = filterEnvChain(programQualifiedName, result, this.indexCache);
       this.envChainCache.set(cacheKey, filtered);
       return filtered;
     } catch {
@@ -929,16 +1038,17 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const lenses: vscode.CodeLens[] = [];
 
-    const workspaceFolder =
-      vscode.workspace.getWorkspaceFolder(document.uri) ??
-      vscode.workspace.workspaceFolders?.[0];
+    if (document.uri.scheme !== 'file') {
+      return lenses;
+    }
 
-    if (!workspaceFolder) {
+    const rootPath = resolveRootPathForUri(document.uri);
+    if (!rootPath) {
       return lenses;
     }
 
     // Use indexer output instead of regex-based detection
-    const entries = this.getFileEntriesSync(workspaceFolder.uri.fsPath, document.uri.fsPath);
+    const entries = this.getFileEntriesSync(rootPath, document.uri.fsPath);
 
     // Filter to only Program assignments (not function parameters)
     const programEntries = entries.filter(entry =>
@@ -962,20 +1072,18 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
       // Check if there's a default action set via TreeView
       const defaultAction = this.stateStore.getDefaultAction(entry.qualifiedName);
 
-      // Debug mode toggle button (first)
+      // Add to playlist button (leftmost)
       lenses.push(
         new vscode.CodeLens(range, {
-          title: debugMode ? TOOL_PREFIX.toggleOn : TOOL_PREFIX.toggleOff,
-          tooltip: debugMode ? 'Debug mode ON (click to switch to Run mode)' : 'Run mode (click to switch to Debug mode)',
-          command: 'doeff-runner.toggleDebugMode',
-          arguments: []
+          title: '[+]',
+          tooltip: 'Add this Program to a Playlist',
+          command: 'doeff-runner.addToPlaylist',
+          arguments: [{
+            entry,
+            worktreePath: rootPath
+          }]
         })
       );
-
-      // Show default action first if set
-      if (defaultAction) {
-        lenses.push(this.createDefaultActionLensFromEntry(entry, range, defaultAction, document.uri, debugMode));
-      }
 
       // Standard Run/Debug button (label changes based on debug mode)
       const runLabel = debugMode ? `${TOOL_PREFIX.debug} Debug` : `${TOOL_PREFIX.run} Run`;
@@ -998,11 +1106,24 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
         })
       );
 
+      // Debug mode toggle button
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: debugMode ? TOOL_PREFIX.toggleOn : TOOL_PREFIX.toggleOff,
+          tooltip: debugMode ? 'Debug mode ON (click to switch to Run mode)' : 'Run mode (click to switch to Debug mode)',
+          command: 'doeff-runner.toggleDebugMode',
+          arguments: []
+        })
+      );
+
+      // Show default action if set
+      if (defaultAction) {
+        lenses.push(this.createDefaultActionLensFromEntry(entry, range, defaultAction, document.uri, debugMode));
+      }
+
       // Only show kleisli/transform tools if the Program has a type argument
       // Untyped Program shouldn't show tools since we don't know the output type
       if (typeArg) {
-        const rootPath = workspaceFolder.uri.fsPath;
-
         // Use program location for proximity-based sorting
         const proximity: ProximityContext = {
           filePath: document.uri.fsPath,
@@ -1292,6 +1413,870 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
   }
 }
 
+// =============================================================================
+// VSCode 002: Worktree-aware playlists
+// =============================================================================
+
+interface ProgramTarget {
+  branch: string;
+  worktreePath: string;
+  entry: IndexEntry;
+}
+
+function uuid(): string {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  }
+}
+
+function isProgramEntrypoint(entry: IndexEntry): boolean {
+  return (
+    entry.itemKind === 'assignment' &&
+    entry.typeUsages.some((usage) => usage.kind === 'program')
+  );
+}
+
+function extractProgramTypeArg(entry: IndexEntry): string {
+  for (const usage of entry.typeUsages) {
+    if (usage.kind === 'program' && usage.typeArguments.length > 0) {
+      return usage.typeArguments[0];
+    }
+  }
+  return '';
+}
+
+function shortQualifiedName(value: string): string {
+  return value.split('.').pop() ?? value;
+}
+
+function formatPlaylistToolsTag(apply: string | null, transform: string | null): string {
+  const parts: string[] = [];
+  if (apply) {
+    parts.push(`🔗 ${shortQualifiedName(apply)}`);
+  }
+  if (transform) {
+    parts.push(`🔀 ${shortQualifiedName(transform)}`);
+  }
+  return parts.join(' ');
+}
+
+class DoeffPlaylistsStore implements vscode.Disposable {
+  private readonly _onDidChange = new vscode.EventEmitter<void>();
+  readonly onDidChange = this._onDidChange.event;
+
+  private repoRootPromise: Promise<string> | undefined;
+  private filePathPromise: Promise<string> | undefined;
+  private cache: PlaylistsFileV2 | undefined;
+  private watcher: fs.FSWatcher | undefined;
+  private migrationAttempted = false;
+
+  constructor(private workspacePath: string) { }
+
+  dispose(): void {
+    this.watcher?.close();
+    this._onDidChange.dispose();
+  }
+
+  private async getRepoRoot(): Promise<string> {
+    if (!this.repoRootPromise) {
+      this.repoRootPromise = (async () => {
+        const repoRoot = await resolveRepoRoot(this.workspacePath);
+        return repoRoot ?? this.workspacePath;
+      })();
+    }
+    return this.repoRootPromise;
+  }
+
+  async getFilePath(): Promise<string> {
+    if (!this.filePathPromise) {
+      this.filePathPromise = (async () => {
+        const repoRoot = await this.getRepoRoot();
+        const gitCommonDir = await resolveGitCommonDir(repoRoot);
+        const filePath = gitCommonDir
+          ? path.join(gitCommonDir, 'doeff', 'playlists.json')
+          : path.join(repoRoot, '.vscode', 'doeff-runner.playlists.json');
+        this.ensureWatcher(filePath);
+        return filePath;
+      })();
+    }
+    return this.filePathPromise;
+  }
+
+  private ensureWatcher(filePath: string): void {
+    if (this.watcher) {
+      return;
+    }
+
+    const dir = path.dirname(filePath);
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch (error) {
+      output.appendLine(`[warn] Failed to create playlists dir ${dir}: ${String(error)}`);
+    }
+
+    try {
+      this.watcher = fs.watch(dir, { persistent: false }, (_eventType, filename) => {
+        if (!filename || filename.toString() === path.basename(filePath)) {
+          this.cache = undefined;
+          this._onDidChange.fire();
+        }
+      });
+    } catch (error) {
+      output.appendLine(`[warn] Failed to watch playlists dir ${dir}: ${String(error)}`);
+    }
+  }
+
+  private empty(): PlaylistsFileV2 {
+    return { version: 2, playlists: [] };
+  }
+
+  private writeFileSync(filePath: string, data: PlaylistsFileV2): void {
+    const dir = path.dirname(filePath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  }
+
+  private async maybeMigrateV1(v2Path: string): Promise<void> {
+    if (this.migrationAttempted) {
+      return;
+    }
+    this.migrationAttempted = true;
+
+    const repoRoot = await this.getRepoRoot();
+    const v1Path = path.join(repoRoot, '.vscode', 'doeff-runner.playlists.json');
+    if (path.resolve(v1Path) === path.resolve(v2Path)) {
+      return;
+    }
+    if (!fs.existsSync(v1Path) || fs.existsSync(v2Path)) {
+      return;
+    }
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(fs.readFileSync(v1Path, 'utf8')) as unknown;
+    } catch (error) {
+      output.appendLine(`[warn] Failed to parse v1 playlists JSON: ${String(error)}`);
+      return;
+    }
+
+    const currentBranch = await resolveCurrentBranch(repoRoot);
+    const defaultBranch = currentBranch ?? 'main';
+
+    const playlistsRaw = Array.isArray((raw as any)?.playlists)
+      ? (raw as any).playlists as unknown[]
+      : Array.isArray(raw)
+        ? raw as unknown[]
+        : [];
+
+    const migrated: PlaylistsFileV2 = { version: 2, playlists: [] };
+    for (const pl of playlistsRaw) {
+      const name = typeof (pl as any)?.name === 'string' ? (pl as any).name as string : 'Playlist';
+      const itemsRaw = Array.isArray((pl as any)?.items) ? (pl as any).items as unknown[] : [];
+      const items: PlaylistItemV2[] = [];
+
+      for (const it of itemsRaw) {
+        const program =
+          typeof (it as any)?.program === 'string'
+            ? (it as any).program as string
+            : typeof (it as any)?.programPath === 'string'
+              ? (it as any).programPath as string
+              : undefined;
+        if (!program) {
+          continue;
+        }
+
+        const itemName =
+          typeof (it as any)?.name === 'string'
+            ? (it as any).name as string
+            : program.split('.').pop() ?? program;
+
+        const apply =
+          typeof (it as any)?.apply === 'string'
+            ? (it as any).apply as string
+            : typeof (it as any)?.kleisli === 'string'
+              ? (it as any).kleisli as string
+              : null;
+        const transform =
+          typeof (it as any)?.transform === 'string'
+            ? (it as any).transform as string
+            : typeof (it as any)?.transformer === 'string'
+              ? (it as any).transformer as string
+              : null;
+
+        items.push({
+          id: uuid(),
+          name: itemName,
+          branch: defaultBranch,
+          commit: null,
+          program,
+          apply,
+          transform,
+          args: {}
+        });
+      }
+
+      migrated.playlists.push({ id: uuid(), name, items });
+    }
+
+    try {
+      this.writeFileSync(v2Path, migrated);
+      vscode.window.showInformationMessage('doeff-runner: Playlists migrated to v2 format');
+      output.appendLine(`[info] Migrated playlists from ${v1Path} -> ${v2Path}`);
+    } catch (error) {
+      output.appendLine(`[warn] Failed to write migrated playlists: ${String(error)}`);
+    }
+  }
+
+  async load(): Promise<PlaylistsFileV2> {
+    if (this.cache) {
+      return this.cache;
+    }
+
+    const filePath = await this.getFilePath();
+    await this.maybeMigrateV1(filePath);
+
+    if (!fs.existsSync(filePath)) {
+      this.cache = this.empty();
+      return this.cache;
+    }
+
+    const content = fs.readFileSync(filePath, 'utf8');
+    const parsed = parsePlaylistsJsonV2(content);
+    if (parsed.error) {
+      output.appendLine(`[warn] Playlists file parse warning: ${parsed.error}`);
+      vscode.window.showWarningMessage(`doeff-runner playlists: ${parsed.error}`);
+    }
+    this.cache = parsed.data;
+    return parsed.data;
+  }
+
+  async save(data: PlaylistsFileV2): Promise<void> {
+    const filePath = await this.getFilePath();
+    this.writeFileSync(filePath, data);
+    this.cache = data;
+    this._onDidChange.fire();
+  }
+
+  async update(mutator: (data: PlaylistsFileV2) => void): Promise<PlaylistsFileV2> {
+    const data = await this.load();
+    mutator(data);
+    await this.save(data);
+    return data;
+  }
+
+  async ensureFileExists(): Promise<string> {
+    const filePath = await this.getFilePath();
+    if (!fs.existsSync(filePath)) {
+      this.writeFileSync(filePath, this.empty());
+    }
+    return filePath;
+  }
+}
+
+type PlaylistsTreeNode =
+  | PlaylistNode
+  | PlaylistBranchNode
+  | PlaylistItemNode
+  | PlaylistActionNode
+  | EnvChainNode
+  | EnvSourceNode
+  | EnvKeyNode;
+
+interface PlaylistNode {
+  type: 'playlist';
+  playlist: PlaylistV2;
+  branches: PlaylistBranchNode[];
+  parent?: undefined;
+}
+
+interface PlaylistBranchNode {
+  type: 'playlistBranch';
+  playlist: PlaylistNode;
+  branch: string;
+  isCurrent: boolean;
+  items: PlaylistItemNode[];
+}
+
+interface PlaylistItemNode {
+  type: 'playlistItem';
+  playlist: PlaylistNode;
+  branchNode: PlaylistBranchNode;
+  item: PlaylistItemV2;
+  actions: PlaylistActionNode[];
+}
+
+interface PlaylistActionNode {
+  type: 'playlistAction';
+  playlistItem: PlaylistItemNode;
+  action: 'run' | 'edit' | 'remove';
+}
+
+class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNode>, vscode.Disposable {
+  private _onDidChangeTreeData = new vscode.EventEmitter<PlaylistsTreeNode | undefined>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  private tree: PlaylistNode[] = [];
+  private nodeById = new Map<string, PlaylistsTreeNode>();
+  private loaded = false;
+
+  constructor(
+    private store: DoeffPlaylistsStore,
+    private stateStore: DoeffStateStore,
+    private workspacePath: string
+  ) {
+    this.store.onDidChange(() => {
+      this.loaded = false;
+      this._onDidChangeTreeData.fire(undefined);
+    });
+  }
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
+  }
+
+  refresh(): void {
+    this.loaded = false;
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  getParent(element: PlaylistsTreeNode): PlaylistsTreeNode | undefined {
+    if (element.type === 'playlist') {
+      return undefined;
+    }
+    if (element.type === 'playlistBranch') {
+      return element.playlist;
+    }
+    if (element.type === 'playlistItem') {
+      return element.branchNode;
+    }
+    if (element.type === 'playlistAction') {
+      return element.playlistItem;
+    }
+    return undefined;
+  }
+
+  private async ensureLoaded(): Promise<void> {
+    if (this.loaded) {
+      return;
+    }
+
+    const data = await this.store.load();
+    const repoRoot = await resolveRepoRoot(this.workspacePath) ?? this.workspacePath;
+    const currentBranch = repoRoot ? await resolveCurrentBranch(repoRoot) : undefined;
+    this.nodeById.clear();
+
+    this.tree = data.playlists
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((playlist) => {
+        const playlistNode: PlaylistNode = {
+          type: 'playlist',
+          playlist,
+          branches: []
+        };
+        this.nodeById.set(`playlist:${playlist.id}`, playlistNode);
+
+        const branchesByName = new Map<string, PlaylistBranchNode>();
+
+        const ensureBranchNode = (branch: string): PlaylistBranchNode => {
+          const existing = branchesByName.get(branch);
+          if (existing) {
+            return existing;
+          }
+          const node: PlaylistBranchNode = {
+            type: 'playlistBranch',
+            playlist: playlistNode,
+            branch,
+            isCurrent: currentBranch === branch,
+            items: []
+          };
+          branchesByName.set(branch, node);
+          this.nodeById.set(`branch:${playlist.id}:${branch}`, node);
+          return node;
+        };
+
+        for (const item of playlist.items) {
+          const branchNode = ensureBranchNode(item.branch);
+          const itemNode: PlaylistItemNode = {
+            type: 'playlistItem',
+            playlist: playlistNode,
+            branchNode,
+            item,
+            actions: []
+          };
+          this.nodeById.set(`item:${playlist.id}:${item.id}`, itemNode);
+          itemNode.actions = (['run', 'edit', 'remove'] as const).map((action) => {
+            const actionNode: PlaylistActionNode = {
+              type: 'playlistAction',
+              playlistItem: itemNode,
+              action
+            };
+            this.nodeById.set(`action:${playlist.id}:${item.id}:${action}`, actionNode);
+            return actionNode;
+          });
+          branchNode.items.push(itemNode);
+        }
+
+        playlistNode.branches = Array.from(branchesByName.values()).sort((a, b) => {
+          if (a.isCurrent && !b.isCurrent) return -1;
+          if (!a.isCurrent && b.isCurrent) return 1;
+          return a.branch.localeCompare(b.branch);
+        });
+
+        return playlistNode;
+      });
+
+    this.loaded = true;
+  }
+
+  getTreeItem(element: PlaylistsTreeNode): vscode.TreeItem {
+    switch (element.type) {
+      case 'playlist': {
+        const item = new vscode.TreeItem(element.playlist.name, vscode.TreeItemCollapsibleState.Expanded);
+        item.contextValue = 'playlist';
+        item.iconPath = new vscode.ThemeIcon('list-unordered');
+        item.id = `playlist:${element.playlist.id}`;
+        item.description = `${element.playlist.items.length} item(s)`;
+        return item;
+      }
+      case 'playlistBranch': {
+        const label = element.isCurrent ? `${element.branch} ✓ current` : element.branch;
+        const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Expanded);
+        item.contextValue = 'playlistBranch';
+        item.iconPath = new vscode.ThemeIcon('git-branch');
+        item.id = `branch:${element.playlist.playlist.id}:${element.branch}`;
+        item.description = `${element.items.length} item(s)`;
+        return item;
+      }
+      case 'playlistItem': {
+        const commitTag = element.item.commit ? `@ ${element.item.commit.slice(0, 6)}` : '';
+        const toolsTag = formatPlaylistToolsTag(element.item.apply, element.item.transform);
+        const itemLabel = element.item.name;
+        const item = new vscode.TreeItem(itemLabel, vscode.TreeItemCollapsibleState.Collapsed);
+        item.contextValue = 'playlistItem';
+        item.iconPath = new vscode.ThemeIcon('symbol-function');
+        item.id = `item:${element.playlist.playlist.id}:${element.item.id}`;
+        item.description = [commitTag, toolsTag].filter(Boolean).join(' ');
+        item.tooltip = [
+          element.item.program,
+          element.item.apply ? `apply: ${element.item.apply}` : undefined,
+          element.item.transform ? `transform: ${element.item.transform}` : undefined
+        ].filter(Boolean).join('\n');
+        item.command = {
+          command: 'doeff-runner.revealPlaylistItem',
+          title: 'Go to Definition',
+          arguments: [element.playlist.playlist.id, element.item.id]
+        };
+        return item;
+      }
+      case 'playlistAction': {
+        const debugMode = this.stateStore.getDebugMode();
+        const label =
+          element.action === 'run'
+            ? (debugMode ? '🐛 Debug' : '▶ Run')
+            : element.action === 'edit'
+              ? '✎ Edit'
+              : '✕ Remove';
+        const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+        item.contextValue = 'playlistAction';
+        item.id = `action:${element.playlistItem.playlist.playlist.id}:${element.playlistItem.item.id}:${element.action}`;
+
+        if (element.action === 'run') {
+          item.iconPath = new vscode.ThemeIcon(debugMode ? 'debug-start' : 'play');
+          item.command = {
+            command: 'doeff-runner.runPlaylistItem',
+            title: 'Run Playlist Item',
+            arguments: [element.playlistItem.playlist.playlist.id, element.playlistItem.item.id]
+          };
+        } else if (element.action === 'edit') {
+          item.iconPath = new vscode.ThemeIcon('edit');
+          item.command = {
+            command: 'doeff-runner.editPlaylistItem',
+            title: 'Edit Playlist Item',
+            arguments: [element.playlistItem.playlist.playlist.id, element.playlistItem.item.id]
+          };
+        } else {
+          item.iconPath = new vscode.ThemeIcon('trash');
+          item.command = {
+            command: 'doeff-runner.removePlaylistItem',
+            title: 'Remove Playlist Item',
+            arguments: [element.playlistItem.playlist.playlist.id, element.playlistItem.item.id]
+          };
+        }
+        return item;
+      }
+      case 'envChain':
+        return createEnvChainTreeItem(element);
+      case 'envSource':
+        return createEnvSourceTreeItem(element);
+      case 'envKey':
+        return createEnvKeyTreeItem(element);
+    }
+  }
+
+  async getChildren(element?: PlaylistsTreeNode): Promise<PlaylistsTreeNode[]> {
+    await this.ensureLoaded();
+
+    if (!element) {
+      return this.tree;
+    }
+    if (element.type === 'playlist') {
+      return element.branches;
+    }
+    if (element.type === 'playlistBranch') {
+      return element.items;
+    }
+    if (element.type === 'playlistItem') {
+      const children: PlaylistsTreeNode[] = [...element.actions];
+      try {
+        const repoRoot = await resolveRepoRoot(this.workspacePath) ?? this.workspacePath;
+        if (repoRoot) {
+          const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+          const worktrees = parseGitWorktreeListPorcelain(stdout);
+          const worktreePath = worktrees.find((wt) => wt.branch === element.item.branch)?.worktreePath;
+          if (worktreePath) {
+            const envChain = await getEnvChainForRoot(worktreePath, element.item.program);
+            const parentEntry: IndexEntry = {
+              name: element.item.program.split('.').pop() ?? element.item.program,
+              qualifiedName: element.item.program,
+              filePath: '',
+              line: 0,
+              itemKind: 'assignment',
+              categories: [],
+              programParameters: [],
+              interpreterParameters: [],
+              typeUsages: []
+            };
+
+            children.push({
+              type: 'envChain',
+              rootPath: worktreePath,
+              parentEntry,
+              entries: envChain
+            });
+          }
+        }
+      } catch (error) {
+        output.appendLine(`[warn] Failed to load env chain for playlist item: ${String(error)}`);
+      }
+      return children;
+    }
+    if (element.type === 'envChain') {
+      return element.entries.map((entry) => ({
+        type: 'envSource' as const,
+        rootPath: element.rootPath,
+        entry,
+        parentEntry: element.parentEntry,
+        allEnvEntries: element.entries
+      }));
+    }
+    if (element.type === 'envSource') {
+      return getEnvKeyNodes(element);
+    }
+    return [];
+  }
+
+  getPlaylistNode(playlistId: string): PlaylistNode | undefined {
+    const node = this.nodeById.get(`playlist:${playlistId}`);
+    return node?.type === 'playlist' ? node : undefined;
+  }
+
+  getPlaylistItemNode(playlistId: string, itemId: string): PlaylistItemNode | undefined {
+    const node = this.nodeById.get(`item:${playlistId}:${itemId}`);
+    return node?.type === 'playlistItem' ? node : undefined;
+  }
+}
+
+type WorktreesProgramsNode =
+  | WorktreeBranchNode
+  | WorktreeModuleNode
+  | WorktreeProgramNode
+  | EnvChainNode
+  | EnvSourceNode
+  | EnvKeyNode;
+
+interface WorktreeBranchNode {
+  type: 'wtBranch';
+  branch: string;
+  worktreePath: string;
+  head: string;
+  isCurrent: boolean;
+  modules: WorktreeModuleNode[];
+  parent?: undefined;
+}
+
+interface WorktreeModuleNode {
+  type: 'wtModule';
+  branch: WorktreeBranchNode;
+  modulePath: string;
+  programs: WorktreeProgramNode[];
+}
+
+interface WorktreeProgramNode {
+  type: 'wtProgram';
+  module: WorktreeModuleNode;
+  entry: IndexEntry;
+}
+
+class DoeffWorktreeProgramsProvider implements vscode.TreeDataProvider<WorktreesProgramsNode>, vscode.Disposable {
+  private _onDidChangeTreeData = new vscode.EventEmitter<WorktreesProgramsNode | undefined>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  private branches: WorktreeBranchNode[] = [];
+  private nodeByKey = new Map<string, WorktreesProgramsNode>();
+  private cacheTimestamp = 0;
+  private refreshing = false;
+  private readonly CACHE_TTL_MS = 30000;
+
+  constructor(private workspacePath: string) { }
+
+  dispose(): void {
+    this._onDidChangeTreeData.dispose();
+  }
+
+  refresh(): void {
+    this.cacheTimestamp = 0;
+    this.branches = [];
+    this.nodeByKey.clear();
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  getParent(element: WorktreesProgramsNode): WorktreesProgramsNode | undefined {
+    if (element.type === 'wtBranch') {
+      return undefined;
+    }
+    if (element.type === 'wtModule') {
+      return element.branch;
+    }
+    if (element.type === 'wtProgram') {
+      return element.module;
+    }
+    return undefined;
+  }
+
+  private async ensureLoaded(): Promise<void> {
+    if (this.refreshing) {
+      return;
+    }
+    if (this.cacheTimestamp && Date.now() - this.cacheTimestamp < this.CACHE_TTL_MS) {
+      return;
+    }
+
+    this.refreshing = true;
+    try {
+      const indexerPath = await locateIndexer();
+      const repoRoot = await resolveRepoRoot(this.workspacePath) ?? this.workspacePath;
+      const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+      const worktrees = parseGitWorktreeListPorcelain(stdout)
+        .filter((wt) => wt.branch);
+
+      const currentResolved = path.resolve(this.workspacePath);
+
+      const byBranch = new Map<string, GitWorktreeInfo>();
+      for (const wt of worktrees) {
+        if (wt.branch) {
+          byBranch.set(wt.branch, wt);
+        }
+      }
+
+      const branchNames = Array.from(byBranch.keys()).sort((a, b) => a.localeCompare(b));
+
+      const branchNodes: WorktreeBranchNode[] = [];
+      const nodeByKey = new Map<string, WorktreesProgramsNode>();
+
+      await Promise.all(branchNames.map(async (branchName) => {
+        const wt = byBranch.get(branchName);
+        if (!wt) {
+          return;
+        }
+
+        const worktreePath = wt.worktreePath;
+        const isCurrent = path.resolve(worktreePath) === currentResolved;
+
+        const entries = await queryIndexer(
+          indexerPath,
+          `index:${worktreePath}`,
+          worktreePath,
+          ['index', '--root', worktreePath]
+        );
+        const programs = entries.filter(isProgramEntrypoint);
+
+        const grouped = new Map<string, IndexEntry[]>();
+        for (const entry of programs) {
+          const modulePath = entry.qualifiedName.split('.').slice(0, -1).join('.');
+          const existing = grouped.get(modulePath) ?? [];
+          existing.push(entry);
+          grouped.set(modulePath, existing);
+        }
+
+        const branchNode: WorktreeBranchNode = {
+          type: 'wtBranch',
+          branch: branchName,
+          worktreePath,
+          head: wt.head,
+          isCurrent,
+          modules: []
+        };
+
+        nodeByKey.set(`branch:${branchName}`, branchNode);
+
+        const moduleNodes = Array.from(grouped.entries())
+          .map(([modulePath, moduleEntries]) => {
+            const moduleNode: WorktreeModuleNode = {
+              type: 'wtModule',
+              branch: branchNode,
+              modulePath: modulePath || '(root)',
+              programs: []
+            };
+            nodeByKey.set(`module:${branchName}:${modulePath}`, moduleNode);
+
+            moduleNode.programs = moduleEntries
+              .slice()
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((entry) => {
+                const programNode: WorktreeProgramNode = {
+                  type: 'wtProgram',
+                  module: moduleNode,
+                  entry
+                };
+                nodeByKey.set(`program:${branchName}:${entry.qualifiedName}`, programNode);
+                return programNode;
+              });
+            return moduleNode;
+          })
+          .sort((a, b) => a.modulePath.localeCompare(b.modulePath));
+
+        branchNode.modules = moduleNodes;
+        branchNodes.push(branchNode);
+      }));
+
+      branchNodes.sort((a, b) => {
+        if (a.isCurrent && !b.isCurrent) return -1;
+        if (!a.isCurrent && b.isCurrent) return 1;
+        return a.branch.localeCompare(b.branch);
+      });
+
+      this.branches = branchNodes;
+      this.nodeByKey = nodeByKey;
+      this.cacheTimestamp = Date.now();
+    } catch (error) {
+      output.appendLine(`[warn] Failed to load worktrees programs: ${String(error)}`);
+      this.branches = [];
+      this.nodeByKey.clear();
+    } finally {
+      this.refreshing = false;
+    }
+  }
+
+  async getProgramTargets(): Promise<ProgramTarget[]> {
+    await this.ensureLoaded();
+    const targets: ProgramTarget[] = [];
+    for (const branch of this.branches) {
+      for (const mod of branch.modules) {
+        for (const prog of mod.programs) {
+          targets.push({
+            branch: branch.branch,
+            worktreePath: branch.worktreePath,
+            entry: prog.entry
+          });
+        }
+      }
+    }
+    return targets;
+  }
+
+  getProgramNode(branch: string, qualifiedName: string): WorktreeProgramNode | undefined {
+    const node = this.nodeByKey.get(`program:${branch}:${qualifiedName}`);
+    return node?.type === 'wtProgram' ? node : undefined;
+  }
+
+  getTreeItem(element: WorktreesProgramsNode): vscode.TreeItem {
+    switch (element.type) {
+      case 'wtBranch': {
+        const label = element.isCurrent ? `${element.branch} ✓ current` : element.branch;
+        const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Expanded);
+        item.contextValue = 'worktreeBranch';
+        item.iconPath = new vscode.ThemeIcon('git-branch');
+        item.id = `branch:${element.branch}`;
+        return item;
+      }
+      case 'wtModule': {
+        const item = new vscode.TreeItem(element.modulePath, vscode.TreeItemCollapsibleState.Expanded);
+        item.contextValue = 'worktreeModule';
+        item.iconPath = new vscode.ThemeIcon('folder');
+        item.id = `module:${element.branch.branch}:${element.modulePath}`;
+        return item;
+      }
+      case 'wtProgram': {
+        const typeArg = extractProgramTypeArg(element.entry);
+        const label = typeArg ? `${element.entry.name}: Program[${typeArg}]` : element.entry.name;
+        const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Collapsed);
+        const uri = vscode.Uri.file(element.entry.filePath);
+        item.contextValue = 'worktreeEntrypoint';
+        item.iconPath = new vscode.ThemeIcon('symbol-function');
+        item.id = `program:${element.module.branch.branch}:${element.entry.qualifiedName}`;
+        item.tooltip = element.entry.docstring
+          ? `${element.entry.qualifiedName}\n\n${element.entry.docstring}`
+          : element.entry.qualifiedName;
+        item.command = {
+          command: 'vscode.open',
+          title: 'Go to Definition',
+          arguments: [
+            uri,
+            { selection: new vscode.Range(element.entry.line - 1, 0, element.entry.line - 1, 0) }
+          ]
+        };
+        item.resourceUri = uri;
+        return item;
+      }
+      case 'envChain':
+        return createEnvChainTreeItem(element);
+      case 'envSource':
+        return createEnvSourceTreeItem(element);
+      case 'envKey':
+        return createEnvKeyTreeItem(element);
+    }
+  }
+
+  async getChildren(element?: WorktreesProgramsNode): Promise<WorktreesProgramsNode[]> {
+    await this.ensureLoaded();
+    if (!element) {
+      return this.branches;
+    }
+    if (element.type === 'wtBranch') {
+      return element.modules;
+    }
+    if (element.type === 'wtModule') {
+      return element.programs;
+    }
+    if (element.type === 'wtProgram') {
+      const rootPath = element.module.branch.worktreePath;
+      const envChain = await getEnvChainForRoot(rootPath, element.entry.qualifiedName);
+      return [{
+        type: 'envChain',
+        rootPath,
+        parentEntry: element.entry,
+        entries: envChain
+      }];
+    }
+    if (element.type === 'envChain') {
+      return element.entries.map((entry) => ({
+        type: 'envSource' as const,
+        rootPath: element.rootPath,
+        entry,
+        parentEntry: element.parentEntry,
+        allEnvEntries: element.entries
+      }));
+    }
+    if (element.type === 'envSource') {
+      return getEnvKeyNodes(element);
+    }
+    return [];
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   output.appendLine('doeff-runner activated');
 
@@ -1301,13 +2286,26 @@ export function activate(context: vscode.ExtensionContext) {
   // Create state store for sharing state between TreeView and CodeLens
   const stateStore = new DoeffStateStore(context);
 
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+
   // Create providers
   const codeLensProvider = new ProgramCodeLensProvider(stateStore);
   const treeProvider = new DoeffProgramsProvider(stateStore);
+  const worktreeProgramsProvider = new DoeffWorktreeProgramsProvider(workspaceRoot);
+  const playlistsStore = new DoeffPlaylistsStore(workspaceRoot);
+  const playlistsProvider = new DoeffPlaylistsProvider(playlistsStore, stateStore, workspaceRoot);
 
   // Create TreeView
   const treeView = vscode.window.createTreeView('doeff-programs', {
     treeDataProvider: treeProvider,
+    showCollapseAll: true
+  });
+  const worktreesTreeView = vscode.window.createTreeView('doeff-programs-all', {
+    treeDataProvider: worktreeProgramsProvider,
+    showCollapseAll: true
+  });
+  const playlistsTreeView = vscode.window.createTreeView('doeff-playlists', {
+    treeDataProvider: playlistsProvider,
     showCollapseAll: true
   });
 
@@ -1322,6 +2320,9 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       treeView.message = `${modeIndicator} mode`;
     }
+
+    worktreesTreeView.message = `${modeIndicator} mode`;
+    playlistsTreeView.message = `${modeIndicator} mode`;
   };
 
   // Subscribe to filter changes to update TreeView message
@@ -1336,21 +2337,743 @@ export function activate(context: vscode.ExtensionContext) {
   stateStore.onStateChange(() => {
     codeLensProvider.refresh();
     treeProvider.refresh();
+    playlistsProvider.refresh();
     updateTreeViewMessage();
   });
 
   // File watcher for auto-refresh
   const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.py');
-  fileWatcher.onDidChange(uri => treeProvider.invalidateFile(uri.fsPath));
-  fileWatcher.onDidCreate(uri => treeProvider.invalidateFile(uri.fsPath));
-  fileWatcher.onDidDelete(uri => treeProvider.invalidateFile(uri.fsPath));
+  fileWatcher.onDidChange(uri => {
+    treeProvider.invalidateFile(uri.fsPath);
+    worktreeProgramsProvider.refresh();
+  });
+  fileWatcher.onDidCreate(uri => {
+    treeProvider.invalidateFile(uri.fsPath);
+    worktreeProgramsProvider.refresh();
+  });
+  fileWatcher.onDidDelete(uri => {
+    treeProvider.invalidateFile(uri.fsPath);
+    worktreeProgramsProvider.refresh();
+  });
+
+  async function pickProgramTarget(): Promise<ProgramTarget | undefined> {
+    const targets = await worktreeProgramsProvider.getProgramTargets();
+    if (targets.length === 0) {
+      vscode.window.showInformationMessage('No Programs found across worktrees.');
+      return undefined;
+    }
+
+    const grouped = new Map<string, ProgramTarget[]>();
+    for (const target of targets) {
+      const existing = grouped.get(target.branch) ?? [];
+      existing.push(target);
+      grouped.set(target.branch, existing);
+    }
+
+    interface ProgramQuickPickItem extends vscode.QuickPickItem {
+      target?: ProgramTarget;
+      searchText?: string;
+    }
+
+    const branchGroups = Array.from(grouped.keys())
+      .sort((a, b) => a.localeCompare(b))
+      .map((branch) => {
+        const branchTargets = (grouped.get(branch) ?? [])
+          .slice()
+          .sort((a, b) => a.entry.name.localeCompare(b.entry.name));
+        const items = branchTargets.map((target): ProgramQuickPickItem => {
+          const modulePath = target.entry.qualifiedName.split('.').slice(0, -1).join('.');
+          return {
+            label: target.entry.name,
+            description: modulePath,
+            detail: `[${branch}]`,
+            target,
+            searchText: `${target.entry.name} ${target.entry.qualifiedName} ${modulePath} ${branch}`
+          };
+        });
+        return { branch, items };
+      });
+
+    const buildItems = (query: string): ProgramQuickPickItem[] => {
+      const flattened: ProgramQuickPickItem[] = [];
+      for (const group of branchGroups) {
+        const filtered = query
+          ? group.items.filter((item) => multiTokenFuzzyMatch(query, item.searchText ?? item.label))
+          : group.items;
+        if (filtered.length === 0) {
+          continue;
+        }
+        flattened.push({ label: group.branch, kind: vscode.QuickPickItemKind.Separator });
+        flattened.push(...filtered);
+      }
+      return flattened;
+    };
+
+    return await new Promise<ProgramTarget | undefined>((resolve) => {
+      const qp = vscode.window.createQuickPick<ProgramQuickPickItem>();
+      qp.title = 'Pick a program';
+      qp.placeholder = 'Search (supports multi-token: "abc fg")';
+
+      const refreshItems = () => {
+        qp.items = buildItems(qp.value);
+      };
+
+      refreshItems();
+      qp.onDidChangeValue(refreshItems);
+      qp.onDidAccept(() => {
+        const selection = qp.selectedItems[0];
+        if (selection?.target) {
+          resolve(selection.target);
+        } else {
+          resolve(undefined);
+        }
+        qp.hide();
+      });
+      qp.onDidHide(() => {
+        resolve(undefined);
+        qp.dispose();
+      });
+
+      qp.show();
+    });
+  }
+
+  async function revealInWorktreesTree(target: ProgramTarget): Promise<void> {
+    const node = worktreeProgramsProvider.getProgramNode(target.branch, target.entry.qualifiedName);
+    if (node) {
+      await worktreesTreeView.reveal(node, { select: true, focus: true, expand: true });
+    }
+    await vscode.commands.executeCommand('doeff-runner.revealEntrypoint', target.entry);
+  }
+
+  async function pickPlaylistId(): Promise<string | undefined> {
+    const data = await playlistsStore.load();
+
+    interface PlaylistQuickPickItem extends vscode.QuickPickItem {
+      playlistId?: string;
+      isCreate?: boolean;
+    }
+
+    const playlists = data.playlists.slice().sort((a, b) => a.name.localeCompare(b.name));
+    const items: PlaylistQuickPickItem[] = [];
+
+    // Default selection should be an existing playlist (if any), not "create new".
+    for (const playlist of playlists) {
+      items.push({
+        label: playlist.name,
+        description: `${playlist.items.length} item(s)`,
+        playlistId: playlist.id
+      });
+    }
+    if (items.length > 0) {
+      items.push({ label: 'Actions', kind: vscode.QuickPickItemKind.Separator });
+    }
+    items.push({ label: 'Create new playlist...', isCreate: true });
+
+    const selected = await vscode.window.showQuickPick(items, { title: 'Select playlist' });
+    if (!selected) {
+      return undefined;
+    }
+    if (selected.isCreate) {
+      const name = await vscode.window.showInputBox({
+        prompt: 'New playlist name',
+        placeHolder: 'e.g., Auth Experiments'
+      });
+      if (!name?.trim()) {
+        return undefined;
+      }
+      const id = uuid();
+      await playlistsStore.update((payload) => {
+        payload.playlists.push({ id, name: name.trim(), items: [] });
+      });
+      return id;
+    }
+    return selected.playlistId;
+  }
+
+  async function pickPlaylistItemIds(
+    title: string
+  ): Promise<{ playlistId: string; itemId: string } | undefined> {
+    const data = await playlistsStore.load();
+
+    interface PlaylistItemQuickPickItem extends vscode.QuickPickItem {
+      playlistId?: string;
+      itemId?: string;
+      searchText?: string;
+    }
+
+    const playlistGroups = data.playlists
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((playlist) => {
+        const items: PlaylistItemQuickPickItem[] = playlist.items.map((item) => {
+          const programName = item.program.split('.').pop() ?? item.program;
+          const detail = [
+            formatBranchCommitTag(item.branch, item.commit),
+            formatPlaylistToolsTag(item.apply, item.transform)
+          ].filter(Boolean).join(' ');
+
+          return {
+            label: item.name,
+            description: programName,
+            detail,
+            playlistId: playlist.id,
+            itemId: item.id,
+            searchText: [
+              item.name,
+              item.program,
+              programName,
+              item.branch,
+              item.commit ?? '',
+              item.apply ?? '',
+              item.transform ?? ''
+            ].join(' ')
+          };
+        });
+        return { name: playlist.name, items };
+      });
+
+    const buildItems = (query: string): PlaylistItemQuickPickItem[] => {
+      const flattened: PlaylistItemQuickPickItem[] = [];
+      for (const group of playlistGroups) {
+        const filtered = query
+          ? group.items.filter((item) => multiTokenFuzzyMatch(query, item.searchText ?? item.label))
+          : group.items;
+        if (filtered.length === 0) {
+          continue;
+        }
+        flattened.push({ label: group.name, kind: vscode.QuickPickItemKind.Separator });
+        flattened.push(...filtered);
+      }
+      return flattened;
+    };
+
+    const selected = await new Promise<PlaylistItemQuickPickItem | undefined>((resolve) => {
+      const qp = vscode.window.createQuickPick<PlaylistItemQuickPickItem>();
+      qp.title = title;
+      qp.placeholder = 'Search (supports multi-token: "abc fg")';
+
+      const refreshItems = () => {
+        qp.items = buildItems(qp.value);
+      };
+
+      refreshItems();
+      qp.onDidChangeValue(refreshItems);
+      qp.onDidAccept(() => {
+        resolve(qp.selectedItems[0]);
+        qp.hide();
+      });
+      qp.onDidHide(() => {
+        resolve(undefined);
+        qp.dispose();
+      });
+      qp.show();
+    });
+
+    if (!selected?.playlistId || !selected.itemId) {
+      return undefined;
+    }
+    return { playlistId: selected.playlistId, itemId: selected.itemId };
+  }
+
+  function resolvePlaylistItemIds(
+    arg1?: unknown,
+    arg2?: unknown
+  ): { playlistId: string; itemId: string } | undefined {
+    if (typeof arg1 === 'string' && typeof arg2 === 'string') {
+      return { playlistId: arg1, itemId: arg2 };
+    }
+
+    if (arg1 && typeof arg1 === 'object') {
+      const maybeNode = arg1 as Partial<PlaylistItemNode>;
+      if (
+        maybeNode.type === 'playlistItem' &&
+        maybeNode.playlist &&
+        maybeNode.item &&
+        typeof maybeNode.playlist.playlist?.id === 'string' &&
+        typeof maybeNode.item.id === 'string'
+      ) {
+        return { playlistId: maybeNode.playlist.playlist.id, itemId: maybeNode.item.id };
+      }
+    }
+
+    return undefined;
+  }
+
+  async function addToPlaylistFlow(initial?: ProgramTarget): Promise<void> {
+    const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+    if (!repoRoot) {
+      vscode.window.showErrorMessage('No workspace folder open.');
+      return;
+    }
+
+    const target = initial ?? await pickProgramTarget();
+    if (!target) {
+      return;
+    }
+
+    const programQualifiedName = target.entry.qualifiedName;
+
+    const currentBranch = await resolveCurrentBranch(repoRoot);
+    const branches = await listLocalBranches(repoRoot);
+    const defaultBranch = target.branch || currentBranch || branches[0] || 'main';
+
+    const indexedTargets = await worktreeProgramsProvider.getProgramTargets();
+    const branchesWithEntrypoint = new Set(
+      indexedTargets
+        .filter((t) => t.entry.qualifiedName === programQualifiedName)
+        .map((t) => t.branch)
+    );
+
+    interface BranchQuickPickItem extends vscode.QuickPickItem {
+      branch?: string;
+      showAll?: boolean;
+    }
+
+    let branch: string | undefined;
+
+    if (branchesWithEntrypoint.size > 0) {
+      const verified = Array.from(branchesWithEntrypoint.values()).sort((a, b) => a.localeCompare(b));
+      if (verified.includes(defaultBranch)) {
+        verified.splice(verified.indexOf(defaultBranch), 1);
+        verified.unshift(defaultBranch);
+      }
+
+      const branchItems: BranchQuickPickItem[] = [
+        { label: 'Branches with this entrypoint', kind: vscode.QuickPickItemKind.Separator },
+        ...verified.map((b) => ({
+          label: b,
+          description: currentBranch === b ? 'current' : undefined,
+          branch: b
+        })),
+        { label: 'Other branches...', description: 'Show all local branches', showAll: true }
+      ];
+
+      const selected = await vscode.window.showQuickPick(branchItems, { title: 'Target branch' });
+      if (!selected) {
+        return;
+      }
+
+      if (selected.showAll) {
+        const allBranchItems: BranchQuickPickItem[] = [];
+        const seen = new Set<string>();
+
+        const addBranchItem = (b: string) => {
+          if (seen.has(b)) return;
+          seen.add(b);
+          allBranchItems.push({
+            label: b,
+            description: branchesWithEntrypoint.has(b) ? 'indexed' : 'unverified',
+            branch: b
+          });
+        };
+
+        addBranchItem(defaultBranch);
+        for (const b of branches) {
+          addBranchItem(b);
+        }
+
+        const chosen = await vscode.window.showQuickPick(allBranchItems, {
+          title: 'Target branch (unverified branches may fail)'
+        });
+        branch = chosen?.branch;
+      } else {
+        branch = selected.branch;
+      }
+    } else {
+      const branchItems: BranchQuickPickItem[] = [];
+      const seen = new Set<string>();
+
+      const addBranchItem = (b: string) => {
+        if (seen.has(b)) return;
+        seen.add(b);
+        const isCurrent = currentBranch === b;
+        branchItems.push({
+          label: b,
+          description: isCurrent ? 'current' : undefined,
+          branch: b
+        });
+      };
+
+      addBranchItem(defaultBranch);
+      for (const b of branches) {
+        addBranchItem(b);
+      }
+
+      const selected = await vscode.window.showQuickPick(branchItems, { title: 'Target branch' });
+      branch = selected?.branch;
+    }
+
+    if (!branch) {
+      return;
+    }
+
+    const worktreePath = await ensureWorktreeForBranch(repoRoot, branch);
+    if (!worktreePath) {
+      return;
+    }
+
+    const indexerPath = await locateIndexer();
+    const programEntry =
+      branch === target.branch && path.resolve(worktreePath) === path.resolve(target.worktreePath)
+        ? target.entry
+        : await findProgramByQualifiedName(indexerPath, worktreePath, programQualifiedName);
+
+    if (!programEntry) {
+      vscode.window.showErrorMessage(`Program '${programQualifiedName}' not found in branch '${branch}'.`);
+      return;
+    }
+
+    const pinnedCommit = await promptPinnedCommit(repoRoot, branch);
+    if (pinnedCommit === undefined) {
+      return;
+    }
+
+    const playlistId = await pickPlaylistId();
+    if (!playlistId) {
+      return;
+    }
+
+    const defaultName = programEntry.name;
+
+    const nameInput = await vscode.window.showInputBox({
+      prompt: 'Playlist item name (optional)',
+      value: defaultName,
+      placeHolder: 'e.g., Login v1.0 baseline'
+    });
+    if (nameInput === undefined) {
+      return;
+    }
+    const itemName = nameInput.trim() || defaultName;
+
+    const newItem: PlaylistItemV2 = {
+      id: uuid(),
+      name: itemName,
+      branch,
+      commit: pinnedCommit,
+      program: programQualifiedName,
+      apply: null,
+      transform: null,
+      args: {}
+    };
+
+    await playlistsStore.update((payload) => {
+      const playlist = payload.playlists.find((p) => p.id === playlistId);
+      if (!playlist) {
+        payload.playlists.push({ id: playlistId, name: 'Playlist', items: [newItem] });
+        return;
+      }
+      playlist.items.push(newItem);
+    });
+
+    vscode.window.showInformationMessage(`Added '${programEntry.name}' to playlist.`);
+  }
+
+  async function runPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
+    const data = await playlistsStore.load();
+    const playlist = data.playlists.find((p) => p.id === playlistId);
+    const item = playlist?.items.find((i) => i.id === itemId);
+    if (!playlist || !item) {
+      vscode.window.showErrorMessage('Playlist item not found.');
+      return;
+    }
+
+    const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+    if (!repoRoot) {
+      vscode.window.showErrorMessage('No workspace folder open.');
+      return;
+    }
+
+    const branchWorktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
+    if (!branchWorktreePath) {
+      return;
+    }
+
+    let runCwd = branchWorktreePath;
+    if (item.commit) {
+      const head = await executeGit(['rev-parse', 'HEAD'], branchWorktreePath);
+      if (head.trim() !== item.commit.trim()) {
+        const choice = await vscode.window.showWarningMessage(
+          `Worktree is at ${head.slice(0, 6)}, but item is pinned to ${item.commit.slice(0, 6)}.`,
+          { modal: true },
+          'Run at current HEAD',
+          `Create temp worktree at ${item.commit.slice(0, 6)}`,
+          'Cancel'
+        );
+        if (choice === 'Cancel' || !choice) {
+          return;
+        }
+        if (choice.startsWith('Create temp')) {
+          const temp = await ensureDetachedWorktreeAtCommit(repoRoot, item.branch, item.commit);
+          if (!temp) {
+            return;
+          }
+          runCwd = temp;
+        }
+      }
+    }
+
+    const indexerPath = await locateIndexer();
+    const programEntry = await findProgramByQualifiedName(indexerPath, runCwd, item.program);
+    if (!programEntry) {
+      vscode.window.showErrorMessage(
+        `Program '${item.program}' not found in branch '${item.branch}'.`
+      );
+      return;
+    }
+
+    const proximity: ProximityContext = { filePath: programEntry.filePath, line: programEntry.line };
+    const interpreters = await fetchEntries(indexerPath, runCwd, 'find-interpreters', '', proximity);
+    if (interpreters.length === 0) {
+      vscode.window.showErrorMessage('No interpreters found in target worktree.');
+      return;
+    }
+
+    const programTypeArg = extractProgramTypeArg(programEntry);
+    let kleisli: IndexEntry | undefined;
+    if (item.apply) {
+      const kleisliEntries = await fetchEntries(indexerPath, runCwd, 'find-kleisli', programTypeArg, proximity);
+      kleisli = kleisliEntries.find((e) => e.qualifiedName === item.apply);
+      if (!kleisli) {
+        vscode.window.showErrorMessage(`Kleisli '${item.apply}' not found in branch '${item.branch}'.`);
+        return;
+      }
+    }
+
+    let transformer: IndexEntry | undefined;
+    if (item.transform) {
+      const transformEntries = await fetchEntries(indexerPath, runCwd, 'find-transforms', programTypeArg, proximity);
+      transformer = transformEntries.find((e) => e.qualifiedName === item.transform);
+      if (!transformer) {
+        vscode.window.showErrorMessage(`Transformer '${item.transform}' not found in branch '${item.branch}'.`);
+        return;
+      }
+    }
+
+    const selection: RunSelection = {
+      programPath: item.program,
+      programType: programTypeArg,
+      interpreter: interpreters[0],
+      kleisli,
+      transformer
+    };
+
+    const extraArgs = playlistArgsToDoeffRunArgs(item.args);
+    await runSelection(selection, undefined, stateStore.getDebugMode(), {
+      cwd: runCwd,
+      persistFolderPath: runCwd,
+      branch: item.branch,
+      extraArgs
+    });
+  }
+
+  async function revealPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
+    const data = await playlistsStore.load();
+    const playlist = data.playlists.find((p) => p.id === playlistId);
+    const item = playlist?.items.find((i) => i.id === itemId);
+    if (!playlist || !item) {
+      vscode.window.showErrorMessage('Playlist item not found.');
+      return;
+    }
+
+    const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+    if (!repoRoot) {
+      vscode.window.showErrorMessage('No workspace folder open.');
+      return;
+    }
+
+    const branchWorktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
+    if (!branchWorktreePath) {
+      return;
+    }
+
+    let openCwd = branchWorktreePath;
+    if (item.commit) {
+      const head = await executeGit(['rev-parse', 'HEAD'], branchWorktreePath);
+      if (head.trim() !== item.commit.trim()) {
+        const choice = await vscode.window.showWarningMessage(
+          `Worktree is at ${head.slice(0, 6)}, but item is pinned to ${item.commit.slice(0, 6)}.`,
+          { modal: true },
+          'Open at current HEAD',
+          `Open at pinned commit ${item.commit.slice(0, 6)}`,
+          'Cancel'
+        );
+        if (!choice || choice === 'Cancel') {
+          return;
+        }
+        if (choice.startsWith('Open at pinned')) {
+          const temp = await ensureDetachedWorktreeAtCommit(repoRoot, item.branch, item.commit);
+          if (!temp) {
+            return;
+          }
+          openCwd = temp;
+        }
+      }
+    }
+
+    const indexerPath = await locateIndexer();
+    const programEntry = await findProgramByQualifiedName(indexerPath, openCwd, item.program);
+    if (!programEntry) {
+      vscode.window.showErrorMessage(
+        `Program '${item.program}' not found in branch '${item.branch}'.`
+      );
+      return;
+    }
+
+    await vscode.commands.executeCommand('doeff-runner.revealEntrypoint', programEntry);
+  }
+
+  async function removePlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
+    const data = await playlistsStore.load();
+    const playlist = data.playlists.find((p) => p.id === playlistId);
+    const item = playlist?.items.find((i) => i.id === itemId);
+    if (!playlist || !item) {
+      vscode.window.showErrorMessage('Playlist item not found.');
+      return;
+    }
+
+    const confirm = await vscode.window.showWarningMessage(
+      `Remove '${item.name}' from '${playlist.name}'?`,
+      { modal: true },
+      'Remove'
+    );
+    if (confirm !== 'Remove') {
+      return;
+    }
+
+    await playlistsStore.update((payload) => {
+      const pl = payload.playlists.find((p) => p.id === playlistId);
+      if (!pl) return;
+      pl.items = pl.items.filter((i) => i.id !== itemId);
+    });
+  }
+
+  async function editPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
+    const data = await playlistsStore.load();
+    const playlist = data.playlists.find((p) => p.id === playlistId);
+    const item = playlist?.items.find((i) => i.id === itemId);
+    if (!playlist || !item) {
+      vscode.window.showErrorMessage('Playlist item not found.');
+      return;
+    }
+
+    const action = await vscode.window.showQuickPick(
+      [
+        { label: 'Rename', key: 'rename' },
+        { label: 'Pin / unpin commit', key: 'pin' },
+        { label: 'Change Kleisli', key: 'kleisli' },
+        { label: 'Change Transform', key: 'transform' },
+        { label: 'Move to playlist', key: 'move' }
+      ],
+      { title: `Edit: ${item.name}` }
+    );
+    if (!action) {
+      return;
+    }
+
+    const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+    const worktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
+    if (!worktreePath) {
+      return;
+    }
+
+    const indexerPath = await locateIndexer();
+    const programEntry = await findProgramByQualifiedName(indexerPath, worktreePath, item.program);
+    const programTypeArg = programEntry ? extractProgramTypeArg(programEntry) : '';
+    const proximity: ProximityContext = programEntry
+      ? { filePath: programEntry.filePath, line: programEntry.line }
+      : { filePath: '', line: 0 };
+
+    if (action.key === 'rename') {
+      const name = await vscode.window.showInputBox({ prompt: 'New item name', value: item.name });
+      if (name === undefined) return;
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it) it.name = name.trim() || it.name;
+      });
+      return;
+    }
+
+    if (action.key === 'pin') {
+      const pinnedCommit = await promptPinnedCommit(repoRoot, item.branch);
+      if (pinnedCommit === undefined) return;
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it) it.commit = pinnedCommit;
+      });
+      return;
+    }
+
+    if (action.key === 'kleisli') {
+      if (!programEntry) {
+        vscode.window.showErrorMessage('Program not found in target branch; cannot edit tools.');
+        return;
+      }
+      const kleisliEntries = await fetchEntries(indexerPath, worktreePath, 'find-kleisli', programTypeArg, proximity);
+      const choice = kleisliEntries.length
+        ? await selectEntry('Select Kleisli (optional)', kleisliEntries, true)
+        : undefined;
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it) it.apply = choice?.qualifiedName ?? null;
+      });
+      return;
+    }
+
+    if (action.key === 'transform') {
+      if (!programEntry) {
+        vscode.window.showErrorMessage('Program not found in target branch; cannot edit tools.');
+        return;
+      }
+      const transformEntries = await fetchEntries(
+        indexerPath,
+        worktreePath,
+        'find-transforms',
+        programTypeArg,
+        proximity
+      );
+      const choice = transformEntries.length
+        ? await selectEntry('Select transformer (optional)', transformEntries, true)
+        : undefined;
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it) it.transform = choice?.qualifiedName ?? null;
+      });
+      return;
+    }
+
+    if (action.key === 'move') {
+      const targetPlaylistId = await pickPlaylistId();
+      if (!targetPlaylistId) return;
+      if (targetPlaylistId === playlistId) return;
+      await playlistsStore.update((payload) => {
+        const src = payload.playlists.find((p) => p.id === playlistId);
+        const dst = payload.playlists.find((p) => p.id === targetPlaylistId);
+        if (!src || !dst) return;
+        const index = src.items.findIndex((i) => i.id === itemId);
+        if (index < 0) return;
+        const [moved] = src.items.splice(index, 1);
+        dst.items.push(moved);
+      });
+      return;
+    }
+  }
 
   context.subscriptions.push(
     output,
     stateStore,
     codeLensProvider,
     treeProvider,
+    worktreeProgramsProvider,
+    playlistsStore,
+    playlistsProvider,
     treeView,
+    worktreesTreeView,
+    playlistsTreeView,
     fileWatcher,
     vscode.languages.registerCodeLensProvider(
       { language: 'python' },
@@ -1432,20 +3155,19 @@ export function activate(context: vscode.ExtensionContext) {
     // New TreeView commands
     vscode.commands.registerCommand(
       'doeff-runner.refreshExplorer',
-      () => treeProvider.refresh()
+      () => {
+        treeProvider.refresh();
+        worktreeProgramsProvider.refresh();
+        playlistsProvider.refresh();
+      }
     ),
     vscode.commands.registerCommand(
       'doeff-runner.revealEntrypoint',
       async (entry: IndexEntry) => {
         const uri = vscode.Uri.file(entry.filePath);
-        const document = await vscode.workspace.openTextDocument(uri);
-        const editor = await vscode.window.showTextDocument(document);
-        const position = new vscode.Position(entry.line - 1, 0);
-        editor.selection = new vscode.Selection(position, position);
-        editor.revealRange(
-          new vscode.Range(position, position),
-          vscode.TextEditorRevealType.InCenter
-        );
+        await vscode.commands.executeCommand('vscode.open', uri, {
+          selection: new vscode.Range(entry.line - 1, 0, entry.line - 1, 0)
+        });
       }
     ),
     vscode.commands.registerCommand(
@@ -1485,31 +3207,56 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        const items = entrypoints.map(entry => ({
+        interface EntrypointQuickPickItem extends vscode.QuickPickItem {
+          entry: IndexEntry;
+          searchText: string;
+        }
+
+        const allItems: EntrypointQuickPickItem[] = entrypoints.map(entry => ({
           label: entry.name,
           description: entry.qualifiedName,
           detail: entry.docstring,
-          entry
+          entry,
+          searchText: `${entry.name} ${entry.qualifiedName} ${entry.docstring ?? ''}`
         }));
 
-        const selected = await vscode.window.showQuickPick(items, {
-          placeHolder: 'Search entrypoints...',
-          matchOnDescription: true,
-          matchOnDetail: true
+        const selected = await new Promise<EntrypointQuickPickItem | undefined>((resolve) => {
+          const qp = vscode.window.createQuickPick<EntrypointQuickPickItem>();
+          qp.placeholder = 'Search entrypoints (supports multi-token: "abc fg")';
+
+          const refreshItems = () => {
+            qp.items = qp.value
+              ? allItems.filter((item) => multiTokenFuzzyMatch(qp.value, item.searchText))
+              : allItems;
+          };
+
+          refreshItems();
+          qp.onDidChangeValue(refreshItems);
+          qp.onDidAccept(() => {
+            resolve(qp.selectedItems[0]);
+            qp.hide();
+          });
+          qp.onDidHide(() => {
+            resolve(undefined);
+            qp.dispose();
+          });
+          qp.show();
         });
 
-        if (selected) {
-          // Reveal the entrypoint in editor
-          const uri = vscode.Uri.file(selected.entry.filePath);
-          const document = await vscode.workspace.openTextDocument(uri);
-          const editor = await vscode.window.showTextDocument(document);
-          const position = new vscode.Position(selected.entry.line - 1, 0);
-          editor.selection = new vscode.Selection(position, position);
-          editor.revealRange(
-            new vscode.Range(position, position),
-            vscode.TextEditorRevealType.InCenter
-          );
+        if (!selected) {
+          return;
         }
+
+        // Reveal the entrypoint in editor
+        const uri = vscode.Uri.file(selected.entry.filePath);
+        const document = await vscode.workspace.openTextDocument(uri);
+        const editor = await vscode.window.showTextDocument(document);
+        const position = new vscode.Position(selected.entry.line - 1, 0);
+        editor.selection = new vscode.Selection(position, position);
+        editor.revealRange(
+          new vscode.Range(position, position),
+          vscode.TextEditorRevealType.InCenter
+        );
       }
     ),
     vscode.commands.registerCommand(
@@ -1542,31 +3289,284 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('Filter cleared');
       }
     ),
-    // Key Inspector commands
+    // Playlists + worktree-aware program pickers
     vscode.commands.registerCommand(
-      'doeff-runner.inspectEnvKey',
-      async (entryArg?: IndexEntry | EnvSourceNode) => {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) {
-          vscode.window.showErrorMessage('No workspace folder open');
+      'doeff-runner.addToPlaylist',
+      async (arg?: unknown) => {
+        let initial: ProgramTarget | undefined;
+
+        if (arg && typeof arg === 'object') {
+          const anyArg = arg as any;
+
+          if (anyArg.type === 'wtProgram' && anyArg.entry && anyArg.module?.branch) {
+            const node = arg as WorktreeProgramNode;
+            initial = {
+              branch: node.module.branch.branch,
+              worktreePath: node.module.branch.worktreePath,
+              entry: node.entry
+            };
+          } else if (anyArg.type === 'entrypoint' && anyArg.entry) {
+            const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+            const branch = await resolveCurrentBranch(repoRoot) ?? 'main';
+            initial = { branch, worktreePath: workspaceRoot, entry: anyArg.entry as IndexEntry };
+          } else if (anyArg.entry && typeof anyArg.worktreePath === 'string') {
+            const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+            const worktreePath = anyArg.worktreePath as string;
+            const branch =
+              await resolveCurrentBranch(worktreePath) ??
+              await resolveCurrentBranch(repoRoot) ??
+              'main';
+            initial = { branch, worktreePath, entry: anyArg.entry as IndexEntry };
+          } else if (typeof anyArg.qualifiedName === 'string') {
+            const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+            const branch = await resolveCurrentBranch(repoRoot) ?? 'main';
+            initial = { branch, worktreePath: workspaceRoot, entry: arg as IndexEntry };
+          }
+        }
+
+        await addToPlaylistFlow(initial);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.pickProgram',
+      async () => {
+        const target = await pickProgramTarget();
+        if (!target) return;
+        await revealInWorktreesTree(target);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.pickAndRun',
+      async () => {
+        const target = await pickProgramTarget();
+        if (!target) return;
+        await runDefault(target.entry.qualifiedName, undefined, stateStore.getDebugMode(), {
+          cwd: target.worktreePath,
+          persistFolderPath: target.worktreePath,
+          branch: target.branch
+        });
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.pickAndAddToPlaylist',
+      async () => {
+        const target = await pickProgramTarget();
+        if (!target) return;
+        await addToPlaylistFlow(target);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.pickPlaylist',
+      async () => {
+        const data = await playlistsStore.load();
+        const items = data.playlists
+          .slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((pl) => ({
+            label: pl.name,
+            description: `${pl.items.length} item(s)`,
+            playlistId: pl.id
+          }));
+        const selected = await vscode.window.showQuickPick(items, { title: 'Pick a playlist' });
+        if (!selected) return;
+        const node = playlistsProvider.getPlaylistNode(selected.playlistId);
+        if (node) {
+          await playlistsTreeView.reveal(node, { select: true, focus: true, expand: true });
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.pickPlaylistItem',
+      async () => {
+        const picked = await pickPlaylistItemIds('Pick a playlist item');
+        if (!picked) {
           return;
         }
 
-        // Determine program and env chain
+        const node = playlistsProvider.getPlaylistItemNode(picked.playlistId, picked.itemId);
+        if (node) {
+          await playlistsTreeView.reveal(node, { select: true, focus: true, expand: true });
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.pickAndRunPlaylistItem',
+      async () => {
+        const picked = await pickPlaylistItemIds('Pick a playlist item to run');
+        if (!picked) {
+          return;
+        }
+        await runPlaylistItemFlow(picked.playlistId, picked.itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.runPlaylistItem',
+      async (arg1?: unknown, arg2?: unknown) => {
+        const ids = resolvePlaylistItemIds(arg1, arg2)
+          ?? await pickPlaylistItemIds('Pick a playlist item to run');
+        if (!ids) {
+          return;
+        }
+        await runPlaylistItemFlow(ids.playlistId, ids.itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.revealPlaylistItem',
+      async (arg1?: unknown, arg2?: unknown) => {
+        const ids = resolvePlaylistItemIds(arg1, arg2)
+          ?? await pickPlaylistItemIds('Pick a playlist item to reveal');
+        if (!ids) {
+          return;
+        }
+        await revealPlaylistItemFlow(ids.playlistId, ids.itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.editPlaylistItem',
+      async (playlistId: string, itemId: string) => {
+        await editPlaylistItemFlow(playlistId, itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.removePlaylistItem',
+      async (playlistId: string, itemId: string) => {
+        await removePlaylistItemFlow(playlistId, itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.createPlaylist',
+      async () => {
+        const name = await vscode.window.showInputBox({
+          prompt: 'New playlist name',
+          placeHolder: 'e.g., Daily'
+        });
+        if (!name?.trim()) {
+          return;
+        }
+        const id = uuid();
+        await playlistsStore.update((payload) => {
+          payload.playlists.push({ id, name: name.trim(), items: [] });
+        });
+        const node = playlistsProvider.getPlaylistNode(id);
+        if (node) {
+          await playlistsTreeView.reveal(node, { select: true, focus: true, expand: true });
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.renamePlaylist',
+      async (node?: PlaylistNode) => {
+        const data = await playlistsStore.load();
+        const playlistId =
+          node?.type === 'playlist'
+            ? node.playlist.id
+            : (await vscode.window.showQuickPick(
+              data.playlists
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((pl) => ({ label: pl.name, playlistId: pl.id })),
+              { title: 'Pick a playlist to rename' }
+            ))?.playlistId;
+
+        if (!playlistId) {
+          return;
+        }
+
+        const playlist = data.playlists.find((p) => p.id === playlistId);
+        const name = await vscode.window.showInputBox({
+          prompt: 'New playlist name',
+          value: playlist?.name ?? ''
+        });
+        if (name === undefined) return;
+
+        await playlistsStore.update((payload) => {
+          const pl = payload.playlists.find((p) => p.id === playlistId);
+          if (pl && name.trim()) {
+            pl.name = name.trim();
+          }
+        });
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.deletePlaylist',
+      async (node?: PlaylistNode) => {
+        const data = await playlistsStore.load();
+        const playlistId =
+          node?.type === 'playlist'
+            ? node.playlist.id
+            : (await vscode.window.showQuickPick(
+              data.playlists
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((pl) => ({
+                  label: pl.name,
+                  description: `${pl.items.length} item(s)`,
+                  playlistId: pl.id
+                })),
+              { title: 'Pick a playlist to delete' }
+            ))?.playlistId;
+
+        if (!playlistId) return;
+        const playlist = data.playlists.find((p) => p.id === playlistId);
+        if (!playlist) return;
+
+        const confirm = await vscode.window.showWarningMessage(
+          playlist.items.length
+            ? `Delete playlist '${playlist.name}' (${playlist.items.length} items)?`
+            : `Delete playlist '${playlist.name}'?`,
+          { modal: true },
+          'Delete'
+        );
+        if (confirm !== 'Delete') return;
+
+        await playlistsStore.update((payload) => {
+          payload.playlists = payload.playlists.filter((p) => p.id !== playlistId);
+        });
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.openPlaylistsFile',
+      async () => {
+        const filePath = await playlistsStore.ensureFileExists();
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+        await vscode.window.showTextDocument(doc, { preview: false });
+      }
+    ),
+    // Key Inspector commands
+    vscode.commands.registerCommand(
+      'doeff-runner.inspectEnvKey',
+      async (entryArg?: IndexEntry | EnvChainNode | EnvSourceNode) => {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const defaultRoot = workspaceFolder?.uri.fsPath;
+
+        // Determine program, root path, and env chain
+        let rootPath = defaultRoot;
         let programEntry: IndexEntry | undefined;
         let envChain: EnvChainEntry[] = [];
 
-        if (entryArg && 'type' in entryArg && entryArg.type === 'envSource') {
-          programEntry = entryArg.parentEntry;
-          envChain = entryArg.allEnvEntries;
-        } else if (entryArg && 'qualifiedName' in entryArg) {
+        if (entryArg && typeof entryArg === 'object' && 'type' in entryArg) {
+          if (entryArg.type === 'envSource') {
+            rootPath = entryArg.rootPath;
+            programEntry = entryArg.parentEntry;
+            envChain = entryArg.allEnvEntries;
+          } else if (entryArg.type === 'envChain') {
+            rootPath = entryArg.rootPath;
+            programEntry = entryArg.parentEntry;
+            envChain = entryArg.entries;
+          }
+        } else if (entryArg && typeof entryArg === 'object' && 'qualifiedName' in entryArg) {
           programEntry = entryArg as IndexEntry;
+        }
+
+        if (!rootPath) {
+          vscode.window.showErrorMessage('No workspace folder open');
+          return;
         }
 
         // If no entry provided, ask user to select a program
         if (!programEntry) {
           const indexerPath = await locateIndexer();
-          const allEntries = await fetchEntries(indexerPath, workspaceFolder.uri.fsPath, 'index', '', undefined);
+          const allEntries = await fetchEntries(indexerPath, rootPath, 'index', '', undefined);
           const programs = allEntries.filter(e =>
             e.itemKind === 'assignment' &&
             e.typeUsages.some(u => u.kind === 'program')
@@ -1587,8 +3587,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Fetch env chain if not already provided
         if (envChain.length === 0) {
-          const indexerPath = await locateIndexer();
-          envChain = await queryEnvChain(indexerPath, workspaceFolder.uri.fsPath, programEntry.qualifiedName);
+          envChain = await getEnvChainForRoot(rootPath, programEntry.qualifiedName);
         }
 
         // Collect all keys from the env chain
@@ -1678,8 +3677,8 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) {
+        const rootPath = keyNode.rootPath || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!rootPath) {
           vscode.window.showErrorMessage('No workspace folder open');
           return;
         }
@@ -1691,11 +3690,20 @@ export function activate(context: vscode.ExtensionContext) {
           { location: vscode.ProgressLocation.Notification, title: `Resolving ${key}...` },
           async () => {
             try {
-              const askCode = `from doeff.core import ask; print(ask("${key}"))`;
-              const { stdout, stderr } = await execFileAsync('python3', ['-c', askCode], {
-                cwd: workspaceFolder.uri.fsPath,
-                timeout: 10000
-              });
+              const askCode = `from doeff.core import ask; print(ask(${JSON.stringify(key)}))`;
+              const timeout = vscode.workspace
+                .getConfiguration()
+                .get<number>('doeff-runner.envInspector.askTimeout', 10000);
+
+              const { stdout, stderr } = (await isUvAvailable())
+                ? await execFileAsync('uv', ['run', 'python', '-c', askCode], {
+                  cwd: rootPath,
+                  timeout
+                })
+                : await execFileAsync(await getPythonInterpreter() ?? 'python3', ['-c', askCode], {
+                  cwd: rootPath,
+                  timeout
+                });
 
               if (stderr.trim()) {
                 output.appendLine(`[warn] ask("${key}") stderr: ${stderr.trim()}`);
@@ -1872,6 +3880,14 @@ async function runProgram(
       return;
     }
 
+    const rootPath = resolveRootPathForUri(document.uri);
+    if (!rootPath) {
+      vscode.window.showErrorMessage(
+        'Could not resolve project root for this file. Open a workspace folder or a Git repo.'
+      );
+      return;
+    }
+
     const targetLine =
       typeof lineNumber === 'number'
         ? lineNumber
@@ -1887,16 +3903,13 @@ async function runProgram(
 
     const workspaceFolder =
       vscode.workspace.getWorkspaceFolder(document.uri) ??
+      vscode.workspace.getWorkspaceFolder(vscode.Uri.file(rootPath)) ??
       vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      vscode.window.showErrorMessage('Open a workspace folder to run doeff.');
-      return;
-    }
 
     const indexerPath = await locateIndexer();
     const programEntry = await findProgramEntry(
       indexerPath,
-      workspaceFolder.uri.fsPath,
+      rootPath,
       document.uri.fsPath,
       declaration.name
     );
@@ -1911,18 +3924,24 @@ async function runProgram(
     const debugMode = stateStore.getDebugMode();
 
     if (mode === 'default') {
-      await runDefault(programPath, workspaceFolder, debugMode);
+      await runDefault(programPath, workspaceFolder, debugMode, {
+        cwd: rootPath,
+        persistFolderPath: rootPath
+      });
     } else {
       const selection = await buildSelection(
         document,
         declaration,
-        workspaceFolder,
+        rootPath,
         programPath
       );
       if (!selection) {
         return;
       }
-      await runSelection(selection, workspaceFolder, debugMode);
+      await runSelection(selection, workspaceFolder, debugMode, {
+        cwd: rootPath,
+        persistFolderPath: rootPath
+      });
     }
 
     codeLensProvider.refresh();
@@ -1950,6 +3969,14 @@ async function runProgramWithTool(
       return;
     }
 
+    const rootPath = resolveRootPathForUri(document.uri);
+    if (!rootPath) {
+      vscode.window.showErrorMessage(
+        'Could not resolve project root for this file. Open a workspace folder or a Git repo.'
+      );
+      return;
+    }
+
     const targetLine =
       typeof lineNumber === 'number'
         ? lineNumber
@@ -1965,16 +3992,13 @@ async function runProgramWithTool(
 
     const workspaceFolder =
       vscode.workspace.getWorkspaceFolder(document.uri) ??
+      vscode.workspace.getWorkspaceFolder(vscode.Uri.file(rootPath)) ??
       vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      vscode.window.showErrorMessage('Open a workspace folder to run doeff.');
-      return;
-    }
 
     const indexerPath = await locateIndexer();
     const programEntry = await findProgramEntry(
       indexerPath,
-      workspaceFolder.uri.fsPath,
+      rootPath,
       document.uri.fsPath,
       declaration.name
     );
@@ -1995,7 +4019,7 @@ async function runProgramWithTool(
     // Find interpreter (sorted by proximity to the program)
     const interpreters = await fetchEntries(
       indexerPath,
-      workspaceFolder.uri.fsPath,
+      rootPath,
       'find-interpreters',
       declaration.typeArg,
       proximity
@@ -2014,7 +4038,7 @@ async function runProgramWithTool(
     const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
     const tools = await fetchEntries(
       indexerPath,
-      workspaceFolder.uri.fsPath,
+      rootPath,
       toolCommand,
       declaration.typeArg,
       proximity
@@ -2038,7 +4062,10 @@ async function runProgramWithTool(
     };
 
     const debugMode = stateStore.getDebugMode();
-    await runSelection(selection, workspaceFolder, debugMode);
+    await runSelection(selection, workspaceFolder, debugMode, {
+      cwd: rootPath,
+      persistFolderPath: rootPath
+    });
     codeLensProvider.refresh();
   } catch (error) {
     const message =
@@ -2056,17 +4083,16 @@ async function showMoreTools(
   codeLensProvider: ProgramCodeLensProvider,
   stateStore: DoeffStateStore
 ): Promise<void> {
-  const workspaceFolder =
-    vscode.workspace.getWorkspaceFolder(uri) ??
-    vscode.workspace.workspaceFolders?.[0];
-  if (!workspaceFolder) {
-    vscode.window.showErrorMessage('Open a workspace folder to run doeff.');
+  const rootPath = resolveRootPathForUri(uri);
+  if (!rootPath) {
+    vscode.window.showErrorMessage(
+      'Could not resolve project root for this file. Open a workspace folder or a Git repo.'
+    );
     return;
   }
 
   try {
     const indexerPath = await locateIndexer();
-    const rootPath = workspaceFolder.uri.fsPath;
 
     // Use the CodeLens location for proximity-based sorting
     const proximity: ProximityContext = {
@@ -2126,15 +4152,26 @@ async function showMoreTools(
   }
 }
 
+interface RunInvocationOptions {
+  cwd?: string;
+  persistFolderPath?: string;
+  extraArgs?: string[];
+  branch?: string;
+}
+
 async function runDefault(
   programPath: string,
   workspaceFolder?: vscode.WorkspaceFolder,
-  debugMode: boolean = true
+  debugMode: boolean = true,
+  options: RunInvocationOptions = {}
 ) {
   const folder =
     workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
-  const args = ['run', '--program', programPath];
-  const sessionName = buildSessionName(debugMode ? 'Debug' : 'Run', programPath);
+  const cwd = options.cwd ?? folder?.uri.fsPath;
+  const persistFolderPath = options.persistFolderPath ?? cwd ?? folder?.uri.fsPath;
+  const args = ['run', '--program', programPath, ...(options.extraArgs ?? [])];
+  const branch = options.branch ?? (cwd ? await resolveCurrentBranch(cwd) : undefined);
+  const sessionName = buildSessionName(debugMode ? 'Debug' : 'Run', programPath, undefined, undefined, branch);
 
   if (debugMode) {
     // Debug mode: use VSCode debug infrastructure with debugpy
@@ -2145,13 +4182,13 @@ async function runDefault(
       name: sessionName,
       module: 'doeff',
       args,
-      cwd: folder?.uri.fsPath,
+      cwd,
       console: 'integratedTerminal',
       justMyCode: false
     };
 
-    if (folder) {
-      persistLaunchConfig(debugConfig, folder);
+    if (persistFolderPath) {
+      persistLaunchConfigToPath(debugConfig, persistFolderPath);
     }
 
     vscode.window.showInformationMessage(`Debugging: ${commandDisplay}`);
@@ -2159,11 +4196,12 @@ async function runDefault(
     await vscode.debug.startDebugging(folder, debugConfig);
   } else {
     // Run mode: use terminal directly without debugpy, respecting IDE's Python selection
-    const pythonPath = await getPythonInterpreter() ?? 'python';
-    const command = `"${pythonPath}" -m doeff ${args.join(' ')}`;
-    const terminal = createTerminal(sessionName, folder?.uri.fsPath);
+    const command = (await isUvAvailable())
+      ? `uv run doeff ${args.join(' ')}`
+      : `"${await getPythonInterpreter() ?? 'python'}" -m doeff ${args.join(' ')}`;
+    const terminal = createTerminal(sessionName, cwd);
     vscode.window.showInformationMessage(`Running: ${command}`);
-    output.appendLine(`[info] Running: ${command}`);
+    output.appendLine(`[info] Command: ${command}`);
     terminal.sendText(command);
     terminal.show();
   }
@@ -2172,7 +4210,8 @@ async function runDefault(
 async function runSelection(
   selection: RunSelection | undefined,
   workspaceFolder?: vscode.WorkspaceFolder,
-  debugMode: boolean = true
+  debugMode: boolean = true,
+  options: RunInvocationOptions = {}
 ) {
   if (!selection) {
     vscode.window.showErrorMessage('No doeff selection to run.');
@@ -2180,6 +4219,8 @@ async function runSelection(
   }
   const folder =
     workspaceFolder ?? vscode.workspace.workspaceFolders?.[0];
+  const cwd = options.cwd ?? folder?.uri.fsPath;
+  const persistFolderPath = options.persistFolderPath ?? cwd ?? folder?.uri.fsPath;
   const args = [
     'run',
     '--program',
@@ -2194,13 +4235,18 @@ async function runSelection(
   if (selection.transformer) {
     args.push('--transform', selection.transformer.qualifiedName);
   }
+  if (options.extraArgs?.length) {
+    args.push(...options.extraArgs);
+  }
 
   const modeLabel = debugMode ? 'Debugging' : 'Running';
+  const branch = options.branch ?? (cwd ? await resolveCurrentBranch(cwd) : undefined);
   const sessionName = buildSessionName(
     debugMode ? 'Debug' : 'Run',
     selection.programPath,
     selection.kleisli?.qualifiedName,
-    selection.transformer?.qualifiedName
+    selection.transformer?.qualifiedName,
+    branch
   );
   output.appendLine(
     `[info] ${modeLabel} doeff for ${selection.programPath} with interpreter ${selection.interpreter.qualifiedName}`
@@ -2215,13 +4261,13 @@ async function runSelection(
       name: sessionName,
       module: 'doeff',
       args,
-      cwd: folder?.uri.fsPath,
+      cwd,
       console: 'integratedTerminal',
       justMyCode: false
     };
 
-    if (folder) {
-      persistLaunchConfig(debugConfig, folder);
+    if (persistFolderPath) {
+      persistLaunchConfigToPath(debugConfig, persistFolderPath);
     }
 
     vscode.window.showInformationMessage(`Debugging: ${commandDisplay}`);
@@ -2229,9 +4275,10 @@ async function runSelection(
     await vscode.debug.startDebugging(folder, debugConfig);
   } else {
     // Run mode: use terminal directly without debugpy, respecting IDE's Python selection
-    const pythonPath = await getPythonInterpreter() ?? 'python';
-    const command = `"${pythonPath}" -m doeff ${args.join(' ')}`;
-    const terminal = createTerminal(sessionName, folder?.uri.fsPath);
+    const command = (await isUvAvailable())
+      ? `uv run doeff ${args.join(' ')}`
+      : `"${await getPythonInterpreter() ?? 'python'}" -m doeff ${args.join(' ')}`;
+    const terminal = createTerminal(sessionName, cwd);
     vscode.window.showInformationMessage(`Running: ${command}`);
     output.appendLine(`[info] Command: ${command}`);
     terminal.sendText(command);
@@ -2239,12 +4286,9 @@ async function runSelection(
   }
 }
 
-function persistLaunchConfig(
-  config: vscode.DebugConfiguration,
-  folder: vscode.WorkspaceFolder
-) {
+function persistLaunchConfigToPath(config: vscode.DebugConfiguration, folderPath: string) {
   try {
-    const vscodeDir = path.join(folder.uri.fsPath, '.vscode');
+    const vscodeDir = path.join(folderPath, '.vscode');
     if (!fs.existsSync(vscodeDir)) {
       fs.mkdirSync(vscodeDir, { recursive: true });
     }
@@ -2278,11 +4322,10 @@ function persistLaunchConfig(
 async function buildSelection(
   document: vscode.TextDocument,
   declaration: ProgramDeclaration,
-  workspaceFolder: vscode.WorkspaceFolder,
+  rootPath: string,
   programPath: string
 ): Promise<RunSelection | undefined> {
   const indexerPath = await locateIndexer();
-  const rootPath = workspaceFolder.uri.fsPath;
 
   const programType = declaration.typeArg;
 
@@ -2415,7 +4458,16 @@ function parseProgramDeclaration(
   //    But allow assignments where RHS ends with ')' like `x: Program[T] = foo()`
   const afterAnnotation = code.slice(match.index + match[0].length).trim();
   const hasAssignment = afterAnnotation.includes('=');
-  if (!hasAssignment && (afterAnnotation.endsWith(',') || afterAnnotation.endsWith(')'))) {
+  if (afterAnnotation.endsWith(',')) {
+    return;
+  }
+  // Handle multi-line function signatures that close the parens and add return type on the same line:
+  //   def foo(
+  //     program: Program[T]) -> str:
+  if (!hasAssignment && afterAnnotation.startsWith(')')) {
+    return;
+  }
+  if (!hasAssignment && afterAnnotation.endsWith(')')) {
     return;
   }
 
@@ -2593,6 +4645,200 @@ async function getPythonInterpreter(): Promise<string | undefined> {
   }
 
   return undefined;
+}
+
+// =============================================================================
+// Git helpers (worktrees + playlists storage)
+// =============================================================================
+
+async function executeGit(args: string[], cwd: string): Promise<string> {
+  const safeCwd =
+    cwd ||
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+    process.cwd();
+
+  try {
+    const { stdout, stderr } = await execFileAsync('git', args, {
+      cwd: safeCwd,
+      maxBuffer: 10 * 1024 * 1024
+    });
+    if (stderr.trim()) {
+      output.appendLine(`[warn] git stderr:\n${stderr.trim()}`);
+    }
+    return stdout.trim();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`[error] git ${args.join(' ')} failed: ${message}`);
+    throw error;
+  }
+}
+
+async function resolveRepoRoot(cwd: string): Promise<string | undefined> {
+  try {
+    const root = await executeGit(['rev-parse', '--show-toplevel'], cwd);
+    return root.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveGitCommonDir(repoRoot: string): Promise<string | undefined> {
+  try {
+    const raw = await executeGit(['rev-parse', '--git-common-dir'], repoRoot);
+    const resolved = path.resolve(repoRoot, raw.trim());
+    return resolved || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveCurrentBranch(repoRoot: string): Promise<string | undefined> {
+  try {
+    const branch = await executeGit(['rev-parse', '--abbrev-ref', 'HEAD'], repoRoot);
+    const trimmed = branch.trim();
+    return trimmed && trimmed !== 'HEAD' ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function listLocalBranches(repoRoot: string): Promise<string[]> {
+  try {
+    const stdout = await executeGit(['branch', '--format=%(refname:short)'], repoRoot);
+    return stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function sanitizeBranchForPath(branch: string): string {
+  return branch.replace(/[\\/]/g, '__');
+}
+
+async function ensureWorktreeForBranch(repoRoot: string, branch: string): Promise<string | undefined> {
+  try {
+    const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+    const worktrees = parseGitWorktreeListPorcelain(stdout);
+    const existing = worktrees.find((wt) => wt.branch === branch);
+    if (existing) {
+      return existing.worktreePath;
+    }
+
+    const decision = await vscode.window.showWarningMessage(
+      `No worktree for '${branch}'. Create one?`,
+      { modal: true },
+      'Create Worktree',
+      'Cancel'
+    );
+    if (decision !== 'Create Worktree') {
+      return undefined;
+    }
+
+    const baseDir = path.join(path.dirname(repoRoot), `${path.basename(repoRoot)}-worktrees`);
+    const defaultPath = path.join(baseDir, sanitizeBranchForPath(branch));
+    const worktreePathInput = await vscode.window.showInputBox({
+      prompt: `Worktree path for '${branch}'`,
+      value: defaultPath
+    });
+    if (!worktreePathInput?.trim()) {
+      return undefined;
+    }
+    const worktreePath = worktreePathInput.trim();
+
+    await executeGit(['worktree', 'add', worktreePath, branch], repoRoot);
+    return worktreePath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`Failed to create worktree for '${branch}': ${message}`);
+    return undefined;
+  }
+}
+
+async function ensureDetachedWorktreeAtCommit(
+  repoRoot: string,
+  branch: string,
+  commit: string
+): Promise<string | undefined> {
+  try {
+    const baseDir = path.join(
+      path.dirname(repoRoot),
+      `${path.basename(repoRoot)}-worktrees`,
+      '.doeff-temp'
+    );
+    const defaultPath = path.join(baseDir, `${sanitizeBranchForPath(branch)}-${commit.slice(0, 6)}`);
+    const worktreePathInput = await vscode.window.showInputBox({
+      prompt: `Temp worktree path for ${branch} @ ${commit.slice(0, 6)}`,
+      value: defaultPath
+    });
+    if (!worktreePathInput?.trim()) {
+      return undefined;
+    }
+    const worktreePath = worktreePathInput.trim();
+
+    await executeGit(['worktree', 'add', '--detach', worktreePath, commit], repoRoot);
+    return worktreePath;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    vscode.window.showErrorMessage(`Failed to create temp worktree: ${message}`);
+    return undefined;
+  }
+}
+
+async function findProgramByQualifiedName(
+  indexerPath: string,
+  worktreePath: string,
+  qualifiedName: string
+): Promise<IndexEntry | undefined> {
+  const entries = await queryIndexer(
+    indexerPath,
+    `index:${worktreePath}`,
+    worktreePath,
+    ['index', '--root', worktreePath]
+  );
+  return entries.find((entry) => entry.qualifiedName === qualifiedName && isProgramEntrypoint(entry));
+}
+
+async function promptPinnedCommit(repoRoot: string, branch: string): Promise<string | null | undefined> {
+  const head = await executeGit(['rev-parse', branch], repoRoot);
+  const headShort = head.slice(0, 6);
+
+  const options = [
+    { label: 'No - always use latest (HEAD)', value: null as string | null },
+    { label: `Yes - pin to ${headShort} (current)`, value: head },
+    { label: 'Yes - select from history...', value: 'history' }
+  ];
+
+  const choice = await vscode.window.showQuickPick(options, { title: 'Pin to commit?' });
+  if (!choice) {
+    return undefined;
+  }
+  if (choice.value === 'history') {
+    return await pickCommitFromHistory(repoRoot, branch);
+  }
+  return choice.value;
+}
+
+async function pickCommitFromHistory(repoRoot: string, branch: string): Promise<string | undefined> {
+  const stdout = await executeGit(['log', '--format=%H%x09%s', '-n', '50', branch], repoRoot);
+  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  const items = lines.map((line) => {
+    const [hash, subject] = line.split('\t', 2);
+    return {
+      label: `${hash.slice(0, 6)} ${subject ?? ''}`.trim(),
+      description: hash,
+      commit: hash
+    };
+  });
+
+  const selected = await vscode.window.showQuickPick(items, {
+    title: `Select commit from ${branch}`,
+    matchOnDescription: true
+  });
+  return selected?.commit;
 }
 
 function isExecutable(target: string): boolean {
@@ -2859,7 +5105,7 @@ function matchesType(entry: IndexEntry, typeArg: string): boolean {
       usage.raw.toLowerCase() === lower ||
       usage.typeArguments.some(
         (argument: string) => argument.toLowerCase() === lower
-      )
+    )
   );
   return parameterMatches || usageMatches;
 }

@@ -2,7 +2,7 @@
   "name": "doeff-runner",
   "displayName": "doeff runner",
   "description": "Run doeff Programs from VS Code using the doeff-indexer and Python debugger.",
-  "version": "0.5.4",
+  "version": "0.6.18",
   "publisher": "Proboscis",
   "icon": "icon.png",
   "license": "Apache-2.0",
@@ -26,7 +26,24 @@
     "onCommand:doeff-runner.showMoreKleisli",
     "onCommand:doeff-runner.showMoreTransforms",
     "onCommand:doeff-runner.toggleDebugMode",
-    "onView:doeff-programs"
+    "onCommand:doeff-runner.addToPlaylist",
+    "onCommand:doeff-runner.pickProgram",
+    "onCommand:doeff-runner.pickAndRun",
+    "onCommand:doeff-runner.pickAndAddToPlaylist",
+    "onCommand:doeff-runner.pickPlaylist",
+    "onCommand:doeff-runner.pickPlaylistItem",
+    "onCommand:doeff-runner.pickAndRunPlaylistItem",
+    "onCommand:doeff-runner.runPlaylistItem",
+    "onCommand:doeff-runner.revealPlaylistItem",
+    "onCommand:doeff-runner.editPlaylistItem",
+    "onCommand:doeff-runner.removePlaylistItem",
+    "onCommand:doeff-runner.createPlaylist",
+    "onCommand:doeff-runner.renamePlaylist",
+    "onCommand:doeff-runner.deletePlaylist",
+    "onCommand:doeff-runner.openPlaylistsFile",
+    "onView:doeff-programs",
+    "onView:doeff-programs-all",
+    "onView:doeff-playlists"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -44,6 +61,14 @@
         {
           "id": "doeff-programs",
           "name": "Programs"
+        },
+        {
+          "id": "doeff-programs-all",
+          "name": "Programs (All Worktrees)"
+        },
+        {
+          "id": "doeff-playlists",
+          "name": "Playlists"
         }
       ]
     },
@@ -128,6 +153,67 @@
         "command": "doeff-runner.resolveEnvKey",
         "title": "Resolve Key at Runtime",
         "icon": "$(play)"
+      },
+      {
+        "command": "doeff-runner.addToPlaylist",
+        "title": "Add doeff Program to Playlist"
+      },
+      {
+        "command": "doeff-runner.pickProgram",
+        "title": "Pick doeff Program (All Worktrees)"
+      },
+      {
+        "command": "doeff-runner.pickAndRun",
+        "title": "Pick and Run doeff Program (All Worktrees)"
+      },
+      {
+        "command": "doeff-runner.pickAndAddToPlaylist",
+        "title": "Pick and Add doeff Program to Playlist"
+      },
+      {
+        "command": "doeff-runner.pickPlaylist",
+        "title": "Pick Playlist"
+      },
+      {
+        "command": "doeff-runner.pickPlaylistItem",
+        "title": "Pick Playlist Item"
+      },
+      {
+        "command": "doeff-runner.pickAndRunPlaylistItem",
+        "title": "Pick and Run Playlist Item"
+      },
+      {
+        "command": "doeff-runner.runPlaylistItem",
+        "title": "Run Playlist Item",
+        "icon": "$(play)"
+      },
+      {
+        "command": "doeff-runner.revealPlaylistItem",
+        "title": "Go to Definition (Playlist Item)"
+      },
+      {
+        "command": "doeff-runner.editPlaylistItem",
+        "title": "Edit Playlist Item"
+      },
+      {
+        "command": "doeff-runner.removePlaylistItem",
+        "title": "Remove Playlist Item"
+      },
+      {
+        "command": "doeff-runner.createPlaylist",
+        "title": "Create Playlist"
+      },
+      {
+        "command": "doeff-runner.renamePlaylist",
+        "title": "Rename Playlist"
+      },
+      {
+        "command": "doeff-runner.deletePlaylist",
+        "title": "Delete Playlist"
+      },
+      {
+        "command": "doeff-runner.openPlaylistsFile",
+        "title": "Open Playlists File"
       }
     ],
     "configuration": {
@@ -176,9 +262,54 @@
           "command": "doeff-runner.refreshExplorer",
           "when": "view == doeff-programs",
           "group": "navigation@3"
+        },
+        {
+          "command": "doeff-runner.toggleDebugMode",
+          "when": "view == doeff-programs-all",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.pickProgram",
+          "when": "view == doeff-programs-all",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.refreshExplorer",
+          "when": "view == doeff-programs-all",
+          "group": "navigation@2"
+        },
+        {
+          "command": "doeff-runner.toggleDebugMode",
+          "when": "view == doeff-playlists",
+          "group": "navigation@0"
+        },
+        {
+          "command": "doeff-runner.createPlaylist",
+          "when": "view == doeff-playlists",
+          "group": "navigation@1"
+        },
+        {
+          "command": "doeff-runner.openPlaylistsFile",
+          "when": "view == doeff-playlists",
+          "group": "navigation@2"
+        },
+        {
+          "command": "doeff-runner.refreshExplorer",
+          "when": "view == doeff-playlists",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
+        {
+          "command": "doeff-runner.addToPlaylist",
+          "when": "view == doeff-programs && viewItem == entrypoint",
+          "group": "inline"
+        },
+        {
+          "command": "doeff-runner.addToPlaylist",
+          "when": "view == doeff-programs-all && viewItem == worktreeEntrypoint",
+          "group": "inline"
+        },
         {
           "command": "doeff-runner.setDefaultAction",
           "when": "view == doeff-programs && viewItem == action",
@@ -196,18 +327,38 @@
         },
         {
           "command": "doeff-runner.inspectEnvKey",
-          "when": "view == doeff-programs && viewItem == envChain",
+          "when": "(view == doeff-programs || view == doeff-programs-all || view == doeff-playlists) && viewItem == envChain",
           "group": "navigation"
         },
         {
           "command": "doeff-runner.inspectEnvKey",
-          "when": "view == doeff-programs && viewItem == envSource",
+          "when": "(view == doeff-programs || view == doeff-programs-all || view == doeff-playlists) && viewItem == envSource",
           "group": "navigation"
         },
         {
           "command": "doeff-runner.resolveEnvKey",
-          "when": "view == doeff-programs && viewItem == envKey",
+          "when": "(view == doeff-programs || view == doeff-programs-all || view == doeff-playlists) && viewItem == envKey",
           "group": "inline"
+        },
+        {
+          "command": "doeff-runner.renamePlaylist",
+          "when": "view == doeff-playlists && viewItem == playlist",
+          "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.deletePlaylist",
+          "when": "view == doeff-playlists && viewItem == playlist",
+          "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.runPlaylistItem",
+          "when": "view == doeff-playlists && viewItem == playlistItem",
+          "group": "inline@0"
+        },
+        {
+          "command": "doeff-runner.revealPlaylistItem",
+          "when": "view == doeff-playlists && viewItem == playlistItem",
+          "group": "navigation"
         }
       ]
     }
