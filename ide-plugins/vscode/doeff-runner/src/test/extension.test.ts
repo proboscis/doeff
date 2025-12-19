@@ -1,4 +1,7 @@
 import * as assert from 'assert';
+import { parseGitWorktreeListPorcelain } from '../worktrees';
+import { parsePlaylistsJsonV2, playlistArgsToDoeffRunArgs } from '../playlists';
+import { multiTokenFuzzyMatch } from '../search';
 
 // Test the PROGRAM_REGEX and parsing logic directly
 const PROGRAM_REGEX =
@@ -19,6 +22,9 @@ function parseProgramDeclaration(line: string): ProgramDeclaration | undefined {
   // Skip if this looks like a function parameter
   // 1. Check if line ends with ',' or ')' after the annotation (typical for function args)
   const afterAnnotation = code.slice(match.index + match[0].length).trim();
+  if (afterAnnotation.startsWith(')')) {
+    return;
+  }
   if (afterAnnotation.endsWith(',') || afterAnnotation.endsWith(')')) {
     return;
   }
@@ -102,6 +108,66 @@ suite('Extension Test Suite', () => {
       const result = parseProgramDeclaration('my_program: Program[int]  # some comment');
       assert.ok(result);
       assert.strictEqual(result?.name, 'my_program');
+    });
+  });
+
+  suite('VSCode 002: Worktrees + Playlists', () => {
+    test('parses `git worktree list --porcelain` output', () => {
+      const stdout = [
+        'worktree /repo',
+        'HEAD abc123abc123abc123abc123abc123abc123abcd',
+        'branch refs/heads/main',
+        '',
+        'worktree /repo-wt/feature-foo',
+        'HEAD def456def456def456def456def456def456def4',
+        'branch refs/heads/feature/foo',
+        '',
+        'worktree /repo-wt/detached',
+        'HEAD 0123450123450123450123450123450123450123',
+        'detached',
+        ''
+      ].join('\n');
+
+      const parsed = parseGitWorktreeListPorcelain(stdout);
+      assert.strictEqual(parsed.length, 3);
+      assert.deepStrictEqual(parsed[0], {
+        worktreePath: '/repo',
+        head: 'abc123abc123abc123abc123abc123abc123abcd',
+        branch: 'main',
+        isDetached: false
+      });
+      assert.deepStrictEqual(parsed[1], {
+        worktreePath: '/repo-wt/feature-foo',
+        head: 'def456def456def456def456def456def456def4',
+        branch: 'feature/foo',
+        isDetached: false
+      });
+      assert.deepStrictEqual(parsed[2], {
+        worktreePath: '/repo-wt/detached',
+        head: '0123450123450123450123450123450123450123',
+        branch: null,
+        isDetached: true
+      });
+    });
+
+    test('maps playlist args to `doeff run` args', () => {
+      const args = playlistArgsToDoeffRunArgs({
+        format: 'json',
+        report: true,
+        reportVerbose: true
+      });
+      assert.deepStrictEqual(args, ['--format', 'json', '--report', '--report-verbose']);
+    });
+
+    test('parses playlists JSON v2 and reports unknown versions', () => {
+      const parsed = parsePlaylistsJsonV2('{"version":1,"playlists":[]}');
+      assert.ok(parsed.error);
+      assert.strictEqual(parsed.data.version, 2);
+      assert.deepStrictEqual(parsed.data.playlists, []);
+    });
+
+    test('supports multi-token fuzzy search (abc fg -> abc_de_fg_hi)', () => {
+      assert.strictEqual(multiTokenFuzzyMatch('abc fg', 'abc_de_fg_hi'), true);
     });
   });
 });
