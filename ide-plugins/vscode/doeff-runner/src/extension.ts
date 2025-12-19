@@ -1417,6 +1417,15 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
 // VSCode 002: Worktree-aware playlists
 // =============================================================================
 
+type PlaylistsSortMode = 'alpha' | 'manual';
+const PLAYLISTS_SORT_MODE_CONFIG_KEY = 'playlists.sortMode';
+
+function getPlaylistsSortMode(): PlaylistsSortMode {
+  return vscode.workspace
+    .getConfiguration('doeff-runner')
+    .get<PlaylistsSortMode>(PLAYLISTS_SORT_MODE_CONFIG_KEY, 'alpha');
+}
+
 interface ProgramTarget {
   branch: string;
   worktreePath: string;
@@ -1765,6 +1774,7 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
     const data = await this.store.load();
     const repoRoot = await resolveRepoRoot(this.workspacePath) ?? this.workspacePath;
     const currentBranch = repoRoot ? await resolveCurrentBranch(repoRoot) : undefined;
+    const sortMode = getPlaylistsSortMode();
     this.nodeById.clear();
 
     this.tree = data.playlists
@@ -1817,6 +1827,18 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
             return actionNode;
           });
           branchNode.items.push(itemNode);
+        }
+
+        if (sortMode === 'alpha') {
+          for (const branchNode of branchesByName.values()) {
+            branchNode.items.sort((a, b) => {
+              const byName = a.item.name.localeCompare(b.item.name, undefined, { sensitivity: 'base' });
+              if (byName !== 0) return byName;
+              const byProgram = a.item.program.localeCompare(b.item.program);
+              if (byProgram !== 0) return byProgram;
+              return a.item.id.localeCompare(b.item.id);
+            });
+          }
         }
 
         playlistNode.branches = Array.from(branchesByName.values()).sort((a, b) => {
@@ -1986,6 +2008,204 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
   getPlaylistItemNode(playlistId: string, itemId: string): PlaylistItemNode | undefined {
     const node = this.nodeById.get(`item:${playlistId}:${itemId}`);
     return node?.type === 'playlistItem' ? node : undefined;
+  }
+}
+
+const PLAYLIST_ITEM_MIME = 'application/vnd.doeff.playlistItem';
+
+class PlaylistsDragAndDropController implements vscode.TreeDragAndDropController<PlaylistsTreeNode> {
+  readonly dragMimeTypes = [PLAYLIST_ITEM_MIME];
+  readonly dropMimeTypes = [PLAYLIST_ITEM_MIME];
+
+  constructor(private store: DoeffPlaylistsStore) { }
+
+  handleDrag(
+    sources: readonly PlaylistsTreeNode[],
+    dataTransfer: vscode.DataTransfer,
+    token: vscode.CancellationToken
+  ): void {
+    if (token.isCancellationRequested) {
+      return;
+    }
+    const items = sources
+      .filter((node): node is PlaylistItemNode => node.type === 'playlistItem')
+      .map((node) => ({
+        playlistId: node.playlist.playlist.id,
+        itemId: node.item.id,
+        branch: node.item.branch
+      }));
+
+    if (!items.length) {
+      return;
+    }
+
+    dataTransfer.set(PLAYLIST_ITEM_MIME, new vscode.DataTransferItem(JSON.stringify(items)));
+  }
+
+  async handleDrop(
+    target: PlaylistsTreeNode | undefined,
+    dataTransfer: vscode.DataTransfer,
+    token: vscode.CancellationToken
+  ): Promise<void> {
+    if (token.isCancellationRequested) {
+      return;
+    }
+    const raw = await dataTransfer.get(PLAYLIST_ITEM_MIME)?.asString();
+    if (!raw) {
+      return;
+    }
+
+    let dragged: { playlistId: string; itemId: string; branch: string } | undefined;
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed) && parsed.length && typeof parsed[0] === 'object' && parsed[0] !== null) {
+        const first = parsed[0] as any;
+        if (
+          typeof first.playlistId === 'string' &&
+          typeof first.itemId === 'string' &&
+          typeof first.branch === 'string'
+        ) {
+          dragged = { playlistId: first.playlistId, itemId: first.itemId, branch: first.branch };
+        }
+      }
+    } catch {
+      // ignore
+    }
+    if (!dragged) {
+      return;
+    }
+
+    // Normalize drop target
+    const normalizedTarget: PlaylistsTreeNode | undefined =
+      target?.type === 'playlistAction' ? target.playlistItem : target;
+
+    if (!normalizedTarget) {
+      return;
+    }
+
+    let destPlaylistId: string | undefined;
+    let destBranch: string | undefined;
+    let destItemId: string | undefined;
+    let moveToBranchEnd = false;
+
+    if (normalizedTarget.type === 'playlistItem') {
+      destPlaylistId = normalizedTarget.playlist.playlist.id;
+      destBranch = normalizedTarget.item.branch;
+      destItemId = normalizedTarget.item.id;
+    } else if (normalizedTarget.type === 'playlistBranch') {
+      destPlaylistId = normalizedTarget.playlist.playlist.id;
+      destBranch = normalizedTarget.branch;
+      moveToBranchEnd = true;
+    } else if (normalizedTarget.type === 'playlist') {
+      destPlaylistId = normalizedTarget.playlist.id;
+      destBranch = dragged.branch;
+      moveToBranchEnd = true;
+    } else {
+      return;
+    }
+
+    if (!destPlaylistId || !destBranch) {
+      return;
+    }
+
+    if (destBranch !== dragged.branch) {
+      vscode.window.showWarningMessage(
+        `Cannot move playlist items across branches via drag & drop (from '${dragged.branch}' to '${destBranch}').`
+      );
+      return;
+    }
+
+    if (getPlaylistsSortMode() === 'alpha') {
+      const choice = await vscode.window.showInformationMessage(
+        'Playlist items are currently sorted A-Z. Switch to Manual order to enable drag & drop sorting?',
+        { modal: true },
+        'Switch to Manual',
+        'Cancel'
+      );
+      if (choice !== 'Switch to Manual') {
+        return;
+      }
+      await vscode.workspace
+        .getConfiguration('doeff-runner')
+        .update(PLAYLISTS_SORT_MODE_CONFIG_KEY, 'manual', vscode.ConfigurationTarget.Workspace);
+    }
+
+    const reorderWithinBranch = (
+      items: PlaylistItemV2[],
+      branch: string,
+      movedId: string,
+      targetId?: string
+    ): void => {
+      const indices: number[] = [];
+      const branchItems: PlaylistItemV2[] = [];
+
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].branch === branch) {
+          indices.push(i);
+          branchItems.push(items[i]);
+        }
+      }
+
+      const srcPos = branchItems.findIndex((item) => item.id === movedId);
+      if (srcPos < 0) {
+        return;
+      }
+
+      if (!targetId) {
+        const [moved] = branchItems.splice(srcPos, 1);
+        branchItems.push(moved);
+      } else {
+        const destPos = branchItems.findIndex((item) => item.id === targetId);
+        if (destPos < 0 || srcPos === destPos) {
+          return;
+        }
+        const [moved] = branchItems.splice(srcPos, 1);
+        branchItems.splice(destPos, 0, moved);
+      }
+
+      for (let j = 0; j < indices.length; j++) {
+        items[indices[j]] = branchItems[j];
+      }
+    };
+
+    await this.store.update((payload) => {
+      const srcPlaylist = payload.playlists.find((p) => p.id === dragged!.playlistId);
+      const dstPlaylist = payload.playlists.find((p) => p.id === destPlaylistId);
+      if (!srcPlaylist || !dstPlaylist) {
+        return;
+      }
+
+      if (dragged!.playlistId === destPlaylistId) {
+        if (moveToBranchEnd) {
+          reorderWithinBranch(srcPlaylist.items, destBranch!, dragged!.itemId);
+        } else if (destItemId) {
+          reorderWithinBranch(srcPlaylist.items, destBranch!, dragged!.itemId, destItemId);
+        }
+        return;
+      }
+
+      const srcIndex = srcPlaylist.items.findIndex((i) => i.id === dragged!.itemId);
+      if (srcIndex < 0) {
+        return;
+      }
+      const [moved] = srcPlaylist.items.splice(srcIndex, 1);
+
+      if (moveToBranchEnd) {
+        dstPlaylist.items.push(moved);
+        return;
+      }
+
+      if (destItemId) {
+        const dstIndex = dstPlaylist.items.findIndex((i) => i.id === destItemId);
+        if (dstIndex >= 0) {
+          dstPlaylist.items.splice(dstIndex, 0, moved);
+        } else {
+          dstPlaylist.items.push(moved);
+        }
+      } else {
+        dstPlaylist.items.push(moved);
+      }
+    });
   }
 }
 
@@ -2306,7 +2526,8 @@ export function activate(context: vscode.ExtensionContext) {
   });
   const playlistsTreeView = vscode.window.createTreeView('doeff-playlists', {
     treeDataProvider: playlistsProvider,
-    showCollapseAll: true
+    showCollapseAll: true,
+    dragAndDropController: new PlaylistsDragAndDropController(playlistsStore)
   });
 
   // Helper to update TreeView message based on debug mode and filter
@@ -2355,6 +2576,14 @@ export function activate(context: vscode.ExtensionContext) {
     treeProvider.invalidateFile(uri.fsPath);
     worktreeProgramsProvider.refresh();
   });
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration('doeff-runner.playlists.sortMode')) {
+        playlistsProvider.refresh();
+      }
+    })
+  );
 
   async function pickProgramTarget(): Promise<ProgramTarget | undefined> {
     const targets = await worktreeProgramsProvider.getProgramTargets();
@@ -2495,6 +2724,7 @@ export function activate(context: vscode.ExtensionContext) {
     title: string
   ): Promise<{ playlistId: string; itemId: string } | undefined> {
     const data = await playlistsStore.load();
+    const sortMode = getPlaylistsSortMode();
 
     interface PlaylistItemQuickPickItem extends vscode.QuickPickItem {
       playlistId?: string;
@@ -2506,7 +2736,19 @@ export function activate(context: vscode.ExtensionContext) {
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
       .map((playlist) => {
-        const items: PlaylistItemQuickPickItem[] = playlist.items.map((item) => {
+        const sortedItems = sortMode === 'alpha'
+          ? playlist.items.slice().sort((a, b) => {
+            const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+            if (byName !== 0) return byName;
+            const byBranch = a.branch.localeCompare(b.branch);
+            if (byBranch !== 0) return byBranch;
+            const byProgram = a.program.localeCompare(b.program);
+            if (byProgram !== 0) return byProgram;
+            return a.id.localeCompare(b.id);
+          })
+          : playlist.items;
+
+        const items: PlaylistItemQuickPickItem[] = sortedItems.map((item) => {
           const programName = item.program.split('.').pop() ?? item.program;
           const detail = [
             formatBranchCommitTag(item.branch, item.commit),
@@ -3530,6 +3772,42 @@ export function activate(context: vscode.ExtensionContext) {
         const filePath = await playlistsStore.ensureFileExists();
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
         await vscode.window.showTextDocument(doc, { preview: false });
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.setPlaylistsSortMode',
+      async () => {
+        interface SortModeQuickPickItem extends vscode.QuickPickItem {
+          mode: PlaylistsSortMode;
+        }
+
+        const current = getPlaylistsSortMode();
+        const options: SortModeQuickPickItem[] = [
+          {
+            label: 'Alphabetical (A-Z)',
+            description: 'Sort by playlist item name',
+            mode: 'alpha'
+          },
+          {
+            label: 'Manual (drag & drop)',
+            description: 'Use saved order',
+            mode: 'manual'
+          }
+        ];
+
+        // Put current mode first for quick selection.
+        options.sort((a, b) => (a.mode === current ? -1 : b.mode === current ? 1 : 0));
+
+        const selected = await vscode.window.showQuickPick(options, {
+          title: 'Playlist item order'
+        });
+        if (!selected) {
+          return;
+        }
+
+        await vscode.workspace
+          .getConfiguration('doeff-runner')
+          .update(PLAYLISTS_SORT_MODE_CONFIG_KEY, selected.mode, vscode.ConfigurationTarget.Workspace);
       }
     ),
     // Key Inspector commands
