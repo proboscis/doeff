@@ -1426,6 +1426,71 @@ function getPlaylistsSortMode(): PlaylistsSortMode {
     .get<PlaylistsSortMode>(PLAYLISTS_SORT_MODE_CONFIG_KEY, 'alpha');
 }
 
+type WorktreesAutoAddToWorkspaceMode = 'prompt' | 'always' | 'never';
+const WORKTREES_AUTO_ADD_TO_WORKSPACE_CONFIG_KEY = 'worktrees.autoAddToWorkspace';
+
+function getWorktreesAutoAddToWorkspaceMode(): WorktreesAutoAddToWorkspaceMode {
+  return vscode.workspace
+    .getConfiguration('doeff-runner')
+    .get<WorktreesAutoAddToWorkspaceMode>(WORKTREES_AUTO_ADD_TO_WORKSPACE_CONFIG_KEY, 'prompt');
+}
+
+async function maybeAddFolderToWorkspace(folderPath: string, name?: string): Promise<void> {
+  const folderUri = vscode.Uri.file(folderPath);
+  const isAlreadyInWorkspace =
+    vscode.workspace.getWorkspaceFolder(folderUri) !== undefined ||
+    (vscode.workspace.workspaceFolders ?? []).some(
+      (folder) => path.resolve(folder.uri.fsPath) === path.resolve(folderPath)
+    );
+  if (isAlreadyInWorkspace) {
+    return;
+  }
+
+  const mode = getWorktreesAutoAddToWorkspaceMode();
+  if (mode === 'never') {
+    return;
+  }
+
+  const add = (): boolean => {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    return vscode.workspace.updateWorkspaceFolders(folders.length, 0, {
+      uri: folderUri,
+      name
+    });
+  };
+
+  if (mode === 'always') {
+    add();
+    return;
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    `Worktree '${name ?? path.basename(folderPath)}' is outside the workspace. Add it to enable navigation features like Go to Definition?`,
+    'Add to Workspace',
+    'Always',
+    'Never'
+  );
+
+  if (choice === 'Never') {
+    await vscode.workspace
+      .getConfiguration('doeff-runner')
+      .update(WORKTREES_AUTO_ADD_TO_WORKSPACE_CONFIG_KEY, 'never', vscode.ConfigurationTarget.Workspace);
+    return;
+  }
+
+  if (choice === 'Always') {
+    await vscode.workspace
+      .getConfiguration('doeff-runner')
+      .update(WORKTREES_AUTO_ADD_TO_WORKSPACE_CONFIG_KEY, 'always', vscode.ConfigurationTarget.Workspace);
+    add();
+    return;
+  }
+
+  if (choice === 'Add to Workspace') {
+    add();
+  }
+}
+
 interface ProgramTarget {
   branch: string;
   worktreePath: string;
@@ -2562,6 +2627,17 @@ export function activate(context: vscode.ExtensionContext) {
     updateTreeViewMessage();
   });
 
+  // When opening a worktree file outside the workspace, offer to add the worktree folder so
+  // language features (e.g. Go to Definition) can work.
+  context.subscriptions.push(
+    worktreesTreeView.onDidChangeSelection((event) => {
+      const selected = event.selection[0];
+      if (selected?.type === 'wtProgram') {
+        void maybeAddFolderToWorkspace(selected.module.branch.worktreePath, selected.module.branch.branch);
+      }
+    })
+  );
+
   // File watcher for auto-refresh
   const fileWatcher = vscode.workspace.createFileSystemWatcher('**/*.py');
   fileWatcher.onDidChange(uri => {
@@ -3153,6 +3229,8 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
+    await maybeAddFolderToWorkspace(openCwd, item.branch);
+
     const indexerPath = await locateIndexer();
     const programEntry = await findProgramByQualifiedName(indexerPath, openCwd, item.program);
     if (!programEntry) {
@@ -3407,6 +3485,10 @@ export function activate(context: vscode.ExtensionContext) {
       'doeff-runner.revealEntrypoint',
       async (entry: IndexEntry) => {
         const uri = vscode.Uri.file(entry.filePath);
+        const worktreeRoot = findGitWorktreeRootSync(entry.filePath);
+        if (worktreeRoot) {
+          await maybeAddFolderToWorkspace(worktreeRoot);
+        }
         await vscode.commands.executeCommand('vscode.open', uri, {
           selection: new vscode.Range(entry.line - 1, 0, entry.line - 1, 0)
         });
