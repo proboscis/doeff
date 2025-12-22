@@ -1437,11 +1437,12 @@ function getWorktreesAutoAddToWorkspaceMode(): WorktreesAutoAddToWorkspaceMode {
 
 async function maybeAddFolderToWorkspace(folderPath: string, name?: string): Promise<void> {
   const folderUri = vscode.Uri.file(folderPath);
-  const isAlreadyInWorkspace =
-    vscode.workspace.getWorkspaceFolder(folderUri) !== undefined ||
-    (vscode.workspace.workspaceFolders ?? []).some(
-      (folder) => path.resolve(folder.uri.fsPath) === path.resolve(folderPath)
-    );
+  const resolvedPath = path.resolve(folderPath);
+  // Check if this exact folder is already a root in the workspace
+  // (not just contained within a workspace folder)
+  const isAlreadyInWorkspace = (vscode.workspace.workspaceFolders ?? []).some(
+    (folder) => path.resolve(folder.uri.fsPath) === resolvedPath
+  );
   if (isAlreadyInWorkspace) {
     return;
   }
@@ -3031,7 +3032,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(worktreePath);
     const programEntry =
       branch === target.branch && path.resolve(worktreePath) === path.resolve(target.worktreePath)
         ? target.entry
@@ -3131,7 +3132,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(runCwd);
     const programEntry = await findProgramByQualifiedName(indexerPath, runCwd, item.program);
     if (!programEntry) {
       vscode.window.showErrorMessage(
@@ -3231,7 +3232,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     await maybeAddFolderToWorkspace(openCwd, item.branch);
 
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(openCwd);
     const programEntry = await findProgramByQualifiedName(indexerPath, openCwd, item.program);
     if (!programEntry) {
       vscode.window.showErrorMessage(
@@ -3268,6 +3269,48 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
+  async function addPlaylistItemWorktreeToWorkspaceFlow(playlistId: string, itemId: string): Promise<void> {
+    const data = await playlistsStore.load();
+    const playlist = data.playlists.find((p) => p.id === playlistId);
+    const item = playlist?.items.find((i) => i.id === itemId);
+    if (!playlist || !item) {
+      vscode.window.showErrorMessage('Playlist item not found.');
+      return;
+    }
+
+    const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+    if (!repoRoot) {
+      vscode.window.showErrorMessage('No workspace folder open.');
+      return;
+    }
+
+    try {
+      const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+      const worktrees = parseGitWorktreeListPorcelain(stdout);
+      const worktree = worktrees.find((wt) => wt.branch === item.branch);
+
+      if (!worktree) {
+        const create = await vscode.window.showWarningMessage(
+          `No worktree exists for branch '${item.branch}'. Create one first?`,
+          'Create Worktree',
+          'Cancel'
+        );
+        if (create === 'Create Worktree') {
+          const worktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
+          if (worktreePath) {
+            await maybeAddFolderToWorkspace(worktreePath, item.branch);
+          }
+        }
+        return;
+      }
+
+      await maybeAddFolderToWorkspace(worktree.worktreePath, item.branch);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`Failed to add worktree to workspace: ${message}`);
+    }
+  }
+
   async function editPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
     const data = await playlistsStore.load();
     const playlist = data.playlists.find((p) => p.id === playlistId);
@@ -3297,7 +3340,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(worktreePath);
     const programEntry = await findProgramByQualifiedName(indexerPath, worktreePath, item.program);
     const programTypeArg = programEntry ? extractProgramTypeArg(programEntry) : '';
     const proximity: ProximityContext = programEntry
@@ -3755,6 +3798,17 @@ export function activate(context: vscode.ExtensionContext) {
       'doeff-runner.removePlaylistItem',
       async (playlistId: string, itemId: string) => {
         await removePlaylistItemFlow(playlistId, itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.addPlaylistItemWorktreeToWorkspace',
+      async (arg1?: unknown, arg2?: unknown) => {
+        const ids = resolvePlaylistItemIds(arg1, arg2)
+          ?? await pickPlaylistItemIds('Pick a playlist item to add its worktree to workspace');
+        if (!ids) {
+          return;
+        }
+        await addPlaylistItemWorktreeToWorkspaceFlow(ids.playlistId, ids.itemId);
       }
     ),
     vscode.commands.registerCommand(
@@ -4894,7 +4948,11 @@ function getBundledIndexerPath(context: vscode.ExtensionContext): string | undef
 // Extension context stored for access to bundled binaries
 let extensionContext: vscode.ExtensionContext | undefined;
 
-async function locateIndexer(): Promise<string> {
+/**
+ * Locate the doeff-indexer binary.
+ * @param cwd Optional working directory (e.g., worktree path) to check for local venv first
+ */
+async function locateIndexer(cwd?: string): Promise<string> {
   // 1. Check for bundled binary first (fastest, no dependencies)
   if (extensionContext) {
     const bundledPath = getBundledIndexerPath(extensionContext);
@@ -4911,8 +4969,8 @@ async function locateIndexer(): Promise<string> {
     return envPath;
   }
 
-  // 3. Try to find indexer in Python environment
-  const pythonEnvIndexer = await findIndexerInPythonEnv();
+  // 3. Try to find indexer in Python environment (cwd-aware for worktrees)
+  const pythonEnvIndexer = await findIndexerInPythonEnv(cwd);
   if (pythonEnvIndexer) {
     output.appendLine(`[info] Using indexer from Python environment: ${pythonEnvIndexer}`);
     return pythonEnvIndexer;
@@ -4933,11 +4991,59 @@ async function locateIndexer(): Promise<string> {
 }
 
 /**
+ * Ensure the Python environment is synced in the given directory.
+ * Runs `uv sync` if the directory has a pyproject.toml or uv.lock file.
+ * @param cwd Working directory to sync
+ */
+async function ensureVenvSynced(cwd: string): Promise<void> {
+  const pyprojectPath = path.join(cwd, 'pyproject.toml');
+  const uvLockPath = path.join(cwd, 'uv.lock');
+
+  // Only run uv sync if this looks like a uv-managed project
+  if (!fs.existsSync(pyprojectPath) && !fs.existsSync(uvLockPath)) {
+    return;
+  }
+
+  // Check if venv already exists with doeff-indexer
+  const venvIndexer = path.join(cwd, '.venv', 'bin', 'doeff-indexer');
+  const venvIndexerWin = path.join(cwd, '.venv', 'Scripts', 'doeff-indexer.exe');
+  if (fs.existsSync(venvIndexer) || fs.existsSync(venvIndexerWin)) {
+    output.appendLine(`[info] doeff-indexer already exists in ${cwd}/.venv`);
+    return;
+  }
+
+  output.appendLine(`[info] Running uv sync in ${cwd} to ensure doeff-indexer is installed...`);
+  try {
+    const { stdout, stderr } = await execFileAsync('uv', ['sync'], {
+      cwd,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 120000, // 2 minute timeout for sync
+    });
+    if (stdout.trim()) {
+      output.appendLine(`[info] uv sync stdout:\n${stdout.trim()}`);
+    }
+    if (stderr.trim()) {
+      output.appendLine(`[info] uv sync stderr:\n${stderr.trim()}`);
+    }
+    output.appendLine(`[info] uv sync completed in ${cwd}`);
+  } catch (error) {
+    output.appendLine(`[warn] uv sync failed in ${cwd}: ${error}`);
+    // Don't throw - we'll fall back to other methods of finding the indexer
+  }
+}
+
+/**
  * Find doeff-indexer binary in the Python environment.
  * This looks for the binary in the same directory as the Python interpreter.
+ * @param cwd Optional working directory (e.g., worktree path) to check for local venv first
  */
-async function findIndexerInPythonEnv(): Promise<string | undefined> {
-  const pythonPath = await getPythonInterpreter();
+async function findIndexerInPythonEnv(cwd?: string): Promise<string | undefined> {
+  // If cwd is provided, ensure the venv is synced first
+  if (cwd) {
+    await ensureVenvSynced(cwd);
+  }
+
+  const pythonPath = await getPythonInterpreter(cwd);
   if (!pythonPath) {
     return undefined;
   }
@@ -4960,10 +5066,27 @@ async function findIndexerInPythonEnv(): Promise<string | undefined> {
 
 /**
  * Get the Python interpreter path from VSCode Python extension or settings.
+ * @param cwd Optional working directory (e.g., worktree path) to check for local venv first
  */
-async function getPythonInterpreter(): Promise<string | undefined> {
+async function getPythonInterpreter(cwd?: string): Promise<string | undefined> {
   try {
-    // Try to get from VSCode Python extension
+    // 1. If cwd is provided (e.g., a worktree), check for venv there first
+    if (cwd) {
+      const cwdVenvCandidates = [
+        path.join(cwd, '.venv', 'bin', 'python'),
+        path.join(cwd, '.venv', 'Scripts', 'python.exe'),
+        path.join(cwd, 'venv', 'bin', 'python'),
+        path.join(cwd, 'venv', 'Scripts', 'python.exe'),
+      ];
+      for (const candidate of cwdVenvCandidates) {
+        if (fs.existsSync(candidate)) {
+          output.appendLine(`[info] Found Python interpreter in cwd venv: ${candidate}`);
+          return candidate;
+        }
+      }
+    }
+
+    // 2. Try to get from VSCode Python extension
     const pythonExt = vscode.extensions.getExtension('ms-python.python');
     if (pythonExt) {
       if (!pythonExt.isActive) {
@@ -4978,14 +5101,14 @@ async function getPythonInterpreter(): Promise<string | undefined> {
       }
     }
 
-    // Fall back to workspace settings
+    // 3. Fall back to workspace settings
     const config = vscode.workspace.getConfiguration('python');
     const pythonPath = config.get<string>('defaultInterpreterPath');
     if (pythonPath && fs.existsSync(pythonPath)) {
       return pythonPath;
     }
 
-    // Try common virtual env locations relative to workspace
+    // 4. Try common virtual env locations relative to workspace
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (workspaceFolder) {
       const venvCandidates = [
