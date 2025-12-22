@@ -219,6 +219,11 @@
       {
         "command": "doeff-runner.setPlaylistsSortMode",
         "title": "Playlists: Set Item Order"
+      },
+      {
+        "command": "doeff-runner.addPlaylistItemWorktreeToWorkspace",
+        "title": "Add Worktree to Workspace",
+        "icon": "$(folder-library)"
       }
     ],
     "configuration": {
@@ -388,6 +393,11 @@
           "command": "doeff-runner.revealPlaylistItem",
           "when": "view == doeff-playlists && viewItem == playlistItem",
           "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.addPlaylistItemWorktreeToWorkspace",
+          "when": "view == doeff-playlists && viewItem == playlistItem",
+          "group": "inline@1"
         }
       ]
     }
