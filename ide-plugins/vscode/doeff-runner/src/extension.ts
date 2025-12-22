@@ -1526,6 +1526,47 @@ function shortQualifiedName(value: string): string {
   return value.split('.').pop() ?? value;
 }
 
+interface WorktreeMetadata {
+  issueId?: string;
+  worktreeName?: string;
+}
+
+function extractWorktreeMetadata(worktreePath: string): WorktreeMetadata {
+  const resolvedPath = path.resolve(worktreePath);
+  const parts = resolvedPath.split(path.sep).filter(Boolean);
+  const gitWorktreesIndex = parts.lastIndexOf('.git-worktrees');
+  if (gitWorktreesIndex >= 0) {
+    const issueId = parts[gitWorktreesIndex + 1];
+    const worktreeName = parts[gitWorktreesIndex + 2];
+    if (issueId && worktreeName) {
+      return { issueId, worktreeName };
+    }
+  }
+  const fallbackName = path.basename(resolvedPath);
+  if (fallbackName && fallbackName !== path.sep) {
+    return { worktreeName: fallbackName };
+  }
+  return {};
+}
+
+function buildProgramQuickPickLabel(
+  entryName: string,
+  branch: string,
+  metadata: WorktreeMetadata
+): string {
+  const parts = [entryName];
+  if (metadata.issueId) {
+    parts.push(metadata.issueId);
+  }
+  if (metadata.worktreeName) {
+    parts.push(metadata.worktreeName);
+  }
+  if (branch) {
+    parts.push(branch);
+  }
+  return parts.join('-');
+}
+
 function formatPlaylistToolsTag(apply: string | null, transform: string | null): string {
   const parts: string[] = [];
   if (apply) {
@@ -2689,12 +2730,34 @@ export function activate(context: vscode.ExtensionContext) {
           .sort((a, b) => a.entry.name.localeCompare(b.entry.name));
         const items = branchTargets.map((target): ProgramQuickPickItem => {
           const modulePath = target.entry.qualifiedName.split('.').slice(0, -1).join('.');
+          const worktreeMeta = extractWorktreeMetadata(target.worktreePath);
+          const label = buildProgramQuickPickLabel(target.entry.name, branch, worktreeMeta);
+          const detailParts: string[] = [];
+          if (worktreeMeta.issueId || worktreeMeta.worktreeName) {
+            detailParts.push(
+              `[${[worktreeMeta.issueId, worktreeMeta.worktreeName].filter(Boolean).join('/')}]`
+            );
+          }
+          if (branch) {
+            detailParts.push(`[${branch}]`);
+          }
+          const detail = detailParts.length > 0 ? detailParts.join(' ') : undefined;
+          const searchText = [
+            label,
+            target.entry.name,
+            target.entry.qualifiedName,
+            modulePath,
+            branch,
+            worktreeMeta.issueId ?? '',
+            worktreeMeta.worktreeName ?? '',
+            target.worktreePath
+          ].filter(Boolean).join(' ');
           return {
-            label: target.entry.name,
+            label,
             description: modulePath,
-            detail: `[${branch}]`,
+            detail,
             target,
-            searchText: `${target.entry.name} ${target.entry.qualifiedName} ${modulePath} ${branch}`
+            searchText
           };
         });
         return { branch, items };
