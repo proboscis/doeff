@@ -38,6 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 pinjected = ["doeff-pinjected; python_version < '3.14'"]
+ray = ["ray>=2.0.0"]
 
 [project.scripts]
 doeff = "doeff.__main__:main"
