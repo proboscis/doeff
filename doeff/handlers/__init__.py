@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
+import logging
 import lzma
 import sqlite3
 import threading
@@ -61,6 +63,8 @@ from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
 from doeff.program import Program
 from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 from doeff.utils import BoundedLog
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_object_repr(value: Any) -> str:
@@ -523,6 +527,7 @@ class SpawnEffectHandler:
         self._ray = None
         self._ray_lock = threading.Lock()
         self._ray_remote_runner = None
+        self._ray_unavailable_warned = False
         self._task_results: dict[int, tuple[Any, ExecutionContext]] = {}
         self._merged_tasks: set[tuple[int, int]] = set()
         self._join_lock: asyncio.Lock | None = None
@@ -577,9 +582,12 @@ class SpawnEffectHandler:
         return value
 
     def _resolve_backend(self, effect: SpawnEffect) -> str:
-        if effect.preferred_backend is not None:
-            return effect.preferred_backend
-        return self._default_backend
+        backend = effect.preferred_backend or self._default_backend
+        if backend == "ray" and not self._ray_available():
+            fallback = self._default_backend if self._default_backend != "ray" else "thread"
+            self._warn_ray_unavailable(fallback)
+            return fallback
+        return backend
 
     def _spawn_thread(
         self,
@@ -731,6 +739,21 @@ class SpawnEffectHandler:
                     max_workers=self._process_max_workers
                 )
             return self._process_executor
+
+    def _ray_available(self) -> bool:
+        if self._ray is not None:
+            return True
+        return importlib.util.find_spec("ray") is not None
+
+    def _warn_ray_unavailable(self, fallback: str) -> None:
+        if self._ray_unavailable_warned:
+            return
+        self._ray_unavailable_warned = True
+        logger.warning(
+            "Ray backend requested but 'ray' is not installed; falling back to %s. "
+            "Install via `uv add 'doeff[ray]'` or `pip install ray`.",
+            fallback,
+        )
 
     def _load_ray(self) -> Any:
         if self._ray is not None:
