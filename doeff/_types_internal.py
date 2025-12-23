@@ -1382,8 +1382,168 @@ class _StatusSection(_BaseSection):
         return lines
 
 
+def _is_user_code_path(path: str) -> bool:
+    """Check if a file path belongs to user code (not doeff internals)."""
+    normalized = path.replace("\\", "/").lower()
+    # Filter out doeff internals
+    if "/doeff/" in normalized or normalized.endswith("/doeff.py"):
+        return False
+    # Filter out site-packages
+    if "/site-packages/" in normalized:
+        return False
+    # Filter out stdlib paths
+    if "/lib/python" in normalized:
+        return False
+    if "/frameworks/python.framework" in normalized:
+        return False
+    if "/.local/share/uv/python" in normalized:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class _UserEffectFrame:
+    """A single frame in the user effect stack."""
+
+    filename: str
+    line: int
+    function: str
+    code: str | None
+
+
+class _UserEffectStackSection(_BaseSection):
+    """Display user-friendly effect stack trace with root cause first."""
+
+    def render(self) -> list[str]:
+        # Only show in non-verbose mode - verbose mode uses _ErrorSection
+        if self.context.verbose:
+            return []
+
+        details = self.context.failure_details
+        if details is None or not details.entries:
+            return []
+
+        lines: list[str] = []
+
+        # Find root cause (innermost exception that's not EffectFailure)
+        root_cause = self._find_root_cause(details)
+        if root_cause:
+            lines.append("Root Cause:")
+            lines.append(
+                self.indent(1, f"{root_cause.__class__.__name__}: {root_cause}")
+            )
+            lines.append("")
+
+        # Extract user code frames from the effect chain
+        user_frames = self._extract_user_frames(details)
+        if user_frames:
+            lines.append("Effect Stack (user code):")
+            lines.append("")
+            for frame in user_frames:
+                # Format: in path:line func_name
+                rel_path = self._relative_path(frame.filename)
+                lines.append(f"in {rel_path}:{frame.line} {frame.function}")
+                if frame.code:
+                    lines.append(self.indent(1, frame.code))
+
+        return lines
+
+    def _find_root_cause(
+        self, details: RunFailureDetails
+    ) -> BaseException | None:
+        """Find the innermost exception that's not an EffectFailure."""
+        root_cause: BaseException | None = None
+
+        for entry in details.entries:
+            if isinstance(entry, EffectFailureInfo):
+                if entry.cause and not isinstance(entry.cause, EffectFailure):
+                    root_cause = entry.cause
+            elif isinstance(entry, ExceptionFailureInfo):
+                root_cause = entry.exception
+
+        return root_cause
+
+    def _extract_user_frames(
+        self, details: RunFailureDetails
+    ) -> list[_UserEffectFrame]:
+        """Extract user code frames from effect creation contexts."""
+        frames: list[_UserEffectFrame] = []
+        seen_locations: set[tuple[str, int, str]] = set()
+
+        for entry in details.entries:
+            if not isinstance(entry, EffectFailureInfo):
+                continue
+
+            ctx = entry.creation_context
+            if ctx is None:
+                continue
+
+            # Add frames from stack_trace (these are the call chain)
+            if ctx.stack_trace:
+                for frame_data in reversed(ctx.stack_trace):
+                    filename = frame_data.get("filename", "<unknown>")
+                    line_no = frame_data.get("line", 0)
+                    func_name = frame_data.get("function", "<unknown>")
+                    code = frame_data.get("code")
+
+                    # Only include user code frames
+                    if not _is_user_code_path(filename):
+                        continue
+
+                    loc_key = (filename, line_no, func_name)
+                    if loc_key in seen_locations:
+                        continue
+                    seen_locations.add(loc_key)
+
+                    frames.append(
+                        _UserEffectFrame(
+                            filename=filename,
+                            line=line_no,
+                            function=func_name,
+                            code=code,
+                        )
+                    )
+
+            # Add the immediate creation location
+            if _is_user_code_path(ctx.filename):
+                loc_key = (ctx.filename, ctx.line, ctx.function)
+                if loc_key not in seen_locations:
+                    seen_locations.add(loc_key)
+                    frames.append(
+                        _UserEffectFrame(
+                            filename=ctx.filename,
+                            line=ctx.line,
+                            function=ctx.function,
+                            code=ctx.code,
+                        )
+                    )
+
+        return frames
+
+    def _relative_path(self, path: str) -> str:
+        """Convert absolute path to relative path for cleaner display."""
+        import os
+
+        cwd = os.getcwd()
+        if path.startswith(cwd):
+            return path[len(cwd) + 1 :]
+        # Try to extract a meaningful relative path
+        parts = path.replace("\\", "/").split("/")
+        # Find a recognizable directory like 'tests' or 'src'
+        for i, part in enumerate(parts):
+            if part in ("tests", "src", "placement", "doeff"):
+                return "/".join(parts[i:])
+        # Fall back to just the filename
+        return parts[-1] if parts else path
+
+
 class _ErrorSection(_BaseSection):
     def render(self) -> list[str]:
+        # Only show verbose error chain in verbose mode
+        # Non-verbose mode uses _UserEffectStackSection for cleaner output
+        if not self.context.verbose:
+            return []
+
         details = self.context.failure_details
         if details is None or not details.entries:
             return []
@@ -1760,7 +1920,8 @@ class RunResultDisplayRenderer:
         sections = [
             _HeaderSection(self.context),
             _StatusSection(self.context),
-            _ErrorSection(self.context),
+            _UserEffectStackSection(self.context),  # User-friendly stack (non-verbose)
+            _ErrorSection(self.context),  # Verbose error chain (verbose only)
             _StateSection(self.context),
             _SharedStateSection(self.context),
             _LogSection(self.context),
