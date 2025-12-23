@@ -447,7 +447,7 @@ class WNode:
         return hash(id(self.value))
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class WStep:
     """A computation step in the graph."""
 
@@ -458,6 +458,11 @@ class WStep:
 
     def __hash__(self) -> int:
         return hash(self._unique_id)
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, WStep):
+            return NotImplemented
+        return self._unique_id == other._unique_id
 
 
 @dataclass(frozen=True)
@@ -493,7 +498,7 @@ class WGraph:
 # =========================================================
 FrozenDict = frozendict
 
-__all__ = [
+__all__ = [  # noqa: DOEFF021
     "NOTHING",
     "Err",
     "FrozenDict",
