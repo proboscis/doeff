@@ -13,7 +13,7 @@ import lzma
 import sqlite3
 import threading
 from collections.abc import Awaitable, Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,7 +45,10 @@ from doeff.effects import (
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
+    SpawnEffect,
     ThreadEffect,
+    Task,
+    TaskJoinEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -74,6 +77,28 @@ def _cloudpickle_dumps(value: Any, context: str) -> bytes:
         raise TypeError(
             f"Failed to cloudpickle {context}; object type={type(value).__name__}; repr={value_repr}"
         ) from exc
+
+
+def _cloudpickle_loads(payload: bytes, context: str) -> Any:
+    try:
+        return cloudpickle.loads(payload)
+    except Exception as exc:
+        raise TypeError(f"Failed to load {context} via cloudpickle") from exc
+
+
+def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> bytes:
+    program, ctx = _cloudpickle_loads(payload, "spawn payload")
+
+    from doeff.interpreter import ProgramInterpreter
+
+    engine = ProgramInterpreter(max_log_entries=max_log_entries)
+    result = engine.run(program, ctx)
+    if isinstance(result.result, Err):
+        raise result.result.error
+    return _cloudpickle_dumps((result.value, result.context), "spawn result")
+
+
+_VALID_SPAWN_BACKENDS = ("thread", "process", "ray")
 
 # Need Program at runtime for isinstance checks
 
@@ -372,6 +397,307 @@ class ThreadEffectHandler:
         parent.log.clear()
         parent.log.extend(child.log)
         parent.graph = child.graph
+
+
+class SpawnEffectHandler:
+    """Handles spawning programs in background tasks."""
+
+    scope = HandlerScope.SHARED
+
+    def __init__(
+        self,
+        *,
+        default_backend: str = "thread",
+        thread_max_workers: int | None = None,
+        process_max_workers: int | None = None,
+        ray_address: str | None = None,
+        ray_init_kwargs: dict[str, Any] | None = None,
+        ray_runtime_env: dict[str, Any] | None = None,
+        max_log_entries: int | None = None,
+    ) -> None:
+        if default_backend not in _VALID_SPAWN_BACKENDS:
+            raise ValueError(
+                "default_backend must be one of 'thread', 'process', or 'ray', "
+                f"got {default_backend!r}"
+            )
+
+        self._default_backend = default_backend
+        self._thread_max_workers = thread_max_workers
+        self._process_max_workers = process_max_workers
+        self._ray_address = ray_address
+        self._ray_init_kwargs = dict(ray_init_kwargs or {})
+        self._ray_runtime_env = dict(ray_runtime_env or {}) if ray_runtime_env else None
+        self._max_log_entries = max_log_entries
+
+        self._thread_executor: ThreadPoolExecutor | None = None
+        self._process_executor: ProcessPoolExecutor | None = None
+        self._thread_lock = threading.Lock()
+        self._process_lock = threading.Lock()
+
+        self._ray = None
+        self._ray_lock = threading.Lock()
+        self._ray_remote_runner = None
+
+    def handle_spawn(
+        self,
+        effect: SpawnEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Task[Any]:
+        backend = self._resolve_backend(effect)
+        if backend == "thread":
+            return self._spawn_thread(effect, ctx, engine)
+        if backend == "process":
+            return self._spawn_process(effect, ctx)
+        if backend == "ray":
+            return self._spawn_ray(effect, ctx)
+        raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+
+    async def handle_join(
+        self,
+        effect: TaskJoinEffect,
+        ctx: ExecutionContext,
+    ) -> Any:
+        task = effect.task
+        backend = task.backend
+        if backend == "ray":
+            result_payload = await self._await_ray(task._handle)
+        else:
+            result_payload = await task._handle
+
+        value, result_ctx = self._unpack_result(result_payload)
+        self._merge_context(ctx, result_ctx, task)
+        return value
+
+    def _resolve_backend(self, effect: SpawnEffect) -> str:
+        if effect.preferred_backend is not None:
+            return effect.preferred_backend
+        return self._default_backend
+
+    def _spawn_thread(
+        self,
+        effect: SpawnEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Task[Any]:
+        loop = asyncio.get_running_loop()
+        sub_ctx = self._prepare_context(ctx, share_cache=True)
+        env_snapshot = sub_ctx.env.copy()
+        state_snapshot = sub_ctx.state.copy()
+
+        def run_program() -> tuple[Any, ExecutionContext]:
+            pragmatic_result = engine.run(effect.program, sub_ctx)
+            if isinstance(pragmatic_result.result, Err):
+                raise pragmatic_result.result.error
+            return pragmatic_result.value, pragmatic_result.context
+
+        future = loop.run_in_executor(self._ensure_thread_executor(), run_program)
+        return Task(
+            backend="thread",
+            _handle=future,
+            _env_snapshot=env_snapshot,
+            _state_snapshot=state_snapshot,
+        )
+
+    def _spawn_process(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
+        loop = asyncio.get_running_loop()
+        sub_ctx = self._prepare_context(ctx, share_cache=False)
+        env_snapshot = sub_ctx.env.copy()
+        state_snapshot = sub_ctx.state.copy()
+        payload = _cloudpickle_dumps((effect.program, sub_ctx), "spawn payload")
+        future = loop.run_in_executor(
+            self._ensure_process_executor(),
+            _run_spawn_payload,
+            payload,
+            self._max_log_entries,
+        )
+        return Task(
+            backend="process",
+            _handle=future,
+            _env_snapshot=env_snapshot,
+            _state_snapshot=state_snapshot,
+        )
+
+    def _spawn_ray(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
+        self._ensure_ray_initialized()
+        sub_ctx = self._prepare_context(ctx, share_cache=False)
+        env_snapshot = sub_ctx.env.copy()
+        state_snapshot = sub_ctx.state.copy()
+        payload = _cloudpickle_dumps((effect.program, sub_ctx), "spawn payload")
+        options = self._build_ray_options(effect.options)
+        runner = self._ray_remote_runner
+        if options:
+            runner = runner.options(**options)
+        object_ref = runner.remote(payload, max_log_entries=self._max_log_entries)
+        return Task(
+            backend="ray",
+            _handle=object_ref,
+            _env_snapshot=env_snapshot,
+            _state_snapshot=state_snapshot,
+        )
+
+    def _prepare_context(self, ctx: ExecutionContext, *, share_cache: bool) -> ExecutionContext:
+        if isinstance(ctx.log, BoundedLog):
+            log = ctx.log.spawn_empty()
+        else:
+            log = BoundedLog()
+        if self._max_log_entries is not None:
+            log.set_max_entries(self._max_log_entries)
+
+        cache = ctx.cache if share_cache else {}
+        observations = ctx.effect_observations if share_cache else []
+
+        return ExecutionContext(
+            env=ctx.env.copy() if ctx.env else {},
+            state=ctx.state.copy() if ctx.state else {},
+            log=log,
+            graph=ctx.graph,
+            io_allowed=ctx.io_allowed,
+            cache=cache,
+            effect_observations=observations,
+            program_call_stack=ctx.program_call_stack.copy(),
+        )
+
+    def _merge_context(
+        self,
+        parent: ExecutionContext,
+        child: ExecutionContext,
+        task: Task[Any],
+    ) -> None:
+        self._merge_mapping(parent.env, child.env, task._env_snapshot)
+        self._merge_mapping(parent.state, child.state, task._state_snapshot)
+        parent.log.extend(child.log)
+
+        combined_steps = set(parent.graph.steps)
+        combined_steps.update(child.graph.steps)
+        parent.graph = WGraph(last=child.graph.last, steps=frozenset(combined_steps))
+
+    @staticmethod
+    def _merge_mapping(
+        target: dict[Any, Any],
+        source: dict[Any, Any],
+        snapshot: dict[Any, Any],
+    ) -> None:
+        for key, value in source.items():
+            if key not in snapshot or not SpawnEffectHandler._values_equal(
+                snapshot.get(key), value
+            ):
+                target[key] = value
+
+    @staticmethod
+    def _values_equal(left: Any, right: Any) -> bool:
+        try:
+            return left == right
+        except Exception:
+            return False
+
+    def _ensure_thread_executor(self) -> ThreadPoolExecutor:
+        executor = self._thread_executor
+        if executor is not None:
+            return executor
+        with self._thread_lock:
+            if self._thread_executor is None:
+                self._thread_executor = ThreadPoolExecutor(
+                    max_workers=self._thread_max_workers,
+                    thread_name_prefix="doeff-spawn-thread",
+                )
+            return self._thread_executor
+
+    def _ensure_process_executor(self) -> ProcessPoolExecutor:
+        executor = self._process_executor
+        if executor is not None:
+            return executor
+        with self._process_lock:
+            if self._process_executor is None:
+                self._process_executor = ProcessPoolExecutor(
+                    max_workers=self._process_max_workers
+                )
+            return self._process_executor
+
+    def _load_ray(self) -> Any:
+        if self._ray is not None:
+            return self._ray
+        try:
+            import ray
+        except ImportError as exc:
+            raise RuntimeError(
+                "Ray backend requested but 'ray' is not installed. "
+                "Install via `uv add 'doeff[ray]'` or `pip install ray`."
+            ) from exc
+        self._ray = ray
+        return ray
+
+    def _ensure_ray_initialized(self) -> Any:
+        ray = self._load_ray()
+        if self._ray_remote_runner is not None:
+            return ray
+        with self._ray_lock:
+            if self._ray_remote_runner is not None:
+                return ray
+            if not ray.is_initialized():
+                init_kwargs = dict(self._ray_init_kwargs)
+                if self._ray_runtime_env and "runtime_env" not in init_kwargs:
+                    init_kwargs["runtime_env"] = self._ray_runtime_env
+                if self._ray_address is not None:
+                    init_kwargs = {"address": self._ray_address, **init_kwargs}
+                ray.init(**init_kwargs)
+            self._ray_remote_runner = ray.remote(_run_spawn_payload)
+        return ray
+
+    def _build_ray_options(self, options: dict[str, Any]) -> dict[str, Any]:
+        ray_options = dict(options)
+        runtime_env = ray_options.pop("runtime_env", None)
+        merged_env = self._merge_runtime_env(runtime_env)
+        if merged_env:
+            ray_options["runtime_env"] = merged_env
+        return ray_options
+
+    def _merge_runtime_env(
+        self, override: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if self._ray_runtime_env is None and override is None:
+            return None
+
+        merged: dict[str, Any] = {}
+        if self._ray_runtime_env:
+            merged.update(self._ray_runtime_env)
+
+        if override:
+            if (
+                "env_vars" in merged
+                and "env_vars" in override
+                and isinstance(merged["env_vars"], dict)
+                and isinstance(override["env_vars"], dict)
+            ):
+                merged["env_vars"] = {
+                    **merged["env_vars"],
+                    **override["env_vars"],
+                }
+                override = {key: value for key, value in override.items() if key != "env_vars"}
+            merged.update(override)
+        return merged
+
+    async def _await_ray(self, object_ref: Any) -> Any:
+        ray = self._load_ray()
+        try:
+            return await asyncio.to_thread(ray.get, object_ref)
+        except Exception as exc:
+            cause = getattr(exc, "cause", None)
+            if isinstance(cause, BaseException):
+                raise cause from exc
+            raise
+
+    def _unpack_result(self, payload: Any) -> tuple[Any, ExecutionContext]:
+        if isinstance(payload, bytes):
+            value, result_ctx = _cloudpickle_loads(payload, "spawn result")
+        else:
+            value, result_ctx = payload
+        if not isinstance(result_ctx, ExecutionContext):
+            raise TypeError(
+                "spawn task result context must be ExecutionContext, "
+                f"got {type(result_ctx).__name__}"
+            )
+        return value, result_ctx
 
 
 class _InterpreterHandle:
@@ -947,6 +1273,7 @@ __all__ = [
     "MemoEffectHandler",
     "ReaderEffectHandler",
     "ResultEffectHandler",
+    "SpawnEffectHandler",
     "StateEffectHandler",
     "ThreadEffectHandler",
     "WriterEffectHandler",
