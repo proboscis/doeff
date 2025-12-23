@@ -119,8 +119,13 @@ def _sanitize_call_stack(call_stack: list[CallFrame]) -> list[CallFrame]:
     sanitized: list[CallFrame] = []
     for frame in call_stack:
         created_at = _sanitize_created_at(frame.created_at)
-        if created_at is not frame.created_at:
-            frame = replace(frame, created_at=created_at)
+        frame = replace(
+            frame,
+            kleisli=None,
+            args=(),
+            kwargs={},
+            created_at=created_at,
+        )
         sanitized.append(frame)
     return sanitized
 
@@ -145,23 +150,9 @@ def _sanitize_exception(error: BaseException) -> BaseException:
     return error
 
 
-def _serialize_spawn_result(payload: tuple[Any, ...]) -> bytes:
-    try:
-        return _cloudpickle_dumps(payload, "spawn result")
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        fallback = (
-            "err",
-            {
-                "type": "SerializationError",
-                "message": f"Failed to serialize spawn result: {exc}",
-            },
-        )
-        return cloudpickle.dumps(fallback)
-
-
 def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:
     return (
-        "err",
+        _SPAWN_ERR_TAG,
         {
             "type": error.__class__.__name__,
             "message": str(error),
@@ -169,11 +160,11 @@ def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:
     )
 
 
-def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> bytes:
+def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> tuple[Any, ...]:
     try:
         program, ctx = _cloudpickle_loads(payload, "spawn payload")
     except Exception as exc:  # pragma: no cover - defensive fallback
-        return _serialize_spawn_result(_pack_spawn_error(exc))
+        return _pack_spawn_error(exc)
 
     from doeff.interpreter import ProgramInterpreter
 
@@ -181,17 +172,19 @@ def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> bytes:
     try:
         result = engine.run(program, ctx)
     except Exception as exc:  # pragma: no cover - defensive fallback
-        return _serialize_spawn_result(_pack_spawn_error(exc))
+        return _pack_spawn_error(exc)
 
     if isinstance(result.result, Err):
         error = _sanitize_exception(result.result.error)
-        return _serialize_spawn_result(_pack_spawn_error(error))
+        return _pack_spawn_error(error)
 
     packed_ctx = _pack_execution_context(result.context)
-    return _serialize_spawn_result(("ok", result.value, packed_ctx))
+    return (_SPAWN_OK_TAG, result.value, packed_ctx)
 
 
 _VALID_SPAWN_BACKENDS = ("thread", "process", "ray")
+_SPAWN_OK_TAG = "__doeff_spawn_ok__"
+_SPAWN_ERR_TAG = "__doeff_spawn_err__"
 
 # Need Program at runtime for isinstance checks
 
@@ -813,28 +806,11 @@ class SpawnEffectHandler:
             raise
 
     def _unpack_result(self, payload: Any) -> tuple[Any, ExecutionContext]:
+        decoded = payload
         if isinstance(payload, bytes):
             decoded = _cloudpickle_loads(payload, "spawn result")
-            if isinstance(decoded, tuple) and decoded:
-                tag = decoded[0]
-                if tag == "err":
-                    error = decoded[1] if len(decoded) > 1 else RuntimeError("Spawn task failed")
-                    if isinstance(error, dict):
-                        error_type = error.get("type", "Error")
-                        message = error.get("message", "")
-                        raise RuntimeError(f"Spawn task failed ({error_type}): {message}")
-                    if isinstance(error, BaseException):
-                        raise error
-                    raise RuntimeError(f"Spawn task failed: {error!r}")
-                if tag == "ok":
-                    value = decoded[1] if len(decoded) > 1 else None
-                    result_ctx = decoded[2] if len(decoded) > 2 else {}
-                else:
-                    value, result_ctx = decoded
-            else:
-                value, result_ctx = decoded
-        else:
-            value, result_ctx = payload
+
+        value, result_ctx = self._decode_spawn_payload(decoded)
         if isinstance(result_ctx, dict):
             result_ctx = ExecutionContext(
                 env=result_ctx.get("env", {}),
@@ -851,6 +827,26 @@ class SpawnEffectHandler:
                 "spawn task result context must be ExecutionContext, "
                 f"got {type(result_ctx).__name__}"
             )
+        return value, result_ctx
+
+    def _decode_spawn_payload(self, decoded: Any) -> tuple[Any, Any]:
+        if isinstance(decoded, tuple) and decoded:
+            tag = decoded[0]
+            if tag == _SPAWN_ERR_TAG:
+                error = decoded[1] if len(decoded) > 1 else RuntimeError("Spawn task failed")
+                if isinstance(error, dict):
+                    error_type = error.get("type", "Error")
+                    message = error.get("message", "")
+                    raise RuntimeError(f"Spawn task failed ({error_type}): {message}")
+                if isinstance(error, BaseException):
+                    raise error
+                raise RuntimeError(f"Spawn task failed: {error!r}")
+            if tag == _SPAWN_OK_TAG:
+                value = decoded[1] if len(decoded) > 1 else None
+                result_ctx = decoded[2] if len(decoded) > 2 else {}
+                return value, result_ctx
+
+        value, result_ctx = decoded
         return value, result_ctx
 
 
