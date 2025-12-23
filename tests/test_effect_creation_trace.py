@@ -337,29 +337,29 @@ async def test_nested_effect_error_chain():
         # Should have failed
         assert result.is_err
 
-        # Get the display output
+        # Get the display output (non-verbose shows user-friendly format)
         display = result.display(verbose=False)
 
-        # Check that it shows a clean error chain
-        assert "Error Chain (most recent first):" in display
-        assert "Effect 'ResultCatchEffect' failed" in display
-        assert "Effect 'ResultFailEffect' failed" in display
+        # Non-verbose format shows root cause first
+        assert "Root Cause:" in display
         assert "ValueError: Expecting value: line 1 column 1 (char 0)" in display
 
-        # Should show creation locations
+        # Status section still shows effect failure info
+        assert "Effect 'ResultCatchEffect' failed" in display
+
+        # Should show creation locations in status section
         assert "📍 Created at:" in display
-        assert "handle_parse_error" in display
-        assert "failing_parse" in display
 
         # Should NOT have massive duplication
         error_count = display.count("Expecting value: line 1 column 1")
-        # It can appear up to 5 times now (error chain entries plus handler log
-        # plus exception forwarding for native try-except support)
-        assert error_count <= 5, f"Error message repeated {error_count} times, should be <= 5"
+        # It can appear up to 3 times now (root cause + status + handler log)
+        assert error_count <= 3, f"Error message repeated {error_count} times, should be <= 3"
 
-        # Verbose mode should show stack trace
+        # Verbose mode shows full error chain with stack traces
         verbose_display = result.display(verbose=True)
-        assert "🔥 Execution Stack Trace" in verbose_display
+        assert "Error Chain (most recent first):" in verbose_display
+        assert "Effect 'ResultCatchEffect' failed" in verbose_display
+        assert "Effect 'ResultFailEffect' failed" in verbose_display
         assert "Traceback (most recent call last):" in verbose_display
 
     finally:
