@@ -1,12 +1,16 @@
+import importlib.util
 import time
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 import pytest
 
 from doeff import (
+    Fail,
     Gather,
     Get,
     IO,
+    Log,
     Put,
     Spawn,
     ProgramInterpreter,
@@ -15,76 +19,371 @@ from doeff import (
 )
 
 
-@pytest.mark.asyncio
-async def test_spawn_thread_join_updates_state() -> None:
-    engine = ProgramInterpreter()
-
-    @do
-    def worker() -> EffectGenerator[int]:
-        yield Put("status", "ready")
-        return 10
-
-    @do
-    def program() -> EffectGenerator[tuple[int, str | None]]:
-        task = yield Spawn(worker(), preferred_backend="thread")
-        result = yield task.join()
-        status = yield Get("status")
-        return result, status
-
-    result = await engine.run_async(program())
-    assert result.is_ok
-    assert result.value == (10, "ready")
+def _ray_available() -> bool:
+    return importlib.util.find_spec("ray") is not None
 
 
-@pytest.fixture(scope="module")
-def ray_runtime() -> Any:
+def _backend_params() -> list[Any]:
+    return [
+        pytest.param("thread", id="thread"),
+        pytest.param("process", id="process"),
+        pytest.param(
+            "ray",
+            id="ray",
+            marks=pytest.mark.skipif(not _ray_available(), reason="ray not installed"),
+        ),
+    ]
+
+
+def _ray_task_options(backend: str) -> dict[str, Any]:
+    if backend == "ray":
+        return {"num_cpus": 1}
+    return {}
+
+
+def _build_engine(backend: str, *, default_backend: str | None = None) -> ProgramInterpreter:
+    spawn_defaults = {}
+    if default_backend is not None:
+        spawn_defaults["spawn_default_backend"] = default_backend
+    if backend == "ray":
+        spawn_defaults["spawn_ray_init_kwargs"] = {"num_cpus": 2}
+    if backend == "process":
+        spawn_defaults["spawn_process_max_workers"] = 2
+    return ProgramInterpreter(**spawn_defaults)
+
+
+@contextmanager
+def _ray_context(backend: str) -> Iterator[Any]:
+    if backend != "ray":
+        yield None
+        return
     ray = pytest.importorskip("ray")
     ray.shutdown()
-    yield ray
-    ray.shutdown()
+    try:
+        yield ray
+    finally:
+        ray.shutdown()
 
 
 @pytest.mark.asyncio
-async def test_spawn_ray_join_returns_value(ray_runtime: Any) -> None:
-    engine = ProgramInterpreter(spawn_ray_init_kwargs={"num_cpus": 2})
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_join_basic(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
 
-    @do
-    def worker() -> EffectGenerator[int]:
-        yield Put("ray_value", 42)
-        return 5
+        @do
+        def worker() -> EffectGenerator[int]:
+            yield Put("status", backend)
+            return 10
 
-    @do
-    def program() -> EffectGenerator[tuple[int, int | None]]:
-        task = yield Spawn(worker(), preferred_backend="ray", num_cpus=1)
-        result = yield task.join()
-        stored = yield Get("ray_value")
-        return result, stored
+        @do
+        def program() -> EffectGenerator[tuple[int, str | None]]:
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            result = yield task.join()
+            status = yield Get("status")
+            return result, status
 
-    result = await engine.run_async(program())
+        result = await engine.run_async(program())
+
     assert result.is_ok
-    assert result.value == (5, 42)
+    assert result.value == (10, backend)
 
 
 @pytest.mark.asyncio
-async def test_spawn_ray_tasks_overlap(ray_runtime: Any) -> None:
-    engine = ProgramInterpreter(spawn_ray_init_kwargs={"num_cpus": 2})
-    delay = 0.2
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_default_backend_selection(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend, default_backend=backend)
 
-    @do
-    def worker() -> EffectGenerator[tuple[float, float]]:
-        start = yield IO(time.perf_counter)
-        yield IO(lambda: time.sleep(delay))
-        end = yield IO(time.perf_counter)
-        return start, end
+        @do
+        def worker() -> EffectGenerator[str]:
+            return "ready"
 
-    @do
-    def program() -> EffectGenerator[list[tuple[float, float]]]:
-        first = yield Spawn(worker(), preferred_backend="ray", num_cpus=1)
-        second = yield Spawn(worker(), preferred_backend="ray", num_cpus=1)
-        return (yield Gather(first.join(), second.join()))
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker())
+            return (yield task.join())
 
-    result = await engine.run_async(program())
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == "ready"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_multiple_tasks(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker(index: int) -> EffectGenerator[int]:
+            yield Put(f"state_{index}", index)
+            return index
+
+        @do
+        def program() -> EffectGenerator[tuple[list[int], list[int]]]:
+            tasks = []
+            for i in range(3):
+                tasks.append(
+                    (
+                        yield Spawn(
+                            worker(i),
+                            preferred_backend=backend,
+                            **_ray_task_options(backend),
+                        )
+                    )
+                )
+            results: list[int] = []
+            for task in tasks:
+                results.append((yield task.join()))
+            states: list[int] = []
+            for i in range(3):
+                states.append((yield Get(f"state_{i}")))
+            return results, states
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == ([0, 1, 2], [0, 1, 2])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_with_gather(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker(index: int) -> EffectGenerator[int]:
+            return index * 2
+
+        @do
+        def program() -> EffectGenerator[list[int]]:
+            tasks = []
+            for i in range(4):
+                tasks.append(
+                    (
+                        yield Spawn(
+                            worker(i),
+                            preferred_backend=backend,
+                            **_ray_task_options(backend),
+                        )
+                    )
+                )
+            return (yield Gather(*(task.join() for task in tasks)))
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == [0, 2, 4, 6]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_state_snapshot_read(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker() -> EffectGenerator[str | None]:
+            return (yield Get("flag"))
+
+        @do
+        def program() -> EffectGenerator[tuple[str | None, str | None]]:
+            yield Put("flag", "before")
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            yield Put("flag", "after")
+            seen = yield task.join()
+            current = yield Get("flag")
+            return seen, current
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == ("before", "after")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_state_merge_preserves_parent_updates(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield Put("worker_key", "done")
+            return "ok"
+
+        @do
+        def program() -> EffectGenerator[tuple[str, int | None, str | None]]:
+            yield Put("counter", 1)
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            yield Put("counter", 2)
+            value = yield task.join()
+            counter = yield Get("counter")
+            worker_value = yield Get("worker_key")
+            return value, counter, worker_value
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == ("ok", 2, "done")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_exception_propagates(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker() -> EffectGenerator[int]:
+            yield Fail(ValueError("boom"))
+            return 0
+
+        @do
+        def program() -> EffectGenerator[int]:
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            return (yield task.join())
+
+        result = await engine.run_async(program())
+
+    assert result.is_err
+    assert "boom" in str(result.result.error)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_join_idempotent(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker() -> EffectGenerator[int]:
+            yield Log("joined-once")
+            yield Put("value", "ok")
+            return 7
+
+        @do
+        def program() -> EffectGenerator[tuple[int, int, str | None]]:
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            first = yield task.join()
+            second = yield task.join()
+            value = yield Get("value")
+            return first, second, value
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == (7, 7, "ok")
+    assert result.log.count("joined-once") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_nested_spawn(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def inner() -> EffectGenerator[int]:
+            return 3
+
+        @do
+        def outer() -> EffectGenerator[int]:
+            inner_task = yield Spawn(inner(), preferred_backend="thread")
+            inner_value = yield inner_task.join()
+            return inner_value + 1
+
+        @do
+        def program() -> EffectGenerator[int]:
+            task = yield Spawn(outer(), preferred_backend=backend, **_ray_task_options(backend))
+            return (yield task.join())
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == 4
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_parallel_overlap(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+        delay = 0.2
+
+        @do
+        def worker() -> EffectGenerator[tuple[float, float]]:
+            start = yield IO(time.perf_counter)
+            yield IO(lambda: time.sleep(delay))
+            end = yield IO(time.perf_counter)
+            return start, end
+
+        @do
+        def program() -> EffectGenerator[list[tuple[float, float]]]:
+            first = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            second = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            return (yield Gather(first.join(), second.join()))
+
+        result = await engine.run_async(program())
+
     assert result.is_ok
     starts = [entry[0] for entry in result.value]
     ends = [entry[1] for entry in result.value]
     assert max(starts) < min(ends)
+
+
+@pytest.mark.asyncio
+async def test_spawn_ray_resource_hints() -> None:
+    ray = pytest.importorskip("ray")
+    ray.shutdown()
+    try:
+        engine = ProgramInterpreter(spawn_ray_init_kwargs={"num_cpus": 2})
+
+        @do
+        def worker() -> EffectGenerator[int]:
+            return 11
+
+        @do
+        def program() -> EffectGenerator[int]:
+            task = yield Spawn(
+                worker(),
+                preferred_backend="ray",
+                num_cpus=1,
+                num_gpus=0,
+                memory=10_000_000,
+            )
+            return (yield task.join())
+
+        result = await engine.run_async(program())
+    finally:
+        ray.shutdown()
+
+    assert result.is_ok
+    assert result.value == 11
+
+
+@pytest.mark.asyncio
+async def test_spawn_process_serialization_error() -> None:
+    engine = ProgramInterpreter()
+
+    class Unpicklable:
+        def __getstate__(self) -> None:
+            raise TypeError("nope")
+
+    @do
+    def worker() -> EffectGenerator[int]:
+        return 1
+
+    @do
+    def program() -> EffectGenerator[int]:
+        yield Put("bad", Unpicklable())
+        task = yield Spawn(worker(), preferred_backend="process")
+        return (yield task.join())
+
+    result = await engine.run_async(program())
+
+    assert result.is_err
+    assert "cloudpickle" in str(result.result.error).lower()
