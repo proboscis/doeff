@@ -187,6 +187,36 @@ class EffectCreationContext:
             frame_info=None,
         )
 
+    def __getstate__(self) -> dict[str, Any]:
+        """Return picklable state, excluding unpicklable frame objects."""
+        sanitized_stack: list[dict[str, Any]] = []
+        for frame in self.stack_trace:  # noqa: DOEFF012
+            if isinstance(frame, dict):
+                sanitized_frame = {
+                    key: value
+                    for key, value in frame.items()
+                    if key != "frame"
+                }
+                sanitized_stack.append(sanitized_frame)
+
+        return {
+            "filename": self.filename,
+            "line": self.line,
+            "function": self.function,
+            "code": self.code,
+            "stack_trace": sanitized_stack,
+            "frame_info": None,  # Frame objects cannot be pickled
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore state from pickle."""
+        object.__setattr__(self, "filename", state["filename"])
+        object.__setattr__(self, "line", state["line"])
+        object.__setattr__(self, "function", state["function"])
+        object.__setattr__(self, "code", state["code"])
+        object.__setattr__(self, "stack_trace", state["stack_trace"])
+        object.__setattr__(self, "frame_info", state["frame_info"])
+
 
 # ============================================
 # Traceback Capture Helpers

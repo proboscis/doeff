@@ -74,6 +74,14 @@ from .state import (
     modify,
     put,
 )
+from .spawn import (
+    Spawn,
+    SpawnBackend,
+    SpawnEffect,
+    Task,
+    TaskJoinEffect,
+    spawn,
+)
 from .thread import Thread, ThreadEffect, ThreadStrategy, thread
 from .writer import (
     Listen,
@@ -168,6 +176,11 @@ __all__ = [
     "StateGetEffect",
     "StateModifyEffect",
     "StatePutEffect",
+    "Spawn",
+    "SpawnBackend",
+    "SpawnEffect",
+    "Task",
+    "TaskJoinEffect",
     "Step",
     "Thread",
     "ThreadEffect",
@@ -215,6 +228,7 @@ __all__ = [
     "safe",
     "slog",
     "snapshot",
+    "spawn",
     "step",
     "tell",
     "unwrap_result",
