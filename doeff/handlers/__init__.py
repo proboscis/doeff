@@ -549,6 +549,7 @@ class SpawnEffectHandler:
         self._ray_address = ray_address
         self._ray_init_kwargs = dict(ray_init_kwargs or {})
         self._ray_runtime_env = dict(ray_runtime_env or {}) if ray_runtime_env else None
+        self._ray_runtime_env_applied = False
         self._max_log_entries = max_log_entries
 
         self._thread_executor: ThreadPoolExecutor | None = None
@@ -813,17 +814,26 @@ class SpawnEffectHandler:
                 return ray
             if not ray.is_initialized():
                 init_kwargs = dict(self._ray_init_kwargs)
-                if self._ray_runtime_env and "runtime_env" not in init_kwargs:
-                    init_kwargs["runtime_env"] = self._ray_runtime_env
+                runtime_env = init_kwargs.get("runtime_env")
+                if runtime_env is None and self._ray_runtime_env:
+                    runtime_env = self._ray_runtime_env
+                    init_kwargs["runtime_env"] = runtime_env
                 if self._ray_address is not None:
                     init_kwargs = {"address": self._ray_address, **init_kwargs}
                 ray.init(**init_kwargs)
+                if runtime_env is not None:
+                    self._ray_runtime_env_applied = True
             self._ray_remote_runner = ray.remote(_run_spawn_payload)  # noqa: DOEFF002
         return ray
 
     def _build_ray_options(self, options: dict[str, Any]) -> dict[str, Any]:
         ray_options = dict(options)
         runtime_env = ray_options.pop("runtime_env", None)
+        if runtime_env is None and self._ray_runtime_env_applied:
+            return ray_options
+        # Avoid per-task runtime_env when we've already applied it at ray.init();
+        # Ray caches runtime_envs, but per-task installation can still trigger
+        # redundant virtualenv/package setup when working_dir/pip are in use.
         merged_env = self._merge_runtime_env(runtime_env)
         if merged_env:
             ray_options["runtime_env"] = merged_env
