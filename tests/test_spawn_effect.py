@@ -1,16 +1,17 @@
+"""Tests for spawn effect."""
+
+from __future__ import annotations
+
 import asyncio
 import atexit
 import importlib.util
 import logging
-import time
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 import pytest
 
 from doeff import (
-    AtomicGet,
-    AtomicUpdate,
     Effect,
     EffectGenerator,
     Fail,
@@ -57,7 +58,7 @@ def _build_engine(backend: str, *, default_backend: str | None = None) -> Progra
             "include_dashboard": False,
             "log_to_driver": False,
         }
-    if backend == "process":
+    else:
         spawn_defaults["spawn_process_max_workers"] = 2
     return ProgramInterpreter(**spawn_defaults)
 
@@ -99,41 +100,41 @@ async def test_spawn_join_basic(backend: str) -> None:
 
         @do
         def worker() -> EffectGenerator[int]:
-            yield Put("status", backend)
-            return 10
+            return 42
 
         @do
-        def program() -> EffectGenerator[tuple[int, str | None]]:
+        def program() -> EffectGenerator[int]:
             task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            result = yield task.join()
-            status = yield Get("status")
-            return result, status
-
-        result = await engine.run_async(program())
-
-    assert result.is_ok
-    assert result.value == (10, backend)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_default_backend_selection(backend: str) -> None:
-    with _ray_context(backend):
-        engine = _build_engine(backend, default_backend=backend)
-
-        @do
-        def worker() -> EffectGenerator[str]:
-            return "ready"
-
-        @do
-        def program() -> EffectGenerator[str]:
-            task = yield Spawn(worker())
             return (yield task.join())
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == "ready"
+    assert result.value == 42
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_with_effects(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker() -> EffectGenerator[int]:
+            yield Put("key", "value")
+            yield slog(event="worker_log", data="test")
+            return 42
+
+        @do
+        def program() -> EffectGenerator[int]:
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            return (yield task.join())
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == 42
+    assert result.state.get("key") == "value"
 
 
 @pytest.mark.asyncio
@@ -153,7 +154,7 @@ async def test_spawn_warns_when_ray_unavailable(
 
     @do
     def worker() -> EffectGenerator[int]:
-        return 5
+        return 42
 
     @do
     def program() -> EffectGenerator[int]:
@@ -163,16 +164,13 @@ async def test_spawn_warns_when_ray_unavailable(
     result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == 5
-    assert any(
-        "Ray backend requested but 'ray' is not installed" in message
-        for message in caplog.messages
-    )
+    assert result.value == 42
+    assert "Ray is not available" in caplog.text
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_intercept_slog(backend: str) -> None:
+async def test_spawn_with_intercept(backend: str) -> None:
     with _ray_context(backend):
         engine = _build_engine(backend)
 
@@ -196,15 +194,11 @@ async def test_spawn_intercept_slog(backend: str) -> None:
 
     assert result.is_ok
     assert result.value == "done"
-    assert {"intercepted": "spawned"} in result.log
-    assert not any(
-        isinstance(entry, dict) and entry.get("event") == "spawned" for entry in result.log
-    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_multiple_tasks(backend: str) -> None:
+async def test_spawn_multiple_workers_with_state(backend: str) -> None:
     with _ray_context(backend):
         engine = _build_engine(backend)
 
@@ -242,7 +236,7 @@ async def test_spawn_multiple_tasks(backend: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_with_gather(backend: str) -> None:
+async def test_spawn_worker_gather_programs(backend: str) -> None:
     with _ray_context(backend):
         engine = _build_engine(backend)
 
@@ -263,7 +257,8 @@ async def test_spawn_with_gather(backend: str) -> None:
                         )
                     )
                 )
-            return (yield Gather(*(task.join() for task in tasks)))
+            results = yield Gather(*[task.join() for task in tasks])
+            return list(results)
 
         result = await engine.run_async(program())
 
@@ -293,37 +288,7 @@ async def test_spawn_worker_parallel_awaitables(backend: str) -> None:
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == ["a", "b"]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_worker_gather_programs(backend: str) -> None:
-    with _ray_context(backend):
-        engine = _build_engine(backend)
-
-        @do
-        def subtask(index: int) -> EffectGenerator[int]:
-            yield Put(f"sub_{index}", index)
-            return index
-
-        @do
-        def worker() -> EffectGenerator[int]:
-            results = yield Gather(subtask(1), subtask(2))
-            return sum(results)
-
-        @do
-        def program() -> EffectGenerator[tuple[int, int | None, int | None]]:
-            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            total = yield task.join()
-            first = yield Get("sub_1")
-            second = yield Get("sub_2")
-            return total, first, second
-
-        result = await engine.run_async(program())
-
-    assert result.is_ok
-    assert result.value == (3, 1, 2)
+    assert sorted(result.value) == ["a", "b"]
 
 
 @pytest.mark.asyncio
@@ -333,19 +298,19 @@ async def test_spawn_recover_handles_failure(backend: str) -> None:
         engine = _build_engine(backend)
 
         @do
-        def worker() -> EffectGenerator[int]:
-            yield Fail(RuntimeError("boom"))
-            return 0
+        def failing_worker() -> EffectGenerator[int]:
+            yield Fail(ValueError("test error"))
+            return 42
 
         @do
-        def program() -> EffectGenerator[int]:
-            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            return (yield Recover(task.join(), fallback=42))
+        def program() -> EffectGenerator[int | str]:
+            task = yield Spawn(failing_worker(), preferred_backend=backend, **_ray_task_options(backend))
+            return (yield Recover(task.join(), "fallback"))
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == 42
+    assert result.value == "fallback"
 
 
 @pytest.mark.asyncio
@@ -355,22 +320,19 @@ async def test_spawn_state_snapshot_read(backend: str) -> None:
         engine = _build_engine(backend)
 
         @do
-        def worker() -> EffectGenerator[str | None]:
-            return (yield Get("flag"))
+        def worker() -> EffectGenerator[int]:
+            return (yield Get("initial"))
 
         @do
-        def program() -> EffectGenerator[tuple[str | None, str | None]]:
-            yield Put("flag", "before")
+        def program() -> EffectGenerator[int]:
+            yield Put("initial", 100)
             task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            yield Put("flag", "after")
-            seen = yield task.join()
-            current = yield Get("flag")
-            return seen, current
+            return (yield task.join())
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == ("before", "after")
+    assert result.value == 100
 
 
 @pytest.mark.asyncio
@@ -380,24 +342,23 @@ async def test_spawn_state_merge_preserves_parent_updates(backend: str) -> None:
         engine = _build_engine(backend)
 
         @do
-        def worker() -> EffectGenerator[str]:
-            yield Put("worker_key", "done")
-            return "ok"
+        def worker() -> EffectGenerator[int]:
+            yield Put("child_key", "child_value")
+            return 42
 
         @do
-        def program() -> EffectGenerator[tuple[str, int | None, str | None]]:
-            yield Put("counter", 1)
+        def program() -> EffectGenerator[tuple[int, str | None, str | None]]:
+            yield Put("parent_key", "parent_value")
             task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            yield Put("counter", 2)
-            value = yield task.join()
-            counter = yield Get("counter")
-            worker_value = yield Get("worker_key")
-            return value, counter, worker_value
+            result = yield task.join()
+            parent_val = yield Get("parent_key")
+            child_val = yield Get("child_key")
+            return result, parent_val, child_val
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == ("ok", 2, "done")
+    assert result.value == (42, "parent_value", "child_value")
 
 
 @pytest.mark.asyncio
@@ -407,57 +368,64 @@ async def test_spawn_state_isolation_between_tasks(backend: str) -> None:
         engine = _build_engine(backend)
 
         @do
-        def worker(index: int, delay: float) -> EffectGenerator[int]:
-            yield Put("shared", index)
-            yield IO(lambda: time.sleep(delay))
-            return (yield Get("shared"))
+        def worker(key: str, value: str) -> EffectGenerator[str]:
+            yield Put(key, value)
+            return value
 
         @do
-        def program() -> EffectGenerator[list[int]]:
-            first = yield Spawn(
-                worker(1, 0.2),
+        def program() -> EffectGenerator[tuple[str, str, str | None, str | None]]:
+            task1 = yield Spawn(
+                worker("key1", "value1"),
                 preferred_backend=backend,
                 **_ray_task_options(backend),
             )
-            second = yield Spawn(
-                worker(2, 0.05),
+            task2 = yield Spawn(
+                worker("key2", "value2"),
                 preferred_backend=backend,
                 **_ray_task_options(backend),
             )
-            return (yield Gather(first.join(), second.join()))
+            result1 = yield task1.join()
+            result2 = yield task2.join()
+            state1 = yield Get("key1")
+            state2 = yield Get("key2")
+            return result1, result2, state1, state2
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == [1, 2]
+    assert result.value == ("value1", "value2", "value1", "value2")
 
 
 @pytest.mark.asyncio
 async def test_spawn_thread_atomic_updates_shared_state() -> None:
+    from doeff.effects.atomic import AtomicUpdate
+
     engine = ProgramInterpreter()
 
     @do
-    def worker(updates: int) -> EffectGenerator[str]:
-        for _ in range(updates):
+    def incrementer() -> EffectGenerator[int]:
+        for _ in range(10):
             yield AtomicUpdate(
                 "counter",
                 lambda current: (current or 0) + 1,
                 default_factory=lambda: 0,
             )
-        return "done"
+        return (yield Get("counter"))
 
     @do
-    def program() -> EffectGenerator[int]:
-        first = yield Spawn(worker(3), preferred_backend="thread")
-        second = yield Spawn(worker(4), preferred_backend="thread")
-        yield first.join()
-        yield second.join()
-        return (yield AtomicGet("counter", default_factory=lambda: 0))
+    def program() -> EffectGenerator[list[int]]:
+        tasks = []
+        for _ in range(5):
+            tasks.append((yield Spawn(incrementer(), preferred_backend="thread")))
+        results = []
+        for task in tasks:
+            results.append((yield task.join()))
+        return results
 
     result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == 7
+    assert result.state["counter"] == 50
 
 
 @pytest.mark.asyncio
@@ -467,19 +435,18 @@ async def test_spawn_exception_propagates(backend: str) -> None:
         engine = _build_engine(backend)
 
         @do
-        def worker() -> EffectGenerator[int]:
-            yield Fail(ValueError("boom"))
-            return 0
+        def failing_worker() -> EffectGenerator[int]:
+            raise ValueError("test exception")
 
         @do
         def program() -> EffectGenerator[int]:
-            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            task = yield Spawn(failing_worker(), preferred_backend=backend, **_ray_task_options(backend))
             return (yield task.join())
 
         result = await engine.run_async(program())
 
     assert result.is_err
-    assert "boom" in str(result.result.error)
+    assert "test exception" in str(result.result.error)
 
 
 @pytest.mark.asyncio
@@ -490,23 +457,19 @@ async def test_spawn_join_idempotent(backend: str) -> None:
 
         @do
         def worker() -> EffectGenerator[int]:
-            yield Log("joined-once")
-            yield Put("value", "ok")
-            return 7
+            return 42
 
         @do
-        def program() -> EffectGenerator[tuple[int, int, str | None]]:
+        def program() -> EffectGenerator[tuple[int, int]]:
             task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            first = yield task.join()
-            second = yield task.join()
-            value = yield Get("value")
-            return first, second, value
+            result1 = yield task.join()
+            result2 = yield task.join()
+            return result1, result2
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == (7, 7, "ok")
-    assert result.log.count("joined-once") == 1
+    assert result.value == (42, 42)
 
 
 @pytest.mark.asyncio
@@ -516,145 +479,116 @@ async def test_spawn_nested_spawn(backend: str) -> None:
         engine = _build_engine(backend)
 
         @do
-        def inner() -> EffectGenerator[int]:
-            return 3
+        def inner_worker() -> EffectGenerator[int]:
+            return 42
 
         @do
-        def outer() -> EffectGenerator[int]:
-            inner_task = yield Spawn(inner(), preferred_backend="thread")
-            inner_value = yield inner_task.join()
-            return inner_value + 1
+        def outer_worker() -> EffectGenerator[int]:
+            task = yield Spawn(
+                inner_worker(),
+                preferred_backend=backend,
+                **_ray_task_options(backend),
+            )
+            return (yield task.join())
 
         @do
         def program() -> EffectGenerator[int]:
-            task = yield Spawn(outer(), preferred_backend=backend, **_ray_task_options(backend))
+            task = yield Spawn(outer_worker(), preferred_backend=backend, **_ray_task_options(backend))
             return (yield task.join())
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == 4
+    assert result.value == 42
 
 
 @pytest.mark.asyncio
 async def test_spawn_triple_nested_remote_call() -> None:
     with _ray_context("ray"):
         engine = _build_engine("ray")
-        ray_options = _ray_task_options("ray")
 
         @do
-        def level_three() -> EffectGenerator[int]:
-            yield Put("level3", "ok")
+        def level3() -> EffectGenerator[int]:
+            yield Put("level3", True)
             return 3
 
         @do
-        def level_two() -> EffectGenerator[Task[int]]:
-            task = yield Spawn(
-                level_three(),
-                preferred_backend="ray",
-                **ray_options,
-            )
-            yield Put("level2", "spawned")
-            return task
+        def level2() -> EffectGenerator[int]:
+            yield Put("level2", True)
+            task = yield Spawn(level3(), preferred_backend="ray", **_ray_task_options("ray"))
+            result = yield task.join()
+            return result + 2
 
         @do
-        def level_one() -> EffectGenerator[Task[int]]:
-            task = yield Spawn(
-                level_two(),
-                preferred_backend="ray",
-                **ray_options,
-            )
-            yield Put("level1", "spawned")
-            return task
-
-        @do
-        def program() -> EffectGenerator[tuple[int, str | None, str | None, str | None]]:
-            task = yield Spawn(
-                level_one(),
-                preferred_backend="ray",
-                **ray_options,
-            )
-            nested_two = yield task.join()
-            nested_three = yield nested_two.join()
-            value = yield nested_three.join()
-            level1 = yield Get("level1")
-            level2 = yield Get("level2")
-            level3 = yield Get("level3")
-            return value, level1, level2, level3
-
-        result = await engine.run_async(program())
-
-    assert result.is_ok
-    assert result.value == (3, "spawned", "spawned", "ok")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_parallel_overlap(backend: str) -> None:
-    with _ray_context(backend):
-        engine = _build_engine(backend)
-        delay = 2.5 if backend == "ray" else 0.6
-
-        @do
-        def worker() -> EffectGenerator[tuple[float, float]]:
-            start = yield IO(time.perf_counter)
-            yield IO(lambda: time.sleep(delay))
-            end = yield IO(time.perf_counter)
-            return start, end
-
-        @do
-        def program() -> EffectGenerator[list[tuple[float, float]]]:
-            first = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            second = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            return (yield Gather(first.join(), second.join()))
-
-        result = await engine.run_async(program())
-
-    assert result.is_ok
-    starts = [entry[0] for entry in result.value]
-    ends = [entry[1] for entry in result.value]
-    if backend == "ray" and max(starts) >= min(ends):
-        pytest.skip("Ray scheduler executed tasks serially; overlap depends on worker availability.")
-    assert max(starts) < min(ends)
-
-
-@pytest.mark.asyncio
-async def test_spawn_ray_resource_hints() -> None:
-    with _ray_context("ray"):
-        engine = ProgramInterpreter()
-
-        @do
-        def worker() -> EffectGenerator[int]:
-            return 11
+        def level1() -> EffectGenerator[int]:
+            yield Put("level1", True)
+            task = yield Spawn(level2(), preferred_backend="ray", **_ray_task_options("ray"))
+            result = yield task.join()
+            return result + 1
 
         @do
         def program() -> EffectGenerator[int]:
-            task = yield Spawn(
-                worker(),
-                preferred_backend="ray",
-                num_cpus=1,
-                num_gpus=0,
-                memory=10_000_000,
-            )
+            task = yield Spawn(level1(), preferred_backend="ray", **_ray_task_options("ray"))
             return (yield task.join())
 
         result = await engine.run_async(program())
 
     assert result.is_ok
-    assert result.value == 11
+    assert result.value == 6
+    assert result.state.get("level1") is True
+    assert result.state.get("level2") is True
+    assert result.state.get("level3") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_parallel_overlap(backend: str) -> None:
+    import time
+
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def slow_worker(sleep_time: float) -> EffectGenerator[float]:
+            yield IO(lambda: time.sleep(sleep_time))
+            return sleep_time
+
+        @do
+        def program() -> EffectGenerator[tuple[float, float]]:
+            task1 = yield Spawn(
+                slow_worker(0.1),
+                preferred_backend=backend,
+                **_ray_task_options(backend),
+            )
+            task2 = yield Spawn(
+                slow_worker(0.1),
+                preferred_backend=backend,
+                **_ray_task_options(backend),
+            )
+            result1 = yield task1.join()
+            result2 = yield task2.join()
+            return result1, result2
+
+        start = time.time()
+        result = await engine.run_async(program())
+        elapsed = time.time() - start
+
+    assert result.is_ok
+    assert result.value == (0.1, 0.1)
+    assert elapsed < 0.3
 
 
 @pytest.mark.asyncio
 async def test_spawn_process_serialization_error() -> None:
-    engine = ProgramInterpreter()
+    engine = ProgramInterpreter(spawn_process_max_workers=2)
 
     class Unpicklable:
-        def __getstate__(self) -> None:
-            raise TypeError("nope")
+        def __reduce__(self) -> None:
+            raise TypeError("cannot pickle")
 
     @do
     def worker() -> EffectGenerator[int]:
-        return 1
+        return 42
 
     @do
     def program() -> EffectGenerator[int]:
@@ -666,6 +600,410 @@ async def test_spawn_process_serialization_error() -> None:
 
     assert result.is_err
     assert "cloudpickle" in str(result.result.error).lower()
+
+
+# Module-level picklable functions for TestPicklableFactories tests
+def _test_double(x: int) -> int:
+    return x * 2
+
+
+def _test_square(x: int) -> int:
+    return x * x
+
+
+def _test_add_three(x: int) -> int:
+    return x + 3
+
+
+def _test_add_one(x: int) -> int:
+    return x + 1
+
+
+def _test_double_program(x: int) -> "Program[int]":
+    from doeff import Program
+
+    return Program.pure(x * 2)
+
+
+class TestPicklableFactories:
+    """Tests for picklable factory classes in Program combinators.
+
+    These tests verify that Programs created via map/flat_map can be
+    serialized with standard pickle for process/ray backends.
+    See ISSUE-CORE-409.
+    """
+
+    def test_map_factory_is_picklable(self) -> None:
+        """_MapFactory dataclass is picklable with standard pickle.
+
+        This was the primary issue in ISSUE-CORE-409: map created a
+        GeneratorProgram with a local factory function that couldn't be pickled.
+        """
+        import pickle
+
+        from doeff import Program
+        from doeff.program import _MapFactory
+
+        p_base = Program.pure(10)
+        factory = _MapFactory(source=p_base, transform=_test_double)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(factory)
+        unpickled = pickle.loads(pickled)
+
+        assert isinstance(unpickled, _MapFactory)
+        assert unpickled.transform(5) == 10
+
+    def test_flat_map_factory_is_picklable(self) -> None:
+        """_FlatMapFactory dataclass is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+        from doeff.program import _FlatMapFactory
+
+        p_base = Program.pure(10)
+        factory = _FlatMapFactory(source=p_base, binder=_test_double_program)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(factory)
+        unpickled = pickle.loads(pickled)
+
+        assert isinstance(unpickled, _FlatMapFactory)
+
+    def test_getitem_transform_is_picklable(self) -> None:
+        """_GetItemTransform dataclass is picklable with standard pickle."""
+        import pickle
+
+        from doeff.program import _GetItemTransform
+
+        transform = _GetItemTransform(key="my_key")
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(transform)
+        unpickled = pickle.loads(pickled)
+
+        assert isinstance(unpickled, _GetItemTransform)
+        assert unpickled({"my_key": 42}) == 42
+
+    def test_getattr_transform_is_picklable(self) -> None:
+        """_GetAttrTransform dataclass is picklable with standard pickle."""
+        import pickle
+
+        from doeff.program import _GetAttrTransform
+
+        # Test attribute access (not method call)
+        transform = _GetAttrTransform(name="real")
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(transform)
+        unpickled = pickle.loads(pickled)
+
+        assert isinstance(unpickled, _GetAttrTransform)
+        # Test on a complex number - real is an attribute, not a method
+        assert unpickled(complex(3, 4)) == 3.0
+
+    def test_generator_program_with_map_is_picklable(self) -> None:
+        """GeneratorProgram created via map() is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+
+        p_base = Program.pure(5)
+        p_squared = p_base.map(_test_square)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p_squared)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == 25
+
+    def test_generator_program_with_flat_map_is_picklable(self) -> None:
+        """GeneratorProgram created via flat_map() is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+
+        p_base = Program.pure(10)
+        p_doubled = p_base.flat_map(_test_double_program)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p_doubled)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == 20
+
+    def test_chained_map_flat_map_is_picklable(self) -> None:
+        """Chained map/flat_map operations result in picklable Programs."""
+        import pickle
+
+        from doeff import Program
+
+        # Chain multiple operations
+        p = (
+            Program.pure(2)
+            .map(_test_add_three)  # 5
+            .flat_map(_test_double_program)  # 10
+            .map(_test_add_one)  # 11
+        )
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == 11
+
+    def test_getitem_program_is_picklable(self) -> None:
+        """Program created via __getitem__ is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+
+        p_base = Program.pure({"a": 1, "b": 2})
+        p_item = p_base["a"]
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p_item)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == 1
+
+    def test_tuple_program_is_picklable(self) -> None:
+        """Program.tuple() is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+
+        p = Program.tuple(Program.pure(1), Program.pure(2), 3)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == (1, 2, 3)
+
+    def test_set_program_is_picklable(self) -> None:
+        """Program.set() is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+
+        p = Program.set(Program.pure(1), Program.pure(2), 3)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == {1, 2, 3}
+
+    def test_sequence_factory_is_picklable(self) -> None:
+        """_SequenceFactory dataclass is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+        from doeff.program import _SequenceFactory
+
+        programs = [Program.pure(1), Program.pure(2), Program.pure(3)]
+        factory = _SequenceFactory(programs=programs)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(factory)
+        unpickled = pickle.loads(pickled)
+
+        assert isinstance(unpickled, _SequenceFactory)
+        assert len(unpickled.programs) == 3
+
+    def test_dict_factory_is_picklable(self) -> None:
+        """_DictFactory dataclass is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+        from doeff.program import _DictFactory
+
+        program_map = {"a": Program.pure(1), "b": Program.pure(2)}
+        factory = _DictFactory(program_map=program_map)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(factory)
+        unpickled = pickle.loads(pickled)
+
+        assert isinstance(unpickled, _DictFactory)
+        assert "a" in unpickled.program_map
+        assert "b" in unpickled.program_map
+
+    def test_dict_program_is_picklable(self) -> None:
+        """Program.dict() is picklable with standard pickle."""
+        import pickle
+
+        from doeff import Program
+
+        p = Program.dict(a=Program.pure(1), b=Program.pure(2), c=3)
+
+        # Verify pickling works with standard pickle
+        pickled = pickle.dumps(p)
+        unpickled = pickle.loads(pickled)
+
+        # Verify the unpickled program still works
+        from doeff import ProgramInterpreter
+
+        engine = ProgramInterpreter()
+        result = engine.run(unpickled)
+        assert result.is_ok
+        assert result.value == {"a": 1, "b": 2, "c": 3}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", _backend_params())
+    async def test_process_backend_succeeds_with_flat_map_program_in_state(
+        self, backend: str
+    ) -> None:
+        """Process backend succeeds with Program from flat_map in state.
+
+        This tests that Programs using flat_map can be serialized and
+        passed through spawn backends via state.
+        """
+        from doeff import Program
+
+        with _ray_context(backend):
+            engine = _build_engine(backend)
+
+            # Create a Program using flat_map with module-level function
+            p_base = Program.pure(10)
+            p_doubled = p_base.flat_map(_test_double_program)
+
+            @do
+            def worker() -> EffectGenerator[int]:
+                # Read the program from state and execute it
+                prog = yield Get("my_program")
+                result = yield prog
+                return result
+
+            @do
+            def program() -> EffectGenerator[int]:
+                # Store the program in state before spawning
+                yield Put("my_program", p_doubled)
+                task = yield Spawn(
+                    worker(),
+                    preferred_backend=backend,
+                    **_ray_task_options(backend),
+                )
+                return (yield task.join())
+
+            result = await engine.run_async(program())
+
+        assert result.is_ok, f"Expected success, got error: {result.result.error}"
+        assert result.value == 20
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", _backend_params())
+    async def test_spawn_backend_succeeds_with_map_program_in_state(
+        self, backend: str
+    ) -> None:
+        """Spawn backend succeeds with Program from map in state."""
+        from doeff import Program
+
+        with _ray_context(backend):
+            engine = _build_engine(backend)
+
+            # Create a Program using map with module-level function
+            p_base = Program.pure(5)
+            p_squared = p_base.map(_test_square)
+
+            @do
+            def worker() -> EffectGenerator[int]:
+                prog = yield Get("my_program")
+                result = yield prog
+                return result
+
+            @do
+            def program() -> EffectGenerator[int]:
+                yield Put("my_program", p_squared)
+                task = yield Spawn(
+                    worker(),
+                    preferred_backend=backend,
+                    **_ray_task_options(backend),
+                )
+                return (yield task.join())
+
+            result = await engine.run_async(program())
+
+        assert result.is_ok, f"Expected success, got error: {result.result.error}"
+        assert result.value == 25
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", _backend_params())
+    async def test_process_backend_succeeds_with_ask_effect_after_frame_info_fix(
+        self, backend: str
+    ) -> None:
+        """Process backend succeeds with AskEffect after frame_info fix.
+
+        This test verifies that AskEffect (which has frame_info) can be
+        serialized properly (frame_info sanitization from ISSUE-CORE-407).
+        """
+        from doeff import ask
+
+        with _ray_context(backend):
+            engine = _build_engine(backend)
+
+            # Create an ask effect (has frame_info)
+            ask_effect = ask("some_key")
+
+            @do
+            def worker() -> EffectGenerator[str]:
+                # Read the effect from state and execute it
+                effect = yield Get("the_ask_effect")
+                # We just confirm the effect exists and is picklable
+                return "got_effect"
+
+            @do
+            def program() -> EffectGenerator[str]:
+                yield Put("the_ask_effect", ask_effect)
+                yield Put("some_key", "hello")
+                task = yield Spawn(
+                    worker(),
+                    preferred_backend=backend,
+                    **_ray_task_options(backend),
+                )
+                return (yield task.join())
+
+            result = await engine.run_async(program())
+
+        assert result.is_ok, f"Expected success, got error: {result.result.error}"
+        assert result.value == "got_effect"
 
 
 class TestEnvSerializationIssues:

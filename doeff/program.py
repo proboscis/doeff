@@ -35,6 +35,160 @@ U = TypeVar("U")
 V = TypeVar("V")
 
 
+# =============================================================================
+# Picklable callable classes for Program combinators
+# =============================================================================
+# These classes replace local functions/lambdas in map/flat_map to ensure
+# Programs can be serialized with standard pickle (for multiprocessing).
+
+
+@dataclass
+class _MapFactory(Generic[T, U]):
+    """Picklable callable factory for map operations.
+
+    Stores the source program and transform function, allowing the generator
+    to be created on-demand while remaining serializable.
+    """
+
+    source: ProgramBase[T]
+    transform: Callable[[T], U]
+
+    def __call__(self) -> Generator[Any, Any, U]:
+        value = yield self.source
+        return self.transform(value)
+
+
+@dataclass
+class _FlatMapFactory(Generic[T, U]):
+    """Picklable callable factory for flat_map operations.
+
+    Stores the source program and binder function, allowing the generator
+    to be created on-demand while remaining serializable.
+    """
+
+    source: ProgramBase[T]
+    binder: Callable[[T], ProgramBase[U]]
+
+    def __call__(self) -> Generator[Any, Any, U]:
+        value = yield self.source
+        next_prog = self.binder(value)
+        if not isinstance(next_prog, ProgramBase):
+            raise TypeError(f"binder must return a Program; got {type(next_prog).__name__}")
+        result = yield next_prog
+        return result
+
+
+@dataclass
+class _GetItemTransform:
+    """Picklable callable for __getitem__ operations."""
+
+    key: Any
+
+    def __call__(self, value: Any) -> Any:
+        return value[self.key]
+
+
+@dataclass
+class _GetAttrTransform:
+    """Picklable callable for __getattr__ operations."""
+
+    name: str
+
+    def __call__(self, value: Any) -> Any:
+        try:
+            return getattr(value, self.name)
+        except AttributeError as exc:
+            raise AttributeError(
+                f"{type(value).__name__} object has no attribute '{self.name}'"
+            ) from exc
+
+
+def _to_tuple(items: list[Any]) -> tuple[Any, ...]:  # noqa: DOEFF006
+    """Picklable function for tuple conversion."""
+    return tuple(items)
+
+
+def _to_set(items: list[Any]) -> set[Any]:
+    """Picklable function for set conversion."""
+    return set(items)
+
+
+def _to_list(items: Any) -> list[Any]:
+    """Picklable function for list conversion."""
+    return list(items)
+
+
+def _to_dict(items: Any) -> dict[Any, Any]:
+    """Picklable function for dict conversion."""
+    return dict(items)
+
+
+@dataclass
+class _SequenceFactory(Generic[T]):
+    """Picklable callable factory for sequence operations."""
+
+    programs: list
+
+    def __call__(self) -> Generator[Any, Any, list[T]]:
+        from doeff.effects import Gather
+
+        effect = Gather(*self.programs)
+        results = yield effect
+        return list(results)
+
+
+@dataclass
+class _FirstSuccessFactory(Generic[T]):
+    """Picklable callable factory for first_success operations."""
+
+    programs: tuple
+
+    def __call__(self) -> Generator[Any, Any, T]:
+        from doeff.effects import first_success_effect
+
+        effect = first_success_effect(*self.programs)
+        value = yield effect
+        return value
+
+
+@dataclass
+class _FirstSomeFactory(Generic[T]):
+    """Picklable callable factory for first_some operations."""
+
+    programs: tuple
+
+    def __call__(self) -> Generator[Any, Any, Any]:
+        from doeff.types import EffectBase, Maybe
+
+        for candidate in self.programs:
+            if isinstance(candidate, (ProgramBase, EffectBase)):
+                normalized = candidate
+            else:
+                raise TypeError("Program.first_some expects Program or Effect candidates")
+            value = yield normalized
+
+            maybe = value if isinstance(value, Maybe) else Maybe.from_optional(value)
+
+            if maybe.is_some():
+                return maybe
+
+        return Maybe.from_optional(None)
+
+
+@dataclass
+class _DictFactory(Generic[T]):
+    """Picklable callable factory for dict operations."""
+
+    program_map: dict
+
+    def __call__(self) -> Generator[Any, Any, dict]:
+        from doeff.effects import GatherDict
+
+        effect = GatherDict(self.program_map)
+        result = yield effect
+        return dict(result)
+
+
 class _AutoUnwrapStrategy:
     """Describe which arguments should be auto-unwrapped for a Kleisli call."""
 
@@ -240,20 +394,12 @@ class ProgramBase(ABC, Generic[T]):
         if name.startswith("__"):
             raise AttributeError(name)
 
-        def mapper(value: Any) -> Any:
-            try:
-                return getattr(value, name)
-            except AttributeError as exc:  # pragma: no cover - re-raise with context
-                raise AttributeError(
-                    f"{type(value).__name__} object has no attribute '{name}'"
-                ) from exc
-
-        return self.map(mapper)
+        return self.map(_GetAttrTransform(name))
 
     def __getitem__(self, key: Any) -> Program[Any]:
         """Lazily project an item from the eventual program result."""
 
-        return self.map(lambda value: value[key])
+        return self.map(_GetItemTransform(key))
 
     def __call__(self, *args: Any, **kwargs: Any) -> Program[Any]:
         """Invoke the eventual callable result with the provided arguments."""
@@ -290,11 +436,7 @@ class ProgramBase(ABC, Generic[T]):
         if not callable(f):
             raise TypeError("mapper must be callable")
 
-        def factory() -> Generator[Effect | Program, Any, U]:
-            value = yield self
-            return f(value)
-
-        return GeneratorProgram(factory)
+        return GeneratorProgram(_MapFactory(self, f))
 
     def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]:
         """Monadic bind operation."""
@@ -302,15 +444,7 @@ class ProgramBase(ABC, Generic[T]):
         if not callable(f):
             raise TypeError("binder must be callable returning a Program")
 
-        def factory() -> Generator[Effect | Program, Any, U]:
-            value = yield self
-            next_prog = f(value)
-            if not isinstance(next_prog, ProgramBase):
-                raise TypeError(f"binder must return a Program; got {type(next_prog).__name__}")
-            result = yield next_prog
-            return result
-
-        return GeneratorProgram(factory)
+        return GeneratorProgram(_FlatMapFactory(self, f))
 
     def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]:
         """Alias for flat_map for Kleisli-style composition."""
@@ -346,49 +480,18 @@ class ProgramBase(ABC, Generic[T]):
         if not programs:
             raise ValueError("Program.first_success requires at least one program")
 
-        from doeff.effects import first_success_effect
-
-        def first_success_generator():
-            effect = first_success_effect(*programs)
-            value = yield effect
-            return value
-
-        return GeneratorProgram(first_success_generator)
+        return GeneratorProgram(_FirstSuccessFactory(programs))
 
     @staticmethod
     def first_some(*programs: ProgramLike[V]) -> Program[Maybe[V]]:
         if not programs:
             raise ValueError("Program.first_some requires at least one program")
 
-        from doeff.types import EffectBase, Maybe
-
-        def first_some_generator():
-            for candidate in programs:
-                if isinstance(candidate, (ProgramBase, EffectBase)):
-                    normalized = candidate
-                else:
-                    raise TypeError("Program.first_some expects Program or Effect candidates")
-                value = yield normalized
-
-                maybe = value if isinstance(value, Maybe) else Maybe.from_optional(value)
-
-                if maybe.is_some():
-                    return maybe
-
-            return Maybe.from_optional(None)
-
-        return GeneratorProgram(first_some_generator)
+        return GeneratorProgram(_FirstSomeFactory(programs))
 
     @staticmethod
     def sequence(programs: list[Program[T]]) -> Program[list[T]]:
-        from doeff.effects import gather
-
-        def sequence_generator():
-            effect = gather(*programs)
-            results = yield effect
-            return list(results)
-
-        return GeneratorProgram(sequence_generator)
+        return GeneratorProgram(_SequenceFactory(list(programs)))
 
     @staticmethod
     def traverse(
@@ -405,11 +508,11 @@ class ProgramBase(ABC, Generic[T]):
 
     @staticmethod
     def tuple(*values: Program[U] | U) -> Program[tuple[U, ...]]:
-        return ProgramBase.list(*values).map(lambda items: tuple(items))
+        return ProgramBase.list(*values).map(_to_tuple)
 
     @staticmethod
     def set(*values: Program[U] | U) -> Program[set[U]]:
-        return ProgramBase.list(*values).map(lambda items: set(items))
+        return ProgramBase.list(*values).map(_to_set)
 
     @staticmethod
     def dict(
@@ -417,16 +520,8 @@ class ProgramBase(ABC, Generic[T]):
         **kwargs: Program[V] | V,
     ) -> Program[dict[Any, V]]:
         raw = dict(*mapping, **kwargs)
-
-        from doeff.effects import gather_dict
-
-        def dict_generator():
-            program_map = {key: ProgramBase.lift(value) for key, value in raw.items()}
-            effect = gather_dict(program_map)
-            result = yield effect
-            return dict(result)
-
-        return GeneratorProgram(dict_generator)
+        program_map = {key: ProgramBase.lift(value) for key, value in raw.items()}
+        return GeneratorProgram(_DictFactory(program_map))
 
 
 @dataclass
