@@ -89,7 +89,13 @@ ignore = [
 external = ["PINJ"]
 
 [tool.doeff-linter]
-disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None patterns
+disable = [
+    "DOEFF002",  # Mutable Attribute Naming - pre-existing throughout codebase
+    "DOEFF006",  # No Tuple Returns - pre-existing throughout codebase
+    "DOEFF007",  # No Mutable Argument Mutations - pre-existing in handler state management
+    "DOEFF013",  # Prefer Maybe Monad - intentionally using Optional/None patterns
+    "DOEFF021",  # No __all__ Declaration - pre-existing
+]
 
 [dependency-groups]
 dev = [

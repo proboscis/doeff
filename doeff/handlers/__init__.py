@@ -848,6 +848,8 @@ class SpawnEffectHandler:
 
         Ray workers reinstall packages when they see pyproject.toml/uv.lock
         in the working_dir. This adds default exclusions to prevent that.
+
+        Returns a new dict with excludes added (does not mutate input).
         """
         if "working_dir" not in runtime_env:
             return runtime_env
@@ -860,8 +862,11 @@ class SpawnEffectHandler:
         for default_exclude in self._DEFAULT_WORKING_DIR_EXCLUDES:
             if default_exclude not in excludes_set:
                 excludes_set.add(default_exclude)
-        runtime_env["excludes"] = list(excludes_set)
-        return runtime_env
+
+        # Return new dict to avoid mutating input
+        result = dict(runtime_env)
+        result["excludes"] = list(excludes_set)
+        return result
 
     def _merge_runtime_env(
         self, override: dict[str, Any] | None
