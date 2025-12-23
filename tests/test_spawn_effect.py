@@ -19,6 +19,7 @@ from doeff import (
     IO,
     Log,
     Parallel,
+    Program,
     Put,
     ProgramInterpreter,
     Recover,
@@ -32,7 +33,7 @@ from doeff.effects import WriterTellEffect
 _RAY_TEST_CPUS = 4
 
 
-def _backend_params() -> list[Any]:
+def _backend_params() -> list[Any]:  # noqa: DOEFF022
     return [
         pytest.param("thread", id="thread"),
         pytest.param("process", id="process"),
@@ -40,13 +41,13 @@ def _backend_params() -> list[Any]:
     ]
 
 
-def _ray_task_options(backend: str) -> dict[str, Any]:
+def _ray_task_options(backend: str) -> dict[str, Any]:  # noqa: DOEFF022
     if backend == "ray":
         return {"num_cpus": 1}
     return {}
 
 
-def _build_engine(backend: str, *, default_backend: str | None = None) -> ProgramInterpreter:
+def _build_engine(backend: str, *, default_backend: str | None = None) -> ProgramInterpreter:  # noqa: DOEFF022
     spawn_defaults = {}
     if default_backend is not None:
         spawn_defaults["spawn_default_backend"] = default_backend
@@ -65,7 +66,7 @@ _ray_runtime: Any | None = None
 
 
 @contextmanager
-def _ray_context(backend: str) -> Iterator[None]:
+def _ray_context(backend: str) -> Iterator[None]:  # noqa: DOEFF022
     if backend != "ray":
         yield
         return
@@ -85,7 +86,7 @@ def _ray_context(backend: str) -> Iterator[None]:
     yield
 
 
-def _shutdown_ray() -> None:
+def _shutdown_ray() -> None:  # noqa: DOEFF022
     if _ray_runtime is not None:
         _ray_runtime.shutdown()
 
@@ -142,7 +143,7 @@ async def test_spawn_warns_when_ray_unavailable(
     engine = ProgramInterpreter()
     original_find_spec = importlib.util.find_spec
 
-    def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
+    def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:  # noqa: DOEFF022
         if name == "ray":
             return None
         return original_find_spec(name, *args, **kwargs)
@@ -180,7 +181,7 @@ async def test_spawn_intercept_slog(backend: str) -> None:
             yield slog(event="spawned", detail="ok")
             return "done"
 
-        def intercept(effect: Effect) -> Effect:
+        def intercept(effect: Effect) -> Effect:  # noqa: DOEFF022
             if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
                 if effect.message.get("event") == "spawned":
                     return Log({"intercepted": effect.message["event"]})
@@ -215,7 +216,7 @@ async def test_spawn_multiple_tasks(backend: str) -> None:
         @do
         def program() -> EffectGenerator[tuple[list[int], list[int]]]:
             tasks = []
-            for i in range(3):
+            for i in range(3):  # noqa: DOEFF012
                 tasks.append(
                     (
                         yield Spawn(
@@ -226,10 +227,10 @@ async def test_spawn_multiple_tasks(backend: str) -> None:
                     )
                 )
             results: list[int] = []
-            for task in tasks:
+            for task in tasks:  # noqa: DOEFF012
                 results.append((yield task.join()))
             states: list[int] = []
-            for i in range(3):
+            for i in range(3):  # noqa: DOEFF012
                 states.append((yield Get(f"state_{i}")))
             return results, states
 
@@ -252,7 +253,7 @@ async def test_spawn_with_gather(backend: str) -> None:
         @do
         def program() -> EffectGenerator[list[int]]:
             tasks = []
-            for i in range(4):
+            for i in range(4):  # noqa: DOEFF012
                 tasks.append(
                     (
                         yield Spawn(
@@ -276,7 +277,7 @@ async def test_spawn_worker_parallel_awaitables(backend: str) -> None:
     with _ray_context(backend):
         engine = _build_engine(backend)
 
-        async def compute(label: str) -> str:
+        async def compute(label: str) -> str:  # noqa: DOEFF022
             await asyncio.sleep(0.01)
             return label
 
@@ -665,3 +666,129 @@ async def test_spawn_process_serialization_error() -> None:
 
     assert result.is_err
     assert "cloudpickle" in str(result.result.error).lower()
+
+
+class TestEnvSerializationIssues:
+    """Tests for env serialization issues with spawn backends.
+
+    These tests verify that:
+    1. Programs created via flat_map (with lambda factories) serialize correctly
+    2. AskEffect objects with frame_info serialize correctly after the frame_info fix
+
+    Both env (reader environment) and state are serialized and passed to spawned
+    processes. These tests use state (via Put/Get) to store Programs/Effects since
+    state is the typical mechanism for passing data to spawned workers.
+    """
+
+    @pytest.mark.asyncio
+    async def test_process_backend_succeeds_with_flat_map_program_in_env(self) -> None:
+        """Process backend succeeds with Program from flat_map using cloudpickle.
+
+        flat_map creates a GeneratorProgram with a local factory function that
+        captures the binder lambda in its closure. Standard pickle cannot serialize
+        this, but cloudpickle can.
+        """
+        engine = ProgramInterpreter(spawn_process_max_workers=2)
+
+        # Create a Program via flat_map - this creates a GeneratorProgram with
+        # a local factory function containing a lambda closure
+        p_base = Program.pure(5)
+        p_flat_mapped = p_base.flat_map(lambda x: Program.pure(x * 2))
+
+        @do
+        def worker() -> EffectGenerator[int]:
+            # Access the program from state and run it
+            prog = yield Get("program")
+            return (yield prog)
+
+        @do
+        def program() -> EffectGenerator[int]:
+            # Put the flat_mapped program (with lambda closure) in state
+            # State is serialized and passed to spawned processes
+            yield Put("program", p_flat_mapped)
+            task = yield Spawn(worker(), preferred_backend="process")
+            return (yield task.join())
+
+        result = await engine.run_async(program())
+
+        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.value == 10  # 5 * 2 = 10
+
+    @pytest.mark.asyncio
+    async def test_ray_backend_succeeds_with_flat_map_program_in_env(self) -> None:
+        """Ray backend succeeds with Program from flat_map."""
+        with _ray_context("ray"):
+            engine = _build_engine("ray")
+
+            # Create a Program via flat_map
+            p_base = Program.pure(5)
+            p_flat_mapped = p_base.flat_map(lambda x: Program.pure(x * 2))
+
+            @do
+            def worker() -> EffectGenerator[int]:
+                prog = yield Get("program")
+                return (yield prog)
+
+            @do
+            def program() -> EffectGenerator[int]:
+                yield Put("program", p_flat_mapped)
+                task = yield Spawn(
+                    worker(),
+                    preferred_backend="ray",
+                    **_ray_task_options("ray"),
+                )
+                return (yield task.join())
+
+            result = await engine.run_async(program())
+
+        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.value == 10
+
+    @pytest.mark.asyncio
+    async def test_process_backend_succeeds_with_ask_effect_after_frame_info_fix(
+        self,
+    ) -> None:
+        """Process backend succeeds with AskEffect after frame_info fix.
+
+        AskEffect objects capture frame_info for debugging/tracing purposes.
+        The frame_info fix (ISSUE-CORE-407) added __getstate__/__setstate__ to
+        EffectCreationContext to sanitize frame references before serialization.
+
+        This test stores an AskEffect in state, serializes it to a subprocess,
+        retrieves it, and yields it. The AskEffect then reads from env which
+        must also be set up correctly.
+        """
+        from doeff import Local
+        from doeff.effects import ask
+
+        engine = ProgramInterpreter(spawn_process_max_workers=2)
+
+        # Create an AskEffect which has frame_info captured at creation time
+        ask_effect = ask("some_key")
+
+        @do
+        def worker() -> EffectGenerator[str | None]:
+            # Access the ask effect from state and yield it
+            # The AskEffect will then read "some_key" from env
+            effect = yield Get("ask_effect")
+            return (yield effect)
+
+        @do
+        def program() -> EffectGenerator[str | None]:
+            # Put the ask effect (with frame_info) in state
+            yield Put("ask_effect", ask_effect)
+            # Use Local to set "some_key" in env, then spawn within that context
+            inner_program = Spawn(worker(), preferred_backend="process")
+
+            @do
+            def spawn_and_join() -> EffectGenerator[str | None]:
+                task = yield inner_program
+                return (yield task.join())
+
+            # Run spawn within Local context so env has "some_key"
+            return (yield Local({"some_key": "expected_value"}, spawn_and_join()))
+
+        result = await engine.run_async(program())
+
+        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.value == "expected_value"
