@@ -814,7 +814,10 @@ class SpawnEffectHandler:
             if not ray.is_initialized():
                 init_kwargs = dict(self._ray_init_kwargs)
                 if self._ray_runtime_env and "runtime_env" not in init_kwargs:
-                    init_kwargs["runtime_env"] = self._ray_runtime_env
+                    # Apply default excludes to prevent redundant venv creation
+                    init_kwargs["runtime_env"] = self._apply_default_excludes(
+                        dict(self._ray_runtime_env)
+                    )
                 if self._ray_address is not None:
                     init_kwargs = {"address": self._ray_address, **init_kwargs}
                 ray.init(**init_kwargs)
@@ -828,6 +831,37 @@ class SpawnEffectHandler:
         if merged_env:
             ray_options["runtime_env"] = merged_env
         return ray_options
+
+    # Default exclusions to prevent Ray workers from reinstalling packages.
+    # When working_dir includes pyproject.toml or uv.lock, uv creates a fresh
+    # virtual environment on each worker, causing significant overhead.
+    _DEFAULT_WORKING_DIR_EXCLUDES: list[str] = [
+        "pyproject.toml",
+        "uv.lock",
+        ".venv/",
+        ".git/",
+        "*.egg-info/",
+    ]
+
+    def _apply_default_excludes(self, runtime_env: dict[str, Any]) -> dict[str, Any]:
+        """Add default excludes to runtime_env when working_dir is set.
+
+        Ray workers reinstall packages when they see pyproject.toml/uv.lock
+        in the working_dir. This adds default exclusions to prevent that.
+        """
+        if "working_dir" not in runtime_env:
+            return runtime_env
+
+        existing_excludes = runtime_env.get("excludes", [])
+        if not isinstance(existing_excludes, list):
+            return runtime_env
+
+        excludes_set = set(existing_excludes)
+        for default_exclude in self._DEFAULT_WORKING_DIR_EXCLUDES:
+            if default_exclude not in excludes_set:
+                excludes_set.add(default_exclude)
+        runtime_env["excludes"] = list(excludes_set)
+        return runtime_env
 
     def _merge_runtime_env(
         self, override: dict[str, Any] | None
@@ -852,7 +886,9 @@ class SpawnEffectHandler:
                 }
                 override = {key: value for key, value in override.items() if key != "env_vars"}
             merged.update(override)
-        return merged
+
+        # Apply default excludes to prevent redundant venv creation
+        return self._apply_default_excludes(merged)
 
     async def _await_ray(self, object_ref: Any) -> Any:
         ray = self._load_ray()

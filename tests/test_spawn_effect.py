@@ -79,7 +79,13 @@ def _ray_context(backend: str) -> Iterator[None]:  # noqa: DOEFF022
             num_cpus=_RAY_TEST_CPUS,
             include_dashboard=False,
             log_to_driver=False,
-            runtime_env={"working_dir": "."},
+            # Exclude pyproject.toml, uv.lock, and .venv to prevent Ray workers from
+            # reinstalling packages via uv when they see these files in the working_dir.
+            # Without this exclusion, each worker creates a fresh virtual environment.
+            runtime_env={
+                "working_dir": ".",
+                "excludes": ["pyproject.toml", "uv.lock", ".venv/", ".git/"],
+            },
         )
         _ray_runtime = ray
         atexit.register(_shutdown_ray)
@@ -842,3 +848,40 @@ class TestValuesEqual:
 
         # Should return False instead of raising
         assert SpawnEffectHandler._values_equal(obj1, obj2) is False
+
+
+def test_spawn_handler_applies_default_excludes() -> None:
+    """Test that SpawnEffectHandler auto-adds excludes to prevent venv reinstallation.
+
+    When working_dir is set in runtime_env, Ray workers will reinstall packages
+    if they see pyproject.toml/uv.lock files. The handler should auto-add excludes
+    to prevent this overhead.
+    """
+    from doeff.handlers import SpawnEffectHandler
+
+    handler = SpawnEffectHandler(ray_runtime_env={"working_dir": "."})
+
+    # Test _apply_default_excludes adds excludes when working_dir is present
+    result = handler._apply_default_excludes({"working_dir": "."})
+    assert "excludes" in result
+    assert "pyproject.toml" in result["excludes"]
+    assert "uv.lock" in result["excludes"]
+    assert ".venv/" in result["excludes"]
+    assert ".git/" in result["excludes"]
+
+    # Test preserves user-specified excludes
+    result = handler._apply_default_excludes(
+        {"working_dir": ".", "excludes": ["custom_file.txt"]}
+    )
+    assert "custom_file.txt" in result["excludes"]
+    assert "pyproject.toml" in result["excludes"]
+
+    # Test doesn't add excludes when working_dir is absent
+    result = handler._apply_default_excludes({"env_vars": {"FOO": "bar"}})
+    assert "excludes" not in result
+
+    # Test _merge_runtime_env applies default excludes
+    merged = handler._merge_runtime_env({"working_dir": "/some/path"})
+    assert merged is not None
+    assert "excludes" in merged
+    assert "pyproject.toml" in merged["excludes"]
