@@ -9,6 +9,10 @@ import {
   type PlaylistItemV2,
   type PlaylistV2,
   type PlaylistsFileV2,
+  type DoeffPlaylistItem,
+  type CustomPlaylistItem,
+  isDoeffPlaylistItem,
+  isCustomPlaylistItem,
   formatBranchCommitTag,
   parsePlaylistsJsonV2,
   playlistArgsToDoeffRunArgs
@@ -1681,10 +1685,12 @@ class DoeffPlaylistsStore implements vscode.Disposable {
               : null;
 
         items.push({
+          type: 'doeff',
           id: uuid(),
           name: itemName,
           branch: defaultBranch,
           commit: null,
+          worktree: null,
           program,
           apply,
           transform,
@@ -1855,21 +1861,23 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
         this.nodeById.set(`playlist:${playlist.id}`, playlistNode);
 
         const branchesByName = new Map<string, PlaylistBranchNode>();
+        const CUSTOM_ITEMS_GROUP = '__custom__';
 
-        const ensureBranchNode = (branch: string): PlaylistBranchNode => {
-          const existing = branchesByName.get(branch);
+        const ensureBranchNode = (branch: string | null): PlaylistBranchNode => {
+          const branchKey = branch ?? CUSTOM_ITEMS_GROUP;
+          const existing = branchesByName.get(branchKey);
           if (existing) {
             return existing;
           }
           const node: PlaylistBranchNode = {
             type: 'playlistBranch',
             playlist: playlistNode,
-            branch,
-            isCurrent: currentBranch === branch,
+            branch: branchKey,
+            isCurrent: branch !== null && currentBranch === branch,
             items: []
           };
-          branchesByName.set(branch, node);
-          this.nodeById.set(`branch:${playlist.id}:${branch}`, node);
+          branchesByName.set(branchKey, node);
+          this.nodeById.set(`branch:${playlist.id}:${branchKey}`, node);
           return node;
         };
 
@@ -1900,8 +1908,11 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
             branchNode.items.sort((a, b) => {
               const byName = a.item.name.localeCompare(b.item.name, undefined, { sensitivity: 'base' });
               if (byName !== 0) return byName;
-              const byProgram = a.item.program.localeCompare(b.item.program);
-              if (byProgram !== 0) return byProgram;
+              // For doeff items, compare by program; for custom items, compare by cmd
+              const aSecondary = isDoeffPlaylistItem(a.item) ? a.item.program : a.item.cmd;
+              const bSecondary = isDoeffPlaylistItem(b.item) ? b.item.program : b.item.cmd;
+              const bySecondary = aSecondary.localeCompare(bSecondary);
+              if (bySecondary !== 0) return bySecondary;
               return a.item.id.localeCompare(b.item.id);
             });
           }
@@ -1930,33 +1941,57 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
         return item;
       }
       case 'playlistBranch': {
-        const label = element.isCurrent ? `${element.branch} ✓ current` : element.branch;
+        const isCustomGroup = element.branch === '__custom__';
+        const label = isCustomGroup
+          ? 'Custom Commands'
+          : element.isCurrent ? `${element.branch} ✓ current` : element.branch;
         const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.Expanded);
         item.contextValue = 'playlistBranch';
-        item.iconPath = new vscode.ThemeIcon('git-branch');
+        item.iconPath = new vscode.ThemeIcon(isCustomGroup ? 'terminal' : 'git-branch');
         item.id = `branch:${element.playlist.playlist.id}:${element.branch}`;
         item.description = `${element.items.length} item(s)`;
         return item;
       }
       case 'playlistItem': {
-        const commitTag = element.item.commit ? `@ ${element.item.commit.slice(0, 6)}` : '';
-        const toolsTag = formatPlaylistToolsTag(element.item.apply, element.item.transform);
-        const itemLabel = element.item.name;
+        const playlistItem = element.item;
+        const commitTag = playlistItem.commit ? `@ ${playlistItem.commit.slice(0, 6)}` : '';
+        const itemLabel = playlistItem.name;
         const item = new vscode.TreeItem(itemLabel, vscode.TreeItemCollapsibleState.Collapsed);
-        item.contextValue = 'playlistItem';
-        item.iconPath = new vscode.ThemeIcon('symbol-function');
-        item.id = `item:${element.playlist.playlist.id}:${element.item.id}`;
-        item.description = [commitTag, toolsTag].filter(Boolean).join(' ');
-        item.tooltip = [
-          element.item.program,
-          element.item.apply ? `apply: ${element.item.apply}` : undefined,
-          element.item.transform ? `transform: ${element.item.transform}` : undefined
-        ].filter(Boolean).join('\n');
-        item.command = {
-          command: 'doeff-runner.revealPlaylistItem',
-          title: 'Go to Definition',
-          arguments: [element.playlist.playlist.id, element.item.id]
-        };
+        item.id = `item:${element.playlist.playlist.id}:${playlistItem.id}`;
+
+        if (isCustomPlaylistItem(playlistItem)) {
+          // Custom command item
+          item.contextValue = 'customPlaylistItem';
+          item.iconPath = new vscode.ThemeIcon('terminal-bash');
+          const worktreeTag = playlistItem.worktree ? `📁 ${path.basename(playlistItem.worktree)}` : '';
+          item.description = [commitTag, worktreeTag].filter(Boolean).join(' ');
+          item.tooltip = [
+            `Command: ${playlistItem.cmd}`,
+            playlistItem.worktree ? `Worktree: ${playlistItem.worktree}` : undefined,
+            playlistItem.branch ? `Branch: ${playlistItem.branch}` : undefined
+          ].filter(Boolean).join('\n');
+          item.command = {
+            command: 'doeff-runner.revealPlaylistItem',
+            title: 'Go to Definition',
+            arguments: [element.playlist.playlist.id, playlistItem.id]
+          };
+        } else {
+          // Doeff program item
+          const toolsTag = formatPlaylistToolsTag(playlistItem.apply, playlistItem.transform);
+          item.contextValue = 'playlistItem';
+          item.iconPath = new vscode.ThemeIcon('symbol-function');
+          item.description = [commitTag, toolsTag].filter(Boolean).join(' ');
+          item.tooltip = [
+            playlistItem.program,
+            playlistItem.apply ? `apply: ${playlistItem.apply}` : undefined,
+            playlistItem.transform ? `transform: ${playlistItem.transform}` : undefined
+          ].filter(Boolean).join('\n');
+          item.command = {
+            command: 'doeff-runner.revealPlaylistItem',
+            title: 'Go to Definition',
+            arguments: [element.playlist.playlist.id, playlistItem.id]
+          };
+        }
         return item;
       }
       case 'playlistAction': {
@@ -2018,36 +2053,39 @@ class DoeffPlaylistsProvider implements vscode.TreeDataProvider<PlaylistsTreeNod
     }
     if (element.type === 'playlistItem') {
       const children: PlaylistsTreeNode[] = [...element.actions];
-      try {
-        const repoRoot = await resolveRepoRoot(this.workspacePath) ?? this.workspacePath;
-        if (repoRoot) {
-          const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
-          const worktrees = parseGitWorktreeListPorcelain(stdout);
-          const worktreePath = worktrees.find((wt) => wt.branch === element.item.branch)?.worktreePath;
-          if (worktreePath) {
-            const envChain = await getEnvChainForRoot(worktreePath, element.item.program);
-            const parentEntry: IndexEntry = {
-              name: element.item.program.split('.').pop() ?? element.item.program,
-              qualifiedName: element.item.program,
-              filePath: '',
-              line: 0,
-              itemKind: 'assignment',
-              categories: [],
-              programParameters: [],
-              interpreterParameters: [],
-              typeUsages: []
-            };
+      // Only load env chain for doeff items (not custom commands)
+      if (isDoeffPlaylistItem(element.item)) {
+        try {
+          const repoRoot = await resolveRepoRoot(this.workspacePath) ?? this.workspacePath;
+          if (repoRoot) {
+            const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+            const worktrees = parseGitWorktreeListPorcelain(stdout);
+            const worktreePath = worktrees.find((wt) => wt.branch === element.item.branch)?.worktreePath;
+            if (worktreePath) {
+              const envChain = await getEnvChainForRoot(worktreePath, element.item.program);
+              const parentEntry: IndexEntry = {
+                name: element.item.program.split('.').pop() ?? element.item.program,
+                qualifiedName: element.item.program,
+                filePath: '',
+                line: 0,
+                itemKind: 'assignment',
+                categories: [],
+                programParameters: [],
+                interpreterParameters: [],
+                typeUsages: []
+              };
 
-            children.push({
-              type: 'envChain',
-              rootPath: worktreePath,
-              parentEntry,
-              entries: envChain
-            });
+              children.push({
+                type: 'envChain',
+                rootPath: worktreePath,
+                parentEntry,
+                entries: envChain
+              });
+            }
           }
+        } catch (error) {
+          output.appendLine(`[warn] Failed to load env chain for playlist item: ${String(error)}`);
         }
-      } catch (error) {
-        output.appendLine(`[warn] Failed to load env chain for playlist item: ${String(error)}`);
       }
       return children;
     }
@@ -2156,7 +2194,7 @@ class PlaylistsDragAndDropController implements vscode.TreeDragAndDropController
 
     if (normalizedTarget.type === 'playlistItem') {
       destPlaylistId = normalizedTarget.playlist.playlist.id;
-      destBranch = normalizedTarget.item.branch;
+      destBranch = normalizedTarget.item.branch ?? undefined;
       destItemId = normalizedTarget.item.id;
     } else if (normalizedTarget.type === 'playlistBranch') {
       destPlaylistId = normalizedTarget.playlist.playlist.id;
@@ -2817,20 +2855,52 @@ export function activate(context: vscode.ExtensionContext) {
           ? playlist.items.slice().sort((a, b) => {
             const byName = a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
             if (byName !== 0) return byName;
-            const byBranch = a.branch.localeCompare(b.branch);
+            // Compare branches, treating null as coming first
+            const aBranch = a.branch ?? '';
+            const bBranch = b.branch ?? '';
+            const byBranch = aBranch.localeCompare(bBranch);
             if (byBranch !== 0) return byBranch;
-            const byProgram = a.program.localeCompare(b.program);
-            if (byProgram !== 0) return byProgram;
+            // Compare by program/cmd depending on type
+            const aSecondary = isDoeffPlaylistItem(a) ? a.program : a.cmd;
+            const bSecondary = isDoeffPlaylistItem(b) ? b.program : b.cmd;
+            const bySecondary = aSecondary.localeCompare(bSecondary);
+            if (bySecondary !== 0) return bySecondary;
             return a.id.localeCompare(b.id);
           })
           : playlist.items;
 
         const items: PlaylistItemQuickPickItem[] = sortedItems.map((item) => {
-          const programName = item.program.split('.').pop() ?? item.program;
-          const detail = [
-            formatBranchCommitTag(item.branch, item.commit),
-            formatPlaylistToolsTag(item.apply, item.transform)
-          ].filter(Boolean).join(' ');
+          const isDoeff = isDoeffPlaylistItem(item);
+          const programName = isDoeff
+            ? (item.program.split('.').pop() ?? item.program)
+            : item.cmd.split(' ')[0];
+          const detail = isDoeff
+            ? [
+              formatBranchCommitTag(item.branch, item.commit),
+              formatPlaylistToolsTag(item.apply, item.transform)
+            ].filter(Boolean).join(' ')
+            : [
+              formatBranchCommitTag(item.branch, item.commit),
+              item.worktree ? `📁 ${path.basename(item.worktree)}` : ''
+            ].filter(Boolean).join(' ');
+
+          const searchText = isDoeff
+            ? [
+              item.name,
+              item.program,
+              programName,
+              item.branch ?? '',
+              item.commit ?? '',
+              item.apply ?? '',
+              item.transform ?? ''
+            ].join(' ')
+            : [
+              item.name,
+              item.cmd,
+              item.branch ?? '',
+              item.commit ?? '',
+              item.worktree ?? ''
+            ].join(' ');
 
           return {
             label: item.name,
@@ -2838,15 +2908,7 @@ export function activate(context: vscode.ExtensionContext) {
             detail,
             playlistId: playlist.id,
             itemId: item.id,
-            searchText: [
-              item.name,
-              item.program,
-              programName,
-              item.branch,
-              item.commit ?? '',
-              item.apply ?? '',
-              item.transform ?? ''
-            ].join(' ')
+            searchText
           };
         });
         return { name: playlist.name, items };
@@ -3065,11 +3127,13 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const itemName = nameInput.trim() || defaultName;
 
-    const newItem: PlaylistItemV2 = {
+    const newItem: DoeffPlaylistItem = {
+      type: 'doeff',
       id: uuid(),
       name: itemName,
       branch,
       commit: pinnedCommit,
+      worktree: null,
       program: programQualifiedName,
       apply: null,
       transform: null,
@@ -3088,6 +3152,164 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage(`Added '${programEntry.name}' to playlist.`);
   }
 
+  async function addCustomPlaylistItemFlow(): Promise<void> {
+    // Step 1: Get command to execute
+    const cmdInput = await vscode.window.showInputBox({
+      prompt: 'Command to execute',
+      placeHolder: 'e.g., python scripts/migrate.py'
+    });
+    if (!cmdInput?.trim()) {
+      return;
+    }
+    const cmd = cmdInput.trim();
+
+    // Step 2: Get item name
+    const nameInput = await vscode.window.showInputBox({
+      prompt: 'Display name for this item',
+      placeHolder: 'e.g., Run Migration Script',
+      value: cmd.split('/').pop()?.split(' ')[0] ?? cmd.slice(0, 30)
+    });
+    if (nameInput === undefined) {
+      return;
+    }
+    const name = nameInput.trim() || cmd.slice(0, 30);
+
+    // Step 3: Optionally get worktree path
+    interface WorktreeOption extends vscode.QuickPickItem {
+      worktree?: string;
+      browse?: boolean;
+    }
+    const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+    const worktreeOptions: WorktreeOption[] = [
+      { label: 'No worktree', description: 'Run in current directory', worktree: undefined }
+    ];
+
+    // Add current workspace folder as an option
+    if (workspaceRoot) {
+      worktreeOptions.push({
+        label: path.basename(workspaceRoot),
+        description: workspaceRoot,
+        worktree: workspaceRoot
+      });
+    }
+
+    // List available git worktrees if in a git repo
+    if (repoRoot) {
+      try {
+        const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+        const worktrees = parseGitWorktreeListPorcelain(stdout);
+        for (const wt of worktrees) {
+          if (wt.worktreePath !== workspaceRoot) {
+            worktreeOptions.push({
+              label: wt.branch || path.basename(wt.worktreePath),
+              description: wt.worktreePath,
+              worktree: wt.worktreePath
+            });
+          }
+        }
+      } catch {
+        // Ignore errors listing worktrees
+      }
+    }
+
+    worktreeOptions.push({
+      label: 'Browse...',
+      description: 'Select a folder',
+      browse: true
+    });
+
+    const worktreeChoice = await vscode.window.showQuickPick(worktreeOptions, {
+      title: 'Working directory (optional)'
+    });
+    if (worktreeChoice === undefined) {
+      return;
+    }
+
+    let worktreePath: string | null = null;
+    if (worktreeChoice.browse) {
+      const folders = await vscode.window.showOpenDialog({
+        canSelectFiles: false,
+        canSelectFolders: true,
+        canSelectMany: false,
+        openLabel: 'Select Folder'
+      });
+      if (folders?.[0]) {
+        worktreePath = folders[0].fsPath;
+      }
+    } else {
+      worktreePath = worktreeChoice.worktree ?? null;
+    }
+
+    // Step 4: Optionally get branch/commit info
+    let branch: string | null = null;
+    let commit: string | null = null;
+
+    if (worktreePath && repoRoot) {
+      try {
+        const currentBranch = await resolveCurrentBranch(worktreePath);
+        if (currentBranch) {
+          const useBranch = await vscode.window.showQuickPick(
+            [
+              { label: 'Yes', description: `Use branch: ${currentBranch}`, use: true },
+              { label: 'No', description: 'No branch association', use: false }
+            ],
+            { title: 'Associate with current branch?' }
+          );
+          if (useBranch?.use) {
+            branch = currentBranch;
+
+            // Ask about pinning commit
+            const pinCommit = await vscode.window.showQuickPick(
+              [
+                { label: 'No', description: 'Run at whatever HEAD is', pin: false },
+                { label: 'Yes', description: 'Pin to current commit', pin: true }
+              ],
+              { title: 'Pin to current commit?' }
+            );
+            if (pinCommit?.pin) {
+              try {
+                const head = await executeGit(['rev-parse', 'HEAD'], worktreePath);
+                commit = head.trim();
+              } catch {
+                // Ignore errors getting commit
+              }
+            }
+          }
+        }
+      } catch {
+        // Ignore errors getting branch info
+      }
+    }
+
+    // Step 5: Pick playlist
+    const playlistId = await pickPlaylistId();
+    if (!playlistId) {
+      return;
+    }
+
+    // Create the custom item
+    const newItem: CustomPlaylistItem = {
+      type: 'custom',
+      id: uuid(),
+      name,
+      branch,
+      commit,
+      worktree: worktreePath,
+      cmd
+    };
+
+    await playlistsStore.update((payload) => {
+      const playlist = payload.playlists.find((p) => p.id === playlistId);
+      if (!playlist) {
+        payload.playlists.push({ id: playlistId, name: 'Playlist', items: [newItem] });
+        return;
+      }
+      playlist.items.push(newItem);
+    });
+
+    vscode.window.showInformationMessage(`Added custom command '${name}' to playlist.`);
+  }
+
   async function runPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
     const data = await playlistsStore.load();
     const playlist = data.playlists.find((p) => p.id === playlistId);
@@ -3097,6 +3319,13 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
+    // Handle custom items differently
+    if (isCustomPlaylistItem(item)) {
+      await runCustomPlaylistItem(item);
+      return;
+    }
+
+    // Handle doeff items (existing logic)
     const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
     if (!repoRoot) {
       vscode.window.showErrorMessage('No workspace folder open.');
@@ -3186,6 +3415,62 @@ export function activate(context: vscode.ExtensionContext) {
     });
   }
 
+  async function runCustomPlaylistItem(item: CustomPlaylistItem): Promise<void> {
+    // Determine working directory
+    let cwd: string | undefined;
+
+    if (item.worktree) {
+      cwd = item.worktree;
+    } else if (item.branch) {
+      // Try to find worktree for the branch
+      const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+      if (repoRoot) {
+        const branchWorktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
+        if (branchWorktreePath) {
+          cwd = branchWorktreePath;
+
+          // Handle commit pinning
+          if (item.commit) {
+            try {
+              const head = await executeGit(['rev-parse', 'HEAD'], branchWorktreePath);
+              if (head.trim() !== item.commit.trim()) {
+                const choice = await vscode.window.showWarningMessage(
+                  `Worktree is at ${head.slice(0, 6)}, but item is pinned to ${item.commit.slice(0, 6)}.`,
+                  { modal: true },
+                  'Run at current HEAD',
+                  `Create temp worktree at ${item.commit.slice(0, 6)}`,
+                  'Cancel'
+                );
+                if (choice === 'Cancel' || !choice) {
+                  return;
+                }
+                if (choice.startsWith('Create temp')) {
+                  const temp = await ensureDetachedWorktreeAtCommit(repoRoot, item.branch, item.commit);
+                  if (!temp) {
+                    return;
+                  }
+                  cwd = temp;
+                }
+              }
+            } catch {
+              // Ignore git errors
+            }
+          }
+        }
+      }
+    }
+
+    if (!cwd) {
+      cwd = workspaceRoot;
+    }
+
+    // Create and show terminal
+    const terminalName = `Custom: ${item.name}`;
+    const terminal = createTerminal(terminalName, cwd);
+    terminal.show();
+    terminal.sendText(item.cmd);
+  }
+
   async function revealPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
     const data = await playlistsStore.load();
     const playlist = data.playlists.find((p) => p.id === playlistId);
@@ -3195,6 +3480,13 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
+    // Handle custom items differently
+    if (isCustomPlaylistItem(item)) {
+      await revealCustomPlaylistItem(item);
+      return;
+    }
+
+    // Handle doeff items (existing logic)
     const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
     if (!repoRoot) {
       vscode.window.showErrorMessage('No workspace folder open.');
@@ -3244,6 +3536,48 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.commands.executeCommand('doeff-runner.revealEntrypoint', programEntry);
   }
 
+  async function revealCustomPlaylistItem(item: CustomPlaylistItem): Promise<void> {
+    // Try to extract file path from the command
+    const cmdParts = item.cmd.trim().split(/\s+/);
+    let targetPath: string | null = null;
+
+    // Look for file-like arguments in the command
+    for (const part of cmdParts) {
+      // Skip common command prefixes
+      if (['python', 'python3', 'node', 'npm', 'yarn', 'pnpm', 'bash', 'sh', './'].some(p => part === p || part.startsWith(p + '/'))) {
+        continue;
+      }
+      // Check if it looks like a path
+      if (part.includes('/') || part.includes('.')) {
+        // Resolve relative to worktree if available
+        const basePath = item.worktree || workspaceRoot;
+        if (basePath) {
+          const fullPath = path.isAbsolute(part) ? part : path.join(basePath, part);
+          if (fs.existsSync(fullPath) && fs.statSync(fullPath).isFile()) {
+            targetPath = fullPath;
+            break;
+          }
+        }
+      }
+    }
+
+    if (targetPath) {
+      // Open the file
+      const uri = vscode.Uri.file(targetPath);
+      const doc = await vscode.workspace.openTextDocument(uri);
+      await vscode.window.showTextDocument(doc);
+    } else if (item.worktree) {
+      // If no file found but we have a worktree, add it to workspace and show in explorer
+      await maybeAddFolderToWorkspace(item.worktree, item.branch ?? undefined);
+      const uri = vscode.Uri.file(item.worktree);
+      await vscode.commands.executeCommand('revealInExplorer', uri);
+    } else {
+      vscode.window.showInformationMessage(
+        `Cannot navigate to definition for custom command: ${item.cmd}`
+      );
+    }
+  }
+
   async function removePlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
     const data = await playlistsStore.load();
     const playlist = data.playlists.find((p) => p.id === playlistId);
@@ -3278,37 +3612,98 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
+    // Handle custom items with explicit worktree path
+    if (isCustomPlaylistItem(item)) {
+      if (item.worktree) {
+        await maybeAddFolderToWorkspace(item.worktree, item.branch ?? undefined);
+        return;
+      } else if (item.branch) {
+        // Fall through to branch-based worktree lookup
+      } else {
+        vscode.window.showInformationMessage('This custom command has no associated worktree.');
+        return;
+      }
+    }
+
     const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
     if (!repoRoot) {
       vscode.window.showErrorMessage('No workspace folder open.');
       return;
     }
 
+    const branchName = item.branch;
+    if (!branchName) {
+      vscode.window.showInformationMessage('This item has no associated branch.');
+      return;
+    }
+
     try {
       const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
       const worktrees = parseGitWorktreeListPorcelain(stdout);
-      const worktree = worktrees.find((wt) => wt.branch === item.branch);
+      const worktree = worktrees.find((wt) => wt.branch === branchName);
 
       if (!worktree) {
         const create = await vscode.window.showWarningMessage(
-          `No worktree exists for branch '${item.branch}'. Create one first?`,
+          `No worktree exists for branch '${branchName}'. Create one first?`,
           'Create Worktree',
           'Cancel'
         );
         if (create === 'Create Worktree') {
-          const worktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
+          const worktreePath = await ensureWorktreeForBranch(repoRoot, branchName);
           if (worktreePath) {
-            await maybeAddFolderToWorkspace(worktreePath, item.branch);
+            await maybeAddFolderToWorkspace(worktreePath, branchName);
           }
         }
         return;
       }
 
-      await maybeAddFolderToWorkspace(worktree.worktreePath, item.branch);
+      await maybeAddFolderToWorkspace(worktree.worktreePath, branchName);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       vscode.window.showErrorMessage(`Failed to add worktree to workspace: ${message}`);
     }
+  }
+
+  async function copyPlaylistItemPathFlow(playlistId: string, itemId: string): Promise<void> {
+    const data = await playlistsStore.load();
+    const playlist = data.playlists.find((p) => p.id === playlistId);
+    const item = playlist?.items.find((i) => i.id === itemId);
+    if (!playlist || !item) {
+      vscode.window.showErrorMessage('Playlist item not found.');
+      return;
+    }
+
+    let textToCopy: string;
+
+    if (isCustomPlaylistItem(item)) {
+      // For custom items, copy the command or worktree path
+      interface CopyOption extends vscode.QuickPickItem {
+        value: string;
+      }
+
+      const options: CopyOption[] = [
+        { label: 'Command', description: item.cmd, value: item.cmd }
+      ];
+      if (item.worktree) {
+        options.push({ label: 'Worktree Path', description: item.worktree, value: item.worktree });
+      }
+
+      if (options.length === 1) {
+        textToCopy = options[0].value;
+      } else {
+        const choice = await vscode.window.showQuickPick(options, { title: 'What to copy?' });
+        if (!choice) {
+          return;
+        }
+        textToCopy = choice.value;
+      }
+    } else {
+      // For doeff items, copy the program qualified name
+      textToCopy = item.program;
+    }
+
+    await vscode.env.clipboard.writeText(textToCopy);
+    vscode.window.showInformationMessage(`Copied: ${textToCopy}`);
   }
 
   async function editPlaylistItemFlow(playlistId: string, itemId: string): Promise<void> {
@@ -3320,6 +3715,13 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
+    // Different edit options for custom vs doeff items
+    if (isCustomPlaylistItem(item)) {
+      await editCustomPlaylistItem(playlistId, itemId, item);
+      return;
+    }
+
+    // Doeff item edit flow
     const action = await vscode.window.showQuickPick(
       [
         { label: 'Rename', key: 'rename' },
@@ -3381,7 +3783,7 @@ export function activate(context: vscode.ExtensionContext) {
       await playlistsStore.update((payload) => {
         const pl = payload.playlists.find((p) => p.id === playlistId);
         const it = pl?.items.find((i) => i.id === itemId);
-        if (it) it.apply = choice?.qualifiedName ?? null;
+        if (it && isDoeffPlaylistItem(it)) it.apply = choice?.qualifiedName ?? null;
       });
       return;
     }
@@ -3404,7 +3806,149 @@ export function activate(context: vscode.ExtensionContext) {
       await playlistsStore.update((payload) => {
         const pl = payload.playlists.find((p) => p.id === playlistId);
         const it = pl?.items.find((i) => i.id === itemId);
-        if (it) it.transform = choice?.qualifiedName ?? null;
+        if (it && isDoeffPlaylistItem(it)) it.transform = choice?.qualifiedName ?? null;
+      });
+      return;
+    }
+
+    if (action.key === 'move') {
+      const targetPlaylistId = await pickPlaylistId();
+      if (!targetPlaylistId) return;
+      if (targetPlaylistId === playlistId) return;
+      await playlistsStore.update((payload) => {
+        const src = payload.playlists.find((p) => p.id === playlistId);
+        const dst = payload.playlists.find((p) => p.id === targetPlaylistId);
+        if (!src || !dst) return;
+        const index = src.items.findIndex((i) => i.id === itemId);
+        if (index < 0) return;
+        const [moved] = src.items.splice(index, 1);
+        dst.items.push(moved);
+      });
+      return;
+    }
+  }
+
+  async function editCustomPlaylistItem(
+    playlistId: string,
+    itemId: string,
+    item: CustomPlaylistItem
+  ): Promise<void> {
+    const action = await vscode.window.showQuickPick(
+      [
+        { label: 'Rename', key: 'rename' },
+        { label: 'Edit command', key: 'cmd' },
+        { label: 'Change worktree', key: 'worktree' },
+        { label: 'Move to playlist', key: 'move' }
+      ],
+      { title: `Edit: ${item.name}` }
+    );
+    if (!action) {
+      return;
+    }
+
+    if (action.key === 'rename') {
+      const name = await vscode.window.showInputBox({ prompt: 'New item name', value: item.name });
+      if (name === undefined) return;
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it) it.name = name.trim() || it.name;
+      });
+      return;
+    }
+
+    if (action.key === 'cmd') {
+      const cmd = await vscode.window.showInputBox({
+        prompt: 'New command',
+        value: item.cmd
+      });
+      if (cmd === undefined) return;
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it && isCustomPlaylistItem(it)) it.cmd = cmd.trim() || it.cmd;
+      });
+      return;
+    }
+
+    if (action.key === 'worktree') {
+      interface WorktreeOption extends vscode.QuickPickItem {
+        worktree?: string | null;
+        browse?: boolean;
+      }
+
+      const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
+      const worktreeOptions: WorktreeOption[] = [
+        { label: 'No worktree', description: 'Remove worktree association', worktree: null }
+      ];
+
+      // Add current worktree if set
+      if (item.worktree) {
+        worktreeOptions.push({
+          label: `Current: ${path.basename(item.worktree)}`,
+          description: item.worktree,
+          worktree: item.worktree
+        });
+      }
+
+      // Add current workspace folder as an option
+      if (workspaceRoot && workspaceRoot !== item.worktree) {
+        worktreeOptions.push({
+          label: path.basename(workspaceRoot),
+          description: workspaceRoot,
+          worktree: workspaceRoot
+        });
+      }
+
+      // List available git worktrees if in a git repo
+      if (repoRoot) {
+        try {
+          const stdout = await executeGit(['worktree', 'list', '--porcelain'], repoRoot);
+          const worktrees = parseGitWorktreeListPorcelain(stdout);
+          for (const wt of worktrees) {
+            if (wt.worktreePath !== workspaceRoot && wt.worktreePath !== item.worktree) {
+              worktreeOptions.push({
+                label: wt.branch || path.basename(wt.worktreePath),
+                description: wt.worktreePath,
+                worktree: wt.worktreePath
+              });
+            }
+          }
+        } catch {
+          // Ignore errors listing worktrees
+        }
+      }
+
+      worktreeOptions.push({
+        label: 'Browse...',
+        description: 'Select a folder',
+        browse: true
+      });
+
+      const choice = await vscode.window.showQuickPick(worktreeOptions, {
+        title: 'Select working directory'
+      });
+      if (choice === undefined) return;
+
+      let newWorktree: string | null = null;
+      if (choice.browse) {
+        const folders = await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: 'Select Folder'
+        });
+        if (folders?.[0]) {
+          newWorktree = folders[0].fsPath;
+        }
+      } else {
+        newWorktree = choice.worktree ?? null;
+      }
+
+      await playlistsStore.update((payload) => {
+        const pl = payload.playlists.find((p) => p.id === playlistId);
+        const it = pl?.items.find((i) => i.id === itemId);
+        if (it && isCustomPlaylistItem(it)) it.worktree = newWorktree;
       });
       return;
     }
@@ -3809,6 +4353,23 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
         await addPlaylistItemWorktreeToWorkspaceFlow(ids.playlistId, ids.itemId);
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.addCustomPlaylistItem',
+      async () => {
+        await addCustomPlaylistItemFlow();
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.copyPlaylistItemPath',
+      async (arg1?: unknown, arg2?: unknown) => {
+        const ids = resolvePlaylistItemIds(arg1, arg2)
+          ?? await pickPlaylistItemIds('Pick a playlist item to copy');
+        if (!ids) {
+          return;
+        }
+        await copyPlaylistItemPathFlow(ids.playlistId, ids.itemId);
       }
     ),
     vscode.commands.registerCommand(

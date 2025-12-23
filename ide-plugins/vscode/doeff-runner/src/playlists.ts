@@ -6,7 +6,38 @@ export interface PlaylistArgs {
   reportVerbose?: boolean;
 }
 
-export interface PlaylistItemV2 {
+export type PlaylistItemType = 'doeff' | 'custom';
+
+// Base fields shared by all playlist item types
+export interface PlaylistItemBase {
+  id: string;
+  name: string;
+  branch: string | null;
+  commit: string | null;
+  worktree: string | null;
+}
+
+// Doeff program playlist item (original type)
+export interface DoeffPlaylistItem extends PlaylistItemBase {
+  type: 'doeff';
+  branch: string; // Required for doeff items
+  program: string;
+  apply: string | null;
+  transform: string | null;
+  args: PlaylistArgs;
+}
+
+// Custom command playlist item (new type)
+export interface CustomPlaylistItem extends PlaylistItemBase {
+  type: 'custom';
+  cmd: string;
+}
+
+// Union type for all playlist items
+export type PlaylistItemV2 = DoeffPlaylistItem | CustomPlaylistItem;
+
+// Legacy interface for backwards compatibility (doeff items without explicit type)
+export interface LegacyPlaylistItemV2 {
   id: string;
   name: string;
   branch: string;
@@ -15,6 +46,15 @@ export interface PlaylistItemV2 {
   apply: string | null;
   transform: string | null;
   args: PlaylistArgs;
+}
+
+// Type guards
+export function isDoeffPlaylistItem(item: PlaylistItemV2): item is DoeffPlaylistItem {
+  return item.type === 'doeff';
+}
+
+export function isCustomPlaylistItem(item: PlaylistItemV2): item is CustomPlaylistItem {
+  return item.type === 'custom';
 }
 
 export interface PlaylistV2 {
@@ -63,21 +103,49 @@ function normalizeItem(value: unknown): PlaylistItemV2 | undefined {
 
   const id = value.id;
   const name = value.name;
-  const branch = value.branch;
-  const program = value.program;
-  if (!isString(id) || !isString(name) || !isString(branch) || !isString(program)) {
+  if (!isString(id) || !isString(name)) {
     return undefined;
   }
 
   const commit = value.commit;
+  const worktree = value.worktree;
+  const type = value.type;
+
+  // Handle custom playlist items
+  if (type === 'custom') {
+    const cmd = value.cmd;
+    const branch = value.branch;
+    if (!isString(cmd)) {
+      return undefined;
+    }
+    return {
+      type: 'custom',
+      id,
+      name,
+      branch: branch === null ? null : isString(branch) ? branch : null,
+      commit: commit === null ? null : isString(commit) ? commit : null,
+      worktree: worktree === null ? null : isString(worktree) ? worktree : null,
+      cmd
+    };
+  }
+
+  // Handle doeff playlist items (including legacy items without type field)
+  const branch = value.branch;
+  const program = value.program;
+  if (!isString(branch) || !isString(program)) {
+    return undefined;
+  }
+
   const apply = value.apply;
   const transform = value.transform;
 
   return {
+    type: 'doeff',
     id,
     name,
     branch,
     commit: commit === null ? null : isString(commit) ? commit : null,
+    worktree: worktree === null ? null : isString(worktree) ? worktree : null,
     program,
     apply: apply === null ? null : isString(apply) ? apply : null,
     transform: transform === null ? null : isString(transform) ? transform : null,
@@ -134,7 +202,13 @@ export function parsePlaylistsJsonV2(content: string): { data: PlaylistsFileV2; 
   }
 }
 
-export function formatBranchCommitTag(branch: string, commit: string | null): string {
+export function formatBranchCommitTag(branch: string | null, commit: string | null): string {
+  if (!branch && !commit) {
+    return '';
+  }
+  if (!branch) {
+    return `[@ ${commit!.slice(0, 6)}]`;
+  }
   if (!commit) {
     return `[${branch}]`;
   }
