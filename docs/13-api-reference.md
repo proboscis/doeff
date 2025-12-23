@@ -695,6 +695,33 @@ result, graph = yield CaptureGraph(sub_program())
 
 ## Advanced Effects
 
+### Spawn(program, preferred_backend=None, **kwargs)
+
+Spawn a Program in the background and return a Task handle.
+
+```python
+task = yield Spawn(worker(), preferred_backend="ray", num_cpus=1)
+result = yield task.join()
+```
+
+**Parameters:**
+
+- **`program: Program[T]`** - Program to execute
+- **`preferred_backend: Literal["thread", "process", "ray"] | None`** - Backend hint
+- **`**kwargs`** - Backend options (Ray: `num_cpus`, `num_gpus`, `memory`,
+  `resources`, `placement_group`, `placement_group_bundle_index`,
+  `placement_group_capture_child_tasks`, `runtime_env`, `scheduling_strategy`)
+
+**Returns:** `Task[T]` with `join()` method
+
+**Notes:**
+
+- Ray tasks use cloudpickle serialization and inherit context from the spawn site.
+- Configure Ray via `ProgramInterpreter` options (`spawn_ray_address`,
+  `spawn_ray_init_kwargs`, `spawn_ray_runtime_env`).
+
+**See:** [Advanced Effects](09-advanced-effects.md)
+
 ### Gather(*programs)
 
 Execute Programs in parallel.
@@ -1071,7 +1098,7 @@ await write_graph_html(result.graph, "output.html")
 | **IO** | IO, Print |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
-| **Advanced** | Gather, GatherDict, MemoGet, MemoPut |
+| **Advanced** | Spawn, Gather, GatherDict, MemoGet, MemoPut |
 | **DI** | Dep (doeff-pinjected) |
 
 ### Common Imports
