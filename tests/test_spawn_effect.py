@@ -11,6 +11,8 @@ import pytest
 from doeff import (
     AtomicGet,
     AtomicUpdate,
+    Effect,
+    EffectGenerator,
     Fail,
     Gather,
     Get,
@@ -18,13 +20,14 @@ from doeff import (
     Log,
     Parallel,
     Put,
+    ProgramInterpreter,
     Recover,
     Spawn,
     Task,
-    ProgramInterpreter,
     do,
-    EffectGenerator,
+    slog,
 )
+from doeff.effects import WriterTellEffect
 
 _RAY_TEST_CPUS = 4
 
@@ -163,6 +166,38 @@ async def test_spawn_warns_when_ray_unavailable(
     assert any(
         "Ray backend requested but 'ray' is not installed" in message
         for message in caplog.messages
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", _backend_params())
+async def test_spawn_intercept_slog(backend: str) -> None:
+    with _ray_context(backend):
+        engine = _build_engine(backend)
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield slog(event="spawned", detail="ok")
+            return "done"
+
+        def intercept(effect: Effect) -> Effect:
+            if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
+                if effect.message.get("event") == "spawned":
+                    return Log({"intercepted": effect.message["event"]})
+            return effect
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
+            return (yield task.join())
+
+        result = await engine.run_async(program().intercept(intercept))
+
+    assert result.is_ok
+    assert result.value == "done"
+    assert {"intercepted": "spawned"} in result.log
+    assert not any(
+        isinstance(entry, dict) and entry.get("event") == "spawned" for entry in result.log
     )
 
 

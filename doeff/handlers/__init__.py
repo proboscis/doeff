@@ -66,6 +66,8 @@ from doeff.utils import BoundedLog
 
 logger = logging.getLogger(__name__)
 
+_MISSING = object()
+
 
 def _safe_object_repr(value: Any) -> str:
     try:
@@ -102,14 +104,30 @@ def _sanitize_created_at(created_at: Any) -> Any:
 def _sanitize_program(program: Any) -> Any:
     from doeff.types import EffectBase
 
+    def _get_attr(obj: Any, name: str) -> Any:
+        try:
+            return object.__getattribute__(obj, name)
+        except AttributeError:
+            return _MISSING
+
     if isinstance(program, EffectBase):
         created_at = _sanitize_created_at(program.created_at)
         if created_at is not program.created_at:
             return program.with_created_at(created_at)
         return program
 
-    created_at = getattr(program, "created_at", None)
-    if created_at is not None:
+    base_program = _get_attr(program, "base_program")
+    transforms = _get_attr(program, "transforms")
+    if base_program is not _MISSING and transforms is not _MISSING:
+        sanitized_base = _sanitize_program(base_program)
+        if sanitized_base is not base_program:
+            try:
+                return replace(program, base_program=sanitized_base)
+            except Exception:
+                pass
+
+    created_at = _get_attr(program, "created_at")
+    if created_at is not _MISSING:
         sanitized = _sanitize_created_at(created_at)
         if sanitized is not created_at:
             try:
