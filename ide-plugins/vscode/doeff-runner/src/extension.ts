@@ -1691,6 +1691,7 @@ class DoeffPlaylistsStore implements vscode.Disposable {
           branch: defaultBranch,
           commit: null,
           worktree: null,
+          cwd: null,
           program,
           apply,
           transform,
@@ -3134,6 +3135,7 @@ export function activate(context: vscode.ExtensionContext) {
       branch,
       commit: pinnedCommit,
       worktree: null,
+      cwd: null,
       program: programQualifiedName,
       apply: null,
       transform: null,
@@ -3295,6 +3297,7 @@ export function activate(context: vscode.ExtensionContext) {
       branch,
       commit,
       worktree: worktreePath,
+      cwd: null,
       cmd
     };
 
@@ -3406,9 +3409,26 @@ export function activate(context: vscode.ExtensionContext) {
       transformer
     };
 
+    // Resolve custom cwd if specified
+    let executionCwd = runCwd;
+    if (item.cwd) {
+      if (path.isAbsolute(item.cwd)) {
+        executionCwd = item.cwd;
+      } else {
+        // Resolve relative paths from the worktree root
+        executionCwd = path.resolve(runCwd, item.cwd);
+      }
+
+      // Validate that the directory exists
+      if (!fs.existsSync(executionCwd) || !fs.statSync(executionCwd).isDirectory()) {
+        vscode.window.showErrorMessage(`Working directory does not exist: ${executionCwd}`);
+        return;
+      }
+    }
+
     const extraArgs = playlistArgsToDoeffRunArgs(item.args);
     await runSelection(selection, undefined, stateStore.getDebugMode(), {
-      cwd: runCwd,
+      cwd: executionCwd,
       persistFolderPath: runCwd,
       branch: item.branch,
       extraArgs
@@ -3416,18 +3436,18 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   async function runCustomPlaylistItem(item: CustomPlaylistItem): Promise<void> {
-    // Determine working directory
-    let cwd: string | undefined;
+    // Determine base working directory
+    let baseCwd: string | undefined;
 
     if (item.worktree) {
-      cwd = item.worktree;
+      baseCwd = item.worktree;
     } else if (item.branch) {
       // Try to find worktree for the branch
       const repoRoot = await resolveRepoRoot(workspaceRoot) ?? workspaceRoot;
       if (repoRoot) {
         const branchWorktreePath = await ensureWorktreeForBranch(repoRoot, item.branch);
         if (branchWorktreePath) {
-          cwd = branchWorktreePath;
+          baseCwd = branchWorktreePath;
 
           // Handle commit pinning
           if (item.commit) {
@@ -3449,7 +3469,7 @@ export function activate(context: vscode.ExtensionContext) {
                   if (!temp) {
                     return;
                   }
-                  cwd = temp;
+                  baseCwd = temp;
                 }
               }
             } catch {
@@ -3460,13 +3480,30 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    if (!cwd) {
-      cwd = workspaceRoot;
+    if (!baseCwd) {
+      baseCwd = workspaceRoot;
+    }
+
+    // Resolve custom cwd if specified
+    let finalCwd = baseCwd;
+    if (item.cwd) {
+      if (path.isAbsolute(item.cwd)) {
+        finalCwd = item.cwd;
+      } else {
+        // Resolve relative paths from the base working directory
+        finalCwd = path.resolve(baseCwd, item.cwd);
+      }
+
+      // Validate that the directory exists
+      if (!fs.existsSync(finalCwd) || !fs.statSync(finalCwd).isDirectory()) {
+        vscode.window.showErrorMessage(`Working directory does not exist: ${finalCwd}`);
+        return;
+      }
     }
 
     // Create and show terminal
     const terminalName = `Custom: ${item.name}`;
-    const terminal = createTerminal(terminalName, cwd);
+    const terminal = createTerminal(terminalName, finalCwd);
     terminal.show();
     terminal.sendText(item.cmd);
   }
