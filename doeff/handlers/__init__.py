@@ -12,6 +12,7 @@ import hashlib
 import lzma
 import sqlite3
 import threading
+from dataclasses import replace
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from enum import Enum, auto
@@ -83,19 +84,111 @@ def _cloudpickle_loads(payload: bytes, context: str) -> Any:
     try:
         return cloudpickle.loads(payload)
     except Exception as exc:
-        raise TypeError(f"Failed to load {context} via cloudpickle") from exc
+        raise TypeError(f"Failed to load {context} via cloudpickle: {exc}") from exc
+
+
+def _sanitize_created_at(created_at: Any) -> Any:
+    from doeff.types import EffectCreationContext
+
+    if isinstance(created_at, EffectCreationContext):
+        return created_at.without_frames()
+    return created_at
+
+
+def _sanitize_program(program: Any) -> Any:
+    from doeff.types import EffectBase
+
+    if isinstance(program, EffectBase):
+        created_at = _sanitize_created_at(program.created_at)
+        if created_at is not program.created_at:
+            return program.with_created_at(created_at)
+        return program
+
+    created_at = getattr(program, "created_at", None)
+    if created_at is not None:
+        sanitized = _sanitize_created_at(created_at)
+        if sanitized is not created_at:
+            try:
+                return replace(program, created_at=sanitized)
+            except Exception:
+                pass
+    return program
+
+
+def _sanitize_call_stack(call_stack: list[CallFrame]) -> list[CallFrame]:
+    sanitized: list[CallFrame] = []
+    for frame in call_stack:
+        created_at = _sanitize_created_at(frame.created_at)
+        if created_at is not frame.created_at:
+            frame = replace(frame, created_at=created_at)
+        sanitized.append(frame)
+    return sanitized
+
+
+def _pack_execution_context(ctx: ExecutionContext) -> dict[str, Any]:
+    return {
+        "env": ctx.env,
+        "state": ctx.state,
+        "log": list(ctx.log),
+        "graph": ctx.graph,
+        "io_allowed": ctx.io_allowed,
+        "cache": ctx.cache,
+    }
+
+
+def _sanitize_exception(error: BaseException) -> BaseException:
+    from doeff.types import EffectFailure
+
+    if isinstance(error, EffectFailure):
+        error.creation_context = _sanitize_created_at(error.creation_context)
+        error.effect = _sanitize_program(error.effect)
+    return error
+
+
+def _serialize_spawn_result(payload: tuple[Any, ...]) -> bytes:
+    try:
+        return _cloudpickle_dumps(payload, "spawn result")
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        fallback = (
+            "err",
+            {
+                "type": "SerializationError",
+                "message": f"Failed to serialize spawn result: {exc}",
+            },
+        )
+        return cloudpickle.dumps(fallback)
+
+
+def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:
+    return (
+        "err",
+        {
+            "type": error.__class__.__name__,
+            "message": str(error),
+        },
+    )
 
 
 def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> bytes:
-    program, ctx = _cloudpickle_loads(payload, "spawn payload")
+    try:
+        program, ctx = _cloudpickle_loads(payload, "spawn payload")
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return _serialize_spawn_result(_pack_spawn_error(exc))
 
     from doeff.interpreter import ProgramInterpreter
 
     engine = ProgramInterpreter(max_log_entries=max_log_entries)
-    result = engine.run(program, ctx)
+    try:
+        result = engine.run(program, ctx)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return _serialize_spawn_result(_pack_spawn_error(exc))
+
     if isinstance(result.result, Err):
-        raise result.result.error
-    return _cloudpickle_dumps((result.value, result.context), "spawn result")
+        error = _sanitize_exception(result.result.error)
+        return _serialize_spawn_result(_pack_spawn_error(error))
+
+    packed_ctx = _pack_execution_context(result.context)
+    return _serialize_spawn_result(("ok", result.value, packed_ctx))
 
 
 _VALID_SPAWN_BACKENDS = ("thread", "process", "ray")
@@ -437,6 +530,9 @@ class SpawnEffectHandler:
         self._ray = None
         self._ray_lock = threading.Lock()
         self._ray_remote_runner = None
+        self._task_results: dict[int, tuple[Any, ExecutionContext]] = {}
+        self._merged_tasks: set[tuple[int, int]] = set()
+        self._join_lock: asyncio.Lock | None = None
 
     def handle_spawn(
         self,
@@ -459,14 +555,32 @@ class SpawnEffectHandler:
         ctx: ExecutionContext,
     ) -> Any:
         task = effect.task
-        backend = task.backend
-        if backend == "ray":
-            result_payload = await self._await_ray(task._handle)
-        else:
-            result_payload = await task._handle
+        task_id = id(task._handle)
+        cached = self._task_results.get(task_id)
 
-        value, result_ctx = self._unpack_result(result_payload)
-        self._merge_context(ctx, result_ctx, task)
+        if cached is None:
+            backend = task.backend
+            if backend == "ray":
+                result_payload = await self._await_ray(task._handle)
+            else:
+                result_payload = await task._handle
+            value, result_ctx = self._unpack_result(result_payload)
+            if self._join_lock is None:
+                self._join_lock = asyncio.Lock()
+            async with self._join_lock:
+                cached = self._task_results.setdefault(task_id, (value, result_ctx))
+
+        value, result_ctx = cached
+        if self._join_lock is None:
+            self._join_lock = asyncio.Lock()
+        async with self._join_lock:
+            merge_key = (task_id, id(ctx))
+            should_merge = merge_key not in self._merged_tasks
+            if should_merge:
+                self._merged_tasks.add(merge_key)
+
+        if should_merge:
+            self._merge_context(ctx, result_ctx, task)
         return value
 
     def _resolve_backend(self, effect: SpawnEffect) -> str:
@@ -501,10 +615,11 @@ class SpawnEffectHandler:
 
     def _spawn_process(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
         loop = asyncio.get_running_loop()
-        sub_ctx = self._prepare_context(ctx, share_cache=False)
+        sub_ctx = self._prepare_context(ctx, share_cache=False, sanitize_call_stack=True)
         env_snapshot = sub_ctx.env.copy()
         state_snapshot = sub_ctx.state.copy()
-        payload = _cloudpickle_dumps((effect.program, sub_ctx), "spawn payload")
+        program = _sanitize_program(effect.program)
+        payload = _cloudpickle_dumps((program, sub_ctx), "spawn payload")
         future = loop.run_in_executor(
             self._ensure_process_executor(),
             _run_spawn_payload,
@@ -520,10 +635,11 @@ class SpawnEffectHandler:
 
     def _spawn_ray(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
         self._ensure_ray_initialized()
-        sub_ctx = self._prepare_context(ctx, share_cache=False)
+        sub_ctx = self._prepare_context(ctx, share_cache=False, sanitize_call_stack=True)
         env_snapshot = sub_ctx.env.copy()
         state_snapshot = sub_ctx.state.copy()
-        payload = _cloudpickle_dumps((effect.program, sub_ctx), "spawn payload")
+        program = _sanitize_program(effect.program)
+        payload = _cloudpickle_dumps((program, sub_ctx), "spawn payload")
         options = self._build_ray_options(effect.options)
         runner = self._ray_remote_runner
         if options:
@@ -536,7 +652,13 @@ class SpawnEffectHandler:
             _state_snapshot=state_snapshot,
         )
 
-    def _prepare_context(self, ctx: ExecutionContext, *, share_cache: bool) -> ExecutionContext:
+    def _prepare_context(
+        self,
+        ctx: ExecutionContext,
+        *,
+        share_cache: bool,
+        sanitize_call_stack: bool = False,
+    ) -> ExecutionContext:
         if isinstance(ctx.log, BoundedLog):
             log = ctx.log.spawn_empty()
         else:
@@ -546,6 +668,9 @@ class SpawnEffectHandler:
 
         cache = ctx.cache if share_cache else {}
         observations = ctx.effect_observations if share_cache else []
+        call_stack = ctx.program_call_stack.copy()
+        if sanitize_call_stack:
+            call_stack = _sanitize_call_stack(call_stack)
 
         return ExecutionContext(
             env=ctx.env.copy() if ctx.env else {},
@@ -555,7 +680,7 @@ class SpawnEffectHandler:
             io_allowed=ctx.io_allowed,
             cache=cache,
             effect_observations=observations,
-            program_call_stack=ctx.program_call_stack.copy(),
+            program_call_stack=call_stack,
         )
 
     def _merge_context(
@@ -689,9 +814,38 @@ class SpawnEffectHandler:
 
     def _unpack_result(self, payload: Any) -> tuple[Any, ExecutionContext]:
         if isinstance(payload, bytes):
-            value, result_ctx = _cloudpickle_loads(payload, "spawn result")
+            decoded = _cloudpickle_loads(payload, "spawn result")
+            if isinstance(decoded, tuple) and decoded:
+                tag = decoded[0]
+                if tag == "err":
+                    error = decoded[1] if len(decoded) > 1 else RuntimeError("Spawn task failed")
+                    if isinstance(error, dict):
+                        error_type = error.get("type", "Error")
+                        message = error.get("message", "")
+                        raise RuntimeError(f"Spawn task failed ({error_type}): {message}")
+                    if isinstance(error, BaseException):
+                        raise error
+                    raise RuntimeError(f"Spawn task failed: {error!r}")
+                if tag == "ok":
+                    value = decoded[1] if len(decoded) > 1 else None
+                    result_ctx = decoded[2] if len(decoded) > 2 else {}
+                else:
+                    value, result_ctx = decoded
+            else:
+                value, result_ctx = decoded
         else:
             value, result_ctx = payload
+        if isinstance(result_ctx, dict):
+            result_ctx = ExecutionContext(
+                env=result_ctx.get("env", {}),
+                state=result_ctx.get("state", {}),
+                log=result_ctx.get("log", []),
+                graph=result_ctx.get("graph", WGraph.single(None)),
+                io_allowed=result_ctx.get("io_allowed", True),
+                cache=result_ctx.get("cache", {}),
+                effect_observations=[],
+                program_call_stack=[],
+            )
         if not isinstance(result_ctx, ExecutionContext):
             raise TypeError(
                 "spawn task result context must be ExecutionContext, "
