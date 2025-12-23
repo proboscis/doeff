@@ -42,6 +42,8 @@
     "onCommand:doeff-runner.deletePlaylist",
     "onCommand:doeff-runner.openPlaylistsFile",
     "onCommand:doeff-runner.setPlaylistsSortMode",
+    "onCommand:doeff-runner.addCustomPlaylistItem",
+    "onCommand:doeff-runner.copyPlaylistItemPath",
     "onView:doeff-programs",
     "onView:doeff-programs-all",
     "onView:doeff-playlists"
@@ -224,6 +226,16 @@
         "command": "doeff-runner.addPlaylistItemWorktreeToWorkspace",
         "title": "Add Worktree to Workspace",
         "icon": "$(folder-library)"
+      },
+      {
+        "command": "doeff-runner.addCustomPlaylistItem",
+        "title": "Add Custom Command to Playlist",
+        "icon": "$(add)"
+      },
+      {
+        "command": "doeff-runner.copyPlaylistItemPath",
+        "title": "Copy Path",
+        "icon": "$(copy)"
       }
     ],
     "configuration": {
@@ -331,6 +343,11 @@
           "command": "doeff-runner.refreshExplorer",
           "when": "view == doeff-playlists",
           "group": "navigation@3"
+        },
+        {
+          "command": "doeff-runner.addCustomPlaylistItem",
+          "when": "view == doeff-playlists",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -398,6 +415,31 @@
           "command": "doeff-runner.addPlaylistItemWorktreeToWorkspace",
           "when": "view == doeff-playlists && viewItem == playlistItem",
           "group": "inline@1"
+        },
+        {
+          "command": "doeff-runner.copyPlaylistItemPath",
+          "when": "view == doeff-playlists && viewItem == playlistItem",
+          "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.runPlaylistItem",
+          "when": "view == doeff-playlists && viewItem == customPlaylistItem",
+          "group": "inline@0"
+        },
+        {
+          "command": "doeff-runner.revealPlaylistItem",
+          "when": "view == doeff-playlists && viewItem == customPlaylistItem",
+          "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.addPlaylistItemWorktreeToWorkspace",
+          "when": "view == doeff-playlists && viewItem == customPlaylistItem",
+          "group": "inline@1"
+        },
+        {
+          "command": "doeff-runner.copyPlaylistItemPath",
+          "when": "view == doeff-playlists && viewItem == customPlaylistItem",
+          "group": "navigation"
         }
       ]
     }
