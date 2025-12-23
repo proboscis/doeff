@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import cloudpickle
 
@@ -139,7 +139,7 @@ def _sanitize_program(program: Any) -> Any:
 
 def _sanitize_call_stack(call_stack: list[CallFrame]) -> list[CallFrame]:
     sanitized: list[CallFrame] = []
-    for frame in call_stack:
+    for frame in call_stack:  # noqa: DOEFF012
         created_at = _sanitize_created_at(frame.created_at)
         frame = replace(
             frame,
@@ -172,7 +172,7 @@ def _sanitize_exception(error: BaseException) -> BaseException:
     return error
 
 
-def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:
+def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:  # noqa: DOEFF006
     return (
         _SPAWN_ERR_TAG,
         {
@@ -182,11 +182,18 @@ def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:
     )
 
 
-def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> tuple[Any, ...]:
+def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> bytes:
+    """Execute a spawn payload and return cloudpickled result.
+
+    Returns cloudpickled bytes to ensure the result can be transferred back
+    through ProcessPoolExecutor's standard pickle queue. This handles cases
+    where state/env contains objects that only cloudpickle can serialize
+    (e.g., Programs with lambda closures from flat_map).
+    """
     try:
         program, ctx = _cloudpickle_loads(payload, "spawn payload")
     except Exception as exc:  # pragma: no cover - defensive fallback
-        return _pack_spawn_error(exc)
+        return _cloudpickle_dumps(_pack_spawn_error(exc), "spawn error result")
 
     from doeff.interpreter import ProgramInterpreter
 
@@ -194,14 +201,15 @@ def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> tuple[Any
     try:
         result = engine.run(program, ctx)
     except Exception as exc:  # pragma: no cover - defensive fallback
-        return _pack_spawn_error(exc)
+        return _cloudpickle_dumps(_pack_spawn_error(exc), "spawn error result")
 
     if isinstance(result.result, Err):
         error = _sanitize_exception(result.result.error)
-        return _pack_spawn_error(error)
+        return _cloudpickle_dumps(_pack_spawn_error(error), "spawn error result")
 
     packed_ctx = _pack_execution_context(result.context)
-    return (_SPAWN_OK_TAG, result.value, packed_ctx)
+    result_tuple = (_SPAWN_OK_TAG, result.value, packed_ctx)
+    return _cloudpickle_dumps(result_tuple, "spawn result")
 
 
 _VALID_SPAWN_BACKENDS = ("thread", "process", "ray")
@@ -218,6 +226,12 @@ class HandlerScope(Enum):
     """Defines how handler state should be managed in parallel execution contexts."""
     ISOLATED = auto()  # Each parallel execution gets its own handler instance (e.g., State)
     SHARED = auto()    # All parallel executions share the same handler instance (e.g., Cache, Log)
+
+
+class GraphCaptureResult(NamedTuple):
+    """Result from capturing a computation graph."""
+    value: Any
+    graph: WGraph
 
 
 class ReaderEffectHandler:
@@ -348,7 +362,7 @@ class AtomicEffectHandler:
                 current = default_factory()
             else:
                 current = None
-            store[key] = current
+            store[key] = current  # noqa: DOEFF007
         ctx.state[key] = current
         return current
 
@@ -428,7 +442,7 @@ class ThreadEffectHandler:
             return executor
         with self._executor_lock:
             if self._executor is None:
-                self._executor = ThreadPoolExecutor(
+                self._executor = ThreadPoolExecutor(  # noqa: DOEFF002
                     max_workers=self._max_workers,
                     thread_name_prefix="doeff-thread-pool",
                 )
@@ -453,7 +467,7 @@ class ThreadEffectHandler:
         loop = asyncio.get_running_loop()
         sub_ctx = ctx.copy()
 
-        def run_program() -> tuple[Any, ExecutionContext]:
+        def run_program() -> tuple[Any, ExecutionContext]:  # noqa: DOEFF006
             pragmatic_result = engine.run(effect.program, sub_ctx)
             if isinstance(pragmatic_result.result, Err):
                 raise pragmatic_result.result.error
@@ -618,7 +632,7 @@ class SpawnEffectHandler:
         env_snapshot = sub_ctx.env.copy()
         state_snapshot = sub_ctx.state.copy()
 
-        def run_program() -> tuple[Any, ExecutionContext]:
+        def run_program() -> tuple[Any, ExecutionContext]:  # noqa: DOEFF006
             pragmatic_result = engine.run(effect.program, sub_ctx)
             if isinstance(pragmatic_result.result, Err):
                 raise pragmatic_result.result.error
@@ -726,7 +740,7 @@ class SpawnEffectHandler:
             if key not in snapshot or not SpawnEffectHandler._values_equal(
                 snapshot.get(key), value
             ):
-                target[key] = value
+                target[key] = value  # noqa: DOEFF007
 
     @staticmethod
     def _values_equal(left: Any, right: Any) -> bool:
@@ -741,7 +755,7 @@ class SpawnEffectHandler:
             return executor
         with self._thread_lock:
             if self._thread_executor is None:
-                self._thread_executor = ThreadPoolExecutor(
+                self._thread_executor = ThreadPoolExecutor(  # noqa: DOEFF002
                     max_workers=self._thread_max_workers,
                     thread_name_prefix="doeff-spawn-thread",
                 )
@@ -753,7 +767,7 @@ class SpawnEffectHandler:
             return executor
         with self._process_lock:
             if self._process_executor is None:
-                self._process_executor = ProcessPoolExecutor(
+                self._process_executor = ProcessPoolExecutor(  # noqa: DOEFF002
                     max_workers=self._process_max_workers
                 )
             return self._process_executor
@@ -766,7 +780,7 @@ class SpawnEffectHandler:
     def _warn_ray_unavailable(self, fallback: str) -> None:
         if self._ray_unavailable_warned:
             return
-        self._ray_unavailable_warned = True
+        self._ray_unavailable_warned = True  # noqa: DOEFF002
         logger.warning(
             "Ray backend requested but 'ray' is not installed; falling back to %s. "
             "Install via `uv add 'doeff[ray]'` or `pip install ray`.",
@@ -783,7 +797,7 @@ class SpawnEffectHandler:
                 "Ray backend requested but 'ray' is not installed. "
                 "Install via `uv add 'doeff[ray]'` or `pip install ray`."
             ) from exc
-        self._ray = ray
+        self._ray = ray  # noqa: DOEFF002
         return ray
 
     def _ensure_ray_initialized(self) -> Any:
@@ -800,7 +814,7 @@ class SpawnEffectHandler:
                 if self._ray_address is not None:
                     init_kwargs = {"address": self._ray_address, **init_kwargs}
                 ray.init(**init_kwargs)
-            self._ray_remote_runner = ray.remote(_run_spawn_payload)
+            self._ray_remote_runner = ray.remote(_run_spawn_payload)  # noqa: DOEFF002
         return ray
 
     def _build_ray_options(self, options: dict[str, Any]) -> dict[str, Any]:
@@ -846,7 +860,7 @@ class SpawnEffectHandler:
                 raise cause from exc
             raise
 
-    def _unpack_result(self, payload: Any) -> tuple[Any, ExecutionContext]:
+    def _unpack_result(self, payload: Any) -> tuple[Any, ExecutionContext]:  # noqa: DOEFF006
         decoded = payload
         if isinstance(payload, bytes):
             decoded = _cloudpickle_loads(payload, "spawn result")
@@ -870,7 +884,11 @@ class SpawnEffectHandler:
             )
         return value, result_ctx
 
-    def _decode_spawn_payload(self, decoded: Any) -> tuple[Any, Any]:
+    def _decode_spawn_payload(self, decoded: Any) -> tuple[Any, Any]:  # noqa: DOEFF006
+        # Handle cloudpickled bytes from process backend
+        if isinstance(decoded, bytes):
+            decoded = _cloudpickle_loads(decoded, "spawn result")
+
         if isinstance(decoded, tuple) and decoded:
             tag = decoded[0]
             if tag == _SPAWN_ERR_TAG:
@@ -1292,7 +1310,7 @@ class GraphEffectHandler:
         """Handle graph.annotate effect."""
         ctx.graph = ctx.graph.with_last_meta(effect.meta)
 
-    async def handle_snapshot(self, _effect: GraphSnapshotEffect, ctx: ExecutionContext):
+    async def handle_snapshot(self, _effect: GraphSnapshotEffect, ctx: ExecutionContext) -> WGraph:
         """Return the current computation graph."""
         return ctx.graph
 
@@ -1301,7 +1319,7 @@ class GraphEffectHandler:
         effect: GraphCaptureEffect,
         ctx: ExecutionContext,
         engine: ProgramInterpreter,
-    ) -> tuple[Any, WGraph]:
+    ) -> GraphCaptureResult:
         sub_program = effect.program
 
         sub_ctx = ExecutionContext(
@@ -1324,7 +1342,7 @@ class GraphEffectHandler:
         ctx.state.update(result.context.state)
         ctx.log.extend(result.context.log)
 
-        return result.value, result.context.graph
+        return GraphCaptureResult(value=result.value, graph=result.context.graph)
 
 
 
@@ -1374,12 +1392,12 @@ class CacheEffectHandler:
         # Look up cache path from context environment, fall back to default
         env_path = ctx.env.get(CACHE_PATH_ENV_KEY)
         if env_path is not None:
-            self._db_path = Path(env_path) if not isinstance(env_path, Path) else env_path
+            self._db_path = Path(env_path) if not isinstance(env_path, Path) else env_path  # noqa: DOEFF002
         else:
             self._db_path = persistent_cache_path()
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
+        self._conn = sqlite3.connect(  # noqa: DOEFF002
             self._db_path,
             detect_types=sqlite3.PARSE_DECLTYPES,
             check_same_thread=False,
@@ -1397,7 +1415,7 @@ class CacheEffectHandler:
         self._conn.commit()
         return self._conn
 
-    def _serialize_key(self, key: Any) -> tuple[str, bytes]:
+    def _serialize_key(self, key: Any) -> tuple[str, bytes]:  # noqa: DOEFF006
         key_bytes = _cloudpickle_dumps(key, "cache key")
         key_blob = lzma.compress(key_bytes)
         key_hash = hashlib.sha256(key_blob).hexdigest()
@@ -1454,7 +1472,7 @@ class CacheEffectHandler:
             self._conn.commit()
 
 
-__all__ = [
+__all__ = [  # noqa: DOEFF021
     "AtomicEffectHandler",
     "CacheEffectHandler",
     "FutureEffectHandler",
