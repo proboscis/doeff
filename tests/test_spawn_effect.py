@@ -18,10 +18,13 @@ from doeff import (
     Put,
     Recover,
     Spawn,
+    Task,
     ProgramInterpreter,
     do,
     EffectGenerator,
 )
+
+_RAY_TEST_CPUS = 4
 
 
 def _backend_params() -> list[Any]:
@@ -44,7 +47,7 @@ def _build_engine(backend: str, *, default_backend: str | None = None) -> Progra
         spawn_defaults["spawn_default_backend"] = default_backend
     if backend == "ray":
         spawn_defaults["spawn_ray_init_kwargs"] = {
-            "num_cpus": 2,
+            "num_cpus": _RAY_TEST_CPUS,
             "include_dashboard": False,
             "log_to_driver": False,
         }
@@ -67,7 +70,7 @@ def _ray_context(backend: str) -> Iterator[None]:
         if ray.is_initialized():
             ray.shutdown()
         ray.init(
-            num_cpus=2,
+            num_cpus=_RAY_TEST_CPUS,
             include_dashboard=False,
             log_to_driver=False,
             runtime_env={"working_dir": "."},
@@ -459,6 +462,58 @@ async def test_spawn_nested_spawn(backend: str) -> None:
 
     assert result.is_ok
     assert result.value == 4
+
+
+@pytest.mark.asyncio
+async def test_spawn_triple_nested_remote_call() -> None:
+    with _ray_context("ray"):
+        engine = _build_engine("ray")
+        ray_options = _ray_task_options("ray")
+
+        @do
+        def level_three() -> EffectGenerator[int]:
+            yield Put("level3", "ok")
+            return 3
+
+        @do
+        def level_two() -> EffectGenerator[Task[int]]:
+            task = yield Spawn(
+                level_three(),
+                preferred_backend="ray",
+                **ray_options,
+            )
+            yield Put("level2", "spawned")
+            return task
+
+        @do
+        def level_one() -> EffectGenerator[Task[int]]:
+            task = yield Spawn(
+                level_two(),
+                preferred_backend="ray",
+                **ray_options,
+            )
+            yield Put("level1", "spawned")
+            return task
+
+        @do
+        def program() -> EffectGenerator[tuple[int, str | None, str | None, str | None]]:
+            task = yield Spawn(
+                level_one(),
+                preferred_backend="ray",
+                **ray_options,
+            )
+            nested_two = yield task.join()
+            nested_three = yield nested_two.join()
+            value = yield nested_three.join()
+            level1 = yield Get("level1")
+            level2 = yield Get("level2")
+            level3 = yield Get("level3")
+            return value, level1, level2, level3
+
+        result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == (3, "spawned", "spawned", "ok")
 
 
 @pytest.mark.asyncio
