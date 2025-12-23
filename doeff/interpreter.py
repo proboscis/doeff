@@ -43,7 +43,10 @@ from doeff.effects import (
     ResultRetryEffect,
     ResultSafeEffect,
     ResultUnwrapEffect,
+    SpawnBackend,
+    SpawnEffect,
     ThreadEffect,
+    TaskJoinEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -59,6 +62,7 @@ from doeff.handlers import (
     MemoEffectHandler,
     ReaderEffectHandler,
     ResultEffectHandler,
+    SpawnEffectHandler,
     StateEffectHandler,
     ThreadEffectHandler,
     WriterEffectHandler,
@@ -149,15 +153,27 @@ class ProgramInterpreter:
         custom_handlers: dict[str, Any] | None = None,
         *,
         max_log_entries: int | None = None,
+        spawn_default_backend: SpawnBackend = "thread",
+        spawn_thread_max_workers: int | None = None,
+        spawn_process_max_workers: int | None = None,
+        spawn_ray_address: str | None = None,
+        spawn_ray_init_kwargs: dict[str, Any] | None = None,
+        spawn_ray_runtime_env: dict[str, Any] | None = None,
     ):
         """Initialize effect handlers.
 
         Args:
             custom_handlers: Optional dict mapping effect categories to custom handlers.
-                           Keys can be: 'reader', 'state', 'writer', 'future', 'thread', 'result',
-                           'io', 'graph', 'memo', 'cache'.
+                           Keys can be: 'reader', 'state', 'writer', 'future', 'thread', 'spawn',
+                           'result', 'io', 'graph', 'memo', 'cache'.
                            Values should be handler instances with appropriate handle_* methods.
             max_log_entries: Optional cap on the number of writer log entries retained.
+            spawn_default_backend: Default backend for Spawn effects.
+            spawn_thread_max_workers: Max worker threads for Spawn thread backend.
+            spawn_process_max_workers: Max worker processes for Spawn process backend.
+            spawn_ray_address: Ray cluster address for Spawn Ray backend.
+            spawn_ray_init_kwargs: Extra kwargs passed to ray.init().
+            spawn_ray_runtime_env: Default runtime_env for Ray tasks.
         """
         if max_log_entries is not None and max_log_entries < 0:
             raise ValueError("max_log_entries must be >= 0 or None")
@@ -172,6 +188,15 @@ class ProgramInterpreter:
             "writer": WriterEffectHandler(),
             "future": FutureEffectHandler(),
             "thread": ThreadEffectHandler(),
+            "spawn": SpawnEffectHandler(
+                default_backend=spawn_default_backend,
+                thread_max_workers=spawn_thread_max_workers,
+                process_max_workers=spawn_process_max_workers,
+                ray_address=spawn_ray_address,
+                ray_init_kwargs=spawn_ray_init_kwargs,
+                ray_runtime_env=spawn_ray_runtime_env,
+                max_log_entries=max_log_entries,
+            ),
             "result": ResultEffectHandler(),
             "io": IOEffectHandler(),
             "graph": GraphEffectHandler(),
@@ -190,6 +215,7 @@ class ProgramInterpreter:
         self.writer_handler = handlers["writer"]
         self.future_handler = handlers["future"]
         self.thread_handler = handlers["thread"]
+        self.spawn_handler = handlers["spawn"]
         self.result_handler = handlers["result"]
         self.io_handler = handlers["io"]
         self.graph_handler = handlers["graph"]
@@ -548,6 +574,10 @@ class ProgramInterpreter:
             return await self.future_handler.handle_await(effect)
         if _effect_is(effect, FutureParallelEffect):
             return await self.future_handler.handle_parallel(effect)
+        if _effect_is(effect, SpawnEffect):
+            return self.spawn_handler.handle_spawn(effect, ctx, self)
+        if _effect_is(effect, TaskJoinEffect):
+            return await self.spawn_handler.handle_join(effect, ctx)
         if _effect_is(effect, ThreadEffect):
             awaitable = self.thread_handler.handle_thread(effect, ctx, self)
             if effect.await_result:
