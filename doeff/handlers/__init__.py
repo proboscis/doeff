@@ -9,11 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import importlib.util
+import logging
 import lzma
 import sqlite3
 import threading
+from dataclasses import replace
 from collections.abc import Awaitable, Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -45,7 +48,10 @@ from doeff.effects import (
     ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
+    SpawnEffect,
     ThreadEffect,
+    Task,
+    TaskJoinEffect,
     StateGetEffect,
     StateModifyEffect,
     StatePutEffect,
@@ -57,6 +63,10 @@ from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
 from doeff.program import Program
 from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 from doeff.utils import BoundedLog
+
+logger = logging.getLogger(__name__)
+
+_MISSING = object()
 
 
 def _safe_object_repr(value: Any) -> str:
@@ -74,6 +84,129 @@ def _cloudpickle_dumps(value: Any, context: str) -> bytes:
         raise TypeError(
             f"Failed to cloudpickle {context}; object type={type(value).__name__}; repr={value_repr}"
         ) from exc
+
+
+def _cloudpickle_loads(payload: bytes, context: str) -> Any:
+    try:
+        return cloudpickle.loads(payload)
+    except Exception as exc:
+        raise TypeError(f"Failed to load {context} via cloudpickle: {exc}") from exc
+
+
+def _sanitize_created_at(created_at: Any) -> Any:
+    from doeff.types import EffectCreationContext
+
+    if isinstance(created_at, EffectCreationContext):
+        return created_at.without_frames()
+    return created_at
+
+
+def _sanitize_program(program: Any) -> Any:
+    from doeff.types import EffectBase
+
+    def _get_attr(obj: Any, name: str) -> Any:
+        try:
+            return object.__getattribute__(obj, name)
+        except AttributeError:
+            return _MISSING
+
+    if isinstance(program, EffectBase):
+        created_at = _sanitize_created_at(program.created_at)
+        if created_at is not program.created_at:
+            return program.with_created_at(created_at)
+        return program
+
+    base_program = _get_attr(program, "base_program")
+    transforms = _get_attr(program, "transforms")
+    if base_program is not _MISSING and transforms is not _MISSING:
+        sanitized_base = _sanitize_program(base_program)
+        if sanitized_base is not base_program:
+            try:
+                return replace(program, base_program=sanitized_base)
+            except Exception:
+                pass
+
+    created_at = _get_attr(program, "created_at")
+    if created_at is not _MISSING:
+        sanitized = _sanitize_created_at(created_at)
+        if sanitized is not created_at:
+            try:
+                return replace(program, created_at=sanitized)
+            except Exception:
+                pass
+    return program
+
+
+def _sanitize_call_stack(call_stack: list[CallFrame]) -> list[CallFrame]:
+    sanitized: list[CallFrame] = []
+    for frame in call_stack:
+        created_at = _sanitize_created_at(frame.created_at)
+        frame = replace(
+            frame,
+            kleisli=None,
+            args=(),
+            kwargs={},
+            created_at=created_at,
+        )
+        sanitized.append(frame)
+    return sanitized
+
+
+def _pack_execution_context(ctx: ExecutionContext) -> dict[str, Any]:
+    return {
+        "env": ctx.env,
+        "state": ctx.state,
+        "log": list(ctx.log),
+        "graph": ctx.graph,
+        "io_allowed": ctx.io_allowed,
+        "cache": ctx.cache,
+    }
+
+
+def _sanitize_exception(error: BaseException) -> BaseException:
+    from doeff.types import EffectFailure
+
+    if isinstance(error, EffectFailure):
+        error.creation_context = _sanitize_created_at(error.creation_context)
+        error.effect = _sanitize_program(error.effect)
+    return error
+
+
+def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:
+    return (
+        _SPAWN_ERR_TAG,
+        {
+            "type": error.__class__.__name__,
+            "message": str(error),
+        },
+    )
+
+
+def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> tuple[Any, ...]:
+    try:
+        program, ctx = _cloudpickle_loads(payload, "spawn payload")
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return _pack_spawn_error(exc)
+
+    from doeff.interpreter import ProgramInterpreter
+
+    engine = ProgramInterpreter(max_log_entries=max_log_entries)
+    try:
+        result = engine.run(program, ctx)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        return _pack_spawn_error(exc)
+
+    if isinstance(result.result, Err):
+        error = _sanitize_exception(result.result.error)
+        return _pack_spawn_error(error)
+
+    packed_ctx = _pack_execution_context(result.context)
+    return (_SPAWN_OK_TAG, result.value, packed_ctx)
+
+
+_VALID_SPAWN_BACKENDS = ("thread", "process", "ray")
+_SPAWN_OK_TAG = "__doeff_spawn_ok__"
+_SPAWN_ERR_TAG = "__doeff_spawn_err__"
 
 # Need Program at runtime for isinstance checks
 
@@ -372,6 +505,390 @@ class ThreadEffectHandler:
         parent.log.clear()
         parent.log.extend(child.log)
         parent.graph = child.graph
+
+
+class SpawnEffectHandler:
+    """Handles spawning programs in background tasks."""
+
+    scope = HandlerScope.SHARED
+
+    def __init__(
+        self,
+        *,
+        default_backend: str = "thread",
+        thread_max_workers: int | None = None,
+        process_max_workers: int | None = None,
+        ray_address: str | None = None,
+        ray_init_kwargs: dict[str, Any] | None = None,
+        ray_runtime_env: dict[str, Any] | None = None,
+        max_log_entries: int | None = None,
+    ) -> None:
+        if default_backend not in _VALID_SPAWN_BACKENDS:
+            raise ValueError(
+                "default_backend must be one of 'thread', 'process', or 'ray', "
+                f"got {default_backend!r}"
+            )
+
+        self._default_backend = default_backend
+        self._thread_max_workers = thread_max_workers
+        self._process_max_workers = process_max_workers
+        self._ray_address = ray_address
+        self._ray_init_kwargs = dict(ray_init_kwargs or {})
+        self._ray_runtime_env = dict(ray_runtime_env or {}) if ray_runtime_env else None
+        self._max_log_entries = max_log_entries
+
+        self._thread_executor: ThreadPoolExecutor | None = None
+        self._process_executor: ProcessPoolExecutor | None = None
+        self._thread_lock = threading.Lock()
+        self._process_lock = threading.Lock()
+
+        self._ray = None
+        self._ray_lock = threading.Lock()
+        self._ray_remote_runner = None
+        self._ray_unavailable_warned = False
+        self._task_results: dict[int, tuple[Any, ExecutionContext]] = {}
+        self._merged_tasks: set[tuple[int, int]] = set()
+        self._join_lock: asyncio.Lock | None = None
+
+    def handle_spawn(
+        self,
+        effect: SpawnEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Task[Any]:
+        backend = self._resolve_backend(effect)
+        if backend == "thread":
+            return self._spawn_thread(effect, ctx, engine)
+        if backend == "process":
+            return self._spawn_process(effect, ctx)
+        if backend == "ray":
+            return self._spawn_ray(effect, ctx)
+        raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+
+    async def handle_join(
+        self,
+        effect: TaskJoinEffect,
+        ctx: ExecutionContext,
+    ) -> Any:
+        task = effect.task
+        task_id = id(task._handle)
+        cached = self._task_results.get(task_id)
+
+        if cached is None:
+            backend = task.backend
+            if backend == "ray":
+                result_payload = await self._await_ray(task._handle)
+            else:
+                result_payload = await task._handle
+            value, result_ctx = self._unpack_result(result_payload)
+            if self._join_lock is None:
+                self._join_lock = asyncio.Lock()
+            async with self._join_lock:
+                cached = self._task_results.setdefault(task_id, (value, result_ctx))
+
+        value, result_ctx = cached
+        if self._join_lock is None:
+            self._join_lock = asyncio.Lock()
+        async with self._join_lock:
+            merge_key = (task_id, id(ctx))
+            should_merge = merge_key not in self._merged_tasks
+            if should_merge:
+                self._merged_tasks.add(merge_key)
+
+        if should_merge:
+            self._merge_context(ctx, result_ctx, task)
+        return value
+
+    def _resolve_backend(self, effect: SpawnEffect) -> str:
+        backend = effect.preferred_backend or self._default_backend
+        if backend == "ray" and not self._ray_available():
+            fallback = self._default_backend if self._default_backend != "ray" else "thread"
+            self._warn_ray_unavailable(fallback)
+            return fallback
+        return backend
+
+    def _spawn_thread(
+        self,
+        effect: SpawnEffect,
+        ctx: ExecutionContext,
+        engine: "ProgramInterpreter",
+    ) -> Task[Any]:
+        loop = asyncio.get_running_loop()
+        sub_ctx = self._prepare_context(ctx, share_cache=True)
+        env_snapshot = sub_ctx.env.copy()
+        state_snapshot = sub_ctx.state.copy()
+
+        def run_program() -> tuple[Any, ExecutionContext]:
+            pragmatic_result = engine.run(effect.program, sub_ctx)
+            if isinstance(pragmatic_result.result, Err):
+                raise pragmatic_result.result.error
+            return pragmatic_result.value, pragmatic_result.context
+
+        future = loop.run_in_executor(self._ensure_thread_executor(), run_program)
+        return Task(
+            backend="thread",
+            _handle=future,
+            _env_snapshot=env_snapshot,
+            _state_snapshot=state_snapshot,
+        )
+
+    def _spawn_process(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
+        loop = asyncio.get_running_loop()
+        sub_ctx = self._prepare_context(ctx, share_cache=False, sanitize_call_stack=True)
+        env_snapshot = sub_ctx.env.copy()
+        state_snapshot = sub_ctx.state.copy()
+        program = _sanitize_program(effect.program)
+        payload = _cloudpickle_dumps((program, sub_ctx), "spawn payload")
+        future = loop.run_in_executor(
+            self._ensure_process_executor(),
+            _run_spawn_payload,
+            payload,
+            self._max_log_entries,
+        )
+        return Task(
+            backend="process",
+            _handle=future,
+            _env_snapshot=env_snapshot,
+            _state_snapshot=state_snapshot,
+        )
+
+    def _spawn_ray(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
+        self._ensure_ray_initialized()
+        sub_ctx = self._prepare_context(ctx, share_cache=False, sanitize_call_stack=True)
+        env_snapshot = sub_ctx.env.copy()
+        state_snapshot = sub_ctx.state.copy()
+        program = _sanitize_program(effect.program)
+        payload = _cloudpickle_dumps((program, sub_ctx), "spawn payload")
+        options = self._build_ray_options(effect.options)
+        runner = self._ray_remote_runner
+        if options:
+            runner = runner.options(**options)
+        object_ref = runner.remote(payload, max_log_entries=self._max_log_entries)
+        return Task(
+            backend="ray",
+            _handle=object_ref,
+            _env_snapshot=env_snapshot,
+            _state_snapshot=state_snapshot,
+        )
+
+    def _prepare_context(
+        self,
+        ctx: ExecutionContext,
+        *,
+        share_cache: bool,
+        sanitize_call_stack: bool = False,
+    ) -> ExecutionContext:
+        if isinstance(ctx.log, BoundedLog):
+            log = ctx.log.spawn_empty()
+        else:
+            log = BoundedLog()
+        if self._max_log_entries is not None:
+            log.set_max_entries(self._max_log_entries)
+
+        cache = ctx.cache if share_cache else {}
+        observations = ctx.effect_observations if share_cache else []
+        call_stack = ctx.program_call_stack.copy()
+        if sanitize_call_stack:
+            call_stack = _sanitize_call_stack(call_stack)
+
+        return ExecutionContext(
+            env=ctx.env.copy() if ctx.env else {},
+            state=ctx.state.copy() if ctx.state else {},
+            log=log,
+            graph=ctx.graph,
+            io_allowed=ctx.io_allowed,
+            cache=cache,
+            effect_observations=observations,
+            program_call_stack=call_stack,
+        )
+
+    def _merge_context(
+        self,
+        parent: ExecutionContext,
+        child: ExecutionContext,
+        task: Task[Any],
+    ) -> None:
+        self._merge_mapping(parent.env, child.env, task._env_snapshot)
+        self._merge_mapping(parent.state, child.state, task._state_snapshot)
+        parent.log.extend(child.log)
+
+        combined_steps = set(parent.graph.steps)
+        combined_steps.update(child.graph.steps)
+        parent.graph = WGraph(last=child.graph.last, steps=frozenset(combined_steps))
+
+    @staticmethod
+    def _merge_mapping(
+        target: dict[Any, Any],
+        source: dict[Any, Any],
+        snapshot: dict[Any, Any],
+    ) -> None:
+        for key, value in source.items():
+            if key not in snapshot or not SpawnEffectHandler._values_equal(
+                snapshot.get(key), value
+            ):
+                target[key] = value
+
+    @staticmethod
+    def _values_equal(left: Any, right: Any) -> bool:
+        try:
+            return left == right
+        except Exception:
+            return False
+
+    def _ensure_thread_executor(self) -> ThreadPoolExecutor:
+        executor = self._thread_executor
+        if executor is not None:
+            return executor
+        with self._thread_lock:
+            if self._thread_executor is None:
+                self._thread_executor = ThreadPoolExecutor(
+                    max_workers=self._thread_max_workers,
+                    thread_name_prefix="doeff-spawn-thread",
+                )
+            return self._thread_executor
+
+    def _ensure_process_executor(self) -> ProcessPoolExecutor:
+        executor = self._process_executor
+        if executor is not None:
+            return executor
+        with self._process_lock:
+            if self._process_executor is None:
+                self._process_executor = ProcessPoolExecutor(
+                    max_workers=self._process_max_workers
+                )
+            return self._process_executor
+
+    def _ray_available(self) -> bool:
+        if self._ray is not None:
+            return True
+        return importlib.util.find_spec("ray") is not None
+
+    def _warn_ray_unavailable(self, fallback: str) -> None:
+        if self._ray_unavailable_warned:
+            return
+        self._ray_unavailable_warned = True
+        logger.warning(
+            "Ray backend requested but 'ray' is not installed; falling back to %s. "
+            "Install via `uv add 'doeff[ray]'` or `pip install ray`.",
+            fallback,
+        )
+
+    def _load_ray(self) -> Any:
+        if self._ray is not None:
+            return self._ray
+        try:
+            import ray
+        except ImportError as exc:
+            raise RuntimeError(
+                "Ray backend requested but 'ray' is not installed. "
+                "Install via `uv add 'doeff[ray]'` or `pip install ray`."
+            ) from exc
+        self._ray = ray
+        return ray
+
+    def _ensure_ray_initialized(self) -> Any:
+        ray = self._load_ray()
+        if self._ray_remote_runner is not None:
+            return ray
+        with self._ray_lock:
+            if self._ray_remote_runner is not None:
+                return ray
+            if not ray.is_initialized():
+                init_kwargs = dict(self._ray_init_kwargs)
+                if self._ray_runtime_env and "runtime_env" not in init_kwargs:
+                    init_kwargs["runtime_env"] = self._ray_runtime_env
+                if self._ray_address is not None:
+                    init_kwargs = {"address": self._ray_address, **init_kwargs}
+                ray.init(**init_kwargs)
+            self._ray_remote_runner = ray.remote(_run_spawn_payload)
+        return ray
+
+    def _build_ray_options(self, options: dict[str, Any]) -> dict[str, Any]:
+        ray_options = dict(options)
+        runtime_env = ray_options.pop("runtime_env", None)
+        merged_env = self._merge_runtime_env(runtime_env)
+        if merged_env:
+            ray_options["runtime_env"] = merged_env
+        return ray_options
+
+    def _merge_runtime_env(
+        self, override: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if self._ray_runtime_env is None and override is None:
+            return None
+
+        merged: dict[str, Any] = {}
+        if self._ray_runtime_env:
+            merged.update(self._ray_runtime_env)
+
+        if override:
+            if (
+                "env_vars" in merged
+                and "env_vars" in override
+                and isinstance(merged["env_vars"], dict)
+                and isinstance(override["env_vars"], dict)
+            ):
+                merged["env_vars"] = {
+                    **merged["env_vars"],
+                    **override["env_vars"],
+                }
+                override = {key: value for key, value in override.items() if key != "env_vars"}
+            merged.update(override)
+        return merged
+
+    async def _await_ray(self, object_ref: Any) -> Any:
+        ray = self._load_ray()
+        try:
+            return await asyncio.to_thread(ray.get, object_ref)
+        except Exception as exc:
+            cause = getattr(exc, "cause", None)
+            if isinstance(cause, BaseException):
+                raise cause from exc
+            raise
+
+    def _unpack_result(self, payload: Any) -> tuple[Any, ExecutionContext]:
+        decoded = payload
+        if isinstance(payload, bytes):
+            decoded = _cloudpickle_loads(payload, "spawn result")
+
+        value, result_ctx = self._decode_spawn_payload(decoded)
+        if isinstance(result_ctx, dict):
+            result_ctx = ExecutionContext(
+                env=result_ctx.get("env", {}),
+                state=result_ctx.get("state", {}),
+                log=result_ctx.get("log", []),
+                graph=result_ctx.get("graph", WGraph.single(None)),
+                io_allowed=result_ctx.get("io_allowed", True),
+                cache=result_ctx.get("cache", {}),
+                effect_observations=[],
+                program_call_stack=[],
+            )
+        if not isinstance(result_ctx, ExecutionContext):
+            raise TypeError(
+                "spawn task result context must be ExecutionContext, "
+                f"got {type(result_ctx).__name__}"
+            )
+        return value, result_ctx
+
+    def _decode_spawn_payload(self, decoded: Any) -> tuple[Any, Any]:
+        if isinstance(decoded, tuple) and decoded:
+            tag = decoded[0]
+            if tag == _SPAWN_ERR_TAG:
+                error = decoded[1] if len(decoded) > 1 else RuntimeError("Spawn task failed")
+                if isinstance(error, dict):
+                    error_type = error.get("type", "Error")
+                    message = error.get("message", "")
+                    raise RuntimeError(f"Spawn task failed ({error_type}): {message}")
+                if isinstance(error, BaseException):
+                    raise error
+                raise RuntimeError(f"Spawn task failed: {error!r}")
+            if tag == _SPAWN_OK_TAG:
+                value = decoded[1] if len(decoded) > 1 else None
+                result_ctx = decoded[2] if len(decoded) > 2 else {}
+                return value, result_ctx
+
+        value, result_ctx = decoded
+        return value, result_ctx
 
 
 class _InterpreterHandle:
@@ -947,6 +1464,7 @@ __all__ = [
     "MemoEffectHandler",
     "ReaderEffectHandler",
     "ResultEffectHandler",
+    "SpawnEffectHandler",
     "StateEffectHandler",
     "ThreadEffectHandler",
     "WriterEffectHandler",
