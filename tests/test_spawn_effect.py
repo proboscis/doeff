@@ -1,5 +1,7 @@
 import asyncio
 import atexit
+import importlib.util
+import logging
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -128,6 +130,40 @@ async def test_spawn_default_backend_selection(backend: str) -> None:
 
     assert result.is_ok
     assert result.value == "ready"
+
+
+@pytest.mark.asyncio
+async def test_spawn_warns_when_ray_unavailable(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    engine = ProgramInterpreter()
+    original_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "ray":
+            return None
+        return original_find_spec(name, *args, **kwargs)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    caplog.set_level(logging.WARNING, logger="doeff.handlers")
+
+    @do
+    def worker() -> EffectGenerator[int]:
+        return 5
+
+    @do
+    def program() -> EffectGenerator[int]:
+        task = yield Spawn(worker(), preferred_backend="ray")
+        return (yield task.join())
+
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == 5
+    assert any(
+        "Ray backend requested but 'ray' is not installed" in message
+        for message in caplog.messages
+    )
 
 
 @pytest.mark.asyncio
