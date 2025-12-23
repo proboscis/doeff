@@ -80,7 +80,7 @@ async def test_display_includes_call_tree():
 
 @pytest.mark.asyncio
 async def test_display_error_with_traceback():
-    """Test display() shows full stack trace for errors."""
+    """Test display() shows user-friendly error output with root cause first."""
     @do
     def failing_program() -> EffectGenerator[str]:
         yield Put("step", "before_error")
@@ -96,13 +96,13 @@ async def test_display_error_with_traceback():
 
     # Verify error indicators
     assert "❌ Failure" in display_output
-    assert "Error Chain (most recent first):" in display_output
+    # New format shows root cause first instead of error chain
+    assert "Root Cause:" in display_output
+    assert "ValueError: Something went wrong in the program" in display_output
+    # Status section still shows effect failure info
     assert "Effect 'ResultFailEffect' failed" in display_output
-    assert "Caused by: ValueError: Something went wrong in the program" in display_output
-    assert "🔥 Fail Creation Stack Trace:" in display_output
-    assert "failing_program" in display_output
 
-    # Verify creation location is shown
+    # Verify creation location is shown in status section
     assert "📍 Created at:" in display_output
     assert "failing_program" in display_output
 
@@ -113,10 +113,15 @@ async def test_display_error_with_traceback():
     # Verify summary shows error status
     assert "Status: ❌ Error" in display_output
 
+    # Verbose mode should show the full error chain
+    verbose_output = result.display(verbose=True)
+    assert "Error Chain (most recent first):" in verbose_output
+    assert "📍 Effect Creation Stack Trace:" in verbose_output
+
 
 @pytest.mark.asyncio
 async def test_display_trace_includes_user_frames():
-    """Display output should show full user stack frames by default."""
+    """Display output should show full user stack frames in verbose mode."""
 
     def helper_outer() -> None:
         helper_middle()
@@ -137,17 +142,21 @@ async def test_display_trace_includes_user_frames():
 
     assert result.is_err
 
+    # Non-verbose mode shows root cause clearly
     display_output = result.display(verbose=False)
+    assert "Root Cause:" in display_output
+    assert "JSONDecodeError" in display_output
 
-    # Full traceback should surface user helper frames and source file.
-    assert "helper_outer" in display_output
-    assert "helper_middle" in display_output
-    assert "tests/test_runresult_display.py" in display_output
+    # Verbose mode shows full traceback with user helper frames
+    verbose_output = result.display(verbose=True)
+    assert "helper_outer" in verbose_output
+    assert "helper_middle" in verbose_output
+    assert "tests/test_runresult_display.py" in verbose_output
 
 
 @pytest.mark.asyncio
 async def test_display_primary_effect_shows_creation_stack(monkeypatch):
-    """Closest failing effect should surface its creation stack without verbose."""
+    """Closest failing effect should surface its root cause and creation location."""
 
     def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
@@ -166,14 +175,20 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch):
 
     display_output = result.display(verbose=False)
 
+    # Non-verbose shows effect failure info in status and root cause
     assert "Effect 'CachePutEffect' failed" in display_output
-    assert "🔥 Effect Creation Stack Trace:" in display_output
+    assert "Root Cause:" in display_output
+    assert "TypeError: synthetic cache failure" in display_output
     assert "cache_program" in display_output
+
+    # Verbose mode shows full stack trace
+    verbose_output = result.display(verbose=True)
+    assert "📍 Effect Creation Stack Trace:" in verbose_output
 
 
 @pytest.mark.asyncio
 async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
-    """Recover failures should surface the failing effect's creation stack."""
+    """Recover failures should surface the root cause clearly."""
 
     def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
@@ -202,20 +217,23 @@ async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
 
     display_output = result.display(verbose=False)
 
+    # Non-verbose shows root cause first
+    assert "Root Cause:" in display_output
+    assert "TypeError: synthetic cache failure" in display_output
     assert "Effect 'ResultRecoverEffect' failed" in display_output
-    recover_section = display_output.split("Effect 'ResultRecoverEffect' failed", 1)[1]
-    assert "🔥 Effect Creation Stack Trace:" in recover_section
-    assert "recover_program" in recover_section
+    assert "recover_program" in display_output
 
-    assert "Effect 'CachePutEffect' failed" in display_output
-    cache_section = display_output.split("Effect 'CachePutEffect' failed", 1)[1]
-    assert "🔥 Effect Creation Stack Trace:" in cache_section
-    assert "compute_and_cache" in cache_section
+    # Verbose mode shows full error chain with all creation stacks
+    verbose_output = result.display(verbose=True)
+    assert "Error Chain (most recent first):" in verbose_output
+    assert "Effect 'ResultRecoverEffect' failed" in verbose_output
+    assert "📍 Effect Creation Stack Trace:" in verbose_output
+    assert "compute_and_cache" in verbose_output
 
 
 @pytest.mark.asyncio
 async def test_display_nested_error():
-    """Test display() with nested errors and Recover."""
+    """Test display() with nested errors shows root cause first."""
     @do
     def inner_failing() -> EffectGenerator[int]:
         yield Fail(KeyError("missing_key"))
@@ -233,13 +251,18 @@ async def test_display_nested_error():
 
     display_output = result.display()
 
-    # Should show the KeyError details
-    assert "Error Chain (most recent first):" in display_output
+    # Non-verbose shows root cause first
+    assert "Root Cause:" in display_output
+    assert "KeyError: 'missing_key'" in display_output
     assert "Effect 'ResultFailEffect' failed" in display_output
-    assert "Caused by: KeyError: 'missing_key'" in display_output
 
     # State should still be captured
     assert 'outer_state: "started"' in display_output
+
+    # Verbose mode shows full error chain
+    verbose_output = result.display(verbose=True)
+    assert "Error Chain (most recent first):" in verbose_output
+    assert "Caused by: KeyError: 'missing_key'" in verbose_output
 
 
 @pytest.mark.asyncio
@@ -530,3 +553,79 @@ async def test_display_formatting():
     for line in lines:
         if "test: 123" in line:
             assert line.startswith("    ")  # 4-space indent
+
+
+@pytest.mark.asyncio
+async def test_display_user_effect_stack_nested_programs():
+    """Test display() shows user effect stack for nested KleisliProgram failures."""
+
+    @do
+    def inner_program() -> EffectGenerator[int]:
+        """This program fails with a ValueError."""
+        yield Fail(ValueError("Inner failure"))
+        return 0
+
+    @do
+    def middle_program() -> EffectGenerator[int]:
+        """This program calls inner_program."""
+        result = yield inner_program()
+        return result
+
+    @do
+    def outer_program() -> EffectGenerator[int]:
+        """This program calls middle_program."""
+        yield Put("started", True)
+        result = yield middle_program()
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_program())
+
+    assert result.is_err
+
+    # Non-verbose mode shows root cause first
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown first
+    assert "Root Cause:" in display_output
+    assert "ValueError: Inner failure" in display_output
+
+    # Should show the failure originated from inner_program
+    assert "inner_program" in display_output
+
+    # Verbose mode should show full error chain
+    verbose_output = result.display(verbose=True)
+    assert "Error Chain (most recent first):" in verbose_output
+    assert "Effect 'ResultFailEffect' failed" in verbose_output
+
+
+@pytest.mark.asyncio
+async def test_display_user_effect_stack_shows_user_code_only():
+    """Test that effect stack filters out doeff internals in non-verbose mode."""
+
+    @do
+    def user_function() -> EffectGenerator[None]:
+        yield Fail(RuntimeError("User error"))
+        return None
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(user_function())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause shown first
+    assert "Root Cause:" in display_output
+    assert "RuntimeError: User error" in display_output
+
+    # User function should be visible
+    assert "user_function" in display_output
+
+    # Internal doeff paths should NOT be in the user effect stack
+    # (they may appear in status section, which is fine)
+    if "Effect Stack (user code):" in display_output:
+        stack_section = display_output.split("Effect Stack (user code):")[1]
+        stack_section = stack_section.split("\n\n")[0]  # Get just this section
+        assert "/doeff/interpreter.py" not in stack_section
+        assert "/doeff/handlers/" not in stack_section
