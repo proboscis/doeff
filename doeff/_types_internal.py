@@ -301,6 +301,35 @@ class CapturedTraceback:
 
         return "\n".join(self.lines(condensed=condensed, max_lines=max_lines))
 
+    def get_raise_location(self) -> RaiseLocation | None:
+        """Extract the innermost user code frame where exception was raised.
+
+        Returns RaiseLocation with (filename, line, function, code) or None if no frame found.
+        """
+        # Get frames from the traceback exception (innermost last)
+        frames = list(self.traceback.stack)
+        if not frames:
+            return None
+
+        # Search from innermost frame outward for a user code frame
+        for frame in reversed(frames):
+            if _is_user_code_path(frame.filename):
+                return RaiseLocation(frame.filename, frame.lineno, frame.name, frame.line)
+
+        # Fall back to innermost frame even if not user code
+        frame = frames[-1]
+        return RaiseLocation(frame.filename, frame.lineno, frame.name, frame.line)
+
+
+@dataclass(frozen=True)
+class RaiseLocation:
+    """Location where an exception was raised."""
+
+    filename: str
+    line: int
+    function: str
+    code: str | None
+
 
 @dataclass(frozen=True)
 class _TracebackSplit:
@@ -1327,6 +1356,22 @@ class _BaseSection:
             max_length=max_length,
         )
 
+    def _relative_path(self, path: str) -> str:
+        """Convert absolute path to relative path for cleaner display."""
+        import os
+
+        cwd = os.getcwd()
+        if path.startswith(cwd):
+            return path[len(cwd) + 1 :]
+        # Try to extract a meaningful relative path
+        parts = path.replace("\\", "/").split("/")
+        # Find a recognizable directory like 'tests' or 'src'
+        for i, part in enumerate(parts):
+            if part in ("tests", "src", "placement", "doeff"):
+                return "/".join(parts[i:])
+        # Fall back to just the filename
+        return parts[-1] if parts else path
+
 
 class _HeaderSection(_BaseSection):
     def render(self) -> list[str]:
@@ -1363,14 +1408,31 @@ class _StatusSection(_BaseSection):
             head = details.entries[0]
             if isinstance(head, EffectFailureInfo):
                 effect_name = head.effect.__class__.__name__
-                lines.append(self.indent(1, f"Effect '{effect_name}' failed"))
-                if head.creation_context:
-                    lines.append(
-                        self.indent(
-                            2,
-                            f"📍 Created at: {head.creation_context.format_location()}",
+                # Show more meaningful message for NullEffect (direct exception raise)
+                if effect_name == "NullEffect":
+                    lines.append(self.indent(1, "Exception raised"))
+                    # Show the location where exception was raised from runtime trace
+                    if head.runtime_trace:
+                        loc = head.runtime_trace.get_raise_location()
+                        if loc:
+                            rel_path = self._relative_path(loc.filename)
+                            lines.append(
+                                self.indent(
+                                    2,
+                                    f"📍 Raised at: {rel_path}:{loc.line} in {loc.function}",
+                                )
+                            )
+                            if loc.code:
+                                lines.append(self.indent(3, loc.code.strip()))
+                else:
+                    lines.append(self.indent(1, f"Effect '{effect_name}' failed"))
+                    if head.creation_context:
+                        lines.append(
+                            self.indent(
+                                2,
+                                f"📍 Created at: {head.creation_context.format_location()}",
+                            )
                         )
-                    )
                 if head.cause:
                     if isinstance(head.cause, EffectFailure):
                         lines.append(
@@ -1507,7 +1569,7 @@ class _UserEffectStackSection(_BaseSection):
         frames: list[_UserEffectFrame] = []
         seen_locations: set[tuple[str, int, str]] = set()
 
-        for entry in details.entries:
+        for entry in details.entries:  # noqa: DOEFF012
             if not isinstance(entry, EffectFailureInfo):
                 continue
 
@@ -1532,6 +1594,24 @@ class _UserEffectStackSection(_BaseSection):
                             code=ctx.code,
                         )
                     )
+
+            # For NullEffect (direct exception raise), extract frames from runtime_trace
+            # This shows the actual location where the exception was raised
+            effect_name = entry.effect.__class__.__name__
+            if effect_name == "NullEffect" and entry.runtime_trace:
+                loc = entry.runtime_trace.get_raise_location()
+                if loc and _is_user_code_path(loc.filename):
+                    loc_key = (loc.filename, loc.line, loc.function)
+                    if loc_key not in seen_locations:
+                        seen_locations.add(loc_key)
+                        frames.append(
+                            _UserEffectFrame(
+                                filename=loc.filename,
+                                line=loc.line,
+                                function=loc.function,
+                                code=loc.code,
+                            )
+                        )
 
             # Then add frames from effect creation context
             ctx = entry.creation_context
@@ -1580,22 +1660,6 @@ class _UserEffectStackSection(_BaseSection):
 
         return frames
 
-    def _relative_path(self, path: str) -> str:
-        """Convert absolute path to relative path for cleaner display."""
-        import os
-
-        cwd = os.getcwd()
-        if path.startswith(cwd):
-            return path[len(cwd) + 1 :]
-        # Try to extract a meaningful relative path
-        parts = path.replace("\\", "/").split("/")
-        # Find a recognizable directory like 'tests' or 'src'
-        for i, part in enumerate(parts):
-            if part in ("tests", "src", "placement", "doeff"):
-                return "/".join(parts[i:])
-        # Fall back to just the filename
-        return parts[-1] if parts else path
-
 
 class _ErrorSection(_BaseSection):
     def render(self) -> list[str]:
@@ -1636,7 +1700,11 @@ class _ErrorSection(_BaseSection):
         is_primary: bool,  # noqa: DOEFF011
     ) -> list[str]:
         effect_name = entry.effect.__class__.__name__
-        lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
+        # Show more meaningful message for NullEffect (direct exception raise)
+        if effect_name == "NullEffect":
+            lines = [self.indent(1, f"[{idx}] Exception raised")]
+        else:
+            lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
         lines.extend(
             self._render_effect_creation_details(entry, effect_name, is_primary)
         )
@@ -1650,6 +1718,18 @@ class _ErrorSection(_BaseSection):
         effect_name: str,
         is_primary: bool,  # noqa: DOEFF011
     ) -> list[str]:
+        # For NullEffect, show the exception raise location from runtime_trace
+        if effect_name == "NullEffect":
+            if entry.runtime_trace:
+                loc = entry.runtime_trace.get_raise_location()
+                if loc:
+                    rel_path = self._relative_path(loc.filename)
+                    lines = [self.indent(2, f"📍 Raised at: {rel_path}:{loc.line} in {loc.function}")]
+                    if loc.code:
+                        lines.append(self.indent(3, loc.code.strip()))
+                    return lines
+            return [self.indent(2, "📍 Raised at: <unknown>")]
+
         ctx = entry.creation_context
         if ctx is None:
             return [self.indent(2, "📍 Created at: <unknown>")]
