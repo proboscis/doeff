@@ -745,7 +745,11 @@ class SpawnEffectHandler:
     @staticmethod
     def _values_equal(left: Any, right: Any) -> bool:
         try:
-            return left == right
+            result = left == right
+            if isinstance(result, bool):
+                return result
+            # Non-bool __eq__ result (numpy arrays, DataFrames, etc.)
+            return False
         except Exception:
             return False
 
