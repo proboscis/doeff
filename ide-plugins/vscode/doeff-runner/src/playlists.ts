@@ -15,6 +15,7 @@ export interface PlaylistItemBase {
   branch: string | null;
   commit: string | null;
   worktree: string | null;
+  cwd: string | null; // Custom working directory (absolute or relative to workspace root)
 }
 
 // Doeff program playlist item (original type)
@@ -109,6 +110,7 @@ function normalizeItem(value: unknown): PlaylistItemV2 | undefined {
 
   const commit = value.commit;
   const worktree = value.worktree;
+  const cwd = value.cwd;
   const type = value.type;
 
   // Handle custom playlist items
@@ -125,6 +127,7 @@ function normalizeItem(value: unknown): PlaylistItemV2 | undefined {
       branch: branch === null ? null : isString(branch) ? branch : null,
       commit: commit === null ? null : isString(commit) ? commit : null,
       worktree: worktree === null ? null : isString(worktree) ? worktree : null,
+      cwd: cwd === null ? null : isString(cwd) ? cwd : null,
       cmd
     };
   }
@@ -146,6 +149,7 @@ function normalizeItem(value: unknown): PlaylistItemV2 | undefined {
     branch,
     commit: commit === null ? null : isString(commit) ? commit : null,
     worktree: worktree === null ? null : isString(worktree) ? worktree : null,
+    cwd: cwd === null ? null : isString(cwd) ? cwd : null,
     program,
     apply: apply === null ? null : isString(apply) ? apply : null,
     transform: transform === null ? null : isString(transform) ? transform : null,
