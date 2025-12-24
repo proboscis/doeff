@@ -185,7 +185,7 @@ interface IndexEntry {
 interface RunSelection {
   programPath: string;
   programType: string;
-  interpreter: IndexEntry;
+  interpreter?: IndexEntry; // Optional: if undefined, doeff run uses its default interpreter
   kleisli?: IndexEntry;
   transformer?: IndexEntry;
 }
@@ -1763,6 +1763,7 @@ class DoeffPlaylistsStore implements vscode.Disposable {
           worktree: null,
           cwd: null,
           program,
+          interpreter: null,
           apply,
           transform,
           args: {}
@@ -3229,6 +3230,7 @@ export function activate(context: vscode.ExtensionContext) {
       worktree: null,
       cwd: null,
       program: programQualifiedName,
+      interpreter: null,
       apply: null,
       transform: null,
       args: {}
@@ -3485,13 +3487,20 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const proximity: ProximityContext = { filePath: programEntry.filePath, line: programEntry.line };
-    const interpreters = await fetchEntries(indexerPath, lookupCwd, 'find-interpreters', '', proximity);
-    if (interpreters.length === 0) {
-      vscode.window.showErrorMessage('No interpreters found in target worktree.');
-      return;
+    const programTypeArg = extractProgramTypeArg(programEntry);
+
+    // Only lookup interpreter if explicitly specified in playlist item;
+    // otherwise, let doeff run use its default interpreter
+    let interpreter: IndexEntry | undefined;
+    if (item.interpreter) {
+      const interpreters = await fetchEntries(indexerPath, lookupCwd, 'find-interpreters', '', proximity);
+      interpreter = interpreters.find((e) => e.qualifiedName === item.interpreter);
+      if (!interpreter) {
+        vscode.window.showErrorMessage(`Interpreter '${item.interpreter}' not found in branch '${item.branch}'.`);
+        return;
+      }
     }
 
-    const programTypeArg = extractProgramTypeArg(programEntry);
     let kleisli: IndexEntry | undefined;
     if (item.apply) {
       const kleisliEntries = await fetchEntries(indexerPath, lookupCwd, 'find-kleisli', programTypeArg, proximity);
@@ -3515,7 +3524,7 @@ export function activate(context: vscode.ExtensionContext) {
     const selection: RunSelection = {
       programPath: item.program,
       programType: programTypeArg,
-      interpreter: interpreters[0],
+      interpreter,
       kleisli,
       transformer
     };
@@ -4948,8 +4957,8 @@ async function runWithToolFromTree(
     return;
   }
 
-  // First interpreter is now the closest one
-  const interpreter = interpreters[0];
+  // First try to find interpreter with "default" marker, otherwise use closest one
+  const interpreter = findDefaultInterpreter(interpreters);
 
   // Find tool (sorted by proximity)
   const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
@@ -5158,8 +5167,8 @@ async function runProgramWithTool(
       return;
     }
 
-    // First interpreter is now the closest one
-    const defaultInterpreter = interpreters[0];
+    // First try to find interpreter with "default" marker, otherwise use closest one
+    const defaultInterpreter = findDefaultInterpreter(interpreters);
 
     // Find the tool entry for validation (sorted by proximity)
     const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
@@ -5354,10 +5363,13 @@ async function runSelection(
   const args = [
     'run',
     '--program',
-    selection.programPath,
-    '--interpreter',
-    selection.interpreter.qualifiedName
+    selection.programPath
   ];
+
+  // Only add --interpreter if explicitly specified; otherwise doeff run uses its default
+  if (selection.interpreter) {
+    args.push('--interpreter', selection.interpreter.qualifiedName);
+  }
 
   if (selection.kleisli) {
     args.push('--apply', selection.kleisli.qualifiedName);
@@ -5378,8 +5390,11 @@ async function runSelection(
     selection.transformer?.qualifiedName,
     branch
   );
+  const interpreterInfo = selection.interpreter
+    ? ` with interpreter ${selection.interpreter.qualifiedName}`
+    : ' with default interpreter';
   output.appendLine(
-    `[info] ${modeLabel} doeff for ${selection.programPath} with interpreter ${selection.interpreter.qualifiedName}`
+    `[info] ${modeLabel} doeff for ${selection.programPath}${interpreterInfo}`
   );
 
   if (debugMode) {
@@ -6307,4 +6322,15 @@ function matchesType(entry: IndexEntry, typeArg: string): boolean {
     )
   );
   return parameterMatches || usageMatches;
+}
+
+/**
+ * Find the default interpreter from a list of interpreters.
+ * Returns the interpreter with "default" marker if present, otherwise the first one.
+ */
+function findDefaultInterpreter(interpreters: IndexEntry[]): IndexEntry {
+  const defaultInterpreter = interpreters.find(
+    (entry) => entry.markers?.some((m) => m.toLowerCase() === 'default')
+  );
+  return defaultInterpreter ?? interpreters[0];
 }
