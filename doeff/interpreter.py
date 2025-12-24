@@ -288,8 +288,17 @@ class ProgramInterpreter:
         try:
             return await self._execute_program_loop(program, ctx)
         except Exception as exc:
-            capture_traceback(exc)
-            return RunResult(ctx, Err(exc))
+            runtime_tb = capture_traceback(exc)
+            # Wrap in EffectFailure to capture call stack for display
+            from doeff._types_internal import NullEffect
+            effect_failure = EffectFailure(
+                effect=NullEffect(),  # No specific effect, exception raised directly
+                cause=exc,
+                runtime_traceback=runtime_tb,
+                creation_context=None,
+                call_stack_snapshot=tuple(ctx.program_call_stack),
+            )
+            return RunResult(ctx, Err(effect_failure))
 
     async def _execute_program_loop(
         self, program: Program[T], ctx: ExecutionContext
@@ -328,6 +337,21 @@ class ProgramInterpreter:
             current = next(gen)
         except StopIteration as e:
             return RunResult(ctx, Ok(e.value))
+        except Exception as exc:
+            # Exception raised during generator initialization (e.g., raise in first line)
+            # If already wrapped in EffectFailure, don't wrap again
+            if isinstance(exc, EffectFailure):
+                return RunResult(ctx, Err(exc))
+            runtime_tb = capture_traceback(exc)
+            from doeff._types_internal import NullEffect
+            effect_failure = EffectFailure(
+                effect=NullEffect(),
+                cause=exc,
+                runtime_traceback=runtime_tb,
+                creation_context=None,
+                call_stack_snapshot=tuple(ctx.program_call_stack),
+            )
+            return RunResult(ctx, Err(effect_failure))
 
         try:
             while True:
@@ -371,6 +395,21 @@ class ProgramInterpreter:
                         current = gen.send(value)
                     except StopIteration as e:
                         return RunResult(ctx, Ok(e.value))
+                    except Exception as exc:
+                        # Exception raised after effect handling (e.g., raise after yield)
+                        # If already wrapped in EffectFailure, don't wrap again
+                        if isinstance(exc, EffectFailure):
+                            return RunResult(ctx, Err(exc))
+                        runtime_tb = capture_traceback(exc)
+                        from doeff._types_internal import NullEffect
+                        effect_failure = EffectFailure(
+                            effect=NullEffect(),
+                            cause=exc,
+                            runtime_traceback=runtime_tb,
+                            creation_context=None,
+                            call_stack_snapshot=tuple(ctx.program_call_stack),
+                        )
+                        return RunResult(ctx, Err(effect_failure))
 
                 elif isinstance(current, ProgramType):
                     sub_result = await self.run_async(current, ctx)
@@ -400,6 +439,22 @@ class ProgramInterpreter:
                         current = gen.send(sub_result.value)
                     except StopIteration as e:
                         return RunResult(ctx, Ok(e.value))
+                    except Exception as exc:
+                        # Exception raised directly in user code (not via yield Fail)
+                        # If already wrapped in EffectFailure, don't wrap again
+                        if isinstance(exc, EffectFailure):
+                            return RunResult(ctx, Err(exc))
+                        runtime_tb = capture_traceback(exc)
+                        from doeff._types_internal import NullEffect
+
+                        effect_failure = EffectFailure(
+                            effect=NullEffect(),
+                            cause=exc,
+                            runtime_traceback=runtime_tb,
+                            creation_context=None,
+                            call_stack_snapshot=tuple(ctx.program_call_stack),
+                        )
+                        return RunResult(ctx, Err(effect_failure))
 
                 else:
                     return RunResult(ctx, Err(TypeError(f"Unknown yield type: {type(current)}")))
