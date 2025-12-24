@@ -30,7 +30,7 @@ from doeff import (
 
 
 @pytest.mark.asyncio
-async def test_program_pure():
+async def test_program_pure() -> None:
     """Test Program.pure creates a Program that returns a pure value."""
     # Create a pure program
     pure_prog = Program.pure(42)
@@ -45,7 +45,7 @@ async def test_program_pure():
 
 
 @pytest.mark.asyncio
-async def test_program_map():
+async def test_program_map() -> None:
     """Test Program.map transforms the result of a program."""
 
     @do
@@ -66,7 +66,7 @@ async def test_program_map():
 
 
 @pytest.mark.asyncio
-async def test_program_map_chain():
+async def test_program_map_chain() -> None:
     """Test chaining multiple map operations."""
 
     @do
@@ -89,7 +89,7 @@ async def test_program_map_chain():
 
 
 @pytest.mark.asyncio
-async def test_program_flat_map():
+async def test_program_flat_map() -> None:
     """Test Program.flat_map chains programs together."""
 
     @do
@@ -119,7 +119,7 @@ async def test_program_flat_map():
 
 
 @pytest.mark.asyncio
-async def test_program_flat_map_with_effects():
+async def test_program_flat_map_with_effects() -> None:
     """Test flat_map with programs that use various effects."""
 
     @do
@@ -158,7 +158,7 @@ async def test_program_flat_map_with_effects():
 
 
 @pytest.mark.asyncio
-async def test_map_vs_flat_map():
+async def test_map_vs_flat_map() -> None:
     """Test the difference between map and flat_map."""
 
     @do
@@ -194,7 +194,7 @@ async def test_map_vs_flat_map():
 
 
 @pytest.mark.asyncio
-async def test_program_collection_builders_dict():
+async def test_program_collection_builders_dict() -> None:
     engine = ProgramInterpreter()
     prog = Program.dict({"a": Program.pure(1), "b": 2}, c=Program.pure(3))
 
@@ -205,7 +205,7 @@ async def test_program_collection_builders_dict():
 
 
 @pytest.mark.asyncio
-async def test_program_collection_builders_sequence():
+async def test_program_collection_builders_sequence() -> None:
     engine = ProgramInterpreter()
 
     list_prog = Program.list(Program.pure(1), 2, Program.pure(3))
@@ -227,7 +227,7 @@ async def test_program_collection_builders_sequence():
 
 
 @pytest.mark.asyncio
-async def test_monadic_laws_left_identity():
+async def test_monadic_laws_left_identity() -> None:
     """Test left identity law: pure(a).flat_map(f) == f(a)"""
 
     @do
@@ -249,7 +249,7 @@ async def test_monadic_laws_left_identity():
 
 
 @pytest.mark.asyncio
-async def test_monadic_laws_right_identity():
+async def test_monadic_laws_right_identity() -> None:
     """Test right identity law: m.flat_map(pure) == m"""
 
     @do
@@ -270,7 +270,7 @@ async def test_monadic_laws_right_identity():
 
 
 @pytest.mark.asyncio
-async def test_async_in_flat_map():
+async def test_async_in_flat_map() -> None:
     """Test flat_map with async operations."""
 
     async def async_operation(x: int) -> int:
@@ -294,7 +294,7 @@ async def test_async_in_flat_map():
 
 
 @pytest.mark.asyncio
-async def test_complex_composition():
+async def test_complex_composition() -> None:
     """Test complex composition of map and flat_map."""
 
     @do
@@ -334,7 +334,7 @@ async def test_complex_composition():
 
 
 @pytest.mark.asyncio
-async def test_error_propagation_in_flat_map():
+async def test_error_propagation_in_flat_map() -> None:
     """Test that errors propagate through flat_map chains."""
 
     @do
@@ -365,7 +365,7 @@ async def test_error_propagation_in_flat_map():
 
 
 @pytest.mark.asyncio
-async def test_program_first_success_returns_earliest_success():
+async def test_program_first_success_returns_earliest_success() -> None:
     """first_success should stop at the first program that succeeds."""
 
     @do
@@ -394,7 +394,7 @@ async def test_program_first_success_returns_earliest_success():
 
 
 @pytest.mark.asyncio
-async def test_program_first_success_raises_last_error_when_all_fail():
+async def test_program_first_success_raises_last_error_when_all_fail() -> None:
     """When all candidates fail, first_success should propagate the last error."""
 
     @do
@@ -414,7 +414,8 @@ async def test_program_first_success_raises_last_error_when_all_fail():
     error = result.result.error
     from doeff.types import EffectFailure
 
-    if isinstance(error, EffectFailure):
+    # Unwrap nested EffectFailure wrappers to get to the root cause
+    while isinstance(error, EffectFailure):
         error = error.cause
 
     assert isinstance(error, RuntimeError)
@@ -422,7 +423,7 @@ async def test_program_first_success_raises_last_error_when_all_fail():
 
 
 @pytest.mark.asyncio
-async def test_program_first_some_returns_first_present_value():
+async def test_program_first_some_returns_first_present_value() -> None:
     """first_some should return the first Some value."""
 
     @do
@@ -445,7 +446,7 @@ async def test_program_first_some_returns_first_present_value():
 
 
 @pytest.mark.asyncio
-async def test_program_first_some_returns_nothing_when_all_none():
+async def test_program_first_some_returns_nothing_when_all_none() -> None:
     """first_some should return Nothing when every program yields None/NOTHING."""
 
     prog = Program.first_some(
@@ -461,7 +462,7 @@ async def test_program_first_some_returns_nothing_when_all_none():
 
 
 @pytest.mark.asyncio
-async def test_program_first_success_resets_state_between_attempts():
+async def test_program_first_success_resets_state_between_attempts() -> None:
     """Failed attempts should not mutate shared state for later candidates."""
 
     @do
@@ -487,7 +488,7 @@ async def test_program_first_success_resets_state_between_attempts():
 
 
 @pytest.mark.asyncio
-async def test_run_result_display_shows_shared_state():
+async def test_run_result_display_shows_shared_state() -> None:
     """RunResult.display should surface shared atomic state entries."""
 
     @do
