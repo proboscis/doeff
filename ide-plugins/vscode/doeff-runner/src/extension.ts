@@ -1080,8 +1080,12 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
       return lenses;
     }
 
+    // Find the nearest project root (with pyproject.toml) for monorepo support.
+    // This ensures qualified names match between CodeLens display and run commands.
+    const projectRoot = findProjectRootForFile(document.uri.fsPath, rootPath);
+
     // Use indexer output instead of regex-based detection
-    const entries = this.getFileEntriesSync(rootPath, document.uri.fsPath);
+    const entries = this.getFileEntriesSync(projectRoot, document.uri.fsPath);
 
     // Filter to only Program assignments (not function parameters)
     const programEntries = entries.filter(entry =>
@@ -1113,7 +1117,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
           command: 'doeff-runner.addToPlaylist',
           arguments: [{
             entry,
-            worktreePath: rootPath
+            worktreePath: projectRoot
           }]
         })
       );
@@ -1164,7 +1168,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
         };
 
         // Add Kleisli tool buttons (sorted by proximity, limited to MAX_VISIBLE_TOOLS)
-        const kleisliTools = this.getToolsSync('kleisli', rootPath, typeArg, proximity);
+        const kleisliTools = this.getToolsSync('kleisli', projectRoot, typeArg, proximity);
         const visibleKleisli = kleisliTools.slice(0, MAX_VISIBLE_TOOLS);
         const hiddenKleisliCount = kleisliTools.length - visibleKleisli.length;
 
@@ -1198,7 +1202,7 @@ class ProgramCodeLensProvider implements vscode.CodeLensProvider, vscode.Disposa
         }
 
         // Add Transform tool buttons (sorted by proximity, limited to MAX_VISIBLE_TOOLS)
-        const transformTools = this.getToolsSync('transform', rootPath, typeArg, proximity);
+        const transformTools = this.getToolsSync('transform', projectRoot, typeArg, proximity);
         const visibleTransform = transformTools.slice(0, MAX_VISIBLE_TOOLS);
         const hiddenTransformCount = transformTools.length - visibleTransform.length;
 
