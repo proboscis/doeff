@@ -3364,8 +3364,27 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    const indexerPath = await locateIndexer(runCwd);
-    const programEntry = await findProgramByQualifiedName(indexerPath, runCwd, item.program);
+    // Resolve custom cwd if specified - this affects BOTH indexer lookup AND execution.
+    // In monorepo setups, subprojects may have their own pyproject.toml, so the indexer
+    // needs to run from the subproject directory to find modules correctly.
+    let lookupCwd = runCwd;
+    if (item.cwd) {
+      if (path.isAbsolute(item.cwd)) {
+        lookupCwd = item.cwd;
+      } else {
+        // Resolve relative paths from the worktree root
+        lookupCwd = path.resolve(runCwd, item.cwd);
+      }
+
+      // Validate that the directory exists
+      if (!fs.existsSync(lookupCwd) || !fs.statSync(lookupCwd).isDirectory()) {
+        vscode.window.showErrorMessage(`Working directory does not exist: ${lookupCwd}`);
+        return;
+      }
+    }
+
+    const indexerPath = await locateIndexer(lookupCwd);
+    const programEntry = await findProgramByQualifiedName(indexerPath, lookupCwd, item.program);
     if (!programEntry) {
       vscode.window.showErrorMessage(
         `Program '${item.program}' not found in branch '${item.branch}'.`
@@ -3374,7 +3393,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const proximity: ProximityContext = { filePath: programEntry.filePath, line: programEntry.line };
-    const interpreters = await fetchEntries(indexerPath, runCwd, 'find-interpreters', '', proximity);
+    const interpreters = await fetchEntries(indexerPath, lookupCwd, 'find-interpreters', '', proximity);
     if (interpreters.length === 0) {
       vscode.window.showErrorMessage('No interpreters found in target worktree.');
       return;
@@ -3383,7 +3402,7 @@ export function activate(context: vscode.ExtensionContext) {
     const programTypeArg = extractProgramTypeArg(programEntry);
     let kleisli: IndexEntry | undefined;
     if (item.apply) {
-      const kleisliEntries = await fetchEntries(indexerPath, runCwd, 'find-kleisli', programTypeArg, proximity);
+      const kleisliEntries = await fetchEntries(indexerPath, lookupCwd, 'find-kleisli', programTypeArg, proximity);
       kleisli = kleisliEntries.find((e) => e.qualifiedName === item.apply);
       if (!kleisli) {
         vscode.window.showErrorMessage(`Kleisli '${item.apply}' not found in branch '${item.branch}'.`);
@@ -3393,7 +3412,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     let transformer: IndexEntry | undefined;
     if (item.transform) {
-      const transformEntries = await fetchEntries(indexerPath, runCwd, 'find-transforms', programTypeArg, proximity);
+      const transformEntries = await fetchEntries(indexerPath, lookupCwd, 'find-transforms', programTypeArg, proximity);
       transformer = transformEntries.find((e) => e.qualifiedName === item.transform);
       if (!transformer) {
         vscode.window.showErrorMessage(`Transformer '${item.transform}' not found in branch '${item.branch}'.`);
@@ -3409,27 +3428,10 @@ export function activate(context: vscode.ExtensionContext) {
       transformer
     };
 
-    // Resolve custom cwd if specified
-    let executionCwd = runCwd;
-    if (item.cwd) {
-      if (path.isAbsolute(item.cwd)) {
-        executionCwd = item.cwd;
-      } else {
-        // Resolve relative paths from the worktree root
-        executionCwd = path.resolve(runCwd, item.cwd);
-      }
-
-      // Validate that the directory exists
-      if (!fs.existsSync(executionCwd) || !fs.statSync(executionCwd).isDirectory()) {
-        vscode.window.showErrorMessage(`Working directory does not exist: ${executionCwd}`);
-        return;
-      }
-    }
-
     const extraArgs = playlistArgsToDoeffRunArgs(item.args);
     await runSelection(selection, undefined, stateStore.getDebugMode(), {
-      cwd: executionCwd,
-      persistFolderPath: runCwd,
+      cwd: lookupCwd,
+      persistFolderPath: lookupCwd,
       branch: item.branch,
       extraArgs
     });
@@ -3484,7 +3486,8 @@ export function activate(context: vscode.ExtensionContext) {
       baseCwd = workspaceRoot;
     }
 
-    // Resolve custom cwd if specified
+    // Resolve custom cwd if specified - this sets the terminal's working directory.
+    // For custom commands, cwd controls where the command is executed.
     let finalCwd = baseCwd;
     if (item.cwd) {
       if (path.isAbsolute(item.cwd)) {
@@ -3501,7 +3504,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
-    // Create and show terminal
+    // Create and show terminal in the resolved cwd
     const terminalName = `Custom: ${item.name}`;
     const terminal = createTerminal(terminalName, finalCwd);
     terminal.show();
