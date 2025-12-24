@@ -1176,10 +1176,16 @@ pub(crate) fn find_python_package_root(
     root: &Path,
     file_path: &Path,
 ) -> Option<std::path::PathBuf> {
-    // First check if we're in a UV project with pyproject.toml at the root
+    // First check if we're in a UV/Hatch project with pyproject.toml at the root
     let root_pyproject = root.join("pyproject.toml");
     if root_pyproject.exists() {
         if let Ok(content) = fs::read_to_string(&root_pyproject) {
+            // Check for [tool.hatch.build.targets.wheel] packages configuration
+            // This handles src-layout projects like: packages = ["src/wille"]
+            if let Some(source_root) = parse_hatch_packages_config(&content, root, file_path) {
+                return Some(source_root);
+            }
+
             // Parse the project name from pyproject.toml
             // Look for [project] section and name = "package_name"
             let mut in_project_section = false;
@@ -1233,6 +1239,99 @@ pub(crate) fn find_python_package_root(
     }
 
     topmost_package_parent
+}
+
+/// Parse [tool.hatch.build.targets.wheel] packages configuration
+/// Returns the source root directory if the file is under one of the configured packages.
+///
+/// Handles formats like:
+/// - packages = ["src/wille"]
+/// - packages = ["src/wille", "src/other"]
+fn parse_hatch_packages_config(content: &str, root: &Path, file_path: &Path) -> Option<std::path::PathBuf> {
+    let mut in_hatch_wheel_section = false;
+    let mut collecting_packages = false;
+    let mut packages_line = String::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Track section headers
+        if trimmed == "[tool.hatch.build.targets.wheel]" {
+            in_hatch_wheel_section = true;
+            continue;
+        } else if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            in_hatch_wheel_section = false;
+            collecting_packages = false;
+            continue;
+        }
+
+        if !in_hatch_wheel_section {
+            continue;
+        }
+
+        // Look for packages = [...] (may span multiple lines)
+        if trimmed.starts_with("packages = ") || trimmed.starts_with("packages=") {
+            let rest = trimmed
+                .strip_prefix("packages = ")
+                .or_else(|| trimmed.strip_prefix("packages="))
+                .unwrap_or("");
+            packages_line = rest.to_string();
+
+            // Check if it's a complete single-line array
+            if rest.contains('[') && rest.contains(']') {
+                collecting_packages = false;
+            } else if rest.contains('[') {
+                collecting_packages = true;
+            }
+        } else if collecting_packages {
+            packages_line.push_str(trimmed);
+            if trimmed.contains(']') {
+                collecting_packages = false;
+            }
+        }
+    }
+
+    // Parse the packages array
+    if !packages_line.is_empty() {
+        // Extract content between [ and ]
+        if let Some(start) = packages_line.find('[') {
+            if let Some(end) = packages_line.rfind(']') {
+                let array_content = &packages_line[start + 1..end];
+
+                // Parse individual package paths
+                for item in array_content.split(',') {
+                    let package_path = item
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .trim();
+
+                    if package_path.is_empty() {
+                        continue;
+                    }
+
+                    // e.g., "src/wille" -> source root is "src"
+                    let full_package_path = root.join(package_path);
+
+                    // Check if file_path is under this package path
+                    let abs_file = file_path.canonicalize().ok()?;
+                    let abs_package = full_package_path.canonicalize().ok();
+
+                    if let Some(abs_pkg) = abs_package {
+                        if abs_file.starts_with(&abs_pkg) {
+                            // Return the parent of the package path as source root
+                            // e.g., for "src/wille", return "src"
+                            if let Some(parent) = full_package_path.parent() {
+                                return Some(parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn push_usage(usages: &mut Vec<ProgramTypeUsage>, usage: ProgramTypeUsage) {
