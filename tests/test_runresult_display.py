@@ -556,8 +556,8 @@ async def test_display_formatting():
 
 
 @pytest.mark.asyncio
-async def test_display_user_effect_stack_nested_programs():
-    """Test display() shows user effect stack for nested KleisliProgram failures."""
+async def test_display_user_effect_stack_nested_programs() -> None:
+    """Test display() shows FULL call chain for nested KleisliProgram failures."""
 
     @do
     def inner_program() -> EffectGenerator[int]:
@@ -590,8 +590,14 @@ async def test_display_user_effect_stack_nested_programs():
     assert "Root Cause:" in display_output
     assert "ValueError: Inner failure" in display_output
 
-    # Should show the failure originated from inner_program
-    assert "inner_program" in display_output
+    # Should show the FULL call chain: outer -> middle -> inner
+    # This verifies the call_stack_snapshot is being used correctly
+    assert "outer_program" in display_output, "outer_program should be in call chain"
+    assert "middle_program" in display_output, "middle_program should be in call chain"
+    assert "inner_program" in display_output, "inner_program should be in call chain"
+
+    # Verify they appear in the Effect Stack section
+    assert "Effect Stack (user code):" in display_output
 
     # Verbose mode should show full error chain
     verbose_output = result.display(verbose=True)
