@@ -23,6 +23,7 @@ export interface DoeffPlaylistItem extends PlaylistItemBase {
   type: 'doeff';
   branch: string; // Required for doeff items
   program: string;
+  interpreter: string | null; // Optional: if null, doeff run uses its default interpreter
   apply: string | null;
   transform: string | null;
   args: PlaylistArgs;
@@ -139,6 +140,7 @@ function normalizeItem(value: unknown): PlaylistItemV2 | undefined {
     return undefined;
   }
 
+  const interpreter = value.interpreter;
   const apply = value.apply;
   const transform = value.transform;
 
@@ -151,6 +153,7 @@ function normalizeItem(value: unknown): PlaylistItemV2 | undefined {
     worktree: worktree === null ? null : isString(worktree) ? worktree : null,
     cwd: cwd === null ? null : isString(cwd) ? cwd : null,
     program,
+    interpreter: interpreter === null ? null : isString(interpreter) ? interpreter : null,
     apply: apply === null ? null : isString(apply) ? apply : null,
     transform: transform === null ? null : isString(transform) ? transform : null,
     args: normalizeArgs(value.args)
