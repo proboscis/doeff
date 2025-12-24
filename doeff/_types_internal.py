@@ -586,6 +586,16 @@ class EffectBase(ProgramBase):
         return result
 
 
+@dataclass(frozen=True, kw_only=True)
+class NullEffect(EffectBase):
+    """Placeholder effect for exceptions raised directly (not via yield Fail)."""
+
+    def intercept(
+        self: E, transform: Callable[[Effect], Effect | Program]
+    ) -> E:
+        return self
+
+
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
 if TYPE_CHECKING:
