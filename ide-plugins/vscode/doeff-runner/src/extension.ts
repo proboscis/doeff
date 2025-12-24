@@ -3562,10 +3562,20 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
 
+    // Resolve custom cwd if specified for indexer lookup
+    let lookupCwd = openCwd;
+    if (item.cwd) {
+      if (path.isAbsolute(item.cwd)) {
+        lookupCwd = item.cwd;
+      } else {
+        lookupCwd = path.resolve(openCwd, item.cwd);
+      }
+    }
+
     await maybeAddFolderToWorkspace(openCwd, item.branch);
 
-    const indexerPath = await locateIndexer(openCwd);
-    const programEntry = await findProgramByQualifiedName(indexerPath, openCwd, item.program);
+    const indexerPath = await locateIndexer(lookupCwd);
+    const programEntry = await findProgramByQualifiedName(indexerPath, lookupCwd, item.program);
     if (!programEntry) {
       vscode.window.showErrorMessage(
         `Program '${item.program}' not found in branch '${item.branch}'.`
