@@ -505,6 +505,7 @@ class EffectFailureError(Exception):
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: CapturedTraceback | None = None  # noqa: DOEFF013 - Runtime stack trace where error occurred
     creation_context: EffectCreationContext | None = None  # noqa: DOEFF013 - Where the effect was created
+    call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure time
 
     def __str__(self) -> str:
         """Format the error for display."""
@@ -709,6 +710,7 @@ class EffectFailureInfo:
     cause: BaseException | None  # noqa: DOEFF013
     runtime_trace: CapturedTraceback | None  # noqa: DOEFF013
     cause_trace: CapturedTraceback | None  # noqa: DOEFF013
+    call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure
 
 
 @dataclass(frozen=True)
@@ -756,6 +758,8 @@ class RunFailureDetails:
                 cause_exc: BaseException | None = exc.cause if exc.cause else None  # noqa: DOEFF013
                 if cause_exc is not None:
                     seen_exceptions.add(id(cause_exc))
+                # Get call stack snapshot from EffectFailure if available
+                call_stack = getattr(exc, "call_stack_snapshot", ())
                 entries.append(
                     EffectFailureInfo(
                         effect=exc.effect,
@@ -763,6 +767,7 @@ class RunFailureDetails:
                         cause=cause_exc,
                         runtime_trace=runtime_trace,
                         cause_trace=capture(cause_exc),
+                        call_stack_snapshot=call_stack,
                     )
                 )
                 if isinstance(exc.cause, BaseException):
@@ -1385,12 +1390,11 @@ class _StatusSection(_BaseSection):
 def _is_user_code_path(path: str) -> bool:
     """Check if a file path belongs to user code (not doeff internals)."""
     normalized = path.replace("\\", "/").lower()
-    # Filter out doeff internals
-    if "/doeff/" in normalized or normalized.endswith("/doeff.py"):
-        return False
-    # Filter out site-packages
+
+    # Filter out site-packages (includes installed doeff)
     if "/site-packages/" in normalized:
         return False
+
     # Filter out stdlib paths
     if "/lib/python" in normalized:
         return False
@@ -1398,6 +1402,29 @@ def _is_user_code_path(path: str) -> bool:
         return False
     if "/.local/share/uv/python" in normalized:
         return False
+
+    # Filter out doeff package internals (but not tests/ or examples/)
+    # Check for doeff module files specifically
+    if "/doeff/" in normalized:
+        # Allow tests and examples
+        if "/tests/" in normalized or "/examples/" in normalized:
+            return True
+        # Filter out doeff package source files
+        doeff_internals = (
+            "/doeff/_",
+            "/doeff/do.py",
+            "/doeff/handlers",
+            "/doeff/interpreter",
+            "/doeff/kleisli",
+            "/doeff/program",
+            "/doeff/types",
+            "/doeff/utils",
+            "/doeff/effects/",
+        )
+        for internal in doeff_internals:
+            if internal in normalized:
+                return False
+
     return True
 
 
@@ -1466,7 +1493,7 @@ class _UserEffectStackSection(_BaseSection):
     def _extract_user_frames(
         self, details: RunFailureDetails
     ) -> list[_UserEffectFrame]:
-        """Extract user code frames from effect creation contexts."""
+        """Extract user code frames from effect creation contexts and call stack."""
         frames: list[_UserEffectFrame] = []
         seen_locations: set[tuple[str, int, str]] = set()
 
@@ -1474,11 +1501,34 @@ class _UserEffectStackSection(_BaseSection):
             if not isinstance(entry, EffectFailureInfo):
                 continue
 
+            # First, add frames from the program call stack (outer -> inner call chain)
+            # This shows the KleisliProgram call chain: outer_call -> middle_call -> inner_fail
+            if entry.call_stack_snapshot:
+                for call_frame in entry.call_stack_snapshot:
+                    ctx = call_frame.created_at
+                    if ctx is None:
+                        continue
+                    if not _is_user_code_path(ctx.filename):
+                        continue
+                    loc_key = (ctx.filename, ctx.line, ctx.function)
+                    if loc_key in seen_locations:
+                        continue
+                    seen_locations.add(loc_key)
+                    frames.append(
+                        _UserEffectFrame(
+                            filename=ctx.filename,
+                            line=ctx.line,
+                            function=call_frame.function_name,  # Use the called function name
+                            code=ctx.code,
+                        )
+                    )
+
+            # Then add frames from effect creation context
             ctx = entry.creation_context
             if ctx is None:
                 continue
 
-            # Add frames from stack_trace (these are the call chain)
+            # Add frames from stack_trace (these are the call chain within the generator)
             if ctx.stack_trace:
                 for frame_data in reversed(ctx.stack_trace):
                     filename = frame_data.get("filename", "<unknown>")
@@ -1504,7 +1554,7 @@ class _UserEffectStackSection(_BaseSection):
                         )
                     )
 
-            # Add the immediate creation location
+            # Add the immediate creation location (where the effect was created)
             if _is_user_code_path(ctx.filename):
                 loc_key = (ctx.filename, ctx.line, ctx.function)
                 if loc_key not in seen_locations:

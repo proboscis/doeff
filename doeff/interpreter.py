@@ -344,6 +344,7 @@ class ProgramInterpreter:
                             cause=exc,
                             runtime_traceback=runtime_tb,
                             creation_context=current.created_at,
+                            call_stack_snapshot=tuple(ctx.program_call_stack),
                         )
                         # Throw into generator to enable native try-except
                         try:
@@ -362,6 +363,7 @@ class ProgramInterpreter:
                                 cause=uncaught,
                                 runtime_traceback=new_tb,
                                 creation_context=current.created_at,
+                                call_stack_snapshot=tuple(ctx.program_call_stack),
                             )
                             return RunResult(ctx, Err(new_failure))
 
