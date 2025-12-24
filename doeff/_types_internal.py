@@ -509,11 +509,14 @@ class EffectFailureError(Exception):
 
     def __str__(self) -> str:
         """Format the error for display."""
-        lines = [f"Effect '{self.effect.__class__.__name__}' failed"]
+        if isinstance(self.effect, NullEffect):
+            lines = ["Unhandled exception raised in program"]
+        else:
+            lines = [f"Effect '{self.effect.__class__.__name__}' failed"]
 
-        # Add creation location if available
-        if self.creation_context:
-            lines.append(f"Created at: {self.creation_context.format_location()}")
+            # Add creation location if available
+            if self.creation_context:
+                lines.append(f"Created at: {self.creation_context.format_location()}")
 
         # Add the cause
         lines.append(f"Caused by: {self.cause.__class__.__name__}: {self.cause}")
@@ -1362,15 +1365,20 @@ class _StatusSection(_BaseSection):
         if details and details.entries:
             head = details.entries[0]
             if isinstance(head, EffectFailureInfo):
-                effect_name = head.effect.__class__.__name__
-                lines.append(self.indent(1, f"Effect '{effect_name}' failed"))
-                if head.creation_context:
+                if isinstance(head.effect, NullEffect):
                     lines.append(
-                        self.indent(
-                            2,
-                            f"📍 Created at: {head.creation_context.format_location()}",
-                        )
+                        self.indent(1, "Unhandled exception raised in program")
                     )
+                else:
+                    effect_name = head.effect.__class__.__name__
+                    lines.append(self.indent(1, f"Effect '{effect_name}' failed"))
+                    if head.creation_context:
+                        lines.append(
+                            self.indent(
+                                2,
+                                f"📍 Created at: {head.creation_context.format_location()}",
+                            )
+                        )
                 if head.cause:
                     if isinstance(head.cause, EffectFailure):
                         lines.append(
@@ -1463,16 +1471,27 @@ class _UserEffectStackSection(_BaseSection):
         lines: list[str] = []
 
         # Find root cause (innermost exception that's not EffectFailure)
-        root_cause = self._find_root_cause(details)
+        root_cause, root_trace = self._find_root_cause_with_trace(details)
         if root_cause:
             lines.append("Root Cause:")
             lines.append(
                 self.indent(1, f"{root_cause.__class__.__name__}: {root_cause}")
             )
+            location = self._root_cause_location(root_trace)
+            if location:
+                rel_path = self._relative_path(location.filename)
+                lines.append(
+                    self.indent(
+                        1,
+                        f"at {rel_path}:{location.line} {location.function}",
+                    )
+                )
+                if location.code:
+                    lines.append(self.indent(2, location.code))
             lines.append("")
 
         # Extract user code frames from the effect chain
-        user_frames = self._extract_user_frames(details)
+        user_frames = self._extract_user_frames(details, root_trace=root_trace)
         if user_frames:
             lines.append("Effect Stack (user code):")
             lines.append("")
@@ -1485,23 +1504,39 @@ class _UserEffectStackSection(_BaseSection):
 
         return lines
 
-    def _find_root_cause(
+    def _find_root_cause_with_trace(
         self, details: RunFailureDetails
-    ) -> BaseException | None:
-        """Find the innermost exception that's not an EffectFailure."""
+    ) -> tuple[BaseException | None, CapturedTraceback | None]:
+        """Find the innermost exception and its captured traceback (if available)."""
         root_cause: BaseException | None = None
+        root_trace: CapturedTraceback | None = None
 
         for entry in details.entries:
             if isinstance(entry, EffectFailureInfo):
                 if entry.cause and not isinstance(entry.cause, EffectFailure):
                     root_cause = entry.cause
+                    root_trace = entry.cause_trace or entry.runtime_trace
             elif isinstance(entry, ExceptionFailureInfo):
                 root_cause = entry.exception
+                root_trace = entry.trace
 
-        return root_cause
+        return root_cause, root_trace
+
+    def _root_cause_location(
+        self, trace: CapturedTraceback | None
+    ) -> _UserEffectFrame | None:
+        if trace is None:
+            return None
+        frames = self._extract_traceback_frames(trace)
+        if not frames:
+            return None
+        return frames[-1]
 
     def _extract_user_frames(
-        self, details: RunFailureDetails
+        self,
+        details: RunFailureDetails,
+        *,
+        root_trace: CapturedTraceback | None = None,
     ) -> list[_UserEffectFrame]:
         """Extract user code frames from effect creation contexts and call stack."""
         frames: list[_UserEffectFrame] = []
@@ -1578,6 +1613,37 @@ class _UserEffectStackSection(_BaseSection):
                         )
                     )
 
+        if root_trace:
+            for frame in self._extract_traceback_frames(root_trace):
+                loc_key = (frame.filename, frame.line, frame.function)
+                if loc_key in seen_locations:
+                    continue
+                seen_locations.add(loc_key)
+                frames.append(frame)
+
+        return frames
+
+    def _extract_traceback_frames(
+        self, trace: CapturedTraceback
+    ) -> list[_UserEffectFrame]:
+        frames: list[_UserEffectFrame] = []
+        stack = trace.traceback.stack
+        for frame in stack:
+            filename = frame.filename
+            if not _is_user_code_path(filename):
+                continue
+            line_no = frame.lineno
+            if line_no is None:
+                continue
+            func_name = frame.name or "<unknown>"
+            frames.append(
+                _UserEffectFrame(
+                    filename=filename,
+                    line=line_no,
+                    function=func_name,
+                    code=frame.line,
+                )
+            )
         return frames
 
     def _relative_path(self, path: str) -> str:
@@ -1635,6 +1701,17 @@ class _ErrorSection(_BaseSection):
         *,
         is_primary: bool,  # noqa: DOEFF011
     ) -> list[str]:
+        if isinstance(entry.effect, NullEffect):
+            lines = [
+                self.indent(
+                    1,
+                    f"[{idx}] Unhandled exception raised in program",
+                )
+            ]
+            lines.extend(self._render_effect_cause(entry))
+            lines.extend(self._render_runtime_trace(entry))
+            return lines
+
         effect_name = entry.effect.__class__.__name__
         lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
         lines.extend(
@@ -2099,4 +2176,3 @@ __all__ = [  # noqa: DOEFF021
     "WStep",
     "trace_err",
 ]
-
