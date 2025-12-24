@@ -792,3 +792,53 @@ class TestEnvSerializationIssues:
 
         assert result.is_ok, f"Expected success, got error: {result.result}"
         assert result.value == "expected_value"
+
+
+class TestValuesEqual:
+    """Tests for SpawnEffectHandler._values_equal handling non-bool __eq__ results.
+
+    This addresses ISSUE-CORE-412: when comparing values during context merge,
+    objects with non-bool __eq__ (numpy arrays, pandas DataFrames) would cause
+    'ValueError: The truth value of a DataFrame is ambiguous'.
+    """
+
+    def test_values_equal_with_regular_values(self) -> None:
+        """Test _values_equal works with regular Python values."""
+        from doeff.handlers import SpawnEffectHandler
+
+        assert SpawnEffectHandler._values_equal(1, 1) is True
+        assert SpawnEffectHandler._values_equal(1, 2) is False
+        assert SpawnEffectHandler._values_equal("a", "a") is True
+        assert SpawnEffectHandler._values_equal("a", "b") is False
+        assert SpawnEffectHandler._values_equal([1, 2], [1, 2]) is True
+        assert SpawnEffectHandler._values_equal([1, 2], [1, 3]) is False
+
+    def test_values_equal_with_numpy_array(self) -> None:
+        """Test _values_equal handles numpy arrays (non-bool __eq__)."""
+        import numpy as np
+        from doeff.handlers import SpawnEffectHandler
+
+        arr1 = np.array([1, 2, 3])
+        arr2 = np.array([1, 2, 3])
+        arr3 = np.array([4, 5, 6])
+
+        # numpy __eq__ returns array, not bool - should return False, not raise
+        assert SpawnEffectHandler._values_equal(arr1, arr2) is False
+        assert SpawnEffectHandler._values_equal(arr1, arr3) is False
+
+        # Same object should still work (identity check happens before __eq__)
+        assert SpawnEffectHandler._values_equal(arr1, arr1) is False  # numpy returns array
+
+    def test_values_equal_with_exception_raising_eq(self) -> None:
+        """Test _values_equal handles objects that raise on __eq__."""
+        from doeff.handlers import SpawnEffectHandler
+
+        class RaisingEq:
+            def __eq__(self, other: object) -> bool:
+                raise RuntimeError("Cannot compare")
+
+        obj1 = RaisingEq()
+        obj2 = RaisingEq()
+
+        # Should return False instead of raising
+        assert SpawnEffectHandler._values_equal(obj1, obj2) is False
