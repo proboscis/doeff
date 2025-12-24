@@ -99,6 +99,35 @@ function resolveRootPathForUri(uri: vscode.Uri): string | undefined {
   return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
+/**
+ * Find the nearest project root for a file by walking up directories
+ * looking for pyproject.toml. This is important for monorepo setups where
+ * subdirectories have their own Python projects with different module structures.
+ * @param filePath Path to the file
+ * @param workspaceRoot The workspace/git root to stop at
+ * @returns The nearest directory with pyproject.toml, or workspaceRoot if not found
+ */
+function findProjectRootForFile(filePath: string, workspaceRoot: string): string {
+  // Walk up from file directory to workspace root, looking for pyproject.toml
+  let current = path.dirname(filePath);
+  const normalizedWorkspaceRoot = path.resolve(workspaceRoot);
+
+  while (current.length >= normalizedWorkspaceRoot.length) {
+    // Check for pyproject.toml in current directory
+    if (fs.existsSync(path.join(current, 'pyproject.toml'))) {
+      return current;
+    }
+    const parent = path.dirname(current);
+    // Stop if we've reached the filesystem root or workspace root
+    if (parent === current || !current.startsWith(normalizedWorkspaceRoot)) {
+      break;
+    }
+    current = parent;
+  }
+
+  return workspaceRoot;
+}
+
 // Build a descriptive name for run/debug sessions
 // Format: <Run/Debug>-<entrypoint>-><kleisli>-><transform>
 function buildSessionName(
@@ -4976,6 +5005,11 @@ async function runProgram(
       return;
     }
 
+    // Find the nearest project root (with pyproject.toml) for monorepo support.
+    // In monorepos, subdirectories may have their own Python projects with
+    // different module structures, so we need to run from the correct directory.
+    const projectRoot = findProjectRootForFile(document.uri.fsPath, rootPath);
+
     const targetLine =
       typeof lineNumber === 'number'
         ? lineNumber
@@ -4994,10 +5028,10 @@ async function runProgram(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(rootPath)) ??
       vscode.workspace.workspaceFolders?.[0];
 
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(projectRoot);
     const programEntry = await findProgramEntry(
       indexerPath,
-      rootPath,
+      projectRoot,
       document.uri.fsPath,
       declaration.name
     );
@@ -5013,22 +5047,22 @@ async function runProgram(
 
     if (mode === 'default') {
       await runDefault(programPath, workspaceFolder, debugMode, {
-        cwd: rootPath,
-        persistFolderPath: rootPath
+        cwd: projectRoot,
+        persistFolderPath: projectRoot
       });
     } else {
       const selection = await buildSelection(
         document,
         declaration,
-        rootPath,
+        projectRoot,
         programPath
       );
       if (!selection) {
         return;
       }
       await runSelection(selection, workspaceFolder, debugMode, {
-        cwd: rootPath,
-        persistFolderPath: rootPath
+        cwd: projectRoot,
+        persistFolderPath: projectRoot
       });
     }
 
@@ -5065,6 +5099,11 @@ async function runProgramWithTool(
       return;
     }
 
+    // Find the nearest project root (with pyproject.toml) for monorepo support.
+    // In monorepos, subdirectories may have their own Python projects with
+    // different module structures, so we need to run from the correct directory.
+    const projectRoot = findProjectRootForFile(document.uri.fsPath, rootPath);
+
     const targetLine =
       typeof lineNumber === 'number'
         ? lineNumber
@@ -5083,10 +5122,10 @@ async function runProgramWithTool(
       vscode.workspace.getWorkspaceFolder(vscode.Uri.file(rootPath)) ??
       vscode.workspace.workspaceFolders?.[0];
 
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(projectRoot);
     const programEntry = await findProgramEntry(
       indexerPath,
-      rootPath,
+      projectRoot,
       document.uri.fsPath,
       declaration.name
     );
@@ -5107,7 +5146,7 @@ async function runProgramWithTool(
     // Find interpreter (sorted by proximity to the program)
     const interpreters = await fetchEntries(
       indexerPath,
-      rootPath,
+      projectRoot,
       'find-interpreters',
       declaration.typeArg,
       proximity
@@ -5126,7 +5165,7 @@ async function runProgramWithTool(
     const toolCommand = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
     const tools = await fetchEntries(
       indexerPath,
-      rootPath,
+      projectRoot,
       toolCommand,
       declaration.typeArg,
       proximity
@@ -5151,8 +5190,8 @@ async function runProgramWithTool(
 
     const debugMode = stateStore.getDebugMode();
     await runSelection(selection, workspaceFolder, debugMode, {
-      cwd: rootPath,
-      persistFolderPath: rootPath
+      cwd: projectRoot,
+      persistFolderPath: projectRoot
     });
     codeLensProvider.refresh();
   } catch (error) {
@@ -5179,8 +5218,11 @@ async function showMoreTools(
     return;
   }
 
+  // Find the nearest project root (with pyproject.toml) for monorepo support
+  const projectRoot = findProjectRootForFile(uri.fsPath, rootPath);
+
   try {
-    const indexerPath = await locateIndexer();
+    const indexerPath = await locateIndexer(projectRoot);
 
     // Use the CodeLens location for proximity-based sorting
     const proximity: ProximityContext = {
@@ -5190,7 +5232,7 @@ async function showMoreTools(
 
     // Fetch all tools
     const command = toolType === 'kleisli' ? 'find-kleisli' : 'find-transforms';
-    const tools = await fetchEntries(indexerPath, rootPath, command, typeArg, proximity);
+    const tools = await fetchEntries(indexerPath, projectRoot, command, typeArg, proximity);
 
     if (tools.length === 0) {
       const suffix = typeArg.trim() ? `for type ${typeArg}` : 'in workspace';
