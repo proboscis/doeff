@@ -673,6 +673,9 @@ async def test_display_raise_exception_nested_programs() -> None:
     # Root cause should be shown first
     assert "Root Cause:" in display_output
     assert "ValueError: Raised from inner" in display_output
+    root_section = display_output.split("Root Cause:")[1].split("\n\n")[0]
+    assert "inner_raises" in root_section
+    assert "test_runresult_display.py" in root_section
 
     # Should show the FULL call chain: outer -> middle -> inner
     # This verifies exception propagation preserves call stack
@@ -684,3 +687,4 @@ async def test_display_raise_exception_nested_programs() -> None:
     assert "Outer entry" in display_output
     assert "Middle layer" in display_output
     assert "Inner about to raise" in display_output
+    assert "NullEffect" not in display_output
