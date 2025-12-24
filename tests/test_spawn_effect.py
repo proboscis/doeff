@@ -4,7 +4,7 @@ import importlib.util
 import logging
 import time
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 import pytest
 
@@ -792,3 +792,258 @@ class TestEnvSerializationIssues:
 
         assert result.is_ok, f"Expected success, got error: {result.result}"
         assert result.value == "expected_value"
+
+
+class TestInterceptSideEffectsInSpawn:
+    """Tests for interceptor side effects in spawned programs (ISSUE-CORE-413).
+
+    These tests verify that interceptors with side effects are actually called
+    when effects are yielded from spawned subprograms. The key difference from
+    test_spawn_intercept_slog is that these tests check side effects are executed,
+    not just that the effect is transformed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_thread_intercept_side_effect_called(self) -> None:
+        """Thread backend: interceptor side effect should be called in same process."""
+        engine = ProgramInterpreter()
+        side_effects: list[dict[str, Any]] = []
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield slog(event="worker_log", source="worker")
+            return "done"
+
+        def intercept(effect: Effect) -> Effect:
+            if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
+                side_effects.append(effect.message.copy())  # Side effect!
+            return effect
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker(), preferred_backend="thread")
+            return (yield task.join())
+
+        result = await engine.run_async(program().intercept(intercept))
+
+        assert result.is_ok
+        assert result.value == "done"
+        # The interceptor side effect should have been called
+        assert len(side_effects) == 1
+        assert side_effects[0] == {"event": "worker_log", "source": "worker"}
+        # The log should also be in the result
+        assert {"event": "worker_log", "source": "worker"} in result.log
+
+    @pytest.mark.asyncio
+    async def test_thread_intercept_called_for_all_worker_effects(self) -> None:
+        """Thread backend: interceptor should be called for ALL effects from worker."""
+        engine = ProgramInterpreter()
+        intercepted_count = [0]  # Use list for mutability in closure
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield slog(step=1)
+            yield slog(step=2)
+            yield slog(step=3)
+            return "done"
+
+        def intercept(effect: Effect) -> Effect:
+            if isinstance(effect, WriterTellEffect):
+                intercepted_count[0] += 1
+            return effect
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker(), preferred_backend="thread")
+            return (yield task.join())
+
+        result = await engine.run_async(program().intercept(intercept))
+
+        assert result.is_ok
+        # Should have intercepted all 3 slog effects from worker
+        assert intercepted_count[0] == 3
+
+    @pytest.mark.asyncio
+    async def test_thread_intercept_nested_spawn_both_intercepted(self) -> None:
+        """Thread backend: interceptor should be called for nested spawns too."""
+        engine = ProgramInterpreter()
+        intercepted_sources: list[str] = []
+
+        @do
+        def inner_worker() -> EffectGenerator[str]:
+            yield slog(source="inner")
+            return "inner_done"
+
+        @do
+        def outer_worker() -> EffectGenerator[str]:
+            yield slog(source="outer_before")
+            inner_task = yield Spawn(inner_worker(), preferred_backend="thread")
+            inner_result = yield inner_task.join()
+            yield slog(source="outer_after")
+            return f"outer_done_{inner_result}"
+
+        def intercept(effect: Effect) -> Effect:
+            if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
+                source = effect.message.get("source")
+                if source:
+                    intercepted_sources.append(source)
+            return effect
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(outer_worker(), preferred_backend="thread")
+            return (yield task.join())
+
+        result = await engine.run_async(program().intercept(intercept))
+
+        assert result.is_ok
+        assert result.value == "outer_done_inner_done"
+        # All sources should have been intercepted
+        assert "outer_before" in intercepted_sources
+        assert "inner" in intercepted_sources
+        assert "outer_after" in intercepted_sources
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", _backend_params())
+    async def test_intercept_transforms_effect_in_spawn(self, backend: str) -> None:
+        """Verify interceptor transforms are applied to effects in spawned programs."""
+        with _ray_context(backend):
+            engine = _build_engine(backend)
+
+            @do
+            def worker() -> EffectGenerator[str]:
+                yield slog(event="original")
+                return "done"
+
+            def intercept(effect: Effect) -> Effect:
+                if isinstance(effect, WriterTellEffect) and isinstance(effect.message, dict):
+                    if effect.message.get("event") == "original":
+                        # Transform the effect
+                        return Log({"event": "transformed", "backend": backend})
+                return effect
+
+            @do
+            def program() -> EffectGenerator[str]:
+                task = yield Spawn(
+                    worker(),
+                    preferred_backend=backend,
+                    **_ray_task_options(backend),
+                )
+                return (yield task.join())
+
+            result = await engine.run_async(program().intercept(intercept))
+
+        assert result.is_ok
+        assert result.value == "done"
+        # The transformed log should be present
+        assert {"event": "transformed", "backend": backend} in result.log
+        # The original log should NOT be present
+        assert not any(
+            isinstance(entry, dict) and entry.get("event") == "original"
+            for entry in result.log
+        )
+
+    @pytest.mark.asyncio
+    async def test_thread_intercept_with_import_inside(self) -> None:
+        """Test interceptor that imports modules inside (like loguru_interceptor)."""
+        engine = ProgramInterpreter()
+        log_records: list[str] = []
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield slog(message="test message", level="INFO")
+            return "done"
+
+        def loguru_style_interceptor(e: Effect) -> Effect:
+            # This mimics the loguru_interceptor pattern:
+            # - Import inside the function
+            # - Perform side effect
+            # - Return effect unchanged
+            import logging
+            local_logger = logging.getLogger("test_interceptor")
+
+            if isinstance(e, WriterTellEffect) and isinstance(e.message, dict):
+                msg = e.message.get("message", "")
+                log_records.append(f"intercepted: {msg}")
+            return e
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker(), preferred_backend="thread")
+            return (yield task.join())
+
+        result = await engine.run_async(program().intercept(loguru_style_interceptor))
+
+        assert result.is_ok
+        assert result.value == "done"
+        # The interceptor should have been called
+        assert len(log_records) == 1
+        assert log_records[0] == "intercepted: test message"
+
+    @pytest.mark.asyncio
+    async def test_intercept_with_closure_variable(self) -> None:
+        """Test interceptor captures closure variables correctly."""
+        engine = ProgramInterpreter()
+        captured_prefix = "CAPTURED"
+        intercepted_messages: list[str] = []
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield slog(msg="hello")
+            yield slog(msg="world")
+            return "done"
+
+        def make_interceptor(prefix: str) -> Callable[[Effect], Effect]:
+            def interceptor(e: Effect) -> Effect:
+                if isinstance(e, WriterTellEffect) and isinstance(e.message, dict):
+                    msg = e.message.get("msg", "")
+                    intercepted_messages.append(f"{prefix}:{msg}")
+                return e
+            return interceptor
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker(), preferred_backend="thread")
+            return (yield task.join())
+
+        result = await engine.run_async(
+            program().intercept(make_interceptor(captured_prefix))
+        )
+
+        assert result.is_ok
+        # Both messages should have been intercepted with the captured prefix
+        assert "CAPTURED:hello" in intercepted_messages
+        assert "CAPTURED:world" in intercepted_messages
+
+    @pytest.mark.asyncio
+    async def test_process_intercept_transforms_apply(self) -> None:
+        """Process backend: verify transforms are applied even if side effects aren't visible."""
+        engine = ProgramInterpreter(spawn_process_max_workers=2)
+
+        @do
+        def worker() -> EffectGenerator[str]:
+            yield slog(original=True, value=42)
+            return "done"
+
+        def transform_interceptor(e: Effect) -> Effect:
+            # This transforms the effect - should work even in process backend
+            if isinstance(e, WriterTellEffect) and isinstance(e.message, dict):
+                if e.message.get("original"):
+                    return Log({"transformed": True, "value": e.message["value"] * 2})
+            return e
+
+        @do
+        def program() -> EffectGenerator[str]:
+            task = yield Spawn(worker(), preferred_backend="process")
+            return (yield task.join())
+
+        result = await engine.run_async(program().intercept(transform_interceptor))
+
+        assert result.is_ok
+        assert result.value == "done"
+        # The transformed log should appear
+        assert {"transformed": True, "value": 84} in result.log
+        # Original should not appear
+        assert not any(
+            isinstance(e, dict) and e.get("original") for e in result.log
+        )
