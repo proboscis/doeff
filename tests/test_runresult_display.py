@@ -684,3 +684,111 @@ async def test_display_raise_exception_nested_programs() -> None:
     assert "Outer entry" in display_output
     assert "Middle layer" in display_output
     assert "Inner about to raise" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_exception_raised_shows_location_not_nulleffect() -> None:
+    """Test that direct exceptions show 'Exception raised' with location, not 'NullEffect'."""
+
+    @do
+    def program_that_raises() -> EffectGenerator[int]:
+        yield Log("about to raise")
+        raise ValueError("direct raise")
+        return 0
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program_that_raises())
+
+    assert result.is_err
+
+    # Non-verbose mode
+    display_output = result.display(verbose=False)
+
+    # Should show "Exception raised" not "Effect 'NullEffect' failed"
+    assert "Exception raised" in display_output
+    assert "NullEffect" not in display_output
+
+    # Should show the location where exception was raised
+    assert "📍 Raised at:" in display_output
+    assert "program_that_raises" in display_output
+
+    # Should still show root cause
+    assert "Root Cause:" in display_output
+    assert "ValueError: direct raise" in display_output
+
+    # Verbose mode
+    verbose_output = result.display(verbose=True)
+    assert "Exception raised" in verbose_output
+    assert "NullEffect" not in verbose_output
+    assert "📍 Raised at:" in verbose_output
+
+
+@pytest.mark.asyncio
+async def test_display_exception_with_spawn_thread() -> None:
+    """Test that exceptions in spawned workers display correctly."""
+    from doeff import Spawn, Recover
+
+    @do
+    def worker_that_raises() -> EffectGenerator[int]:
+        yield Log("worker started")
+        raise RuntimeError("worker failed")
+        return 0
+
+    @do
+    def program() -> EffectGenerator[int]:
+        task = yield Spawn(worker_that_raises(), preferred_backend="thread")
+        return (yield task.join())
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Should show meaningful error, not NullEffect
+    assert "NullEffect" not in display_output
+    assert "RuntimeError: worker failed" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_nested_exception_shows_full_chain() -> None:
+    """Test that nested exceptions show full call chain without NullEffect."""
+
+    @do
+    def level3() -> EffectGenerator[int]:
+        yield Log("level3")
+        raise KeyError("deep error")
+        return 0
+
+    @do
+    def level2() -> EffectGenerator[int]:
+        yield Log("level2")
+        return (yield level3())
+
+    @do
+    def level1() -> EffectGenerator[int]:
+        yield Log("level1")
+        return (yield level2())
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(level1())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # No NullEffect in output
+    assert "NullEffect" not in display_output
+
+    # Should show Exception raised
+    assert "Exception raised" in display_output
+
+    # Should show all levels in call chain
+    assert "level1" in display_output
+    assert "level2" in display_output
+    assert "level3" in display_output
+
+    # Should show root cause
+    assert "KeyError" in display_output
+    assert "deep error" in display_output
