@@ -51,7 +51,7 @@ def cache_context(temp_cache_db):
     return ExecutionContext(env={CACHE_PATH_ENV_KEY: temp_cache_db})
 
 
-def test_persistent_cache_path_returns_default():
+def test_persistent_cache_path_returns_default() -> None:
     """persistent_cache_path returns the default temp directory path."""
     import tempfile
     from pathlib import Path
@@ -61,7 +61,7 @@ def test_persistent_cache_path_returns_default():
 
 
 @pytest.mark.asyncio
-async def test_clear_persistent_cache(temp_cache_db, cache_context):
+async def test_clear_persistent_cache(temp_cache_db, cache_context) -> None:
     @do
     def cache_roundtrip():
         yield CachePut("clear-key", "value", lifecycle=CacheLifecycle.PERSISTENT)
@@ -90,7 +90,7 @@ async def test_clear_persistent_cache(temp_cache_db, cache_context):
 # Test cache effects directly
 
 @pytest.mark.asyncio
-async def test_cache_put_and_get():
+async def test_cache_put_and_get() -> None:
     """Test basic cache put and get operations."""
 
     @do
@@ -109,7 +109,7 @@ async def test_cache_put_and_get():
 
 
 @pytest.mark.asyncio
-async def test_cache_miss_raises_error():
+async def test_cache_miss_raises_error() -> None:
     """Test that cache miss raises KeyError."""
 
     @do
@@ -126,7 +126,7 @@ async def test_cache_miss_raises_error():
 
 
 @pytest.mark.asyncio
-async def test_cache_with_complex_key():
+async def test_cache_with_complex_key() -> None:
     """Test cache with tuple and FrozenDict key."""
 
     @do
@@ -145,7 +145,7 @@ async def test_cache_with_complex_key():
 
 
 @pytest.mark.asyncio
-async def test_cache_ttl_expiry(temp_cache_db):
+async def test_cache_ttl_expiry(temp_cache_db) -> None:
     """Test that cached values expire after TTL."""
 
     # We need to wrap the sleep in an IO effect
@@ -179,7 +179,7 @@ async def test_cache_ttl_expiry(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context):
+async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context) -> None:
     """Cache entries with persistent lifecycle persist across interpreter instances."""
 
     engine = ProgramInterpreter()
@@ -207,7 +207,7 @@ async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context
 
 
 @pytest.mark.asyncio
-async def test_cache_explicit_storage_disk(temp_cache_db, cache_context):
+async def test_cache_explicit_storage_disk(temp_cache_db, cache_context) -> None:
     """Explicit disk storage hint should persist values on disk."""
 
     engine = ProgramInterpreter()
@@ -225,7 +225,7 @@ async def test_cache_explicit_storage_disk(temp_cache_db, cache_context):
 
 
 @pytest.mark.asyncio
-async def test_cache_recover_on_miss():
+async def test_cache_recover_on_miss() -> None:
     """Test using Recover effect with cache miss."""
 
     @do
@@ -249,7 +249,7 @@ async def test_cache_recover_on_miss():
 # Test the @cache decorator
 
 @pytest.mark.asyncio
-async def test_basic_cache_decorator(temp_cache_db, cache_context):
+async def test_basic_cache_decorator(temp_cache_db, cache_context) -> None:
     """Test basic caching with decorator."""
 
     call_count = [0]
@@ -282,7 +282,7 @@ async def test_basic_cache_decorator(temp_cache_db, cache_context):
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_failure_includes_call_frame():
+async def test_cache_decorator_failure_includes_call_frame() -> None:
     """Failures should raise CacheComputationError with call-site frame present."""
 
     @cache()
@@ -299,9 +299,17 @@ async def test_cache_decorator_failure_includes_call_frame():
     failure = result.result.error
     assert isinstance(failure, EffectFailureError)
 
+    # Navigate through nested EffectFailureError to find CacheComputationError
+    # The cache decorator raises CacheComputationError which may be wrapped in EffectFailure
     cause = failure.cause
+    while isinstance(cause, EffectFailureError):
+        cause = cause.cause
     assert isinstance(cause, CacheComputationError)
-    assert isinstance(cause.__cause__, ValueError)
+    # Inner cause is also wrapped in EffectFailure (from the @do function raising)
+    inner_cause = cause.__cause__
+    while isinstance(inner_cause, EffectFailureError):
+        inner_cause = inner_cause.cause
+    assert isinstance(inner_cause, ValueError)
     assert cause.call_site is not None
     assert (
         cause.call_site.function == "test_cache_decorator_failure_includes_call_frame"
@@ -310,7 +318,7 @@ async def test_cache_decorator_failure_includes_call_frame():
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_persistent_lifecycle(temp_cache_db):
+async def test_cache_decorator_persistent_lifecycle(temp_cache_db) -> None:
     """Decorator should propagate persistent lifecycle and reuse cached value."""
 
     call_count = [0]
@@ -354,7 +362,7 @@ async def test_cache_decorator_persistent_lifecycle(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cache_context):
+async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cache_context) -> None:
     """Persistent lifecycle hint should keep data across interpreter instances."""
 
     call_count = [0]
@@ -385,7 +393,7 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cach
 
 
 @pytest.mark.asyncio
-async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
+async def test_cache_persistent_lifecycle_cross_process(temp_cache_db) -> None:
     """Persistent lifecycle cache survives across different Python processes.
 
     Cache path is passed via command-line argument and set in context using
@@ -462,7 +470,7 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_with_kwargs(temp_cache_db, cache_context):
+async def test_cache_with_kwargs(temp_cache_db, cache_context) -> None:
     """Test caching with keyword arguments."""
 
     call_count = [0]
@@ -497,7 +505,7 @@ async def test_cache_with_kwargs(temp_cache_db, cache_context):
 
 
 @pytest.mark.asyncio
-async def test_cache_with_ttl(temp_cache_db):
+async def test_cache_with_ttl(temp_cache_db) -> None:
     """Test cache decorator with TTL."""
 
     call_count = [0]
@@ -539,7 +547,7 @@ async def test_cache_with_ttl(temp_cache_db):
 
 
 @pytest.mark.asyncio
-async def test_cache_key_selector(temp_cache_db, cache_context):
+async def test_cache_key_selector(temp_cache_db, cache_context) -> None:
     """Test custom cache key selection."""
 
     call_count = [0]
@@ -572,12 +580,12 @@ async def test_cache_key_selector(temp_cache_db, cache_context):
 
 
 @pytest.mark.asyncio
-async def test_cache_key_hashers_transform_arguments(temp_cache_db, cache_context):
+async def test_cache_key_hashers_transform_arguments(temp_cache_db, cache_context) -> None:
     """Test key_hashers applies transformations for positional and keyword args."""
 
     calls = []
 
-    def dict_hasher(data: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:
+    def dict_hasher(data: Mapping[str, Any]) -> tuple[tuple[str, Any], ...]:  # noqa: DOEFF006
         return tuple(sorted(data.items()))
 
     hasher_runs: list[str] = []
@@ -614,7 +622,7 @@ async def test_cache_key_hashers_transform_arguments(temp_cache_db, cache_contex
 
 
 @pytest.mark.asyncio
-async def test_convenience_decorators():
+async def test_convenience_decorators() -> None:
     """Test convenience cache decorators."""
 
     @cache_1min
@@ -635,7 +643,7 @@ async def test_convenience_decorators():
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_hits(temp_cache_db, cache_context):
+async def test_cache_decorator_hits(temp_cache_db, cache_context) -> None:
     calls = []
 
     @cache()
@@ -656,7 +664,7 @@ async def test_cache_decorator_hits(temp_cache_db, cache_context):
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_expiry(temp_cache_db, cache_context):
+async def test_cache_decorator_expiry(temp_cache_db, cache_context) -> None:
     calls = []
 
     @cache(ttl=0.5)
@@ -687,7 +695,7 @@ async def test_cache_decorator_expiry(temp_cache_db, cache_context):
 
 
 @pytest.mark.asyncio
-async def test_memo_effects():
+async def test_memo_effects() -> None:
     @do
     def program() -> EffectGenerator[int]:
         yield MemoPut("alpha", 123)
@@ -701,7 +709,7 @@ async def test_memo_effects():
 
 
 @pytest.mark.asyncio
-async def test_memo_miss_raises_keyerror():
+async def test_memo_miss_raises_keyerror() -> None:
     @do
     def program() -> EffectGenerator[int]:
         return (yield MemoGet("missing"))
@@ -718,7 +726,7 @@ if __name__ == "__main__":
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_accepts_pil(temp_cache_db, cache_context):
+async def test_cache_decorator_accepts_pil(temp_cache_db, cache_context) -> None:
     from PIL import Image
 
     calls = []

@@ -21,7 +21,7 @@ from doeff import (
 
 
 @pytest.mark.asyncio
-async def test_display_success():
+async def test_display_success() -> None:
     """Test display() for successful result."""
     @do
     def successful_program() -> EffectGenerator[str]:
@@ -54,7 +54,7 @@ async def test_display_success():
 
 
 @pytest.mark.asyncio
-async def test_display_includes_call_tree():
+async def test_display_includes_call_tree() -> None:
     """Display should include the effect call tree when observations exist."""
 
     @do
@@ -79,7 +79,7 @@ async def test_display_includes_call_tree():
 
 
 @pytest.mark.asyncio
-async def test_display_error_with_traceback():
+async def test_display_error_with_traceback() -> None:
     """Test display() shows user-friendly error output with root cause first."""
     @do
     def failing_program() -> EffectGenerator[str]:
@@ -120,7 +120,7 @@ async def test_display_error_with_traceback():
 
 
 @pytest.mark.asyncio
-async def test_display_trace_includes_user_frames():
+async def test_display_trace_includes_user_frames() -> None:
     """Display output should show full user stack frames in verbose mode."""
 
     def helper_outer() -> None:
@@ -155,7 +155,7 @@ async def test_display_trace_includes_user_frames():
 
 
 @pytest.mark.asyncio
-async def test_display_primary_effect_shows_creation_stack(monkeypatch):
+async def test_display_primary_effect_shows_creation_stack(monkeypatch) -> None:
     """Closest failing effect should surface its root cause and creation location."""
 
     def failing_dumps(_value, _context):
@@ -187,7 +187,7 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
+async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch) -> None:
     """Recover failures should surface the root cause clearly."""
 
     def failing_dumps(_value, _context):
@@ -232,7 +232,7 @@ async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_display_nested_error():
+async def test_display_nested_error() -> None:
     """Test display() with nested errors shows root cause first."""
     @do
     def inner_failing() -> EffectGenerator[int]:
@@ -266,7 +266,7 @@ async def test_display_nested_error():
 
 
 @pytest.mark.asyncio
-async def test_display_with_complex_state():
+async def test_display_with_complex_state() -> None:
     """Test display() with complex state and log data."""
     @do
     def complex_program() -> EffectGenerator[dict]:
@@ -308,7 +308,7 @@ async def test_display_with_complex_state():
 
 
 @pytest.mark.asyncio
-async def test_display_truncation():
+async def test_display_truncation() -> None:
     """Test that display() truncates very long values."""
     @do
     def long_value_program() -> EffectGenerator[str]:
@@ -338,7 +338,7 @@ async def test_display_truncation():
 
 
 @pytest.mark.asyncio
-async def test_display_dep_ask_usage_summary():
+async def test_display_dep_ask_usage_summary() -> None:
     """RunResult.display should summarize Dep/Ask effects without duplicates."""
 
     @do
@@ -373,7 +373,7 @@ async def test_display_dep_ask_usage_summary():
 
 
 @pytest.mark.asyncio
-async def test_display_error_types():
+async def test_display_error_types() -> None:
     """Test display() with different error types."""
 
     # Test with TypeError
@@ -408,7 +408,7 @@ async def test_display_error_types():
 
 
 @pytest.mark.asyncio
-async def test_display_verbose_mode():
+async def test_display_verbose_mode() -> None:
     """Test verbose mode shows additional details."""
     from doeff import Ask, Local
 
@@ -448,7 +448,7 @@ async def test_display_verbose_mode():
 
 
 @pytest.mark.asyncio
-async def test_display_with_graph_steps():
+async def test_display_with_graph_steps() -> None:
     """Test display() shows graph information."""
     from doeff import Annotate, Step
 
@@ -472,7 +472,7 @@ async def test_display_with_graph_steps():
 
 
 @pytest.mark.asyncio
-async def test_visualize_graph_ascii():
+async def test_visualize_graph_ascii() -> None:
     """RunResult.visualize_graph_ascii renders computation graph metadata."""
 
     @do
@@ -506,7 +506,7 @@ async def test_visualize_graph_ascii():
 
 
 @pytest.mark.asyncio
-async def test_display_empty_result():
+async def test_display_empty_result() -> None:
     """Test display() with minimal/empty state."""
     @do
     def minimal_program() -> EffectGenerator[None]:
@@ -526,7 +526,7 @@ async def test_display_empty_result():
 
 
 @pytest.mark.asyncio
-async def test_display_formatting():
+async def test_display_formatting() -> None:
     """Test display() formatting and structure."""
     @do
     def test_program() -> EffectGenerator[int]:
@@ -556,8 +556,8 @@ async def test_display_formatting():
 
 
 @pytest.mark.asyncio
-async def test_display_user_effect_stack_nested_programs():
-    """Test display() shows user effect stack for nested KleisliProgram failures."""
+async def test_display_user_effect_stack_nested_programs() -> None:
+    """Test display() shows FULL call chain for nested KleisliProgram failures."""
 
     @do
     def inner_program() -> EffectGenerator[int]:
@@ -590,8 +590,14 @@ async def test_display_user_effect_stack_nested_programs():
     assert "Root Cause:" in display_output
     assert "ValueError: Inner failure" in display_output
 
-    # Should show the failure originated from inner_program
-    assert "inner_program" in display_output
+    # Should show the FULL call chain: outer -> middle -> inner
+    # This verifies the call_stack_snapshot is being used correctly
+    assert "outer_program" in display_output, "outer_program should be in call chain"
+    assert "middle_program" in display_output, "middle_program should be in call chain"
+    assert "inner_program" in display_output, "inner_program should be in call chain"
+
+    # Verify they appear in the Effect Stack section
+    assert "Effect Stack (user code):" in display_output
 
     # Verbose mode should show full error chain
     verbose_output = result.display(verbose=True)
@@ -600,7 +606,7 @@ async def test_display_user_effect_stack_nested_programs():
 
 
 @pytest.mark.asyncio
-async def test_display_user_effect_stack_shows_user_code_only():
+async def test_display_user_effect_stack_shows_user_code_only() -> None:
     """Test that effect stack filters out doeff internals in non-verbose mode."""
 
     @do
@@ -629,3 +635,52 @@ async def test_display_user_effect_stack_shows_user_code_only():
         stack_section = stack_section.split("\n\n")[0]  # Get just this section
         assert "/doeff/interpreter.py" not in stack_section
         assert "/doeff/handlers/" not in stack_section
+
+
+@pytest.mark.asyncio
+async def test_display_raise_exception_nested_programs() -> None:
+    """Test display() shows FULL call chain when exception is raised (not yield Fail)."""
+
+    @do
+    def inner_raises() -> EffectGenerator[int]:
+        """This program raises an exception directly."""
+        yield Log("Inner about to raise")
+        raise ValueError("Raised from inner")
+        return 0
+
+    @do
+    def middle_call() -> EffectGenerator[int]:
+        """This program calls inner_raises."""
+        yield Log("Middle layer")
+        result = yield inner_raises()
+        return result
+
+    @do
+    def outer_entry() -> EffectGenerator[int]:
+        """This program calls middle_call."""
+        yield Log("Outer entry")
+        result = yield middle_call()
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_entry())
+
+    assert result.is_err
+
+    # Non-verbose mode shows root cause first
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown first
+    assert "Root Cause:" in display_output
+    assert "ValueError: Raised from inner" in display_output
+
+    # Should show the FULL call chain: outer -> middle -> inner
+    # This verifies exception propagation preserves call stack
+    assert "outer_entry" in display_output, "outer_entry should be in call chain"
+    assert "middle_call" in display_output, "middle_call should be in call chain"
+    assert "inner_raises" in display_output, "inner_raises should be in call chain"
+
+    # Verify logs were captured before the exception
+    assert "Outer entry" in display_output
+    assert "Middle layer" in display_output
+    assert "Inner about to raise" in display_output
