@@ -684,3 +684,280 @@ async def test_display_raise_exception_nested_programs() -> None:
     assert "Outer entry" in display_output
     assert "Middle layer" in display_output
     assert "Inner about to raise" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_spawn_failure_shows_internal_call_stack() -> None:
+    """Test display() shows internal call stack from spawned task failures.
+
+    When a spawned task fails, the display should show both:
+    1. Where the task was spawned and joined (outer call stack)
+    2. The internal call stack from inside the spawned program (where error occurred)
+    """
+    from doeff import Spawn
+
+    @do
+    def inner_failing() -> EffectGenerator[int]:
+        """Innermost program that raises an error."""
+        yield Fail(ValueError("Error from spawned inner"))
+        return 0
+
+    @do
+    def middle_spawned() -> EffectGenerator[int]:
+        """Middle layer inside the spawned program."""
+        result = yield inner_failing()
+        return result
+
+    @do
+    def spawned_worker() -> EffectGenerator[int]:
+        """The program that gets spawned."""
+        yield Log("Worker starting")
+        result = yield middle_spawned()
+        return result
+
+    @do
+    def outer_program() -> EffectGenerator[int]:
+        """Main program that spawns a worker."""
+        yield Log("Spawning worker")
+        task = yield Spawn(spawned_worker(), preferred_backend="thread")
+        result = yield task.join()
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_program())
+
+    assert result.is_err
+
+    # Non-verbose mode shows root cause first
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Error from spawned inner" in display_output
+
+    # Should show the outer call stack (where spawn and join happened)
+    assert "outer_program" in display_output
+
+    # Should show the internal call stack from inside the spawned program
+    # These are the key assertions - verifying spawn internal trace is preserved
+    # The Effect Stack section in non-verbose mode shows the program call chain
+    assert "spawned_worker" in display_output, "spawned_worker should be in display output"
+    assert "middle_spawned" in display_output, "middle_spawned should be in display output"
+    assert "inner_failing" in display_output, "inner_failing should be in display output"
+
+    # Verbose mode shows error chain with detailed traces
+    verbose_output = result.display(verbose=True)
+    # In verbose mode, the error chain shows the inner ResultFailEffect
+    assert "ResultFailEffect" in verbose_output
+    assert "inner_failing" in verbose_output  # Should be in creation trace
+
+
+@pytest.mark.asyncio
+async def test_display_nested_spawn_failure_shows_internal_call_stack() -> None:
+    """Test display() shows internal call stack from nested spawned task failures.
+
+    When a spawned task spawns another task that fails, the display should show
+    the full call chain through all spawn levels.
+    """
+    from doeff import Spawn
+
+    @do
+    def innermost_failing() -> EffectGenerator[int]:
+        """Deepest program that raises an error."""
+        yield Fail(ValueError("Error from nested spawned inner"))
+        return 0
+
+    @do
+    def inner_spawned() -> EffectGenerator[int]:
+        """Inner spawned worker that spawns another task."""
+        result = yield innermost_failing()
+        return result
+
+    @do
+    def outer_spawned() -> EffectGenerator[int]:
+        """Outer spawned worker that spawns inner_spawned."""
+        task = yield Spawn(inner_spawned(), preferred_backend="thread")
+        result = yield task.join()
+        return result
+
+    @do
+    def main_program() -> EffectGenerator[int]:
+        """Main program that spawns outer_spawned."""
+        task = yield Spawn(outer_spawned(), preferred_backend="thread")
+        result = yield task.join()
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(main_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Error from nested spawned inner" in display_output
+
+    # Should show the full call chain through nested spawns
+    assert "main_program" in display_output
+    assert "outer_spawned" in display_output
+    assert "inner_spawned" in display_output
+    assert "innermost_failing" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_gather_failure_shows_call_stack() -> None:
+    """Test display() shows call stack when a gathered task fails.
+
+    When using Gather with multiple tasks and one fails, the display should
+    show the call stack leading to the failure.
+    """
+    from doeff import Gather
+
+    @do
+    def succeeding_task() -> EffectGenerator[int]:
+        """Task that succeeds."""
+        return 42
+
+    @do
+    def failing_task() -> EffectGenerator[int]:
+        """Task that fails."""
+        yield Fail(ValueError("Gather task failed"))
+        return 0
+
+    @do
+    def main_program() -> EffectGenerator[list[int]]:
+        """Main program that gathers multiple tasks."""
+        yield Log("Starting gather")
+        # One task succeeds, one fails
+        results = yield Gather(succeeding_task(), failing_task())
+        return results
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(main_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Gather task failed" in display_output
+
+    # Should show the call chain
+    assert "main_program" in display_output
+    assert "failing_task" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_spawn_with_gather_failure_shows_call_stack() -> None:
+    """Test display() shows call stack when spawned task uses Gather and fails.
+
+    When a spawned task runs Gather and one of the gathered tasks fails,
+    the display should show the complete call chain.
+    """
+    from doeff import Spawn, Gather
+
+    @do
+    def inner_failing() -> EffectGenerator[int]:
+        """Task that fails inside gather."""
+        yield Fail(ValueError("Inner gather task failed"))
+        return 0
+
+    @do
+    def inner_success() -> EffectGenerator[int]:
+        """Task that succeeds."""
+        return 1
+
+    @do
+    def spawned_with_gather() -> EffectGenerator[list[int]]:
+        """Spawned task that uses Gather internally."""
+        yield Log("Running gather in spawned task")
+        results = yield Gather(inner_success(), inner_failing())
+        return results
+
+    @do
+    def main_program() -> EffectGenerator[list[int]]:
+        """Main program that spawns a task with gather."""
+        task = yield Spawn(spawned_with_gather(), preferred_backend="thread")
+        results = yield task.join()
+        return results
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(main_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Inner gather task failed" in display_output
+
+    # Should show the full call chain
+    assert "main_program" in display_output
+    assert "spawned_with_gather" in display_output
+    assert "inner_failing" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_process_spawn_failure_shows_internal_call_stack() -> None:
+    """Test display() shows internal call stack from process-spawned task failures.
+
+    This verifies that the serialization/deserialization of EffectFailure info
+    preserves the call stack when using the process backend.
+    """
+    from doeff import Spawn
+
+    @do
+    def inner_failing() -> EffectGenerator[int]:
+        """Innermost program that raises an error."""
+        yield Fail(ValueError("Error from process spawned inner"))
+        return 0
+
+    @do
+    def middle_spawned() -> EffectGenerator[int]:
+        """Middle layer inside the spawned program."""
+        result = yield inner_failing()
+        return result
+
+    @do
+    def spawned_worker() -> EffectGenerator[int]:
+        """The program that gets spawned in a separate process."""
+        yield Log("Process worker starting")
+        result = yield middle_spawned()
+        return result
+
+    @do
+    def outer_program() -> EffectGenerator[int]:
+        """Main program that spawns a worker in process backend."""
+        yield Log("Spawning process worker")
+        task = yield Spawn(spawned_worker(), preferred_backend="process")
+        result = yield task.join()
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_program())
+
+    assert result.is_err
+
+    # Non-verbose mode shows root cause first
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Error from process spawned inner" in display_output
+
+    # Should show the outer call stack (where spawn and join happened)
+    assert "outer_program" in display_output
+
+    # Should show the internal call stack from inside the spawned program
+    # These verify that call stack survives process serialization
+    assert "spawned_worker" in display_output, "spawned_worker should be in display output"
+    assert "middle_spawned" in display_output, "middle_spawned should be in display output"
+    assert "inner_failing" in display_output, "inner_failing should be in display output"
