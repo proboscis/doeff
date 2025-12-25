@@ -707,6 +707,9 @@ class ProgramInterpreter:
         for program in programs:
             _enqueue_program(program)
 
+        # Capture parent call stack before running sub-programs
+        parent_call_stack = tuple(ctx.program_call_stack)
+
         tasks = []
         for prog in normalized_programs:
             ctx_copy = ExecutionContext(
@@ -717,6 +720,7 @@ class ProgramInterpreter:
                 io_allowed=ctx.io_allowed,
                 cache=ctx.cache,
                 effect_observations=ctx.effect_observations,
+                program_call_stack=[],  # Start fresh call stack for sub-program
             )
             self._ensure_log_buffer(ctx_copy)
             tasks.append(asyncio.create_task(self.run_async(prog, ctx_copy)))
@@ -726,11 +730,13 @@ class ProgramInterpreter:
         results: list[Any] = []
         sub_contexts = [sub_result.context for sub_result in sub_results]
         error_to_raise: BaseException | None = None
+        error_index: int | None = None
 
-        for sub_result in sub_results:
+        for idx, sub_result in enumerate(sub_results):
             if isinstance(sub_result.result, Err):
                 if error_to_raise is None:
                     error_to_raise = sub_result.result.error
+                    error_index = idx
             else:
                 results.append(sub_result.value)
 
@@ -751,6 +757,18 @@ class ProgramInterpreter:
             ctx.graph = WGraph(last=ctx.graph.last, steps=frozenset(combined_steps))
 
         if error_to_raise is not None:
+            # Augment EffectFailure with sub-program context
+            if isinstance(error_to_raise, EffectFailure):
+                error_to_raise = EffectFailure(
+                    effect=error_to_raise.effect,
+                    cause=error_to_raise.cause,
+                    runtime_traceback=error_to_raise.runtime_traceback,
+                    creation_context=error_to_raise.creation_context,
+                    call_stack_snapshot=error_to_raise.call_stack_snapshot,
+                    parent_call_stack=parent_call_stack,
+                    sub_program_index=error_index,
+                    sub_program_type="gather",
+                )
             raise error_to_raise
 
         return results

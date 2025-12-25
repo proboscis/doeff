@@ -535,6 +535,10 @@ class EffectFailureError(Exception):
     runtime_traceback: CapturedTraceback | None = None  # noqa: DOEFF013 - Runtime stack trace where error occurred
     creation_context: EffectCreationContext | None = None  # noqa: DOEFF013 - Where the effect was created
     call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure time
+    # Sub-program context for enhanced stack trace display
+    parent_call_stack: tuple[CallFrame, ...] | None = None  # noqa: DOEFF013 - Parent's call stack at spawn/gather point
+    sub_program_index: int | None = None  # noqa: DOEFF013 - Index in gather (0-based), None for spawn/listen
+    sub_program_type: str | None = None  # noqa: DOEFF013 - "gather", "spawn", "listen", "parallel"
 
     def __str__(self) -> str:
         """Format the error for display."""
@@ -750,6 +754,10 @@ class EffectFailureInfo:
     runtime_trace: CapturedTraceback | None  # noqa: DOEFF013
     cause_trace: CapturedTraceback | None  # noqa: DOEFF013
     call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure
+    # Sub-program context for enhanced stack trace display
+    parent_call_stack: tuple[CallFrame, ...] | None = None  # noqa: DOEFF013
+    sub_program_index: int | None = None  # noqa: DOEFF013
+    sub_program_type: str | None = None  # noqa: DOEFF013
 
 
 @dataclass(frozen=True)
@@ -799,6 +807,10 @@ class RunFailureDetails:
                     seen_exceptions.add(id(cause_exc))
                 # Get call stack snapshot from EffectFailure if available
                 call_stack = getattr(exc, "call_stack_snapshot", ())
+                # Get sub-program context if available
+                parent_call_stack = getattr(exc, "parent_call_stack", None)
+                sub_program_index = getattr(exc, "sub_program_index", None)
+                sub_program_type = getattr(exc, "sub_program_type", None)
                 entries.append(
                     EffectFailureInfo(
                         effect=exc.effect,
@@ -807,6 +819,9 @@ class RunFailureDetails:
                         runtime_trace=runtime_trace,
                         cause_trace=capture(cause_exc),
                         call_stack_snapshot=call_stack,
+                        parent_call_stack=parent_call_stack,
+                        sub_program_index=sub_program_index,
+                        sub_program_type=sub_program_type,
                     )
                 )
                 if isinstance(exc.cause, BaseException):
@@ -1510,6 +1525,16 @@ class _UserEffectFrame:
     code: str | None
 
 
+@dataclass(frozen=True)
+class _FrameGroup:
+    """A group of frames, optionally from a sub-program."""
+
+    frames: list[_UserEffectFrame]
+    is_sub_program: bool = False
+    sub_program_type: str | None = None
+    sub_program_index: int | None = None
+
+
 class _UserEffectStackSection(_BaseSection):
     """Display user-friendly effect stack trace with root cause first."""
 
@@ -1533,19 +1558,37 @@ class _UserEffectStackSection(_BaseSection):
             )
             lines.append("")
 
-        # Extract user code frames from the effect chain
-        user_frames = self._extract_user_frames(details)
-        if user_frames:
+        # Extract user code frames with sub-program context
+        frame_groups = self._extract_user_frames_with_sub_programs(details)
+        if frame_groups:
             lines.append("Effect Stack (user code):")
             lines.append("")
-            for frame in user_frames:
-                # Format: in path:line func_name
-                rel_path = self._relative_path(frame.filename)
-                lines.append(f"in {rel_path}:{frame.line} {frame.function}")
-                if frame.code:
-                    lines.append(self.indent(1, frame.code))
+            for group in frame_groups:
+                if group.is_sub_program:
+                    # Show sub-program indicator
+                    label = self._format_sub_program_label(
+                        group.sub_program_type, group.sub_program_index
+                    )
+                    lines.append(label)
+                for frame in group.frames:
+                    # Format: in path:line func_name
+                    indent_level = 1 if group.is_sub_program else 0
+                    rel_path = self._relative_path(frame.filename)
+                    frame_line = f"in {rel_path}:{frame.line} {frame.function}"
+                    lines.append(self.indent(indent_level, frame_line))
+                    if frame.code:
+                        lines.append(self.indent(indent_level + 1, frame.code))
 
         return lines
+
+    def _format_sub_program_label(
+        self, sub_program_type: str | None, sub_program_index: int | None
+    ) -> str:
+        """Format the sub-program indicator label."""
+        type_str = sub_program_type or "sub-program"
+        if sub_program_index is not None:
+            return f"↳ in {type_str} [{sub_program_index}]:"
+        return f"↳ in {type_str}:"
 
     def _find_root_cause(
         self, details: RunFailureDetails
@@ -1561,6 +1604,162 @@ class _UserEffectStackSection(_BaseSection):
                 root_cause = entry.exception
 
         return root_cause
+
+    def _extract_user_frames_with_sub_programs(
+        self, details: RunFailureDetails
+    ) -> list[_FrameGroup]:
+        """Extract user code frames grouped by parent/sub-program context."""
+        groups: list[_FrameGroup] = []
+        seen_locations: set[tuple[str, int, str]] = set()
+
+        for entry in details.entries:  # noqa: DOEFF012
+            if not isinstance(entry, EffectFailureInfo):
+                continue
+
+            # Check if this entry has sub-program context
+            has_sub_program_context = (
+                entry.parent_call_stack is not None
+                and entry.sub_program_type is not None
+            )
+
+            if has_sub_program_context:
+                # First, add frames from parent_call_stack (parent program context)
+                parent_frames = self._extract_frames_from_call_stack(
+                    entry.parent_call_stack, seen_locations
+                )
+                if parent_frames:
+                    groups.append(_FrameGroup(frames=parent_frames, is_sub_program=False))
+
+                # Then add frames from call_stack_snapshot (sub-program context)
+                sub_frames = self._extract_frames_from_call_stack(
+                    entry.call_stack_snapshot, seen_locations
+                )
+                # Also add frames from creation context and runtime trace
+                sub_frames.extend(
+                    self._extract_frames_from_entry_context(entry, seen_locations)
+                )
+                if sub_frames:
+                    groups.append(
+                        _FrameGroup(
+                            frames=sub_frames,
+                            is_sub_program=True,
+                            sub_program_type=entry.sub_program_type,
+                            sub_program_index=entry.sub_program_index,
+                        )
+                    )
+            else:
+                # No sub-program context - use the standard extraction
+                frames = self._extract_frames_from_call_stack(
+                    entry.call_stack_snapshot, seen_locations
+                )
+                frames.extend(
+                    self._extract_frames_from_entry_context(entry, seen_locations)
+                )
+                if frames:
+                    groups.append(_FrameGroup(frames=frames, is_sub_program=False))
+
+        return groups
+
+    def _extract_frames_from_call_stack(
+        self,
+        call_stack: tuple[CallFrame, ...] | None,
+        seen_locations: set[tuple[str, int, str]],
+    ) -> list[_UserEffectFrame]:
+        """Extract user frames from a call stack snapshot."""
+        frames: list[_UserEffectFrame] = []
+        if not call_stack:
+            return frames
+
+        for call_frame in call_stack:
+            ctx = call_frame.created_at
+            if ctx is None:
+                continue
+            if not _is_user_code_path(ctx.filename):
+                continue
+            loc_key = (ctx.filename, ctx.line, ctx.function)
+            if loc_key in seen_locations:
+                continue
+            seen_locations.add(loc_key)
+            frames.append(
+                _UserEffectFrame(
+                    filename=ctx.filename,
+                    line=ctx.line,
+                    function=call_frame.function_name,
+                    code=ctx.code,
+                )
+            )
+        return frames
+
+    def _extract_frames_from_entry_context(
+        self,
+        entry: EffectFailureInfo,
+        seen_locations: set[tuple[str, int, str]],
+    ) -> list[_UserEffectFrame]:
+        """Extract user frames from an entry's creation context and runtime trace."""
+        frames: list[_UserEffectFrame] = []
+
+        # For NullEffect (direct exception raise), extract frames from runtime_trace
+        effect_name = entry.effect.__class__.__name__
+        if effect_name == "NullEffect" and entry.runtime_trace:
+            loc = entry.runtime_trace.get_raise_location()
+            if loc and _is_user_code_path(loc.filename):
+                loc_key = (loc.filename, loc.line, loc.function)
+                if loc_key not in seen_locations:
+                    seen_locations.add(loc_key)
+                    frames.append(
+                        _UserEffectFrame(
+                            filename=loc.filename,
+                            line=loc.line,
+                            function=loc.function,
+                            code=loc.code,
+                        )
+                    )
+
+        # Add frames from creation context
+        ctx = entry.creation_context
+        if ctx is None:
+            return frames
+
+        # Add frames from stack_trace
+        if ctx.stack_trace:
+            for frame_data in reversed(ctx.stack_trace):
+                filename = frame_data.get("filename", "<unknown>")
+                line_no = frame_data.get("line", 0)
+                func_name = frame_data.get("function", "<unknown>")
+                code = frame_data.get("code")
+
+                if not _is_user_code_path(filename):
+                    continue
+
+                loc_key = (filename, line_no, func_name)
+                if loc_key in seen_locations:
+                    continue
+                seen_locations.add(loc_key)
+
+                frames.append(
+                    _UserEffectFrame(
+                        filename=filename,
+                        line=line_no,
+                        function=func_name,
+                        code=code,
+                    )
+                )
+
+        # Add the immediate creation location
+        if _is_user_code_path(ctx.filename):
+            loc_key = (ctx.filename, ctx.line, ctx.function)
+            if loc_key not in seen_locations:
+                seen_locations.add(loc_key)
+                frames.append(
+                    _UserEffectFrame(
+                        filename=ctx.filename,
+                        line=ctx.line,
+                        function=ctx.function,
+                        code=ctx.code,
+                    )
+                )
+
+        return frames
 
     def _extract_user_frames(
         self, details: RunFailureDetails

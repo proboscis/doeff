@@ -53,6 +53,7 @@ class Task(Generic[T]):
     _handle: Any = field(repr=False)
     _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False)
     _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False)
+    _parent_call_stack: tuple[Any, ...] = field(default_factory=tuple, repr=False)
 
     def join(self) -> Effect:
         return create_effect_with_trace(TaskJoinEffect(task=self), skip_frames=3)
