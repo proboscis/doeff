@@ -172,7 +172,61 @@ def _sanitize_exception(error: BaseException) -> BaseException:
     return error
 
 
-def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:  # noqa: DOEFF006
+def _serialize_call_stack_for_spawn(
+    call_stack: tuple[Any, ...],
+) -> list[dict[str, Any]]:  # noqa: DOEFF006
+    """Serialize call stack frames for cross-process transfer."""
+    result = []
+    for frame in call_stack:
+        created_at = getattr(frame, "created_at", None)
+        serialized_created_at = None
+        if created_at is not None:
+            serialized_created_at = {
+                "filename": getattr(created_at, "filename", ""),
+                "line": getattr(created_at, "line", 0),
+                "function": getattr(created_at, "function", ""),
+                "code": getattr(created_at, "code", ""),
+                "stack_trace": getattr(created_at, "stack_trace", []),
+            }
+        result.append({
+            "function_name": getattr(frame, "function_name", ""),
+            "depth": getattr(frame, "depth", 0),
+            "created_at": serialized_created_at,
+        })
+    return result
+
+
+def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, Any]]:  # noqa: DOEFF006
+    """Pack an error for cross-process transfer, preserving EffectFailure info."""
+    from doeff.types import EffectFailure
+
+    if isinstance(error, EffectFailure):
+        # Preserve the full EffectFailure info including call stack
+        creation_ctx = error.creation_context
+        serialized_creation_ctx = None
+        if creation_ctx is not None:
+            serialized_creation_ctx = {
+                "filename": getattr(creation_ctx, "filename", ""),
+                "line": getattr(creation_ctx, "line", 0),
+                "function": getattr(creation_ctx, "function", ""),
+                "code": getattr(creation_ctx, "code", ""),
+                "stack_trace": getattr(creation_ctx, "stack_trace", []),
+            }
+
+        return (
+            _SPAWN_ERR_TAG,
+            {
+                "is_effect_failure": True,
+                "type": error.cause.__class__.__name__ if error.cause else "EffectFailure",
+                "message": str(error.cause) if error.cause else str(error),
+                "effect_type": error.effect.__class__.__name__,
+                "call_stack_snapshot": _serialize_call_stack_for_spawn(
+                    error.call_stack_snapshot
+                ),
+                "creation_context": serialized_creation_ctx,
+            },
+        )
+
     return (
         _SPAWN_ERR_TAG,
         {
@@ -180,6 +234,79 @@ def _pack_spawn_error(error: BaseException) -> tuple[str, dict[str, str]]:  # no
             "message": str(error),
         },
     )
+
+
+def _reconstruct_spawn_effect_failure(error_dict: dict[str, Any]) -> BaseException:
+    """Reconstruct an EffectFailure from serialized spawn error data."""
+    from doeff._types_internal import (
+        CallFrame,
+        EffectCreationContext,
+        EffectFailureError,
+        NullEffect,
+    )
+
+    # Reconstruct the cause exception
+    error_type = error_dict.get("type", "Error")
+    message = error_dict.get("message", "")
+
+    # Create a SpawnTaskError that preserves the original error info
+    cause = SpawnTaskError(f"{error_type}: {message}")
+
+    # Reconstruct creation context if available
+    creation_context = None
+    ctx_data = error_dict.get("creation_context")
+    if ctx_data:
+        creation_context = EffectCreationContext(
+            filename=ctx_data.get("filename", ""),
+            line=ctx_data.get("line", 0),
+            function=ctx_data.get("function", ""),
+            code=ctx_data.get("code", ""),
+            stack_trace=ctx_data.get("stack_trace", []),
+            frame_info=None,
+        )
+
+    # Reconstruct call stack snapshot
+    call_stack: list[CallFrame] = []
+    for frame_data in error_dict.get("call_stack_snapshot", []):
+        created_at = None
+        created_at_data = frame_data.get("created_at")
+        if created_at_data:
+            created_at = EffectCreationContext(
+                filename=created_at_data.get("filename", ""),
+                line=created_at_data.get("line", 0),
+                function=created_at_data.get("function", ""),
+                code=created_at_data.get("code", ""),
+                stack_trace=created_at_data.get("stack_trace", []),
+                frame_info=None,
+            )
+        call_stack.append(
+            CallFrame(
+                kleisli=None,  # Not needed for display
+                function_name=frame_data.get("function_name", ""),
+                args=(),
+                kwargs={},
+                depth=frame_data.get("depth", 0),
+                created_at=created_at,
+            )
+        )
+
+    # Determine effect type from the error dict
+    effect_type = error_dict.get("effect_type", "NullEffect")
+    effect = NullEffect()  # Use placeholder effect
+
+    return EffectFailureError(
+        effect=effect,
+        cause=cause,
+        runtime_traceback=None,
+        creation_context=creation_context,
+        call_stack_snapshot=tuple(call_stack),
+    )
+
+
+class SpawnTaskError(Exception):
+    """Exception raised when a spawned task fails, preserving original error info."""
+
+    pass
 
 
 def _run_spawn_payload(payload: bytes, max_log_entries: int | None) -> bytes:
@@ -898,6 +1025,9 @@ class SpawnEffectHandler:
             if tag == _SPAWN_ERR_TAG:
                 error = decoded[1] if len(decoded) > 1 else RuntimeError("Spawn task failed")
                 if isinstance(error, dict):
+                    if error.get("is_effect_failure"):
+                        # Reconstruct EffectFailure with preserved call stack
+                        raise _reconstruct_spawn_effect_failure(error)
                     error_type = error.get("type", "Error")
                     message = error.get("message", "")
                     raise RuntimeError(f"Spawn task failed ({error_type}): {message}")
