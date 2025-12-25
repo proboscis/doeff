@@ -1,11 +1,17 @@
 """Unit tests for CLI discovery service."""
 
+import os
+import tempfile
+from pathlib import Path
+
 import pytest
 
 from doeff.cli.discovery import (
     IndexerBasedDiscovery,
     StandardEnvMerger,
     StandardSymbolLoader,
+    find_project_root,
+    ensure_project_root_in_sys_path,
 )
 from doeff.interpreter import ProgramInterpreter
 
@@ -255,3 +261,221 @@ def test_full_discovery_flow(discovery, merger):
     assert "feature_flags" in merged_env  # From features_env
     assert merged_env["auth_provider"] == "oauth2"  # From auth_env
     assert merged_env["token_expiry"] == 3600  # From auth_env
+
+
+# Project root discovery tests
+
+
+def test_find_project_root_from_root():
+    """Should find project root when already at root."""
+    # This test runs from the project root
+    root = find_project_root()
+
+    assert root is not None
+    # Should contain pyproject.toml
+    assert (root / "pyproject.toml").exists()
+
+
+def test_find_project_root_from_subdirectory():
+    """Should find project root from a subdirectory."""
+    project_root = find_project_root()
+    assert project_root is not None
+
+    # Test from tests/fixtures_discovery subdirectory
+    subdir = project_root / "tests" / "fixtures_discovery"
+    if subdir.exists():
+        found_root = find_project_root(subdir)
+        assert found_root == project_root
+
+
+def test_find_project_root_from_deeply_nested():
+    """Should find project root from deeply nested subdirectory."""
+    project_root = find_project_root()
+    assert project_root is not None
+
+    # Test from deeply nested subdirectory
+    deep_subdir = project_root / "tests" / "fixtures_discovery" / "myapp" / "features" / "auth"
+    if deep_subdir.exists():
+        found_root = find_project_root(deep_subdir)
+        assert found_root == project_root
+
+
+def test_find_project_root_outside_project():
+    """Should return None when outside any project."""
+    # Use temp directory without any project markers
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = find_project_root(tmpdir)
+        assert result is None
+
+
+def test_find_project_root_with_pyproject_toml():
+    """Should detect project root via pyproject.toml."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Resolve symlinks (e.g., /var -> /private/var on macOS)
+        tmppath = Path(tmpdir).resolve()
+        # Create pyproject.toml
+        (tmppath / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+        # Create nested directory
+        nested = tmppath / "src" / "app" / "module"
+        nested.mkdir(parents=True)
+
+        result = find_project_root(nested)
+        assert result == tmppath
+
+
+def test_find_project_root_with_git():
+    """Should detect project root via .git directory."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Resolve symlinks (e.g., /var -> /private/var on macOS)
+        tmppath = Path(tmpdir).resolve()
+        # Create .git directory
+        (tmppath / ".git").mkdir()
+        # Create nested directory
+        nested = tmppath / "src" / "app"
+        nested.mkdir(parents=True)
+
+        result = find_project_root(nested)
+        assert result == tmppath
+
+
+# Subdirectory execution tests
+
+
+def test_discovery_from_subdirectory(discovery):
+    """Should discover interpreter when running from subdirectory."""
+    original_cwd = os.getcwd()
+    project_root = find_project_root()
+    assert project_root is not None
+
+    try:
+        # Change to subdirectory
+        subdir = project_root / "tests" / "fixtures_discovery"
+        if subdir.exists():
+            os.chdir(subdir)
+
+            # Create a fresh discovery with explicit project root
+            loader = StandardSymbolLoader()
+            subdirectory_discovery = IndexerBasedDiscovery(
+                symbol_loader=loader, project_root=project_root
+            )
+
+            # Should still find the interpreter
+            program_path = "tests.fixtures_discovery.myapp.features.auth.login"
+            result = subdirectory_discovery.find_default_interpreter(program_path)
+
+            assert result is not None
+            assert "auth_interpreter" in result
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_discovery_from_deeply_nested_subdirectory(discovery):
+    """Should discover interpreter from deeply nested subdirectory."""
+    original_cwd = os.getcwd()
+    project_root = find_project_root()
+    assert project_root is not None
+
+    try:
+        # Change to deeply nested subdirectory
+        deep_subdir = project_root / "tests" / "fixtures_discovery" / "myapp" / "features" / "auth"
+        if deep_subdir.exists():
+            os.chdir(deep_subdir)
+
+            # Create discovery - it should auto-find the project root
+            loader = StandardSymbolLoader()
+            deep_discovery = IndexerBasedDiscovery(symbol_loader=loader)
+
+            # Verify project root was found
+            assert deep_discovery.project_root == project_root
+
+            # Should still find the interpreter
+            program_path = "tests.fixtures_discovery.myapp.features.auth.login"
+            result = deep_discovery.find_default_interpreter(program_path)
+
+            assert result is not None
+            assert "auth_interpreter" in result
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_discovery_envs_from_subdirectory(discovery):
+    """Should discover environments when running from subdirectory."""
+    original_cwd = os.getcwd()
+    project_root = find_project_root()
+    assert project_root is not None
+
+    try:
+        # Change to subdirectory
+        subdir = project_root / "tests"
+        if subdir.exists():
+            os.chdir(subdir)
+
+            # Create discovery with explicit project root
+            loader = StandardSymbolLoader()
+            subdirectory_discovery = IndexerBasedDiscovery(
+                symbol_loader=loader, project_root=project_root
+            )
+
+            # Should find all envs in hierarchy order
+            program_path = "tests.fixtures_discovery.myapp.features.auth.login"
+            result = subdirectory_discovery.discover_default_envs(program_path)
+
+            assert len(result) == 3
+            assert "base_env" in result[0]
+            assert "features_env" in result[1]
+            assert "auth_env" in result[2]
+    finally:
+        os.chdir(original_cwd)
+
+
+def test_ensure_project_root_in_sys_path():
+    """Should add project root to sys.path."""
+    import sys
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir).resolve()
+        # Create pyproject.toml
+        (tmppath / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+
+        # Initially not in sys.path
+        assert str(tmppath) not in sys.path
+
+        # Add to sys.path
+        result = ensure_project_root_in_sys_path(tmppath)
+
+        assert result == tmppath
+        assert str(tmppath) in sys.path
+
+        # Clean up
+        sys.path.remove(str(tmppath))
+
+
+def test_discovery_outside_project_fails_gracefully():
+    """Should handle running outside any project gracefully."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(tmpdir)
+
+            # Create discovery - no project root will be found
+            loader = StandardSymbolLoader()
+
+            # Skip if doeff-indexer not available
+            try:
+                from doeff_indexer import Indexer  # noqa: F401
+            except ImportError:
+                pytest.skip("doeff-indexer not available")
+
+            outside_discovery = IndexerBasedDiscovery(symbol_loader=loader)
+
+            # Project root should be None
+            assert outside_discovery.project_root is None
+
+            # Discovery should return None/empty gracefully
+            result = outside_discovery.find_default_interpreter("some.module.path")
+            assert result is None
+
+            envs = outside_discovery.discover_default_envs("some.module.path")
+            assert envs == []
+        finally:
+            os.chdir(original_cwd)

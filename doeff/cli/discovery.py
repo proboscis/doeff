@@ -8,12 +8,95 @@ from __future__ import annotations
 
 import importlib
 import logging
+import os
+import sys
+from pathlib import Path
 from typing import Any, Protocol
 
 from doeff import Program
 from doeff.cli.profiling import profile
 
 logger = logging.getLogger(__name__)
+
+# Project root markers (in order of priority)
+PROJECT_ROOT_MARKERS = (
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    ".git",
+    ".hg",
+    "requirements.txt",
+)
+
+
+def find_project_root(start_path: Path | str | None = None) -> Path | None:
+    """Find the project root by walking up the directory tree.
+
+    Looks for common project markers (pyproject.toml, .git, etc.) starting
+    from the given path or current working directory.
+
+    Args:
+        start_path: Starting directory path. If None, uses current working directory.
+
+    Returns:
+        Path to project root if found, None otherwise.
+
+    Example:
+        >>> find_project_root()
+        PosixPath('/home/user/myproject')
+        >>> find_project_root('/home/user/myproject/src/app/module.py')
+        PosixPath('/home/user/myproject')
+    """
+    if start_path is None:
+        current = Path.cwd()
+    else:
+        current = Path(start_path)
+        if current.is_file():
+            current = current.parent
+
+    current = current.resolve()
+
+    while current != current.parent:
+        for marker in PROJECT_ROOT_MARKERS:
+            marker_path = current / marker
+            if marker_path.exists():
+                return current
+        current = current.parent
+
+    # Check root directory as well
+    for marker in PROJECT_ROOT_MARKERS:
+        if (current / marker).exists():
+            return current
+
+    return None
+
+
+def ensure_project_root_in_sys_path(project_root: Path | None = None) -> Path | None:
+    """Ensure project root is in sys.path for module imports.
+
+    Finds the project root and adds it to sys.path if not already present.
+    This allows importing modules when running from a subdirectory.
+
+    Args:
+        project_root: Optional project root path. If None, auto-discovers.
+
+    Returns:
+        The project root path if found, None otherwise.
+    """
+    if project_root is None:
+        project_root = find_project_root()
+
+    if project_root is None:
+        return None
+
+    project_root_str = str(project_root)
+
+    # Add to sys.path if not already present
+    if project_root_str not in sys.path:
+        sys.path.insert(0, project_root_str)
+        logger.debug("Added project root to sys.path: %s", project_root_str)
+
+    return project_root
 
 
 class InterpreterDiscovery(Protocol):
@@ -127,11 +210,12 @@ class SymbolLoader(Protocol):
 class IndexerBasedDiscovery:
     """Discovery implementation using doeff-indexer."""
 
-    def __init__(self, symbol_loader: SymbolLoader | None = None):
-        """Initialize discovery with optional symbol loader.
+    def __init__(self, symbol_loader: SymbolLoader | None = None, project_root: Path | None = None):
+        """Initialize discovery with optional symbol loader and project root.
 
         Args:
             symbol_loader: Custom symbol loader, or None for default
+            project_root: Explicit project root path, or None to auto-discover
         """
         with profile("Import doeff_indexer", indent=1):
             try:
@@ -145,6 +229,48 @@ class IndexerBasedDiscovery:
 
         self.symbol_loader = symbol_loader or StandardSymbolLoader()
 
+        # Discover and store project root
+        with profile("Discover project root", indent=1):
+            if project_root is not None:
+                self._project_root = Path(project_root).resolve()
+            else:
+                self._project_root = find_project_root()
+
+            if self._project_root is not None:
+                ensure_project_root_in_sys_path(self._project_root)
+                logger.debug("Using project root: %s", self._project_root)
+
+    @property
+    def project_root(self) -> Path | None:
+        """Get the discovered project root path."""
+        return self._project_root
+
+    def _create_indexer(self, module_path: str):
+        """Create an indexer, changing to project root if needed.
+
+        Args:
+            module_path: The Python module path to create indexer for
+
+        Returns:
+            Indexer instance or None if creation failed
+        """
+        original_cwd = None
+        try:
+            # Change to project root if we have one and it differs from cwd
+            if self._project_root is not None:
+                cwd = Path.cwd().resolve()
+                if cwd != self._project_root:
+                    original_cwd = cwd
+                    os.chdir(self._project_root)
+                    logger.debug("Changed to project root: %s", self._project_root)
+
+            return self.indexer_class.for_module(module_path)
+        finally:
+            # Restore original working directory
+            if original_cwd is not None:
+                os.chdir(original_cwd)
+                logger.debug("Restored working directory: %s", original_cwd)
+
     def find_default_interpreter(self, program_path: str) -> str | None:
         """Find closest default interpreter in module hierarchy.
 
@@ -155,7 +281,7 @@ class IndexerBasedDiscovery:
 
             with profile("Create indexer", indent=2):
                 try:
-                    indexer = self.indexer_class.for_module(module_path)
+                    indexer = self._create_indexer(module_path)
                 except RuntimeError as e:
                     logger.warning(
                         "Failed to create indexer for module %s: %s. "
@@ -201,7 +327,7 @@ class IndexerBasedDiscovery:
 
             with profile("Create indexer", indent=2):
                 try:
-                    indexer = self.indexer_class.for_module(module_path)
+                    indexer = self._create_indexer(module_path)
                 except RuntimeError as e:
                     logger.warning(
                         "Failed to create indexer for module %s: %s. "
