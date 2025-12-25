@@ -1069,3 +1069,236 @@ async def test_display_process_spawn_failure_shows_internal_call_stack() -> None
     assert "spawned_worker" in display_output, "spawned_worker should be in display output"
     assert "middle_spawned" in display_output, "middle_spawned should be in display output"
     assert "inner_failing" in display_output, "inner_failing should be in display output"
+
+
+@pytest.mark.asyncio
+async def test_display_gather_failure_shows_sub_program_index() -> None:
+    """Test display() shows which sub-program index failed in gather.
+
+    When gather runs multiple sub-programs and one fails, the display should
+    indicate which sub-program (by index) failed with a clear marker.
+    """
+    from doeff import Gather
+
+    @do
+    def succeeding_task() -> EffectGenerator[int]:
+        """Task that succeeds (index 0)."""
+        return 42
+
+    @do
+    def another_success() -> EffectGenerator[int]:
+        """Task that succeeds (index 1)."""
+        return 100
+
+    @do
+    def failing_task() -> EffectGenerator[int]:
+        """Task that fails (index 2)."""
+        yield Fail(ValueError("Third task failed"))
+        return 0
+
+    @do
+    def outer_program() -> EffectGenerator[int]:
+        """Outer program that calls the gather."""
+        yield Log("Starting outer")
+        return (yield main_with_gather())
+
+    @do
+    def main_with_gather() -> EffectGenerator[list[int]]:
+        """Program that gathers multiple tasks."""
+        yield Log("Starting gather")
+        results = yield Gather(succeeding_task(), another_success(), failing_task())
+        return results
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Third task failed" in display_output
+
+    # Should show sub-program indicator with index
+    assert "↳ in gather [2]:" in display_output
+
+    # Should show the parent call chain
+    assert "outer_program" in display_output
+    assert "main_with_gather" in display_output
+
+    # Should show the failing task in sub-program section
+    assert "failing_task" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_spawn_failure_shows_sub_program_indicator() -> None:
+    """Test display() shows sub-program indicator for spawn failures.
+
+    When a spawned task fails, the display should indicate it was a spawned
+    sub-program with a clear marker.
+    """
+    from doeff import Spawn
+
+    @do
+    def inner_failing() -> EffectGenerator[int]:
+        """Task that fails inside spawned program."""
+        yield Fail(ValueError("Spawned task failed"))
+        return 0
+
+    @do
+    def spawned_worker() -> EffectGenerator[int]:
+        """Spawned worker that calls inner function."""
+        yield Log("Starting spawned worker")
+        return (yield inner_failing())
+
+    @do
+    def outer_caller() -> EffectGenerator[int]:
+        """Outer program that initiates spawn."""
+        yield Log("Starting outer")
+        return (yield main_program())
+
+    @do
+    def main_program() -> EffectGenerator[int]:
+        """Main program that spawns a task."""
+        task = yield Spawn(spawned_worker(), preferred_backend="thread")
+        result = yield task.join()
+        return result
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_caller())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Spawned task failed" in display_output
+
+    # Should show sub-program indicator (spawn has no index)
+    assert "↳ in spawn:" in display_output
+
+    # Should show the parent call chain
+    assert "outer_caller" in display_output
+    assert "main_program" in display_output
+
+    # Should show the spawned task's call chain
+    assert "spawned_worker" in display_output
+    assert "inner_failing" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_listen_failure_shows_sub_program_indicator() -> None:
+    """Test display() shows sub-program indicator for listen failures.
+
+    When a task in listen() fails, the display should indicate it was a
+    listen sub-program with a clear marker.
+    """
+    from doeff import Listen
+
+    @do
+    def failing_listened_program() -> EffectGenerator[int]:
+        """Program that fails inside listen."""
+        yield Log("This gets logged")
+        yield Fail(ValueError("Listen sub-program failed"))
+        return 0
+
+    @do
+    def outer_caller() -> EffectGenerator[int]:
+        """Outer program."""
+        yield Log("Starting outer")
+        return (yield main_with_listen())
+
+    @do
+    def main_with_listen() -> EffectGenerator[int]:
+        """Main program that uses listen."""
+        listen_result = yield Listen(failing_listened_program())
+        return listen_result.value
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(outer_caller())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Listen sub-program failed" in display_output
+
+    # Should show sub-program indicator
+    assert "↳ in listen:" in display_output
+
+    # Should show the parent call chain
+    assert "outer_caller" in display_output
+    assert "main_with_listen" in display_output
+
+    # Should show the listened program's call chain
+    assert "failing_listened_program" in display_output
+
+
+@pytest.mark.asyncio
+async def test_display_nested_gather_spawn_shows_full_trace() -> None:
+    """Test display() shows full trace for nested spawn inside gather.
+
+    When a gathered task spawns another task that fails, the display should
+    show the complete nested trace with proper sub-program indicators.
+    """
+    from doeff import Gather, Spawn
+
+    @do
+    def deep_failing() -> EffectGenerator[int]:
+        """Innermost failing task."""
+        yield Fail(ValueError("Deep nested failure"))
+        return 0
+
+    @do
+    def spawned_in_gather() -> EffectGenerator[int]:
+        """Task spawned inside a gathered task."""
+        yield Log("Running spawned task")
+        return (yield deep_failing())
+
+    @do
+    def gathered_with_spawn() -> EffectGenerator[int]:
+        """Gathered task that spawns another task (fails)."""
+        task = yield Spawn(spawned_in_gather(), preferred_backend="thread")
+        result = yield task.join()
+        return result
+
+    @do
+    def successful_gathered() -> EffectGenerator[int]:
+        """Gathered task that succeeds."""
+        return 100
+
+    @do
+    def main_program() -> EffectGenerator[list[int]]:
+        """Main program with gather and spawn."""
+        yield Log("Starting main")
+        results = yield Gather(successful_gathered(), gathered_with_spawn())
+        return results
+
+    engine = ProgramInterpreter()
+    result = await engine.run_async(main_program())
+
+    assert result.is_err
+
+    display_output = result.display(verbose=False)
+
+    # Root cause should be shown
+    assert "Root Cause:" in display_output
+    assert "ValueError" in display_output
+    assert "Deep nested failure" in display_output
+
+    # Should show main program
+    assert "main_program" in display_output
+
+    # Should show the gathered task
+    assert "gathered_with_spawn" in display_output
+
+    # Should show the spawned task's content
+    assert "spawned_in_gather" in display_output
+    assert "deep_failing" in display_output

@@ -527,13 +527,37 @@ class WriterEffectHandler:
         engine: ProgramInterpreter,
     ) -> ListenResult:
         """Handle writer.listen effect."""
+        from doeff._vendor import Err
+        from doeff.types import EffectFailure
+
         sub_program = effect.sub_program
+        # Capture parent call stack before running sub-program
+        parent_call_stack = tuple(ctx.program_call_stack)
         sub_ctx = ctx.copy()
         if isinstance(sub_ctx.log, BoundedLog):
             sub_ctx.log = sub_ctx.log.spawn_empty()
         else:  # Defensive: contexts constructed without bounded logs
             sub_ctx.log = BoundedLog()
+        # Start fresh call stack for sub-program
+        sub_ctx.program_call_stack = []
         pragmatic_result = await engine.run_async(sub_program, sub_ctx)
+
+        # Check for error and augment with sub-program context
+        if isinstance(pragmatic_result.result, Err):
+            error = pragmatic_result.result.error
+            if isinstance(error, EffectFailure):
+                error = EffectFailure(
+                    effect=error.effect,
+                    cause=error.cause,
+                    runtime_traceback=error.runtime_traceback,
+                    creation_context=error.creation_context,
+                    call_stack_snapshot=error.call_stack_snapshot,
+                    parent_call_stack=parent_call_stack,
+                    sub_program_index=None,  # listen doesn't have an index
+                    sub_program_type="listen",
+                )
+            raise error
+
         return ListenResult(value=pragmatic_result.value, log=sub_ctx.log)
 
 
@@ -717,11 +741,17 @@ class SpawnEffectHandler:
 
         if cached is None:
             backend = task.backend
-            if backend == "ray":
-                result_payload = await self._await_ray(task._handle)
-            else:
-                result_payload = await task._handle
-            value, result_ctx = self._unpack_result(result_payload)
+            try:
+                if backend == "ray":
+                    result_payload = await self._await_ray(task._handle)
+                else:
+                    result_payload = await task._handle
+                value, result_ctx = self._unpack_result(result_payload)
+            except BaseException as exc:
+                # Augment EffectFailure with spawn sub-program context
+                exc = self._augment_spawn_error(exc, task)
+                raise exc
+
             if self._join_lock is None:
                 self._join_lock = asyncio.Lock()
             async with self._join_lock:
@@ -740,6 +770,26 @@ class SpawnEffectHandler:
             self._merge_context(ctx, result_ctx, task)
         return value
 
+    def _augment_spawn_error(
+        self, error: BaseException, task: Task[Any]
+    ) -> BaseException:
+        """Augment EffectFailure with spawn sub-program context."""
+        from doeff.types import EffectFailure
+
+        if isinstance(error, EffectFailure):
+            parent_call_stack = task._parent_call_stack
+            return EffectFailure(
+                effect=error.effect,
+                cause=error.cause,
+                runtime_traceback=error.runtime_traceback,
+                creation_context=error.creation_context,
+                call_stack_snapshot=error.call_stack_snapshot,
+                parent_call_stack=parent_call_stack if parent_call_stack else None,
+                sub_program_index=None,  # spawn doesn't have an index
+                sub_program_type="spawn",
+            )
+        return error
+
     def _resolve_backend(self, effect: SpawnEffect) -> str:
         backend = effect.preferred_backend or self._default_backend
         if backend == "ray" and not self._ray_available():
@@ -755,6 +805,8 @@ class SpawnEffectHandler:
         engine: "ProgramInterpreter",
     ) -> Task[Any]:
         loop = asyncio.get_running_loop()
+        # Capture parent call stack before creating sub-context
+        parent_call_stack = tuple(ctx.program_call_stack)
         sub_ctx = self._prepare_context(ctx, share_cache=True)
         env_snapshot = sub_ctx.env.copy()
         state_snapshot = sub_ctx.state.copy()
@@ -771,10 +823,13 @@ class SpawnEffectHandler:
             _handle=future,
             _env_snapshot=env_snapshot,
             _state_snapshot=state_snapshot,
+            _parent_call_stack=parent_call_stack,
         )
 
     def _spawn_process(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
         loop = asyncio.get_running_loop()
+        # Capture parent call stack before creating sub-context
+        parent_call_stack = tuple(ctx.program_call_stack)
         sub_ctx = self._prepare_context(ctx, share_cache=False, sanitize_call_stack=True)
         env_snapshot = sub_ctx.env.copy()
         state_snapshot = sub_ctx.state.copy()
@@ -791,10 +846,13 @@ class SpawnEffectHandler:
             _handle=future,
             _env_snapshot=env_snapshot,
             _state_snapshot=state_snapshot,
+            _parent_call_stack=parent_call_stack,
         )
 
     def _spawn_ray(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
         self._ensure_ray_initialized()
+        # Capture parent call stack before creating sub-context
+        parent_call_stack = tuple(ctx.program_call_stack)
         sub_ctx = self._prepare_context(ctx, share_cache=False, sanitize_call_stack=True)
         env_snapshot = sub_ctx.env.copy()
         state_snapshot = sub_ctx.state.copy()
@@ -810,6 +868,7 @@ class SpawnEffectHandler:
             _handle=object_ref,
             _env_snapshot=env_snapshot,
             _state_snapshot=state_snapshot,
+            _parent_call_stack=parent_call_stack,
         )
 
     def _prepare_context(
