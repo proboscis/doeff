@@ -748,3 +748,292 @@ async def test_cache_decorator_accepts_pil(temp_cache_db, cache_context) -> None
     result2 = await interpreter.run_async(compute(image), result1.context)
     assert result2.value == 256
     assert calls == [(16, 16)]
+
+
+# =============================================================================
+# Stress tests for concurrent cache access (ISSUE-CORE-416)
+# =============================================================================
+
+
+class TestCacheConcurrentAccess:
+    """Stress tests for thread/process safety of CacheEffectHandler.
+
+    These tests verify that the SQLite cache backend works correctly under
+    concurrent access from multiple spawned processes and threads.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", ["thread", "process"])
+    async def test_parallel_cache_put_different_keys(
+        self, temp_cache_db, backend: str
+    ) -> None:
+        """Multiple parallel spawns all doing cache_put with different keys.
+
+        Each worker writes to a unique key - no contention on data but stress
+        tests the SQLite connection under concurrent write load.
+        """
+        from doeff import Gather, Local, Spawn
+
+        num_workers = 10
+
+        @do
+        def worker(worker_id: int) -> EffectGenerator[int]:
+            key = f"parallel_key_{worker_id}"
+            value = worker_id * 100
+            yield CachePut(key, value, lifecycle=CacheLifecycle.PERSISTENT)
+            # Read back to verify write succeeded
+            result = yield CacheGet(key)
+            return result
+
+        @do
+        def program() -> EffectGenerator[list[int]]:
+            tasks = []
+            for i in range(num_workers):
+                task = yield Spawn(worker(i), preferred_backend=backend)
+                tasks.append(task)
+            return (yield Gather(*(t.join() for t in tasks)))
+
+        engine = ProgramInterpreter(spawn_process_max_workers=4)
+        # Wrap program in Local to propagate cache path to spawned programs
+        result = await engine.run_async(
+            Local({CACHE_PATH_ENV_KEY: temp_cache_db}, program())
+        )
+
+        assert result.is_ok, f"Expected success, got: {result.result}"
+        assert sorted(result.value) == [i * 100 for i in range(num_workers)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", ["thread", "process"])
+    async def test_parallel_cache_put_same_key_race(
+        self, temp_cache_db, backend: str
+    ) -> None:
+        """Multiple parallel spawns all doing cache_get/cache_put with same key.
+
+        This is a race condition stress test - all workers try to update the
+        same key. The test verifies no database locked errors occur and that
+        one of the values is successfully written.
+        """
+        from doeff import Gather, Local, Spawn
+
+        num_workers = 8
+        shared_key = "race_condition_key"
+
+        @do
+        def worker(worker_id: int) -> EffectGenerator[int]:
+            value = worker_id * 10
+            yield CachePut(shared_key, value, lifecycle=CacheLifecycle.PERSISTENT)
+            return worker_id
+
+        @do
+        def program() -> EffectGenerator[tuple[list[int], int]]:
+            tasks = []
+            for i in range(num_workers):
+                task = yield Spawn(worker(i), preferred_backend=backend)
+                tasks.append(task)
+            worker_ids = yield Gather(*(t.join() for t in tasks))
+            # Read the final value - one of the workers should have won
+            final_value = yield CacheGet(shared_key)
+            return worker_ids, final_value
+
+        engine = ProgramInterpreter(spawn_process_max_workers=4)
+        result = await engine.run_async(
+            Local({CACHE_PATH_ENV_KEY: temp_cache_db}, program())
+        )
+
+        assert result.is_ok, f"Expected success, got: {result.result}"
+        worker_ids, final_value = result.value
+        assert sorted(worker_ids) == list(range(num_workers))
+        # Final value should be one of the worker values
+        assert final_value in [i * 10 for i in range(num_workers)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", ["thread", "process"])
+    async def test_nested_spawn_cache_access(
+        self, temp_cache_db, backend: str
+    ) -> None:
+        """Nested spawns (spawn within spawn) accessing cache.
+
+        Verifies cache works correctly with deeply nested spawn effects.
+        """
+        from doeff import Local, Spawn
+
+        @do
+        def inner_worker(value: int) -> EffectGenerator[int]:
+            key = f"nested_inner_{value}"
+            yield CachePut(key, value * 2, lifecycle=CacheLifecycle.PERSISTENT)
+            return (yield CacheGet(key))
+
+        @do
+        def outer_worker(worker_id: int) -> EffectGenerator[int]:
+            # Put a value in cache
+            key = f"nested_outer_{worker_id}"
+            yield CachePut(key, worker_id, lifecycle=CacheLifecycle.PERSISTENT)
+
+            # Spawn an inner worker (nested spawn)
+            inner_task = yield Spawn(inner_worker(worker_id), preferred_backend="thread")
+            inner_result = yield inner_task.join()
+
+            # Read our own value back
+            outer_result = yield CacheGet(key)
+            return outer_result + inner_result
+
+        @do
+        def program() -> EffectGenerator[list[int]]:
+            from doeff import Gather
+
+            tasks = []
+            for i in range(4):
+                task = yield Spawn(outer_worker(i), preferred_backend=backend)
+                tasks.append(task)
+            return (yield Gather(*(t.join() for t in tasks)))
+
+        engine = ProgramInterpreter(spawn_process_max_workers=2)
+        result = await engine.run_async(
+            Local({CACHE_PATH_ENV_KEY: temp_cache_db}, program())
+        )
+
+        assert result.is_ok, f"Expected success, got: {result.result}"
+        # Each result should be: worker_id + (worker_id * 2) = worker_id * 3
+        assert sorted(result.value) == [0, 3, 6, 9]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", ["thread", "process"])
+    async def test_cache_hits_and_misses_concurrent(
+        self, temp_cache_db, backend: str
+    ) -> None:
+        """Mix of cache hits and misses under concurrent load.
+
+        Pre-populates some cache entries, then spawns workers that do a mix
+        of reads (hits and misses) and writes.
+        """
+        from doeff import Gather, Local, Spawn
+
+        # Pre-populate some cache entries
+        @do
+        def setup() -> EffectGenerator[None]:
+            for i in range(5):
+                yield CachePut(f"preexisting_{i}", i * 100, lifecycle=CacheLifecycle.PERSISTENT)
+
+        @do
+        def worker(worker_id: int) -> EffectGenerator[dict[str, Any]]:
+            results: dict[str, Any] = {"worker_id": worker_id, "hits": 0, "misses": 0}
+
+            # Try to read a preexisting key (should hit for worker_id < 5)
+            try:
+                value = yield CacheGet(f"preexisting_{worker_id}")
+                results["hits"] += 1
+                results["hit_value"] = value
+            except KeyError:
+                results["misses"] += 1
+
+            # Write a new key
+            yield CachePut(
+                f"worker_{worker_id}_result",
+                worker_id * 50,
+                lifecycle=CacheLifecycle.PERSISTENT,
+            )
+
+            # Read back our written key (should always hit)
+            try:
+                value = yield CacheGet(f"worker_{worker_id}_result")
+                results["hits"] += 1
+                results["own_value"] = value
+            except KeyError:
+                results["misses"] += 1
+                results["own_value"] = None
+
+            return results
+
+        @do
+        def program() -> EffectGenerator[list[dict[str, Any]]]:
+            # Setup phase
+            yield setup()
+
+            # Concurrent workers
+            num_workers = 10
+            tasks = []
+            for i in range(num_workers):
+                task = yield Spawn(worker(i), preferred_backend=backend)
+                tasks.append(task)
+            return (yield Gather(*(t.join() for t in tasks)))
+
+        engine = ProgramInterpreter(spawn_process_max_workers=4)
+        result = await engine.run_async(
+            Local({CACHE_PATH_ENV_KEY: temp_cache_db}, program())
+        )
+
+        assert result.is_ok, f"Expected success, got: {result.result}"
+
+        for worker_result in result.value:
+            worker_id = worker_result["worker_id"]
+            # Each worker should have read back their own written value
+            assert worker_result["own_value"] == worker_id * 50
+            # Workers 0-4 should have cache hits for preexisting keys
+            if worker_id < 5:
+                assert worker_result["hit_value"] == worker_id * 100
+
+    @pytest.mark.asyncio
+    async def test_high_contention_stress(self, temp_cache_db) -> None:
+        """High contention stress test with many rapid cache operations.
+
+        Uses thread backend for faster execution but moderate concurrency to stress
+        the locking mechanism while avoiding SQLite WAL visibility edge cases.
+        """
+        from doeff import Gather, Local, Spawn
+
+        num_workers = 10
+        ops_per_worker = 5
+
+        @do
+        def worker(worker_id: int) -> EffectGenerator[int]:
+            total = 0
+            for op in range(ops_per_worker):
+                key = f"stress_{worker_id}_{op}"
+                value = worker_id * 1000 + op
+                yield CachePut(key, value, lifecycle=CacheLifecycle.PERSISTENT)
+                result = yield CacheGet(key)
+                total += result
+            return total
+
+        @do
+        def program() -> EffectGenerator[list[int]]:
+            tasks = []
+            for i in range(num_workers):
+                task = yield Spawn(worker(i), preferred_backend="thread")
+                tasks.append(task)
+            return (yield Gather(*(t.join() for t in tasks)))
+
+        engine = ProgramInterpreter()
+        result = await engine.run_async(
+            Local({CACHE_PATH_ENV_KEY: temp_cache_db}, program())
+        )
+
+        assert result.is_ok, f"Expected success, got: {result.result}"
+
+        # Verify each worker got their expected sum
+        for worker_id in range(num_workers):
+            expected_sum = sum(worker_id * 1000 + op for op in range(ops_per_worker))
+            assert expected_sum in result.value
+
+    @pytest.mark.asyncio
+    async def test_process_backend_wal_mode_enabled(self, temp_cache_db, cache_context) -> None:
+        """Verify WAL mode is enabled on the database.
+
+        This test directly checks the SQLite database to confirm WAL mode
+        was activated by the CacheEffectHandler.
+        """
+        # First, do a cache operation to create the database
+        @do
+        def setup() -> EffectGenerator[None]:
+            yield CachePut("wal_test_key", "wal_test_value", lifecycle=CacheLifecycle.PERSISTENT)
+
+        engine = ProgramInterpreter()
+        result = await engine.run_async(setup(), cache_context)
+        assert result.is_ok
+
+        # Now check the journal mode directly
+        import sqlite3
+
+        with sqlite3.connect(temp_cache_db) as conn:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            assert mode.lower() == "wal", f"Expected WAL mode, got {mode}"
