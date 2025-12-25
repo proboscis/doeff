@@ -1506,9 +1506,24 @@ class CacheEffectHandler:
     The cache path is determined lazily on first use. The handler looks for
     ``CACHE_PATH_ENV_KEY`` (``"doeff.cache_path"``) in the execution context's
     environment. If not present, it falls back to :func:`persistent_cache_path`.
+
+    Thread/Process Safety
+    ---------------------
+    This handler is safe for concurrent access from multiple threads and processes:
+
+    - WAL (Write-Ahead Logging) mode enables concurrent reads during writes
+    - A 5-second busy timeout handles lock contention gracefully
+    - Retry logic with exponential backoff handles transient lock failures
+    - Each process maintains its own connection (SHARED scope is per-process)
+    - A threading lock protects connection initialization from races
     """
 
     scope = HandlerScope.SHARED
+
+    # Retry configuration for database locked errors
+    _MAX_RETRIES = 5
+    _BASE_DELAY = 0.05  # 50ms base delay
+    _MAX_DELAY = 2.0  # Cap at 2 seconds
 
     def __init__(self) -> None:
         import time
@@ -1516,38 +1531,112 @@ class CacheEffectHandler:
         self._time = time.time
         self._db_path: Path | None = None
         self._conn: sqlite3.Connection | None = None
-        self._lock = asyncio.Lock()
+        self._init_lock = threading.Lock()  # Protects connection initialization
+        self._op_lock = threading.Lock()  # Serializes database operations on the connection
 
     def _ensure_connection(self, ctx: ExecutionContext) -> sqlite3.Connection:
-        """Lazily initialize the SQLite connection using the context's environment."""
+        """Lazily initialize the SQLite connection using the context's environment.
+
+        Configures the connection for safe concurrent access:
+        - WAL mode for better concurrency (readers don't block writers)
+        - 5-second busy timeout to wait for locks instead of failing immediately
+        - Thread-safe initialization via threading.Lock
+        """
+        # Fast path: connection already exists
         if self._conn is not None:
             return self._conn
 
-        # Look up cache path from context environment, fall back to default
-        env_path = ctx.env.get(CACHE_PATH_ENV_KEY)
-        if env_path is not None:
-            self._db_path = Path(env_path) if not isinstance(env_path, Path) else env_path  # noqa: DOEFF002
-        else:
-            self._db_path = persistent_cache_path()
+        # Slow path: need to initialize connection (thread-safe)
+        with self._init_lock:
+            # Double-check after acquiring lock
+            if self._conn is not None:
+                return self._conn
 
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(  # noqa: DOEFF002
-            self._db_path,
-            detect_types=sqlite3.PARSE_DECLTYPES,
-            check_same_thread=False,
-        )
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS cache_entries (
-                key_hash TEXT PRIMARY KEY,
-                expiry REAL,
-                key_blob BLOB NOT NULL,
-                value_blob BLOB NOT NULL
+            # Look up cache path from context environment, fall back to default
+            env_path = ctx.env.get(CACHE_PATH_ENV_KEY)
+            if env_path is not None:
+                self._db_path = Path(env_path) if not isinstance(env_path, Path) else env_path  # noqa: DOEFF002
+            else:
+                self._db_path = persistent_cache_path()
+
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(  # noqa: DOEFF002
+                self._db_path,
+                detect_types=sqlite3.PARSE_DECLTYPES,
+                check_same_thread=False,
+                timeout=5.0,  # Wait up to 5 seconds for locks
             )
-            """
-        )
-        self._conn.commit()
-        return self._conn
+            # Enable WAL mode for better concurrent read/write performance
+            # WAL allows readers to proceed while a write is in progress
+            conn.execute("PRAGMA journal_mode=WAL")
+            # Set busy timeout as additional protection (5 seconds)
+            conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cache_entries (
+                    key_hash TEXT PRIMARY KEY,
+                    expiry REAL,
+                    key_blob BLOB NOT NULL,
+                    value_blob BLOB NOT NULL
+                )
+                """
+            )
+            conn.commit()
+            self._conn = conn
+            return self._conn
+
+    async def _execute_with_retry(
+        self,
+        operation: Callable[[], Any],
+        operation_name: str,
+    ) -> Any:
+        """Execute a database operation with retry logic for lock contention.
+
+        Uses exponential backoff with jitter to handle transient database locked
+        errors that can occur under heavy concurrent load from multiple processes.
+        Uses a threading lock to serialize access to the connection within this
+        handler instance.
+
+        Retries on:
+        - OperationalError with "database is locked"
+        - InterfaceError (API misuse, often from concurrent access)
+        """
+        import random
+
+        last_error: Exception | None = None
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                # Serialize access to the connection within this handler instance
+                with self._op_lock:
+                    return operation()
+            except (sqlite3.OperationalError, sqlite3.InterfaceError) as e:
+                error_msg = str(e).lower()
+                # Only retry on lock-related or concurrency-related errors
+                if not any(
+                    msg in error_msg
+                    for msg in ("database is locked", "bad parameter", "api misuse")
+                ):
+                    raise
+                last_error = e
+                if attempt < self._MAX_RETRIES - 1:
+                    # Exponential backoff with jitter (lock released during sleep)
+                    delay = min(
+                        self._BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.1),
+                        self._MAX_DELAY,
+                    )
+                    await asyncio.sleep(delay)
+                    logger.debug(
+                        "CacheEffectHandler: %s attempt %d failed with %s, "
+                        "retrying in %.3fs",
+                        operation_name,
+                        attempt + 1,
+                        type(e).__name__,
+                        delay,
+                    )
+        # All retries exhausted
+        raise sqlite3.OperationalError(
+            f"Database operation failed after {self._MAX_RETRIES} retries for {operation_name}: {last_error}"
+        ) from last_error
 
     def _serialize_key(self, key: Any) -> tuple[str, bytes]:  # noqa: DOEFF006
         key_bytes = _cloudpickle_dumps(key, "cache key")
@@ -1559,11 +1648,14 @@ class CacheEffectHandler:
         key_hash, _ = self._serialize_key(effect.key)
         conn = self._ensure_connection(ctx)
 
-        async with self._lock:
-            row = conn.execute(
+        def do_select() -> Any:
+            return conn.execute(
                 "SELECT value_blob, expiry FROM cache_entries WHERE key_hash = ?",
                 (key_hash,),
             ).fetchone()
+
+        row = await self._execute_with_retry(do_select, "cache_get")
+
         if row is None:
             raise KeyError("Cache miss for key")
 
@@ -1588,22 +1680,27 @@ class CacheEffectHandler:
         value_blob = lzma.compress(cloudpickle.dumps(value))
         conn = self._ensure_connection(ctx)
 
-        async with self._lock:
+        def do_replace() -> None:
             conn.execute(
                 "REPLACE INTO cache_entries (key_hash, expiry, key_blob, value_blob) VALUES (?, ?, ?, ?)",
                 (key_hash, expiry, key_blob, value_blob),
             )
             conn.commit()
 
+        await self._execute_with_retry(do_replace, "cache_put")
+
     async def _delete_entry(self, key_hash: str) -> None:
         if self._conn is None:
             return
-        async with self._lock:
-            self._conn.execute(
+
+        def do_delete() -> None:
+            self._conn.execute(  # type: ignore[union-attr]
                 "DELETE FROM cache_entries WHERE key_hash = ?",
                 (key_hash,),
             )
-            self._conn.commit()
+            self._conn.commit()  # type: ignore[union-attr]
+
+        await self._execute_with_retry(do_delete, "cache_delete")
 
 
 __all__ = [  # noqa: DOEFF021
