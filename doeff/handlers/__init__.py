@@ -766,6 +766,7 @@ class SpawnEffectHandler:
             return pragmatic_result.value, pragmatic_result.context
 
         future = loop.run_in_executor(self._ensure_thread_executor(), run_program)
+        self._consume_future_exception(future)
         return Task(
             backend="thread",
             _handle=future,
@@ -891,6 +892,18 @@ class SpawnEffectHandler:
                     thread_name_prefix="doeff-spawn-thread",
                 )
             return self._thread_executor
+
+    @staticmethod
+    def _consume_future_exception(future: asyncio.Future[Any]) -> None:
+        """Consume exceptions to avoid unretrieved future warnings."""
+
+        def _consume(done: asyncio.Future[Any]) -> None:
+            try:
+                done.exception()
+            except BaseException:  # pragma: no cover - defensive guard
+                return
+
+        future.add_done_callback(_consume)
 
     def _ensure_process_executor(self) -> ProcessPoolExecutor:
         executor = self._process_executor
