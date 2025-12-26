@@ -1,7 +1,9 @@
 import asyncio
 import atexit
+import gc
 import importlib.util
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -458,6 +460,121 @@ async def test_spawn_thread_atomic_updates_shared_state() -> None:
 
     assert result.is_ok
     assert result.value == 7
+
+
+@pytest.mark.asyncio
+async def test_spawn_thread_single_failure_suppresses_future_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = ProgramInterpreter()
+    ready_event = threading.Event()
+    go_event = threading.Event()
+
+    @do
+    def worker() -> EffectGenerator[int]:
+        yield IO(ready_event.set)
+        yield IO(lambda: go_event.wait(1.0))
+        yield Fail(RuntimeError("boom"))
+        return 0
+
+    @do
+    def program() -> EffectGenerator[bool]:
+        yield Spawn(worker(), preferred_backend="thread")
+        ready = yield IO(lambda: ready_event.wait(1.0))
+        yield IO(go_event.set)
+        yield IO(lambda: time.sleep(0.05))
+        return ready
+
+    caplog.set_level(logging.ERROR, logger="asyncio")
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value is True
+
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert "Future exception was never retrieved" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_spawn_thread_multiple_failures_suppress_future_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = ProgramInterpreter()
+    ready_events = [threading.Event() for _ in range(3)]
+    go_event = threading.Event()
+
+    @do
+    def worker(index: int) -> EffectGenerator[int]:
+        yield IO(ready_events[index].set)
+        yield IO(lambda: go_event.wait(1.0))
+        yield Fail(RuntimeError(f"boom-{index}"))
+        return index
+
+    @do
+    def program() -> EffectGenerator[bool]:
+        for i in range(3):  # noqa: DOEFF012
+            yield Spawn(worker(i), preferred_backend="thread")
+        ready = yield IO(lambda: all(event.wait(1.0) for event in ready_events))
+        yield IO(go_event.set)
+        yield IO(lambda: time.sleep(0.05))
+        return ready
+
+    caplog.set_level(logging.ERROR, logger="asyncio")
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value is True
+
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert "Future exception was never retrieved" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_spawn_thread_mixed_results_suppress_future_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine = ProgramInterpreter()
+    ready_success = threading.Event()
+    ready_failure = threading.Event()
+    go_event = threading.Event()
+
+    @do
+    def worker_success() -> EffectGenerator[int]:
+        yield IO(ready_success.set)
+        yield IO(lambda: go_event.wait(1.0))
+        return 1
+
+    @do
+    def worker_failure() -> EffectGenerator[int]:
+        yield IO(ready_failure.set)
+        yield IO(lambda: go_event.wait(1.0))
+        yield Fail(RuntimeError("boom"))
+        return 0
+
+    @do
+    def program() -> EffectGenerator[tuple[bool, bool]]:
+        yield Spawn(worker_success(), preferred_backend="thread")
+        yield Spawn(worker_failure(), preferred_backend="thread")
+        success_ready = yield IO(lambda: ready_success.wait(1.0))
+        failure_ready = yield IO(lambda: ready_failure.wait(1.0))
+        yield IO(go_event.set)
+        yield IO(lambda: time.sleep(0.05))
+        return success_ready, failure_ready
+
+    caplog.set_level(logging.ERROR, logger="asyncio")
+    result = await engine.run_async(program())
+
+    assert result.is_ok
+    assert result.value == (True, True)
+
+    await asyncio.sleep(0)
+    gc.collect()
+
+    assert "Future exception was never retrieved" not in caplog.text
 
 
 @pytest.mark.asyncio
