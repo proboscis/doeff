@@ -691,6 +691,11 @@ class SpawnEffectHandler:
         self._merged_tasks: set[tuple[int, int]] = set()
         self._join_lock: asyncio.Lock | None = None
 
+        # Track spawned tasks for auto-join at interpreter shutdown
+        self._pending_tasks: dict[int, Task[Any]] = {}
+        self._joined_task_ids: set[int] = set()
+        self._pending_tasks_lock = threading.Lock()
+
     def handle_spawn(
         self,
         effect: SpawnEffect,
@@ -699,12 +704,19 @@ class SpawnEffectHandler:
     ) -> Task[Any]:
         backend = self._resolve_backend(effect)
         if backend == "thread":
-            return self._spawn_thread(effect, ctx, engine)
-        if backend == "process":
-            return self._spawn_process(effect, ctx)
-        if backend == "ray":
-            return self._spawn_ray(effect, ctx)
-        raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+            task = self._spawn_thread(effect, ctx, engine)
+        elif backend == "process":
+            task = self._spawn_process(effect, ctx)
+        elif backend == "ray":
+            task = self._spawn_ray(effect, ctx)
+        else:
+            raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+
+        # Track spawned task for auto-join
+        task_id = id(task._handle)
+        with self._pending_tasks_lock:
+            self._pending_tasks[task_id] = task
+        return task
 
     async def handle_join(
         self,
@@ -713,6 +725,11 @@ class SpawnEffectHandler:
     ) -> Any:
         task = effect.task
         task_id = id(task._handle)
+
+        # Mark task as joined
+        with self._pending_tasks_lock:
+            self._joined_task_ids.add(task_id)
+
         cached = self._task_results.get(task_id)
 
         if cached is None:
@@ -739,6 +756,46 @@ class SpawnEffectHandler:
         if should_merge:
             self._merge_context(ctx, result_ctx, task)
         return value
+
+    async def join_pending_tasks(self) -> list[BaseException]:
+        """Join all spawned tasks that haven't been explicitly joined.
+
+        Returns a list of exceptions from failed tasks. This ensures that:
+        1. All spawned tasks are properly awaited (preventing Future warnings)
+        2. Errors from unjoined tasks are collected and reported
+
+        This method should be called at the end of program execution.
+        """
+        errors: list[BaseException] = []
+
+        with self._pending_tasks_lock:
+            unjoined_task_ids = set(self._pending_tasks.keys()) - self._joined_task_ids
+            tasks_to_join = [
+                (task_id, self._pending_tasks[task_id])
+                for task_id in unjoined_task_ids
+            ]
+
+        for task_id, task in tasks_to_join:
+            try:
+                backend = task.backend
+                if backend == "ray":
+                    await self._await_ray(task._handle)
+                else:
+                    await task._handle
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                # Mark as joined to prevent duplicate processing
+                with self._pending_tasks_lock:
+                    self._joined_task_ids.add(task_id)
+
+        return errors
+
+    def clear_pending_tasks(self) -> None:
+        """Clear tracking state for a new program execution."""
+        with self._pending_tasks_lock:
+            self._pending_tasks.clear()
+            self._joined_task_ids.clear()
 
     def _resolve_backend(self, effect: SpawnEffect) -> str:
         backend = effect.preferred_backend or self._default_backend
