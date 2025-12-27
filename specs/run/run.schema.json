@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://doeff.dev/schemas/run/v0",
+  "title": "Run v0",
+  "description": "Reproducible execution record for arbitrary command execution",
+  "type": "object",
+  "required": ["run_version", "run_id", "exec", "code_state"],
+  "additionalProperties": false,
+  "properties": {
+    "run_version": {
+      "type": "integer",
+      "const": 0,
+      "description": "Schema version (always 0 for v0)"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_[0-9A-Z]{26}$",
+      "description": "Unique identifier in ULID format with run_ prefix"
+    },
+    "exec": {
+      "$ref": "#/$defs/Exec"
+    },
+    "code_state": {
+      "$ref": "#/$defs/CodeState"
+    }
+  },
+  "$defs": {
+    "Exec": {
+      "type": "object",
+      "description": "Execution parameters",
+      "required": ["argv", "cwd", "env"],
+      "additionalProperties": false,
+      "properties": {
+        "argv": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Command and arguments (non-empty, fully resolved)"
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory relative to repo root"
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Environment variables (all string values)"
+        },
+        "timeout_sec": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Execution timeout in seconds (0 = unlimited)"
+        }
+      }
+    },
+    "CodeState": {
+      "type": "object",
+      "description": "Code state for reproduction",
+      "required": ["repo_url", "base_commit"],
+      "additionalProperties": false,
+      "properties": {
+        "repo_url": {
+          "type": "string",
+          "description": "Clone-able repository URL"
+        },
+        "base_commit": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$",
+          "description": "Full commit SHA (40 characters)"
+        },
+        "patch": {
+          "$ref": "#/$defs/Patch"
+        }
+      }
+    },
+    "Patch": {
+      "type": "object",
+      "description": "Reference to a patch stored as a git blob",
+      "required": ["ref", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "type": "string",
+          "pattern": "^refs/patches/",
+          "description": "Git ref in refs/patches/ namespace"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "description": "SHA-256 hash of patch content"
+        }
+      }
+    }
+  }
+}
