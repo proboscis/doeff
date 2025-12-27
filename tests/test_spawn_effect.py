@@ -842,3 +842,184 @@ class TestValuesEqual:
 
         # Should return False instead of raising
         assert SpawnEffectHandler._values_equal(obj1, obj2) is False
+
+
+class TestSpawnAutoJoin:
+    """Tests for ISSUE-CORE-419: Auto-join spawned tasks at interpreter shutdown.
+
+    When spawned tasks are not explicitly joined, the interpreter should:
+    1. Automatically join them at the end of program execution
+    2. Log warnings for any failed unjoined tasks (not Python's cryptic Future warning)
+    3. Prevent "Future exception was never retrieved" log spam
+    """
+
+    @pytest.mark.asyncio
+    async def test_unjoined_spawn_failures_logged_as_warnings(
+        self, capfd: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Unjoined spawns that fail should log warnings, not Future exception spam."""
+        import gc
+
+        caplog.set_level(logging.WARNING, logger="doeff.interpreter")
+        engine = ProgramInterpreter()
+
+        @do
+        def failing_worker(index: int) -> EffectGenerator[int]:
+            yield Fail(RuntimeError(f"Worker {index} failed intentionally"))
+            return 0
+
+        @do
+        def program() -> EffectGenerator[str]:
+            # Spawn tasks but don't join them
+            for i in range(3):  # noqa: DOEFF012
+                yield Spawn(failing_worker(i), preferred_backend="thread")
+            return "done_without_joining"
+
+        result = await engine.run_async(program())
+
+        # Force garbage collection
+        gc.collect()
+        await asyncio.sleep(0.1)
+        gc.collect()
+
+        assert result.is_ok
+        assert result.value == "done_without_joining"
+
+        # Should NOT have Python's cryptic Future warning
+        captured = capfd.readouterr()
+        assert "Future exception was never retrieved" not in captured.err
+
+        # Should have our clean warnings for each failed unjoined task
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_messages) == 3
+        for msg in warning_messages:
+            assert "Spawned task was not joined and failed with error" in msg
+
+    @pytest.mark.asyncio
+    async def test_joined_spawn_failures_no_duplicate_warnings(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Spawns that are explicitly joined should not produce warnings."""
+        caplog.set_level(logging.WARNING, logger="doeff.interpreter")
+        engine = ProgramInterpreter()
+
+        @do
+        def failing_worker(index: int) -> EffectGenerator[int]:
+            yield Fail(RuntimeError(f"Worker {index} failed"))
+            return 0
+
+        @do
+        def program() -> EffectGenerator[list[int]]:
+            tasks = []
+            for i in range(3):  # noqa: DOEFF012
+                tasks.append((yield Spawn(failing_worker(i), preferred_backend="thread")))
+            # Join all tasks with Recover
+            results = []
+            for i, task in enumerate(tasks):  # noqa: DOEFF012
+                results.append((yield Recover(task.join(), fallback=-i)))
+            return results
+
+        result = await engine.run_async(program())
+
+        assert result.is_ok
+        assert result.value == [0, -1, -2]
+
+        # No warnings should be logged since all tasks were explicitly joined
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_mixed_joined_unjoined_spawns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Mix of joined and unjoined spawns - only unjoined failures get warnings."""
+        caplog.set_level(logging.WARNING, logger="doeff.interpreter")
+        engine = ProgramInterpreter()
+
+        @do
+        def failing_worker(index: int) -> EffectGenerator[int]:
+            yield Fail(RuntimeError(f"Worker {index} failed"))
+            return 0
+
+        @do
+        def program() -> EffectGenerator[int]:
+            # Spawn 4 tasks
+            task0 = yield Spawn(failing_worker(0), preferred_backend="thread")
+            task1 = yield Spawn(failing_worker(1), preferred_backend="thread")
+            task2 = yield Spawn(failing_worker(2), preferred_backend="thread")
+            task3 = yield Spawn(failing_worker(3), preferred_backend="thread")
+
+            # Only join task0 and task2
+            yield Recover(task0.join(), fallback=-1)
+            yield Recover(task2.join(), fallback=-1)
+
+            # task1 and task3 are not joined
+            return 42
+
+        result = await engine.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 42
+
+        # Should have exactly 2 warnings for unjoined tasks (task1 and task3)
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_messages) == 2
+
+    @pytest.mark.asyncio
+    async def test_successful_unjoined_spawns_no_warnings(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Successful unjoined spawns should not produce warnings."""
+        caplog.set_level(logging.WARNING, logger="doeff.interpreter")
+        engine = ProgramInterpreter()
+
+        @do
+        def success_worker(index: int) -> EffectGenerator[int]:
+            return index * 10
+
+        @do
+        def program() -> EffectGenerator[str]:
+            # Spawn successful tasks but don't join them
+            for i in range(3):  # noqa: DOEFF012
+                yield Spawn(success_worker(i), preferred_backend="thread")
+            return "done"
+
+        result = await engine.run_async(program())
+
+        assert result.is_ok
+        assert result.value == "done"
+
+        # No warnings for successful tasks
+        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warning_messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_no_future_exception_warning_in_stderr(
+        self, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        """Verify no 'Future exception was never retrieved' in stderr."""
+        import gc
+
+        engine = ProgramInterpreter()
+
+        @do
+        def failing_worker() -> EffectGenerator[int]:
+            yield Fail(RuntimeError("boom"))
+            return 0
+
+        @do
+        def program() -> EffectGenerator[str]:
+            yield Spawn(failing_worker(), preferred_backend="thread")
+            yield Spawn(failing_worker(), preferred_backend="thread")
+            yield Spawn(failing_worker(), preferred_backend="thread")
+            return "done"
+
+        await engine.run_async(program())
+
+        # Force GC to trigger any Future warnings
+        gc.collect()
+        await asyncio.sleep(0.2)
+        gc.collect()
+
+        captured = capfd.readouterr()
+        assert "Future exception was never retrieved" not in captured.err

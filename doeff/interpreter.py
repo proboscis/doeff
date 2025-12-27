@@ -271,6 +271,9 @@ class ProgramInterpreter:
         - context: final execution context (state, log, graph)
         - result: Ok(value) or Err(error)
         """
+        # Track if this is a top-level call (no existing context)
+        is_top_level = context is None
+
         ctx = context or ExecutionContext(
             env={},
             state={},
@@ -285,8 +288,12 @@ class ProgramInterpreter:
 
         self._ensure_log_buffer(ctx)
 
+        # Clear pending tasks tracking for top-level execution
+        if is_top_level:
+            self.spawn_handler.clear_pending_tasks()
+
         try:
-            return await self._execute_program_loop(program, ctx)
+            result = await self._execute_program_loop(program, ctx)
         except Exception as exc:
             runtime_tb = capture_traceback(exc)
             # Wrap in EffectFailure to capture call stack for display
@@ -298,7 +305,20 @@ class ProgramInterpreter:
                 creation_context=None,
                 call_stack_snapshot=tuple(ctx.program_call_stack),
             )
-            return RunResult(ctx, Err(effect_failure))
+            result = RunResult(ctx, Err(effect_failure))
+
+        # Join any unjoined spawned tasks at end of top-level execution
+        if is_top_level:
+            unjoined_errors = await self.spawn_handler.join_pending_tasks()
+            if unjoined_errors:
+                # Log errors from unjoined tasks
+                for error in unjoined_errors:
+                    logger.warning(
+                        "Spawned task was not joined and failed with error: %s",
+                        error,
+                    )
+
+        return result
 
     async def _execute_program_loop(
         self, program: Program[T], ctx: ExecutionContext
