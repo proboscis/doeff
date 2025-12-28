@@ -24,6 +24,7 @@ class SpawnEffect(EffectBase):
     program: ProgramLike
     preferred_backend: SpawnBackend | None = None
     options: dict[str, Any] = field(default_factory=dict)
+    fire_and_forget: bool = False
 
     def __post_init__(self) -> None:
         ensure_program_like(self.program, name="program")
@@ -53,6 +54,7 @@ class Task(Generic[T]):
     _handle: Any = field(repr=False)
     _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False)
     _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False)
+    _fire_and_forget: bool = field(default=False, repr=False)
 
     def join(self) -> Effect:
         return create_effect_with_trace(TaskJoinEffect(task=self), skip_frames=3)
@@ -80,6 +82,7 @@ def spawn(
     program: ProgramLike,
     *,
     preferred_backend: SpawnBackend | None = None,
+    fire_and_forget: bool = False,
     **options: Any,
 ) -> SpawnEffect:
     return create_effect_with_trace(
@@ -87,6 +90,7 @@ def spawn(
             program=program,
             preferred_backend=preferred_backend,
             options=options,
+            fire_and_forget=fire_and_forget,
         )
     )
 
@@ -95,6 +99,7 @@ def Spawn(
     program: ProgramLike,
     *,
     preferred_backend: SpawnBackend | None = None,
+    fire_and_forget: bool = False,
     **options: Any,
 ) -> Effect:
     return create_effect_with_trace(
@@ -102,6 +107,7 @@ def Spawn(
             program=program,
             preferred_backend=preferred_backend,
             options=options,
+            fire_and_forget=fire_and_forget,
         ),
         skip_frames=3,
     )

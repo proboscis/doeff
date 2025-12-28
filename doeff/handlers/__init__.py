@@ -691,6 +691,32 @@ class SpawnEffectHandler:
         self._merged_tasks: set[tuple[int, int]] = set()
         self._join_lock: asyncio.Lock | None = None
 
+        # Track spawned and joined tasks for unjoined task warnings
+        self._spawned_tasks: dict[int, Task] = {}
+        self._joined_task_ids: set[int] = set()
+        self._spawned_tasks_lock = threading.Lock()
+
+    @staticmethod
+    def _consume_future_exception(future: Any) -> None:
+        """Add done callback to consume Future exceptions.
+
+        This prevents Python's cryptic 'Future exception was never retrieved' warning
+        by ensuring the exception is accessed when the future completes.
+        """
+        def _consume(done: Any) -> None:
+            try:
+                done.exception()
+            except BaseException:
+                pass
+        future.add_done_callback(_consume)
+
+    def _track_spawned_task(self, task: Task) -> None:
+        """Track a spawned task for later unjoined task detection."""
+        if task._fire_and_forget:
+            return  # Don't track fire-and-forget tasks
+        with self._spawned_tasks_lock:
+            self._spawned_tasks[id(task._handle)] = task
+
     def handle_spawn(
         self,
         effect: SpawnEffect,
@@ -699,12 +725,16 @@ class SpawnEffectHandler:
     ) -> Task[Any]:
         backend = self._resolve_backend(effect)
         if backend == "thread":
-            return self._spawn_thread(effect, ctx, engine)
-        if backend == "process":
-            return self._spawn_process(effect, ctx)
-        if backend == "ray":
-            return self._spawn_ray(effect, ctx)
-        raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+            task = self._spawn_thread(effect, ctx, engine)
+        elif backend == "process":
+            task = self._spawn_process(effect, ctx)
+        elif backend == "ray":
+            task = self._spawn_ray(effect, ctx)
+        else:
+            raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+
+        self._track_spawned_task(task)
+        return task
 
     async def handle_join(
         self,
@@ -713,6 +743,11 @@ class SpawnEffectHandler:
     ) -> Any:
         task = effect.task
         task_id = id(task._handle)
+
+        # Track this task as joined
+        with self._spawned_tasks_lock:
+            self._joined_task_ids.add(task_id)
+
         cached = self._task_results.get(task_id)
 
         if cached is None:
@@ -740,6 +775,47 @@ class SpawnEffectHandler:
             self._merge_context(ctx, result_ctx, task)
         return value
 
+    def get_unjoined_tasks(self) -> list[Task]:
+        """Return list of spawned tasks that have not been joined.
+
+        Tasks with fire_and_forget=True are excluded from this list.
+        """
+        with self._spawned_tasks_lock:
+            return [
+                task for task_id, task in self._spawned_tasks.items()
+                if task_id not in self._joined_task_ids
+            ]
+
+    def clear_task_tracking(self) -> None:
+        """Clear all task tracking state.
+
+        Call this before starting a new top-level program execution.
+        """
+        with self._spawned_tasks_lock:
+            self._spawned_tasks.clear()
+            self._joined_task_ids.clear()
+
+    def warn_unjoined_tasks(self) -> None:
+        """Log warning if there are unjoined spawned tasks.
+
+        Provides actionable guidance for handling unjoined tasks.
+        """
+        unjoined = self.get_unjoined_tasks()
+        if not unjoined:
+            return
+
+        logger.warning(
+            "%d spawned task(s) were not joined.\n\n"
+            "Unjoined tasks may cause errors to be silently lost.\n"
+            "To fix, use one of these patterns:\n"
+            "  - yield task.join()              # raises on error\n"
+            "  - yield Safe(task.join())        # returns Result[T]\n"
+            "  - yield Recover(task.join(), x)  # returns fallback on error\n\n"
+            "If fire-and-forget is intentional:\n"
+            "  - yield Spawn(program, fire_and_forget=True)",
+            len(unjoined),
+        )
+
     def _resolve_backend(self, effect: SpawnEffect) -> str:
         backend = effect.preferred_backend or self._default_backend
         if backend == "ray" and not self._ray_available():
@@ -760,17 +836,21 @@ class SpawnEffectHandler:
         state_snapshot = sub_ctx.state.copy()
 
         def run_program() -> tuple[Any, ExecutionContext]:  # noqa: DOEFF006
-            pragmatic_result = engine.run(effect.program, sub_ctx)
+            # Use _is_top_level=False to avoid clearing/warning in spawned tasks
+            pragmatic_result = engine.run(effect.program, sub_ctx, _is_top_level=False)
             if isinstance(pragmatic_result.result, Err):
                 raise pragmatic_result.result.error
             return pragmatic_result.value, pragmatic_result.context
 
         future = loop.run_in_executor(self._ensure_thread_executor(), run_program)
+        # Suppress Python's "Future exception was never retrieved" warning
+        self._consume_future_exception(future)
         return Task(
             backend="thread",
             _handle=future,
             _env_snapshot=env_snapshot,
             _state_snapshot=state_snapshot,
+            _fire_and_forget=effect.fire_and_forget,
         )
 
     def _spawn_process(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
@@ -786,11 +866,14 @@ class SpawnEffectHandler:
             payload,
             self._max_log_entries,
         )
+        # Suppress Python's "Future exception was never retrieved" warning
+        self._consume_future_exception(future)
         return Task(
             backend="process",
             _handle=future,
             _env_snapshot=env_snapshot,
             _state_snapshot=state_snapshot,
+            _fire_and_forget=effect.fire_and_forget,
         )
 
     def _spawn_ray(self, effect: SpawnEffect, ctx: ExecutionContext) -> Task[Any]:
@@ -810,6 +893,7 @@ class SpawnEffectHandler:
             _handle=object_ref,
             _env_snapshot=env_snapshot,
             _state_snapshot=state_snapshot,
+            _fire_and_forget=effect.fire_and_forget,
         )
 
     def _prepare_context(
