@@ -222,6 +222,9 @@ class ProgramInterpreter:
         self.memo_handler = handlers["memo"]
         self.cache_handler = handlers["cache"]
 
+        # Track nested run() depth for task warning logic
+        self._run_depth = 0
+
 
     def _new_log_buffer(self) -> BoundedLog:
         """Return a fresh log buffer respecting the configured limit."""
@@ -254,7 +257,35 @@ class ProgramInterpreter:
 
         For async contexts (e.g., pytest async tests), use run_async() instead.
         """
-        return asyncio.run(self.run_async(program, context))
+        is_top_level = self._run_depth == 0
+
+        # Reset task tracking only at the start of top-level execution
+        if is_top_level:
+            self.spawn_handler.reset_task_tracking()
+
+        self._run_depth += 1
+        try:
+            result = asyncio.run(self.run_async(program, context))
+        finally:
+            self._run_depth -= 1
+
+        # Warn about unjoined tasks only at the end of top-level execution
+        if is_top_level:
+            unjoined = self.spawn_handler.get_unjoined_tasks()
+            if unjoined:
+                logger.warning(
+                    "%d spawned task(s) were not joined.\n\n"
+                    "Unjoined tasks may cause errors to be silently lost.\n"
+                    "To fix, use one of these patterns:\n"
+                    "  - yield task.join()              # raises on error\n"
+                    "  - yield Safe(task.join())        # returns Result[T]\n"
+                    "  - yield Recover(task.join(), x)  # returns fallback on error\n\n"
+                    "If fire-and-forget is intentional:\n"
+                    "  - yield Spawn(program, fire_and_forget=True)",
+                    len(unjoined),
+                )
+
+        return result
 
     async def run_async(
         self, program: Program[T], context: ExecutionContext | None = None
