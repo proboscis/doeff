@@ -691,6 +691,38 @@ class SpawnEffectHandler:
         self._merged_tasks: set[tuple[int, int]] = set()
         self._join_lock: asyncio.Lock | None = None
 
+        # Track spawned tasks and joined task IDs for unjoined task warnings
+        self._spawned_tasks: dict[int, Task[Any]] = {}
+        self._fire_and_forget_tasks: set[int] = set()
+        self._joined_task_ids: set[int] = set()
+        self._spawned_tasks_lock = threading.Lock()
+
+    @staticmethod
+    def _consume_future_exception(future: asyncio.Future[Any]) -> None:
+        """Add done callback to consume Future exceptions, preventing Python's warning."""
+        def _consume(done: asyncio.Future[Any]) -> None:
+            try:
+                done.exception()
+            except BaseException:
+                return
+        future.add_done_callback(_consume)
+
+    def get_unjoined_tasks(self) -> list[Task[Any]]:
+        """Return list of spawned tasks that were not joined (excluding fire_and_forget)."""
+        with self._spawned_tasks_lock:
+            unjoined = []
+            for task_id, task in self._spawned_tasks.items():
+                if task_id not in self._joined_task_ids and task_id not in self._fire_and_forget_tasks:
+                    unjoined.append(task)
+            return unjoined
+
+    def reset_task_tracking(self) -> None:
+        """Reset task tracking state. Called at the start of top-level execution."""
+        with self._spawned_tasks_lock:
+            self._spawned_tasks.clear()
+            self._fire_and_forget_tasks.clear()
+            self._joined_task_ids.clear()
+
     def handle_spawn(
         self,
         effect: SpawnEffect,
@@ -699,12 +731,22 @@ class SpawnEffectHandler:
     ) -> Task[Any]:
         backend = self._resolve_backend(effect)
         if backend == "thread":
-            return self._spawn_thread(effect, ctx, engine)
-        if backend == "process":
-            return self._spawn_process(effect, ctx)
-        if backend == "ray":
-            return self._spawn_ray(effect, ctx)
-        raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+            task = self._spawn_thread(effect, ctx, engine)
+        elif backend == "process":
+            task = self._spawn_process(effect, ctx)
+        elif backend == "ray":
+            task = self._spawn_ray(effect, ctx)
+        else:
+            raise RuntimeError(f"Unsupported spawn backend: {backend!r}")
+
+        # Track spawned task
+        task_id = id(task._handle)
+        with self._spawned_tasks_lock:
+            self._spawned_tasks[task_id] = task
+            if effect.fire_and_forget:
+                self._fire_and_forget_tasks.add(task_id)
+
+        return task
 
     async def handle_join(
         self,
@@ -713,6 +755,11 @@ class SpawnEffectHandler:
     ) -> Any:
         task = effect.task
         task_id = id(task._handle)
+
+        # Mark task as joined
+        with self._spawned_tasks_lock:
+            self._joined_task_ids.add(task_id)
+
         cached = self._task_results.get(task_id)
 
         if cached is None:
@@ -766,6 +813,8 @@ class SpawnEffectHandler:
             return pragmatic_result.value, pragmatic_result.context
 
         future = loop.run_in_executor(self._ensure_thread_executor(), run_program)
+        # Consume future exceptions to suppress Python's "Future exception was never retrieved" warning
+        self._consume_future_exception(future)
         return Task(
             backend="thread",
             _handle=future,
@@ -786,6 +835,8 @@ class SpawnEffectHandler:
             payload,
             self._max_log_entries,
         )
+        # Consume future exceptions to suppress Python's "Future exception was never retrieved" warning
+        self._consume_future_exception(future)
         return Task(
             backend="process",
             _handle=future,
