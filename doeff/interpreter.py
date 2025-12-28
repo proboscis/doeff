@@ -239,7 +239,11 @@ class ProgramInterpreter:
 
 
     def run(
-        self, program: Program[T], context: ExecutionContext | None = None
+        self,
+        program: Program[T],
+        context: ExecutionContext | None = None,
+        *,
+        _is_top_level: bool = True,
     ) -> RunResult[T]:
         """
         Run a program with full monad support (synchronous interface).
@@ -253,8 +257,23 @@ class ProgramInterpreter:
         as an implementation detail rather than a special effect.
 
         For async contexts (e.g., pytest async tests), use run_async() instead.
+
+        Args:
+            program: The program to run
+            context: Optional execution context
+            _is_top_level: Internal flag - do not use directly. Used to track
+                           whether this is a top-level execution for task tracking.
         """
-        return asyncio.run(self.run_async(program, context))
+        if _is_top_level:
+            # Clear task tracking at start of top-level execution
+            self.spawn_handler.clear_task_tracking()
+
+        try:
+            return asyncio.run(self.run_async(program, context))
+        finally:
+            if _is_top_level:
+                # Warn about unjoined tasks at end of top-level execution
+                self.spawn_handler.warn_unjoined_tasks()
 
     async def run_async(
         self, program: Program[T], context: ExecutionContext | None = None
