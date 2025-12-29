@@ -82,7 +82,6 @@ from doeff.effects import (
     Unwrap,
     Retry,
     FirstSuccess,
-    Unwrap,
     # Effects - IO
     IO,
     Print,
@@ -122,7 +121,6 @@ from doeff.effects import (
     first_success_effect,
     unwrap_result,
     retry,
-    unwrap_result,
     io,
     print_,
     memo_get,
@@ -139,6 +137,16 @@ from doeff.effects import (
 
 # Import from new modular structure
 from doeff.interpreter import ProgramInterpreter
+from doeff.interpreter_v2 import (
+    TrampolinedInterpreter,
+    ContinuationStackOverflowError,
+    EffectStackTrace,
+    EffectStackFrame,
+    EffectStackFrameType,
+    PythonLocation,
+    EffectStackTraceRenderer,
+    InterpretationStats,
+)
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
 from doeff.program import Program
@@ -202,6 +210,14 @@ __all__ = [  # noqa: RUF022
     "FrozenDict",
     # Core classes
     "ProgramInterpreter",
+    "TrampolinedInterpreter",
+    "ContinuationStackOverflowError",
+    "EffectStackTrace",
+    "EffectStackFrame",
+    "EffectStackFrameType",
+    "PythonLocation",
+    "EffectStackTraceRenderer",
+    "InterpretationStats",
     "KleisliProgram",
     "EffectCallTree",
     # Decorator
@@ -223,7 +239,6 @@ __all__ = [  # noqa: RUF022
     "Recover",
     "Unwrap",
     "Retry",
-    "Unwrap",
     "Dep",
     "Fail",
     "Gather",
@@ -263,7 +278,6 @@ __all__ = [  # noqa: RUF022
     "recover",
     "unwrap_result",
     "retry",
-    "unwrap_result",
     "fail",
     "get",
     "io",
