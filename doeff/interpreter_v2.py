@@ -169,7 +169,7 @@ class ContinuationFrame:
     - INV-F3: Close is idempotent - safe to call multiple times
     - INV-F4: Generator ownership is exclusive to this frame
     - INV-F5: context_snapshot is immutable after creation
-    - INV-F6: Completed frame operations are no-ops
+    - INV-F6: Operations on terminal frames raise InvalidFrameStateError
     """
 
     # The generator representing this computation
@@ -365,9 +365,12 @@ class InterpreterState:
     Complete interpreter state - explicit, introspectable.
 
     Invariants:
-    - continuation_stack is never empty during active interpretation
-    - current_item is the item being processed (Effect, Program, or value)
-    - At most one frame is in ACTIVE state with pending work
+    - INV-S1: Phase and stack are consistent (COMPLETED/FAILED => empty stack)
+    - INV-S2: Active phases (STEPPING/AWAITING_EFFECT) have non-empty stack
+    - INV-S3: Only the top frame is active during interpretation
+    - INV-S4: Phase reflects current activity (PROPAGATING_ERROR when error)
+    - INV-S5: Stats counters only increase, never decrease
+    - INV-S6: All frames cleaned up after run completes (success or error)
     """
 
     # The continuation stack - LIFO order (top = current frame)
@@ -392,7 +395,11 @@ class InterpreterState:
     failed_effect: Effect | None = None
 
     # Stack snapshot captured when error first occurred (before frames are popped)
+    # Contains source_info from each ContinuationFrame for effect stack trace building
     stack_at_error: tuple[CallFrame | None, ...] | None = None
+
+    # Full continuation frames snapshot (for effect stack trace with full context)
+    continuation_stack_at_error: tuple[ContinuationFrame, ...] | None = None
 
     # Program call stack snapshot at error time (for EffectFailure)
     call_stack_at_error: tuple[CallFrame, ...] | None = None
@@ -450,6 +457,7 @@ class InterpreterState:
         # Only capture stack on first error
         if self.stack_at_error is None:
             self.stack_at_error = tuple(f.source_info for f in self.continuation_stack)
+            self.continuation_stack_at_error = tuple(self.continuation_stack)
             self.call_stack_at_error = tuple(self.context.program_call_stack)
 
     def clear_error_state(self) -> None:
@@ -457,6 +465,7 @@ class InterpreterState:
         self.propagating_exception = None
         self.failed_effect = None
         self.stack_at_error = None
+        self.continuation_stack_at_error = None
         self.call_stack_at_error = None
 
 
@@ -1073,6 +1082,7 @@ class TrampolinedInterpreter:
         except BaseException as exc:
             # Program failed on first step - capture call stack BEFORE popping
             state.stack_at_error = tuple(f.source_info for f in state.continuation_stack)
+            state.continuation_stack_at_error = tuple(state.continuation_stack)
             state.call_stack_at_error = tuple(ctx.program_call_stack)
             state.propagating_exception = exc
             state.phase = InterpretationPhase.FAILED
@@ -1423,7 +1433,8 @@ class TrampolinedInterpreter:
         Build a complete effect stack trace from interpreter state.
 
         This is called when an error occurs and we need to report it.
-        The continuation_stack gives us the EXACT call chain.
+        Uses stack_at_error (captured at error time) if available, otherwise
+        falls back to the live continuation_stack.
         """
         if not self._capture_stack_trace:
             return EffectStackTrace(
@@ -1435,8 +1446,16 @@ class TrampolinedInterpreter:
 
         frames: list[EffectStackFrame] = []
 
+        # Use captured stack snapshot if available (preserves frames before unwinding)
+        # Otherwise fall back to live stack (for errors during initialization)
+        stack_to_use = (
+            state.continuation_stack_at_error
+            if state.continuation_stack_at_error is not None
+            else state.continuation_stack
+        )
+
         # Walk the continuation stack from bottom (entry) to top (current)
-        for cont_frame in state.continuation_stack:
+        for cont_frame in stack_to_use:
             source = cont_frame.source_info
 
             if source is None:
