@@ -63,6 +63,7 @@ from doeff.handlers import (
     WriterEffectHandler,
 )
 from doeff.interpreter import ProgramInterpreter, force_eval
+from doeff.interpreter_v2 import TrampolinedInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program
 from doeff.types import Effect, ExecutionContext, RunResult
@@ -80,6 +81,7 @@ __all__ = [
     "do",
     # Interpreter
     "ProgramInterpreter",
+    "TrampolinedInterpreter",
     "force_eval",
     # Handlers
     "ReaderEffectHandler",

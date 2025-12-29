@@ -101,6 +101,11 @@ def force_eval(prog: Program[T]) -> Program[T]:
     This is critical for stack safety with deep monadic computations.
     Python's recursion limit (~1000 frames) requires trampolining.
     """
+    warnings.warn(
+        "force_eval() is deprecated. TrampolinedInterpreter is stack safe by default.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     def forced_generator():
         to_gen = getattr(prog, "to_generator", None)
         if to_gen is None:
@@ -938,6 +943,46 @@ def _program_to_generator(
         "Cannot intercept value that does not expose to_generator(): "
         f"{type(base).__name__}"
     )
+
+
+import warnings
+
+from doeff.interpreter_v2 import TrampolinedInterpreter
+
+
+class ProgramInterpreter(TrampolinedInterpreter):
+    """Compatibility wrapper around the trampolined interpreter."""
+
+    def __init__(
+        self,
+        custom_handlers: dict[str, Any] | None = None,
+        *,
+        max_log_entries: int | None = None,
+        spawn_default_backend: SpawnBackend = "thread",
+        spawn_thread_max_workers: int | None = None,
+        spawn_process_max_workers: int | None = None,
+        spawn_ray_address: str | None = None,
+        spawn_ray_init_kwargs: dict[str, Any] | None = None,
+        spawn_ray_runtime_env: dict[str, Any] | None = None,
+        max_stack_depth: int = 10000,
+    ) -> None:
+        warnings.warn(
+            "ProgramInterpreter is deprecated; use TrampolinedInterpreter instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            custom_handlers=custom_handlers,
+            max_log_entries=max_log_entries,
+            spawn_default_backend=spawn_default_backend,
+            spawn_thread_max_workers=spawn_thread_max_workers,
+            spawn_process_max_workers=spawn_process_max_workers,
+            spawn_ray_address=spawn_ray_address,
+            spawn_ray_init_kwargs=spawn_ray_init_kwargs,
+            spawn_ray_runtime_env=spawn_ray_runtime_env,
+            allow_reentrancy=True,
+            max_stack_depth=max_stack_depth,
+        )
 
 
 __all__ = ["ProgramInterpreter", "force_eval"]  # noqa: DOEFF021

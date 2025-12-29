@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import traceback
+import warnings
+from enum import Enum, auto
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator, Hashable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
     from phart.styles import NodeStyle
 
     from doeff.program import Program
+    from doeff.interpreter_v2 import InterpretationStats
 
 # Re-export vendored types for backward compatibility
 from doeff._vendor import (
@@ -664,6 +667,59 @@ class CallFrame:
 
 
 # ============================================
+# Effect Stack Trace Types
+# ============================================
+
+
+class EffectStackFrameType(Enum):
+    """Types of frames in an effect stack trace."""
+
+    KLEISLI_CALL = auto()
+    EFFECT_YIELD = auto()
+    PROGRAM_FLAT_MAP = auto()
+    HANDLER_BOUNDARY = auto()
+    SPAWN_BOUNDARY = auto()
+
+
+@dataclass(frozen=True)
+class PythonLocation:
+    """A location in Python source code."""
+
+    filename: str
+    line: int
+    function: str
+    code: str | None = None  # noqa: DOEFF013
+
+    def format(self) -> str:
+        loc = f"{self.filename}:{self.line} in {self.function}"
+        if self.code:
+            return f"{loc}\n    {self.code}"
+        return loc
+
+
+@dataclass(frozen=True)
+class EffectStackFrame:
+    """Frame in a detailed effect stack trace."""
+
+    frame_type: EffectStackFrameType
+    name: str
+    location: PythonLocation | None = None  # noqa: DOEFF013
+    call_args: tuple[Any, ...] | None = None
+    call_kwargs: dict[str, Any] | None = None
+    raw_frame: CallFrame | None = None
+
+
+@dataclass(frozen=True)
+class EffectStackTrace:
+    """Complete effect call stack derived from interpreter state."""
+
+    frames: tuple[EffectStackFrame, ...]
+    failed_effect: EffectBase | None
+    original_exception: BaseException
+    python_raise_location: PythonLocation | None = None  # noqa: DOEFF013
+
+
+# ============================================
 # Execution Context
 # ============================================
 
@@ -846,6 +902,8 @@ class RunResult(Generic[T]):
 
     context: ExecutionContext
     result: Result[T]
+    stats: InterpretationStats | None = None
+    effect_stack_trace: EffectStackTrace | None = None  # noqa: DOEFF013
 
     @property
     def value(self) -> T:
@@ -863,6 +921,10 @@ class RunResult(Generic[T]):
     def is_err(self) -> bool:
         """Check if the result is an error."""
         return isinstance(self.result, Err)
+
+    @property
+    def has_effect_trace(self) -> bool:
+        return self.effect_stack_trace is not None
 
     @property
     def env(self) -> dict[Any, Any]:
@@ -989,7 +1051,25 @@ class RunResult(Generic[T]):
 
     def display(self, verbose: bool = False, indent: int = 2) -> str:  # noqa: DOEFF011
         """Render a human-readable report using structured sections."""
+        warnings.warn(
+            "display() is deprecated. Use display_v2() for effect stack traces.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._legacy_display(verbose=verbose, indent=indent)
 
+    def display_v2(self) -> str:
+        """Render an effect stack trace view when available."""
+        if self.is_ok:
+            return self._legacy_display(verbose=False, indent=2)
+        if self.effect_stack_trace is None:
+            return self._legacy_display(verbose=False, indent=2)
+        from doeff.effect_stack_trace import EffectStackTraceRenderer
+
+        renderer = EffectStackTraceRenderer()
+        return renderer.render(self.effect_stack_trace)
+
+    def _legacy_display(self, verbose: bool = False, indent: int = 2) -> str:  # noqa: DOEFF011
         dep_ask_stats = _DepAskStats.from_observations(
             self.effect_observations
         )
@@ -2179,4 +2259,3 @@ __all__ = [  # noqa: DOEFF021
     "WStep",
     "trace_err",
 ]
-

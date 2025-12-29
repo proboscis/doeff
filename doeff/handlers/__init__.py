@@ -15,7 +15,7 @@ import lzma
 import sqlite3
 import threading
 from dataclasses import replace
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Generator
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from enum import Enum, auto
 from pathlib import Path
@@ -31,6 +31,7 @@ from doeff.effects import (
     AtomicUpdateEffect,
     CacheGetEffect,
     CachePutEffect,
+    await_,
     FutureAwaitEffect,
     FutureParallelEffect,
     GraphAnnotateEffect,
@@ -60,8 +61,14 @@ from doeff.effects import (
 )
 from doeff.effects.pure import PureEffect
 from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
-from doeff.program import Program
-from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
+from doeff.program import GeneratorProgram, Program, ProgramBase
+from doeff.types import (
+    EffectBase,
+    EffectFailure,
+    EffectStackFrameType,
+    ExecutionContext,
+    ListenResult,
+)
 from doeff.utils import BoundedLog
 
 logger = logging.getLogger(__name__)
@@ -389,16 +396,17 @@ class ReaderEffectHandler:
                 raise RuntimeError(f"Cyclic Ask dependency for environment key: {key!r}")
 
             if isinstance(value, (ProgramType, ProgramBase)):
-                ctx.env[key] = self._RESOLUTION_IN_PROGRESS
-                try:
-                    result = await engine.run_async(value, ctx)
-                    resolved_value = result.value
-                except Exception:
-                    ctx.env[key] = value
-                    raise
+                def _resolve_program() -> Generator[EffectBase, Any, Any]:
+                    ctx.env[key] = self._RESOLUTION_IN_PROGRESS
+                    try:
+                        resolved = yield value
+                    except BaseException:
+                        ctx.env[key] = value
+                        raise
+                    ctx.env[key] = resolved
+                    return resolved
 
-                ctx.env[key] = resolved_value
-                return resolved_value
+                return GeneratorProgram(_resolve_program)
 
             return value
 
@@ -412,21 +420,18 @@ class ReaderEffectHandler:
         self, effect: LocalEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle reader.local effect."""
-        sub_ctx = ctx.copy()
-        sub_ctx.env.update(effect.env_update)
-        sub_ctx.log = ctx.log  # Share writer log with parent context
-        pragmatic_result = await engine.run_async(effect.sub_program, sub_ctx)
+        def _local_program() -> Generator[EffectBase, Any, Any]:
+            original_env = ctx.env
+            local_env = dict(original_env)
+            local_env.update(effect.env_update)
+            ctx.env = local_env
+            try:
+                result = yield effect.sub_program
+            finally:
+                ctx.env = original_env
+            return result
 
-        # Propagate sub-context graph/state/log updates back to parent context.
-        # ``ExecutionContext.copy`` shares the cache and effect observations, but
-        # graph/state mutations happen on ``sub_ctx``. Without copying them back,
-        # any GraphStep/Step effects executed inside ``Local`` are lost.
-        ctx.graph = pragmatic_result.context.graph
-        ctx.state = pragmatic_result.context.state
-        ctx.log = pragmatic_result.context.log
-
-        # Return the value from the sub-program
-        return pragmatic_result.value
+        return GeneratorProgram(_local_program)
 
 
 class StateEffectHandler:
@@ -527,14 +532,20 @@ class WriterEffectHandler:
         engine: ProgramInterpreter,
     ) -> ListenResult:
         """Handle writer.listen effect."""
-        sub_program = effect.sub_program
-        sub_ctx = ctx.copy()
-        if isinstance(sub_ctx.log, BoundedLog):
-            sub_ctx.log = sub_ctx.log.spawn_empty()
-        else:  # Defensive: contexts constructed without bounded logs
-            sub_ctx.log = BoundedLog()
-        pragmatic_result = await engine.run_async(sub_program, sub_ctx)
-        return ListenResult(value=pragmatic_result.value, log=sub_ctx.log)
+        def _listen_program() -> Generator[EffectBase, Any, Any]:
+            original_log = ctx.log
+            if isinstance(original_log, BoundedLog):
+                sub_log = original_log.spawn_empty()
+            else:
+                sub_log = BoundedLog()
+            ctx.log = sub_log
+            try:
+                value = yield effect.sub_program
+            finally:
+                ctx.log = original_log
+            return ListenResult(value=value, log=sub_log)
+
+        return GeneratorProgram(_listen_program)
 
 
 class FutureEffectHandler:
@@ -1094,46 +1105,37 @@ class ResultEffectHandler:
         """Handle result.fail effect."""
         raise effect.exception
 
+    def _handler_program(
+        self, name: str, generator_func: Callable[[], Generator[EffectBase, Any, Any]]
+    ) -> Program:
+        program = GeneratorProgram(generator_func)
+        setattr(program, "_effect_stack_frame_type", EffectStackFrameType.HANDLER_BOUNDARY)
+        setattr(program, "_effect_stack_name", name)
+        return program
+
+    def _unwrap_effect_failure(self, error: Any) -> Any:
+        """Unwrap EffectFailure to get the underlying cause."""
+        return error.cause if isinstance(error, EffectFailure) else error
+
     async def handle_catch(
         self, effect: ResultCatchEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.catch effect."""
-        # Import here to avoid circular import
-        from doeff.types import EffectFailure
+        handler_name = getattr(effect.handler, "__name__", "catch")
 
-        sub_program = effect.sub_program
+        def _catch_program() -> Generator[EffectBase, Any, Any]:
+            try:
+                return (yield effect.sub_program)
+            except BaseException as exc:
+                if isinstance(exc, SystemExit):
+                    raise
+                error = self._unwrap_effect_failure(exc)
+                handler_result = effect.handler(error)
+                if isinstance(handler_result, ProgramBase):
+                    return (yield handler_result)
+                return handler_result
 
-        def _unwrap_error(error: Any) -> Any:
-            if isinstance(error, EffectFailure):
-                return error.cause
-            return error
-
-        async def _run_handler(handler_error: Any) -> Any:
-            from doeff.types import Program as ProgramType
-
-            handler_result = effect.handler(handler_error)
-
-            if isinstance(handler_result, ProgramType):
-                handler_run = await engine.run_async(handler_result, ctx)
-                if isinstance(handler_run.result, Err):
-                    raise handler_run.result.error
-                return handler_run.value
-
-            return handler_result
-
-        try:
-            pragmatic_result = await engine.run_async(sub_program, ctx)
-        except BaseException as exc:  # Handle direct exceptions from the sub-program
-            if isinstance(exc, SystemExit):
-                raise
-            actual_error = _unwrap_error(exc)
-            return await _run_handler(actual_error)
-
-        if isinstance(pragmatic_result.result, Err):
-            error = _unwrap_error(pragmatic_result.result.error)
-            return await _run_handler(error)
-
-        return pragmatic_result.value
+        return self._handler_program(handler_name, _catch_program)
 
     async def handle_finally(
         self,
@@ -1142,58 +1144,47 @@ class ResultEffectHandler:
         engine: ProgramInterpreter,
     ) -> Any:
         """Handle result.finally effect ensuring finalizer runs on all outcomes."""
-
-        async def _run_finalizer() -> None:
+        def _resolve_finalizer() -> ProgramBase | None:
             finalizer_value = effect.finalizer
-
-            if callable(finalizer_value) and not isinstance(finalizer_value, Program):
+            if callable(finalizer_value) and not isinstance(finalizer_value, ProgramBase):
                 finalizer_value = finalizer_value()
-
             if finalizer_value is None:
-                return
+                return None
+            if isinstance(finalizer_value, ProgramBase):
+                return finalizer_value
+            return None
 
-            if not isinstance(finalizer_value, (Program, EffectBase)):
-                return
+        def _finally_program() -> Generator[EffectBase, Any, Any]:
+            try:
+                result = yield effect.sub_program
+            except BaseException:
+                finalizer = _resolve_finalizer()
+                if finalizer is not None:
+                    yield finalizer
+                raise
 
-            finalizer_result = await engine.run_async(finalizer_value, ctx)
-            if isinstance(finalizer_result.result, Err):
-                raise finalizer_result.result.error
+            finalizer = _resolve_finalizer()
+            if finalizer is not None:
+                yield finalizer
+            return result
 
-        sub_program = effect.sub_program
-
-        try:
-            pragmatic_result = await engine.run_async(sub_program, ctx)
-        except BaseException:
-            await _run_finalizer()
-            raise
-
-        await _run_finalizer()
-
-        if isinstance(pragmatic_result.result, Err):
-            raise pragmatic_result.result.error
-
-        return pragmatic_result.value
+        return self._handler_program("finally", _finally_program)
 
     async def handle_safe(
         self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.safe effect by capturing the program outcome."""
-        pragmatic_result = await engine.run_async(effect.sub_program, ctx)
-        result = pragmatic_result.result
+        def _safe_program() -> Generator[EffectBase, Any, Any]:
+            try:
+                value = yield effect.sub_program
+            except BaseException as exc:
+                error = self._unwrap_effect_failure(exc)
+                if isinstance(error, Exception):
+                    return Err(error)
+                return Err(exc)
+            return Ok(value)
 
-        if isinstance(result, Err):
-            error = result.error
-            if isinstance(error, EffectFailure):
-                unwrapped = error.cause
-                while isinstance(unwrapped, EffectFailure):
-                    unwrapped = unwrapped.cause
-
-                if isinstance(unwrapped, Exception):
-                    return Err(unwrapped)
-
-            return result
-
-        return result
+        return GeneratorProgram(_safe_program)
 
     async def handle_first_success(
         self,
@@ -1202,33 +1193,60 @@ class ResultEffectHandler:
         engine: ProgramInterpreter,
     ) -> Any:
         """Handle sequential attempts, returning the first successful value."""
+        def _snapshot_context() -> tuple[
+            dict[Any, Any],
+            dict[str, Any],
+            BoundedLog,
+            WGraph,
+            list[Any],
+        ]:
+            env_snapshot = dict(ctx.env) if ctx.env else {}
+            state_snapshot = dict(ctx.state) if ctx.state else {}
+            if isinstance(ctx.log, BoundedLog):
+                log_snapshot = ctx.log.copy()
+            else:
+                log_snapshot = BoundedLog(ctx.log)
+            graph_snapshot = ctx.graph
+            observations_snapshot = list(ctx.effect_observations)
+            return env_snapshot, state_snapshot, log_snapshot, graph_snapshot, observations_snapshot
 
-        base_snapshot = ctx.copy()
-        base_snapshot.effect_observations = list(ctx.effect_observations)
+        base_env, base_state, base_log, base_graph, base_obs = _snapshot_context()
+        last_error: BaseException | None = None
 
-        last_error: Exception | None = None
+        def _first_success_program() -> Generator[EffectBase, Any, Any]:
+            nonlocal last_error
+            for candidate in effect.programs:
+                attempt_env = dict(base_env)
+                attempt_state = dict(base_state)
+                attempt_log = base_log.copy() if isinstance(base_log, BoundedLog) else BoundedLog(base_log)
+                attempt_obs = list(base_obs)
 
-        for candidate in effect.programs:
+                ctx.env = attempt_env
+                ctx.state = attempt_state
+                ctx.log = attempt_log
+                ctx.graph = base_graph
+                ctx.effect_observations = attempt_obs
 
-            attempt_ctx = base_snapshot.copy()
-            attempt_ctx.effect_observations = list(base_snapshot.effect_observations)
+                try:
+                    value = yield candidate
+                except BaseException as exc:
+                    if isinstance(exc, SystemExit):
+                        raise
+                    last_error = exc
+                    ctx.env = dict(base_env)
+                    ctx.state = dict(base_state)
+                    ctx.log = base_log.copy() if isinstance(base_log, BoundedLog) else BoundedLog(base_log)
+                    ctx.graph = base_graph
+                    ctx.effect_observations = list(base_obs)
+                    continue
 
-            pragmatic_result = await engine.run_async(candidate, attempt_ctx)
+                return value
 
-            if isinstance(pragmatic_result.result, Ok):
-                ctx.env = attempt_ctx.env
-                ctx.state = attempt_ctx.state
-                ctx.log = attempt_ctx.log
-                ctx.graph = attempt_ctx.graph
-                ctx.effect_observations = attempt_ctx.effect_observations
-                return pragmatic_result.value
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("All programs failed")
 
-            last_error = pragmatic_result.result.error
-
-        if last_error is not None:
-            raise last_error
-
-        raise RuntimeError("All programs failed")
+        return GeneratorProgram(_first_success_program)
 
     async def handle_unwrap(
         self,
@@ -1253,158 +1271,116 @@ class ResultEffectHandler:
         self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.recover effect - try program, use fallback on error."""
-        pragmatic_result = await engine.run_async(effect.sub_program, ctx)
+        def _recover_program() -> Generator[EffectBase, Any, Any]:
+            try:
+                return (yield effect.sub_program)
+            except BaseException as exc:
+                error = self._unwrap_effect_failure(exc)
+                fallback = self._resolve_fallback_value(effect.fallback, error)
+                if isinstance(fallback, ProgramBase):
+                    return (yield fallback)
+                return fallback
 
-        if isinstance(pragmatic_result.result, Err):
-            error = self._unwrap_effect_failure(pragmatic_result.result.error)
-            fallback = await self._resolve_fallback(effect.fallback, error, ctx, engine)
-            return await self._execute_fallback(fallback, ctx, engine)
+        return self._handler_program("recover", _recover_program)
 
-        return pragmatic_result.value
-
-    def _unwrap_effect_failure(self, error: Any) -> Any:
-        """Unwrap EffectFailure to get the underlying cause."""
-        from doeff.types import EffectFailure
-        return error.cause if isinstance(error, EffectFailure) else error
-
-    async def _resolve_fallback(
-        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Resolve fallback based on its type (error handler, thunk, or value)."""
-        if not callable(fallback) or isinstance(fallback, Program):
+    def _resolve_fallback_value(self, fallback: Any, error: Any) -> Any:
+        if not callable(fallback) or isinstance(fallback, ProgramBase):
             return fallback
 
         from doeff.kleisli import KleisliProgram
         if isinstance(fallback, KleisliProgram):
-            return await self._handle_kleisli_fallback(fallback, error, ctx, engine)
+            return self._call_kleisli_fallback(fallback, error)
 
-        return await self._handle_regular_callable(fallback, error, ctx, engine)
+        return self._call_regular_callable(fallback, error)
 
-    async def _handle_kleisli_fallback(
-        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle KleisliProgram fallback - check signature to determine if error handler or thunk."""
+    def _call_kleisli_fallback(self, fallback: Any, error: Any) -> Any:
         import inspect
 
-        # Check the signature of the underlying function to determine if it accepts arguments
         try:
             sig = inspect.signature(fallback)
-            params = [p for p in sig.parameters.values()
-                     if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
+            params = [
+                p
+                for p in sig.parameters.values()
+                if p.kind not in (
+                    inspect.Parameter.VAR_POSITIONAL,
+                    inspect.Parameter.VAR_KEYWORD,
+                )
+            ]
 
-            # If it has required parameters, it's an error handler
             if params and params[0].default is inspect.Parameter.empty:
                 handler_result = fallback(error)
             else:
-                # No required params, it's a thunk
                 handler_result = fallback()
         except (ValueError, TypeError):
-            # Can't inspect, try with error first, fallback to thunk on error
             try:
                 handler_result = fallback(error)
-            except TypeError as e:
-                if "positional argument" in str(e):
+            except TypeError as exc:
+                if "positional argument" in str(exc):
                     handler_result = fallback()
                 else:
                     raise
 
-        from doeff.types import Program as ProgramType
-        if not isinstance(handler_result, ProgramType):
-            return handler_result
+        return handler_result
 
-        try_result = await engine.run_async(handler_result, ctx)
-
-        if isinstance(try_result.result, Err):
-            raise self._unwrap_effect_failure(try_result.result.error)
-
-        return try_result.value
-
-    async def _handle_regular_callable(
-        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle regular callable fallback based on signature."""
+    def _call_regular_callable(self, fallback: Any, error: Any) -> Any:
         import inspect
+
         try:
             sig = inspect.signature(fallback)
             if len(sig.parameters) > 0:
-                # Error handler - call with exception
-                return await self._execute_error_handler(fallback(error), ctx, engine)
-            # Thunk - call with no args
+                return fallback(error)
             return fallback()
         except (ValueError, TypeError):
-            # Can't inspect signature, treat as thunk
             return fallback()
-
-    async def _execute_error_handler(
-        self, handler_result: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Execute error handler result if it's a Program."""
-        from doeff.program import KleisliProgramCall
-
-        if isinstance(handler_result, (Program, KleisliProgramCall, EffectBase)):
-            result = await engine.run_async(handler_result, ctx)
-            return result.value
-        return handler_result
-
-    async def _execute_fallback(
-        self, fallback: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Execute the resolved fallback value."""
-        from doeff.program import KleisliProgramCall
-
-        if isinstance(fallback, (Program, KleisliProgramCall, EffectBase)):
-            result = await engine.run_async(fallback, ctx)
-            return result.value
-        return fallback
 
     async def handle_retry(
         self, effect: ResultRetryEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
         """Handle result.retry effect - retry program on failure."""
-        import asyncio
-
-        from doeff._vendor import Ok
-        from doeff.program import Program
-
         max_attempts = effect.max_attempts
         delay_ms = effect.delay_ms
         delay_strategy = effect.delay_strategy
 
-        sub_program = effect.sub_program
+        def _retry_program() -> Generator[EffectBase, Any, Any]:
+            import asyncio as _asyncio
 
-        last_error = None
-        for attempt in range(max_attempts):
-            pragmatic_result = await engine.run_async(sub_program, ctx)
+            last_error: BaseException | None = None
+            for attempt in range(max_attempts):
+                try:
+                    return (yield effect.sub_program)
+                except BaseException as exc:
+                    if isinstance(exc, SystemExit):
+                        raise
+                    last_error = exc
 
-            if isinstance(pragmatic_result.result, Ok):
-                return pragmatic_result.value
+                if attempt < max_attempts - 1:
+                    delay_seconds: float | None = None
+                    if delay_strategy is not None:
+                        try:
+                            delay_value = delay_strategy(attempt + 1, last_error)  # type: ignore[arg-type]
+                        except Exception as exc:
+                            raise RuntimeError(
+                                "Retry delay_strategy raised an exception"
+                            ) from exc
+                        if delay_value is None:
+                            delay_seconds = None
+                        else:
+                            delay_seconds = float(delay_value)
+                            if delay_seconds < 0:
+                                raise ValueError(
+                                    "Retry delay_strategy must not return a negative delay"
+                                )
+                    elif delay_ms > 0:
+                        delay_seconds = delay_ms / 1000.0
 
-            last_error = pragmatic_result.result.error
+                    if delay_seconds is not None and delay_seconds > 0:
+                        yield await_(_asyncio.sleep(delay_seconds))
 
-            if attempt < max_attempts - 1:
-                delay_seconds: float | None = None
-                if delay_strategy is not None:
-                    try:
-                        delay_value = delay_strategy(attempt + 1, last_error)  # type: ignore[arg-type]
-                    except Exception as exc:
-                        raise RuntimeError(
-                            "Retry delay_strategy raised an exception"
-                        ) from exc
-                    if delay_value is None:
-                        delay_seconds = None
-                    else:
-                        delay_seconds = float(delay_value)
-                        if delay_seconds < 0:
-                            raise ValueError("Retry delay_strategy must not return a negative delay")
-                elif delay_ms > 0:
-                    delay_seconds = delay_ms / 1000.0
+            if last_error:
+                raise last_error
+            raise RuntimeError(f"All {max_attempts} attempts failed")
 
-                if delay_seconds is not None and delay_seconds > 0:
-                    await asyncio.sleep(delay_seconds)
-
-        if last_error:
-            raise last_error
-        raise RuntimeError(f"All {max_attempts} attempts failed")
+        return GeneratorProgram(_retry_program)
 
 
 class IOEffectHandler:
@@ -1454,29 +1430,54 @@ class GraphEffectHandler:
         ctx: ExecutionContext,
         engine: ProgramInterpreter,
     ) -> GraphCaptureResult:
-        sub_program = effect.program
+        def _capture_program() -> Generator[EffectBase, Any, Any]:
+            original_env = ctx.env
+            original_state = ctx.state
+            original_log = ctx.log
+            original_graph = ctx.graph
+            original_observations = ctx.effect_observations
+            original_call_stack = ctx.program_call_stack
 
-        sub_ctx = ExecutionContext(
-            env=ctx.env.copy() if ctx.env else {},
-            state=ctx.state.copy() if ctx.state else {},
-            log=ctx.log.spawn_empty() if isinstance(ctx.log, BoundedLog) else BoundedLog(),
-            graph=WGraph(
+            sub_env = dict(original_env) if original_env else {}
+            sub_state = dict(original_state) if original_state else {}
+            sub_log = (
+                original_log.spawn_empty()
+                if isinstance(original_log, BoundedLog)
+                else BoundedLog()
+            )
+            sub_graph = WGraph(
                 last=WStep(inputs=(), output=WNode("_root"), meta={}),
                 steps=frozenset(),
-            ),
-            io_allowed=ctx.io_allowed,
-            cache=ctx.cache,
-        )
+            )
 
-        result = await engine.run_async(sub_program, sub_ctx)
+            ctx.env = sub_env
+            ctx.state = sub_state
+            ctx.log = sub_log
+            ctx.graph = sub_graph
+            ctx.effect_observations = []
+            ctx.program_call_stack = []
+            try:
+                value = yield effect.program
+            except BaseException:
+                ctx.env = original_env
+                ctx.state = original_state
+                ctx.log = original_log
+                ctx.graph = original_graph
+                ctx.effect_observations = original_observations
+                ctx.program_call_stack = original_call_stack
+                raise
 
-        if isinstance(result.result, Err):
-            raise result.result.error
+            original_state.update(sub_state)
+            original_log.extend(sub_log)
+            ctx.env = original_env
+            ctx.state = original_state
+            ctx.log = original_log
+            ctx.graph = original_graph
+            ctx.effect_observations = original_observations
+            ctx.program_call_stack = original_call_stack
+            return GraphCaptureResult(value=value, graph=sub_graph)
 
-        ctx.state.update(result.context.state)
-        ctx.log.extend(result.context.log)
-
-        return GraphCaptureResult(value=result.value, graph=result.context.graph)
+        return GeneratorProgram(_capture_program)
 
 
 
