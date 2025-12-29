@@ -440,6 +440,43 @@ class TestEffectStackTraceRenderer:
         assert "outer_call" in output
         assert "inner_call" in output
 
+    def test_renderer_truncation_with_max_frames(self):
+        """Test that EffectStackTraceRenderer truncates long traces."""
+        # Create a trace with many frames
+        many_frames = tuple(
+            EffectStackFrame(
+                frame_type=EffectStackFrameType.EFFECT_YIELD,
+                name=f"effect_{i}",
+                location=None,  # Optional location
+            )
+            for i in range(25)
+        )
+
+        trace = EffectStackTrace(
+            frames=many_frames,
+            failed_effect=None,
+            original_exception=ValueError("test"),
+            python_raise_location=None,
+        )
+
+        # Renderer with max_frames=10, head_frames=5
+        renderer = EffectStackTraceRenderer(max_frames=10, head_frames=5)
+        output = renderer.render(trace)
+
+        # Should have truncation marker
+        assert "frames omitted" in output
+
+        # First 5 frames should be present
+        assert "effect_0" in output
+        assert "effect_4" in output
+
+        # Omitted frames should not be present
+        assert "effect_10" not in output
+
+        # Last 5 frames should be present (tail)
+        assert "effect_20" in output
+        assert "effect_24" in output
+
 
 # ============================================
 # Integration Tests: Basic Functionality

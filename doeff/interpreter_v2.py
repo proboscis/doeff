@@ -19,7 +19,7 @@ import time
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, Union
+from typing import Any, Generic, TypeVar, Union
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
 from doeff.effects import (
@@ -89,9 +89,6 @@ from doeff.types import (
     capture_traceback,
 )
 from doeff.utils import BoundedLog
-
-if TYPE_CHECKING:
-    pass
 
 T = TypeVar("T")
 
