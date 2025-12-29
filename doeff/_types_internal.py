@@ -535,6 +535,7 @@ class EffectFailureError(Exception):
     runtime_traceback: CapturedTraceback | None = None  # noqa: DOEFF013 - Runtime stack trace where error occurred
     creation_context: EffectCreationContext | None = None  # noqa: DOEFF013 - Where the effect was created
     call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure time
+    effect_stack_trace: Any = None  # noqa: DOEFF013 - EffectStackTrace from TrampolinedInterpreter (avoids circular import)
 
     def __str__(self) -> str:
         """Format the error for display."""

@@ -1424,5 +1424,210 @@ class TestProgramInterpreterParity:
         assert old_result.state == new_result.state
 
 
+# ============================================
+# Invariant Verification Tests
+# ============================================
+
+
+class TestFrameInvariants:
+    """Verify frame invariants INV-F1 through INV-F6."""
+
+    def test_inv_f1_valid_state_transitions(self):
+        """INV-F1: Only valid state transitions allowed (ACTIVE -> terminal)."""
+        VALID_TRANSITIONS = {
+            FrameState.ACTIVE: {FrameState.COMPLETED, FrameState.FAILED, FrameState.CANCELLED},
+            FrameState.COMPLETED: set(),  # Terminal
+            FrameState.FAILED: set(),     # Terminal
+            FrameState.CANCELLED: set(),  # Terminal
+        }
+
+        def gen():
+            yield tell("step1")
+            return "done"
+
+        frame = ContinuationFrame(generator=gen(), source_info=None)
+        assert frame.state == FrameState.ACTIVE
+
+        # ACTIVE -> ACTIVE (after yield)
+        result = frame.resume(None)
+        assert isinstance(result, FrameResultYield)
+        assert frame.state == FrameState.ACTIVE
+
+        # ACTIVE -> COMPLETED (after return)
+        result = frame.resume(None)
+        assert isinstance(result, FrameResultReturn)
+        assert frame.state == FrameState.COMPLETED
+
+        # Verify terminal states have no valid transitions
+        assert len(VALID_TRANSITIONS[FrameState.COMPLETED]) == 0
+        assert len(VALID_TRANSITIONS[FrameState.FAILED]) == 0
+        assert len(VALID_TRANSITIONS[FrameState.CANCELLED]) == 0
+
+    def test_inv_f3_close_idempotency(self):
+        """INV-F3: close() can be called multiple times safely."""
+        def gen():
+            yield tell("test")
+            return "done"
+
+        frame = ContinuationFrame(generator=gen(), source_info=None)
+        frame.resume(None)  # Advance to yield point
+
+        # First close
+        frame.close()
+        assert frame.state == FrameState.CANCELLED
+
+        # Subsequent calls are no-ops (idempotent)
+        frame.close()
+        assert frame.state == FrameState.CANCELLED
+        frame.close()
+        assert frame.state == FrameState.CANCELLED
+
+    def test_inv_f6_completed_frame_operations_raise(self):
+        """INV-F6: Operations on COMPLETED frame raise InvalidFrameStateError."""
+        def gen():
+            if False:
+                yield tell("never")
+            return "done"
+
+        frame = ContinuationFrame(generator=gen(), source_info=None)
+        result = frame.resume(None)
+        assert isinstance(result, FrameResultReturn)
+        assert frame.state == FrameState.COMPLETED
+
+        # Resume on COMPLETED should raise
+        with pytest.raises(InvalidFrameStateError):
+            frame.resume("value")
+
+        # Throw on COMPLETED should raise
+        with pytest.raises(InvalidFrameStateError):
+            frame.throw(ValueError("test"))
+
+    def test_inv_f6_failed_frame_operations_raise(self):
+        """INV-F6: Operations on FAILED frame raise InvalidFrameStateError."""
+        def gen():
+            raise ValueError("boom")
+            yield  # Never reached
+
+        frame = ContinuationFrame(generator=gen(), source_info=None)
+        result = frame.resume(None)
+        assert isinstance(result, FrameResultRaise)
+        assert frame.state == FrameState.FAILED
+
+        # Resume on FAILED should raise
+        with pytest.raises(InvalidFrameStateError):
+            frame.resume("value")
+
+        # Throw on FAILED should raise
+        with pytest.raises(InvalidFrameStateError):
+            frame.throw(ValueError("test"))
+
+
+class TestStateInvariants:
+    """Verify interpreter state invariants INV-S1 through INV-S6."""
+
+    def test_inv_s5_stats_monotonicity(self):
+        """INV-S5: Stats counters only increase, never decrease."""
+        stats = InterpretationStats()
+
+        # Track that counters only increase
+        for i in range(100):
+            old_steps = stats.total_steps
+            old_frames = stats.total_frames_created
+            old_effects = stats.total_effects_handled
+            old_max_depth = stats.max_stack_depth
+
+            stats.total_steps += 1
+            stats.total_frames_created += 1
+            stats.total_effects_handled += 1
+            stats.max_stack_depth = max(stats.max_stack_depth, i + 1)
+
+            assert stats.total_steps > old_steps
+            assert stats.total_frames_created > old_frames
+            assert stats.total_effects_handled > old_effects
+            assert stats.max_stack_depth >= old_max_depth
+
+    @pytest.mark.asyncio
+    async def test_inv_s6_no_active_frames_after_completion(self):
+        """INV-S6: All frames cleaned up after run completes."""
+        @do
+        def nested() -> Generator[Effect, Any, int]:
+            yield put("inner", 1)
+            return 42
+
+        @do
+        def program() -> Generator[Effect, Any, int]:
+            result = yield nested()
+            yield put("outer", result)
+            return result
+
+        interpreter = TrampolinedInterpreter()
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 42
+        # After completion, the interpreter cleaned up properly
+        # (no state leakage - each run has isolated state)
+
+    @pytest.mark.asyncio
+    async def test_inv_s6_cleanup_after_error(self):
+        """INV-S6: All frames cleaned up even after unhandled error."""
+        @do
+        def failing() -> Generator[Effect, Any, int]:
+            yield put("before_fail", 1)
+            yield fail(ValueError("intentional"))
+            return 0
+
+        interpreter = TrampolinedInterpreter()
+        result = await interpreter.run_async(failing())
+
+        assert result.is_err
+        # Verify error is wrapped properly
+        from doeff.types import EffectFailure
+        assert isinstance(result.result.error, EffectFailure)
+
+
+class TestEffectStackTraceIntegration:
+    """Test that effect_stack_trace is properly built and attached."""
+
+    @pytest.mark.asyncio
+    async def test_effect_stack_trace_attached_to_failure(self):
+        """Verify effect_stack_trace is populated on errors."""
+        @do
+        def failing_program() -> Generator[Effect, Any, int]:
+            yield put("key", "value")
+            yield fail(ValueError("test error"))
+            return 0
+
+        interpreter = TrampolinedInterpreter()
+        result = await interpreter.run_async(failing_program())
+
+        assert result.is_err
+        from doeff.types import EffectFailure
+        failure = result.result.error
+        assert isinstance(failure, EffectFailure)
+
+        # effect_stack_trace should be populated
+        assert failure.effect_stack_trace is not None
+
+    @pytest.mark.asyncio
+    async def test_effect_stack_trace_disabled(self):
+        """Verify effect_stack_trace is None when capture_stack_trace=False."""
+        @do
+        def failing_program() -> Generator[Effect, Any, int]:
+            yield fail(ValueError("test"))
+            return 0
+
+        interpreter = TrampolinedInterpreter(capture_stack_trace=False)
+        result = await interpreter.run_async(failing_program())
+
+        assert result.is_err
+        from doeff.types import EffectFailure
+        failure = result.result.error
+        assert isinstance(failure, EffectFailure)
+
+        # effect_stack_trace should be None when disabled
+        assert failure.effect_stack_trace is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

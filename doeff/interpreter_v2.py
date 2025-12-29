@@ -118,6 +118,16 @@ class FrameState(Enum):
     CANCELLED = auto()   # Frame was cancelled
 
 
+class HandlerScope(Enum):
+    """Handler isolation scope for frames.
+
+    ISOLATED: Handlers from this frame are not visible to sub-programs
+    SHARED: Handlers from this frame are inherited by sub-programs
+    """
+    ISOLATED = auto()
+    SHARED = auto()
+
+
 # ============================================
 # Frame Result Types
 # ============================================
@@ -158,8 +168,17 @@ class ContinuationFrame:
 
     Semantics:
     - Wraps a Python generator that yields Effects/Programs
+    - Captures the ExecutionContext at frame creation time
     - Tracks handler scope for proper effect routing
     - Maintains error state for exception propagation
+
+    Invariants:
+    - INV-F1: State transitions only through valid paths (ACTIVE -> terminal)
+    - INV-F2: Single resume rule - only one caller at a time
+    - INV-F3: Close is idempotent - safe to call multiple times
+    - INV-F4: Generator ownership is exclusive to this frame
+    - INV-F5: context_snapshot is immutable after creation
+    - INV-F6: Completed frame operations are no-ops
     """
 
     # The generator representing this computation
@@ -167,6 +186,13 @@ class ContinuationFrame:
 
     # Source program info for debugging
     source_info: CallFrame | None
+
+    # Context snapshot at frame creation (for handler lookup)
+    # Note: This is a shallow copy capturing env/state at creation time
+    context_snapshot: ExecutionContext | None = None
+
+    # Handler scope for this frame (ISOLATED vs SHARED)
+    handler_scope: HandlerScope = HandlerScope.SHARED
 
     # Original program (for reference)
     original_program: Program | None = None
@@ -1382,12 +1408,18 @@ class TrampolinedInterpreter:
             else tuple(state.context.program_call_stack)
         )
 
+        # Build effect stack trace if capture is enabled
+        effect_stack_trace = None
+        if self._capture_stack_trace:
+            effect_stack_trace = self._build_effect_stack_trace(state, effect, exc)
+
         return EffectFailure(
             effect=effect if effect else NullEffect(),
             cause=exc,
             runtime_traceback=runtime_tb,
             creation_context=creation_context,
             call_stack_snapshot=call_stack,
+            effect_stack_trace=effect_stack_trace,
         )
 
     def _build_effect_stack_trace(
@@ -1924,6 +1956,7 @@ __all__ = [
     "FrameResultReturn",
     "FrameResultYield",
     "FrameState",
+    "HandlerScope",
     "InterpretationPhase",
     "InterpretationStats",
     "InterpreterInvariantError",
