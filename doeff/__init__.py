@@ -139,6 +139,7 @@ from doeff.effects import (
 
 # Import from new modular structure
 from doeff.interpreter import ProgramInterpreter
+from doeff.interpreter_v2 import TrampolinedInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
 from doeff.program import Program
@@ -202,6 +203,7 @@ __all__ = [  # noqa: RUF022
     "FrozenDict",
     # Core classes
     "ProgramInterpreter",
+    "TrampolinedInterpreter",
     "KleisliProgram",
     "EffectCallTree",
     # Decorator
