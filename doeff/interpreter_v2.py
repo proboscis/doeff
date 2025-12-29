@@ -118,14 +118,8 @@ class FrameState(Enum):
     CANCELLED = auto()   # Frame was cancelled
 
 
-class HandlerScope(Enum):
-    """Handler isolation scope for frames.
-
-    ISOLATED: Handlers from this frame are not visible to sub-programs
-    SHARED: Handlers from this frame are inherited by sub-programs
-    """
-    ISOLATED = auto()
-    SHARED = auto()
+# Import HandlerScope from handlers module (canonical location)
+from doeff.handlers import HandlerScope
 
 
 # ============================================
