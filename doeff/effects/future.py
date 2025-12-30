@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Awaitable
-from typing import Any, Callable, Tuple
+from typing import Any, Callable
 
 from .base import Effect, EffectBase, create_effect_with_trace
-from ._validators import ensure_awaitable, ensure_awaitable_tuple
+from ._validators import ensure_awaitable
 
 
 @dataclass(frozen=True)
@@ -25,46 +25,20 @@ class FutureAwaitEffect(EffectBase):
         return self
 
 
-@dataclass(frozen=True)
-class FutureParallelEffect(EffectBase):
-    """Runs all awaitables concurrently and yields the collected results list."""
-
-    awaitables: Tuple[Awaitable[Any], ...]
-
-    def __post_init__(self) -> None:
-        ensure_awaitable_tuple(self.awaitables, name="awaitables")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "FutureParallelEffect":
-        return self
+# NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect for parallel execution
+# For parallel awaitable execution, wrap each awaitable in a program that yields Await
 
 
 def await_(awaitable: Awaitable[Any]) -> FutureAwaitEffect:
     return create_effect_with_trace(FutureAwaitEffect(awaitable=awaitable))
 
 
-def parallel(*awaitables: Awaitable[Any]) -> FutureParallelEffect:
-    return create_effect_with_trace(
-        FutureParallelEffect(awaitables=tuple(awaitables))
-    )
-
-
 def Await(awaitable: Awaitable[Any]) -> Effect:
     return create_effect_with_trace(FutureAwaitEffect(awaitable=awaitable), skip_frames=3)
 
 
-def Parallel(*awaitables: Awaitable[Any]) -> Effect:
-    return create_effect_with_trace(
-        FutureParallelEffect(awaitables=tuple(awaitables)), skip_frames=3
-    )
-
-
 __all__ = [
     "FutureAwaitEffect",
-    "FutureParallelEffect",
     "await_",
-    "parallel",
     "Await",
-    "Parallel",
 ]

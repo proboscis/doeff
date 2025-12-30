@@ -32,7 +32,6 @@ from doeff.effects import (
     CacheGetEffect,
     CachePutEffect,
     FutureAwaitEffect,
-    FutureParallelEffect,
     GraphAnnotateEffect,
     GraphCaptureEffect,
     GraphSnapshotEffect,
@@ -545,12 +544,8 @@ class FutureEffectHandler:
         """Handle future.await effect."""
         return await effect.awaitable
 
-    async def handle_parallel(
-        self, effect: FutureParallelEffect
-    ) -> list[Any]:
-        """Handle future.parallel effect."""
-        results = await asyncio.gather(*effect.awaitables)
-        return results
+    # NOTE: handle_parallel (FutureParallelEffect) REMOVED
+    # Use ProgramParallelEffect for parallel execution
 
 
 class ThreadEffectHandler:

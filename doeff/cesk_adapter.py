@@ -79,6 +79,13 @@ class CESKRunResult(Generic[T]):
         """Get the final environment."""
         return dict(self._final_env)
 
+    @property
+    def error(self) -> Exception:
+        """Get the error if result is Err, otherwise raise."""
+        if isinstance(self._result, Err):
+            return self._result.error
+        raise ValueError("Cannot access error on successful result")
+
 
 class CESKInterpreter:
     """
