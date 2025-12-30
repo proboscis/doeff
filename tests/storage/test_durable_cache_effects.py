@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-from doeff._vendor import Ok
 from doeff.cesk import run_sync
 from doeff.do import do
 from doeff.effects.durable_cache import (
@@ -43,7 +42,7 @@ class TestDurableCacheEffects:
             return result
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == {"data": 42}
 
     def test_cacheget_nonexistent(self) -> None:
@@ -56,7 +55,7 @@ class TestDurableCacheEffects:
             return result
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value is None
 
     def test_cacheput_overwrites(self) -> None:
@@ -71,7 +70,7 @@ class TestDurableCacheEffects:
             return result
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == "new_value"
 
     def test_cachedelete_existing(self) -> None:
@@ -86,7 +85,7 @@ class TestDurableCacheEffects:
             return {"deleted": deleted, "exists_after": exists_after}
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value["deleted"] is True
         assert result.value["exists_after"] is False
 
@@ -99,7 +98,7 @@ class TestDurableCacheEffects:
             return (yield cachedelete("nonexistent"))
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value is False
 
     def test_cacheexists_existing(self) -> None:
@@ -112,7 +111,7 @@ class TestDurableCacheEffects:
             return (yield cacheexists("key"))
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value is True
 
     def test_cacheexists_nonexistent(self) -> None:
@@ -124,7 +123,7 @@ class TestDurableCacheEffects:
             return (yield cacheexists("nonexistent"))
 
         result = run_sync(workflow(), storage=storage)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value is False
 
     def test_workflow_replay_uses_cache(self) -> None:
@@ -147,13 +146,13 @@ class TestDurableCacheEffects:
 
         # First run - should execute expensive operation
         result1 = run_sync(workflow(), storage=storage)
-        assert isinstance(result1, Ok)
+        assert result1.is_ok
         assert result1.value == {"computed": 42}
         assert execution_count["expensive_op"] == 1
 
         # Second run (replay) - should use cache, not re-run
         result2 = run_sync(workflow(), storage=storage)
-        assert isinstance(result2, Ok)
+        assert result2.is_ok
         assert result2.value == {"computed": 42}
         assert execution_count["expensive_op"] == 1  # Still 1!
 
@@ -168,7 +167,7 @@ class TestDurableCacheEffects:
             return "written"
 
         result1 = run_sync(write_workflow(), storage=storage)
-        assert isinstance(result1, Ok)
+        assert result1.is_ok
         storage.close()
 
         # New connection
@@ -179,7 +178,7 @@ class TestDurableCacheEffects:
             return (yield cacheget("persistent_data"))
 
         result2 = run_sync(read_workflow(), storage=storage2)
-        assert isinstance(result2, Ok)
+        assert result2.is_ok
         assert result2.value == {"step": 1, "result": "done"}
         storage2.close()
 
@@ -199,7 +198,7 @@ class TestDurableCacheEffects:
 
         # Run without storage parameter
         result = run_sync(workflow())
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value["get"] is None
         assert result.value["exists"] is False
         assert result.value["delete"] is False
@@ -224,7 +223,7 @@ class TestObservability:
             return "done"
 
         result = run_sync(workflow(), storage=storage, on_step=on_step)
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == "done"
 
         # Should have been called multiple times
@@ -254,7 +253,7 @@ class TestObservability:
             return result
 
         result = run_sync(outer(), storage=storage, on_step=on_step)
-        assert isinstance(result, Ok)
+        assert result.is_ok
 
         # Find snapshots with non-empty K stack
         has_k_stack = [s for s in snapshots if len(s.k_stack) > 0]
@@ -283,7 +282,7 @@ class TestObservability:
             return "done"
 
         result = run_sync(workflow(), storage=storage, on_step=on_step)
-        assert isinstance(result, Ok)
+        assert result.is_ok
 
         # At least one snapshot should have cache keys
         has_keys = [s for s in snapshots if len(s.cache_keys) > 0]
@@ -311,7 +310,7 @@ class TestObservability:
             return result
 
         result = run_sync(workflow(), storage=storage, on_step=on_step)
-        assert isinstance(result, Ok)
+        assert result.is_ok
 
         # Should have seen Pure and cache effects
         assert "PureEffect" in effects_seen
@@ -332,7 +331,7 @@ class TestObservability:
             return "done"
 
         result = run_sync(workflow(), storage=storage, on_step=on_step)
-        assert isinstance(result, Ok)
+        assert result.is_ok
 
         # Should have "running" and end with "completed"
         assert "running" in statuses
