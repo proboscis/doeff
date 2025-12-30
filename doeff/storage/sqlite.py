@@ -133,7 +133,9 @@ class SQLiteStorage:
 
     def __del__(self) -> None:
         """Close connection on garbage collection."""
+        import logging
+
         try:
             self.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
+        except Exception as e:
+            logging.debug(f"SQLiteStorage cleanup error: {e}")

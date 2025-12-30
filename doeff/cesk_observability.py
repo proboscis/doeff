@@ -187,8 +187,10 @@ class ExecutionSnapshot:
         if storage is not None:
             try:
                 cache_keys = tuple(storage.keys())
-            except Exception:
-                pass  # Ignore storage errors during snapshot
+            except Exception as e:
+                import logging
+
+                logging.debug(f"Error getting cache keys during snapshot: {e}")
 
         return cls(
             status=status,
