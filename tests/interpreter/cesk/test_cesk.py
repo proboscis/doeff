@@ -474,7 +474,7 @@ class TestMainLoop:
 
         result = await run(program)
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == 42
 
     @pytest.mark.asyncio
@@ -491,7 +491,7 @@ class TestMainLoop:
 
         result = await run(program())
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == 15
 
     @pytest.mark.asyncio
@@ -506,7 +506,7 @@ class TestMainLoop:
         env = FrozenDict({"config": "hello"})
         result = await run(program(), env=env)
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == "got: hello"
 
     @pytest.mark.asyncio
@@ -521,7 +521,7 @@ class TestMainLoop:
 
         result = await run(program())
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == "done"
 
     @pytest.mark.asyncio
@@ -535,7 +535,7 @@ class TestMainLoop:
 
         result = await run(program())
 
-        assert isinstance(result, Err)
+        assert result.is_err
         assert isinstance(result.error, ValueError)
 
     @pytest.mark.asyncio
@@ -557,7 +557,7 @@ class TestMainLoop:
 
         result = await run(program())
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == "caught: ValueError"
 
     # Note: test_run_safe_effect_success/failure removed
@@ -583,7 +583,7 @@ class TestMainLoop:
         env = FrozenDict({"value": "outer"})
         result = await run(program(), env=env)
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == ("outer", "inner", "outer")
 
 
@@ -596,7 +596,7 @@ class TestSyncRun:
 
         result = run_sync(program)
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == 42
 
 
@@ -626,7 +626,7 @@ class TestDoDecoratorIntegration:
 
         result = await run(outer())
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == (10, 20)
 
     @pytest.mark.asyncio
@@ -642,7 +642,7 @@ class TestDoDecoratorIntegration:
 
         result = await run(program())
 
-        assert isinstance(result, Ok)
+        assert result.is_ok
         assert result.value == "caught keyerror"
 
 

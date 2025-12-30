@@ -136,8 +136,8 @@ class CESKInterpreter:
         else:
             E = FrozenDict(final_env)
 
-        # Run through CESK
-        result, final_store = await _run_internal(program, E, final_state)
+        # Run through CESK (returns 3-element tuple: result, store, traceback)
+        result, final_store, _ = await _run_internal(program, E, final_state)
 
         return CESKRunResult(
             _result=result,
