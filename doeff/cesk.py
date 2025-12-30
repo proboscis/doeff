@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
 import threading
@@ -89,6 +90,7 @@ if TYPE_CHECKING:
 from doeff._types_internal import EffectBase, EffectCreationContext, ListenResult
 from doeff.utils import BoundedLog
 
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -1465,8 +1467,10 @@ async def _run_internal(
                         result, "running", step_count, storage
                     )
                 on_step(snapshot)
-            except Exception:
-                pass  # Don't let callback errors break execution
+            except Exception as e:
+                logger.debug(
+                    "on_step callback raised exception: %s", e, exc_info=True
+                )
 
         if isinstance(result, Done):
             return Ok(result.value), result.store
