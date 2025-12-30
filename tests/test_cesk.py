@@ -22,8 +22,8 @@ from doeff.effects.result import (
     ResultCatchEffect,
     ResultRecoverEffect,
     ResultFinallyEffect,
-    ResultSafeEffect,
 )
+# Note: ResultSafeEffect removed - Result/Maybe are values, not effects
 from doeff.cesk import (
     # State components
     Environment,
@@ -36,7 +36,7 @@ from doeff.cesk import (
     # Frames
     ReturnFrame,
     CatchFrame,
-    RecoverFrame,
+    # Note: RecoverFrame removed - Result/Maybe are values, not effects
     FinallyFrame,
     LocalFrame,
     InterceptFrame,
@@ -392,22 +392,8 @@ class TestStepValuePropagation:
         assert result.C.v == 42
         assert result.K == []
 
-    def test_value_through_recover_frame_wraps_in_ok(self):
-        """Value through RecoverFrame becomes Ok(value)."""
-        frame = RecoverFrame(saved_env=FrozenDict())
-        state_obj = CESKState(
-            C=Value(42),
-            E=FrozenDict(),
-            S={},
-            K=[frame],
-        )
-
-        result = step(state_obj)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert isinstance(result.C.v, Ok)
-        assert result.C.v.value == 42
+    # Note: test_value_through_recover_frame_wraps_in_ok removed
+    # RecoverFrame removed - Result/Maybe are values, not effects
 
     def test_value_through_local_frame_restores_env(self):
         """Value through LocalFrame restores saved environment."""
@@ -454,23 +440,8 @@ class TestStepErrorPropagation:
         assert isinstance(result.C, ProgramControl)
         # Handler was called
 
-    def test_error_through_recover_frame_wraps_in_err(self):
-        """Error through RecoverFrame becomes Err(exception)."""
-        frame = RecoverFrame(saved_env=FrozenDict())
-        exc = ValueError("test error")
-        state_obj = CESKState(
-            C=Error(exc),
-            E=FrozenDict(),
-            S={},
-            K=[frame],
-        )
-
-        result = step(state_obj)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert isinstance(result.C.v, Err)
-        assert result.C.v.error is exc
+    # Note: test_error_through_recover_frame_wraps_in_err removed
+    # RecoverFrame removed - Result/Maybe are values, not effects
 
     def test_error_through_local_frame_restores_env_and_propagates(self):
         """Error through LocalFrame restores env and continues propagating."""
@@ -619,43 +590,8 @@ class TestMainLoop:
         assert isinstance(result, Ok)
         assert result.value == "caught: ValueError"
 
-    @pytest.mark.asyncio
-    async def test_run_safe_effect_success(self):
-        """Run a program with Safe effect on success."""
-        from doeff.effects.result import Safe
-
-        @do
-        def program():
-            result = yield Safe(Program.pure(42))
-            return result
-
-        result = await run(program())
-
-        assert isinstance(result, Ok)
-        inner_result = result.value
-        assert isinstance(inner_result, Ok)
-        assert inner_result.value == 42
-
-    @pytest.mark.asyncio
-    async def test_run_safe_effect_failure(self):
-        """Run a program with Safe effect on failure."""
-        from doeff.effects.result import Safe
-
-        @do
-        def failing():
-            raise ValueError("oops")
-
-        @do
-        def program():
-            result = yield Safe(failing())
-            return result
-
-        result = await run(program())
-
-        assert isinstance(result, Ok)
-        inner_result = result.value
-        assert isinstance(inner_result, Err)
-        assert isinstance(inner_result.error, ValueError)
+    # Note: test_run_safe_effect_success/failure removed
+    # ResultSafeEffect is NOT supported in CESK - Result/Maybe are values, not effects
 
     @pytest.mark.asyncio
     async def test_run_local_effect(self):
