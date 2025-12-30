@@ -223,6 +223,89 @@ def _get_function_name(
 # ============================================================================
 
 
+def _is_doeff_internal_file(filename: str) -> bool:
+    """Check if a filename is internal to the doeff package."""
+    # Normalize path separators
+    normalized = filename.replace("\\", "/")
+    # Check for doeff package paths (but not examples or tests)
+    if "/doeff/" in normalized:
+        # Exclude test and example files
+        if "/tests/" in normalized or "/examples/" in normalized:
+            return False
+        return True
+    return False
+
+
+def _find_user_generator(gen: Generator[Any, Any, Any]) -> Generator[Any, Any, Any]:
+    """
+    Traverse wrapper chain to find the user's generator.
+
+    The wrapper chain is:
+    - program.py's generator has 'generator_obj' (do.py's wrapper)
+    - do.py's generator_wrapper has 'gen' (user's generator)
+
+    We traverse until we find a generator NOT from the doeff package.
+    """
+    current = gen
+    visited: set[int] = set()
+
+    for _ in range(5):  # Limit depth to prevent infinite loops
+        if id(current) in visited:
+            break
+        visited.add(id(current))
+
+        # Check gi_code first (always available, even if gi_frame is None)
+        code_filename = current.gi_code.co_filename
+        if not _is_doeff_internal_file(code_filename):
+            return current
+
+        # If frame is available, check it too and try to traverse deeper
+        if current.gi_frame is not None:
+            # Try to find inner generator in locals
+            locals_dict = current.gi_frame.f_locals
+            inner = locals_dict.get("gen") or locals_dict.get("generator_obj")
+            if inner is not None and hasattr(inner, "gi_code"):
+                current = inner
+                continue
+
+        break
+
+    return gen  # Return original if no user generator found
+
+
+def _get_user_source_location(
+    gen: Generator[Any, Any, Any],
+    program_call: "KleisliProgramCall | None",
+    is_resumed: bool,
+) -> tuple[str, int]:
+    """
+    Get the user's source location instead of internal wrapper location.
+
+    For resumed generators: traverses the wrapper chain via frame locals.
+    For unstarted generators: uses original_func from KleisliProgramCall.
+
+    Returns:
+        (filename, lineno) tuple
+    """
+    # For resumed generators, traverse to find user's generator via frame locals
+    if is_resumed and gen.gi_frame is not None:
+        user_gen = _find_user_generator(gen)
+        if user_gen.gi_frame is not None:
+            return user_gen.gi_frame.f_code.co_filename, user_gen.gi_frame.f_lineno
+
+    # For unstarted generators, can't traverse frames - use original_func if available
+    if program_call is not None:
+        kleisli_source = getattr(program_call, "kleisli_source", None)
+        if kleisli_source is not None:
+            original_func = getattr(kleisli_source, "original_func", None)
+            if original_func is not None and hasattr(original_func, "__code__"):
+                code = original_func.__code__
+                return code.co_filename, code.co_firstlineno
+
+    # Fallback to wrapper generator's code object
+    return gen.gi_code.co_filename, gen.gi_code.co_firstlineno
+
+
 def pre_capture_generator(
     gen: Generator[Any, Any, Any],
     is_resumed: bool = False,
@@ -249,12 +332,15 @@ def pre_capture_generator(
     """
     function = _get_function_name(gen, program_call)
 
+    # Get user source location instead of internal wrapper location
+    filename, lineno = _get_user_source_location(gen, program_call, is_resumed)
+
     if is_resumed and gen.gi_frame is not None:
         # Generator is paused at a yield - use current position
         return PreCapturedFrame(
             generator=gen,
-            filename=gen.gi_frame.f_code.co_filename,
-            lineno=gen.gi_frame.f_lineno,
+            filename=filename,
+            lineno=lineno,
             function=function,
             frame_kind="kleisli_yield",
         )
@@ -264,8 +350,8 @@ def pre_capture_generator(
         # "kleisli_closed" to indicate unusual state.
         return PreCapturedFrame(
             generator=gen,
-            filename=gen.gi_code.co_filename,
-            lineno=gen.gi_code.co_firstlineno,
+            filename=filename,
+            lineno=lineno,
             function=function,
             frame_kind="kleisli_closed",
         )
@@ -273,8 +359,8 @@ def pre_capture_generator(
         # Generator not started - use definition location
         return PreCapturedFrame(
             generator=gen,
-            filename=gen.gi_code.co_filename,
-            lineno=gen.gi_code.co_firstlineno,
+            filename=filename,
+            lineno=lineno,
             function=function,
             frame_kind="kleisli_entry",
         )
@@ -301,13 +387,16 @@ def precapture_to_effect_frame(
     # Get call site from caller generator if available
     call_site_loc = None
     if caller_gen is not None and caller_gen.gi_frame is not None:
-        caller_frame = caller_gen.gi_frame
+        # Use user source location for caller instead of internal wrapper
+        caller_filename, caller_lineno = _get_user_source_location(
+            caller_gen, caller_program_call, is_resumed=True
+        )
         caller_function = _get_function_name(caller_gen, caller_program_call)
         call_site_loc = CodeLocation(
-            filename=caller_frame.f_code.co_filename,
-            lineno=caller_frame.f_lineno,
+            filename=caller_filename,
+            lineno=caller_lineno,
             function=caller_function,
-            code=_safe_getline(caller_frame.f_code.co_filename, caller_frame.f_lineno),
+            code=_safe_getline(caller_filename, caller_lineno),
         )
 
     return EffectFrame(
@@ -348,8 +437,8 @@ def capture_effect_frame_from_generator(
         if frame is None:
             return None
 
-        filename = frame.f_code.co_filename
-        lineno = frame.f_lineno
+        # Get user source location instead of internal wrapper location
+        filename, lineno = _get_user_source_location(gen, program_call, is_resumed=True)
 
         # Fallback for unstarted frames where f_lineno is 0
         if lineno == 0:
@@ -397,8 +486,8 @@ def capture_effect_frame_with_call_site(
         if frame is None:
             return None
 
-        filename = frame.f_code.co_filename
-        lineno = frame.f_lineno
+        # Get user source location instead of internal wrapper location
+        filename, lineno = _get_user_source_location(gen, program_call, is_resumed=True)
 
         # Fallback for unstarted frames
         if lineno == 0:
@@ -409,13 +498,15 @@ def capture_effect_frame_with_call_site(
         # Where this generator was called from (if we have a caller)
         call_site_loc = None
         if caller_gen is not None and caller_gen.gi_frame is not None:
-            caller_frame = caller_gen.gi_frame
+            caller_filename, caller_lineno = _get_user_source_location(
+                caller_gen, caller_program_call, is_resumed=True
+            )
             caller_function = _get_function_name(caller_gen, caller_program_call)
             call_site_loc = CodeLocation(
-                filename=caller_frame.f_code.co_filename,
-                lineno=caller_frame.f_lineno,
+                filename=caller_filename,
+                lineno=caller_lineno,
                 function=caller_function,
-                code=_safe_getline(caller_frame.f_code.co_filename, caller_frame.f_lineno),
+                code=_safe_getline(caller_filename, caller_lineno),
             )
 
         return EffectFrame(
