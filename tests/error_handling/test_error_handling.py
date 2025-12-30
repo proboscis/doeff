@@ -1,9 +1,11 @@
 """
-CESK interpreter tests for error handling effects.
+Interpreter tests for error handling effects.
 
-This module tests Recover/Retry/Catch/Safe/Finally effects using the CESK
-interpreter, adapted from test_error_handling_effects.py.
+This module tests Recover/Retry/Catch/Safe/Finally effects, parameterized
+to run against both CESK interpreter and ProgramInterpreter.
 """
+
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -25,7 +27,9 @@ from doeff import (
     do,
 )
 from doeff._vendor import Err, Ok
-from doeff.cesk_adapter import CESKInterpreter
+
+if TYPE_CHECKING:
+    from tests.conftest import Interpreter
 
 
 # ============================================================================
@@ -34,7 +38,7 @@ from doeff.cesk_adapter import CESKInterpreter
 
 
 @pytest.mark.asyncio
-async def test_recover_with_fallback_value():
+async def test_recover_with_fallback_value(interpreter: "Interpreter"):
     """Test Recover effect with simple fallback value."""
 
     @do
@@ -49,8 +53,7 @@ async def test_recover_with_fallback_value():
         yield Log(f"Recovered with value: {result}")
         return result
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(program_with_recover())
+    result = await interpreter.run_async(program_with_recover())
 
     assert result.is_ok
     assert result.value == 100
@@ -59,7 +62,7 @@ async def test_recover_with_fallback_value():
 
 
 @pytest.mark.asyncio
-async def test_recover_with_fallback_program():
+async def test_recover_with_fallback_program(interpreter: "Interpreter"):
     """Test Recover effect with fallback program."""
 
     @do
@@ -77,8 +80,8 @@ async def test_recover_with_fallback_program():
         result = yield Recover(failing_program(), fallback=fallback_program())
         return result
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(main_program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(main_program())
 
     assert result.is_ok
     assert result.value == "fallback_value"
@@ -86,7 +89,7 @@ async def test_recover_with_fallback_program():
 
 
 @pytest.mark.asyncio
-async def test_recover_on_success():
+async def test_recover_on_success(interpreter: "Interpreter"):
     """Test Recover doesn't use fallback on success."""
 
     @do
@@ -100,8 +103,8 @@ async def test_recover_on_success():
         yield Log(f"Got result: {result}")
         return result
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(main_program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(main_program())
 
     assert result.is_ok
     assert result.value == "success"
@@ -115,7 +118,7 @@ async def test_recover_on_success():
 
 
 @pytest.mark.asyncio
-async def test_retry_success_on_second_attempt():
+async def test_retry_success_on_second_attempt(interpreter: "Interpreter"):
     """Test Retry effect succeeds after initial failure."""
 
     @do
@@ -136,8 +139,8 @@ async def test_retry_success_on_second_attempt():
         yield Log(f"Succeeded with result: {result}")
         return result
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(main_program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(main_program())
 
     assert result.is_ok
     assert result.value == 2
@@ -148,7 +151,7 @@ async def test_retry_success_on_second_attempt():
 
 
 @pytest.mark.asyncio
-async def test_retry_max_attempts_exceeded():
+async def test_retry_max_attempts_exceeded(interpreter: "Interpreter"):
     """Test Retry fails after max attempts."""
 
     @do
@@ -162,8 +165,8 @@ async def test_retry_max_attempts_exceeded():
         result = yield Retry(always_failing(), max_attempts=2)
         return result
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(main_program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(main_program())
 
     assert result.is_err
     log_messages = [str(log) for log in result.log]
@@ -177,7 +180,7 @@ async def test_retry_max_attempts_exceeded():
 
 
 @pytest.mark.asyncio
-async def test_catch_vs_recover():
+async def test_catch_vs_recover(interpreter: "Interpreter"):
     """Test difference between Catch and Recover."""
 
     @do
@@ -198,19 +201,19 @@ async def test_catch_vs_recover():
         result = yield Recover(failing(), fallback="fallback")
         return result
 
-    engine = CESKInterpreter()
+    # Using parameterized interpreter
 
-    catch_result = await engine.run_async(test_catch())
+    catch_result = await interpreter.run_async(test_catch())
     assert catch_result.is_ok
     assert "Caught: test error" in catch_result.value
 
-    recover_result = await engine.run_async(test_recover())
+    recover_result = await interpreter.run_async(test_recover())
     assert recover_result.is_ok
     assert recover_result.value == "fallback"
 
 
 @pytest.mark.asyncio
-async def test_catch_handler_logs_are_accumulated():
+async def test_catch_handler_logs_are_accumulated(interpreter: "Interpreter"):
     """Catch handler logs should append to the surrounding writer log."""
 
     @do
@@ -229,8 +232,8 @@ async def test_catch_handler_logs_are_accumulated():
         result = yield Catch(failing_program(), handler)
         return result
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(main_program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(main_program())
 
     assert result.is_ok
     assert result.value == 42
@@ -238,7 +241,7 @@ async def test_catch_handler_logs_are_accumulated():
 
 
 @pytest.mark.asyncio
-async def test_nested_error_handling():
+async def test_nested_error_handling(interpreter: "Interpreter"):
     """Test nested Recover and Retry effects."""
 
     @do
@@ -256,8 +259,8 @@ async def test_nested_error_handling():
         result = yield Retry(middle_layer(), max_attempts=2)
         return f"outer: {result}"
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(outer_layer())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(outer_layer())
 
     assert result.is_ok
     assert result.value == "outer: middle: recovered"
@@ -274,7 +277,7 @@ async def test_nested_error_handling():
 
 
 @pytest.mark.asyncio
-async def test_finally_runs_finalizer_on_success():
+async def test_finally_runs_finalizer_on_success(interpreter: "Interpreter"):
     """Finally executes the finalizer program when the sub-program succeeds."""
 
     @do
@@ -293,8 +296,8 @@ async def test_finally_runs_finalizer_on_success():
         yield Log(f"after finally {result}")
         return result
 
-    engine = CESKInterpreter()
-    run_result = await engine.run_async(program())
+    # Using parameterized interpreter
+    run_result = await interpreter.run_async(program())
 
     assert run_result.is_ok
     assert run_result.value == 7
@@ -304,7 +307,7 @@ async def test_finally_runs_finalizer_on_success():
 
 
 @pytest.mark.asyncio
-async def test_finally_runs_on_failure():
+async def test_finally_runs_on_failure(interpreter: "Interpreter"):
     """Finally executes the finalizer even when the sub-program fails."""
 
     cleanup: list[str] = []
@@ -322,8 +325,8 @@ async def test_finally_runs_on_failure():
         yield Finally(failing(), finalizer_callable)
         return None
 
-    engine = CESKInterpreter()
-    run_result = await engine.run_async(program())
+    # Using parameterized interpreter
+    run_result = await interpreter.run_async(program())
 
     assert run_result.is_err
     assert cleanup == ["ran"]
@@ -336,7 +339,7 @@ async def test_finally_runs_on_failure():
 
 
 @pytest.mark.asyncio
-async def test_native_try_except_catches_effect_error():
+async def test_native_try_except_catches_effect_error(interpreter: "Interpreter"):
     """Native try-except should catch errors from yielded effects."""
 
     @do
@@ -347,15 +350,15 @@ async def test_native_try_except_catches_effect_error():
         except ValueError as e:
             return f"caught: {e}"
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == "caught: test error"
 
 
 @pytest.mark.asyncio
-async def test_try_except_with_state_effects():
+async def test_try_except_with_state_effects(interpreter: "Interpreter"):
     """try-except should work alongside state effects (Get/Put)."""
 
     @do
@@ -369,8 +372,8 @@ async def test_try_except_with_state_effects():
             counter = yield Get("counter")
             return f"caught, counter={counter}"
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == "caught, counter=1"
@@ -378,7 +381,7 @@ async def test_try_except_with_state_effects():
 
 
 @pytest.mark.asyncio
-async def test_try_except_with_log_effects():
+async def test_try_except_with_log_effects(interpreter: "Interpreter"):
     """try-except should work alongside log effects."""
 
     @do
@@ -392,8 +395,8 @@ async def test_try_except_with_log_effects():
             yield Log(f"caught: {e}")
             return "handled"
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == "handled"
@@ -404,7 +407,7 @@ async def test_try_except_with_log_effects():
 
 
 @pytest.mark.asyncio
-async def test_multiple_try_except_blocks():
+async def test_multiple_try_except_blocks(interpreter: "Interpreter"):
     """Multiple sequential try-except blocks should all work."""
 
     @do
@@ -428,8 +431,8 @@ async def test_multiple_try_except_blocks():
 
         return ", ".join(results)
 
-    engine = CESKInterpreter()
-    result = await engine.run_async(program())
+    # Using parameterized interpreter
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == "caught1, caught2, caught3"

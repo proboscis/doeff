@@ -1,21 +1,27 @@
 """
-CESK interpreter tests for Thread effect.
+Interpreter tests for Thread effect.
 
-Adapted from test_thread_effect.py - tests thread execution strategies.
+Tests thread execution strategies, parameterized to run against
+both CESK interpreter and ProgramInterpreter.
 """
 
 import threading
+from typing import TYPE_CHECKING
 
 import pytest
 
 from doeff import EffectGenerator, Get, Put, Thread, do
-from doeff.cesk_adapter import CESKInterpreter
+
+if TYPE_CHECKING:
+    from tests.conftest import Interpreter
 
 
 @pytest.mark.asyncio
-async def test_thread_effect_dedicated_runs_in_new_thread_and_updates_state() -> None:
+async def test_thread_effect_dedicated_runs_in_new_thread_and_updates_state(
+    interpreter: "Interpreter",
+) -> None:
     """Thread with dedicated strategy runs in a new thread and updates state."""
-    engine = CESKInterpreter()
+    # Using parameterized interpreter
     outer_thread = threading.current_thread().name
 
     @do
@@ -32,7 +38,7 @@ async def test_thread_effect_dedicated_runs_in_new_thread_and_updates_state() ->
         stored = yield Get("worker")
         return worker_name, daemon_flag, stored
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
     assert result.is_ok
     worker_name, daemon_flag, stored_value = result.value
     assert worker_name != outer_thread
@@ -42,9 +48,10 @@ async def test_thread_effect_dedicated_runs_in_new_thread_and_updates_state() ->
 
 
 @pytest.mark.asyncio
-async def test_thread_effect_pooled_uses_executor_threads() -> None:
+async def test_thread_effect_pooled_uses_executor_threads(
+    interpreter: "Interpreter",
+) -> None:
     """Thread with pooled strategy uses shared executor threads."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[str]:
@@ -56,7 +63,7 @@ async def test_thread_effect_pooled_uses_executor_threads() -> None:
         second = yield Thread(worker(), strategy="pooled")
         return [first, second]
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
     assert result.is_ok
     worker_threads = result.value
     assert len(worker_threads) == 2
@@ -67,9 +74,10 @@ async def test_thread_effect_pooled_uses_executor_threads() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thread_effect_daemon_sets_daemon_flag() -> None:
+async def test_thread_effect_daemon_sets_daemon_flag(
+    interpreter: "Interpreter",
+) -> None:
     """Thread with daemon strategy sets daemon flag on thread."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[bool]:
@@ -79,18 +87,19 @@ async def test_thread_effect_daemon_sets_daemon_flag() -> None:
     def program() -> EffectGenerator[bool]:
         return (yield Thread(worker(), strategy="daemon"))
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
     assert result.is_ok
     assert result.value is True
 
 
 @pytest.mark.asyncio
-async def test_thread_effect_can_return_awaitable_for_parallelism() -> None:
+async def test_thread_effect_can_return_awaitable_for_parallelism(
+    interpreter: "Interpreter",
+) -> None:
     """Thread with await_result=False returns awaitable for parallel execution.
 
     This test uses individual Await effects to await thread futures.
     """
-    engine = CESKInterpreter()
 
     @do
     def worker(identifier: str) -> EffectGenerator[str]:
@@ -107,7 +116,7 @@ async def test_thread_effect_can_return_awaitable_for_parallelism() -> None:
         result_two = yield Await(future_two)
         return [result_one, result_two]
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
     assert result.is_ok
     values = result.value
     # Both worker identifiers should be returned
@@ -115,9 +124,10 @@ async def test_thread_effect_can_return_awaitable_for_parallelism() -> None:
 
 
 @pytest.mark.asyncio
-async def test_thread_effect_state_isolation() -> None:
+async def test_thread_effect_state_isolation(
+    interpreter: "Interpreter",
+) -> None:
     """Thread sees state at spawn time, not later modifications."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[str | None]:
@@ -132,16 +142,17 @@ async def test_thread_effect_state_isolation() -> None:
         current = yield Get("flag")
         return seen, current
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
     assert result.is_ok
     # Thread sees "before" (snapshot at spawn), parent sees "after"
     assert result.value == ("before", "after")
 
 
 @pytest.mark.asyncio
-async def test_thread_effect_multiple_threads_sequential() -> None:
+async def test_thread_effect_multiple_threads_sequential(
+    interpreter: "Interpreter",
+) -> None:
     """Multiple threads executed sequentially accumulate results."""
-    engine = CESKInterpreter()
 
     @do
     def worker(n: int) -> EffectGenerator[int]:
@@ -160,7 +171,7 @@ async def test_thread_effect_multiple_threads_sequential() -> None:
 
         return results, states
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
     assert result.is_ok
     # All computations should succeed
     assert result.value[0] == [0, 1, 4]
