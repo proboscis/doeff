@@ -1,8 +1,8 @@
 """
 Interpreter tests for error handling effects.
 
-This module tests Recover/Retry/Catch/Safe/Finally effects, parameterized
-to run against both CESK interpreter and ProgramInterpreter.
+This module tests Catch/Finally (CESK core) and Recover/Retry/Fail (pure-only).
+Recover/Retry/Fail are library sugar over Catch - only supported by Pure interpreter.
 """
 
 from typing import TYPE_CHECKING
@@ -32,14 +32,22 @@ if TYPE_CHECKING:
     from tests.conftest import Interpreter
 
 
+# Helper to skip tests for CESK interpreter (Recover/Retry/Fail not supported)
+def skip_if_cesk(interpreter: "Interpreter"):
+    """Skip test if running on CESK interpreter."""
+    if interpreter.interpreter_type == "cesk":
+        pytest.skip("Recover/Retry/Fail not supported in CESK core")
+
+
 # ============================================================================
-# Recover Effect Tests
+# Recover Effect Tests (Pure interpreter only)
 # ============================================================================
 
 
 @pytest.mark.asyncio
 async def test_recover_with_fallback_value(interpreter: "Interpreter"):
     """Test Recover effect with simple fallback value."""
+    skip_if_cesk(interpreter)
 
     @do
     def failing_program() -> EffectGenerator[int]:
@@ -64,6 +72,7 @@ async def test_recover_with_fallback_value(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_recover_with_fallback_program(interpreter: "Interpreter"):
     """Test Recover effect with fallback program."""
+    skip_if_cesk(interpreter)
 
     @do
     def failing_program() -> EffectGenerator[str]:
@@ -91,6 +100,7 @@ async def test_recover_with_fallback_program(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_recover_on_success(interpreter: "Interpreter"):
     """Test Recover doesn't use fallback on success."""
+    skip_if_cesk(interpreter)
 
     @do
     def successful_program() -> EffectGenerator[str]:
@@ -120,6 +130,7 @@ async def test_recover_on_success(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_retry_success_on_second_attempt(interpreter: "Interpreter"):
     """Test Retry effect succeeds after initial failure."""
+    skip_if_cesk(interpreter)
 
     @do
     def flaky_program() -> EffectGenerator[int]:
@@ -153,6 +164,7 @@ async def test_retry_success_on_second_attempt(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_retry_max_attempts_exceeded(interpreter: "Interpreter"):
     """Test Retry fails after max attempts."""
+    skip_if_cesk(interpreter)
 
     @do
     def always_failing() -> EffectGenerator[int]:
@@ -182,6 +194,7 @@ async def test_retry_max_attempts_exceeded(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_catch_vs_recover(interpreter: "Interpreter"):
     """Test difference between Catch and Recover."""
+    skip_if_cesk(interpreter)
 
     @do
     def failing() -> EffectGenerator[int]:
@@ -215,6 +228,7 @@ async def test_catch_vs_recover(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_catch_handler_logs_are_accumulated(interpreter: "Interpreter"):
     """Catch handler logs should append to the surrounding writer log."""
+    skip_if_cesk(interpreter)
 
     @do
     def failing_program() -> EffectGenerator[int]:
@@ -243,6 +257,7 @@ async def test_catch_handler_logs_are_accumulated(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_nested_error_handling(interpreter: "Interpreter"):
     """Test nested Recover and Retry effects."""
+    skip_if_cesk(interpreter)
 
     @do
     def deeply_nested() -> EffectGenerator[str]:
@@ -279,6 +294,7 @@ async def test_nested_error_handling(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_finally_runs_finalizer_on_success(interpreter: "Interpreter"):
     """Finally executes the finalizer program when the sub-program succeeds."""
+    skip_if_cesk(interpreter)
 
     @do
     def inner() -> EffectGenerator[int]:
@@ -309,6 +325,7 @@ async def test_finally_runs_finalizer_on_success(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_finally_runs_on_failure(interpreter: "Interpreter"):
     """Finally executes the finalizer even when the sub-program fails."""
+    skip_if_cesk(interpreter)
 
     cleanup: list[str] = []
 
@@ -341,6 +358,7 @@ async def test_finally_runs_on_failure(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_native_try_except_catches_effect_error(interpreter: "Interpreter"):
     """Native try-except should catch errors from yielded effects."""
+    skip_if_cesk(interpreter)
 
     @do
     def program() -> EffectGenerator[str]:
@@ -360,6 +378,7 @@ async def test_native_try_except_catches_effect_error(interpreter: "Interpreter"
 @pytest.mark.asyncio
 async def test_try_except_with_state_effects(interpreter: "Interpreter"):
     """try-except should work alongside state effects (Get/Put)."""
+    skip_if_cesk(interpreter)
 
     @do
     def program() -> EffectGenerator[str]:
@@ -383,6 +402,7 @@ async def test_try_except_with_state_effects(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_try_except_with_log_effects(interpreter: "Interpreter"):
     """try-except should work alongside log effects."""
+    skip_if_cesk(interpreter)
 
     @do
     def program() -> EffectGenerator[str]:
@@ -409,6 +429,7 @@ async def test_try_except_with_log_effects(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_multiple_try_except_blocks(interpreter: "Interpreter"):
     """Multiple sequential try-except blocks should all work."""
+    skip_if_cesk(interpreter)
 
     @do
     def program() -> EffectGenerator[str]:
