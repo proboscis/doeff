@@ -5,7 +5,6 @@ Adapted from test_comprehensive_stack_safety.py - tests deep chains,
 nested operations, and monad composition patterns.
 
 Parameterized to run against both CESK interpreter and ProgramInterpreter.
-Tests using Parallel effect are CESK-only.
 """
 
 import asyncio
@@ -27,8 +26,6 @@ from doeff import (
     do,
     EffectGenerator,
 )
-from doeff.cesk import Parallel
-from doeff.cesk_adapter import CESKInterpreter
 
 if TYPE_CHECKING:
     from tests.conftest import Interpreter
@@ -160,48 +157,6 @@ async def test_nested_effect_operations(interpreter: "Interpreter") -> None:
 
 
 @pytest.mark.asyncio
-async def test_parallel_with_deep_nesting() -> None:
-    """Test parallel execution with nested operations."""
-    engine = CESKInterpreter()
-
-    async def quick_operation(n: int) -> int:
-        await asyncio.sleep(0.001)
-        return n
-
-    @do
-    def worker(batch: int, item: int) -> EffectGenerator[int]:
-        result = yield Await(quick_operation(batch * 10 + item))
-        yield Log(f"Batch {batch}, item {item}: {result}")
-        return result
-
-    @do
-    def parallel_program() -> EffectGenerator[list[int]]:
-        results = []
-
-        for batch in range(10):  # 10 batches
-            yield Log(f"Processing batch {batch}")
-
-            # Parallel runs Programs concurrently
-            batch_programs = [worker(batch, i) for i in range(5)]
-            batch_results = yield Parallel(*batch_programs)
-            results.extend(batch_results)
-
-            yield Put(f"batch_{batch}", sum(batch_results))
-
-            # Note: Step (Graph effect) not yet implemented in CESK
-            if batch % 3 == 0:
-                yield Log(f"Batch {batch} progress: {len(results)} items")
-
-        return results
-
-    result = await engine.run_async(parallel_program())
-
-    assert result.is_ok
-    assert len(result.value) == 50  # 10 batches * 5 items
-    assert len(result.state) == 10  # One entry per batch
-
-
-@pytest.mark.asyncio
 async def test_monad_composition_patterns(interpreter: "Interpreter") -> None:
     """Test various monad composition patterns."""
     engine = interpreter
@@ -297,54 +252,6 @@ async def test_error_recovery_chain(interpreter: "Interpreter") -> None:
     assert result.value == 5  # First success at n=5
     # Should have logs for attempts 0-4 (failures) and 5 (success)
     assert len(result.log) >= 6
-
-
-@pytest.mark.asyncio
-async def test_state_isolation_in_parallel() -> None:
-    """Test state isolation between parallel executions."""
-    engine = CESKInterpreter()
-
-    @do
-    def modify_state(name: str, value: int) -> EffectGenerator[int]:
-        # Each parallel branch starts with same initial state
-        current = yield Get("shared")
-        current = current or 0
-        yield Put("shared", current + value)
-        yield Put(f"private_{name}", value)
-        final = yield Get("shared")
-        yield Log(f"{name}: shared={final}")
-        return final
-
-    @do
-    def parallel_state_test() -> EffectGenerator[tuple]:
-        yield Put("shared", 100)
-
-        results = yield Parallel(
-            modify_state("A", 10),
-            modify_state("B", 20),
-            modify_state("C", 30),
-        )
-
-        final_shared = yield Get("shared")
-        private_a = yield Get("private_A")
-        private_b = yield Get("private_B")
-        private_c = yield Get("private_C")
-
-        return results, final_shared, private_a, private_b, private_c
-
-    result = await engine.run_async(parallel_state_test())
-
-    assert result.is_ok
-    results, final_shared, priv_a, priv_b, priv_c = result.value
-
-    # Each branch saw shared=100, added their value
-    assert results == [110, 120, 130]
-    # Private values should all be set (unique keys are merged)
-    assert priv_a == 10
-    assert priv_b == 20
-    assert priv_c == 30
-    # CESK parallel merge policy: parent store value preserved for conflicts
-    assert final_shared == 100
 
 
 @pytest.mark.asyncio

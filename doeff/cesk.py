@@ -24,12 +24,11 @@ to the actual doeff API effects:
 |----------------------|----------------------------|-------------------------|
 | Catch (handler)      | ResultCatchEffect          | CatchFrame              |
 | Recover (fallback)   | ResultRecoverEffect        | CatchFrame + fallback   |
-| Parallel (programs)  | ProgramParallelEffect      | Suspended(effect,...)   |
 | Thread (callable)    | ThreadEffect               | ThreadPoolExecutor      |
 | Spawn (program)      | SpawnEffect                | Async child machine     |
 | Tell (message)       | WriterTellEffect           | Single message append   |
 
-NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect for parallel execution.
+NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern.
 
 Design Note: Result/Maybe as Values
 -----------------------------------
@@ -47,14 +46,11 @@ When the step function encounters an effectful operation, it returns a
 - `resume(value, new_store)`: Continuation to call on success
 - `resume_error(exception)`: Continuation to call on error
 
-This unified model replaces ad-hoc NeedAsync/NeedParallel with explicit
-continuations, aligning with CPS (continuation-passing style) semantics.
+This unified model replaces ad-hoc NeedAsync with explicit continuations,
+aligning with CPS (continuation-passing style) semantics.
 
 State Merging Semantics:
 -----------------------
-- **Parallel**: Each child gets deep copy of store. On success, states are
-  merged back in PROGRAM ORDER (not completion order). On error, NO merge.
-
 - **Spawn (await_result=True)**: Child gets deep copy, state merges on join.
 
 - **Spawn (await_result=False)**: Fire-and-forget, no state merge.
@@ -62,8 +58,10 @@ State Merging Semantics:
 - **Thread**: Runs a callable (not a program) in thread pool. No CESK machine
   for child, no state merge. Store passes through unchanged.
 
-- **Listen**: Captures logs from sub-computation. Child logs from Parallel/Spawn
+- **Listen**: Captures logs from sub-computation. Child logs from Spawn
   merge BEFORE Listen captures (only when state merge occurs).
+
+For parallel execution, use asyncio.create_task + Await + Gather pattern.
 """
 
 from __future__ import annotations
@@ -103,49 +101,6 @@ Store: TypeAlias = dict[str, Any]
 # ============================================================================
 # Control (C) - What we're currently evaluating
 # ============================================================================
-
-
-@dataclass(frozen=True, kw_only=True)
-class ProgramParallelEffect(EffectBase):
-    """
-    Effect for running programs in parallel.
-
-    This is the CESK machine's native parallel effect.
-    Each child program runs with a deep copy of the store.
-
-    State merging semantics:
-    - On success: child stores are merged back in PROGRAM ORDER (not completion order)
-    - On error: NO merge occurs (all-or-nothing semantics)
-    - Merge logic: child adds new keys; parent wins on conflict; logs appended
-
-    Inherits from EffectBase to satisfy the "programs yield only Effect or Program" invariant.
-
-    Usage:
-        result = yield ProgramParallelEffect(programs=(prog1, prog2, prog3))
-        # result is [result1, result2, result3]
-    """
-
-    programs: tuple["Program", ...]
-
-    def intercept(
-        self, transform: Callable[["Effect"], "Effect | Program | None"]
-    ) -> "ProgramParallelEffect":
-        # Control flow effect - not interceptable
-        return self
-
-
-def Parallel(*programs: "Program") -> ProgramParallelEffect:
-    """
-    Create a ProgramParallelEffect to run programs in parallel.
-
-    Usage:
-        results = yield Parallel(prog1, prog2, prog3)
-        # results is [result1, result2, result3]
-
-    State merging: child stores merge in program order on success.
-    Error handling: first error (program order) is raised, no merge.
-    """
-    return ProgramParallelEffect(programs=tuple(programs))
 
 
 @dataclass(frozen=True)
@@ -437,7 +392,6 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
             InterceptEffect,
             WriterListenEffect,
             GatherEffect,
-            ProgramParallelEffect,  # CESK native parallel
         ),
     )
 
@@ -761,7 +715,7 @@ def step(state: CESKState) -> StepResult:
     Returns:
     - CESKState for continued execution
     - Terminal: Done(value) | Failed(exception) - computation complete
-    - Suspend: NeedAsync(effect, E, S, K) | NeedParallel(programs, E, S, K) - pause for async
+    - Suspend: Suspended(effect, resume, resume_error) - pause for async
     """
     C, E, S, K = state.C, state.E, state.S, state.K
 
@@ -794,7 +748,7 @@ def step(state: CESKState) -> StepResult:
             WriterListenEffect,
         )
         # Note: ResultSafeEffect is NOT imported - Result/Maybe are values, not effects
-        # Note: FutureParallelEffect REMOVED - use ProgramParallelEffect
+        # Note: For parallel execution, use asyncio.create_task + Await + Gather pattern
 
         # ResultFailEffect - immediately transition to Error state
         if isinstance(effect, ResultFailEffect):
@@ -959,23 +913,6 @@ def step(state: CESKState) -> StepResult:
                 K=[GatherFrame(rest, [], E)] + K,
             )
 
-        if isinstance(effect, ProgramParallelEffect):
-            # ProgramParallelEffect runs programs in parallel
-            # Each child gets deep copy of store; results collected; first error propagates
-            programs = list(effect.programs)
-            if not programs:
-                return CESKState(C=Value([]), E=E, S=S, K=K)
-            # Return Suspended with continuation for parallel execution
-            return Suspended(
-                effect=effect,
-                resume=lambda results, new_store, E=E, K=K: CESKState(
-                    C=Value(results), E=E, S=new_store, K=K
-                ),
-                resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                    C=Error(ex), E=E, S=S, K=K
-                ),
-            )
-
         # =====================================================================
         # EFFECT INTERCEPTION (before generic effect handling)
         # Chain semantics: apply transforms from ALL InterceptFrames (inner→outer)
@@ -992,10 +929,6 @@ def step(state: CESKState) -> StepResult:
 
             # IMPORTANT: Check EffectBase BEFORE ProgramBase because EffectBase inherits from ProgramBase
             # If we check ProgramBase first, Effects would match and be treated as Programs (wrong!)
-
-            if isinstance(transformed, ProgramParallelEffect):
-                # Transform returned ProgramParallelEffect - handle as control-flow
-                return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
 
             if isinstance(transformed, EffectBase):
                 if is_control_flow_effect(transformed):
@@ -1092,7 +1025,7 @@ def step(state: CESKState) -> StepResult:
             from doeff.program import ProgramBase
             from doeff.types import EffectBase
 
-            if isinstance(item, EffectBase) or isinstance(item, ProgramParallelEffect):
+            if isinstance(item, EffectBase):
                 control = EffectControl(item)
             elif isinstance(item, ProgramBase):
                 control = ProgramControl(item)
@@ -1133,7 +1066,7 @@ def step(state: CESKState) -> StepResult:
                 from doeff.program import ProgramBase
                 from doeff.types import EffectBase
 
-                if isinstance(item, EffectBase) or isinstance(item, ProgramParallelEffect):
+                if isinstance(item, EffectBase):
                     control = EffectControl(item)
                 elif isinstance(item, ProgramBase):
                     control = ProgramControl(item)
@@ -1219,7 +1152,7 @@ def step(state: CESKState) -> StepResult:
                 from doeff.program import ProgramBase
                 from doeff.types import EffectBase
 
-                if isinstance(item, EffectBase) or isinstance(item, ProgramParallelEffect):
+                if isinstance(item, EffectBase):
                     control = EffectControl(item)
                 elif isinstance(item, ProgramBase):
                     control = ProgramControl(item)
@@ -1392,7 +1325,7 @@ async def handle_effectful(
         result = await effect.awaitable
         return (result, store)
 
-    # NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect
+    # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
 
     if isinstance(effect, SpawnEffect):
         # Spawn creates an independent CESK machine
@@ -1536,7 +1469,7 @@ async def handle_effectful(
                 else:
                     return (result, store)
             else:
-                # Return unwrapping awaitable for Parallel
+                # Return unwrapping awaitable for thread result
                 async def unwrap_thread_result():
                     result, _ = await future
                     if isinstance(result, Ok):
@@ -1596,7 +1529,7 @@ async def _run_internal(
     """
     Internal main interpreter loop that returns both result and final store.
 
-    Used for Spawn/Parallel where we need the child's final store for merging.
+    Used for Spawn where we need the child's final store for merging.
     """
     state = CESKState.initial(program, env, store)
 
@@ -1614,51 +1547,7 @@ async def _run_internal(
             effect = result.effect
             original_store = state.S  # Capture for error case
 
-            if isinstance(effect, ProgramParallelEffect):
-                # Parallel execution - spawn independent machines with state merging
-                programs = list(effect.programs)
-                if not programs:
-                    state = result.resume([], original_store)
-                    continue
-
-                # Each child gets DEEP COPY of store and returns (result, final_store)
-                tasks = [_run_internal(p, state.E, copy.deepcopy(original_store)) for p in programs]
-                child_outputs = await asyncio.gather(*tasks, return_exceptions=True)
-
-                # Check for errors and collect values (in program order)
-                first_error = None
-                values = []
-                child_final_stores = []
-                for output in child_outputs:
-                    if isinstance(output, Exception):
-                        first_error = first_error or output
-                    elif isinstance(output, tuple):
-                        child_result, child_store = output
-                        child_final_stores.append(child_store)
-                        if isinstance(child_result, Err):
-                            first_error = first_error or child_result.error
-                        elif isinstance(child_result, Ok):
-                            values.append(child_result.value)
-                        else:
-                            values.append(child_result)
-                    else:
-                        # Unexpected output type
-                        first_error = first_error or InterpreterInvariantError(
-                            f"Unexpected child output: {type(output)}"
-                        )
-
-                if first_error is not None:
-                    # On error: NO state merge (all-or-nothing semantics)
-                    state = result.resume_error(first_error)
-                else:
-                    # On success: merge all child stores in program order
-                    merged_store = original_store
-                    for child_store in child_final_stores:
-                        merged_store = merge_store(merged_store, child_store)
-                    state = result.resume(values, merged_store)
-                continue
-
-            # Other effectful effects - handle and resume with continuation
+            # Handle effectful effects and resume with continuation
             try:
                 v, new_store = await handle_effectful(effect, state.E, original_store)
                 state = result.resume(v, new_store)
@@ -1685,7 +1574,8 @@ async def run(
 
     Pure stepping is synchronous. Async boundaries occur for:
     - Effectful handlers (IO, Await, Thread, Spawn) via Suspended
-    - Parallel execution via Suspended with ProgramParallelEffect
+
+    For parallel execution, use asyncio.create_task + Await + Gather pattern.
 
     Returns Ok(value) or Err(exception).
     """
@@ -1720,8 +1610,6 @@ __all__ = [
     "Error",
     "EffectControl",
     "ProgramControl",
-    # CESK-native effects
-    "ProgramParallelEffect",
     # Thread pool management
     "shutdown_shared_executor",
     # Frames
