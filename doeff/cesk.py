@@ -76,12 +76,13 @@ from collections.abc import Callable, Generator
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from doeff._vendor import Err, FrozenDict, Ok, Result
 
 if TYPE_CHECKING:
-    from doeff.program import Program
+    from doeff.cesk_traceback import CapturedTraceback
+    from doeff.program import KleisliProgramCall, Program
     from doeff.types import Effect
 
 from doeff._types_internal import EffectBase, EffectCreationContext, ListenResult
@@ -118,6 +119,8 @@ class Error:
     """Control state: computation has raised an exception."""
 
     ex: BaseException
+    # Captured traceback data (captured when error first occurs)
+    captured_traceback: "CapturedTraceback | None" = None
 
 
 @dataclass(frozen=True)
@@ -154,6 +157,8 @@ class ReturnFrame:
 
     generator: Generator[Any, Any, Any]
     saved_env: Environment
+    # The KleisliProgramCall that created this generator (for correct function name in tracebacks)
+    program_call: "KleisliProgramCall | None" = None
 
 
 @dataclass(frozen=True)
@@ -313,6 +318,8 @@ class Failed:
 
     exception: BaseException
     store: Store
+    # Complete traceback data for error reporting
+    captured_traceback: "CapturedTraceback | None" = None
 
 
 @dataclass(frozen=True)
@@ -336,6 +343,48 @@ class Suspended:
 
 Terminal: TypeAlias = Done | Failed
 StepResult: TypeAlias = CESKState | Terminal | Suspended
+
+
+# ============================================================================
+# CESKResult - Public result type with traceback support
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class CESKResult(Generic[T]):
+    """Result from CESK interpreter execution with optional traceback.
+
+    This is the public result type returned by run_sync() and run().
+    It wraps the standard Result[T] with additional traceback information
+    captured during error conditions.
+
+    Attributes:
+        result: The standard Ok[T] | Err result
+        captured_traceback: Traceback captured on error, None on success
+    """
+
+    result: Result[T]
+    captured_traceback: "CapturedTraceback | None" = None
+
+    @property
+    def is_ok(self) -> bool:
+        """Check if result is successful."""
+        return isinstance(self.result, Ok)
+
+    @property
+    def is_err(self) -> bool:
+        """Check if result is an error."""
+        return isinstance(self.result, Err)
+
+    @property
+    def value(self) -> T:
+        """Get success value. Raises if error."""
+        return self.result.ok()
+
+    @property
+    def error(self) -> BaseException:
+        """Get error. Raises if success."""
+        return self.result.err()
 
 
 # ============================================================================
@@ -704,7 +753,7 @@ def step(state: CESKState) -> StepResult:
         return Done(C.v, S)
 
     if isinstance(C, Error) and not K:
-        return Failed(C.ex, S)
+        return Failed(C.ex, S, captured_traceback=C.captured_traceback)
 
     # =========================================================================
     # CONTROL FLOW EFFECTS (before generic effect handling)
@@ -801,10 +850,14 @@ def step(state: CESKState) -> StepResult:
         # =====================================================================
 
         if not is_control_flow_effect(effect) and has_intercept_frame(K):
+            from doeff.cesk_traceback import capture_traceback_safe
+
             try:
                 transformed = apply_intercept_chain(K, effect)
             except Exception as ex:
-                return CESKState(C=Error(ex), E=E, S=S, K=K)
+                # Intercept transform raised - capture traceback
+                captured = capture_traceback_safe(K, ex)
+                return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
             from doeff.program import ProgramBase
             from doeff.types import EffectBase
@@ -823,10 +876,13 @@ def step(state: CESKState) -> StepResult:
                         v, S_new = handle_pure(transformed, E, S)
                         return CESKState(C=Value(v), E=E, S=S_new, K=K)
                     except Exception as ex:
-                        return CESKState(C=Error(ex), E=E, S=S, K=K)
+                        # Pure effect handler raised after transform - capture traceback
+                        captured = capture_traceback_safe(K, ex)
+                        return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
                 if is_effectful(transformed):
                     # Transform returned effectful Effect - async boundary
+                    # Note: resume_error traceback capture happens in _run_internal
                     return Suspended(
                         effect=transformed,
                         resume=lambda v, new_store, E=E, K=K: CESKState(
@@ -838,8 +894,10 @@ def step(state: CESKState) -> StepResult:
                     )
 
                 # Effect not handled by any category - return as unhandled
+                unhandled_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
+                captured = capture_traceback_safe(K, unhandled_ex)
                 return CESKState(
-                    C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
+                    C=Error(unhandled_ex, captured_traceback=captured),
                     E=E,
                     S=S,
                     K=K,
@@ -850,8 +908,10 @@ def step(state: CESKState) -> StepResult:
                 return CESKState(C=ProgramControl(transformed), E=E, S=S, K=K)
 
             # Unknown effect type - error
+            unknown_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
+            captured = capture_traceback_safe(K, unknown_ex)
             return CESKState(
-                C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
+                C=Error(unknown_ex, captured_traceback=captured),
                 E=E,
                 S=S,
                 K=K,
@@ -862,17 +922,22 @@ def step(state: CESKState) -> StepResult:
         # =====================================================================
 
         if is_pure_effect(effect):
+            from doeff.cesk_traceback import capture_traceback_safe
+
             try:
                 v, S_new = handle_pure(effect, E, S)
                 return CESKState(C=Value(v), E=E, S=S_new, K=K)
             except Exception as ex:
-                return CESKState(C=Error(ex), E=E, S=S, K=K)
+                # Pure effect handler raised - capture traceback
+                captured = capture_traceback_safe(K, ex)
+                return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
         # =====================================================================
         # EFFECTFUL EFFECTS → async boundary
         # =====================================================================
 
         if is_effectful(effect):
+            # Note: resume_error traceback capture happens in _run_internal
             return Suspended(
                 effect=effect,
                 resume=lambda v, new_store, E=E, K=K: CESKState(
@@ -887,8 +952,12 @@ def step(state: CESKState) -> StepResult:
         # UNHANDLED EFFECTS → error
         # =====================================================================
 
+        from doeff.cesk_traceback import capture_traceback_safe
+
+        unhandled_ex = UnhandledEffectError(f"No handler for {type(effect).__name__}")
+        captured = capture_traceback_safe(K, unhandled_ex)
         return CESKState(
-            C=Error(UnhandledEffectError(f"No handler for {type(effect).__name__}")),
+            C=Error(unhandled_ex, captured_traceback=captured),
             E=E,
             S=S,
             K=K,
@@ -900,12 +969,22 @@ def step(state: CESKState) -> StepResult:
 
     if isinstance(C, ProgramControl):
         program = C.program
+        from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
+        from doeff.program import KleisliProgramCall, ProgramBase
+        from doeff.types import EffectBase
+
         try:
             gen = to_generator(program)
-            item = next(gen)
 
-            from doeff.program import ProgramBase
-            from doeff.types import EffectBase
+            # Get program_call for correct function name (if program is KleisliProgramCall)
+            program_call = program if isinstance(program, KleisliProgramCall) else None
+
+            # PRE-CAPTURE: Save generator info BEFORE execution
+            # is_resumed=False: use co_firstlineno, frame_kind="kleisli_entry"
+            # NO file I/O here (linecache deferred to error path)
+            pre_captured = pre_capture_generator(gen, is_resumed=False, program_call=program_call)
+
+            item = next(gen)
 
             if isinstance(item, EffectBase):
                 control = EffectControl(item)
@@ -924,14 +1003,16 @@ def step(state: CESKState) -> StepResult:
                 C=control,
                 E=E,
                 S=S,
-                K=[ReturnFrame(gen, E)] + K,
+                K=[ReturnFrame(gen, E, program_call=program_call)] + K,
             )
         except StopIteration as e:
             # Program immediately returned without yielding
             return CESKState(C=Value(e.value), E=E, S=S, K=K)
         except Exception as ex:
-            # Generator raised on first step
-            return CESKState(C=Error(ex), E=E, S=S, K=K)
+            # Generator raised on first step - capture traceback
+            # K might be empty for top-level, but we have pre_captured
+            captured = capture_traceback_safe(K, ex, pre_captured=pre_captured)
+            return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
     # =========================================================================
     # VALUE + Frames → propagate value through continuation
@@ -942,11 +1023,18 @@ def step(state: CESKState) -> StepResult:
         K_rest = K[1:]
 
         if isinstance(frame, ReturnFrame):
+            from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
+            from doeff.program import ProgramBase
+            from doeff.types import EffectBase
+
+            # PRE-CAPTURE: Save current generator info BEFORE send()
+            # is_resumed=True: use gi_frame.f_lineno, frame_kind="kleisli_yield"
+            pre_captured = pre_capture_generator(
+                frame.generator, is_resumed=True, program_call=frame.program_call
+            )
+
             try:
                 item = frame.generator.send(C.v)
-
-                from doeff.program import ProgramBase
-                from doeff.types import EffectBase
 
                 if isinstance(item, EffectBase):
                     control = EffectControl(item)
@@ -964,12 +1052,14 @@ def step(state: CESKState) -> StepResult:
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env)] + K_rest,
+                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
                 )
             except StopIteration as e:
                 return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
             except Exception as ex:
-                return CESKState(C=Error(ex), E=frame.saved_env, S=S, K=K_rest)
+                # Capture traceback with pre_captured (generator may be dead)
+                captured = capture_traceback_safe(K_rest, ex, pre_captured=pre_captured)
+                return CESKState(C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, CatchFrame):
             # Value passes through CatchFrame unchanged, restore env
@@ -1022,13 +1112,20 @@ def step(state: CESKState) -> StepResult:
         K_rest = K[1:]
 
         if isinstance(frame, ReturnFrame):
+            from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
+            from doeff.program import ProgramBase
+            from doeff.types import EffectBase
+
+            # PRE-CAPTURE: Save current generator info BEFORE throw()
+            # is_resumed=True: generator is paused at a yield
+            pre_captured = pre_capture_generator(
+                frame.generator, is_resumed=True, program_call=frame.program_call
+            )
+
             try:
                 # Throw into generator - single-arg form preserves traceback
                 # when passing exception instance (modern Python approach)
                 item = frame.generator.throw(C.ex)
-
-                from doeff.program import ProgramBase
-                from doeff.types import EffectBase
 
                 if isinstance(item, EffectBase):
                     control = EffectControl(item)
@@ -1046,16 +1143,36 @@ def step(state: CESKState) -> StepResult:
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env)] + K_rest,
+                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
                 )
             except StopIteration as e:
                 # Generator caught exception and returned
                 return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
             except Exception as propagated:
-                # Generator didn't catch - continue propagating
-                return CESKState(C=Error(propagated), E=frame.saved_env, S=S, K=K_rest)
+                # Error continues propagating
+                # If this is the SAME exception (not caught and re-raised), preserve original traceback
+                # If it's a NEW exception (from generator's except handler), capture new traceback
+                if propagated is C.ex:
+                    # Same exception, preserve original traceback
+                    return CESKState(
+                        C=Error(propagated, captured_traceback=C.captured_traceback),
+                        E=frame.saved_env,
+                        S=S,
+                        K=K_rest,
+                    )
+                else:
+                    # New exception from generator's except handler
+                    captured = capture_traceback_safe(K_rest, propagated, pre_captured=pre_captured)
+                    return CESKState(
+                        C=Error(propagated, captured_traceback=captured),
+                        E=frame.saved_env,
+                        S=S,
+                        K=K_rest,
+                    )
 
         if isinstance(frame, CatchFrame):
+            from doeff.cesk_traceback import capture_traceback_safe
+
             # Invoke handler
             try:
                 recovery_result = frame.handler(C.ex)
@@ -1070,8 +1187,9 @@ def step(state: CESKState) -> StepResult:
                     recovery_program = Program.pure(recovery_result)
                 return CESKState(C=ProgramControl(recovery_program), E=frame.saved_env, S=S, K=K_rest)
             except Exception as handler_ex:
-                # Handler itself raised - propagate that error
-                return CESKState(C=Error(handler_ex), E=frame.saved_env, S=S, K=K_rest)
+                # Handler itself raised - capture NEW traceback for handler's error
+                captured = capture_traceback_safe(K_rest, handler_ex)
+                return CESKState(C=Error(handler_ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
 
         # Note: RecoverFrame removed - Result/Maybe are values, not effects
 
@@ -1081,20 +1199,20 @@ def step(state: CESKState) -> StepResult:
             return CESKState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, LocalFrame):
-            # Restore env, continue propagating
-            return CESKState(C=Error(C.ex), E=frame.restore_env, S=S, K=K_rest)
+            # Restore env, continue propagating - preserve traceback
+            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.restore_env, S=S, K=K_rest)
 
         if isinstance(frame, InterceptFrame):
-            # Intercept doesn't catch errors - propagate
-            return CESKState(C=Error(C.ex), E=E, S=S, K=K_rest)
+            # Intercept doesn't catch errors - propagate with traceback
+            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
 
         if isinstance(frame, ListenFrame):
-            # Propagate error (logs remain in S for debugging)
-            return CESKState(C=Error(C.ex), E=E, S=S, K=K_rest)
+            # Propagate error (logs remain in S for debugging) - preserve traceback
+            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GatherFrame):
-            # Propagate (partial results discarded), restore env
-            return CESKState(C=Error(C.ex), E=frame.saved_env, S=S, K=K_rest)
+            # Propagate (partial results discarded), restore env - preserve traceback
+            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.saved_env, S=S, K=K_rest)
 
     # =========================================================================
     # CATCH-ALL (should never reach - indicates bug in rules)
@@ -1189,7 +1307,7 @@ async def handle_effectful(
 
         async def run_and_capture_store():
             """Run child and capture final store for later merging at join time."""
-            result, final_store = await _run_internal(effect.program, child_env, child_store)
+            result, final_store, _ = await _run_internal(effect.program, child_env, child_store)
             final_store_holder["store"] = final_store
             return result
 
@@ -1223,9 +1341,10 @@ async def handle_effectful(
             thread_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(thread_loop)
             try:
-                return thread_loop.run_until_complete(
+                result, final_store, _ = thread_loop.run_until_complete(
                     _run_internal(effect.program, child_env, child_store)
                 )
+                return result, final_store
             finally:
                 thread_loop.close()
 
@@ -1376,22 +1495,30 @@ async def _run_internal(
     program: "Program",
     env: Environment,
     store: Store,
-) -> tuple[Result[T], Store]:
+) -> tuple[Result[T], Store, "CapturedTraceback | None"]:
     """
-    Internal main interpreter loop that returns both result and final store.
+    Internal main interpreter loop that returns result, final store, and traceback.
 
     Used for Spawn where we need the child's final store for merging.
+
+    Returns:
+        Tuple of (Result[T], Store, CapturedTraceback | None)
+        - Result is Ok on success, Err on error
+        - Store is the final state
+        - CapturedTraceback is provided on error, None on success
     """
+    from doeff.cesk_traceback import CapturedTraceback, capture_traceback_safe
+
     state = CESKState.initial(program, env, store)
 
     while True:
         result = step(state)
 
         if isinstance(result, Done):
-            return Ok(result.value), result.store
+            return Ok(result.value), result.store, None
 
         if isinstance(result, Failed):
-            return Err(result.exception), result.store
+            return Err(result.exception), result.store, result.captured_traceback
 
         if isinstance(result, Suspended):
             # Async boundary - use continuation-based resumption
@@ -1403,7 +1530,19 @@ async def _run_internal(
                 v, new_store = await handle_effectful(effect, state.E, original_store)
                 state = result.resume(v, new_store)
             except Exception as ex:
-                state = result.resume_error(ex)
+                # Capture traceback for effectful handler exception
+                captured = capture_traceback_safe(state.K, ex)
+                # Create error state with captured traceback
+                error_state = result.resume_error(ex)
+                # If the resumed state has Error control, attach our traceback
+                if isinstance(error_state.C, Error) and error_state.C.captured_traceback is None:
+                    error_state = CESKState(
+                        C=Error(ex, captured_traceback=captured),
+                        E=error_state.E,
+                        S=error_state.S,
+                        K=error_state.K,
+                    )
+                state = error_state
             continue
 
         if isinstance(result, CESKState):
@@ -1419,7 +1558,7 @@ async def run(
     program: "Program",
     env: Environment | dict[Any, Any] | None = None,
     store: Store | None = None,
-) -> Result[T]:
+) -> CESKResult[T]:
     """
     Main interpreter loop.
 
@@ -1428,7 +1567,7 @@ async def run(
 
     For parallel execution, use asyncio.create_task + Await + Gather pattern.
 
-    Returns Ok(value) or Err(exception).
+    Returns CESKResult containing Ok(value) or Err(exception) with captured traceback.
     """
     # Coerce env to FrozenDict to ensure immutability
     if env is None:
@@ -1439,16 +1578,19 @@ async def run(
         E = FrozenDict(env)
     S = store if store is not None else {}
 
-    result, _ = await _run_internal(program, E, S)
-    return result
+    result, _, captured_traceback = await _run_internal(program, E, S)
+    return CESKResult(result, captured_traceback)
 
 
 def run_sync(
     program: "Program",
     env: Environment | None = None,
     store: Store | None = None,
-) -> Result[T]:
-    """Synchronous wrapper for the run function."""
+) -> CESKResult[T]:
+    """Synchronous wrapper for the run function.
+
+    Returns CESKResult containing Ok(value) or Err(exception) with captured traceback.
+    """
     return asyncio.run(run(program, env, store))
 
 
@@ -1481,6 +1623,8 @@ __all__ = [
     "Failed",
     "Suspended",
     "Terminal",
+    # Public result type
+    "CESKResult",
     # Classification
     "is_control_flow_effect",
     "is_pure_effect",
