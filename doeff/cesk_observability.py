@@ -100,14 +100,22 @@ class KFrameSnapshot:
 
         if isinstance(frame, ReturnFrame):
             description = "Awaiting generator continuation"
-            # Try to extract location from generator
+            # Try to extract location from generator using user source location
             gen = frame.generator
             if hasattr(gen, "gi_frame") and gen.gi_frame is not None:
-                gi_frame = gen.gi_frame
+                from doeff.cesk_traceback import (
+                    _get_function_name,
+                    _get_user_source_location,
+                )
+
+                filename, line = _get_user_source_location(
+                    gen, frame.program_call, is_resumed=True
+                )
+                function = _get_function_name(gen, frame.program_call)
                 location = CodeLocation(
-                    filename=gi_frame.f_code.co_filename,
-                    line=gi_frame.f_lineno,
-                    function=gi_frame.f_code.co_name,
+                    filename=filename,
+                    line=line,
+                    function=function,
                 )
 
         elif isinstance(frame, CatchFrame):
