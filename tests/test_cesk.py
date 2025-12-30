@@ -43,7 +43,7 @@ from doeff.cesk import (
     ListenFrame,
     GatherFrame,
     # State
-    CEKSState,
+    CESKState,
     # Step results
     Done,
     Failed,
@@ -233,7 +233,7 @@ class TestStepTerminalStates:
 
     def test_value_empty_k_returns_done(self):
         """Value with empty K returns Done."""
-        state = CEKSState(C=Value(42), E=FrozenDict(), S={}, K=[])
+        state = CESKState(C=Value(42), E=FrozenDict(), S={}, K=[])
 
         result = step(state)
 
@@ -243,7 +243,7 @@ class TestStepTerminalStates:
     def test_error_empty_k_returns_failed(self):
         """Error with empty K returns Failed."""
         exc = ValueError("test error")
-        state = CEKSState(C=Error(exc), E=FrozenDict(), S={}, K=[])
+        state = CESKState(C=Error(exc), E=FrozenDict(), S={}, K=[])
 
         result = step(state)
 
@@ -262,7 +262,7 @@ class TestStepPureEffects:
     def test_pure_effect_state_get(self):
         """Pure StateGetEffect is handled synchronously."""
         effect = state.StateGetEffect(key="counter")
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=EffectControl(effect),
             E=FrozenDict(),
             S={"counter": 42},
@@ -271,14 +271,14 @@ class TestStepPureEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, Value)
         assert result.C.v == 42
 
     def test_pure_effect_ask_error_becomes_error_state(self):
         """Pure effect raising exception becomes Error state."""
         effect = reader.AskEffect(key="missing")
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=EffectControl(effect),
             E=FrozenDict(),
             S={},
@@ -287,7 +287,7 @@ class TestStepPureEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, Error)
         assert isinstance(result.C.ex, KeyError)
 
@@ -307,7 +307,7 @@ class TestStepControlFlowEffects:
             sub_program=Program.pure(42),
             handler=handler,
         )
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=EffectControl(effect),
             E=FrozenDict(),
             S={},
@@ -316,7 +316,7 @@ class TestStepControlFlowEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, ProgramControl)
         assert len(result.K) == 1
         assert isinstance(result.K[0], CatchFrame)
@@ -328,7 +328,7 @@ class TestStepControlFlowEffects:
             sub_program=Program.pure(42),
             fallback=0,
         )
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=EffectControl(effect),
             E=FrozenDict(),
             S={},
@@ -337,7 +337,7 @@ class TestStepControlFlowEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, ProgramControl)
         assert len(result.K) == 1
         # Recover uses CatchFrame with fallback handler (not RecoverFrame)
@@ -351,7 +351,7 @@ class TestStepControlFlowEffects:
             env_update={"key": "value"},
             sub_program=Program.pure(42),
         )
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=EffectControl(effect),
             E=FrozenDict({"existing": "data"}),
             S={},
@@ -360,7 +360,7 @@ class TestStepControlFlowEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert result.E["key"] == "value"
         assert result.E["existing"] == "data"
         assert len(result.K) == 1
@@ -378,7 +378,7 @@ class TestStepValuePropagation:
     def test_value_through_catch_frame(self):
         """Value passes through CatchFrame unchanged."""
         frame = CatchFrame(handler=lambda e: Program.pure(0), saved_env=FrozenDict())
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=Value(42),
             E=FrozenDict({"temp": "data"}),
             S={},
@@ -387,7 +387,7 @@ class TestStepValuePropagation:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, Value)
         assert result.C.v == 42
         assert result.K == []
@@ -395,7 +395,7 @@ class TestStepValuePropagation:
     def test_value_through_recover_frame_wraps_in_ok(self):
         """Value through RecoverFrame becomes Ok(value)."""
         frame = RecoverFrame(saved_env=FrozenDict())
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=Value(42),
             E=FrozenDict(),
             S={},
@@ -404,7 +404,7 @@ class TestStepValuePropagation:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, Value)
         assert isinstance(result.C.v, Ok)
         assert result.C.v.value == 42
@@ -413,7 +413,7 @@ class TestStepValuePropagation:
         """Value through LocalFrame restores saved environment."""
         original_env = FrozenDict({"original": "env"})
         frame = LocalFrame(restore_env=original_env)
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=Value(42),
             E=FrozenDict({"modified": "env"}),
             S={},
@@ -422,7 +422,7 @@ class TestStepValuePropagation:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert result.E == original_env
         assert isinstance(result.C, Value)
         assert result.C.v == 42
@@ -441,7 +441,7 @@ class TestStepErrorPropagation:
         handler = lambda e: Program.pure(f"recovered: {e}")
         frame = CatchFrame(handler=handler, saved_env=FrozenDict())
         exc = ValueError("test error")
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=Error(exc),
             E=FrozenDict(),
             S={},
@@ -450,7 +450,7 @@ class TestStepErrorPropagation:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, ProgramControl)
         # Handler was called
 
@@ -458,7 +458,7 @@ class TestStepErrorPropagation:
         """Error through RecoverFrame becomes Err(exception)."""
         frame = RecoverFrame(saved_env=FrozenDict())
         exc = ValueError("test error")
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=Error(exc),
             E=FrozenDict(),
             S={},
@@ -467,7 +467,7 @@ class TestStepErrorPropagation:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert isinstance(result.C, Value)
         assert isinstance(result.C.v, Err)
         assert result.C.v.error is exc
@@ -477,7 +477,7 @@ class TestStepErrorPropagation:
         original_env = FrozenDict({"original": "env"})
         frame = LocalFrame(restore_env=original_env)
         exc = ValueError("test error")
-        state_obj = CEKSState(
+        state_obj = CESKState(
             C=Error(exc),
             E=FrozenDict({"modified": "env"}),
             S={},
@@ -486,7 +486,7 @@ class TestStepErrorPropagation:
 
         result = step(state_obj)
 
-        assert isinstance(result, CEKSState)
+        assert isinstance(result, CESKState)
         assert result.E == original_env
         assert isinstance(result.C, Error)
         assert result.C.ex is exc
