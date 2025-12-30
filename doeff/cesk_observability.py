@@ -27,6 +27,7 @@ Example usage (callback-based):
 
 from __future__ import annotations
 
+import logging
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, TypeVar
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from doeff.storage import DurableStorage
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 # Execution status literals
 ExecutionStatus = Literal["pending", "running", "paused", "completed", "failed"]
@@ -187,8 +190,9 @@ class ExecutionSnapshot:
         if storage is not None:
             try:
                 cache_keys = tuple(storage.keys())
-            except Exception:
-                pass  # Ignore storage errors during snapshot
+            except Exception as e:
+                logger.warning("Failed to capture cache keys from storage: %s", e)
+                # Continue with empty cache keys to prevent snapshot creation from failing
 
         return cls(
             status=status,
