@@ -25,10 +25,11 @@ to the actual doeff API effects:
 | Catch (handler)      | ResultCatchEffect          | CatchFrame              |
 | Recover (fallback)   | ResultRecoverEffect        | CatchFrame + fallback   |
 | Parallel (programs)  | ProgramParallelEffect      | Suspended(effect,...)   |
-| Parallel (awaitables)| FutureParallelEffect       | Suspended(effect,...)   |
 | Thread (callable)    | ThreadEffect               | ThreadPoolExecutor      |
 | Spawn (program)      | SpawnEffect                | Async child machine     |
 | Tell (message)       | WriterTellEffect           | Single message append   |
+
+NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect for parallel execution.
 
 Design Note: Result/Maybe as Values
 -----------------------------------
@@ -131,6 +132,20 @@ class ProgramParallelEffect(EffectBase):
     ) -> "ProgramParallelEffect":
         # Control flow effect - not interceptable
         return self
+
+
+def Parallel(*programs: "Program") -> ProgramParallelEffect:
+    """
+    Create a ProgramParallelEffect to run programs in parallel.
+
+    Usage:
+        results = yield Parallel(prog1, prog2, prog3)
+        # results is [result1, result2, result3]
+
+    State merging: child stores merge in program order on success.
+    Error handling: first error (program order) is raised, no merge.
+    """
+    return ProgramParallelEffect(programs=tuple(programs))
 
 
 @dataclass(frozen=True)
@@ -395,8 +410,6 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
 
     Control flow effects are NOT interceptable by InterceptFrame - they always
     push their frames directly.
-
-    Note: FutureParallelEffect is NOT control-flow - it's effectful (awaits awaitables).
     """
     from doeff.effects import (
         GatherEffect,
@@ -467,7 +480,6 @@ def is_effectful(effect: "EffectBase") -> bool:
         TaskJoinEffect,
         ThreadEffect,
     )
-    from doeff.effects.future import FutureParallelEffect
 
     return isinstance(
         effect,
@@ -475,7 +487,6 @@ def is_effectful(effect: "EffectBase") -> bool:
             IOPerformEffect,
             IOPrintEffect,
             FutureAwaitEffect,
-            FutureParallelEffect,
             ThreadEffect,
             SpawnEffect,
             TaskJoinEffect,
@@ -783,7 +794,7 @@ def step(state: CESKState) -> StepResult:
             WriterListenEffect,
         )
         # Note: ResultSafeEffect is NOT imported - Result/Maybe are values, not effects
-        from doeff.effects.future import FutureParallelEffect
+        # Note: FutureParallelEffect REMOVED - use ProgramParallelEffect
 
         # ResultFailEffect - immediately transition to Error state
         if isinstance(effect, ResultFailEffect):
@@ -964,9 +975,6 @@ def step(state: CESKState) -> StepResult:
                     C=Error(ex), E=E, S=S, K=K
                 ),
             )
-
-        # Note: FutureParallelEffect is effectful (awaits awaitables), not control-flow
-        # It's handled via the generic is_effectful path below
 
         # =====================================================================
         # EFFECT INTERCEPTION (before generic effect handling)
@@ -1370,7 +1378,6 @@ async def handle_effectful(
         TaskJoinEffect,
         ThreadEffect,
     )
-    from doeff.effects.future import FutureParallelEffect
     from doeff.effects.spawn import Task
 
     if isinstance(effect, IOPerformEffect):
@@ -1385,14 +1392,7 @@ async def handle_effectful(
         result = await effect.awaitable
         return (result, store)
 
-    if isinstance(effect, FutureParallelEffect):
-        # Await all awaitables in parallel
-        results = await asyncio.gather(*effect.awaitables, return_exceptions=True)
-        # Check for first error
-        for r in results:
-            if isinstance(r, Exception):
-                raise r
-        return (list(results), store)
+    # NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect
 
     if isinstance(effect, SpawnEffect):
         # Spawn creates an independent CESK machine

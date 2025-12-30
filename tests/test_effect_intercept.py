@@ -13,7 +13,7 @@ from doeff.cache_policy import ensure_cache_policy
 from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 from doeff.effects.cache import CacheGetEffect, CachePutEffect
 from doeff.effects.dep import DepInjectEffect
-from doeff.effects.future import FutureAwaitEffect, FutureParallelEffect
+from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherDictEffect, GatherEffect
 from doeff.effects.graph import (
     GraphAnnotateEffect,
@@ -88,7 +88,6 @@ def tagging_transform(effect: Effect) -> Effect:
         lambda: CachePutEffect(key="cache-key", value=1, policy=ensure_cache_policy(ttl=1)),
         lambda: DepInjectEffect(key="service"),
         lambda: FutureAwaitEffect(awaitable=DummyAwaitable()),
-        lambda: FutureParallelEffect(awaitables=(DummyAwaitable(), DummyAwaitable())),
         lambda: GraphStepEffect(value="value", meta={"step": 1}),
         lambda: GraphAnnotateEffect(meta={"tag": "test"}),
         lambda: GraphSnapshotEffect(),

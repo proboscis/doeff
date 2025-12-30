@@ -11,6 +11,7 @@ import pytest
 from doeff import (
     AtomicGet,
     AtomicUpdate,
+    Await,
     Effect,
     EffectGenerator,
     Fail,
@@ -18,7 +19,6 @@ from doeff import (
     Get,
     IO,
     Log,
-    Parallel,
     Program,
     Put,
     ProgramInterpreter,
@@ -282,8 +282,13 @@ async def test_spawn_worker_parallel_awaitables(backend: str) -> None:
             return label
 
         @do
+        def compute_worker(label: str) -> EffectGenerator[str]:
+            result = yield Await(compute(label))
+            return result
+
+        @do
         def worker() -> EffectGenerator[list[str]]:
-            return (yield Parallel(compute("a"), compute("b")))
+            return (yield Gather(compute_worker("a"), compute_worker("b")))
 
         @do
         def program() -> EffectGenerator[list[str]]:

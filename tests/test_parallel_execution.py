@@ -3,7 +3,9 @@ import time
 
 import pytest
 
-from doeff import Await, Gather, Parallel, ProgramInterpreter, do, EffectGenerator
+from doeff import Await, Gather, ProgramInterpreter, do, EffectGenerator
+from doeff.cesk import Parallel
+from doeff.cesk_adapter import CESKInterpreter
 
 TimelineEntry = tuple[str, str, float]
 
@@ -17,7 +19,11 @@ def _starts_before_first_end(timeline: list[TimelineEntry]) -> int:
 
 @pytest.mark.asyncio
 async def test_parallel_effect_runs_awaitables_concurrently() -> None:
-    engine = ProgramInterpreter()
+    """Test Parallel effect runs Programs concurrently.
+
+    NOTE: Uses CESKInterpreter because Parallel is CESK-only.
+    """
+    engine = CESKInterpreter()
     delay = 0.01
 
     async def record_sleep(label: str, timeline: list[TimelineEntry]) -> str:
@@ -34,13 +40,17 @@ async def test_parallel_effect_runs_awaitables_concurrently() -> None:
         return [first, second]
 
     @do
+    def make_worker(label: str, timeline: list[TimelineEntry]) -> EffectGenerator[str]:
+        result = yield Await(record_sleep(label, timeline))
+        return result
+
+    @do
     def parallel_program(timeline: list[TimelineEntry]) -> EffectGenerator[list[str]]:
-        return (
-            yield Parallel(
-                record_sleep("one", timeline),
-                record_sleep("two", timeline),
-            )
-        )
+        # Parallel requires Programs, not raw awaitables
+        return (yield Parallel(
+            make_worker("one", timeline),
+            make_worker("two", timeline),
+        ))
 
     timeline_seq: list[TimelineEntry] = []
     sequential_result = await engine.run_async(sequential_program(timeline_seq))
@@ -100,7 +110,11 @@ async def test_gather_runs_programs_concurrently() -> None:
 
 @pytest.mark.asyncio
 async def test_parallel_many_long_tasks_finishes_under_one_second() -> None:
-    engine = ProgramInterpreter()
+    """Test Parallel with many Programs finishes quickly.
+
+    NOTE: Uses CESKInterpreter because Parallel is CESK-only.
+    """
+    engine = CESKInterpreter()
     delay = 0.5
     task_count = 100
 
@@ -109,10 +123,14 @@ async def test_parallel_many_long_tasks_finishes_under_one_second() -> None:
         return index
 
     @do
+    def make_worker(index: int) -> EffectGenerator[int]:
+        result = yield Await(sleep_and_return(index))
+        return result
+
+    @do
     def run_parallel() -> EffectGenerator[list[int]]:
-        return (
-            yield Parallel(*(sleep_and_return(i) for i in range(task_count)))
-        )
+        programs = [make_worker(i) for i in range(task_count)]
+        return (yield Parallel(*programs))
 
     start = time.perf_counter()
     result = await engine.run_async(run_parallel())

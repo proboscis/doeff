@@ -21,10 +21,10 @@ from doeff import (
     io,
     listen,
     modify,
-    parallel,
     put,
     step,
     tell,
+    Gather,
 )
 from doeff.program import GeneratorProgram
 
@@ -204,20 +204,30 @@ async def test_nested_monad_operations():
 
 @pytest.mark.asyncio
 async def test_parallel_async_operations():
-    """Test handling many parallel async operations."""
+    """Test handling many parallel async operations using Gather."""
+
+    async def quick_operation(n: int) -> int:
+        """Quick async operation."""
+        await asyncio.sleep(0.0001)
+        return n
+
+    @do
+    def make_worker(n: int):
+        """Create a worker Program that awaits the async operation."""
+        result = yield await_(quick_operation(n))
+        return result
 
     def parallel_program() -> Generator[Effect, Any, list[int]]:
-        """Program with many parallel operations."""
+        """Program with many parallel operations using Gather."""
         results = []
 
         # Process in batches
         for batch in range(100):  # 100 batches
             yield tell(f"Processing batch {batch}")
 
-            # Parallel operations
-            batch_results = yield parallel(
-                *[quick_operation(batch * 10 + i) for i in range(10)]
-            )
+            # Gather runs Programs concurrently
+            workers = [make_worker(batch * 10 + i) for i in range(10)]
+            batch_results = yield Gather(*workers)
             results.extend(batch_results)
 
             # Update state
@@ -228,11 +238,6 @@ async def test_parallel_async_operations():
                 yield step(len(results), meta={"batch": batch})
 
         return results
-
-    async def quick_operation(n: int) -> int:
-        """Quick async operation."""
-        await asyncio.sleep(0.0001)
-        return n
 
     engine = ProgramInterpreter()
     context = ExecutionContext()

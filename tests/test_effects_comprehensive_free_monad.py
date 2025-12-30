@@ -21,12 +21,12 @@ from doeff import (
     EffectGenerator,
     ExecutionContext,
     Fail,
+    Gather,
     Get,
     Listen,
     Local,
     Log,
     Modify,
-    Parallel,
     Print,
     ProgramInterpreter,
     Put,
@@ -42,7 +42,6 @@ from doeff import (
     io,
     listen,
     modify,
-    parallel,
     print_,
     put,
     step,
@@ -373,24 +372,34 @@ async def test_future_await_effect():  # noqa: PINJ040
 
 @pytest.mark.asyncio
 async def test_future_parallel_effect():  # noqa: PINJ040
-    """Test Parallel effect for concurrent async operations."""
+    """Test Gather effect for concurrent async operations.
+
+    Note: The old Parallel effect (FutureParallelEffect) has been replaced
+    with Gather which works with Programs, not raw awaitables.
+    """
 
     async def async_process(n: int) -> int:
         await asyncio.sleep(0.01)
         return n * 2
 
     @do
+    def make_worker(n: int) -> EffectGenerator[int]:
+        """Wrap async operation in a Program."""
+        result = yield Await(async_process(n))
+        return result
+
+    @do
     def program() -> EffectGenerator[tuple]:
-        # Test with Effects API
-        results1 = yield Parallel(
-            async_process(1), async_process(2), async_process(3)
+        # Test with Gather (concurrent execution of Programs)
+        results1 = yield Gather(
+            make_worker(1), make_worker(2), make_worker(3)
         )
 
-        # Test with capitalized alias
-        results2 = yield Parallel(async_process(4), async_process(5))
+        # Test another batch
+        results2 = yield Gather(make_worker(4), make_worker(5))
 
-        # Test with lowercase (backwards compatibility)
-        results3 = yield parallel(async_process(6), async_process(7), async_process(8))
+        # Test third batch
+        results3 = yield Gather(make_worker(6), make_worker(7), make_worker(8))
 
         return (results1, results2, results3)
 
@@ -696,11 +705,16 @@ async def test_all_effects_integration():  # noqa: PINJ040
 
         data = yield Await(fetch())
 
-        # Parallel
+        # Gather (parallel execution of Programs)
         async def process(n: int) -> int:
             return n * 2
 
-        results = yield Parallel(process(1), process(2), process(3))
+        @do
+        def process_worker(n: int) -> EffectGenerator[int]:
+            result = yield Await(process(n))
+            return result
+
+        results = yield Gather(process_worker(1), process_worker(2), process_worker(3))
 
         # State modification
         final_count = yield Modify("counter", lambda x: x + sum(results))

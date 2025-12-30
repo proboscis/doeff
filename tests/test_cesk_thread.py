@@ -8,7 +8,8 @@ import threading
 
 import pytest
 
-from doeff import EffectGenerator, Get, Parallel, Put, Thread, do
+from doeff import EffectGenerator, Get, Put, Thread, do
+from doeff.cesk import Parallel
 from doeff.cesk_adapter import CESKInterpreter
 
 
@@ -88,25 +89,26 @@ async def test_thread_effect_daemon_sets_daemon_flag() -> None:
 async def test_thread_effect_can_return_awaitable_for_parallelism() -> None:
     """Thread with await_result=False returns awaitable for parallel execution.
 
-    NOTE: Unlike ProgramInterpreter which uses mutable context and can merge
-    state when the awaitable is eventually awaited, CESK uses immutable stores.
-    State from async threads (await_result=False) is NOT merged back.
-    Only the return values are collected by Parallel.
+    NOTE: CESK Parallel effect takes Programs, not awaitables. The old FutureParallelEffect
+    that accepted awaitables has been removed. This test now uses individual Await effects.
     """
     engine = CESKInterpreter()
 
     @do
     def worker(identifier: str) -> EffectGenerator[str]:
-        # NOTE: This Put won't be visible to parent with await_result=False
         yield Put(identifier, threading.current_thread().name)
         return identifier
 
     @do
     def program() -> EffectGenerator[list[str]]:
+        # Use individual Thread effects with await_result=True for parallel execution
+        from doeff import Await
         future_one = yield Thread(worker("first"), strategy="pooled", await_result=False)
         future_two = yield Thread(worker("second"), strategy="dedicated", await_result=False)
-        results = yield Parallel(future_one, future_two)
-        return list(results)
+        # Await each future individually since CESK Parallel takes Programs, not awaitables
+        result_one = yield Await(future_one)
+        result_two = yield Await(future_two)
+        return [result_one, result_two]
 
     result = await engine.run_async(program())
     assert result.is_ok

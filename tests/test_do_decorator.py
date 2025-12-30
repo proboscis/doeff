@@ -10,6 +10,7 @@ import pytest
 from doeff import (
     Effect,
     ExecutionContext,
+    Gather,
     Program,
     ProgramInterpreter,
     annotate,
@@ -21,7 +22,6 @@ from doeff import (
     get,
     listen,
     modify,
-    parallel,
     print_,
     put,
     step,
@@ -67,8 +67,13 @@ def complex_program(name: str) -> Generator[Effect, Any, dict]:
         risky_operation(), lambda e: safe_recovery(e)
     )
 
-    # Parallel async
-    results = yield parallel(process_item(1), process_item(2), process_item(3))
+    # Parallel async using Gather with Programs
+    @do
+    def item_worker(item: int) -> Generator[Effect, Any, int]:
+        result = yield await_(process_item(item))
+        return result
+
+    results = yield Gather(item_worker(1), item_worker(2), item_worker(3))
 
     # State modification
     yield modify("counter", lambda x: x + sum(results))
