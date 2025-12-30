@@ -1501,7 +1501,7 @@ async def run(
     env: Environment | dict[Any, Any] | None = None,
     store: Store | None = None,
     *,
-    storage: "DurableStorage | None" = None,
+    storage: "DurableStorage | None | object" = ...,
     on_step: "OnStepCallback | None" = None,
 ) -> Result[T]:
     """
@@ -1516,14 +1516,19 @@ async def run(
         program: The program to execute.
         env: Initial environment (default: empty).
         store: Initial store (default: empty).
-        storage: Optional durable storage backend for cache effects.
+        storage: Durable storage backend for cache effects (default: SQLiteStorage(".doeff-cache.db")).
+                 Pass None to disable storage.
         on_step: Optional callback invoked after each interpreter step.
 
     Returns:
         Ok(value) or Err(exception).
     """
     from doeff.cesk_observability import OnStepCallback
-    from doeff.storage import DurableStorage
+    from doeff.storage import DurableStorage, SQLiteStorage
+
+    # Use default SQLiteStorage if not provided
+    if storage is ...:
+        storage = SQLiteStorage(".doeff-cache.db")
 
     # Coerce env to FrozenDict to ensure immutability
     if env is None:
@@ -1547,7 +1552,7 @@ def run_sync(
     env: Environment | None = None,
     store: Store | None = None,
     *,
-    storage: "DurableStorage | None" = None,
+    storage: "DurableStorage | None | object" = ...,
     on_step: "OnStepCallback | None" = None,
 ) -> Result[T]:
     """
@@ -1557,7 +1562,8 @@ def run_sync(
         program: The program to execute.
         env: Initial environment (default: empty).
         store: Initial store (default: empty).
-        storage: Optional durable storage backend for cache effects (default: InMemoryStorage).
+        storage: Durable storage backend for cache effects (default: SQLiteStorage(".doeff-cache.db")).
+                 Pass None to disable storage.
         on_step: Optional callback invoked after each interpreter step.
 
     Returns:
