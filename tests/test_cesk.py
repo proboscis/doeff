@@ -47,8 +47,7 @@ from doeff.cesk import (
     # Step results
     Done,
     Failed,
-    NeedAsync,
-    NeedParallel,
+    Suspended,  # Continuation-based suspension (replaces NeedAsync/NeedParallel)
     # Classification
     is_control_flow_effect,
     is_pure_effect,
@@ -323,8 +322,8 @@ class TestStepControlFlowEffects:
         assert isinstance(result.K[0], CatchFrame)
         assert result.K[0].handler is handler
 
-    def test_recover_effect_pushes_recover_frame(self):
-        """ResultRecoverEffect pushes RecoverFrame onto K."""
+    def test_recover_effect_pushes_catch_frame(self):
+        """ResultRecoverEffect pushes CatchFrame with fallback handler onto K."""
         effect = ResultRecoverEffect(
             sub_program=Program.pure(42),
             fallback=0,
@@ -341,7 +340,8 @@ class TestStepControlFlowEffects:
         assert isinstance(result, CEKSState)
         assert isinstance(result.C, ProgramControl)
         assert len(result.K) == 1
-        assert isinstance(result.K[0], RecoverFrame)
+        # Recover uses CatchFrame with fallback handler (not RecoverFrame)
+        assert isinstance(result.K[0], CatchFrame)
 
     def test_local_effect_updates_environment(self):
         """LocalEffect updates environment and pushes LocalFrame."""
@@ -738,6 +738,84 @@ class TestDoDecoratorIntegration:
 
         assert isinstance(result, Ok)
         assert result.value == "caught keyerror"
+
+
+class TestProgramParallelEffect:
+    """Test ProgramParallelEffect for program-level parallelism."""
+
+    @pytest.mark.asyncio
+    async def test_program_parallel_effect_basic(self):
+        """ProgramParallelEffect runs programs in parallel."""
+        from doeff.cesk import ProgramParallelEffect
+
+        @do
+        def program():
+            results = yield ProgramParallelEffect(
+                programs=(
+                    Program.pure(1),
+                    Program.pure(2),
+                    Program.pure(3),
+                )
+            )
+            return results
+
+        result = await run(program())
+
+        assert isinstance(result, Ok)
+        assert result.value == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_program_parallel_effect_empty(self):
+        """ProgramParallelEffect with empty programs returns empty list."""
+        from doeff.cesk import ProgramParallelEffect
+
+        @do
+        def program():
+            results = yield ProgramParallelEffect(programs=())
+            return results
+
+        result = await run(program())
+
+        assert isinstance(result, Ok)
+        assert result.value == []
+
+    @pytest.mark.asyncio
+    async def test_program_parallel_effect_with_state_merging(self):
+        """ProgramParallelEffect merges child state back in program order."""
+        from doeff.cesk import ProgramParallelEffect
+
+        @do
+        def child1():
+            yield state.Put("x", 100)
+            yield state.Put("from_child1", "yes")
+            return (yield state.Get("x"))
+
+        @do
+        def child2():
+            yield state.Put("x", 200)  # Overwrites child1's x (program order: last wins)
+            yield state.Put("from_child2", "yes")
+            return (yield state.Get("x"))
+
+        @do
+        def program():
+            yield state.Put("x", 0)
+            results = yield ProgramParallelEffect(
+                programs=(child1(), child2())
+            )
+            # After merge: x=200 (child2 last), both child keys present
+            parent_x = yield state.Get("x")
+            c1 = yield state.Get("from_child1")
+            c2 = yield state.Get("from_child2")
+            return (results, parent_x, c1, c2)
+
+        result = await run(program())
+
+        assert isinstance(result, Ok)
+        results, parent_x, c1, c2 = result.value
+        assert results == [100, 200]
+        assert parent_x == 200  # Last-write-wins in program order
+        assert c1 == "yes"  # Merged from child1
+        assert c2 == "yes"  # Merged from child2
 
 
 if __name__ == "__main__":
