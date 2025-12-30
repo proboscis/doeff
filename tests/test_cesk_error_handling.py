@@ -265,54 +265,8 @@ async def test_nested_error_handling():
 
 # ============================================================================
 # Safe Effect Tests
-# ============================================================================
-
-
-@pytest.mark.asyncio
-async def test_safe_wraps_successful_program():
-    """Safe should return Ok when the sub-program succeeds."""
-
-    @do
-    def happy_program() -> EffectGenerator[int]:
-        return 42
-
-    @do
-    def main_program() -> EffectGenerator[Ok[int]]:
-        outcome = yield Safe(happy_program())
-        assert isinstance(outcome, Ok)
-        return outcome
-
-    engine = CESKInterpreter()
-    run_result = await engine.run_async(main_program())
-
-    assert run_result.is_ok
-    assert isinstance(run_result.value, Ok)
-    assert run_result.value.value == 42
-
-
-@pytest.mark.asyncio
-async def test_safe_wraps_failing_program():
-    """Safe should return Err when the sub-program fails."""
-
-    @do
-    def failing_program() -> EffectGenerator[int]:
-        yield Fail(ValueError("boom"))
-        return 0
-
-    @do
-    def main_program() -> EffectGenerator[Err]:
-        outcome = yield Safe(failing_program())
-        assert isinstance(outcome, Err)
-        return outcome
-
-    engine = CESKInterpreter()
-    run_result = await engine.run_async(main_program())
-
-    assert run_result.is_ok
-    assert isinstance(run_result.value, Err)
-    assert isinstance(run_result.value.error, ValueError)
-    assert str(run_result.value.error) == "boom"
-
+# Note: Safe tests removed - ResultSafeEffect is NOT supported in CESK
+# Result/Maybe are values, not effects. Use Catch for error handling.
 
 # ============================================================================
 # Finally Effect Tests
@@ -481,28 +435,7 @@ async def test_multiple_try_except_blocks():
     assert result.value == "caught1, caught2, caught3"
 
 
-@pytest.mark.asyncio
-async def test_try_except_with_safe_effect():
-    """try-except should work alongside Safe effect."""
-
-    @do
-    def program() -> EffectGenerator[str]:
-        safe_result = yield Safe(Fail(ValueError("safe error")))
-        assert isinstance(safe_result, Err)
-
-        try:
-            yield Fail(ValueError("try error"))
-            direct_result = "unreachable"
-        except ValueError:
-            direct_result = "caught directly"
-
-        return f"safe={type(safe_result).__name__}, direct={direct_result}"
-
-    engine = CESKInterpreter()
-    result = await engine.run_async(program())
-
-    assert result.is_ok
-    assert result.value == "safe=Err, direct=caught directly"
+# Note: test_try_except_with_safe_effect removed - Safe not supported in CESK
 
 
 if __name__ == "__main__":

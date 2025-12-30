@@ -22,7 +22,6 @@ to the actual doeff API effects:
 
 | ORCH_PROMPT Spec     | doeff API Effect           | Implementation          |
 |----------------------|----------------------------|-------------------------|
-| Recover (Ok/Err)     | ResultSafeEffect           | RecoverFrame            |
 | Catch (handler)      | ResultCatchEffect          | CatchFrame              |
 | Recover (fallback)   | ResultRecoverEffect        | CatchFrame + fallback   |
 | Parallel (programs)  | ProgramParallelEffect      | Suspended(effect,...)   |
@@ -30,6 +29,14 @@ to the actual doeff API effects:
 | Thread (callable)    | ThreadEffect               | ThreadPoolExecutor      |
 | Spawn (program)      | SpawnEffect                | Async child machine     |
 | Tell (message)       | WriterTellEffect           | Single message append   |
+
+Design Note: Result/Maybe as Values
+-----------------------------------
+Domain-level Result/Maybe types are treated as VALUES, not effects.
+The interpreter's Error/exception handling is kept separate.
+Therefore, ResultSafeEffect (which wraps in Ok/Err) is NOT supported
+in the CESK core. Users should use Catch for error handling and construct
+Result values explicitly if needed at domain boundaries.
 
 Suspension Model (Continuation-based):
 -------------------------------------
@@ -102,9 +109,13 @@ class ProgramParallelEffect(EffectBase):
     """
     Effect for running programs in parallel.
 
-    This is the CESK machine's native parallel effect that returns NeedParallel.
-    Each child program runs with a deep copy of the store; results are collected.
-    First error propagates; store modifications are NOT merged back.
+    This is the CESK machine's native parallel effect.
+    Each child program runs with a deep copy of the store.
+
+    State merging semantics:
+    - On success: child stores are merged back in PROGRAM ORDER (not completion order)
+    - On error: NO merge occurs (all-or-nothing semantics)
+    - Merge logic: child adds new keys; parent wins on conflict; logs appended
 
     Inherits from EffectBase to satisfy the "programs yield only Effect or Program" invariant.
 
@@ -185,17 +196,6 @@ class CatchFrame:
 
 
 @dataclass(frozen=True)
-class RecoverFrame:
-    """Error recovery - always produces a Result type.
-
-    On success: returns Ok(value)
-    On error: returns Err(ex) (no handler - use Catch for error handling)
-    """
-
-    saved_env: Environment
-
-
-@dataclass(frozen=True)
 class FinallyFrame:
     """Cleanup on exit - runs cleanup program on both success and error.
 
@@ -244,8 +244,14 @@ class InterceptFrame:
     Non-control-flow effects get transformed as they bubble up.
     Control flow effects pass through unchanged.
 
-    First-intercept-wins: innermost InterceptFrame always handles effects;
-    outer intercepts NEVER see them (even if no transform matches).
+    Chain semantics (inner → outer):
+    - All InterceptFrames in K are traversed in order
+    - Each frame's transforms are applied to the (possibly transformed) effect
+    - First transform returning Effect/Program within a frame wins
+    - Outer interceptors see effects that may have been transformed by inner ones
+    - If all transforms return None → original effect unchanged
+
+    This enables composable interception.
     """
 
     transforms: tuple[Callable[["Effect"], "Effect | Program | None"], ...]
@@ -279,7 +285,6 @@ class GatherFrame:
 Frame: TypeAlias = (
     ReturnFrame
     | CatchFrame
-    | RecoverFrame
     | FinallyFrame
     | LocalFrame
     | RetryFrame
@@ -336,16 +341,25 @@ class CESKState:
 
 @dataclass(frozen=True)
 class Done:
-    """Terminal: computation completed successfully."""
+    """Terminal: computation completed successfully.
+
+    Carries final store for correctness - state from the last pure effect
+    or merge is preserved in the terminal result.
+    """
 
     value: Any
+    store: Store
 
 
 @dataclass(frozen=True)
 class Failed:
-    """Terminal: computation failed with exception."""
+    """Terminal: computation failed with exception.
+
+    Carries final store for correctness - state at error point is preserved.
+    """
 
     exception: BaseException
+    store: Store
 
 
 @dataclass(frozen=True)
@@ -393,17 +407,17 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
         ResultFinallyEffect,
         ResultRecoverEffect,
         ResultRetryEffect,
-        ResultSafeEffect,
         WriterListenEffect,
     )
 
+    # Note: ResultSafeEffect is NOT included - Result/Maybe are values, not effects
+    # Users should use Catch for error handling
     return isinstance(
         effect,
         (
             ResultCatchEffect,
             ResultRecoverEffect,
             ResultFinallyEffect,
-            ResultSafeEffect,
             ResultFailEffect,
             ResultRetryEffect,
             LocalEffect,
@@ -589,6 +603,31 @@ def apply_transforms(
     return effect  # No transform matched, return original
 
 
+def apply_intercept_chain(K: Kontinuation, effect: "Effect") -> "Effect | Program":
+    """
+    Apply intercept transforms from ALL InterceptFrames in the continuation stack.
+
+    Chain semantics (inner → outer):
+    - Traverse K looking for InterceptFrames
+    - For each InterceptFrame, apply its transforms to current effect
+    - First transform returning Effect/Program replaces current effect
+    - Continue to next InterceptFrame with the (possibly transformed) effect
+    - If all transforms return None → original effect unchanged
+
+    This enables composable interception: outer interceptors see effects
+    that may have been transformed by inner interceptors.
+    """
+    current = effect
+    for frame in K:
+        if isinstance(frame, InterceptFrame):
+            for transform in frame.transforms:
+                result = transform(current)
+                if result is not None:
+                    current = result
+                    break  # This frame matched; move to next frame
+    return current
+
+
 # ============================================================================
 # State Merging
 # ============================================================================
@@ -720,10 +759,10 @@ def step(state: CESKState) -> StepResult:
     # =========================================================================
 
     if isinstance(C, Value) and not K:
-        return Done(C.v)
+        return Done(C.v, S)
 
     if isinstance(C, Error) and not K:
-        return Failed(C.ex)
+        return Failed(C.ex, S)
 
     # =========================================================================
     # CONTROL FLOW EFFECTS (before generic effect handling)
@@ -741,9 +780,9 @@ def step(state: CESKState) -> StepResult:
             ResultFinallyEffect,
             ResultRecoverEffect,
             ResultRetryEffect,
-            ResultSafeEffect,
             WriterListenEffect,
         )
+        # Note: ResultSafeEffect is NOT imported - Result/Maybe are values, not effects
         from doeff.effects.future import FutureParallelEffect
 
         # ResultFailEffect - immediately transition to Error state
@@ -782,10 +821,8 @@ def step(state: CESKState) -> StepResult:
             )
 
         if isinstance(effect, ResultRecoverEffect):
-            # Note: doeff API naming differs from ORCH_PROMPT spec:
-            # - ORCH_PROMPT "Recover" = wrap in Ok/Err → doeff "ResultSafeEffect" → RecoverFrame
-            # - doeff "ResultRecoverEffect" = fallback semantics → CatchFrame with fallback handler
-            # This implementation correctly matches the doeff API.
+            # ResultRecoverEffect = fallback semantics → CatchFrame with fallback handler
+            # (This is exception recovery/fallback, NOT Result type creation)
             fallback = effect.fallback
 
             def make_fallback_handler(fb):
@@ -846,14 +883,8 @@ def step(state: CESKState) -> StepResult:
                 K=[CatchFrame(make_fallback_handler(fallback), E)] + K,
             )
 
-        if isinstance(effect, ResultSafeEffect):
-            # Safe also uses RecoverFrame as it wraps in Ok/Err
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[RecoverFrame(saved_env=E)] + K,
-            )
+        # Note: ResultSafeEffect is NOT handled - Result/Maybe are values, not effects
+        # Users should use Catch + explicit Ok/Err construction at domain boundaries
 
         if isinstance(effect, ResultFinallyEffect):
             cleanup = effect.finalizer
@@ -939,15 +970,12 @@ def step(state: CESKState) -> StepResult:
 
         # =====================================================================
         # EFFECT INTERCEPTION (before generic effect handling)
+        # Chain semantics: apply transforms from ALL InterceptFrames (inner→outer)
         # =====================================================================
 
         if not is_control_flow_effect(effect) and has_intercept_frame(K):
-            idx = find_intercept_frame_index(K)
-            intercept_frame = K[idx]
-            assert isinstance(intercept_frame, InterceptFrame)
-
             try:
-                transformed = apply_transforms(intercept_frame.transforms, effect)
+                transformed = apply_intercept_chain(K, effect)
             except Exception as ex:
                 return CESKState(C=Error(ex), E=E, S=S, K=K)
 
@@ -1124,9 +1152,7 @@ def step(state: CESKState) -> StepResult:
             # Value passes through CatchFrame unchanged, restore env
             return CESKState(C=Value(C.v), E=frame.saved_env, S=S, K=K_rest)
 
-        if isinstance(frame, RecoverFrame):
-            # Wrap value in Ok
-            return CESKState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
+        # Note: RecoverFrame removed - Result/Maybe are values, not effects
 
         if isinstance(frame, FinallyFrame):
             # Run cleanup, then return value
@@ -1228,9 +1254,7 @@ def step(state: CESKState) -> StepResult:
                 # Handler itself raised - propagate that error
                 return CESKState(C=Error(handler_ex), E=frame.saved_env, S=S, K=K_rest)
 
-        if isinstance(frame, RecoverFrame):
-            # Wrap error in Err
-            return CESKState(C=Value(Err(C.ex)), E=frame.saved_env, S=S, K=K_rest)
+        # Note: RecoverFrame removed - Result/Maybe are values, not effects
 
         if isinstance(frame, FinallyFrame):
             # Run cleanup, then re-raise
@@ -1580,10 +1604,10 @@ async def _run_internal(
         result = step(state)
 
         if isinstance(result, Done):
-            return Ok(result.value), state.S
+            return Ok(result.value), result.store
 
         if isinstance(result, Failed):
-            return Err(result.exception), state.S
+            return Err(result.exception), result.store
 
         if isinstance(result, Suspended):
             # Async boundary - use continuation-based resumption
@@ -1704,7 +1728,6 @@ __all__ = [
     "Frame",
     "ReturnFrame",
     "CatchFrame",
-    "RecoverFrame",
     "FinallyFrame",
     "LocalFrame",
     "RetryFrame",
@@ -1733,6 +1756,7 @@ __all__ = [
     "InterpreterInvariantError",
     # Transform
     "apply_transforms",
+    "apply_intercept_chain",
     # State merging
     "merge_store",
     # Step function
