@@ -594,19 +594,29 @@ def apply_transforms(
 # ============================================================================
 
 
-def merge_store(parent_store: Store, child_store: Store) -> Store:
+def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store | None = None) -> Store:
     """Merge child store into parent after child completion.
 
-    Per spec:
-    - User keys: last-write-wins (child values overwrite parent)
+    Merge semantics:
+    - User keys: child can ADD new keys; for existing keys, parent wins
+      (parent may have updated after spawn, child's snapshot is stale)
     - __log__: child logs are APPENDED to parent log
     - __memo__: child entries are MERGED (child overwrites on conflict)
+
+    Args:
+        parent_store: Current parent store state
+        child_store: Child's final store state
+        child_snapshot: Optional - child's initial snapshot (for detecting new keys)
     """
     merged = {**parent_store}
 
-    # Merge user keys (last-write-wins)
+    # Merge user keys - only ADD new keys from child, don't overwrite parent
+    # This ensures parent's updates after spawn are preserved
     for key, value in child_store.items():
-        if not key.startswith("__"):
+        if key.startswith("__"):
+            continue
+        # Only add if key doesn't exist in parent
+        if key not in parent_store:
             merged[key] = value
 
     # Append logs
@@ -1454,13 +1464,17 @@ async def handle_effectful(
                 # On error: NO state merge (error propagates, parent store unchanged)
                 raise result.error
 
-            # On success: merge child's final store into parent
+            # On success: merge child's final store into parent (ONCE)
             # The _state_snapshot holds reference to final_store_holder
             final_store_holder = task._state_snapshot
             if isinstance(final_store_holder, dict) and "store" in final_store_holder:
                 child_final_store = final_store_holder.get("store")
-                if child_final_store is not None:
+                # Check if we've already merged (avoid double merge on multiple joins)
+                already_merged = final_store_holder.get("_merged", False)
+                if child_final_store is not None and not already_merged:
                     merged_store = merge_store(store, child_final_store)
+                    # Mark as merged to prevent duplicate merge on second join
+                    final_store_holder["_merged"] = True
                 else:
                     merged_store = store
             else:
