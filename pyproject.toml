@@ -38,7 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 pinjected = ["doeff-pinjected; python_version < '3.14'"]
-ray = ["ray>=2.0.0"]
+ray = ["ray>=2.0.0; python_version < '3.14'"]
 
 [project.scripts]
 doeff = "doeff.__main__:main"
@@ -95,7 +95,7 @@ disable = ["DOEFF013"]  # Prefer Maybe Monad - intentionally using Optional/None
 dev = [
     "pytest>=8.1.1",
     "pytest-asyncio>=0.24.0",
-    "ray>=2.0.0",
+    "ray>=2.0.0; python_version < '3.14'",
     "ruff>=0.8.0",
     "pyright>=1.1.0",
     "pillow>=11.3.0",
