@@ -1404,55 +1404,124 @@ async def handle_effectful(
         # Child gets deep copy of store; starts with fresh K
         child_store = copy.deepcopy(store)
         child_env = env
-
-        def run_in_thread():
-            """Run async interpreter in a new event loop in this thread."""
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                return loop.run_until_complete(run(effect.program, child_env, child_store))
-            finally:
-                loop.close()
-
-        # Get or create executor based on strategy
-        loop = asyncio.get_running_loop()
         strategy = effect.strategy
+        loop = asyncio.get_running_loop()
+
+        def run_in_thread() -> tuple[Result, Store]:
+            """Run async interpreter in a new event loop in this thread.
+
+            Returns (result, final_store) for state merging.
+            """
+            thread_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(thread_loop)
+            try:
+                return thread_loop.run_until_complete(
+                    _run_internal(effect.program, child_env, child_store)
+                )
+            finally:
+                thread_loop.close()
+
+        def merge_thread_state(parent_store: Store, child_store: Store) -> Store:
+            """Merge thread state: child state replaces parent (except logs append).
+
+            Unlike Spawn (where child adds new keys only), Thread synchronously
+            blocks and its state should fully replace parent state.
+            """
+            merged = {}
+            # User keys: child wins completely
+            for key, value in child_store.items():
+                if not key.startswith("__"):
+                    merged[key] = value
+            # Also include parent keys not in child
+            for key, value in parent_store.items():
+                if not key.startswith("__") and key not in merged:
+                    merged[key] = value
+
+            # Append logs (same as spawn)
+            parent_log = parent_store.get("__log__", [])
+            child_log = child_store.get("__log__", [])
+            if child_log:
+                merged["__log__"] = list(parent_log) + list(child_log)
+            elif parent_log:
+                merged["__log__"] = list(parent_log)
+
+            # Merge memo
+            parent_memo = parent_store.get("__memo__", {})
+            child_memo = child_store.get("__memo__", {})
+            if parent_memo or child_memo:
+                merged["__memo__"] = {**parent_memo, **child_memo}
+
+            return merged
 
         if strategy == "pooled":
-            # Use shared pool (module-level singleton)
+            # Use shared pool (module-level singleton) with ThreadPoolExecutor
             executor = _get_shared_executor()
-            owns_executor = False
-        elif strategy == "daemon":
-            # Daemon thread - use dedicated executor but don't wait for cleanup
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cesk-daemon")
-            owns_executor = True
-        else:  # "dedicated" or default
-            # Dedicated thread per call
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cesk-dedicated")
-            owns_executor = True
 
-        if effect.await_result:
-            # Wait for result from child machine
-            try:
-                result = await loop.run_in_executor(executor, run_in_thread)
-            finally:
-                if owns_executor:
-                    executor.shutdown(wait=False)
-            if isinstance(result, Ok):
-                return (result.value, store)
-            elif isinstance(result, Err):
-                raise result.error
+            if effect.await_result:
+                result, child_final_store = await loop.run_in_executor(
+                    executor, run_in_thread
+                )
+                if isinstance(result, Ok):
+                    merged_store = merge_thread_state(store, child_final_store)
+                    return (result.value, merged_store)
+                elif isinstance(result, Err):
+                    raise result.error
+                else:
+                    return (result, store)
             else:
-                return (result, store)
+                # Fire and forget for pooled - return unwrapping awaitable
+                raw_future = loop.run_in_executor(executor, run_in_thread)
+
+                async def unwrap_thread_result():
+                    result, _ = await raw_future
+                    if isinstance(result, Ok):
+                        return result.value
+                    elif isinstance(result, Err):
+                        raise result.error
+                    return result
+
+                return (unwrap_thread_result(), store)
+
         else:
-            # Fire and forget - schedule shutdown after completion
-            future = loop.run_in_executor(executor, run_in_thread)
-            if owns_executor:
-                # Schedule cleanup when future completes
-                def cleanup_executor(fut):
-                    executor.shutdown(wait=False)
-                future.add_done_callback(cleanup_executor)
-            return (future, store)
+            # For dedicated/daemon: use threading.Thread directly to control daemon flag
+            is_daemon = strategy == "daemon"
+            future: asyncio.Future[tuple[Result, Store]] = loop.create_future()
+
+            def thread_target() -> None:
+                try:
+                    result = run_in_thread()
+                except BaseException as exc:
+                    loop.call_soon_threadsafe(future.set_exception, exc)
+                else:
+                    loop.call_soon_threadsafe(future.set_result, result)
+
+            thread = threading.Thread(
+                target=thread_target,
+                name=f"cesk-{'daemon' if is_daemon else 'dedicated'}",
+                daemon=is_daemon,
+            )
+            thread.start()
+
+            if effect.await_result:
+                result, child_final_store = await future
+                if isinstance(result, Ok):
+                    merged_store = merge_thread_state(store, child_final_store)
+                    return (result.value, merged_store)
+                elif isinstance(result, Err):
+                    raise result.error
+                else:
+                    return (result, store)
+            else:
+                # Return unwrapping awaitable for Parallel
+                async def unwrap_thread_result():
+                    result, _ = await future
+                    if isinstance(result, Ok):
+                        return result.value
+                    elif isinstance(result, Err):
+                        raise result.error
+                    return result
+
+                return (unwrap_thread_result(), store)
 
     if isinstance(effect, TaskJoinEffect):
         # Wait for spawned task to complete and merge state
