@@ -76,6 +76,7 @@ from collections.abc import Callable, Generator
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from types import EllipsisType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 from doeff._vendor import Err, FrozenDict, Ok, Result
@@ -1501,7 +1502,7 @@ async def run(
     env: Environment | dict[Any, Any] | None = None,
     store: Store | None = None,
     *,
-    storage: "DurableStorage | None | object" = ...,
+    storage: "DurableStorage | None | EllipsisType" = ...,
     on_step: "OnStepCallback | None" = None,
 ) -> Result[T]:
     """
@@ -1552,7 +1553,7 @@ def run_sync(
     env: Environment | None = None,
     store: Store | None = None,
     *,
-    storage: "DurableStorage | None | object" = ...,
+    storage: "DurableStorage | None | EllipsisType" = ...,
     on_step: "OnStepCallback | None" = None,
 ) -> Result[T]:
     """
