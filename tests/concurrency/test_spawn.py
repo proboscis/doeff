@@ -1,9 +1,11 @@
 """
-CESK interpreter tests for Spawn effect.
+Interpreter tests for Spawn effect.
 
-Adapted from test_spawn_effect.py - tests spawn/join with state merging.
-Note: CESK uses asyncio internally for all spawn operations.
+Tests spawn/join with state merging, parameterized to run against
+both CESK interpreter and ProgramInterpreter.
 """
+
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -18,13 +20,14 @@ from doeff import (
     Spawn,
     do,
 )
-from doeff.cesk_adapter import CESKInterpreter
+
+if TYPE_CHECKING:
+    from tests.conftest import Interpreter
 
 
 @pytest.mark.asyncio
-async def test_spawn_join_basic():
+async def test_spawn_join_basic(interpreter: "Interpreter"):
     """Basic spawn and join returns correct value."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[int]:
@@ -38,7 +41,7 @@ async def test_spawn_join_basic():
         status = yield Get("status")
         return result, status
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     # With state merging, parent should see worker's state
@@ -46,9 +49,8 @@ async def test_spawn_join_basic():
 
 
 @pytest.mark.asyncio
-async def test_spawn_multiple_tasks():
+async def test_spawn_multiple_tasks(interpreter: "Interpreter"):
     """Multiple spawn tasks run and merge state correctly."""
-    engine = CESKInterpreter()
 
     @do
     def worker(index: int) -> EffectGenerator[int]:
@@ -71,7 +73,7 @@ async def test_spawn_multiple_tasks():
 
         return results, states
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     # With state merging, all worker states should be visible
@@ -79,9 +81,8 @@ async def test_spawn_multiple_tasks():
 
 
 @pytest.mark.asyncio
-async def test_spawn_with_gather():
+async def test_spawn_with_gather(interpreter: "Interpreter"):
     """Spawn tasks can be gathered."""
-    engine = CESKInterpreter()
 
     @do
     def worker(index: int) -> EffectGenerator[int]:
@@ -94,16 +95,15 @@ async def test_spawn_with_gather():
             tasks.append((yield Spawn(worker(i))))
         return (yield Gather(*(task.join() for task in tasks)))
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == [0, 2, 4, 6]
 
 
 @pytest.mark.asyncio
-async def test_spawn_worker_gather_programs():
+async def test_spawn_worker_gather_programs(interpreter: "Interpreter"):
     """Spawned worker can use Gather internally."""
-    engine = CESKInterpreter()
 
     @do
     def subtask(index: int) -> EffectGenerator[int]:
@@ -123,7 +123,7 @@ async def test_spawn_worker_gather_programs():
         second = yield Get("sub_2")
         return total, first, second
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     # With state merging, subtask states should be visible
@@ -131,9 +131,8 @@ async def test_spawn_worker_gather_programs():
 
 
 @pytest.mark.asyncio
-async def test_spawn_recover_handles_failure():
+async def test_spawn_recover_handles_failure(interpreter: "Interpreter"):
     """Failed spawn can be recovered."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[int]:
@@ -145,16 +144,15 @@ async def test_spawn_recover_handles_failure():
         task = yield Spawn(worker())
         return (yield Recover(task.join(), fallback=42))
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == 42
 
 
 @pytest.mark.asyncio
-async def test_spawn_state_snapshot_read():
+async def test_spawn_state_snapshot_read(interpreter: "Interpreter"):
     """Spawned worker reads state at spawn time."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[str | None]:
@@ -169,7 +167,7 @@ async def test_spawn_state_snapshot_read():
         current = yield Get("flag")
         return seen, current
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     # Worker sees "before" (snapshot at spawn), parent keeps "after"
@@ -177,9 +175,8 @@ async def test_spawn_state_snapshot_read():
 
 
 @pytest.mark.asyncio
-async def test_spawn_state_merge_preserves_parent_updates():
+async def test_spawn_state_merge_preserves_parent_updates(interpreter: "Interpreter"):
     """State merging preserves both parent and worker updates."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[str]:
@@ -196,7 +193,7 @@ async def test_spawn_state_merge_preserves_parent_updates():
         worker_value = yield Get("worker_key")
         return value, counter, worker_value
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     # Parent's counter=2 should be preserved (set after spawn)
@@ -205,9 +202,8 @@ async def test_spawn_state_merge_preserves_parent_updates():
 
 
 @pytest.mark.asyncio
-async def test_spawn_exception_propagates():
+async def test_spawn_exception_propagates(interpreter: "Interpreter"):
     """Exceptions from spawned worker propagate correctly."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[int]:
@@ -219,16 +215,15 @@ async def test_spawn_exception_propagates():
         task = yield Spawn(worker())
         return (yield task.join())
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_err
-    assert "boom" in str(result._result.error)
+    assert "boom" in str(result.error)
 
 
 @pytest.mark.asyncio
-async def test_spawn_join_idempotent():
+async def test_spawn_join_idempotent(interpreter: "Interpreter"):
     """Joining same task multiple times returns same value."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[int]:
@@ -244,7 +239,7 @@ async def test_spawn_join_idempotent():
         value = yield Get("value")
         return first, second, value
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == (7, 7, "ok")
@@ -252,9 +247,8 @@ async def test_spawn_join_idempotent():
 
 
 @pytest.mark.asyncio
-async def test_spawn_nested_spawn():
+async def test_spawn_nested_spawn(interpreter: "Interpreter"):
     """Nested spawn works correctly."""
-    engine = CESKInterpreter()
 
     @do
     def inner() -> EffectGenerator[int]:
@@ -271,16 +265,15 @@ async def test_spawn_nested_spawn():
         task = yield Spawn(outer())
         return (yield task.join())
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     assert result.value == 4
 
 
 @pytest.mark.asyncio
-async def test_spawn_state_no_merge_on_error():
+async def test_spawn_state_no_merge_on_error(interpreter: "Interpreter"):
     """On worker error, state is NOT merged (all-or-nothing)."""
-    engine = CESKInterpreter()
 
     @do
     def worker() -> EffectGenerator[int]:
@@ -297,7 +290,7 @@ async def test_spawn_state_no_merge_on_error():
             pass
         return (yield Get("worker_state"))
 
-    result = await engine.run_async(program())
+    result = await interpreter.run_async(program())
 
     assert result.is_ok
     # Worker state should NOT be visible due to error (no merge)
