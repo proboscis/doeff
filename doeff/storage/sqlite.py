@@ -7,6 +7,7 @@ Thread-safe via connection-per-thread pattern.
 
 from __future__ import annotations
 
+import logging
 import pickle
 import sqlite3
 import threading
@@ -14,6 +15,8 @@ import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class SQLiteStorage:
@@ -135,5 +138,7 @@ class SQLiteStorage:
         """Close connection on garbage collection."""
         try:
             self.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
+        except Exception as e:
+            logger.debug(
+                f"Exception during cleanup of SQLiteStorage({self._db_path!r}): {e}"
+            )
