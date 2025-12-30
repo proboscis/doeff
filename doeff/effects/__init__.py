@@ -11,6 +11,16 @@ from .atomic import (
     atomic_update,
 )
 from .cache import CacheGet, CacheGetEffect, CachePut, CachePutEffect, cache_get, cache_put
+from .durable_cache import (
+    DurableCacheDelete,
+    DurableCacheExists,
+    DurableCacheGet,
+    DurableCachePut,
+    cachedelete,
+    cacheexists,
+    cacheget,
+    cacheput,
+)
 from .callstack import (
     ProgramCallFrame,
     ProgramCallFrameEffect,
@@ -121,6 +131,15 @@ __all__ = [
     "CacheGetEffect",
     "CachePut",
     "CachePutEffect",
+    # Durable cache effects
+    "DurableCacheDelete",
+    "DurableCacheExists",
+    "DurableCacheGet",
+    "DurableCachePut",
+    "cachedelete",
+    "cacheexists",
+    "cacheget",
+    "cacheput",
     "ProgramCallFrame",
     "ProgramCallFrameEffect",
     "ProgramCallStack",
