@@ -1465,8 +1465,10 @@ async def _run_internal(
                         result, "running", step_count, storage
                     )
                 on_step(snapshot)
-            except Exception:
-                pass  # Don't let callback errors break execution
+            except Exception as e:
+                import logging
+
+                logging.debug(f"on_step callback error: {e}")
 
         if isinstance(result, Done):
             return Ok(result.value), result.store
@@ -1557,7 +1559,7 @@ def run_sync(
         program: The program to execute.
         env: Initial environment (default: empty).
         store: Initial store (default: empty).
-        storage: Optional durable storage backend for cache effects (default: InMemoryStorage).
+        storage: Optional durable storage backend for cache effects (default: None).
         on_step: Optional callback invoked after each interpreter step.
 
     Returns:

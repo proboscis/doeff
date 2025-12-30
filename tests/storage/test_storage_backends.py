@@ -243,16 +243,46 @@ class TestSQLiteStorage:
 
 
 class TestDurableStorageProtocol:
-    """Tests that storage implementations satisfy the protocol."""
+    """Tests that storage implementations satisfy the protocol by testing method contracts."""
 
     def test_inmemory_satisfies_protocol(self) -> None:
-        """InMemoryStorage satisfies DurableStorage protocol."""
+        """InMemoryStorage satisfies DurableStorage protocol by testing all methods."""
         storage = InMemoryStorage()
+
+        # Test isinstance for runtime-checkable protocol
         assert isinstance(storage, DurableStorage)
 
+        # Test actual method contracts
+        storage.put("key", "value")
+        assert storage.get("key") == "value"
+        assert storage.exists("key") is True
+        assert "key" in list(storage.keys())
+        assert ("key", "value") in list(storage.items())
+        assert storage.delete("key") is True
+        assert storage.exists("key") is False
+        storage.put("a", 1)
+        storage.put("b", 2)
+        storage.clear()
+        assert list(storage.keys()) == []
+
     def test_sqlite_satisfies_protocol(self, tmp_path: Path) -> None:
-        """SQLiteStorage satisfies DurableStorage protocol."""
+        """SQLiteStorage satisfies DurableStorage protocol by testing all methods."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
+
+        # Test isinstance for runtime-checkable protocol
         assert isinstance(storage, DurableStorage)
+
+        # Test actual method contracts
+        storage.put("key", "value")
+        assert storage.get("key") == "value"
+        assert storage.exists("key") is True
+        assert "key" in list(storage.keys())
+        assert ("key", "value") in list(storage.items())
+        assert storage.delete("key") is True
+        assert storage.exists("key") is False
+        storage.put("a", 1)
+        storage.put("b", 2)
+        storage.clear()
+        assert list(storage.keys()) == []
         storage.close()
