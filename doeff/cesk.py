@@ -219,6 +219,25 @@ class LocalFrame:
 
 
 @dataclass(frozen=True)
+class RetryFrame:
+    """Retry failed computations up to max_attempts.
+
+    On success: value passes through
+    On error: if attempts < max_attempts, retry; else propagate error
+
+    Note: State is PRESERVED across retries (not reset). This matches the
+    ProgramInterpreter behavior where Retry can use accumulated state.
+    """
+
+    sub_program: "Program"
+    max_attempts: int
+    current_attempt: int
+    delay_ms: int
+    delay_strategy: Callable[[int, Exception | None], float | int | None] | None
+    saved_env: Environment
+
+
+@dataclass(frozen=True)
 class InterceptFrame:
     """Transform effects passing through. Marks interception boundary.
 
@@ -263,6 +282,7 @@ Frame: TypeAlias = (
     | RecoverFrame
     | FinallyFrame
     | LocalFrame
+    | RetryFrame
     | InterceptFrame
     | ListenFrame
     | GatherFrame
@@ -278,7 +298,7 @@ Kontinuation: TypeAlias = list[Frame]
 
 
 @dataclass
-class CEKSState:
+class CESKState:
     """Full CESK machine state."""
 
     C: Control
@@ -292,7 +312,7 @@ class CEKSState:
         program: "Program",
         env: Environment | dict[Any, Any] | None = None,
         store: Store | None = None,
-    ) -> "CEKSState":
+    ) -> "CESKState":
         """Create initial state for a program."""
         # Coerce env to FrozenDict to ensure immutability
         if env is None:
@@ -342,13 +362,13 @@ class Suspended:
 
     effect: "EffectBase"
     # Continuation: (value, new_store) -> next state
-    resume: Callable[[Any, Store], "CEKSState"]
+    resume: Callable[[Any, Store], "CESKState"]
     # Error continuation: exception -> next state (uses original store)
-    resume_error: Callable[[BaseException], "CEKSState"]
+    resume_error: Callable[[BaseException], "CESKState"]
 
 
 Terminal: TypeAlias = Done | Failed
-StepResult: TypeAlias = CEKSState | Terminal | Suspended
+StepResult: TypeAlias = CESKState | Terminal | Suspended
 
 
 # ============================================================================
@@ -369,8 +389,10 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
         InterceptEffect,
         LocalEffect,
         ResultCatchEffect,
+        ResultFailEffect,
         ResultFinallyEffect,
         ResultRecoverEffect,
+        ResultRetryEffect,
         ResultSafeEffect,
         WriterListenEffect,
     )
@@ -382,6 +404,8 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
             ResultRecoverEffect,
             ResultFinallyEffect,
             ResultSafeEffect,
+            ResultFailEffect,
+            ResultRetryEffect,
             LocalEffect,
             InterceptEffect,
             WriterListenEffect,
@@ -670,12 +694,12 @@ def to_generator(program: "Program") -> Generator[Any, Any, Any]:
 # ============================================================================
 
 
-def step(state: CEKSState) -> StepResult:
+def step(state: CESKState) -> StepResult:
     """
     Single step of the CESK machine.
 
     Returns:
-    - CEKSState for continued execution
+    - CESKState for continued execution
     - Terminal: Done(value) | Failed(exception) - computation complete
     - Suspend: NeedAsync(effect, E, S, K) | NeedParallel(programs, E, S, K) - pause for async
     """
@@ -703,15 +727,44 @@ def step(state: CEKSState) -> StepResult:
             InterceptEffect,
             LocalEffect,
             ResultCatchEffect,
+            ResultFailEffect,
             ResultFinallyEffect,
             ResultRecoverEffect,
+            ResultRetryEffect,
             ResultSafeEffect,
             WriterListenEffect,
         )
         from doeff.effects.future import FutureParallelEffect
 
+        # ResultFailEffect - immediately transition to Error state
+        if isinstance(effect, ResultFailEffect):
+            return CESKState(
+                C=Error(effect.exception),
+                E=E,
+                S=S,
+                K=K,
+            )
+
+        # ResultRetryEffect - push RetryFrame and run sub_program
+        if isinstance(effect, ResultRetryEffect):
+            return CESKState(
+                C=ProgramControl(effect.sub_program),
+                E=E,
+                S=S,
+                K=[
+                    RetryFrame(
+                        sub_program=effect.sub_program,
+                        max_attempts=effect.max_attempts,
+                        current_attempt=1,
+                        delay_ms=effect.delay_ms,
+                        delay_strategy=effect.delay_strategy,
+                        saved_env=E,
+                    )
+                ] + K,
+            )
+
         if isinstance(effect, ResultCatchEffect):
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
                 S=S,
@@ -776,7 +829,7 @@ def step(state: CEKSState) -> StepResult:
                     return Program.pure(fb)
                 return handler
 
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
                 S=S,
@@ -785,7 +838,7 @@ def step(state: CEKSState) -> StepResult:
 
         if isinstance(effect, ResultSafeEffect):
             # Safe also uses RecoverFrame as it wraps in Ok/Err
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
                 S=S,
@@ -806,7 +859,7 @@ def step(state: CEKSState) -> StepResult:
                     # Non-program, non-callable - wrap in pure program
                     from doeff.program import Program
                     cleanup = Program.pure(cleanup)
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
                 S=S,
@@ -816,7 +869,7 @@ def step(state: CEKSState) -> StepResult:
         if isinstance(effect, LocalEffect):
             # env_update is a dict to merge: E' = E | env_update
             new_env = E | FrozenDict(effect.env_update)
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.sub_program),
                 E=new_env,
                 S=S,
@@ -824,7 +877,7 @@ def step(state: CEKSState) -> StepResult:
             )
 
         if isinstance(effect, InterceptEffect):
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.program),
                 E=E,
                 S=S,
@@ -833,7 +886,7 @@ def step(state: CEKSState) -> StepResult:
 
         if isinstance(effect, WriterListenEffect):
             log_start = len(S.get("__log__", []))
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
                 S=S,
@@ -845,9 +898,9 @@ def step(state: CEKSState) -> StepResult:
             # Each program sees S modifications from previous (state accumulates)
             programs = list(effect.programs)
             if not programs:
-                return CEKSState(C=Value([]), E=E, S=S, K=K)
+                return CESKState(C=Value([]), E=E, S=S, K=K)
             first, *rest = programs
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(first),
                 E=E,
                 S=S,
@@ -859,14 +912,14 @@ def step(state: CEKSState) -> StepResult:
             # Each child gets deep copy of store; results collected; first error propagates
             programs = list(effect.programs)
             if not programs:
-                return CEKSState(C=Value([]), E=E, S=S, K=K)
+                return CESKState(C=Value([]), E=E, S=S, K=K)
             # Return Suspended with continuation for parallel execution
             return Suspended(
                 effect=effect,
-                resume=lambda results, new_store, E=E, K=K: CEKSState(
+                resume=lambda results, new_store, E=E, K=K: CESKState(
                     C=Value(results), E=E, S=new_store, K=K
                 ),
-                resume_error=lambda ex, E=E, S=S, K=K: CEKSState(
+                resume_error=lambda ex, E=E, S=S, K=K: CESKState(
                     C=Error(ex), E=E, S=S, K=K
                 ),
             )
@@ -886,7 +939,7 @@ def step(state: CEKSState) -> StepResult:
             try:
                 transformed = apply_transforms(intercept_frame.transforms, effect)
             except Exception as ex:
-                return CEKSState(C=Error(ex), E=E, S=S, K=K)
+                return CESKState(C=Error(ex), E=E, S=S, K=K)
 
             from doeff.program import ProgramBase
             from doeff.types import EffectBase
@@ -896,35 +949,35 @@ def step(state: CEKSState) -> StepResult:
 
             if isinstance(transformed, ProgramParallelEffect):
                 # Transform returned ProgramParallelEffect - handle as control-flow
-                return CEKSState(C=EffectControl(transformed), E=E, S=S, K=K)
+                return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
 
             if isinstance(transformed, EffectBase):
                 if is_control_flow_effect(transformed):
                     # Transform returned control-flow effect - handle it normally
-                    return CEKSState(C=EffectControl(transformed), E=E, S=S, K=K)
+                    return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
 
                 if is_pure_effect(transformed):
                     # Transform returned pure Effect - handle inline
                     try:
                         v, S_new = handle_pure(transformed, E, S)
-                        return CEKSState(C=Value(v), E=E, S=S_new, K=K)
+                        return CESKState(C=Value(v), E=E, S=S_new, K=K)
                     except Exception as ex:
-                        return CEKSState(C=Error(ex), E=E, S=S, K=K)
+                        return CESKState(C=Error(ex), E=E, S=S, K=K)
 
                 if is_effectful(transformed):
                     # Transform returned effectful Effect - async boundary
                     return Suspended(
                         effect=transformed,
-                        resume=lambda v, new_store, E=E, K=K: CEKSState(
+                        resume=lambda v, new_store, E=E, K=K: CESKState(
                             C=Value(v), E=E, S=new_store, K=K
                         ),
-                        resume_error=lambda ex, E=E, S=S, K=K: CEKSState(
+                        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
                             C=Error(ex), E=E, S=S, K=K
                         ),
                     )
 
                 # Effect not handled by any category - return as unhandled
-                return CEKSState(
+                return CESKState(
                     C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
                     E=E,
                     S=S,
@@ -933,10 +986,10 @@ def step(state: CEKSState) -> StepResult:
 
             if isinstance(transformed, ProgramBase):
                 # Transform returned Program (not Effect) - run it INSIDE intercept scope
-                return CEKSState(C=ProgramControl(transformed), E=E, S=S, K=K)
+                return CESKState(C=ProgramControl(transformed), E=E, S=S, K=K)
 
             # Unknown effect type - error
-            return CEKSState(
+            return CESKState(
                 C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
                 E=E,
                 S=S,
@@ -950,9 +1003,9 @@ def step(state: CEKSState) -> StepResult:
         if is_pure_effect(effect):
             try:
                 v, S_new = handle_pure(effect, E, S)
-                return CEKSState(C=Value(v), E=E, S=S_new, K=K)
+                return CESKState(C=Value(v), E=E, S=S_new, K=K)
             except Exception as ex:
-                return CEKSState(C=Error(ex), E=E, S=S, K=K)
+                return CESKState(C=Error(ex), E=E, S=S, K=K)
 
         # =====================================================================
         # EFFECTFUL EFFECTS → async boundary
@@ -961,10 +1014,10 @@ def step(state: CEKSState) -> StepResult:
         if is_effectful(effect):
             return Suspended(
                 effect=effect,
-                resume=lambda v, new_store, E=E, K=K: CEKSState(
+                resume=lambda v, new_store, E=E, K=K: CESKState(
                     C=Value(v), E=E, S=new_store, K=K
                 ),
-                resume_error=lambda ex, E=E, S=S, K=K: CEKSState(
+                resume_error=lambda ex, E=E, S=S, K=K: CESKState(
                     C=Error(ex), E=E, S=S, K=K
                 ),
             )
@@ -973,7 +1026,7 @@ def step(state: CEKSState) -> StepResult:
         # UNHANDLED EFFECTS → error
         # =====================================================================
 
-        return CEKSState(
+        return CESKState(
             C=Error(UnhandledEffectError(f"No handler for {type(effect).__name__}")),
             E=E,
             S=S,
@@ -999,14 +1052,14 @@ def step(state: CEKSState) -> StepResult:
                 control = ProgramControl(item)
             else:
                 # Unexpected yield type - programs must yield Effect or Program only
-                return CEKSState(
+                return CESKState(
                     C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
                     E=E,
                     S=S,
                     K=K,
                 )
 
-            return CEKSState(
+            return CESKState(
                 C=control,
                 E=E,
                 S=S,
@@ -1014,10 +1067,10 @@ def step(state: CEKSState) -> StepResult:
             )
         except StopIteration as e:
             # Program immediately returned without yielding
-            return CEKSState(C=Value(e.value), E=E, S=S, K=K)
+            return CESKState(C=Value(e.value), E=E, S=S, K=K)
         except Exception as ex:
             # Generator raised on first step
-            return CEKSState(C=Error(ex), E=E, S=S, K=K)
+            return CESKState(C=Error(ex), E=E, S=S, K=K)
 
     # =========================================================================
     # VALUE + Frames → propagate value through continuation
@@ -1039,44 +1092,48 @@ def step(state: CEKSState) -> StepResult:
                 elif isinstance(item, ProgramBase):
                     control = ProgramControl(item)
                 else:
-                    return CEKSState(
+                    return CESKState(
                         C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
                         E=frame.saved_env,
                         S=S,
                         K=K_rest,
                     )
 
-                return CEKSState(
+                return CESKState(
                     C=control,
                     E=frame.saved_env,
                     S=S,
                     K=[ReturnFrame(frame.generator, frame.saved_env)] + K_rest,
                 )
             except StopIteration as e:
-                return CEKSState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
             except Exception as ex:
-                return CEKSState(C=Error(ex), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=Error(ex), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, CatchFrame):
             # Value passes through CatchFrame unchanged, restore env
-            return CEKSState(C=Value(C.v), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(C=Value(C.v), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, RecoverFrame):
             # Wrap value in Ok
-            return CEKSState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, FinallyFrame):
             # Run cleanup, then return value
             cleanup_program = make_cleanup_then_return(frame.cleanup_program, C.v)
-            return CEKSState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, LocalFrame):
             # Restore environment
-            return CEKSState(C=Value(C.v), E=frame.restore_env, S=S, K=K_rest)
+            return CESKState(C=Value(C.v), E=frame.restore_env, S=S, K=K_rest)
+
+        if isinstance(frame, RetryFrame):
+            # Success - just pass value through (no retry needed)
+            return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
 
         if isinstance(frame, InterceptFrame):
             # Interception scope ends, pass value through
-            return CEKSState(C=Value(C.v), E=E, S=S, K=K_rest)
+            return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
 
         if isinstance(frame, ListenFrame):
             # Capture logs and return ListenResult per doeff API
@@ -1084,17 +1141,17 @@ def step(state: CEKSState) -> StepResult:
             captured = current_log[frame.log_start_index :]
             # Wrap captured logs in BoundedLog for ListenResult compatibility
             listen_result = ListenResult(value=C.v, log=BoundedLog(captured))
-            return CEKSState(C=Value(listen_result), E=E, S=S, K=K_rest)
+            return CESKState(C=Value(listen_result), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GatherFrame):
             if not frame.remaining_programs:
                 # All programs complete - restore saved_env
                 final_results = frame.collected_results + [C.v]
-                return CEKSState(C=Value(final_results), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=Value(final_results), E=frame.saved_env, S=S, K=K_rest)
 
             # More programs to run (sequential: S accumulates)
             next_prog, *rest = frame.remaining_programs
-            return CEKSState(
+            return CESKState(
                 C=ProgramControl(next_prog),
                 E=frame.saved_env,
                 S=S,
@@ -1123,14 +1180,14 @@ def step(state: CEKSState) -> StepResult:
                 elif isinstance(item, ProgramBase):
                     control = ProgramControl(item)
                 else:
-                    return CEKSState(
+                    return CESKState(
                         C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
                         E=frame.saved_env,
                         S=S,
                         K=K_rest,
                     )
 
-                return CEKSState(
+                return CESKState(
                     C=control,
                     E=frame.saved_env,
                     S=S,
@@ -1138,10 +1195,10 @@ def step(state: CEKSState) -> StepResult:
                 )
             except StopIteration as e:
                 # Generator caught exception and returned
-                return CEKSState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
             except Exception as propagated:
                 # Generator didn't catch - continue propagating
-                return CEKSState(C=Error(propagated), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=Error(propagated), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, CatchFrame):
             # Invoke handler
@@ -1156,35 +1213,62 @@ def step(state: CEKSState) -> StepResult:
                 else:
                     # Handler returned raw value - wrap in pure program
                     recovery_program = Program.pure(recovery_result)
-                return CEKSState(C=ProgramControl(recovery_program), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=ProgramControl(recovery_program), E=frame.saved_env, S=S, K=K_rest)
             except Exception as handler_ex:
                 # Handler itself raised - propagate that error
-                return CEKSState(C=Error(handler_ex), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(C=Error(handler_ex), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, RecoverFrame):
             # Wrap error in Err
-            return CEKSState(C=Value(Err(C.ex)), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(C=Value(Err(C.ex)), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, FinallyFrame):
             # Run cleanup, then re-raise
             cleanup_program = make_cleanup_then_raise(frame.cleanup_program, C.ex)
-            return CEKSState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, LocalFrame):
             # Restore env, continue propagating
-            return CEKSState(C=Error(C.ex), E=frame.restore_env, S=S, K=K_rest)
+            return CESKState(C=Error(C.ex), E=frame.restore_env, S=S, K=K_rest)
+
+        if isinstance(frame, RetryFrame):
+            # Error - check if we should retry
+            if frame.current_attempt < frame.max_attempts:
+                # More attempts available - retry
+                # Note: delay handling would be done at async boundary, not in sync step
+                next_attempt = frame.current_attempt + 1
+
+                # State is PRESERVED across retries (not reset)
+                return CESKState(
+                    C=ProgramControl(frame.sub_program),
+                    E=frame.saved_env,
+                    S=S,  # Keep current store (state preserved across retries)
+                    K=[
+                        RetryFrame(
+                            sub_program=frame.sub_program,
+                            max_attempts=frame.max_attempts,
+                            current_attempt=next_attempt,
+                            delay_ms=frame.delay_ms,
+                            delay_strategy=frame.delay_strategy,
+                            saved_env=frame.saved_env,
+                        )
+                    ] + K_rest,
+                )
+            else:
+                # Max attempts reached - propagate error
+                return CESKState(C=Error(C.ex), E=E, S=S, K=K_rest)
 
         if isinstance(frame, InterceptFrame):
             # Intercept doesn't catch errors - propagate
-            return CEKSState(C=Error(C.ex), E=E, S=S, K=K_rest)
+            return CESKState(C=Error(C.ex), E=E, S=S, K=K_rest)
 
         if isinstance(frame, ListenFrame):
             # Propagate error (logs remain in S for debugging)
-            return CEKSState(C=Error(C.ex), E=E, S=S, K=K_rest)
+            return CESKState(C=Error(C.ex), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GatherFrame):
             # Propagate (partial results discarded), restore env
-            return CEKSState(C=Error(C.ex), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(C=Error(C.ex), E=frame.saved_env, S=S, K=K_rest)
 
     # =========================================================================
     # CATCH-ALL (should never reach - indicates bug in rules)
@@ -1407,7 +1491,7 @@ async def _run_internal(
 
     Used for Spawn/Parallel where we need the child's final store for merging.
     """
-    state = CEKSState.initial(program, env, store)
+    state = CESKState.initial(program, env, store)
 
     while True:
         result = step(state)
@@ -1475,7 +1559,7 @@ async def _run_internal(
                 state = result.resume_error(ex)
             continue
 
-        if isinstance(result, CEKSState):
+        if isinstance(result, CESKState):
             # Normal state transition
             state = result
             continue
@@ -1540,12 +1624,13 @@ __all__ = [
     "RecoverFrame",
     "FinallyFrame",
     "LocalFrame",
+    "RetryFrame",
     "InterceptFrame",
     "ListenFrame",
     "GatherFrame",
     "Kontinuation",
     # State
-    "CEKSState",
+    "CESKState",
     # Step results
     "StepResult",
     "Done",
