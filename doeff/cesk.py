@@ -81,7 +81,9 @@ from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 from doeff._vendor import Err, FrozenDict, Ok, Result
 
 if TYPE_CHECKING:
+    from doeff.cesk_observability import OnStepCallback
     from doeff.program import Program
+    from doeff.storage import DurableStorage
     from doeff.types import Effect
 
 from doeff._types_internal import EffectBase, EffectCreationContext, ListenResult
@@ -384,6 +386,12 @@ def is_pure_effect(effect: "EffectBase") -> bool:
         StatePutEffect,
         WriterTellEffect,
     )
+    from doeff.effects.durable_cache import (
+        DurableCacheDelete,
+        DurableCacheExists,
+        DurableCacheGet,
+        DurableCachePut,
+    )
     from doeff.effects.pure import PureEffect
 
     return isinstance(
@@ -397,6 +405,11 @@ def is_pure_effect(effect: "EffectBase") -> bool:
             MemoGetEffect,
             MemoPutEffect,
             PureEffect,
+            # Durable cache effects (handled via __durable_storage__ in store)
+            DurableCacheGet,
+            DurableCachePut,
+            DurableCacheDelete,
+            DurableCacheExists,
         ),
     )
 
@@ -460,7 +473,7 @@ def handle_pure(effect: "EffectBase", env: Environment, store: Store) -> tuple[A
     Pure effect handler - deterministic, no external side effects.
 
     Contract:
-    - MUST NOT perform I/O or spawn processes
+    - MUST NOT perform I/O or spawn processes (except durable cache via __durable_storage__)
     - MUST NOT run sub-programs or call the interpreter recursively
     - MAY raise exceptions for invalid operations (e.g., missing key)
     - Returns (raw_value, new_store) - step function wraps in Value(raw_value)
@@ -473,6 +486,12 @@ def handle_pure(effect: "EffectBase", env: Environment, store: Store) -> tuple[A
         StateModifyEffect,
         StatePutEffect,
         WriterTellEffect,
+    )
+    from doeff.effects.durable_cache import (
+        DurableCacheDelete,
+        DurableCacheExists,
+        DurableCacheGet,
+        DurableCachePut,
     )
     from doeff.effects.pure import PureEffect
 
@@ -515,6 +534,32 @@ def handle_pure(effect: "EffectBase", env: Environment, store: Store) -> tuple[A
 
     if isinstance(effect, PureEffect):
         return (effect.value, store)
+
+    # Durable cache effects (use __durable_storage__ from store)
+    if isinstance(effect, DurableCacheGet):
+        storage = store.get("__durable_storage__")
+        if storage is None:
+            # No storage configured, return None (same as cache miss)
+            return (None, store)
+        return (storage.get(effect.key), store)
+
+    if isinstance(effect, DurableCachePut):
+        storage = store.get("__durable_storage__")
+        if storage is not None:
+            storage.put(effect.key, effect.value)
+        return (None, store)
+
+    if isinstance(effect, DurableCacheDelete):
+        storage = store.get("__durable_storage__")
+        if storage is None:
+            return (False, store)
+        return (storage.delete(effect.key), store)
+
+    if isinstance(effect, DurableCacheExists):
+        storage = store.get("__durable_storage__")
+        if storage is None:
+            return (False, store)
+        return (storage.exists(effect.key), store)
 
     raise UnhandledEffectError(f"No pure handler for {type(effect).__name__}")
 
@@ -1376,16 +1421,52 @@ async def _run_internal(
     program: "Program",
     env: Environment,
     store: Store,
+    on_step: "OnStepCallback | None" = None,
+    storage: "DurableStorage | None" = None,
 ) -> tuple[Result[T], Store]:
     """
     Internal main interpreter loop that returns both result and final store.
 
     Used for Spawn where we need the child's final store for merging.
+
+    Args:
+        program: The program to execute.
+        env: Initial environment.
+        store: Initial store.
+        on_step: Optional callback invoked after each interpreter step.
+        storage: Optional durable storage backend for cache effects.
     """
+    from doeff.cesk_observability import ExecutionSnapshot, OnStepCallback
+
     state = CESKState.initial(program, env, store)
+    step_count = 0
 
     while True:
         result = step(state)
+        step_count += 1
+
+        # Call on_step callback if provided
+        if on_step is not None:
+            try:
+                if isinstance(result, Done):
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "completed", step_count, storage
+                    )
+                elif isinstance(result, Failed):
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "failed", step_count, storage
+                    )
+                elif isinstance(result, Suspended):
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "paused", step_count, storage
+                    )
+                else:
+                    snapshot = ExecutionSnapshot.from_state(
+                        result, "running", step_count, storage
+                    )
+                on_step(snapshot)
+            except Exception:
+                pass  # Don't let callback errors break execution
 
         if isinstance(result, Done):
             return Ok(result.value), result.store
@@ -1419,6 +1500,9 @@ async def run(
     program: "Program",
     env: Environment | dict[Any, Any] | None = None,
     store: Store | None = None,
+    *,
+    storage: "DurableStorage | None" = None,
+    on_step: "OnStepCallback | None" = None,
 ) -> Result[T]:
     """
     Main interpreter loop.
@@ -1428,8 +1512,19 @@ async def run(
 
     For parallel execution, use asyncio.create_task + Await + Gather pattern.
 
-    Returns Ok(value) or Err(exception).
+    Args:
+        program: The program to execute.
+        env: Initial environment (default: empty).
+        store: Initial store (default: empty).
+        storage: Optional durable storage backend for cache effects.
+        on_step: Optional callback invoked after each interpreter step.
+
+    Returns:
+        Ok(value) or Err(exception).
     """
+    from doeff.cesk_observability import OnStepCallback
+    from doeff.storage import DurableStorage
+
     # Coerce env to FrozenDict to ensure immutability
     if env is None:
         E = FrozenDict()
@@ -1437,9 +1532,13 @@ async def run(
         E = env
     else:
         E = FrozenDict(env)
-    S = store if store is not None else {}
 
-    result, _ = await _run_internal(program, E, S)
+    # Initialize store with durable storage if provided
+    S = store if store is not None else {}
+    if storage is not None:
+        S = {**S, "__durable_storage__": storage}
+
+    result, _ = await _run_internal(program, E, S, on_step=on_step, storage=storage)
     return result
 
 
@@ -1447,9 +1546,24 @@ def run_sync(
     program: "Program",
     env: Environment | None = None,
     store: Store | None = None,
+    *,
+    storage: "DurableStorage | None" = None,
+    on_step: "OnStepCallback | None" = None,
 ) -> Result[T]:
-    """Synchronous wrapper for the run function."""
-    return asyncio.run(run(program, env, store))
+    """
+    Synchronous wrapper for the run function.
+
+    Args:
+        program: The program to execute.
+        env: Initial environment (default: empty).
+        store: Initial store (default: empty).
+        storage: Optional durable storage backend for cache effects (default: InMemoryStorage).
+        on_step: Optional callback invoked after each interpreter step.
+
+    Returns:
+        Ok(value) or Err(exception).
+    """
+    return asyncio.run(run(program, env, store, storage=storage, on_step=on_step))
 
 
 __all__ = [
