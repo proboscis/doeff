@@ -93,6 +93,9 @@ from doeff.utils import BoundedLog
 
 T = TypeVar("T")
 
+# Default database path for durable storage
+DEFAULT_CACHE_DB = ".doeff-cache.db"
+
 # ============================================================================
 # CESK State Components
 # ============================================================================
@@ -1517,8 +1520,8 @@ async def run(
         program: The program to execute.
         env: Initial environment (default: empty).
         store: Initial store (default: empty).
-        storage: Durable storage backend for cache effects (default: SQLiteStorage(".doeff-cache.db")).
-                 Pass None to disable storage.
+        storage: Durable storage backend for cache effects. Defaults to
+                 SQLiteStorage(".doeff-cache.db"). Pass None to disable storage.
         on_step: Optional callback invoked after each interpreter step.
 
     Returns:
@@ -1529,7 +1532,7 @@ async def run(
 
     # Use default SQLiteStorage if not provided
     if storage is ...:
-        storage = SQLiteStorage(".doeff-cache.db")
+        storage = SQLiteStorage(DEFAULT_CACHE_DB)
 
     # Coerce env to FrozenDict to ensure immutability
     if env is None:
@@ -1563,8 +1566,8 @@ def run_sync(
         program: The program to execute.
         env: Initial environment (default: empty).
         store: Initial store (default: empty).
-        storage: Durable storage backend for cache effects (default: SQLiteStorage(".doeff-cache.db")).
-                 Pass None to disable storage.
+        storage: Durable storage backend for cache effects. Defaults to
+                 SQLiteStorage(".doeff-cache.db"). Pass None to disable storage.
         on_step: Optional callback invoked after each interpreter step.
 
     Returns:
