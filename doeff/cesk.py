@@ -1,6 +1,9 @@
 """
 CESK Machine abstraction for the doeff effect interpreter.
 
+Specification: See ISSUE-CORE-422.md in doeff-vault repository for full design.
+https://github.com/CyberAgentAILab/doeff-vault/blob/main/Issues/ISSUE-CORE-422.md
+
 This module implements a CESK machine (Control, Environment, Store, Kontinuation)
 as described in Felleisen & Friedman (1986) and Van Horn & Might (2010).
 
@@ -10,6 +13,49 @@ The CESK machine provides:
 - Separated concerns - pure handlers vs effectful handlers vs control flow
 - Explicit control flow - Catch/Intercept/Local are K frames, not magic
 - Fully trampolined - no nested interpreters (except intentional parallelism)
+- Continuation-based suspension via `Suspended` type
+
+API Mapping Notes (doeff API vs ORCH_PROMPT spec):
+-------------------------------------------------
+The ORCH_PROMPT spec uses abstract effect names. This implementation maps them
+to the actual doeff API effects:
+
+| ORCH_PROMPT Spec     | doeff API Effect           | Implementation          |
+|----------------------|----------------------------|-------------------------|
+| Recover (Ok/Err)     | ResultSafeEffect           | RecoverFrame            |
+| Catch (handler)      | ResultCatchEffect          | CatchFrame              |
+| Recover (fallback)   | ResultRecoverEffect        | CatchFrame + fallback   |
+| Parallel (programs)  | ProgramParallelEffect      | Suspended(effect,...)   |
+| Parallel (awaitables)| FutureParallelEffect       | Suspended(effect,...)   |
+| Thread (callable)    | ThreadEffect               | ThreadPoolExecutor      |
+| Spawn (program)      | SpawnEffect                | Async child machine     |
+| Tell (message)       | WriterTellEffect           | Single message append   |
+
+Suspension Model (Continuation-based):
+-------------------------------------
+When the step function encounters an effectful operation, it returns a
+`Suspended` object containing:
+- `effect`: The effect to be handled externally
+- `resume(value, new_store)`: Continuation to call on success
+- `resume_error(exception)`: Continuation to call on error
+
+This unified model replaces ad-hoc NeedAsync/NeedParallel with explicit
+continuations, aligning with CPS (continuation-passing style) semantics.
+
+State Merging Semantics:
+-----------------------
+- **Parallel**: Each child gets deep copy of store. On success, states are
+  merged back in PROGRAM ORDER (not completion order). On error, NO merge.
+
+- **Spawn (await_result=True)**: Child gets deep copy, state merges on join.
+
+- **Spawn (await_result=False)**: Fire-and-forget, no state merge.
+
+- **Thread**: Runs a callable (not a program) in thread pool. No CESK machine
+  for child, no state merge. Store passes through unchanged.
+
+- **Listen**: Captures logs from sub-computation. Child logs from Parallel/Spawn
+  merge BEFORE Listen captures (only when state merge occurs).
 """
 
 from __future__ import annotations
@@ -18,6 +64,8 @@ import asyncio
 import copy
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
@@ -25,7 +73,10 @@ from doeff._vendor import Err, FrozenDict, Ok, Result
 
 if TYPE_CHECKING:
     from doeff.program import Program
-    from doeff.types import Effect, EffectBase
+    from doeff.types import Effect
+
+from doeff._types_internal import EffectBase, EffectCreationContext, ListenResult
+from doeff.utils import BoundedLog
 
 
 T = TypeVar("T")
@@ -44,6 +95,31 @@ Store: TypeAlias = dict[str, Any]
 # ============================================================================
 # Control (C) - What we're currently evaluating
 # ============================================================================
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProgramParallelEffect(EffectBase):
+    """
+    Effect for running programs in parallel.
+
+    This is the CESK machine's native parallel effect that returns NeedParallel.
+    Each child program runs with a deep copy of the store; results are collected.
+    First error propagates; store modifications are NOT merged back.
+
+    Inherits from EffectBase to satisfy the "programs yield only Effect or Program" invariant.
+
+    Usage:
+        result = yield ProgramParallelEffect(programs=(prog1, prog2, prog3))
+        # result is [result1, result2, result3]
+    """
+
+    programs: tuple["Program", ...]
+
+    def intercept(
+        self, transform: Callable[["Effect"], "Effect | Program | None"]
+    ) -> "ProgramParallelEffect":
+        # Control flow effect - not interceptable
+        return self
 
 
 @dataclass(frozen=True)
@@ -86,8 +162,10 @@ Control: TypeAlias = Value | Error | EffectControl | ProgramControl
 class ReturnFrame:
     """Resume generator with value.
 
-    Note: Generator is mutable - this is the unavoidable impurity in Python.
-    The generator is owned exclusively by this frame.
+    Note: This frame is intentionally NOT frozen because Python generators
+    are mutable objects. The generator is owned exclusively by this frame.
+    Each ReturnFrame owns one generator and advances it on each step.
+    This is the unavoidable impurity in implementing coroutine-style effects.
     """
 
     generator: Generator[Any, Any, Any]
@@ -212,13 +290,20 @@ class CEKSState:
     def initial(
         cls,
         program: "Program",
-        env: Environment | None = None,
+        env: Environment | dict[Any, Any] | None = None,
         store: Store | None = None,
     ) -> "CEKSState":
         """Create initial state for a program."""
+        # Coerce env to FrozenDict to ensure immutability
+        if env is None:
+            env_frozen = FrozenDict()
+        elif isinstance(env, FrozenDict):
+            env_frozen = env
+        else:
+            env_frozen = FrozenDict(env)
         return cls(
             C=ProgramControl(program),
-            E=env if env is not None else FrozenDict(),
+            E=env_frozen,
             S=store if store is not None else {},
             K=[],
         )
@@ -244,28 +329,26 @@ class Failed:
 
 
 @dataclass(frozen=True)
-class NeedAsync:
-    """Suspend: need to handle effectful effect asynchronously."""
+class Suspended:
+    """Suspend: need external handling to continue.
+
+    Continuation-based suspension for async operations. The effect is handled
+    externally, then the appropriate continuation is called with the result.
+
+    Per spec: continuations take (value, new_store) to incorporate handler's
+    store updates. On error, resume_error uses the original store (S) from
+    before the effect - effectful handlers should NOT mutate S in-place.
+    """
 
     effect: "EffectBase"
-    E: Environment
-    S: Store
-    K: Kontinuation
-
-
-@dataclass(frozen=True)
-class NeedParallel:
-    """Suspend: need to run parallel programs."""
-
-    programs: list["Program"]
-    E: Environment
-    S: Store
-    K: Kontinuation
+    # Continuation: (value, new_store) -> next state
+    resume: Callable[[Any, Store], "CEKSState"]
+    # Error continuation: exception -> next state (uses original store)
+    resume_error: Callable[[BaseException], "CEKSState"]
 
 
 Terminal: TypeAlias = Done | Failed
-Suspend: TypeAlias = NeedAsync | NeedParallel
-StepResult: TypeAlias = CEKSState | Terminal | Suspend
+StepResult: TypeAlias = CEKSState | Terminal | Suspended
 
 
 # ============================================================================
@@ -278,6 +361,8 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
 
     Control flow effects are NOT interceptable by InterceptFrame - they always
     push their frames directly.
+
+    Note: FutureParallelEffect is NOT control-flow - it's effectful (awaits awaitables).
     """
     from doeff.effects import (
         GatherEffect,
@@ -289,7 +374,6 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
         ResultSafeEffect,
         WriterListenEffect,
     )
-    from doeff.effects.future import FutureParallelEffect
 
     return isinstance(
         effect,
@@ -297,11 +381,12 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
             ResultCatchEffect,
             ResultRecoverEffect,
             ResultFinallyEffect,
+            ResultSafeEffect,
             LocalEffect,
             InterceptEffect,
             WriterListenEffect,
             GatherEffect,
-            FutureParallelEffect,
+            ProgramParallelEffect,  # CESK native parallel
         ),
     )
 
@@ -344,6 +429,7 @@ def is_effectful(effect: "EffectBase") -> bool:
         TaskJoinEffect,
         ThreadEffect,
     )
+    from doeff.effects.future import FutureParallelEffect
 
     return isinstance(
         effect,
@@ -351,6 +437,7 @@ def is_effectful(effect: "EffectBase") -> bool:
             IOPerformEffect,
             IOPrintEffect,
             FutureAwaitEffect,
+            FutureParallelEffect,
             ThreadEffect,
             SpawnEffect,
             TaskJoinEffect,
@@ -428,6 +515,9 @@ def handle_pure(effect: "EffectBase", env: Environment, store: Store) -> tuple[A
         return (env[effect.key], store)
 
     if isinstance(effect, WriterTellEffect):
+        # Note: doeff API stores raw messages, not LogEntry objects.
+        # Each WriterTellEffect has a single `message` field.
+        # For batch logging, use multiple yield calls or slog() for structured entries.
         log = store.get("__log__", [])
         new_log = log + [effect.message]
         new_store = {**store, "__log__": new_log}
@@ -435,9 +525,8 @@ def handle_pure(effect: "EffectBase", env: Environment, store: Store) -> tuple[A
 
     if isinstance(effect, MemoGetEffect):
         memo = store.get("__memo__", {})
-        if effect.key not in memo:
-            raise KeyError("Memo miss for key")
-        return (memo[effect.key], store)
+        # Return None on miss (per spec), don't raise
+        return (memo.get(effect.key), store)
 
     if isinstance(effect, MemoPutEffect):
         memo = {**store.get("__memo__", {}), effect.key: effect.value}
@@ -477,8 +566,59 @@ def apply_transforms(
 
 
 # ============================================================================
+# State Merging
+# ============================================================================
+
+
+def merge_store(parent_store: Store, child_store: Store) -> Store:
+    """Merge child store into parent after child completion.
+
+    Per spec:
+    - User keys: last-write-wins (child values overwrite parent)
+    - __log__: child logs are APPENDED to parent log
+    - __memo__: child entries are MERGED (child overwrites on conflict)
+    """
+    merged = {**parent_store}
+
+    # Merge user keys (last-write-wins)
+    for key, value in child_store.items():
+        if not key.startswith("__"):
+            merged[key] = value
+
+    # Append logs
+    parent_log = merged.get("__log__", [])
+    child_log = child_store.get("__log__", [])
+    merged["__log__"] = parent_log + child_log
+
+    # Merge memo (child overwrites)
+    parent_memo = merged.get("__memo__", {})
+    child_memo = child_store.get("__memo__", {})
+    merged["__memo__"] = {**parent_memo, **child_memo}
+
+    return merged
+
+
+# ============================================================================
 # Helper Functions for Cleanup
 # ============================================================================
+
+
+def _wrap_callable_as_program(func: Callable[[], Any]) -> "Program":
+    """Wrap a callable (thunk) in a program that calls it."""
+    from doeff.do import do
+
+    @do
+    def call_thunk():
+        result = func()
+        # If result is a program, yield it
+        from doeff.program import ProgramBase
+        from doeff.types import EffectBase
+
+        if isinstance(result, (ProgramBase, EffectBase)):
+            return (yield result)
+        return result
+
+    return call_thunk()
 
 
 def make_cleanup_then_return(cleanup: "Program", value: Any) -> "Program":
@@ -579,12 +719,68 @@ def step(state: CEKSState) -> StepResult:
             )
 
         if isinstance(effect, ResultRecoverEffect):
-            # Recover wraps result in Ok/Err - purely structural transformation
+            # Note: doeff API naming differs from ORCH_PROMPT spec:
+            # - ORCH_PROMPT "Recover" = wrap in Ok/Err → doeff "ResultSafeEffect" → RecoverFrame
+            # - doeff "ResultRecoverEffect" = fallback semantics → CatchFrame with fallback handler
+            # This implementation correctly matches the doeff API.
+            fallback = effect.fallback
+
+            def make_fallback_handler(fb):
+                """Create handler that returns fallback value/program."""
+                from doeff.program import Program, ProgramBase
+                from doeff.types import EffectBase
+                import inspect
+
+                # Check for Program/Effect first - they're callable but should be used as-is
+                if isinstance(fb, (ProgramBase, EffectBase)):
+                    def handler(ex):
+                        return fb
+                    return handler
+
+                if callable(fb) and not isinstance(fb, type):
+                    # Fallback is a callable - check signature to support both
+                    # zero-arg thunks and single-arg exception handlers
+                    try:
+                        sig = inspect.signature(fb)
+                        # Try to determine if it takes any parameters
+                        params = [p for p in sig.parameters.values()
+                                  if p.default is inspect.Parameter.empty
+                                  and p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                                                     inspect.Parameter.VAR_KEYWORD)]
+                        needs_arg = len(params) > 0
+                    except (ValueError, TypeError):
+                        # Cannot inspect - assume it takes exception arg
+                        needs_arg = True
+
+                    def handler(ex):
+                        try:
+                            # Try calling with exception first if it needs args
+                            if needs_arg:
+                                result = fb(ex)
+                            else:
+                                result = fb()
+                        except TypeError:
+                            # Fallback: if signature detection was wrong, try the other way
+                            try:
+                                result = fb() if needs_arg else fb(ex)
+                            except TypeError:
+                                # If both fail, re-raise original error
+                                raise
+                        if isinstance(result, ProgramBase):
+                            return result
+                        return Program.pure(result)
+                    return handler
+
+                # Fallback is a value - wrap in pure program
+                def handler(ex):
+                    return Program.pure(fb)
+                return handler
+
             return CEKSState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
                 S=S,
-                K=[RecoverFrame(saved_env=E)] + K,
+                K=[CatchFrame(make_fallback_handler(fallback), E)] + K,
             )
 
         if isinstance(effect, ResultSafeEffect):
@@ -598,16 +794,18 @@ def step(state: CEKSState) -> StepResult:
 
         if isinstance(effect, ResultFinallyEffect):
             cleanup = effect.finalizer
-            # If finalizer is callable, we need to call it to get the program
-            if callable(cleanup) and not isinstance(cleanup, type):
-                from doeff.program import ProgramBase
-                from doeff.types import EffectBase
+            # Normalize finalizer to a Program per spec
+            from doeff.program import ProgramBase
+            from doeff.types import EffectBase
 
-                if not isinstance(cleanup, (ProgramBase, EffectBase)):
-                    try:
-                        cleanup = cleanup()
-                    except Exception:
-                        pass
+            if not isinstance(cleanup, (ProgramBase, EffectBase)):
+                if callable(cleanup):
+                    # Wrap callable in a program that calls it
+                    cleanup = _wrap_callable_as_program(cleanup)
+                else:
+                    # Non-program, non-callable - wrap in pure program
+                    from doeff.program import Program
+                    cleanup = Program.pure(cleanup)
             return CEKSState(
                 C=ProgramControl(effect.sub_program),
                 E=E,
@@ -643,6 +841,8 @@ def step(state: CEKSState) -> StepResult:
             )
 
         if isinstance(effect, GatherEffect):
+            # GatherEffect runs programs sequentially per CESK spec
+            # Each program sees S modifications from previous (state accumulates)
             programs = list(effect.programs)
             if not programs:
                 return CEKSState(C=Value([]), E=E, S=S, K=K)
@@ -654,11 +854,25 @@ def step(state: CEKSState) -> StepResult:
                 K=[GatherFrame(rest, [], E)] + K,
             )
 
-        if isinstance(effect, FutureParallelEffect):
-            # For simplicity, parallel execution uses NeedParallel
-            # Note: FutureParallelEffect has awaitables, not programs
-            # This would need special handling
-            return NeedAsync(effect, E, S, K)
+        if isinstance(effect, ProgramParallelEffect):
+            # ProgramParallelEffect runs programs in parallel
+            # Each child gets deep copy of store; results collected; first error propagates
+            programs = list(effect.programs)
+            if not programs:
+                return CEKSState(C=Value([]), E=E, S=S, K=K)
+            # Return Suspended with continuation for parallel execution
+            return Suspended(
+                effect=effect,
+                resume=lambda results, new_store, E=E, K=K: CEKSState(
+                    C=Value(results), E=E, S=new_store, K=K
+                ),
+                resume_error=lambda ex, E=E, S=S, K=K: CEKSState(
+                    C=Error(ex), E=E, S=S, K=K
+                ),
+            )
+
+        # Note: FutureParallelEffect is effectful (awaits awaitables), not control-flow
+        # It's handled via the generic is_effectful path below
 
         # =====================================================================
         # EFFECT INTERCEPTION (before generic effect handling)
@@ -677,9 +891,12 @@ def step(state: CEKSState) -> StepResult:
             from doeff.program import ProgramBase
             from doeff.types import EffectBase
 
-            if isinstance(transformed, ProgramBase):
-                # Transform returned Program - run it INSIDE intercept scope
-                return CEKSState(C=ProgramControl(transformed), E=E, S=S, K=K)
+            # IMPORTANT: Check EffectBase BEFORE ProgramBase because EffectBase inherits from ProgramBase
+            # If we check ProgramBase first, Effects would match and be treated as Programs (wrong!)
+
+            if isinstance(transformed, ProgramParallelEffect):
+                # Transform returned ProgramParallelEffect - handle as control-flow
+                return CEKSState(C=EffectControl(transformed), E=E, S=S, K=K)
 
             if isinstance(transformed, EffectBase):
                 if is_control_flow_effect(transformed):
@@ -696,7 +913,27 @@ def step(state: CEKSState) -> StepResult:
 
                 if is_effectful(transformed):
                     # Transform returned effectful Effect - async boundary
-                    return NeedAsync(transformed, E, S, K)
+                    return Suspended(
+                        effect=transformed,
+                        resume=lambda v, new_store, E=E, K=K: CEKSState(
+                            C=Value(v), E=E, S=new_store, K=K
+                        ),
+                        resume_error=lambda ex, E=E, S=S, K=K: CEKSState(
+                            C=Error(ex), E=E, S=S, K=K
+                        ),
+                    )
+
+                # Effect not handled by any category - return as unhandled
+                return CEKSState(
+                    C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
+                    E=E,
+                    S=S,
+                    K=K,
+                )
+
+            if isinstance(transformed, ProgramBase):
+                # Transform returned Program (not Effect) - run it INSIDE intercept scope
+                return CEKSState(C=ProgramControl(transformed), E=E, S=S, K=K)
 
             # Unknown effect type - error
             return CEKSState(
@@ -722,7 +959,15 @@ def step(state: CEKSState) -> StepResult:
         # =====================================================================
 
         if is_effectful(effect):
-            return NeedAsync(effect, E, S, K)
+            return Suspended(
+                effect=effect,
+                resume=lambda v, new_store, E=E, K=K: CEKSState(
+                    C=Value(v), E=E, S=new_store, K=K
+                ),
+                resume_error=lambda ex, E=E, S=S, K=K: CEKSState(
+                    C=Error(ex), E=E, S=S, K=K
+                ),
+            )
 
         # =====================================================================
         # UNHANDLED EFFECTS → error
@@ -748,14 +993,14 @@ def step(state: CEKSState) -> StepResult:
             from doeff.program import ProgramBase
             from doeff.types import EffectBase
 
-            if isinstance(item, EffectBase):
+            if isinstance(item, EffectBase) or isinstance(item, ProgramParallelEffect):
                 control = EffectControl(item)
             elif isinstance(item, ProgramBase):
                 control = ProgramControl(item)
             else:
-                # Unexpected yield type
+                # Unexpected yield type - programs must yield Effect or Program only
                 return CEKSState(
-                    C=Error(TypeError(f"Program yielded unexpected type: {type(item).__name__}")),
+                    C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
                     E=E,
                     S=S,
                     K=K,
@@ -789,13 +1034,13 @@ def step(state: CEKSState) -> StepResult:
                 from doeff.program import ProgramBase
                 from doeff.types import EffectBase
 
-                if isinstance(item, EffectBase):
+                if isinstance(item, EffectBase) or isinstance(item, ProgramParallelEffect):
                     control = EffectControl(item)
                 elif isinstance(item, ProgramBase):
                     control = ProgramControl(item)
                 else:
                     return CEKSState(
-                        C=Error(TypeError(f"Program yielded unexpected type: {type(item).__name__}")),
+                        C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
                         E=frame.saved_env,
                         S=S,
                         K=K_rest,
@@ -834,12 +1079,12 @@ def step(state: CEKSState) -> StepResult:
             return CEKSState(C=Value(C.v), E=E, S=S, K=K_rest)
 
         if isinstance(frame, ListenFrame):
-            # Capture logs and return (value, logs)
+            # Capture logs and return ListenResult per doeff API
             current_log = S.get("__log__", [])
             captured = current_log[frame.log_start_index :]
-            from doeff.types import ListenResult
-
-            return CEKSState(C=Value(ListenResult(value=C.v, log=captured)), E=E, S=S, K=K_rest)
+            # Wrap captured logs in BoundedLog for ListenResult compatibility
+            listen_result = ListenResult(value=C.v, log=BoundedLog(captured))
+            return CEKSState(C=Value(listen_result), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GatherFrame):
             if not frame.remaining_programs:
@@ -866,19 +1111,20 @@ def step(state: CEKSState) -> StepResult:
 
         if isinstance(frame, ReturnFrame):
             try:
-                # Throw into generator
+                # Throw into generator - single-arg form preserves traceback
+                # when passing exception instance (modern Python approach)
                 item = frame.generator.throw(C.ex)
 
                 from doeff.program import ProgramBase
                 from doeff.types import EffectBase
 
-                if isinstance(item, EffectBase):
+                if isinstance(item, EffectBase) or isinstance(item, ProgramParallelEffect):
                     control = EffectControl(item)
                 elif isinstance(item, ProgramBase):
                     control = ProgramControl(item)
                 else:
                     return CEKSState(
-                        C=Error(TypeError(f"Program yielded unexpected type: {type(item).__name__}")),
+                        C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
                         E=frame.saved_env,
                         S=S,
                         K=K_rest,
@@ -900,7 +1146,16 @@ def step(state: CEKSState) -> StepResult:
         if isinstance(frame, CatchFrame):
             # Invoke handler
             try:
-                recovery_program = frame.handler(C.ex)
+                recovery_result = frame.handler(C.ex)
+                # Normalize handler return value to Program
+                from doeff.program import Program, ProgramBase
+                from doeff.types import EffectBase
+
+                if isinstance(recovery_result, (ProgramBase, EffectBase)):
+                    recovery_program = recovery_result
+                else:
+                    # Handler returned raw value - wrap in pure program
+                    recovery_program = Program.pure(recovery_result)
                 return CEKSState(C=ProgramControl(recovery_program), E=frame.saved_env, S=S, K=K_rest)
             except Exception as handler_ex:
                 # Handler itself raised - propagate that error
@@ -940,6 +1195,37 @@ def step(state: CEKSState) -> StepResult:
 
 
 # ============================================================================
+# Thread Pool Management (for ThreadEffect strategy support)
+# ============================================================================
+
+_shared_executor: ThreadPoolExecutor | None = None
+_shared_executor_lock = threading.Lock()
+
+
+def _get_shared_executor() -> ThreadPoolExecutor:
+    """Get or create the shared thread pool executor for 'pooled' strategy."""
+    global _shared_executor
+    if _shared_executor is None:
+        with _shared_executor_lock:
+            if _shared_executor is None:
+                _shared_executor = ThreadPoolExecutor(
+                    max_workers=4,  # Default pool size
+                    thread_name_prefix="cesk-pooled",
+                )
+    return _shared_executor
+
+
+def shutdown_shared_executor(wait: bool = True) -> None:
+    """Shutdown the shared executor. Call this on application exit."""
+    global _shared_executor
+    if _shared_executor is not None:
+        with _shared_executor_lock:
+            if _shared_executor is not None:
+                _shared_executor.shutdown(wait=wait)
+                _shared_executor = None
+
+
+# ============================================================================
 # Effectful Effect Handlers
 # ============================================================================
 
@@ -966,6 +1252,8 @@ async def handle_effectful(
         TaskJoinEffect,
         ThreadEffect,
     )
+    from doeff.effects.future import FutureParallelEffect
+    from doeff.effects.spawn import Task
 
     if isinstance(effect, IOPerformEffect):
         result = effect.action()
@@ -979,18 +1267,127 @@ async def handle_effectful(
         result = await effect.awaitable
         return (result, store)
 
+    if isinstance(effect, FutureParallelEffect):
+        # Await all awaitables in parallel
+        results = await asyncio.gather(*effect.awaitables, return_exceptions=True)
+        # Check for first error
+        for r in results:
+            if isinstance(r, Exception):
+                raise r
+        return (list(results), store)
+
     if isinstance(effect, SpawnEffect):
-        # Spawn creates an independent machine - for now, just return a placeholder
-        # Full spawn implementation would use the SpawnEffectHandler
-        raise NotImplementedError("Spawn effect requires SpawnEffectHandler")
+        # Spawn creates an independent CESK machine
+        # Child gets deep copy of store and env; starts with fresh K (no InterceptFrame inheritance)
+        child_store = copy.deepcopy(store)
+        child_env = env  # Environment is immutable, shared is fine
+
+        # Create a container to hold the child's final store for later merging
+        final_store_holder: dict[str, Any] = {"store": None}
+
+        async def run_and_capture_store():
+            """Run child and capture final store for later merging at join time."""
+            result, final_store = await _run_internal(effect.program, child_env, child_store)
+            final_store_holder["store"] = final_store
+            return result
+
+        # Create asyncio task for the child machine
+        async_task = asyncio.create_task(run_and_capture_store())
+
+        # Return doeff Task handle - compatible with Task.join() effect
+        # Note: preferred_backend/options are recorded but CESK always uses asyncio internally
+        # _state_snapshot holds reference to final_store_holder for merge at join time
+        task = Task(
+            backend=effect.preferred_backend or "thread",
+            _handle=async_task,
+            _env_snapshot=dict(env),
+            _state_snapshot=final_store_holder,  # Reference to holder for final store
+        )
+        return (task, store)
 
     if isinstance(effect, ThreadEffect):
-        # Thread execution requires engine reference
-        raise NotImplementedError("Thread effect requires full engine context")
+        # Thread runs program in a separate machine in an actual thread
+        # Child gets deep copy of store; starts with fresh K
+        child_store = copy.deepcopy(store)
+        child_env = env
+
+        def run_in_thread():
+            """Run async interpreter in a new event loop in this thread."""
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(run(effect.program, child_env, child_store))
+            finally:
+                loop.close()
+
+        # Get or create executor based on strategy
+        loop = asyncio.get_running_loop()
+        strategy = effect.strategy
+
+        if strategy == "pooled":
+            # Use shared pool (module-level singleton)
+            executor = _get_shared_executor()
+            owns_executor = False
+        elif strategy == "daemon":
+            # Daemon thread - use dedicated executor but don't wait for cleanup
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cesk-daemon")
+            owns_executor = True
+        else:  # "dedicated" or default
+            # Dedicated thread per call
+            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cesk-dedicated")
+            owns_executor = True
+
+        if effect.await_result:
+            # Wait for result from child machine
+            try:
+                result = await loop.run_in_executor(executor, run_in_thread)
+            finally:
+                if owns_executor:
+                    executor.shutdown(wait=False)
+            if isinstance(result, Ok):
+                return (result.value, store)
+            elif isinstance(result, Err):
+                raise result.error
+            else:
+                return (result, store)
+        else:
+            # Fire and forget - schedule shutdown after completion
+            future = loop.run_in_executor(executor, run_in_thread)
+            if owns_executor:
+                # Schedule cleanup when future completes
+                def cleanup_executor(fut):
+                    executor.shutdown(wait=False)
+                future.add_done_callback(cleanup_executor)
+            return (future, store)
 
     if isinstance(effect, TaskJoinEffect):
-        # Task join requires the spawn handler's task tracking
-        raise NotImplementedError("TaskJoin effect requires SpawnEffectHandler")
+        # Wait for spawned task to complete and merge state
+        task = effect.task
+        if hasattr(task, "_handle") and isinstance(task._handle, asyncio.Task):
+            result = await task._handle
+
+            if isinstance(result, Err):
+                # On error: NO state merge (error propagates, parent store unchanged)
+                raise result.error
+
+            # On success: merge child's final store into parent
+            # The _state_snapshot holds reference to final_store_holder
+            final_store_holder = task._state_snapshot
+            if isinstance(final_store_holder, dict) and "store" in final_store_holder:
+                child_final_store = final_store_holder.get("store")
+                if child_final_store is not None:
+                    merged_store = merge_store(store, child_final_store)
+                else:
+                    merged_store = store
+            else:
+                merged_store = store
+
+            if isinstance(result, Ok):
+                return (result.value, merged_store)
+            else:
+                return (result, merged_store)
+        else:
+            raise ValueError(f"Cannot join task with handle type: {type(task._handle)}")
 
     raise UnhandledEffectError(f"No effectful handler for {type(effect).__name__}")
 
@@ -1000,70 +1397,82 @@ async def handle_effectful(
 # ============================================================================
 
 
-async def run(
+async def _run_internal(
     program: "Program",
-    env: Environment | None = None,
-    store: Store | None = None,
-) -> Result[T]:
+    env: Environment,
+    store: Store,
+) -> tuple[Result[T], Store]:
     """
-    Main interpreter loop.
+    Internal main interpreter loop that returns both result and final store.
 
-    Pure stepping is synchronous. Async boundaries occur for:
-    - Effectful handlers (IO, Await, Thread, Spawn) via NeedAsync
-    - Parallel execution via NeedParallel
-
-    Returns Ok(value) or Err(exception).
+    Used for Spawn/Parallel where we need the child's final store for merging.
     """
-    E = env if env is not None else FrozenDict()
-    S = store if store is not None else {}
-    state = CEKSState.initial(program, E, S)
+    state = CEKSState.initial(program, env, store)
 
     while True:
         result = step(state)
 
         if isinstance(result, Done):
-            return Ok(result.value)
+            return Ok(result.value), state.S
 
         if isinstance(result, Failed):
-            return Err(result.exception)
+            return Err(result.exception), state.S
 
-        if isinstance(result, NeedAsync):
-            # Async boundary - effectful handler
-            try:
-                v, S_new = await handle_effectful(result.effect, result.E, result.S)
-                state = CEKSState(C=Value(v), E=result.E, S=S_new, K=result.K)
-            except Exception as ex:
-                state = CEKSState(C=Error(ex), E=result.E, S=result.S, K=result.K)
-            continue
+        if isinstance(result, Suspended):
+            # Async boundary - use continuation-based resumption
+            effect = result.effect
+            original_store = state.S  # Capture for error case
 
-        if isinstance(result, NeedParallel):
-            # Parallel execution - spawn independent machines
-            # Each child gets DEEP COPY of store
-            programs = result.programs
-            if not programs:
-                state = CEKSState(C=Value([]), E=result.E, S=result.S, K=result.K)
+            if isinstance(effect, ProgramParallelEffect):
+                # Parallel execution - spawn independent machines with state merging
+                programs = list(effect.programs)
+                if not programs:
+                    state = result.resume([], original_store)
+                    continue
+
+                # Each child gets DEEP COPY of store and returns (result, final_store)
+                tasks = [_run_internal(p, state.E, copy.deepcopy(original_store)) for p in programs]
+                child_outputs = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Check for errors and collect values (in program order)
+                first_error = None
+                values = []
+                child_final_stores = []
+                for output in child_outputs:
+                    if isinstance(output, Exception):
+                        first_error = first_error or output
+                    elif isinstance(output, tuple):
+                        child_result, child_store = output
+                        child_final_stores.append(child_store)
+                        if isinstance(child_result, Err):
+                            first_error = first_error or child_result.error
+                        elif isinstance(child_result, Ok):
+                            values.append(child_result.value)
+                        else:
+                            values.append(child_result)
+                    else:
+                        # Unexpected output type
+                        first_error = first_error or InterpreterInvariantError(
+                            f"Unexpected child output: {type(output)}"
+                        )
+
+                if first_error is not None:
+                    # On error: NO state merge (all-or-nothing semantics)
+                    state = result.resume_error(first_error)
+                else:
+                    # On success: merge all child stores in program order
+                    merged_store = original_store
+                    for child_store in child_final_stores:
+                        merged_store = merge_store(merged_store, child_store)
+                    state = result.resume(values, merged_store)
                 continue
 
-            tasks = [run(p, result.E, copy.deepcopy(result.S)) for p in programs]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Find first error
-            first_error = None
-            values = []
-            for r in results:
-                if isinstance(r, Exception):
-                    first_error = first_error or r
-                elif isinstance(r, Err):
-                    first_error = first_error or r.error
-                elif isinstance(r, Ok):
-                    values.append(r.value)
-                else:
-                    values.append(r)
-
-            if first_error is not None:
-                state = CEKSState(C=Error(first_error), E=result.E, S=result.S, K=result.K)
-            else:
-                state = CEKSState(C=Value(values), E=result.E, S=result.S, K=result.K)
+            # Other effectful effects - handle and resume with continuation
+            try:
+                v, new_store = await handle_effectful(effect, state.E, original_store)
+                state = result.resume(v, new_store)
+            except Exception as ex:
+                state = result.resume_error(ex)
             continue
 
         if isinstance(result, CEKSState):
@@ -1073,6 +1482,33 @@ async def run(
 
         # Should never reach here
         raise InterpreterInvariantError(f"Unexpected step result: {type(result).__name__}")
+
+
+async def run(
+    program: "Program",
+    env: Environment | dict[Any, Any] | None = None,
+    store: Store | None = None,
+) -> Result[T]:
+    """
+    Main interpreter loop.
+
+    Pure stepping is synchronous. Async boundaries occur for:
+    - Effectful handlers (IO, Await, Thread, Spawn) via Suspended
+    - Parallel execution via Suspended with ProgramParallelEffect
+
+    Returns Ok(value) or Err(exception).
+    """
+    # Coerce env to FrozenDict to ensure immutability
+    if env is None:
+        E = FrozenDict()
+    elif isinstance(env, FrozenDict):
+        E = env
+    else:
+        E = FrozenDict(env)
+    S = store if store is not None else {}
+
+    result, _ = await _run_internal(program, E, S)
+    return result
 
 
 def run_sync(
@@ -1093,6 +1529,10 @@ __all__ = [
     "Error",
     "EffectControl",
     "ProgramControl",
+    # CESK-native effects
+    "ProgramParallelEffect",
+    # Thread pool management
+    "shutdown_shared_executor",
     # Frames
     "Frame",
     "ReturnFrame",
@@ -1110,10 +1550,8 @@ __all__ = [
     "StepResult",
     "Done",
     "Failed",
-    "NeedAsync",
-    "NeedParallel",
+    "Suspended",
     "Terminal",
-    "Suspend",
     # Classification
     "is_control_flow_effect",
     "is_pure_effect",
@@ -1127,6 +1565,8 @@ __all__ = [
     "InterpreterInvariantError",
     # Transform
     "apply_transforms",
+    # State merging
+    "merge_store",
     # Step function
     "step",
     # Main loop
