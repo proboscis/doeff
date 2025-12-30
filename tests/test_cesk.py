@@ -781,28 +781,34 @@ class TestProgramParallelEffect:
 
     @pytest.mark.asyncio
     async def test_program_parallel_effect_with_state_merging(self):
-        """ProgramParallelEffect merges child state back in program order."""
+        """ProgramParallelEffect merges NEW child keys into parent.
+
+        Merge semantics:
+        - Child can ADD new keys to parent
+        - Parent keys are NOT overwritten (parent may have updated after spawn)
+        - Both children's NEW keys are merged
+        """
         from doeff.cesk import ProgramParallelEffect
 
         @do
         def child1():
-            yield state.Put("x", 100)
-            yield state.Put("from_child1", "yes")
+            yield state.Put("x", 100)  # Won't overwrite parent's x
+            yield state.Put("from_child1", "yes")  # NEW key, will merge
             return (yield state.Get("x"))
 
         @do
         def child2():
-            yield state.Put("x", 200)  # Overwrites child1's x (program order: last wins)
-            yield state.Put("from_child2", "yes")
+            yield state.Put("x", 200)  # Won't overwrite parent's x
+            yield state.Put("from_child2", "yes")  # NEW key, will merge
             return (yield state.Get("x"))
 
         @do
         def program():
-            yield state.Put("x", 0)
+            yield state.Put("x", 0)  # Parent sets x
             results = yield ProgramParallelEffect(
                 programs=(child1(), child2())
             )
-            # After merge: x=200 (child2 last), both child keys present
+            # After merge: x=0 (parent's value preserved), new child keys added
             parent_x = yield state.Get("x")
             c1 = yield state.Get("from_child1")
             c2 = yield state.Get("from_child2")
@@ -812,10 +818,10 @@ class TestProgramParallelEffect:
 
         assert isinstance(result, Ok)
         results, parent_x, c1, c2 = result.value
-        assert results == [100, 200]
-        assert parent_x == 200  # Last-write-wins in program order
-        assert c1 == "yes"  # Merged from child1
-        assert c2 == "yes"  # Merged from child2
+        assert results == [100, 200]  # Children see their own values
+        assert parent_x == 0  # Parent's x preserved (not overwritten by children)
+        assert c1 == "yes"  # NEW key from child1 merged
+        assert c2 == "yes"  # NEW key from child2 merged
 
 
 if __name__ == "__main__":
