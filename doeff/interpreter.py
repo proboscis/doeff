@@ -628,7 +628,7 @@ class ProgramInterpreter:
         """Handle Future/IO/Graph effects. Returns _NO_HANDLER if not matched."""
         if _effect_is(effect, FutureAwaitEffect):
             return await self.future_handler.handle_await(effect)
-        # NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect
+        # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
         if _effect_is(effect, SpawnEffect):
             return self.spawn_handler.handle_spawn(effect, ctx, self)
         if _effect_is(effect, TaskJoinEffect):

@@ -25,8 +25,8 @@ class FutureAwaitEffect(EffectBase):
         return self
 
 
-# NOTE: FutureParallelEffect REMOVED - use ProgramParallelEffect for parallel execution
-# For parallel awaitable execution, wrap each awaitable in a program that yields Await
+# NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
+# See the doeff documentation for examples of concurrent execution patterns
 
 
 def await_(awaitable: Awaitable[Any]) -> FutureAwaitEffect:

@@ -374,8 +374,7 @@ async def test_future_await_effect():  # noqa: PINJ040
 async def test_future_parallel_effect():  # noqa: PINJ040
     """Test Gather effect for concurrent async operations.
 
-    Note: The old Parallel effect (FutureParallelEffect) has been replaced
-    with Gather which works with Programs, not raw awaitables.
+    Gather works with Programs to provide concurrent execution.
     """
 
     async def async_process(n: int) -> int:

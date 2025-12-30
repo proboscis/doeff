@@ -3,7 +3,6 @@ import threading
 import pytest
 
 from doeff import Get, ProgramInterpreter, Put, Thread, do, EffectGenerator
-from doeff.cesk import Parallel
 
 
 @pytest.mark.asyncio
@@ -77,8 +76,7 @@ async def test_thread_effect_daemon_sets_daemon_flag() -> None:
 async def test_thread_effect_can_return_awaitable_for_parallelism() -> None:
     """Thread with await_result=False returns awaitable.
 
-    NOTE: The old FutureParallelEffect that accepted awaitables has been removed.
-    This test now awaits the thread futures individually.
+    This test awaits the thread futures individually using Await effect.
     """
     from doeff import Await
     engine = ProgramInterpreter()
@@ -92,7 +90,7 @@ async def test_thread_effect_can_return_awaitable_for_parallelism() -> None:
     def program() -> EffectGenerator[list[str]]:
         future_one = yield Thread(worker("first"), strategy="pooled", await_result=False)
         future_two = yield Thread(worker("second"), strategy="dedicated", await_result=False)
-        # Await futures individually since CESK Parallel takes Programs, not awaitables
+        # Await futures individually
         result_one = yield Await(future_one)
         result_two = yield Await(future_two)
         state_first = yield Get("first")
