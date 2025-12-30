@@ -850,10 +850,14 @@ def step(state: CESKState) -> StepResult:
         # =====================================================================
 
         if not is_control_flow_effect(effect) and has_intercept_frame(K):
+            from doeff.cesk_traceback import capture_traceback_safe
+
             try:
                 transformed = apply_intercept_chain(K, effect)
             except Exception as ex:
-                return CESKState(C=Error(ex), E=E, S=S, K=K)
+                # Intercept transform raised - capture traceback
+                captured = capture_traceback_safe(K, ex)
+                return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
             from doeff.program import ProgramBase
             from doeff.types import EffectBase
@@ -872,10 +876,13 @@ def step(state: CESKState) -> StepResult:
                         v, S_new = handle_pure(transformed, E, S)
                         return CESKState(C=Value(v), E=E, S=S_new, K=K)
                     except Exception as ex:
-                        return CESKState(C=Error(ex), E=E, S=S, K=K)
+                        # Pure effect handler raised after transform - capture traceback
+                        captured = capture_traceback_safe(K, ex)
+                        return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
                 if is_effectful(transformed):
                     # Transform returned effectful Effect - async boundary
+                    # Note: resume_error traceback capture happens in _run_internal
                     return Suspended(
                         effect=transformed,
                         resume=lambda v, new_store, E=E, K=K: CESKState(
@@ -887,8 +894,10 @@ def step(state: CESKState) -> StepResult:
                     )
 
                 # Effect not handled by any category - return as unhandled
+                unhandled_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
+                captured = capture_traceback_safe(K, unhandled_ex)
                 return CESKState(
-                    C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
+                    C=Error(unhandled_ex, captured_traceback=captured),
                     E=E,
                     S=S,
                     K=K,
@@ -899,8 +908,10 @@ def step(state: CESKState) -> StepResult:
                 return CESKState(C=ProgramControl(transformed), E=E, S=S, K=K)
 
             # Unknown effect type - error
+            unknown_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
+            captured = capture_traceback_safe(K, unknown_ex)
             return CESKState(
-                C=Error(UnhandledEffectError(f"No handler for {type(transformed).__name__}")),
+                C=Error(unknown_ex, captured_traceback=captured),
                 E=E,
                 S=S,
                 K=K,
@@ -911,17 +922,22 @@ def step(state: CESKState) -> StepResult:
         # =====================================================================
 
         if is_pure_effect(effect):
+            from doeff.cesk_traceback import capture_traceback_safe
+
             try:
                 v, S_new = handle_pure(effect, E, S)
                 return CESKState(C=Value(v), E=E, S=S_new, K=K)
             except Exception as ex:
-                return CESKState(C=Error(ex), E=E, S=S, K=K)
+                # Pure effect handler raised - capture traceback
+                captured = capture_traceback_safe(K, ex)
+                return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
 
         # =====================================================================
         # EFFECTFUL EFFECTS → async boundary
         # =====================================================================
 
         if is_effectful(effect):
+            # Note: resume_error traceback capture happens in _run_internal
             return Suspended(
                 effect=effect,
                 resume=lambda v, new_store, E=E, K=K: CESKState(
@@ -936,8 +952,12 @@ def step(state: CESKState) -> StepResult:
         # UNHANDLED EFFECTS → error
         # =====================================================================
 
+        from doeff.cesk_traceback import capture_traceback_safe
+
+        unhandled_ex = UnhandledEffectError(f"No handler for {type(effect).__name__}")
+        captured = capture_traceback_safe(K, unhandled_ex)
         return CESKState(
-            C=Error(UnhandledEffectError(f"No handler for {type(effect).__name__}")),
+            C=Error(unhandled_ex, captured_traceback=captured),
             E=E,
             S=S,
             K=K,

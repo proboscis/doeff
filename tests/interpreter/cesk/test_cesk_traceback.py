@@ -563,6 +563,89 @@ class TestEdgeCases:
 
 
 # ============================================================================
+# Test: Error Paths with Traceback Capture
+# ============================================================================
+
+
+class TestErrorPathsTracebackCapture:
+    """Test traceback capture for various error paths."""
+
+    def test_pure_effect_handler_exception_has_traceback(self):
+        """Test that exceptions from pure effect handlers capture traceback."""
+        from doeff.effects import state
+
+        @do
+        def program_with_modify():
+            # StateModifyEffect calls a function that may raise
+            def bad_modifier(x):
+                raise ValueError("modifier error")
+
+            yield state.Modify("key", bad_modifier)
+            return "done"
+
+        # First set up the state
+        @do
+        def setup_and_run():
+            yield state.Put("key", 10)
+            yield program_with_modify()
+
+        result = run_sync(setup_and_run())
+
+        assert result.is_err
+        assert result.captured_traceback is not None
+        assert isinstance(result.error, ValueError)
+        assert "modifier error" in str(result.error)
+
+    def test_intercept_transform_exception_has_traceback(self):
+        """Test that exceptions from intercept transforms capture traceback."""
+        from doeff.effects import Pure
+
+        @do
+        def simple_program():
+            x = yield Pure(42)
+            return x
+
+        def bad_transformer(effect):
+            raise RuntimeError("transformer error")
+
+        result = run_sync(simple_program().intercept(bad_transformer))
+
+        assert result.is_err
+        assert result.captured_traceback is not None
+        assert isinstance(result.error, RuntimeError)
+        assert "transformer error" in str(result.error)
+
+    def test_unhandled_effect_has_traceback(self):
+        """Test that unhandled effects have traceback."""
+        from doeff._types_internal import EffectBase
+        from doeff.program import ProgramProtocol
+        from dataclasses import dataclass
+        from typing import Any
+
+        @dataclass(frozen=True)
+        class CustomUnhandledEffect(EffectBase):
+            """A custom effect that has no handler."""
+            value: int
+
+            def intercept(self, transform: Any) -> ProgramProtocol:
+                # Required by EffectBase but not used in this test
+                return self
+
+        @do
+        def program_with_unhandled():
+            yield CustomUnhandledEffect(42)
+            return "done"
+
+        result = run_sync(program_with_unhandled())
+
+        assert result.is_err
+        assert result.captured_traceback is not None
+        # Should be UnhandledEffectError
+        assert "No handler for" in str(result.error)
+        assert "CustomUnhandledEffect" in str(result.error)
+
+
+# ============================================================================
 # Test: ExceptionGroup (Python 3.11+)
 # ============================================================================
 
