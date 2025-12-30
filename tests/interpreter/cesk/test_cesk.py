@@ -20,10 +20,9 @@ from doeff.program import Program
 from doeff.effects import state, reader, writer
 from doeff.effects.result import (
     ResultCatchEffect,
-    ResultRecoverEffect,
     ResultFinallyEffect,
 )
-# Note: ResultSafeEffect removed - Result/Maybe are values, not effects
+# Note: Recover/Retry/Fail/Safe removed from CESK core - library sugar for Pure interpreter
 from doeff.cesk import (
     # State components
     Environment,
@@ -79,14 +78,6 @@ class TestEffectClassification:
         effect = ResultCatchEffect(
             sub_program=Program.pure(42),
             handler=lambda e: Program.pure(0),
-        )
-        assert is_control_flow_effect(effect) is True
-
-    def test_is_control_flow_effect_recover(self):
-        """ResultRecoverEffect is a control flow effect."""
-        effect = ResultRecoverEffect(
-            sub_program=Program.pure(42),
-            fallback=0,
         )
         assert is_control_flow_effect(effect) is True
 
@@ -321,27 +312,6 @@ class TestStepControlFlowEffects:
         assert len(result.K) == 1
         assert isinstance(result.K[0], CatchFrame)
         assert result.K[0].handler is handler
-
-    def test_recover_effect_pushes_catch_frame(self):
-        """ResultRecoverEffect pushes CatchFrame with fallback handler onto K."""
-        effect = ResultRecoverEffect(
-            sub_program=Program.pure(42),
-            fallback=0,
-        )
-        state_obj = CESKState(
-            C=EffectControl(effect),
-            E=FrozenDict(),
-            S={},
-            K=[],
-        )
-
-        result = step(state_obj)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, ProgramControl)
-        assert len(result.K) == 1
-        # Recover uses CatchFrame with fallback handler (not RecoverFrame)
-        assert isinstance(result.K[0], CatchFrame)
 
     def test_local_effect_updates_environment(self):
         """LocalEffect updates environment and pushes LocalFrame."""

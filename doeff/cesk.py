@@ -23,10 +23,13 @@ to the actual doeff API effects:
 | ORCH_PROMPT Spec     | doeff API Effect           | Implementation          |
 |----------------------|----------------------------|-------------------------|
 | Catch (handler)      | ResultCatchEffect          | CatchFrame              |
-| Recover (fallback)   | ResultRecoverEffect        | CatchFrame + fallback   |
+| Finally (cleanup)    | ResultFinallyEffect        | FinallyFrame            |
 | Thread (callable)    | ThreadEffect               | ThreadPoolExecutor      |
 | Spawn (program)      | SpawnEffect                | Async child machine     |
 | Tell (message)       | WriterTellEffect           | Single message append   |
+
+NOTE: Recover/Retry/Fail/Safe are NOT handled in CESK core.
+They can be implemented as library sugar over Catch in the Pure interpreter.
 
 NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern.
 
@@ -189,25 +192,6 @@ class LocalFrame:
 
 
 @dataclass(frozen=True)
-class RetryFrame:
-    """Retry failed computations up to max_attempts.
-
-    On success: value passes through
-    On error: if attempts < max_attempts, retry; else propagate error
-
-    Note: State is PRESERVED across retries (not reset). This matches the
-    ProgramInterpreter behavior where Retry can use accumulated state.
-    """
-
-    sub_program: "Program"
-    max_attempts: int
-    current_attempt: int
-    delay_ms: int
-    delay_strategy: Callable[[int, Exception | None], float | int | None] | None
-    saved_env: Environment
-
-
-@dataclass(frozen=True)
 class InterceptFrame:
     """Transform effects passing through. Marks interception boundary.
 
@@ -257,7 +241,6 @@ Frame: TypeAlias = (
     | CatchFrame
     | FinallyFrame
     | LocalFrame
-    | RetryFrame
     | InterceptFrame
     | ListenFrame
     | GatherFrame
@@ -371,23 +354,17 @@ def is_control_flow_effect(effect: "EffectBase") -> bool:
         InterceptEffect,
         LocalEffect,
         ResultCatchEffect,
-        ResultFailEffect,
         ResultFinallyEffect,
-        ResultRecoverEffect,
-        ResultRetryEffect,
         WriterListenEffect,
     )
 
-    # Note: ResultSafeEffect is NOT included - Result/Maybe are values, not effects
-    # Users should use Catch for error handling
+    # Note: Recover/Retry/Fail/Safe are NOT included - they are library sugar
+    # handled by the Pure interpreter, not CESK core
     return isinstance(
         effect,
         (
             ResultCatchEffect,
-            ResultRecoverEffect,
             ResultFinallyEffect,
-            ResultFailEffect,
-            ResultRetryEffect,
             LocalEffect,
             InterceptEffect,
             WriterListenEffect,
@@ -741,41 +718,12 @@ def step(state: CESKState) -> StepResult:
             InterceptEffect,
             LocalEffect,
             ResultCatchEffect,
-            ResultFailEffect,
             ResultFinallyEffect,
-            ResultRecoverEffect,
-            ResultRetryEffect,
             WriterListenEffect,
         )
-        # Note: ResultSafeEffect is NOT imported - Result/Maybe are values, not effects
+        # Note: Recover/Retry/Fail/Safe are NOT handled in CESK core
+        # They are library sugar handled by the Pure interpreter
         # Note: For parallel execution, use asyncio.create_task + Await + Gather pattern
-
-        # ResultFailEffect - immediately transition to Error state
-        if isinstance(effect, ResultFailEffect):
-            return CESKState(
-                C=Error(effect.exception),
-                E=E,
-                S=S,
-                K=K,
-            )
-
-        # ResultRetryEffect - push RetryFrame and run sub_program
-        if isinstance(effect, ResultRetryEffect):
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[
-                    RetryFrame(
-                        sub_program=effect.sub_program,
-                        max_attempts=effect.max_attempts,
-                        current_attempt=1,
-                        delay_ms=effect.delay_ms,
-                        delay_strategy=effect.delay_strategy,
-                        saved_env=E,
-                    )
-                ] + K,
-            )
 
         if isinstance(effect, ResultCatchEffect):
             return CESKState(
@@ -784,72 +732,6 @@ def step(state: CESKState) -> StepResult:
                 S=S,
                 K=[CatchFrame(effect.handler, E)] + K,
             )
-
-        if isinstance(effect, ResultRecoverEffect):
-            # ResultRecoverEffect = fallback semantics → CatchFrame with fallback handler
-            # (This is exception recovery/fallback, NOT Result type creation)
-            fallback = effect.fallback
-
-            def make_fallback_handler(fb):
-                """Create handler that returns fallback value/program."""
-                from doeff.program import Program, ProgramBase
-                from doeff.types import EffectBase
-                import inspect
-
-                # Check for Program/Effect first - they're callable but should be used as-is
-                if isinstance(fb, (ProgramBase, EffectBase)):
-                    def handler(ex):
-                        return fb
-                    return handler
-
-                if callable(fb) and not isinstance(fb, type):
-                    # Fallback is a callable - check signature to support both
-                    # zero-arg thunks and single-arg exception handlers
-                    try:
-                        sig = inspect.signature(fb)
-                        # Try to determine if it takes any parameters
-                        params = [p for p in sig.parameters.values()
-                                  if p.default is inspect.Parameter.empty
-                                  and p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                                                     inspect.Parameter.VAR_KEYWORD)]
-                        needs_arg = len(params) > 0
-                    except (ValueError, TypeError):
-                        # Cannot inspect - assume it takes exception arg
-                        needs_arg = True
-
-                    def handler(ex):
-                        try:
-                            # Try calling with exception first if it needs args
-                            if needs_arg:
-                                result = fb(ex)
-                            else:
-                                result = fb()
-                        except TypeError:
-                            # Fallback: if signature detection was wrong, try the other way
-                            try:
-                                result = fb() if needs_arg else fb(ex)
-                            except TypeError:
-                                # If both fail, re-raise original error
-                                raise
-                        if isinstance(result, ProgramBase):
-                            return result
-                        return Program.pure(result)
-                    return handler
-
-                # Fallback is a value - wrap in pure program
-                def handler(ex):
-                    return Program.pure(fb)
-                return handler
-
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[CatchFrame(make_fallback_handler(fallback), E)] + K,
-            )
-
-        # Note: ResultSafeEffect is NOT handled - Result/Maybe are values, not effects
-        # Users should use Catch + explicit Ok/Err construction at domain boundaries
 
         if isinstance(effect, ResultFinallyEffect):
             cleanup = effect.finalizer
@@ -1104,10 +986,6 @@ def step(state: CESKState) -> StepResult:
             # Restore environment
             return CESKState(C=Value(C.v), E=frame.restore_env, S=S, K=K_rest)
 
-        if isinstance(frame, RetryFrame):
-            # Success - just pass value through (no retry needed)
-            return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
-
         if isinstance(frame, InterceptFrame):
             # Interception scope ends, pass value through
             return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
@@ -1205,33 +1083,6 @@ def step(state: CESKState) -> StepResult:
         if isinstance(frame, LocalFrame):
             # Restore env, continue propagating
             return CESKState(C=Error(C.ex), E=frame.restore_env, S=S, K=K_rest)
-
-        if isinstance(frame, RetryFrame):
-            # Error - check if we should retry
-            if frame.current_attempt < frame.max_attempts:
-                # More attempts available - retry
-                # Note: delay handling would be done at async boundary, not in sync step
-                next_attempt = frame.current_attempt + 1
-
-                # State is PRESERVED across retries (not reset)
-                return CESKState(
-                    C=ProgramControl(frame.sub_program),
-                    E=frame.saved_env,
-                    S=S,  # Keep current store (state preserved across retries)
-                    K=[
-                        RetryFrame(
-                            sub_program=frame.sub_program,
-                            max_attempts=frame.max_attempts,
-                            current_attempt=next_attempt,
-                            delay_ms=frame.delay_ms,
-                            delay_strategy=frame.delay_strategy,
-                            saved_env=frame.saved_env,
-                        )
-                    ] + K_rest,
-                )
-            else:
-                # Max attempts reached - propagate error
-                return CESKState(C=Error(C.ex), E=E, S=S, K=K_rest)
 
         if isinstance(frame, InterceptFrame):
             # Intercept doesn't catch errors - propagate
@@ -1618,7 +1469,6 @@ __all__ = [
     "CatchFrame",
     "FinallyFrame",
     "LocalFrame",
-    "RetryFrame",
     "InterceptFrame",
     "ListenFrame",
     "GatherFrame",
