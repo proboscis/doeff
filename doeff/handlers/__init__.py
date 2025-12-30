@@ -544,8 +544,7 @@ class FutureEffectHandler:
         """Handle future.await effect."""
         return await effect.awaitable
 
-    # NOTE: handle_parallel (FutureParallelEffect) REMOVED
-    # Use ProgramParallelEffect for parallel execution
+    # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
 
 
 class ThreadEffectHandler:
