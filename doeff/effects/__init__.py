@@ -18,7 +18,7 @@ from .callstack import (
     ProgramCallStackEffect,
 )
 from .dep import Dep, DepInjectEffect, inject
-from .future import Await, FutureAwaitEffect, FutureParallelEffect, Parallel, await_, parallel
+from .future import Await, FutureAwaitEffect, await_
 from .gather import Gather, GatherDict, GatherDictEffect, GatherEffect, gather, gather_dict
 from .graph import (
     Annotate,
@@ -133,7 +133,6 @@ __all__ = [
     "Finally",
     "FirstSuccess",
     "FutureAwaitEffect",
-    "FutureParallelEffect",
     "Gather",
     "GatherDict",
     "GatherDictEffect",
@@ -155,7 +154,6 @@ __all__ = [
     "MemoPut",
     "MemoPutEffect",
     "Modify",
-    "Parallel",
     "Print",
     "Pure",
     # Effect classes
@@ -217,7 +215,6 @@ __all__ = [
     "memo_get",
     "memo_put",
     "modify",
-    "parallel",
     "perform",
     "print_",
     "put",
