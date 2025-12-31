@@ -156,12 +156,12 @@ with trace_observer("wf-001", ".doeff-flow") as on_step:
 ### With Durable Storage
 
 ```python
-from doeff.storage import FileStorage
+from doeff.storage import SQLiteStorage
 
 result = run_workflow(
     my_workflow(),
     workflow_id="durable-wf",
-    storage=FileStorage(".doeff-cache"),
+    storage=SQLiteStorage(".doeff-cache.db"),
 )
 ```
 

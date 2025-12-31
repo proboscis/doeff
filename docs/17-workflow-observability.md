@@ -248,13 +248,13 @@ doeff-flow ps --trace-dir .doeff-flow
 ### Using with Custom Environments
 
 ```python
-from doeff.effects import AskEffect
+from doeff.effects import Ask
 from doeff_flow import trace_observer
 from doeff.cesk import run_sync
 
 @do
 def workflow_with_config():
-    config = yield AskEffect("database_url")
+    config = yield Ask("database_url")
     # ... use config
     return f"Connected to {config}"
 
@@ -269,17 +269,17 @@ with trace_observer("config-wf", ".doeff-flow") as on_step:
 ### Using with State Effects
 
 ```python
-from doeff.effects import StateGetEffect, StatePutEffect
+from doeff.effects import Get, Put
 
 @do
 def stateful_workflow():
-    yield StatePutEffect("counter", 0)
+    yield Put("counter", 0)
 
     for i in range(5):
-        current = yield StateGetEffect("counter")
-        yield StatePutEffect("counter", current + 1)
+        current = yield Get("counter")
+        yield Put("counter", current + 1)
 
-    final = yield StateGetEffect("counter")
+    final = yield Get("counter")
     return final
 
 result = run_workflow(
@@ -291,13 +291,13 @@ result = run_workflow(
 ### Using with Durable Storage
 
 ```python
-from doeff.storage import FileStorage
+from doeff.storage import SQLiteStorage
 
 result = run_workflow(
     my_workflow(),
     workflow_id="durable-001",
     trace_dir=".doeff-flow",
-    storage=FileStorage(".doeff-cache"),  # Enable caching
+    storage=SQLiteStorage(".doeff-cache.db"),  # Enable caching
 )
 ```
 
