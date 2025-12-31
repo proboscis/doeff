@@ -313,11 +313,11 @@ class TestE2ETraceObserverComposability:
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)
 
-            from doeff.effects import AskEffect
+            from doeff.effects import Ask
 
             @do
             def workflow_with_env():
-                config = yield AskEffect("config")
+                config = yield Ask("config")
                 return f"got-{config}"
 
             with trace_observer("env-test", trace_dir) as on_step:
@@ -339,15 +339,15 @@ class TestE2ETraceObserverComposability:
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)
 
-            from doeff.effects import StateGetEffect, StatePutEffect
+            from doeff.effects import Get, Put
 
             @do
             def stateful_workflow():
-                yield StatePutEffect("counter", 0)
+                yield Put("counter", 0)
                 for _ in range(3):
-                    current = yield StateGetEffect("counter")
-                    yield StatePutEffect("counter", current + 1)
-                final = yield StateGetEffect("counter")
+                    current = yield Get("counter")
+                    yield Put("counter", current + 1)
+                final = yield Get("counter")
                 return final
 
             with trace_observer("state-test", trace_dir) as on_step:
