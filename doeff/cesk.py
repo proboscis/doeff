@@ -1140,6 +1140,10 @@ def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
     if parent_memo or child_memo:
         merged["__memo__"] = {**parent_memo, **child_memo}
 
+    # Preserve durable storage from parent (child doesn't own it)
+    if "__durable_storage__" in parent_store:
+        merged["__durable_storage__"] = parent_store["__durable_storage__"]
+
     return merged
 
 
@@ -1908,11 +1912,11 @@ async def _handle_task_join(effect: EffectBase, env: Environment, store: Store) 
 
         final_store_holder = task._state_snapshot
         if isinstance(final_store_holder, dict) and "store" in final_store_holder:
-            child_final_store = final_store_holder.get("store")
-            already_merged = final_store_holder.get("_merged", False)
-            if child_final_store is not None and not already_merged:
+            # Use pop to atomically get and remove the store, preventing double-merge
+            # on concurrent joins (pop returns None on second call)
+            child_final_store = final_store_holder.pop("store", None)
+            if child_final_store is not None:
                 merged_store = merge_store(store, child_final_store)
-                final_store_holder["_merged"] = True
             else:
                 merged_store = store
         else:
@@ -2050,7 +2054,7 @@ async def _run_internal(
             except Exception as e:
                 import logging
 
-                logging.debug(f"on_step callback error: {e}")
+                logging.warning(f"on_step callback error (ignored): {e}", exc_info=True)
 
         if isinstance(result, Done):
             return Ok(result.value), result.store, None
