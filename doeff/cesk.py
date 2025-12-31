@@ -160,7 +160,7 @@ class HandlerRegistryError(Exception):
 # E: Environment - immutable mapping (copy-on-write semantics)
 Environment: TypeAlias = FrozenDict[Any, Any]
 
-# S: Store - mutable state (dict with reserved keys __log__, __memo__)
+# S: Store - mutable state (dict with reserved keys: __log__, __memo__, __durable_storage__, __dispatcher__)
 Store: TypeAlias = dict[str, Any]
 
 
@@ -1783,7 +1783,9 @@ async def _handle_spawn(effect: EffectBase, env: Environment, store: Store) -> t
     parent_dispatcher = store.get("__dispatcher__")
 
     # Child gets deep copy of store and env; starts with fresh K (no InterceptFrame inheritance)
-    child_store = copy.deepcopy(store)
+    # Exclude __dispatcher__ from deep-copy (it's passed explicitly and may not be deepcopyable)
+    store_without_dispatcher = {k: v for k, v in store.items() if k != "__dispatcher__"}
+    child_store = copy.deepcopy(store_without_dispatcher)
     child_env = env  # Environment is immutable, shared is fine
 
     # Create a container to hold the child's final store for later merging
@@ -1815,7 +1817,9 @@ async def _handle_thread(effect: EffectBase, env: Environment, store: Store) -> 
     # Inherit dispatcher from parent so custom handlers are available in child
     parent_dispatcher = store.get("__dispatcher__")
 
-    child_store = copy.deepcopy(store)
+    # Exclude __dispatcher__ from deep-copy (it's passed explicitly and may not be deepcopyable)
+    store_without_dispatcher = {k: v for k, v in store.items() if k != "__dispatcher__"}
+    child_store = copy.deepcopy(store_without_dispatcher)
     child_env = env
     strategy = effect.strategy
     loop = asyncio.get_running_loop()
@@ -2164,7 +2168,7 @@ async def run(
 
 def run_sync(
     program: Program,
-    env: Environment | None = None,
+    env: Environment | dict[Any, Any] | None = None,
     store: Store | None = None,
     *,
     storage: DurableStorage | None = None,
