@@ -1185,6 +1185,43 @@ def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store |
     return merged
 
 
+def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
+    """Merge thread state: child state replaces parent (except logs append).
+
+    Used by ThreadEffect handlers when await_result=True.
+
+    Merge semantics (different from merge_store):
+    - User keys: child's values replace parent's
+    - __log__: child logs are APPENDED to parent log
+    - __memo__: child entries are MERGED (child overwrites on conflict)
+    """
+    merged = {}
+
+    # Child user keys replace parent
+    for key, value in child_store.items():
+        if not key.startswith("__"):
+            merged[key] = value
+    for key, value in parent_store.items():
+        if not key.startswith("__") and key not in merged:
+            merged[key] = value
+
+    # Append logs
+    parent_log = parent_store.get("__log__", [])
+    child_log = child_store.get("__log__", [])
+    if child_log:
+        merged["__log__"] = list(parent_log) + list(child_log)
+    elif parent_log:
+        merged["__log__"] = list(parent_log)
+
+    # Merge memo (child overwrites)
+    parent_memo = parent_store.get("__memo__", {})
+    child_memo = child_store.get("__memo__", {})
+    if parent_memo or child_memo:
+        merged["__memo__"] = {**parent_memo, **child_memo}
+
+    return merged
+
+
 # ============================================================================
 # Helper Functions for Cleanup
 # ============================================================================
@@ -1821,6 +1858,9 @@ async def _handle_spawn(effect: EffectBase, env: Environment, store: Store) -> t
     """Handle SpawnEffect - creates an independent CESK machine."""
     from doeff.effects.spawn import Task
 
+    # Inherit dispatcher from parent so custom handlers are available in child
+    parent_dispatcher = store.get("__dispatcher__")
+
     # Child gets deep copy of store and env; starts with fresh K (no InterceptFrame inheritance)
     child_store = copy.deepcopy(store)
     child_env = env  # Environment is immutable, shared is fine
@@ -1830,7 +1870,9 @@ async def _handle_spawn(effect: EffectBase, env: Environment, store: Store) -> t
 
     async def run_and_capture_store():
         """Run child and capture final store for later merging at join time."""
-        result, final_store, _ = await _run_internal(effect.program, child_env, child_store)
+        result, final_store, _ = await _run_internal(
+            effect.program, child_env, child_store, dispatcher=parent_dispatcher
+        )
         final_store_holder["store"] = final_store
         return result
 
@@ -1849,6 +1891,9 @@ async def _handle_spawn(effect: EffectBase, env: Environment, store: Store) -> t
 
 async def _handle_thread(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
     """Handle ThreadEffect - runs program in a separate thread."""
+    # Inherit dispatcher from parent so custom handlers are available in child
+    parent_dispatcher = store.get("__dispatcher__")
+
     child_store = copy.deepcopy(store)
     child_env = env
     strategy = effect.strategy
@@ -1860,35 +1905,11 @@ async def _handle_thread(effect: EffectBase, env: Environment, store: Store) -> 
         asyncio.set_event_loop(thread_loop)
         try:
             result, final_store, _ = thread_loop.run_until_complete(
-                _run_internal(effect.program, child_env, child_store)
+                _run_internal(effect.program, child_env, child_store, dispatcher=parent_dispatcher)
             )
             return result, final_store
         finally:
             thread_loop.close()
-
-    def merge_thread_state(parent_store: Store, child_store_result: Store) -> Store:
-        """Merge thread state: child state replaces parent (except logs append)."""
-        merged = {}
-        for key, value in child_store_result.items():
-            if not key.startswith("__"):
-                merged[key] = value
-        for key, value in parent_store.items():
-            if not key.startswith("__") and key not in merged:
-                merged[key] = value
-
-        parent_log = parent_store.get("__log__", [])
-        child_log = child_store_result.get("__log__", [])
-        if child_log:
-            merged["__log__"] = list(parent_log) + list(child_log)
-        elif parent_log:
-            merged["__log__"] = list(parent_log)
-
-        parent_memo = parent_store.get("__memo__", {})
-        child_memo = child_store_result.get("__memo__", {})
-        if parent_memo or child_memo:
-            merged["__memo__"] = {**parent_memo, **child_memo}
-
-        return merged
 
     if strategy == "pooled":
         executor = _get_shared_executor()
@@ -1896,7 +1917,7 @@ async def _handle_thread(effect: EffectBase, env: Environment, store: Store) -> 
         if effect.await_result:
             result, child_final_store = await loop.run_in_executor(executor, run_in_thread)
             if isinstance(result, Ok):
-                merged_store = merge_thread_state(store, child_final_store)
+                merged_store = _merge_thread_state(store, child_final_store)
                 return (result.value, merged_store)
             if isinstance(result, Err):
                 raise result.error
@@ -1934,11 +1955,12 @@ async def _handle_thread(effect: EffectBase, env: Environment, store: Store) -> 
     if effect.await_result:
         result, child_final_store = await future
         if isinstance(result, Ok):
-            merged_store = merge_thread_state(store, child_final_store)
+            merged_store = _merge_thread_state(store, child_final_store)
             return (result.value, merged_store)
         if isinstance(result, Err):
             raise result.error
         return (result, store)
+
     async def unwrap_thread_result():
         result, _ = await future
         if isinstance(result, Ok):
@@ -2100,38 +2122,6 @@ async def handle_effectful(
             finally:
                 thread_loop.close()
 
-        def merge_thread_state(parent_store: Store, child_store: Store) -> Store:
-            """Merge thread state: child state replaces parent (except logs append).
-
-            Unlike Spawn (where child adds new keys only), Thread synchronously
-            blocks and its state should fully replace parent state.
-            """
-            merged = {}
-            # User keys: child wins completely
-            for key, value in child_store.items():
-                if not key.startswith("__"):
-                    merged[key] = value
-            # Also include parent keys not in child
-            for key, value in parent_store.items():
-                if not key.startswith("__") and key not in merged:
-                    merged[key] = value
-
-            # Append logs (same as spawn)
-            parent_log = parent_store.get("__log__", [])
-            child_log = child_store.get("__log__", [])
-            if child_log:
-                merged["__log__"] = list(parent_log) + list(child_log)
-            elif parent_log:
-                merged["__log__"] = list(parent_log)
-
-            # Merge memo
-            parent_memo = parent_store.get("__memo__", {})
-            child_memo = child_store.get("__memo__", {})
-            if parent_memo or child_memo:
-                merged["__memo__"] = {**parent_memo, **child_memo}
-
-            return merged
-
         if strategy == "pooled":
             # Use shared pool (module-level singleton) with ThreadPoolExecutor
             executor = _get_shared_executor()
@@ -2141,7 +2131,7 @@ async def handle_effectful(
                     executor, run_in_thread
                 )
                 if isinstance(result, Ok):
-                    merged_store = merge_thread_state(store, child_final_store)
+                    merged_store = _merge_thread_state(store, child_final_store)
                     return (result.value, merged_store)
                 if isinstance(result, Err):
                     raise result.error
@@ -2181,11 +2171,12 @@ async def handle_effectful(
         if effect.await_result:
             result, child_final_store = await future
             if isinstance(result, Ok):
-                merged_store = merge_thread_state(store, child_final_store)
+                merged_store = _merge_thread_state(store, child_final_store)
                 return (result.value, merged_store)
             if isinstance(result, Err):
                 raise result.error
             return (result, store)
+
         # Return unwrapping awaitable for thread result
         async def unwrap_thread_result():
             result, _ = await future
@@ -2272,6 +2263,9 @@ async def _run_internal(
             builtin_pure=default_pure_handlers(),
             builtin_effectful=default_effectful_handlers(),
         )
+
+    # Store dispatcher in store so child machines (Spawn/Thread) can inherit it
+    store = {**store, "__dispatcher__": dispatcher}
 
     state = CESKState.initial(program, env, store)
     step_count = 0
@@ -2407,11 +2401,10 @@ async def run(
         override_builtins,
     )
 
+    # Use merged registries to properly handle category changes with override_builtins
     dispatcher = EffectDispatcher(
-        user_pure=pure_handlers,
-        builtin_pure=builtin_pure,
-        user_effectful=effectful_handlers,
-        builtin_effectful=builtin_effectful,
+        builtin_pure=merged_pure,
+        builtin_effectful=merged_effectful,
     )
 
     result, _, captured_traceback = await _run_internal(
