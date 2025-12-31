@@ -4,12 +4,14 @@ Live effect trace observability for doeff workflows.
 
 ## Overview
 
-When running durable workflows with doeff, you need visibility into the execution state:
-- Which `@do` function is currently executing
-- The call chain that led to the current point (effect trace / K stack)
-- The current effect being processed
+When running durable or long-running workflows with doeff, you need visibility into execution state:
 
-`doeff-flow` provides tools to observe this information **live** from external tools (CLI, TUI, monitoring).
+- **Where am I?** Which `@do` function is currently executing
+- **How did I get here?** The call chain that led to the current point
+- **What's happening?** The current effect being processed
+- **Is it stuck?** Whether execution is progressing
+
+`doeff-flow` provides real-time workflow observation through JSONL trace files and CLI tools.
 
 ## Installation
 
@@ -17,129 +19,214 @@ When running durable workflows with doeff, you need visibility into the executio
 pip install doeff-flow
 ```
 
-## Quick Start
+Or with uv:
 
-### Running Workflows with Trace
+```bash
+uv add doeff-flow
+```
+
+## Quick Start Tutorial
+
+### Step 1: Create a Workflow
 
 ```python
+# my_workflow.py
 from doeff import do
 from doeff.effects import Pure
 from doeff_flow import run_workflow
 from pathlib import Path
 
 @do
+def fetch_data():
+    """Simulate fetching data."""
+    data = yield Pure({"items": [1, 2, 3, 4, 5]})
+    return data
+
+@do
+def process_item(item: int):
+    """Process a single item."""
+    result = yield Pure(item * 2)
+    return result
+
+@do
 def my_workflow():
-    a = yield Pure(10)
-    b = yield Pure(20)
-    return a + b
+    """Main workflow."""
+    # Step 1: Fetch
+    data = yield fetch_data()
 
-# Run with live trace
-result = run_workflow(
-    my_workflow(),
-    workflow_id="wf-001",
-    trace_dir=Path(".doeff-flow"),
-)
-print(result.value)  # 30
+    # Step 2: Process each item
+    results = []
+    for item in data["items"]:
+        result = yield process_item(item)
+        results.append(result)
+
+    # Step 3: Return summary
+    return {"count": len(results), "sum": sum(results)}
+
+if __name__ == "__main__":
+    result = run_workflow(
+        my_workflow(),
+        workflow_id="my-first-workflow",
+        trace_dir=Path(".doeff-flow"),
+    )
+    print(f"Result: {result.value}")
 ```
 
-### Composable with Existing run_sync
+### Step 2: Run and Watch
 
-```python
-from doeff.cesk import run_sync
-from doeff_flow import trace_observer
-from pathlib import Path
-
-with trace_observer("wf-001", Path(".doeff-flow")) as on_step:
-    result = run_sync(my_workflow(), on_step=on_step)
-```
-
-## CLI Commands
-
-### Watch a Workflow
-
-Watch live effect trace in real-time:
-
+**Terminal 1** - Run the workflow:
 ```bash
-# Watch single workflow
-doeff-flow watch wf-001
-
-# Watch with custom trace directory
-doeff-flow watch wf-001 --trace-dir ./my-traces
-
-# Exit when workflow completes
-doeff-flow watch wf-001 --exit-on-complete
+python my_workflow.py
 ```
 
-The watch display shows:
+**Terminal 2** - Watch live execution:
+```bash
+doeff-flow watch my-first-workflow --exit-on-complete
+```
+
+You'll see the call stack update in real-time:
 
 ```
-┌─ wf-001 [running] step 42 ─────────────────────────┐
+┌─ my-first-workflow [running] step 7 ───────────────┐
 │                                                     │
-│  main_workflow         workflow.py:100              │
-│    └─ process_step     workflow.py:45               │
-│         └─ call_api    api.py:23                    │
-│              ↳ CacheGet(key='api_result')           │
+│  my_workflow           my_workflow.py:18            │
+│    └─ process_item     my_workflow.py:11            │
+│         ↳ Pure(6)                                   │
 │                                                     │
 │  Updated: 12:00:00.123                              │
 └─────────────────────────────────────────────────────┘
 ```
 
-### List Active Workflows
+### Step 3: Inspect After Completion
 
 ```bash
+# List all workflows
 doeff-flow ps
+
+# View execution history
+doeff-flow history my-first-workflow --last 20
 ```
 
-Output:
-```
-wf-001    running     step 42
-wf-002    completed   step 100
-wf-003    failed      step 15
-```
+## Examples
 
-### View Execution History
+The package includes several examples demonstrating different use cases:
+
+| Example | Description |
+|---------|-------------|
+| `01_live_trace.py` | Basic live tracing with `run_workflow` and `trace_observer` |
+| `02_data_pipeline.py` | ETL pipeline with multiple stages |
+| `03_error_handling.py` | Error capture and failure tracing |
+| `04_concurrent_workflows.py` | Multiple concurrent workers with separate traces |
+
+Run examples from the repository root:
 
 ```bash
-# Show last 10 steps
-doeff-flow history wf-001
-
-# Show last 20 steps
-doeff-flow history wf-001 --last 20
+python examples/flow/01_live_trace.py
+python examples/flow/02_data_pipeline.py
 ```
 
-Output:
-```
-step    1  running     Pure(10)
-step    2  running     CacheGet(key='api_result')
-step    3  running     Pure(20)
-...
-step   42  completed   -
+## API Usage
+
+### Option A: `run_workflow` (Simple)
+
+```python
+from doeff_flow import run_workflow
+
+result = run_workflow(
+    my_workflow(),
+    workflow_id="wf-001",
+    trace_dir=".doeff-flow",  # str or Path
+)
 ```
 
-## Trace File Format
+### Option B: `trace_observer` (Composable)
 
-Traces are stored as JSONL files (one JSON object per line) in:
+```python
+from doeff.cesk import run_sync
+from doeff_flow import trace_observer
+
+with trace_observer("wf-001", ".doeff-flow") as on_step:
+    result = run_sync(
+        my_workflow(),
+        env={"config": "value"},  # Custom environment
+        on_step=on_step,
+    )
+```
+
+### With Durable Storage
+
+```python
+from doeff.storage import FileStorage
+
+result = run_workflow(
+    my_workflow(),
+    workflow_id="durable-wf",
+    storage=FileStorage(".doeff-cache"),
+)
+```
+
+## CLI Reference
+
+### `doeff-flow watch`
+
+Watch live effect trace for a workflow.
+
+```bash
+doeff-flow watch WORKFLOW_ID [OPTIONS]
+```
+
+**Options:**
+- `--trace-dir PATH` - Directory containing traces (default: `.doeff-flow`)
+- `--exit-on-complete` - Exit when workflow completes or fails
+- `--poll-interval FLOAT` - Poll interval in seconds (default: 0.1)
+
+### `doeff-flow ps`
+
+List all workflows with their status.
+
+```bash
+doeff-flow ps [OPTIONS]
+```
+
+**Options:**
+- `--trace-dir PATH` - Directory containing traces
+
+### `doeff-flow history`
+
+Show execution history for a workflow.
+
+```bash
+doeff-flow history WORKFLOW_ID [OPTIONS]
+```
+
+**Options:**
+- `--trace-dir PATH` - Directory containing traces
+- `--last N` - Show last N steps (default: 10)
+
+## Trace Format
+
+Traces are stored as JSONL files:
 
 ```
 .doeff-flow/
-├── wf-001/
+├── workflow-001/
 │   └── trace.jsonl
-├── wf-002/
+├── workflow-002/
 │   └── trace.jsonl
 └── ...
 ```
 
-Each line contains a `LiveTrace` object:
+Each line is a JSON snapshot:
 
 ```json
 {
-  "workflow_id": "wf-001",
+  "workflow_id": "workflow-001",
   "step": 42,
   "status": "running",
-  "current_effect": "CacheGet(key='api_result')",
+  "current_effect": "Pure(10)",
   "trace": [
-    {"function": "main_workflow", "file": "workflow.py", "line": 100, "code": null},
-    {"function": "process_step", "file": "workflow.py", "line": 45, "code": null}
+    {"function": "my_workflow", "file": "workflow.py", "line": 18, "code": null},
+    {"function": "process_item", "file": "workflow.py", "line": 11, "code": null}
   ],
   "started_at": "2025-12-31T12:00:00.000000",
   "updated_at": "2025-12-31T12:00:00.050000",
@@ -147,48 +234,50 @@ Each line contains a `LiveTrace` object:
 }
 ```
 
-**Benefits of JSONL**:
-- Append-only (no atomic rename needed)
-- Full execution history preserved
-- `tail -f` friendly for live watching
-- Easy replay and debugging
+## Best Practices
+
+1. **Use descriptive workflow IDs** with timestamps for uniqueness:
+   ```python
+   from datetime import datetime
+   workflow_id = f"pipeline-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+   ```
+
+2. **Add `.doeff-flow` to `.gitignore`**:
+   ```
+   .doeff-flow/
+   ```
+
+3. **Use `--exit-on-complete` in scripts**:
+   ```bash
+   doeff-flow watch my-wf --exit-on-complete
+   ```
+
+4. **Clean up old traces periodically**:
+   ```bash
+   find .doeff-flow -mtime +7 -delete
+   ```
 
 ## API Reference
 
-### `run_workflow()`
+### Functions
 
-```python
-def run_workflow(
-    program: Program[T],
-    workflow_id: str,
-    trace_dir: Path | str = Path(".doeff-flow"),
-    *,
-    env: Environment | dict | None = None,
-    store: Store | None = None,
-    storage: DurableStorage | None = None,
-) -> CESKResult[T]:
-```
-
-Convenience wrapper that combines `run_sync` with `trace_observer`.
-
-### `trace_observer()`
-
-```python
-@contextmanager
-def trace_observer(
-    workflow_id: str,
-    trace_dir: Path,
-) -> Generator[Callable[[ExecutionSnapshot], None], None, None]:
-```
-
-Context manager that creates an `on_step` callback for live trace.
+| Function | Description |
+|----------|-------------|
+| `run_workflow(program, workflow_id, ...)` | Run workflow with live trace |
+| `trace_observer(workflow_id, trace_dir)` | Context manager for `on_step` callback |
+| `validate_workflow_id(workflow_id)` | Validate workflow ID format |
 
 ### Data Types
 
-- `TraceFrame` - A frame in the effect trace (corresponds to a `@do` function call)
-- `LiveTrace` - Current execution state of a workflow
+| Type | Description |
+|------|-------------|
+| `TraceFrame` | A frame in the effect trace (function, file, line, code) |
+| `LiveTrace` | Complete execution snapshot (workflow_id, step, status, trace, ...) |
 
-## Related
+## Documentation
 
-- [CESK Execution Observability](../doeff/cesk_observability.py) - Core observability API
-- [Durable Execution](../doeff/storage.py) - Storage layer for durable workflows
+Full documentation: [docs/17-workflow-observability.md](../../docs/17-workflow-observability.md)
+
+## License
+
+MIT
