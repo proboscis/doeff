@@ -77,3 +77,4 @@ proboscis_doeff_deploy.pub
 
 # Override global gitignore for examples
 !examples/
+ORCH_PROMPT.md
