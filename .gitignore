@@ -74,3 +74,6 @@ proboscis_doeff_deploy.pub
 # Worktrees and orchestration
 .git-worktrees/
 .orch/
+
+# Override global gitignore for examples
+!examples/
