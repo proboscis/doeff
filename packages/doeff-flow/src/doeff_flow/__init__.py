@@ -41,7 +41,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff_flow.trace import LiveTrace, TraceFrame, trace_observer
+from doeff_flow.trace import LiveTrace, TraceFrame, trace_observer, validate_workflow_id
 
 if TYPE_CHECKING:
     from doeff.cesk import CESKResult, Environment, Store
@@ -116,6 +116,8 @@ __all__ = [
     "LiveTrace",
     # Observer
     "trace_observer",
+    # Validation
+    "validate_workflow_id",
     # Convenience wrapper
     "run_workflow",
 ]

@@ -16,48 +16,59 @@ from doeff_flow.trace import (
     LiveTrace,
     TraceFrame,
     _safe_repr,
-    _validate_workflow_id,
     trace_observer,
+    validate_workflow_id,
 )
 
 
 class TestValidateWorkflowId:
-    """Tests for _validate_workflow_id function."""
+    """Tests for validate_workflow_id function."""
 
     def test_valid_alphanumeric(self):
         """Valid alphanumeric workflow IDs should pass."""
-        assert _validate_workflow_id("workflow001") == "workflow001"
-        assert _validate_workflow_id("MyWorkflow") == "MyWorkflow"
-        assert _validate_workflow_id("test123") == "test123"
+        assert validate_workflow_id("workflow001") == "workflow001"
+        assert validate_workflow_id("MyWorkflow") == "MyWorkflow"
+        assert validate_workflow_id("test123") == "test123"
 
     def test_valid_with_hyphen(self):
         """Valid workflow IDs with hyphens should pass."""
-        assert _validate_workflow_id("my-workflow") == "my-workflow"
-        assert _validate_workflow_id("test-123-abc") == "test-123-abc"
+        assert validate_workflow_id("my-workflow") == "my-workflow"
+        assert validate_workflow_id("test-123-abc") == "test-123-abc"
 
     def test_valid_with_underscore(self):
         """Valid workflow IDs with underscores should pass."""
-        assert _validate_workflow_id("my_workflow") == "my_workflow"
-        assert _validate_workflow_id("test_123_abc") == "test_123_abc"
+        assert validate_workflow_id("my_workflow") == "my_workflow"
+        assert validate_workflow_id("test_123_abc") == "test_123_abc"
 
     def test_invalid_with_spaces(self):
         """Workflow IDs with spaces should be rejected."""
         with pytest.raises(ValueError, match="Invalid workflow_id"):
-            _validate_workflow_id("my workflow")
+            validate_workflow_id("my workflow")
 
     def test_invalid_with_special_chars(self):
         """Workflow IDs with special characters should be rejected."""
         with pytest.raises(ValueError, match="Invalid workflow_id"):
-            _validate_workflow_id("workflow@123")
+            validate_workflow_id("workflow@123")
         with pytest.raises(ValueError, match="Invalid workflow_id"):
-            _validate_workflow_id("workflow/test")
+            validate_workflow_id("workflow/test")
         with pytest.raises(ValueError, match="Invalid workflow_id"):
-            _validate_workflow_id("workflow..test")
+            validate_workflow_id("workflow..test")
 
     def test_empty_string(self):
         """Empty workflow ID should be rejected."""
-        with pytest.raises(ValueError, match="Invalid workflow_id"):
-            _validate_workflow_id("")
+        with pytest.raises(ValueError, match="cannot be empty"):
+            validate_workflow_id("")
+
+    def test_too_long(self):
+        """Workflow IDs longer than 255 characters should be rejected."""
+        long_id = "a" * 256
+        with pytest.raises(ValueError, match="too long"):
+            validate_workflow_id(long_id)
+
+    def test_max_length_valid(self):
+        """Workflow IDs at exactly 255 characters should pass."""
+        max_id = "a" * 255
+        assert validate_workflow_id(max_id) == max_id
 
 
 class TestSafeRepr:
@@ -241,6 +252,21 @@ class TestTraceObserver:
             with pytest.raises(ValueError, match="Invalid workflow_id"):
                 with trace_observer("invalid/id", trace_dir):
                     pass
+
+    def test_accepts_string_trace_dir(self):
+        """trace_observer should accept string path for trace_dir."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+
+            @do
+            def simple_workflow():
+                return (yield Pure(42))
+
+            with trace_observer("test-wf", tmp_dir) as on_step:  # String instead of Path
+                result = run_sync(simple_workflow(), on_step=on_step)
+
+            assert result.value == 42
+            trace_file = Path(tmp_dir) / "test-wf" / "trace.jsonl"
+            assert trace_file.exists()
 
 
 class TestRunWorkflow:

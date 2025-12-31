@@ -74,8 +74,8 @@ class LiveTrace:
     error: str | None = None
 
 
-def _validate_workflow_id(workflow_id: str) -> str:
-    """Validate workflow_id contains only safe characters.
+def validate_workflow_id(workflow_id: str) -> str:
+    """Validate workflow_id contains only safe characters and reasonable length.
 
     Args:
         workflow_id: The workflow ID to validate.
@@ -84,13 +84,21 @@ def _validate_workflow_id(workflow_id: str) -> str:
         The validated workflow ID.
 
     Raises:
-        ValueError: If the workflow ID contains invalid characters.
+        ValueError: If the workflow ID is invalid (empty, too long, or has invalid characters).
     """
+    if not workflow_id:
+        raise ValueError("workflow_id cannot be empty")
+    if len(workflow_id) > 255:
+        raise ValueError(f"workflow_id too long: {len(workflow_id)} > 255 characters")
     if not re.match(r"^[a-zA-Z0-9_-]+$", workflow_id):
         raise ValueError(
             f"Invalid workflow_id: {workflow_id!r}. Must match [a-zA-Z0-9_-]+"
         )
     return workflow_id
+
+
+# Alias for internal use
+_validate_workflow_id = validate_workflow_id
 
 
 def _safe_repr(obj: object, max_len: int = 200) -> str:
@@ -134,7 +142,7 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
 @contextmanager
 def trace_observer(
     workflow_id: str,
-    trace_dir: Path,
+    trace_dir: Path | str,
 ) -> Generator[Callable[["ExecutionSnapshot"], None], None, None]:
     """Context manager that creates an on_step callback for live trace.
 
@@ -143,7 +151,7 @@ def trace_observer(
 
     Args:
         workflow_id: Unique identifier for the workflow. Must match [a-zA-Z0-9_-]+.
-        trace_dir: Directory where trace files will be written.
+        trace_dir: Directory where trace files will be written. Can be Path or str.
 
     Yields:
         A callback function suitable for passing to run_sync(on_step=...).
@@ -156,6 +164,8 @@ def trace_observer(
             result = run_sync(my_workflow(), on_step=on_step)
     """
     workflow_id = _validate_workflow_id(workflow_id)
+    if isinstance(trace_dir, str):
+        trace_dir = Path(trace_dir)
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     trace_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -196,4 +206,5 @@ __all__ = [
     "TraceFrame",
     "LiveTrace",
     "trace_observer",
+    "validate_workflow_id",
 ]
