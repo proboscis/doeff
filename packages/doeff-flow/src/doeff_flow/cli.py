@@ -15,6 +15,8 @@ from pathlib import Path
 
 import click
 
+from doeff_flow.trace import validate_workflow_id
+
 
 @click.group()
 def cli():
@@ -50,6 +52,11 @@ def watch(
 
     WORKFLOW_ID is the unique identifier of the workflow to watch.
     """
+    try:
+        workflow_id = validate_workflow_id(workflow_id)
+    except ValueError as e:
+        raise click.BadParameter(str(e)) from e
+
     trace_file = trace_dir / workflow_id / "trace.jsonl"
 
     last_line_count = 0
@@ -169,6 +176,11 @@ def history(workflow_id: str, trace_dir: Path, last: int):
 
     WORKFLOW_ID is the unique identifier of the workflow.
     """
+    try:
+        workflow_id = validate_workflow_id(workflow_id)
+    except ValueError as e:
+        raise click.BadParameter(str(e)) from e
+
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     if not trace_file.exists():
         click.echo(f"No trace found for {workflow_id}")
