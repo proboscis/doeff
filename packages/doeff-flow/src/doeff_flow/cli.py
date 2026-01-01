@@ -141,6 +141,8 @@ def _render_trace_panel(data: dict) -> Panel:
 
     trace_frames = data.get("trace", [])
     is_failed = status == "failed"
+    is_completed = status == "completed"
+    gather = data.get("gather")
 
     for i, frame in enumerate(trace_frames):
         fn = frame["function"]
@@ -167,16 +169,50 @@ def _render_trace_panel(data: dict) -> Panel:
 
         current = current.add(label)
 
+    # Show gather info as parallel branches if inside a Gather
+    if gather and gather.get("total", 0) > 0:
+        total = gather["total"]
+        completed = gather.get("completed", 0)
+        results = gather.get("results", [])
+
+        gather_node = current.add(f"[blue bold]⋔ gather[/] [dim]({completed}/{total} done)[/]")
+
+        # Show completed tasks with results
+        for j, result in enumerate(results):
+            result_display = result[:30] + "..." if len(result) > 30 else result
+            gather_node.add(f"[green]✓[/] [dim]task {j + 1}:[/] {result_display}")
+
+        # Show current task (running)
+        if completed < total:
+            gather_node.add(f"[yellow]→[/] [dim]task {completed + 1}:[/] [yellow]running...[/]")
+
+        # Show remaining tasks
+        remaining = total - completed - 1
+        if remaining > 0:
+            gather_node.add(f"[dim]○ {remaining} more pending[/]")
+
     # Show "empty stack" message if no frames
-    if not trace_frames:
+    if not trace_frames and not gather:
         current.add("[dim italic]<top level>[/]")
 
     # Format timestamp
     updated = data["updated_at"].split("T")[1][:12] if "T" in data["updated_at"] else data["updated_at"]
 
-    # Build content with optional error section
+    # Build content with optional sections
     content_parts = [tree]
 
+    # Show result if completed
+    if is_completed and data.get("result"):
+        result_text = Text()
+        result_text.append("\n\n")
+        result_text.append("Result: ", style="green bold")
+        result_display = data["result"]
+        if len(result_display) > 100:
+            result_display = result_display[:97] + "..."
+        result_text.append(result_display, style="green")
+        content_parts.append(result_text)
+
+    # Show error if failed
     if is_failed and data.get("error"):
         error_text = Text()
         error_text.append("\n\n")
