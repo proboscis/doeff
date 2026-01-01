@@ -115,7 +115,7 @@ def _watch_single(
 
 
 def _render_trace_panel(data: dict) -> Panel:
-    """Render a single workflow trace as a rich Panel."""
+    """Render a single workflow trace as a rich Panel with call tree."""
     wf_id = data["workflow_id"]
     status = data["status"]
     step = data["step"]
@@ -130,35 +130,49 @@ def _render_trace_panel(data: dict) -> Panel:
     }
     icon, color = status_styles.get(status, ("?", "white"))
 
-    # Build call stack tree
-    tree = Tree(f"[bold]{wf_id}[/bold]")
+    # Build call stack tree (kleisli trace)
+    tree = Tree(f"[bold magenta]⚡ {wf_id}[/bold magenta]")
     current = tree
-    for frame in data["trace"]:
+
+    trace_frames = data.get("trace", [])
+    for i, frame in enumerate(trace_frames):
         fn = frame["function"]
         file_name = Path(frame["file"]).name
-        loc = f"{file_name}:{frame['line']}"
-        current = current.add(f"[cyan]{fn}[/cyan] [dim]{loc}[/dim]")
+        line = frame["line"]
+        code = frame.get("code")
 
-    # Add current effect
-    if data["current_effect"]:
-        effect = data["current_effect"]
-        if len(effect) > 60:
-            effect = effect[:57] + "..."
-        current.add(f"[yellow]↳ {effect}[/yellow]")
+        # Show function with location
+        if code:
+            # Truncate code if too long
+            code_display = code.strip()
+            if len(code_display) > 50:
+                code_display = code_display[:47] + "..."
+            label = f"[cyan bold]{fn}[/] [dim]{file_name}:{line}[/]\n[dim italic]  {code_display}[/]"
+        else:
+            label = f"[cyan bold]{fn}[/] [dim]{file_name}:{line}[/]"
+
+        # Use different style for deepest frame (current position)
+        if i == len(trace_frames) - 1:
+            label = f"[yellow]→[/] {label}"
+
+        current = current.add(label)
+
+    # Show "empty stack" message if no frames
+    if not trace_frames:
+        current.add("[dim italic]<top level>[/]")
 
     # Format timestamp
     updated = data["updated_at"].split("T")[1][:12] if "T" in data["updated_at"] else data["updated_at"]
 
-    # Build panel
-    panel_content = Text()
-    panel_content.append(f"{icon} ", style=color)
-    panel_content.append(f"{status}", style=f"bold {color}")
-    panel_content.append(f"  step {step}\n\n", style="dim")
+    # Add error info if failed
+    error_text = ""
+    if status == "failed" and data.get("error"):
+        error_text = f"\n\n[red bold]Error:[/] [red]{data['error']}[/]"
 
     return Panel(
         tree,
         title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
-        subtitle=f"[dim]Updated: {updated}[/dim]",
+        subtitle=f"[dim]Updated: {updated}[/dim]{error_text}",
         border_style=color,
     )
 
@@ -240,8 +254,24 @@ def _collect_workflow_states(trace_dir: Path) -> dict[str, dict]:
     return workflows
 
 
+def _format_call_stack(trace: list[dict], max_len: int = 50) -> str:
+    """Format call stack as a compact string: fn1 → fn2 → fn3."""
+    if not trace:
+        return "[dim]<top level>[/]"
+
+    functions = [frame["function"] for frame in trace]
+    # Show arrow chain: fn1 → fn2 → fn3
+    chain = " → ".join(functions)
+
+    if len(chain) > max_len:
+        # Truncate from the beginning, keeping the deepest frames
+        chain = "..." + chain[-(max_len - 3) :]
+
+    return chain
+
+
 def _render_all_workflows_table(workflows: dict[str, dict]) -> Panel:
-    """Render a table of all workflows."""
+    """Render a table of all workflows with call stacks."""
     # Status styling
     status_styles = {
         "running": ("▶", "yellow"),
@@ -255,22 +285,21 @@ def _render_all_workflows_table(workflows: dict[str, dict]) -> Panel:
     table.add_column("Workflow", style="cyan")
     table.add_column("Status", justify="center")
     table.add_column("Step", justify="right")
-    table.add_column("Current Effect", style="dim", max_width=40)
+    table.add_column("Call Stack", style="dim", max_width=50)
 
     for wf_id, data in sorted(workflows.items()):
         status = data["status"]
         icon, color = status_styles.get(status, ("?", "white"))
         step = str(data["step"])
 
-        effect = data.get("current_effect") or ""
-        if len(effect) > 40:
-            effect = effect[:37] + "..."
+        # Format call stack instead of current effect
+        call_stack = _format_call_stack(data.get("trace", []))
 
         table.add_row(
             wf_id,
             Text(f"{icon} {status}", style=color),
             step,
-            effect,
+            call_stack,
         )
 
     # Summary
