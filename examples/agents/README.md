@@ -12,6 +12,7 @@ coding agents (Claude, Codex, Gemini) in tmux sessions.
 | `03_async_monitoring.py` | Async API usage with multiple sessions |
 | `04_custom_adapter.py` | Creating a custom agent adapter |
 | `05_status_callbacks.py` | Using callbacks for status changes and PR detection |
+| `06_effects_api.py` | Effects-based API with handlers and programs |
 
 ## Prerequisites
 
