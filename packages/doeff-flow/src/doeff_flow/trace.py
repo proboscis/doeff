@@ -105,6 +105,7 @@ class LiveTrace:
         error: Error message if status is "failed", None otherwise.
         result: Repr of return value if completed, None otherwise.
         gather: Info about active parallel gather, None if not gathering.
+        last_slog: Most recent structured log payload from slog(), None otherwise.
     """
 
     workflow_id: str
@@ -117,6 +118,7 @@ class LiveTrace:
     error: str | None = None
     result: str | None = None
     gather: GatherState | None = None
+    last_slog: dict | None = None
 
 
 def validate_workflow_id(workflow_id: str) -> str:
@@ -181,6 +183,7 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
         "error": trace.error,
         "result": trace.result,
         "gather": asdict(trace.gather) if trace.gather else None,
+        "last_slog": trace.last_slog,
     }
     with trace_file.open("a") as f:
         f.write(json.dumps(trace_dict) + "\n")
@@ -296,6 +299,16 @@ def trace_observer(
                 results=list(snapshot.gather_info.completed_results),
             )
 
+        # Extract structured log (slog) if current effect is WriterTellEffect with dict
+        last_slog = None
+        if snapshot.current_effect is not None:
+            from doeff.effects.writer import WriterTellEffect
+
+            if isinstance(snapshot.current_effect, WriterTellEffect):
+                msg = snapshot.current_effect.message
+                if isinstance(msg, dict):
+                    last_slog = msg
+
         trace = LiveTrace(
             workflow_id=workflow_id,
             step=snapshot.step_count,
@@ -309,6 +322,7 @@ def trace_observer(
             error=error_msg,
             result=snapshot.result,
             gather=gather_state,
+            last_slog=last_slog,
         )
 
         _write_trace(trace_file, trace)
