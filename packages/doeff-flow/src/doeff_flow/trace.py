@@ -200,42 +200,59 @@ def trace_observer(
     trace_file.parent.mkdir(parents=True, exist_ok=True)
 
     started_at = datetime.now().isoformat()
-    # Track deepest frames for error cases (K stack unwinds, we want the deepest point)
-    deepest_frames: list[TraceFrame] = []
 
     def on_step(snapshot: "ExecutionSnapshot") -> None:
-        nonlocal deepest_frames
-
-        # Extract ReturnFrames only (these are @do function calls)
-        frames = [
-            TraceFrame(
-                function=f.location.function if f.location else "?",
-                file=f.location.filename if f.location else "?",
-                line=f.location.line if f.location else 0,
-                code=f.location.code if f.location else None,
-            )
-            for f in snapshot.k_stack
-            if f.frame_type == "ReturnFrame"
-        ]
-
-        # Include active_call as the deepest frame (captures non-yielding functions)
-        if snapshot.active_call is not None:
-            frames.append(
+        # For error cases, use the captured effect trace and error location
+        if snapshot.error is not None and snapshot.error.effect_trace:
+            # Build frames from the captured effect trace
+            frames = [
                 TraceFrame(
-                    function=snapshot.active_call.function,
-                    file=snapshot.active_call.filename,
-                    line=snapshot.active_call.line,
-                    code=snapshot.active_call.code,
+                    function=loc.function,
+                    file=loc.filename,
+                    line=loc.line,
+                    code=loc.code,
                 )
-            )
+                for loc in snapshot.error.effect_trace
+            ]
+            # Add the error location as the final frame (where exception was raised)
+            if snapshot.error.error_location is not None:
+                error_loc = snapshot.error.error_location
+                # Only add if different from last effect frame
+                if not frames or (
+                    frames[-1].function != error_loc.function
+                    or frames[-1].line != error_loc.line
+                ):
+                    frames.append(
+                        TraceFrame(
+                            function=error_loc.function,
+                            file=error_loc.filename,
+                            line=error_loc.line,
+                            code=error_loc.code,
+                        )
+                    )
+        else:
+            # Normal case: extract ReturnFrames from K stack
+            frames = [
+                TraceFrame(
+                    function=f.location.function if f.location else "?",
+                    file=f.location.filename if f.location else "?",
+                    line=f.location.line if f.location else 0,
+                    code=f.location.code if f.location else None,
+                )
+                for f in snapshot.k_stack
+                if f.frame_type == "ReturnFrame"
+            ]
 
-        # Track deepest frames seen (for error recovery when K stack unwinds)
-        if len(frames) > len(deepest_frames):
-            deepest_frames = frames.copy()
-
-        # For error cases with empty frames, use deepest known frames
-        if snapshot.error is not None and not frames and deepest_frames:
-            frames = deepest_frames
+            # Include active_call as the deepest frame (captures non-yielding functions)
+            if snapshot.active_call is not None:
+                frames.append(
+                    TraceFrame(
+                        function=snapshot.active_call.function,
+                        file=snapshot.active_call.filename,
+                        line=snapshot.active_call.line,
+                        code=snapshot.active_call.code,
+                    )
+                )
 
         # Extract error info if present
         error_msg = None
