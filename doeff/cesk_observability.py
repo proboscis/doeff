@@ -163,6 +163,8 @@ class ExecutionSnapshot:
         current_effect: Effect currently being processed, or None.
         step_count: Number of interpreter steps executed so far.
         cache_keys: Tuple of keys currently in durable storage.
+        active_call: Location of currently executing program (if any).
+            This captures function calls even for non-yielding @do functions.
     """
 
     status: ExecutionStatus
@@ -170,6 +172,7 @@ class ExecutionSnapshot:
     current_effect: Any | None
     step_count: int
     cache_keys: tuple[str, ...]
+    active_call: CodeLocation | None = None
 
     @classmethod
     def from_state(
@@ -180,7 +183,7 @@ class ExecutionSnapshot:
         storage: "DurableStorage | None" = None,
     ) -> "ExecutionSnapshot":
         """Create a snapshot from the current CESK state."""
-        from doeff.cesk import EffectControl
+        from doeff.cesk import EffectControl, ProgramControl
 
         # Build K stack snapshots
         k_stack = tuple(KFrameSnapshot.from_frame(frame) for frame in state.K)
@@ -189,6 +192,22 @@ class ExecutionSnapshot:
         current_effect = None
         if isinstance(state.C, EffectControl):
             current_effect = state.C.effect
+
+        # Get active call if executing a program (captures non-yielding functions)
+        active_call = None
+        if isinstance(state.C, ProgramControl):
+            from doeff.program import KleisliProgramCall
+
+            program = state.C.program
+            if isinstance(program, KleisliProgramCall):
+                created_at = getattr(program, "created_at", None)
+                if created_at is not None:
+                    active_call = CodeLocation(
+                        filename=getattr(created_at, "filename", "<unknown>"),
+                        line=getattr(created_at, "line", 0),
+                        function=getattr(program, "function_name", "<unknown>"),
+                        code=getattr(created_at, "code", None),
+                    )
 
         # Get cache keys from storage
         cache_keys: tuple[str, ...] = ()
@@ -206,6 +225,7 @@ class ExecutionSnapshot:
             current_effect=current_effect,
             step_count=step_count,
             cache_keys=cache_keys,
+            active_call=active_call,
         )
 
 
