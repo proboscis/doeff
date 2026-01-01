@@ -170,6 +170,22 @@ class ErrorInfo:
 
 
 @dataclass(frozen=True)
+class GatherInfo:
+    """
+    Information about an active Gather (parallel) operation.
+
+    Attributes:
+        total_tasks: Total number of tasks being gathered.
+        completed_count: Number of tasks completed so far.
+        completed_results: Repr strings of completed results.
+    """
+
+    total_tasks: int
+    completed_count: int
+    completed_results: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ExecutionSnapshot:
     """
     Point-in-time snapshot of execution state.
@@ -186,6 +202,8 @@ class ExecutionSnapshot:
         active_call: Location of currently executing program (if any).
             This captures function calls even for non-yielding @do functions.
         error: Error information if status is "failed", None otherwise.
+        result: The return value when status is "completed", None otherwise.
+        gather_info: Info about active Gather operation, None if not gathering.
     """
 
     status: ExecutionStatus
@@ -195,6 +213,8 @@ class ExecutionSnapshot:
     cache_keys: tuple[str, ...]
     active_call: CodeLocation | None = None
     error: ErrorInfo | None = None
+    result: str | None = None  # Truncated repr of result value
+    gather_info: GatherInfo | None = None
 
     @classmethod
     def from_state(
@@ -292,6 +312,41 @@ class ExecutionSnapshot:
 
                 logging.debug(f"Error getting cache keys during snapshot: {e}")
 
+        # Get result value if completed
+        result_repr = None
+        if status == "completed":
+            from doeff.cesk import Value
+
+            if isinstance(state.C, Value):
+                try:
+                    r = repr(state.C.v)
+                    result_repr = r[:200] + "..." if len(r) > 200 else r
+                except Exception:
+                    result_repr = "<repr failed>"
+
+        # Get gather info if inside a Gather operation
+        gather_info = None
+        from doeff.cesk import GatherFrame
+
+        for frame in state.K:
+            if isinstance(frame, GatherFrame):
+                try:
+                    completed_count = len(frame.collected_results)
+                    remaining_count = len(frame.remaining_programs)
+                    total = completed_count + remaining_count + 1  # +1 for current
+                    completed_reprs = tuple(
+                        (repr(r)[:50] + "..." if len(repr(r)) > 50 else repr(r))
+                        for r in frame.collected_results
+                    )
+                    gather_info = GatherInfo(
+                        total_tasks=total,
+                        completed_count=completed_count,
+                        completed_results=completed_reprs,
+                    )
+                except Exception:
+                    pass
+                break  # Only care about innermost Gather
+
         return cls(
             status=status,
             k_stack=k_stack,
@@ -300,6 +355,8 @@ class ExecutionSnapshot:
             cache_keys=cache_keys,
             active_call=active_call,
             error=error_info,
+            result=result_repr,
+            gather_info=gather_info,
         )
 
 
@@ -413,6 +470,7 @@ __all__ = [
     "CodeLocation",
     "KFrameSnapshot",
     "ErrorInfo",
+    "GatherInfo",
     "ExecutionSnapshot",
     "ExecutionMonitor",
     "OnStepCallback",
