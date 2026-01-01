@@ -117,6 +117,7 @@ The package includes several examples demonstrating different use cases:
 | `02_data_pipeline.py` | ETL pipeline with multiple stages |
 | `03_error_handling.py` | Error capture and failure tracing |
 | `04_concurrent_workflows.py` | Multiple concurrent workers with separate traces |
+| `07_workflow_status.py` | Workflow status with slog for semantic status updates |
 
 Run examples from the `packages/doeff-flow` directory:
 
@@ -180,6 +181,7 @@ doeff-flow watch WORKFLOW_ID [OPTIONS]
 - `--trace-dir PATH` - Directory containing traces (default: `.doeff-flow`)
 - `--exit-on-complete` - Exit when workflow completes or fails
 - `--poll-interval FLOAT` - Poll interval in seconds (default: 0.1)
+- `--status-only` - Show only slog status updates (simplified display)
 
 ### `doeff-flow ps`
 
@@ -231,9 +233,63 @@ Each line is a JSON snapshot:
   ],
   "started_at": "2025-12-31T12:00:00.000000",
   "updated_at": "2025-12-31T12:00:00.050000",
-  "error": null
+  "error": null,
+  "last_slog": {"status": "reviewing", "msg": "Checking PR"}
 }
 ```
+
+## Workflow Status with slog
+
+For multi-agent workflows with complex, varying states, use `slog` (structured log) to emit
+human-readable status messages. These are captured in traces and displayed prominently in the CLI.
+
+### Basic Usage
+
+```python
+from doeff import do
+from doeff.effects.writer import slog
+from doeff_flow import run_workflow
+
+@do
+def my_workflow():
+    yield slog(status="starting", msg="Beginning workflow")
+
+    result = yield some_operation()
+    yield slog(status="processing", msg=f"Processed {len(result)} items")
+
+    yield slog(status="waiting", msg="Ready for user review")
+    return result
+```
+
+### Watching with Status Mode
+
+```bash
+# Full display with slog status at the top
+doeff-flow watch my-workflow
+
+# Simplified display showing only slog status
+doeff-flow watch my-workflow --status-only
+```
+
+### Example Output
+
+```
+[automated-review] Starting PR check
+Step 5: RunReviewAgent(...)
+
+[waiting] Ready for user review
+```
+
+### Use Cases
+
+The slog pattern is designed for:
+
+- **Multi-agent workflows**: Display which agent/phase is currently active
+- **Cyclic workflows**: Track iterations in review → fix → review loops
+- **User interaction**: Signal when workflow needs human attention
+- **Progress tracking**: Show completion status of long-running operations
+
+See `examples/07_workflow_status.py` for a complete example.
 
 ## Best Practices
 

@@ -50,11 +50,17 @@ def cli():
     type=float,
     help="Poll interval in seconds (default: 0.1)",
 )
+@click.option(
+    "--status-only",
+    is_flag=True,
+    help="Show only slog status updates (simplified display)",
+)
 def watch(
     workflow_id: str | None,
     trace_dir: Path | None,
     exit_on_complete: bool,
     poll_interval: float,
+    status_only: bool,
 ):
     """Watch live effect trace for workflows.
 
@@ -70,7 +76,7 @@ def watch(
             workflow_id = validate_workflow_id(workflow_id)
         except ValueError as e:
             raise click.BadParameter(str(e)) from e
-        _watch_single(trace_dir, workflow_id, exit_on_complete, poll_interval)
+        _watch_single(trace_dir, workflow_id, exit_on_complete, poll_interval, status_only)
     else:
         # Watch all workflows
         _watch_all(trace_dir, exit_on_complete, poll_interval)
@@ -81,8 +87,17 @@ def _watch_single(
     workflow_id: str,
     exit_on_complete: bool,
     poll_interval: float,
+    status_only: bool = False,
 ) -> None:
-    """Watch a single workflow with rich live display."""
+    """Watch a single workflow with rich live display.
+
+    Args:
+        trace_dir: Directory containing trace files.
+        workflow_id: The workflow ID to watch.
+        exit_on_complete: Exit when workflow completes or fails.
+        poll_interval: Poll interval in seconds.
+        status_only: Show only slog status updates (simplified display).
+    """
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     last_line_count = 0
 
@@ -97,7 +112,7 @@ def _watch_single(
                     if len(lines) > last_line_count:
                         last_line_count = len(lines)
                         data = json.loads(lines[-1])
-                        live.update(_render_trace_panel(data))
+                        live.update(_render_trace_panel(data, status_only=status_only))
 
                         if exit_on_complete and data["status"] in ("completed", "failed"):
                             console.print(
@@ -117,13 +132,19 @@ def _watch_single(
             time.sleep(poll_interval)
 
 
-def _render_trace_panel(data: dict) -> Panel:
-    """Render a single workflow trace as a rich Panel with call tree."""
+def _render_trace_panel(data: dict, status_only: bool = False) -> Panel:
+    """Render a single workflow trace as a rich Panel with call tree.
+
+    Args:
+        data: The trace data dict from JSONL.
+        status_only: If True, show only slog status updates (simplified display).
+    """
     from rich.console import Group
 
     wf_id = data["workflow_id"]
     status = data["status"]
     step = data["step"]
+    last_slog = data.get("last_slog")
 
     # Status styling
     status_styles = {
@@ -198,8 +219,47 @@ def _render_trace_panel(data: dict) -> Panel:
     # Format timestamp
     updated = data["updated_at"].split("T")[1][:12] if "T" in data["updated_at"] else data["updated_at"]
 
+    # For status_only mode, show simplified display
+    if status_only:
+        if last_slog:
+            slog_status = last_slog.get("status", "")
+            slog_msg = last_slog.get("msg", str(last_slog))
+            status_text = Text()
+            if slog_status:
+                status_text.append(f"[{slog_status}]", style="bold cyan")
+                status_text.append(f" {slog_msg}")
+            else:
+                status_text.append(str(last_slog))
+            return Panel(
+                status_text,
+                title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
+                subtitle=f"[dim]Updated: {updated}[/dim]",
+                border_style=color,
+            )
+        else:
+            return Panel(
+                Text(f"Step {step}: {data.get('current_effect') or '-'}", style="dim"),
+                title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
+                subtitle=f"[dim]Updated: {updated}[/dim]",
+                border_style=color,
+            )
+
     # Build content with optional sections
-    content_parts = [tree]
+    content_parts = []
+
+    # Show slog status prominently at the top if available
+    if last_slog:
+        slog_status = last_slog.get("status", "")
+        slog_msg = last_slog.get("msg", str(last_slog))
+        slog_text = Text()
+        if slog_status:
+            slog_text.append(f"[{slog_status}]", style="bold cyan")
+            slog_text.append(f" {slog_msg}\n\n")
+        else:
+            slog_text.append(f"{last_slog}\n\n")
+        content_parts.append(slog_text)
+
+    content_parts.append(tree)
 
     # Show result if completed
     if is_completed and data.get("result"):
