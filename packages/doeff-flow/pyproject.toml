@@ -23,6 +23,7 @@ classifiers = [
 dependencies = [
     "doeff>=0.1.9",
     "click>=8.0.0",
+    "rich>=13.0.0",
 ]
 
 [project.scripts]

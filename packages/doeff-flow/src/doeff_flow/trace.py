@@ -21,6 +21,7 @@ Example usage:
 from __future__ import annotations
 
 import json
+import os
 import re
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -30,6 +31,31 @@ from typing import TYPE_CHECKING, Callable, Generator
 
 if TYPE_CHECKING:
     from doeff.cesk_observability import ExecutionSnapshot
+
+
+def get_default_trace_dir() -> Path:
+    """Get the default trace directory following XDG Base Directory Specification.
+
+    Returns the trace directory in this order of precedence:
+    1. $DOEFF_FLOW_TRACE_DIR if set
+    2. $XDG_STATE_HOME/doeff-flow if XDG_STATE_HOME is set
+    3. ~/.local/state/doeff-flow (XDG default)
+
+    Returns:
+        Path to the default trace directory.
+    """
+    # Check for explicit override
+    if env_dir := os.environ.get("DOEFF_FLOW_TRACE_DIR"):
+        return Path(env_dir)
+
+    # Use XDG_STATE_HOME or default
+    xdg_state_home = os.environ.get("XDG_STATE_HOME")
+    if xdg_state_home:
+        base = Path(xdg_state_home)
+    else:
+        base = Path.home() / ".local" / "state"
+
+    return base / "doeff-flow"
 
 
 @dataclass
@@ -142,7 +168,7 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
 @contextmanager
 def trace_observer(
     workflow_id: str,
-    trace_dir: Path | str,
+    trace_dir: Path | str | None = None,
 ) -> Generator[Callable[["ExecutionSnapshot"], None], None, None]:
     """Context manager that creates an on_step callback for live trace.
 
@@ -152,6 +178,7 @@ def trace_observer(
     Args:
         workflow_id: Unique identifier for the workflow. Must match [a-zA-Z0-9_-]+.
         trace_dir: Directory where trace files will be written. Can be Path or str.
+            If None, uses XDG-compliant default (~/.local/state/doeff-flow).
 
     Yields:
         A callback function suitable for passing to run_sync(on_step=...).
@@ -160,11 +187,14 @@ def trace_observer(
         from doeff.cesk import run_sync
         from doeff_flow.trace import trace_observer
 
-        with trace_observer("wf-001", Path(".doeff-flow")) as on_step:
+        # Uses default XDG directory
+        with trace_observer("wf-001") as on_step:
             result = run_sync(my_workflow(), on_step=on_step)
     """
     workflow_id = _validate_workflow_id(workflow_id)
-    if isinstance(trace_dir, str):
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+    elif isinstance(trace_dir, str):
         trace_dir = Path(trace_dir)
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     trace_file.parent.mkdir(parents=True, exist_ok=True)
@@ -207,4 +237,5 @@ __all__ = [
     "LiveTrace",
     "trace_observer",
     "validate_workflow_id",
+    "get_default_trace_dir",
 ]
