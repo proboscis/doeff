@@ -2,7 +2,7 @@
 CLI for observing live effect traces.
 
 Commands:
-    watch   - Watch live effect trace for a workflow
+    watch   - Watch live effect trace for a workflow (or all workflows)
     ps      - List active workflows
     history - Show execution history for a workflow
 """
@@ -14,8 +14,16 @@ import time
 from pathlib import Path
 
 import click
+from rich.console import Console
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.tree import Tree
 
-from doeff_flow.trace import validate_workflow_id
+from doeff_flow.trace import get_default_trace_dir, validate_workflow_id
+
+console = Console()
 
 
 @click.group()
@@ -24,12 +32,12 @@ def cli():
 
 
 @cli.command()
-@click.argument("workflow_id")
+@click.argument("workflow_id", required=False)
 @click.option(
     "--trace-dir",
-    default=".doeff-flow",
+    default=None,
     type=click.Path(path_type=Path),
-    help="Directory containing trace files",
+    help="Directory containing trace files (default: ~/.local/state/doeff-flow)",
 )
 @click.option(
     "--exit-on-complete",
@@ -43,101 +51,279 @@ def cli():
     help="Poll interval in seconds (default: 0.1)",
 )
 def watch(
-    workflow_id: str,
-    trace_dir: Path,
+    workflow_id: str | None,
+    trace_dir: Path | None,
     exit_on_complete: bool,
     poll_interval: float,
 ):
-    """Watch live effect trace for a workflow.
+    """Watch live effect trace for workflows.
 
-    WORKFLOW_ID is the unique identifier of the workflow to watch.
+    If WORKFLOW_ID is provided, watch that specific workflow.
+    If omitted, watch all workflows in the trace directory.
     """
-    try:
-        workflow_id = validate_workflow_id(workflow_id)
-    except ValueError as e:
-        raise click.BadParameter(str(e)) from e
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
 
+    if workflow_id:
+        # Watch single workflow
+        try:
+            workflow_id = validate_workflow_id(workflow_id)
+        except ValueError as e:
+            raise click.BadParameter(str(e)) from e
+        _watch_single(trace_dir, workflow_id, exit_on_complete, poll_interval)
+    else:
+        # Watch all workflows
+        _watch_all(trace_dir, exit_on_complete, poll_interval)
+
+
+def _watch_single(
+    trace_dir: Path,
+    workflow_id: str,
+    exit_on_complete: bool,
+    poll_interval: float,
+) -> None:
+    """Watch a single workflow with rich live display."""
     trace_file = trace_dir / workflow_id / "trace.jsonl"
-
     last_line_count = 0
-    while True:
-        if trace_file.exists():
-            lines = trace_file.read_text().strip().split("\n")
-            if lines and lines[0]:  # Check for non-empty content
-                if len(lines) > last_line_count:
-                    last_line_count = len(lines)
-                    data = json.loads(lines[-1])  # Read last line
-                    _render_trace(data)
 
-                    if exit_on_complete and data["status"] in ("completed", "failed"):
-                        click.echo(f"\nWorkflow {workflow_id} finished: {data['status']}")
-                        return
-        else:
-            click.echo(f"Waiting for workflow {workflow_id} to start...")
-        time.sleep(poll_interval)
+    with Live(console=console, refresh_per_second=10) as live:
+        while True:
+            if trace_file.exists():
+                lines = trace_file.read_text().strip().split("\n")
+                if lines and lines[0]:
+                    if len(lines) > last_line_count:
+                        last_line_count = len(lines)
+                        data = json.loads(lines[-1])
+                        live.update(_render_trace_panel(data))
+
+                        if exit_on_complete and data["status"] in ("completed", "failed"):
+                            console.print(
+                                f"\n[bold]Workflow {workflow_id} finished:[/bold] "
+                                f"[{'green' if data['status'] == 'completed' else 'red'}]"
+                                f"{data['status']}[/]"
+                            )
+                            return
+            else:
+                live.update(
+                    Panel(
+                        f"[dim]Waiting for workflow [bold]{workflow_id}[/bold] to start...[/dim]",
+                        title="⏳ Waiting",
+                        border_style="dim",
+                    )
+                )
+            time.sleep(poll_interval)
 
 
-def _render_trace(data: dict) -> None:
-    """Render trace to terminal with clear + redraw.
-
-    Args:
-        data: Trace data dictionary from JSONL.
-    """
-    click.clear()
-
+def _render_trace_panel(data: dict) -> Panel:
+    """Render a single workflow trace as a rich Panel."""
     wf_id = data["workflow_id"]
     status = data["status"]
     step = data["step"]
 
-    # Calculate dynamic width based on content
-    header = f" {wf_id} [{status}] step {step} "
-    box_width = max(55, len(header) + 4)
+    # Status styling
+    status_styles = {
+        "running": ("▶", "yellow"),
+        "pending": ("○", "dim"),
+        "paused": ("⏸", "blue"),
+        "completed": ("✓", "green"),
+        "failed": ("✗", "red"),
+    }
+    icon, color = status_styles.get(status, ("?", "white"))
 
-    click.echo(f"\u250c\u2500{header}\u2500" + "\u2500" * (box_width - len(header) - 3) + "\u2510")
-    click.echo("\u2502" + " " * (box_width - 1) + "\u2502")
-
-    for i, frame in enumerate(data["trace"]):
-        indent = "  " * i
+    # Build call stack tree
+    tree = Tree(f"[bold]{wf_id}[/bold]")
+    current = tree
+    for frame in data["trace"]:
         fn = frame["function"]
         file_name = Path(frame["file"]).name
         loc = f"{file_name}:{frame['line']}"
-        line = f"\u2502  {indent}{fn:<20} {loc}"
-        # Pad to box width
-        padding = box_width - len(line)
-        click.echo(line + " " * padding + "\u2502")
+        current = current.add(f"[cyan]{fn}[/cyan] [dim]{loc}[/dim]")
 
+    # Add current effect
     if data["current_effect"]:
-        indent = "  " * len(data["trace"])
-        effect_line = f"\u2502  {indent}\u21b3 {data['current_effect']}"
-        # Truncate if too long
-        if len(effect_line) > box_width - 1:
-            effect_line = effect_line[: box_width - 4] + "..."
-        padding = box_width - len(effect_line)
-        click.echo(effect_line + " " * padding + "\u2502")
+        effect = data["current_effect"]
+        if len(effect) > 60:
+            effect = effect[:57] + "..."
+        current.add(f"[yellow]↳ {effect}[/yellow]")
 
-    click.echo("\u2502" + " " * (box_width - 1) + "\u2502")
-
-    # Format timestamp for display (just time portion)
+    # Format timestamp
     updated = data["updated_at"].split("T")[1][:12] if "T" in data["updated_at"] else data["updated_at"]
-    update_line = f"\u2502  Updated: {updated}"
-    padding = box_width - len(update_line)
-    click.echo(update_line + " " * padding + "\u2502")
 
-    click.echo("\u2514" + "\u2500" * (box_width - 1) + "\u2518")
+    # Build panel
+    panel_content = Text()
+    panel_content.append(f"{icon} ", style=color)
+    panel_content.append(f"{status}", style=f"bold {color}")
+    panel_content.append(f"  step {step}\n\n", style="dim")
+
+    return Panel(
+        tree,
+        title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
+        subtitle=f"[dim]Updated: {updated}[/dim]",
+        border_style=color,
+    )
+
+
+def _watch_all(
+    trace_dir: Path,
+    exit_on_complete: bool,
+    poll_interval: float,
+) -> None:
+    """Watch all workflows with rich live display."""
+    last_states: dict[str, tuple[int, str]] = {}
+
+    with Live(console=console, refresh_per_second=10) as live:
+        while True:
+            if not trace_dir.exists():
+                live.update(
+                    Panel(
+                        f"[dim]Waiting for workflows in [bold]{trace_dir}[/bold]...[/dim]",
+                        title="⏳ Waiting",
+                        border_style="dim",
+                    )
+                )
+                time.sleep(poll_interval)
+                continue
+
+            workflows = _collect_workflow_states(trace_dir)
+            if not workflows:
+                live.update(
+                    Panel(
+                        f"[dim]Waiting for workflows in [bold]{trace_dir}[/bold]...[/dim]",
+                        title="⏳ Waiting",
+                        border_style="dim",
+                    )
+                )
+                time.sleep(poll_interval)
+                continue
+
+            # Check for updates
+            updated = False
+            for wf_id, data in workflows.items():
+                trace_file = trace_dir / wf_id / "trace.jsonl"
+                lines = trace_file.read_text().strip().split("\n")
+                line_count = len(lines)
+                status = data["status"]
+
+                if wf_id not in last_states or last_states[wf_id] != (line_count, status):
+                    last_states[wf_id] = (line_count, status)
+                    updated = True
+
+            if updated:
+                live.update(_render_all_workflows_table(workflows))
+
+            # Check if all workflows completed
+            if exit_on_complete and workflows:
+                all_done = all(
+                    w["status"] in ("completed", "failed") for w in workflows.values()
+                )
+                if all_done:
+                    console.print("\n[bold]All workflows finished.[/bold]")
+                    return
+
+            time.sleep(poll_interval)
+
+
+def _collect_workflow_states(trace_dir: Path) -> dict[str, dict]:
+    """Collect current state of all workflows."""
+    workflows = {}
+    for wf_dir in sorted(trace_dir.iterdir()):
+        if wf_dir.is_dir():
+            trace_file = wf_dir / "trace.jsonl"
+            if trace_file.exists():
+                lines = trace_file.read_text().strip().split("\n")
+                if lines and lines[-1]:
+                    try:
+                        data = json.loads(lines[-1])
+                        workflows[data["workflow_id"]] = data
+                    except json.JSONDecodeError:
+                        continue
+    return workflows
+
+
+def _render_all_workflows_table(workflows: dict[str, dict]) -> Panel:
+    """Render a table of all workflows."""
+    # Status styling
+    status_styles = {
+        "running": ("▶", "yellow"),
+        "pending": ("○", "dim"),
+        "paused": ("⏸", "blue"),
+        "completed": ("✓", "green"),
+        "failed": ("✗", "red"),
+    }
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Workflow", style="cyan")
+    table.add_column("Status", justify="center")
+    table.add_column("Step", justify="right")
+    table.add_column("Current Effect", style="dim", max_width=40)
+
+    for wf_id, data in sorted(workflows.items()):
+        status = data["status"]
+        icon, color = status_styles.get(status, ("?", "white"))
+        step = str(data["step"])
+
+        effect = data.get("current_effect") or ""
+        if len(effect) > 40:
+            effect = effect[:37] + "..."
+
+        table.add_row(
+            wf_id,
+            Text(f"{icon} {status}", style=color),
+            step,
+            effect,
+        )
+
+    # Summary
+    total = len(workflows)
+    running = sum(1 for w in workflows.values() if w["status"] == "running")
+    completed = sum(1 for w in workflows.values() if w["status"] == "completed")
+    failed = sum(1 for w in workflows.values() if w["status"] == "failed")
+
+    subtitle = (
+        f"[dim]Total: {total}  "
+        f"[yellow]Running: {running}[/]  "
+        f"[green]Completed: {completed}[/]  "
+        f"[red]Failed: {failed}[/][/dim]"
+    )
+
+    return Panel(
+        table,
+        title="[bold]doeff-flow Workflow Monitor[/bold]",
+        subtitle=subtitle,
+        border_style="blue",
+    )
 
 
 @cli.command()
 @click.option(
     "--trace-dir",
-    default=".doeff-flow",
+    default=None,
     type=click.Path(path_type=Path),
-    help="Directory containing trace files",
+    help="Directory containing trace files (default: ~/.local/state/doeff-flow)",
 )
-def ps(trace_dir: Path):
+def ps(trace_dir: Path | None):
     """List active workflows."""
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+
     if not trace_dir.exists():
-        click.echo("No workflows found")
+        console.print("[dim]No workflows found[/dim]")
         return
+
+    # Status styling
+    status_styles = {
+        "running": ("▶", "yellow"),
+        "pending": ("○", "dim"),
+        "paused": ("⏸", "blue"),
+        "completed": ("✓", "green"),
+        "failed": ("✗", "red"),
+    }
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Workflow ID", style="cyan")
+    table.add_column("Status", justify="center")
+    table.add_column("Step", justify="right")
+    table.add_column("Last Updated", style="dim")
 
     found = False
     for wf_dir in sorted(trace_dir.iterdir()):
@@ -148,22 +334,35 @@ def ps(trace_dir: Path):
                 if lines and lines[-1]:
                     try:
                         data = json.loads(lines[-1])
-                        click.echo(f"{data['workflow_id']}\t{data['status']}\tstep {data['step']}")
+                        status = data["status"]
+                        icon, color = status_styles.get(status, ("?", "white"))
+
+                        # Format timestamp
+                        updated = data["updated_at"].split("T")[1][:8] if "T" in data["updated_at"] else data["updated_at"]
+
+                        table.add_row(
+                            data["workflow_id"],
+                            Text(f"{icon} {status}", style=color),
+                            str(data["step"]),
+                            updated,
+                        )
                         found = True
                     except json.JSONDecodeError:
                         continue
 
     if not found:
-        click.echo("No workflows found")
+        console.print("[dim]No workflows found[/dim]")
+    else:
+        console.print(table)
 
 
 @cli.command()
 @click.argument("workflow_id")
 @click.option(
     "--trace-dir",
-    default=".doeff-flow",
+    default=None,
     type=click.Path(path_type=Path),
-    help="Directory containing trace files",
+    help="Directory containing trace files (default: ~/.local/state/doeff-flow)",
 )
 @click.option(
     "--last",
@@ -171,11 +370,14 @@ def ps(trace_dir: Path):
     type=int,
     help="Show last N steps (default: 10)",
 )
-def history(workflow_id: str, trace_dir: Path, last: int):
+def history(workflow_id: str, trace_dir: Path | None, last: int):
     """Show execution history for a workflow.
 
     WORKFLOW_ID is the unique identifier of the workflow.
     """
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+
     try:
         workflow_id = validate_workflow_id(workflow_id)
     except ValueError as e:
@@ -183,24 +385,47 @@ def history(workflow_id: str, trace_dir: Path, last: int):
 
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     if not trace_file.exists():
-        click.echo(f"No trace found for {workflow_id}")
+        console.print(f"[red]No trace found for[/red] [bold]{workflow_id}[/bold]")
         return
 
     lines = trace_file.read_text().strip().split("\n")
     if not lines or not lines[0]:
-        click.echo(f"No trace data for {workflow_id}")
+        console.print(f"[dim]No trace data for {workflow_id}[/dim]")
         return
+
+    # Status styling
+    status_styles = {
+        "running": ("▶", "yellow"),
+        "pending": ("○", "dim"),
+        "paused": ("⏸", "blue"),
+        "completed": ("✓", "green"),
+        "failed": ("✗", "red"),
+    }
+
+    table = Table(show_header=True, header_style="bold", title=f"History: {workflow_id}")
+    table.add_column("Step", justify="right", style="cyan")
+    table.add_column("Status", justify="center")
+    table.add_column("Effect", style="dim", max_width=50)
 
     for line in lines[-last:]:
         try:
             data = json.loads(line)
+            status = data["status"]
+            icon, color = status_styles.get(status, ("?", "white"))
+
             effect = data.get("current_effect") or "-"
-            # Truncate effect for display
             if len(effect) > 50:
                 effect = effect[:47] + "..."
-            click.echo(f"step {data['step']:4d}  {data['status']:10s}  {effect}")
+
+            table.add_row(
+                str(data["step"]),
+                Text(f"{icon} {status}", style=color),
+                effect,
+            )
         except json.JSONDecodeError:
             continue
+
+    console.print(table)
 
 
 if __name__ == "__main__":
