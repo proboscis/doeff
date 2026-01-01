@@ -127,12 +127,17 @@ def ps_command(show_all: bool) -> None:
 @click.argument("session_name")
 def attach(session_name: str) -> None:
     """Attach to a tmux session."""
+    from .tmux import is_inside_tmux
+
     if not has_session(session_name):
         console.print(f"[red]Error:[/red] Session '{session_name}' not found")
         sys.exit(1)
 
-    console.print(f"Attaching to session: {session_name}")
-    console.print("Press Ctrl+B, D to detach")
+    if is_inside_tmux():
+        console.print(f"Switching to session: {session_name}")
+    else:
+        console.print(f"Attaching to session: {session_name}")
+        console.print("Press Ctrl+B, D to detach")
     tmux_attach(session_name)
 
 
