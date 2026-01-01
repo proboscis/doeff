@@ -214,14 +214,20 @@ def trace_observer(
                 )
                 for loc in snapshot.error.effect_trace
             ]
-            # Add the error location as the final frame (where exception was raised)
-            if snapshot.error.error_location is not None:
+            # Update the deepest frame with error location (where exception was raised)
+            if snapshot.error.error_location is not None and frames:
                 error_loc = snapshot.error.error_location
-                # Only add if different from last effect frame
-                if not frames or (
-                    frames[-1].function != error_loc.function
-                    or frames[-1].line != error_loc.line
-                ):
+                # If error is in the same function as deepest frame, update that frame
+                # (shows the raise line instead of the yield line)
+                if frames[-1].function == error_loc.function:
+                    frames[-1] = TraceFrame(
+                        function=error_loc.function,
+                        file=error_loc.filename,
+                        line=error_loc.line,
+                        code=error_loc.code,
+                    )
+                # If error is in a different function (pure Python call), add as new frame
+                elif frames[-1].line != error_loc.line:
                     frames.append(
                         TraceFrame(
                             function=error_loc.function,
