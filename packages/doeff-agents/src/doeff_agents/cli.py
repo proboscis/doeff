@@ -87,27 +87,38 @@ def run(
 
 
 @cli.command("ps")
-def ps_command() -> None:
-    """List all tmux sessions."""
+@click.option("--all", "-a", "show_all", is_flag=True, help="Show all tmux sessions, not just doeff-agents")
+def ps_command(show_all: bool) -> None:
+    """List doeff-agents sessions."""
     try:
         sessions = list_sessions()
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 
+    # Filter to only doeff sessions unless --all is specified
+    if not show_all:
+        sessions = [s for s in sessions if s.startswith("doeff-")]
+
     if not sessions:
-        console.print("No tmux sessions found.")
+        if show_all:
+            console.print("No tmux sessions found.")
+        else:
+            console.print("No doeff-agents sessions found. Use --all to see all tmux sessions.")
         return
 
-    table = Table(title="Tmux Sessions")
+    table = Table(title="Agent Sessions" if not show_all else "All Tmux Sessions")
     table.add_column("Session Name", style="cyan")
-    table.add_column("Status", style="green")
+    if show_all:
+        table.add_column("Type", style="green")
 
     for name in sessions:
-        # Check if it's a doeff session
-        is_doeff = name.startswith("doeff-")
-        status = "[blue]doeff-agents[/blue]" if is_doeff else "[dim]other[/dim]"
-        table.add_row(name, status)
+        if show_all:
+            is_doeff = name.startswith("doeff-")
+            type_str = "[blue]doeff-agents[/blue]" if is_doeff else "[dim]other[/dim]"
+            table.add_row(name, type_str)
+        else:
+            table.add_row(name)
 
     console.print(table)
 
