@@ -76,6 +76,21 @@ class TraceFrame:
 
 
 @dataclass
+class GatherState:
+    """State of an active Gather (parallel) operation.
+
+    Attributes:
+        total: Total number of parallel tasks.
+        completed: Number completed so far.
+        results: Repr strings of completed results.
+    """
+
+    total: int
+    completed: int
+    results: list[str]
+
+
+@dataclass
 class LiveTrace:
     """Current execution state of a workflow.
 
@@ -88,6 +103,8 @@ class LiveTrace:
         started_at: ISO timestamp of workflow start.
         updated_at: ISO timestamp of last update.
         error: Error message if status is "failed", None otherwise.
+        result: Repr of return value if completed, None otherwise.
+        gather: Info about active parallel gather, None if not gathering.
     """
 
     workflow_id: str
@@ -98,6 +115,8 @@ class LiveTrace:
     started_at: str
     updated_at: str
     error: str | None = None
+    result: str | None = None
+    gather: GatherState | None = None
 
 
 def validate_workflow_id(workflow_id: str) -> str:
@@ -160,6 +179,8 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
         "started_at": trace.started_at,
         "updated_at": trace.updated_at,
         "error": trace.error,
+        "result": trace.result,
+        "gather": asdict(trace.gather) if trace.gather else None,
     }
     with trace_file.open("a") as f:
         f.write(json.dumps(trace_dict) + "\n")
@@ -266,6 +287,15 @@ def trace_observer(
         if snapshot.error is not None:
             error_msg = f"{snapshot.error.exception_type}: {snapshot.error.message}"
 
+        # Extract gather info if present
+        gather_state = None
+        if snapshot.gather_info is not None:
+            gather_state = GatherState(
+                total=snapshot.gather_info.total_tasks,
+                completed=snapshot.gather_info.completed_count,
+                results=list(snapshot.gather_info.completed_results),
+            )
+
         trace = LiveTrace(
             workflow_id=workflow_id,
             step=snapshot.step_count,
@@ -277,6 +307,8 @@ def trace_observer(
             started_at=started_at,
             updated_at=datetime.now().isoformat(),
             error=error_msg,
+            result=snapshot.result,
+            gather=gather_state,
         )
 
         _write_trace(trace_file, trace)
@@ -287,6 +319,7 @@ def trace_observer(
 
 __all__ = [
     "TraceFrame",
+    "GatherState",
     "LiveTrace",
     "trace_observer",
     "validate_workflow_id",
