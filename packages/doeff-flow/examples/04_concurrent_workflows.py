@@ -6,7 +6,8 @@ This example demonstrates running multiple workflows concurrently,
 each with its own trace file that can be watched independently.
 
 Run this example:
-    python examples/flow/04_concurrent_workflows.py
+    cd packages/doeff-flow
+    uv run python examples/04_concurrent_workflows.py
 
 Watch all workflows:
     doeff-flow ps

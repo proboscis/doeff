@@ -118,11 +118,12 @@ The package includes several examples demonstrating different use cases:
 | `03_error_handling.py` | Error capture and failure tracing |
 | `04_concurrent_workflows.py` | Multiple concurrent workers with separate traces |
 
-Run examples from the repository root:
+Run examples from the `packages/doeff-flow` directory:
 
 ```bash
-python examples/flow/01_live_trace.py
-python examples/flow/02_data_pipeline.py
+cd packages/doeff-flow
+uv run python examples/01_live_trace.py
+uv run python examples/02_data_pipeline.py
 ```
 
 ## API Usage

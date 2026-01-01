@@ -6,7 +6,8 @@ This example shows a realistic data processing pipeline where you can
 observe each stage of execution in real-time.
 
 Run this example:
-    python examples/flow/02_data_pipeline.py
+    cd packages/doeff-flow
+    uv run python examples/02_data_pipeline.py
 
 In another terminal, watch the execution:
     doeff-flow watch data-pipeline --exit-on-complete
