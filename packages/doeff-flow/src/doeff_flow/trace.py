@@ -200,8 +200,13 @@ def trace_observer(
     trace_file.parent.mkdir(parents=True, exist_ok=True)
 
     started_at = datetime.now().isoformat()
+    # Track frames at error point (when error first appears, K stack shows error location)
+    error_frames: list[TraceFrame] | None = None
+    prev_had_error = False
 
     def on_step(snapshot: "ExecutionSnapshot") -> None:
+        nonlocal error_frames, prev_had_error
+
         # Extract ReturnFrames only (these are @do function calls)
         frames = [
             TraceFrame(
@@ -225,6 +230,21 @@ def trace_observer(
                 )
             )
 
+        # Capture frames when error first appears (before K stack unwinds)
+        has_error = snapshot.error is not None
+        if has_error and not prev_had_error and frames:
+            error_frames = frames.copy()
+        prev_had_error = has_error
+
+        # For failed status with empty frames, use captured error frames
+        if snapshot.status == "failed" and not frames and error_frames:
+            frames = error_frames
+
+        # Extract error info if present
+        error_msg = None
+        if snapshot.error is not None:
+            error_msg = f"{snapshot.error.exception_type}: {snapshot.error.message}"
+
         trace = LiveTrace(
             workflow_id=workflow_id,
             step=snapshot.step_count,
@@ -235,6 +255,7 @@ def trace_observer(
             trace=frames,
             started_at=started_at,
             updated_at=datetime.now().isoformat(),
+            error=error_msg,
         )
 
         _write_trace(trace_file, trace)
