@@ -449,6 +449,314 @@ import time
 session_name = f"task-{int(time.time())}"
 ```
 
+## Effects API
+
+The effects API provides a functional approach to agent session management,
+designed for integration with the doeff effects system.
+
+### Key Types
+
+#### SessionHandle (Immutable)
+
+Unlike `AgentSession`, `SessionHandle` is immutable and identifies a session
+without holding mutable state:
+
+```python
+from doeff_agents import SessionHandle, Observation
+
+# SessionHandle is a frozen dataclass
+handle = SessionHandle(
+    session_name="my-session",
+    pane_id="%42",
+    agent_type=AgentType.CLAUDE,
+    work_dir=Path.cwd(),
+)
+# handle.session_name = "other"  # Raises AttributeError
+```
+
+#### Observation (Immutable Snapshot)
+
+Observations represent a snapshot of session state:
+
+```python
+obs = Observation(
+    status=SessionStatus.RUNNING,
+    output_changed=True,
+    pr_url="https://github.com/org/repo/pull/123",
+    output_snippet="Last 500 chars...",
+)
+obs.is_terminal  # False
+```
+
+### Effects
+
+Fine-grained effects for session operations:
+
+```python
+from doeff_agents import Launch, Monitor, Capture, Send, Stop, Sleep
+
+# Each effect is immutable data describing an operation
+launch_effect = Launch("my-session", config)
+monitor_effect = Monitor(handle)
+capture_effect = Capture(handle, lines=100)
+send_effect = Send(handle, "Hello")
+stop_effect = Stop(handle)
+sleep_effect = Sleep(1.0)  # For testable polling
+```
+
+### Handlers
+
+Handlers interpret effects:
+
+```python
+from doeff_agents import TmuxAgentHandler, MockAgentHandler, dispatch_effect
+
+# Real handler using tmux
+handler = TmuxAgentHandler()
+handle = dispatch_effect(handler, Launch("my-session", config))
+obs = dispatch_effect(handler, Monitor(handle))
+
+# Mock handler for testing
+mock = MockAgentHandler()
+mock.configure_session("test", MockSessionScript([
+    (SessionStatus.RUNNING, "Working..."),
+    (SessionStatus.DONE, "Complete!"),
+]))
+```
+
+### Programs
+
+High-level workflows composed from effects:
+
+```python
+from doeff_agents import run_agent_to_completion, with_session
+
+# run_agent_to_completion is a Program (generator), not an Effect
+program = run_agent_to_completion("my-session", config, poll_interval=1.0)
+
+# Execute with a handler
+def run_program(program, handler):
+    try:
+        effect = next(program)
+    except StopIteration as stop:
+        return stop.value
+    while True:
+        try:
+            result = dispatch_effect(handler, effect)
+            effect = program.send(result)
+        except StopIteration as stop:
+            return stop.value
+
+result = run_program(program, handler)
+print(f"Status: {result.final_status}")
+print(f"Output: {result.output}")
+```
+
+### Testing with MockAgentHandler
+
+The mock handler enables deterministic testing without tmux:
+
+```python
+from doeff_agents import MockAgentHandler, MockSessionScript
+
+def test_agent_workflow():
+    handler = MockAgentHandler()
+
+    # Configure scriptable state transitions
+    handler.configure_session(
+        "test-session",
+        MockSessionScript([
+            (SessionStatus.BOOTING, "Starting..."),
+            (SessionStatus.RUNNING, "Processing..."),
+            (SessionStatus.DONE, "Complete!"),
+        ]),
+    )
+
+    # Run program
+    program = run_agent_to_completion("test-session", config)
+    result = run_program(program, handler)
+
+    # Assert results
+    assert result.succeeded
+    assert result.final_status == SessionStatus.DONE
+
+    # Mock skips actual sleep - no delays in tests
+    assert handler.total_sleep_time == 0.0
+
+    # Verify sent messages
+    assert handler.sent_messages == []
+```
+
+### Effects vs Imperative API Comparison
+
+| Imperative API | Effects API |
+|----------------|-------------|
+| `AgentSession` (mutable) | `SessionHandle` (immutable) |
+| `session_scope()` | `with_session()` program |
+| `monitor_session()` | `Monitor` effect |
+| `send_message()` | `Send` effect |
+| `capture_output()` | `Capture` effect |
+| `stop_session()` | `Stop` effect |
+| `time.sleep()` | `Sleep` effect |
+| Direct execution | Handler-mediated execution |
+| Harder to test | Easily mocked |
+
+## CESK Integration
+
+The effects API integrates with doeff's CESK interpreter for use in
+effect-driven workflows.
+
+### CESK Handlers
+
+CESK handlers follow the `AsyncEffectHandler` protocol, taking
+`(effect, env, store)` and returning `tuple[value, new_store]`:
+
+```python
+from doeff.cesk import run
+from doeff_agents import agent_effectful_handlers, mock_agent_handlers
+
+# Real handlers for production
+result = await run(
+    my_program,
+    effectful_handlers=agent_effectful_handlers(),
+)
+
+# Mock handlers for testing
+result = await run(
+    my_program,
+    effectful_handlers=mock_agent_handlers(),
+)
+```
+
+### State Storage in CESK Store
+
+Session state is stored in the CESK Store under specific keys:
+
+```python
+from doeff_agents import AGENT_SESSIONS_KEY, MOCK_AGENT_STATE_KEY
+
+# Real handlers store SessionState objects
+store[AGENT_SESSIONS_KEY] = {
+    "session-1": SessionState(...),
+    "session-2": SessionState(...),
+}
+
+# Mock handlers store MockAgentState
+store[MOCK_AGENT_STATE_KEY] = MockAgentState(
+    handles={"session-1": handle},
+    statuses={"session-1": SessionStatus.RUNNING},
+    outputs={"session-1": "Current output..."},
+    sends=[("session-1", "message sent")],
+    sleep_calls=[1.0, 2.0],
+)
+```
+
+### Configuring Mock Sessions for CESK
+
+Configure mock sessions before running:
+
+```python
+from doeff_agents import configure_mock_session, CeskMockSessionScript
+
+# Configure in store before running
+store = {}
+configure_mock_session(
+    store,
+    "my-session",
+    CeskMockSessionScript([
+        (SessionStatus.RUNNING, "Working..."),
+        (SessionStatus.DONE, "Complete!"),
+    ]),
+    initial_output="Ready",
+)
+
+# Run with the configured store
+result = await run(
+    my_program,
+    effectful_handlers=mock_agent_handlers(),
+    initial_store=store,
+)
+```
+
+### Example: CESK Effect Handler Usage
+
+```python
+from doeff import Do, Ask
+from doeff.cesk import run
+from doeff_agents import (
+    Launch, Monitor, Stop, Sleep,
+    agent_effectful_handlers,
+    LaunchConfig, AgentType,
+)
+from pathlib import Path
+
+@Do
+def agent_workflow():
+    config = LaunchConfig(
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="Fix the bug",
+    )
+
+    # Launch session (yields LaunchEffect)
+    handle = yield Launch("my-session", config)
+
+    # Monitor until terminal
+    while True:
+        obs = yield Monitor(handle)
+        if obs.is_terminal:
+            break
+        yield Sleep(1.0)
+
+    # Stop session
+    yield Stop(handle)
+
+    return obs.status
+
+# Run with real tmux handlers
+async def main():
+    result = await run(
+        agent_workflow(),
+        effectful_handlers=agent_effectful_handlers(),
+    )
+    print(f"Final status: {result}")
+```
+
+### Testing CESK Workflows
+
+```python
+import pytest
+from doeff.cesk import run
+from doeff_agents import (
+    mock_agent_handlers,
+    configure_mock_session,
+    CeskMockSessionScript,
+)
+from doeff_agents.monitor import SessionStatus
+
+@pytest.mark.asyncio
+async def test_agent_workflow():
+    # Setup mock
+    store = {}
+    configure_mock_session(
+        store,
+        "my-session",
+        CeskMockSessionScript([
+            (SessionStatus.RUNNING, "Processing..."),
+            (SessionStatus.DONE, "Complete!"),
+        ]),
+    )
+
+    # Run workflow
+    result = await run(
+        agent_workflow(),
+        effectful_handlers=mock_agent_handlers(),
+        initial_store=store,
+    )
+
+    assert result == SessionStatus.DONE
+```
+
 ## Related
 
 - [Examples: Agent Session Examples](../examples/agents/README.md)
