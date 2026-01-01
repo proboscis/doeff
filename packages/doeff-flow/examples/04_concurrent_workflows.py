@@ -9,21 +9,21 @@ Run this example:
     cd packages/doeff-flow
     uv run python examples/04_concurrent_workflows.py
 
-Watch all workflows:
-    doeff-flow ps
+Watch all workflows (dashboard view):
+    doeff-flow watch
 
 Watch a specific workflow:
     doeff-flow watch worker-001 --exit-on-complete
+
+Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
 import random
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 
 from doeff import do
-from doeff.effects import Pure
 
 from doeff_flow import run_workflow
 
@@ -34,23 +34,27 @@ from doeff_flow import run_workflow
 
 
 @do
+def process_step(task_id: str, step: int):
+    """Process a single step of a task."""
+    time.sleep(0.1)
+    return f"task-{task_id}-step-{step}"
+
+
+@do
 def process_task(task_id: str, complexity: int):
     """Process a single task with variable complexity."""
-    steps = complexity
     results = []
 
-    for step in range(steps):
-        # Simulate work
-        time.sleep(0.1)
-        result = yield Pure(f"task-{task_id}-step-{step}")
+    for step in range(complexity):
+        # Simulate work via sub-workflow
+        result = yield process_step(task_id, step)
         results.append(result)
 
-    final = yield Pure({
+    return {
         "task_id": task_id,
         "steps_completed": len(results),
         "results": results,
-    })
-    return final
+    }
 
 
 @do
@@ -75,12 +79,12 @@ def worker_workflow(worker_id: str, num_tasks: int):
 
     elapsed = (datetime.now() - start_time).total_seconds()
 
-    summary = yield Pure({
+    summary = {
         "worker_id": worker_id,
         "tasks_completed": len(completed_tasks),
         "elapsed_seconds": round(elapsed, 2),
         "tasks": completed_tasks,
-    })
+    }
 
     print(f"[Worker {worker_id}] Finished in {elapsed:.2f}s")
     return summary
@@ -91,19 +95,17 @@ def worker_workflow(worker_id: str, num_tasks: int):
 # =============================================================================
 
 
-def run_worker(worker_id: str, num_tasks: int, trace_dir: Path, results: dict):
+def run_worker(worker_id: str, num_tasks: int, results: dict):
     """Run a single worker in a thread."""
     result = run_workflow(
         worker_workflow(worker_id, num_tasks),
         workflow_id=f"worker-{worker_id}",
-        trace_dir=trace_dir,
     )
     results[worker_id] = result
 
 
 def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
     """Run multiple workers concurrently."""
-    trace_dir = Path(".doeff-flow")
     results = {}
     threads = []
 
@@ -119,7 +121,7 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
         worker_id = f"{i + 1:03d}"
         t = threading.Thread(
             target=run_worker,
-            args=(worker_id, tasks_per_worker, trace_dir, results),
+            args=(worker_id, tasks_per_worker, results),
         )
         threads.append(t)
         t.start()
@@ -165,13 +167,14 @@ def main():
     print("Each worker has its own trace file.")
     print()
     print("Watch commands:")
+    print("  doeff-flow watch                       # Dashboard view of all")
     print("  doeff-flow ps                          # List all workflows")
     print("  doeff-flow watch worker-001            # Watch specific worker")
     print()
     input("Press Enter to start workers...")
 
     # Run 3 workers, each processing 4 tasks
-    results = run_concurrent_workers(
+    run_concurrent_workers(
         num_workers=3,
         tasks_per_worker=4,
     )

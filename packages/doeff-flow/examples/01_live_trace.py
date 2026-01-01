@@ -10,14 +10,15 @@ Run this example:
     uv run python examples/01_live_trace.py
 
 Then in another terminal, watch the trace:
-    doeff-flow watch example-workflow --trace-dir .doeff-flow
+    doeff-flow watch example-wf-001
+
+Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
+You can override with --trace-dir or DOEFF_FLOW_TRACE_DIR env var.
 """
 
-from pathlib import Path
 from time import sleep
 
 from doeff import do
-from doeff.effects import Pure
 
 # Import from doeff_flow
 from doeff_flow import run_workflow, trace_observer
@@ -32,20 +33,20 @@ from doeff_flow import run_workflow, trace_observer
 def fetch_data():
     """Simulate fetching data."""
     sleep(0.1)  # Simulate network latency
-    return (yield Pure({"items": [1, 2, 3, 4, 5]}))
+    return {"items": [1, 2, 3, 4, 5]}
 
 
 @do
 def process_item(item: int):
     """Process a single item."""
     sleep(0.05)  # Simulate processing
-    return (yield Pure(item * 2))
+    return item * 2
 
 
 @do
 def aggregate_results(results: list[int]):
     """Aggregate all results."""
-    return (yield Pure(sum(results)))
+    return sum(results)
 
 
 @do
@@ -72,12 +73,12 @@ def main_workflow():
 def example_run_workflow():
     """Run workflow with live trace using convenience wrapper."""
     print("=== Example 1: Using run_workflow ===")
-    print("Run 'doeff-flow watch example-wf-001 --trace-dir .doeff-flow' in another terminal\n")
+    print("Run 'doeff-flow watch example-wf-001' in another terminal\n")
 
+    # Uses XDG default trace directory (~/.local/state/doeff-flow)
     result = run_workflow(
         main_workflow(),
         workflow_id="example-wf-001",
-        trace_dir=Path(".doeff-flow"),
     )
 
     print(f"\nResult: {result.value}")
@@ -94,9 +95,10 @@ def example_trace_observer():
     from doeff.cesk import run_sync
 
     print("=== Example 2: Using trace_observer ===")
-    print("Run 'doeff-flow watch example-wf-002 --trace-dir .doeff-flow' in another terminal\n")
+    print("Run 'doeff-flow watch example-wf-002' in another terminal\n")
 
-    with trace_observer("example-wf-002", Path(".doeff-flow")) as on_step:
+    # Uses XDG default trace directory
+    with trace_observer("example-wf-002") as on_step:
         result = run_sync(main_workflow(), on_step=on_step)
 
     print(f"\nResult: {result.value}")
@@ -112,7 +114,8 @@ def example_trace_observer():
 def workflow_a():
     """Workflow A - fast."""
     for i in range(3):
-        yield Pure(f"A-{i}")
+        # Just yield sub-workflows to generate trace entries
+        yield process_item(i)
         sleep(0.1)
     return "A completed"
 
@@ -121,7 +124,7 @@ def workflow_a():
 def workflow_b():
     """Workflow B - slow."""
     for i in range(5):
-        yield Pure(f"B-{i}")
+        yield process_item(i)
         sleep(0.2)
     return "B completed"
 
@@ -131,10 +134,11 @@ def example_multiple_workflows():
     import threading
 
     print("=== Example 3: Multiple Concurrent Workflows ===")
-    print("Run 'doeff-flow ps --trace-dir .doeff-flow' in another terminal\n")
+    print("Run 'doeff-flow watch' or 'doeff-flow ps' in another terminal\n")
 
     def run_wf(wf, wf_id):
-        run_workflow(wf(), workflow_id=wf_id, trace_dir=Path(".doeff-flow"))
+        # Uses XDG default trace directory
+        run_workflow(wf(), workflow_id=wf_id)
         print(f"  {wf_id} finished")
 
     # Start both workflows in threads
@@ -167,9 +171,10 @@ def main():
     print("Examples completed!")
     print()
     print("Try these commands to explore the traces:")
-    print("  doeff-flow ps --trace-dir .doeff-flow")
-    print("  doeff-flow history example-wf-001 --trace-dir .doeff-flow")
-    print("  doeff-flow history example-wf-002 --last 20 --trace-dir .doeff-flow")
+    print("  doeff-flow ps")
+    print("  doeff-flow watch")
+    print("  doeff-flow history example-wf-001")
+    print("  doeff-flow history example-wf-002 --last 20")
 
 
 if __name__ == "__main__":
