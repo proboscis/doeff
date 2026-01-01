@@ -759,6 +759,6 @@ async def test_agent_workflow():
 
 ## Related
 
-- [Examples: Agent Session Examples](../examples/agents/README.md)
+- [Examples: Agent Session Examples](../packages/doeff-agents/examples/README.md)
 - [Workflow Observability](17-workflow-observability.md)
 - orch: Go reference implementation
