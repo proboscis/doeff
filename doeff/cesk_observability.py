@@ -150,6 +150,22 @@ class KFrameSnapshot:
 
 
 @dataclass(frozen=True)
+class ErrorInfo:
+    """
+    Error information for failed executions.
+
+    Attributes:
+        message: The exception message.
+        exception_type: The type name of the exception (e.g., "ValueError").
+        traceback: Optional formatted traceback string.
+    """
+
+    message: str
+    exception_type: str
+    traceback: str | None = None
+
+
+@dataclass(frozen=True)
 class ExecutionSnapshot:
     """
     Point-in-time snapshot of execution state.
@@ -165,6 +181,7 @@ class ExecutionSnapshot:
         cache_keys: Tuple of keys currently in durable storage.
         active_call: Location of currently executing program (if any).
             This captures function calls even for non-yielding @do functions.
+        error: Error information if status is "failed", None otherwise.
     """
 
     status: ExecutionStatus
@@ -173,6 +190,7 @@ class ExecutionSnapshot:
     step_count: int
     cache_keys: tuple[str, ...]
     active_call: CodeLocation | None = None
+    error: ErrorInfo | None = None
 
     @classmethod
     def from_state(
@@ -183,7 +201,7 @@ class ExecutionSnapshot:
         storage: "DurableStorage | None" = None,
     ) -> "ExecutionSnapshot":
         """Create a snapshot from the current CESK state."""
-        from doeff.cesk import EffectControl, ProgramControl
+        from doeff.cesk import EffectControl, Error, ProgramControl
 
         # Build K stack snapshots
         k_stack = tuple(KFrameSnapshot.from_frame(frame) for frame in state.K)
@@ -209,6 +227,22 @@ class ExecutionSnapshot:
                         code=getattr(created_at, "code", None),
                     )
 
+        # Get error info if in error state
+        error_info = None
+        if isinstance(state.C, Error):
+            ex = state.C.ex
+            traceback_str = None
+            if state.C.captured_traceback is not None:
+                try:
+                    traceback_str = state.C.captured_traceback.format()
+                except Exception:
+                    pass
+            error_info = ErrorInfo(
+                message=str(ex),
+                exception_type=type(ex).__name__,
+                traceback=traceback_str,
+            )
+
         # Get cache keys from storage
         cache_keys: tuple[str, ...] = ()
         if storage is not None:
@@ -226,6 +260,7 @@ class ExecutionSnapshot:
             step_count=step_count,
             cache_keys=cache_keys,
             active_call=active_call,
+            error=error_info,
         )
 
 
@@ -338,6 +373,7 @@ __all__ = [
     "ExecutionStatus",
     "CodeLocation",
     "KFrameSnapshot",
+    "ErrorInfo",
     "ExecutionSnapshot",
     "ExecutionMonitor",
     "OnStepCallback",
