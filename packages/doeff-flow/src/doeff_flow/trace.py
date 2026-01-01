@@ -238,6 +238,7 @@ def trace_observer(
                     )
         else:
             # Normal case: extract ReturnFrames from K stack
+            # K stack is [innermost, ..., outermost], reverse for tree display
             frames = [
                 TraceFrame(
                     function=f.location.function if f.location else "?",
@@ -245,7 +246,7 @@ def trace_observer(
                     line=f.location.line if f.location else 0,
                     code=f.location.code if f.location else None,
                 )
-                for f in snapshot.k_stack
+                for f in reversed(snapshot.k_stack)
                 if f.frame_type == "ReturnFrame"
             ]
 
