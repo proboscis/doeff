@@ -158,9 +158,17 @@ def kill_session(session: str) -> None:
 
 
 def attach_session(session: str) -> None:
-    """Attach to a tmux session (blocks until detached)."""
+    """Attach to a tmux session.
+
+    If already inside tmux, switches to the target session instead of attaching.
+    """
     _ensure_tmux_available()
-    subprocess.run(["tmux", "attach-session", "-t", session], check=True)
+    if is_inside_tmux():
+        # Switch to session when already inside tmux
+        subprocess.run(["tmux", "switch-client", "-t", session], check=True)
+    else:
+        # Attach from outside tmux (blocks until detached)
+        subprocess.run(["tmux", "attach-session", "-t", session], check=True)
 
 
 def list_sessions() -> list[str]:
