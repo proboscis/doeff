@@ -339,21 +339,34 @@ def _render_all_workflows_table(workflows: dict[str, dict]) -> Panel:
     table.add_column("Workflow", style="cyan")
     table.add_column("Status", justify="center")
     table.add_column("Step", justify="right")
-    table.add_column("Call Stack", style="dim", max_width=50)
+    table.add_column("Result / Error", max_width=40)
 
     for wf_id, data in sorted(workflows.items()):
         status = data["status"]
         icon, color = status_styles.get(status, ("?", "white"))
         step = str(data["step"])
 
-        # Format call stack instead of current effect
-        call_stack = _format_call_stack(data.get("trace", []))
+        # Show result for completed, error for failed, call stack for running
+        if status == "completed" and data.get("result"):
+            result_display = data["result"]
+            if len(result_display) > 37:
+                result_display = result_display[:34] + "..."
+            result_cell = Text(result_display, style="green")
+        elif status == "failed" and data.get("error"):
+            error_display = data["error"]
+            if len(error_display) > 37:
+                error_display = error_display[:34] + "..."
+            result_cell = Text(error_display, style="red")
+        else:
+            # Show call stack for running workflows
+            call_stack = _format_call_stack(data.get("trace", []))
+            result_cell = Text(call_stack, style="dim")
 
         table.add_row(
             wf_id,
             Text(f"{icon} {status}", style=color),
             step,
-            call_stack,
+            result_cell,
         )
 
     # Summary
