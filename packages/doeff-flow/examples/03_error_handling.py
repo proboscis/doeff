@@ -6,7 +6,8 @@ This example demonstrates how workflow failures are captured in traces,
 allowing you to see exactly where and why a workflow failed.
 
 Run this example:
-    python examples/flow/03_error_handling.py
+    cd packages/doeff-flow
+    uv run python examples/03_error_handling.py
 
 Watch the execution:
     doeff-flow watch error-demo --exit-on-complete

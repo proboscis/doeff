@@ -6,7 +6,8 @@ This example demonstrates how to observe workflow execution in real-time
 using doeff-flow's trace observer.
 
 Run this example:
-    python examples/flow/01_live_trace.py
+    cd packages/doeff-flow
+    uv run python examples/01_live_trace.py
 
 Then in another terminal, watch the trace:
     doeff-flow watch example-workflow --trace-dir .doeff-flow
