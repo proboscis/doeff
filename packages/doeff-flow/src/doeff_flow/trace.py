@@ -214,6 +214,17 @@ def trace_observer(
             if f.frame_type == "ReturnFrame"
         ]
 
+        # Include active_call as the deepest frame (captures non-yielding functions)
+        if snapshot.active_call is not None:
+            frames.append(
+                TraceFrame(
+                    function=snapshot.active_call.function,
+                    file=snapshot.active_call.filename,
+                    line=snapshot.active_call.line,
+                    code=snapshot.active_call.code,
+                )
+            )
+
         trace = LiveTrace(
             workflow_id=workflow_id,
             step=snapshot.step_count,
