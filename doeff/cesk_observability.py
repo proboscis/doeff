@@ -158,11 +158,15 @@ class ErrorInfo:
         message: The exception message.
         exception_type: The type name of the exception (e.g., "ValueError").
         traceback: Optional formatted traceback string.
+        error_location: Where the exception was actually raised (from Python traceback).
+        effect_trace: The @do function call chain at error time (outermost to innermost).
     """
 
     message: str
     exception_type: str
     traceback: str | None = None
+    error_location: CodeLocation | None = None
+    effect_trace: tuple[CodeLocation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,15 +236,50 @@ class ExecutionSnapshot:
         if isinstance(state.C, Error):
             ex = state.C.ex
             traceback_str = None
+            error_location = None
+            effect_trace: tuple[CodeLocation, ...] = ()
+
             if state.C.captured_traceback is not None:
                 try:
                     traceback_str = state.C.captured_traceback.format()
                 except Exception:
                     pass
+
+                # Extract error location from Python traceback (last frame is raise site)
+                try:
+                    python_frames = state.C.captured_traceback.python_frames
+                    if python_frames:
+                        last_frame = python_frames[-1]
+                        error_location = CodeLocation(
+                            filename=last_frame.location.filename,
+                            line=last_frame.location.lineno,
+                            function=last_frame.location.function,
+                            code=last_frame.location.code,
+                        )
+                except Exception:
+                    pass
+
+                # Extract effect trace from captured traceback
+                try:
+                    effect_frames = state.C.captured_traceback.effect_frames
+                    effect_trace = tuple(
+                        CodeLocation(
+                            filename=ef.location.filename,
+                            line=ef.location.lineno,
+                            function=ef.location.function,
+                            code=ef.location.code,
+                        )
+                        for ef in effect_frames
+                    )
+                except Exception:
+                    pass
+
             error_info = ErrorInfo(
                 message=str(ex),
                 exception_type=type(ex).__name__,
                 traceback=traceback_str,
+                error_location=error_location,
+                effect_trace=effect_trace,
             )
 
         # Get cache keys from storage
