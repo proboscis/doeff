@@ -86,6 +86,9 @@ def _watch_single(
     trace_file = trace_dir / workflow_id / "trace.jsonl"
     last_line_count = 0
 
+    # Clear terminal for clean live display
+    console.clear()
+
     with Live(console=console, refresh_per_second=10) as live:
         while True:
             if trace_file.exists():
@@ -116,6 +119,8 @@ def _watch_single(
 
 def _render_trace_panel(data: dict) -> Panel:
     """Render a single workflow trace as a rich Panel with call tree."""
+    from rich.console import Group
+
     wf_id = data["workflow_id"]
     status = data["status"]
     step = data["step"]
@@ -135,6 +140,8 @@ def _render_trace_panel(data: dict) -> Panel:
     current = tree
 
     trace_frames = data.get("trace", [])
+    is_failed = status == "failed"
+
     for i, frame in enumerate(trace_frames):
         fn = frame["function"]
         file_name = Path(frame["file"]).name
@@ -151,9 +158,12 @@ def _render_trace_panel(data: dict) -> Panel:
         else:
             label = f"[cyan bold]{fn}[/] [dim]{file_name}:{line}[/]"
 
-        # Use different style for deepest frame (current position)
+        # Use different style for deepest frame (current position or error location)
         if i == len(trace_frames) - 1:
-            label = f"[yellow]→[/] {label}"
+            if is_failed:
+                label = f"[red bold]✗[/] {label}"
+            else:
+                label = f"[yellow]→[/] {label}"
 
         current = current.add(label)
 
@@ -164,15 +174,20 @@ def _render_trace_panel(data: dict) -> Panel:
     # Format timestamp
     updated = data["updated_at"].split("T")[1][:12] if "T" in data["updated_at"] else data["updated_at"]
 
-    # Add error info if failed
-    error_text = ""
-    if status == "failed" and data.get("error"):
-        error_text = f"\n\n[red bold]Error:[/] [red]{data['error']}[/]"
+    # Build content with optional error section
+    content_parts = [tree]
+
+    if is_failed and data.get("error"):
+        error_text = Text()
+        error_text.append("\n\n")
+        error_text.append("Error: ", style="red bold")
+        error_text.append(data["error"], style="red")
+        content_parts.append(error_text)
 
     return Panel(
-        tree,
+        Group(*content_parts),
         title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
-        subtitle=f"[dim]Updated: {updated}[/dim]{error_text}",
+        subtitle=f"[dim]Updated: {updated}[/dim]",
         border_style=color,
     )
 
@@ -184,6 +199,9 @@ def _watch_all(
 ) -> None:
     """Watch all workflows with rich live display."""
     last_states: dict[str, tuple[int, str]] = {}
+
+    # Clear terminal for clean live display
+    console.clear()
 
     with Live(console=console, refresh_per_second=10) as live:
         while True:
