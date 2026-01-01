@@ -7,25 +7,28 @@ Features:
     - Write live effect trace to JSONL files during workflow execution
     - CLI commands to watch traces in real-time
     - Support for multiple concurrent workflows
+    - XDG-compliant default trace directory (~/.local/state/doeff-flow)
 
 Quick Start:
-    # Option A: Convenience wrapper
+    # Option A: Convenience wrapper (uses XDG default directory)
     from doeff_flow import run_workflow
 
     result = run_workflow(
         my_workflow(),
         workflow_id="wf-001",
-        trace_dir=Path(".doeff-flow"),
     )
 
     # Option B: Composable with existing run_sync
     from doeff.cesk import run_sync
     from doeff_flow import trace_observer
 
-    with trace_observer("wf-001", Path(".doeff-flow")) as on_step:
+    with trace_observer("wf-001") as on_step:
         result = run_sync(my_workflow(), on_step=on_step)
 
 CLI Usage:
+    # Watch all workflows
+    $ doeff-flow watch
+
     # Watch single workflow
     $ doeff-flow watch wf-001
 
@@ -41,7 +44,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff_flow.trace import LiveTrace, TraceFrame, trace_observer, validate_workflow_id
+from doeff_flow.trace import (
+    LiveTrace,
+    TraceFrame,
+    get_default_trace_dir,
+    trace_observer,
+    validate_workflow_id,
+)
 
 if TYPE_CHECKING:
     from doeff.cesk import CESKResult, Environment, Store
@@ -54,7 +63,7 @@ T = TypeVar("T")
 def run_workflow(
     program: "Program[T]",
     workflow_id: str,
-    trace_dir: Path | str = Path(".doeff-flow"),
+    trace_dir: Path | str | None = None,
     *,
     env: "Environment | dict[Any, Any] | None" = None,
     store: "Store | None" = None,
@@ -70,7 +79,7 @@ def run_workflow(
         workflow_id: Unique identifier for this workflow run.
             Must match [a-zA-Z0-9_-]+.
         trace_dir: Directory where trace files will be written.
-            Defaults to ".doeff-flow".
+            If None, uses XDG-compliant default (~/.local/state/doeff-flow).
         env: Initial environment (optional).
         store: Initial store (optional).
         storage: Optional durable storage backend for cache effects.
@@ -89,6 +98,7 @@ def run_workflow(
             y = yield Pure(20)
             return x + y
 
+        # Uses XDG default trace directory
         result = run_workflow(
             my_workflow(),
             workflow_id="example-001",
@@ -97,7 +107,9 @@ def run_workflow(
     """
     from doeff.cesk import run_sync
 
-    if isinstance(trace_dir, str):
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+    elif isinstance(trace_dir, str):
         trace_dir = Path(trace_dir)
 
     with trace_observer(workflow_id, trace_dir) as on_step:
@@ -118,6 +130,8 @@ __all__ = [
     "trace_observer",
     # Validation
     "validate_workflow_id",
+    # XDG support
+    "get_default_trace_dir",
     # Convenience wrapper
     "run_workflow",
 ]

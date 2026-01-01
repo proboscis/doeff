@@ -11,14 +11,14 @@ Run this example:
 
 In another terminal, watch the execution:
     doeff-flow watch data-pipeline --exit-on-complete
+
+Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
 import random
 import time
-from pathlib import Path
 
 from doeff import do
-from doeff.effects import Pure
 
 from doeff_flow import run_workflow
 
@@ -40,9 +40,8 @@ def extract_data(source: str):
         for i in range(5)
     ]
 
-    result = yield Pure(records)
     print(f"  [Extract] Got {len(records)} records")
-    return result
+    return records
 
 
 @do
@@ -50,14 +49,13 @@ def transform_record(record: dict):
     """Transform a single record."""
     time.sleep(0.05)  # Simulate processing
 
-    transformed = yield Pure({
+    return {
         "id": record["id"],
         "original_value": record["value"],
         "doubled": record["value"] * 2,
         "source": record["source"],
         "processed": True,
-    })
-    return transformed
+    }
 
 
 @do
@@ -81,7 +79,7 @@ def load_data(records: list[dict], destination: str):
     time.sleep(0.1)  # Simulate I/O
 
     # Simulate loading
-    loaded_count = yield Pure(len(records))
+    loaded_count = len(records)
     print(f"  [Load] Successfully loaded {loaded_count} records")
     return loaded_count
 
@@ -96,14 +94,13 @@ def aggregate_stats(records: list[dict]):
     max_val = max(r["doubled"] for r in records) if records else 0
     min_val = min(r["doubled"] for r in records) if records else 0
 
-    stats = yield Pure({
+    return {
         "count": len(records),
         "total": total,
         "average": round(avg, 2),
         "max": max_val,
         "min": min_val,
-    })
-    return stats
+    }
 
 
 # =============================================================================
@@ -173,7 +170,6 @@ def main():
             destination="warehouse://analytics/users_processed",
         ),
         workflow_id="data-pipeline",
-        trace_dir=Path(".doeff-flow"),
     )
 
     if result.is_ok:
