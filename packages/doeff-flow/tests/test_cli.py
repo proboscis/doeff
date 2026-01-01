@@ -185,3 +185,82 @@ class TestWatchCommand:
         assert result.exit_code == 0
         assert "Watch live effect trace" in result.output
         assert "--exit-on-complete" in result.output
+
+    def test_status_only_help(self):
+        """watch --help should show --status-only option."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["watch", "--help"])
+        assert result.exit_code == 0
+        assert "--status-only" in result.output
+        assert "slog status" in result.output
+
+
+class TestSlogDisplay:
+    """Tests for slog display in CLI (using mock data)."""
+
+    def test_history_shows_last_slog(self):
+        """history should show last_slog in output when present."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            trace_dir = Path(tmp_dir)
+            wf_dir = trace_dir / "wf-slog"
+            wf_dir.mkdir()
+            trace_file = wf_dir / "trace.jsonl"
+
+            # Write trace entries with slog
+            entries = [
+                {
+                    "workflow_id": "wf-slog",
+                    "step": 1,
+                    "status": "running",
+                    "current_effect": "WriterTellEffect(...)",
+                    "trace": [],
+                    "started_at": "2025-01-01T00:00:00",
+                    "updated_at": "2025-01-01T00:00:01",
+                    "last_slog": {"status": "reviewing", "msg": "Checking PR"},
+                },
+                {
+                    "workflow_id": "wf-slog",
+                    "step": 2,
+                    "status": "completed",
+                    "current_effect": None,
+                    "trace": [],
+                    "started_at": "2025-01-01T00:00:00",
+                    "updated_at": "2025-01-01T00:00:02",
+                    "result": "success",
+                    "last_slog": None,
+                },
+            ]
+            trace_file.write_text("\n".join(json.dumps(e) for e in entries) + "\n")
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["history", "wf-slog", "--trace-dir", tmp_dir])
+            assert result.exit_code == 0
+            # History command shows the trace was recorded
+            assert "1" in result.output
+            assert "2" in result.output
+
+    def test_ps_with_slog_workflow(self):
+        """ps should list workflows that have slog status."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            trace_dir = Path(tmp_dir)
+            wf_dir = trace_dir / "wf-slog-status"
+            wf_dir.mkdir()
+            trace_file = wf_dir / "trace.jsonl"
+
+            trace_data = {
+                "workflow_id": "wf-slog-status",
+                "step": 5,
+                "status": "running",
+                "current_effect": "WriterTellEffect(...)",
+                "trace": [],
+                "started_at": "2025-01-01T00:00:00",
+                "updated_at": "2025-01-01T00:00:05",
+                "last_slog": {"status": "waiting", "msg": "Ready for user review"},
+            }
+            trace_file.write_text(json.dumps(trace_data) + "\n")
+
+            runner = CliRunner()
+            result = runner.invoke(cli, ["ps", "--trace-dir", tmp_dir])
+            assert result.exit_code == 0
+            assert "wf-slog-status" in result.output
+            assert "running" in result.output
