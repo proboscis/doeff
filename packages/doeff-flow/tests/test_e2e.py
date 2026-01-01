@@ -250,8 +250,8 @@ class TestE2ECLIIntegration:
             )
 
             assert result.exit_code == 0
-            # Should show multiple steps
-            assert "step" in result.output
+            # Rich table shows "Step" column header
+            assert "Step" in result.output
             # Should show completed status in final entry
             assert "completed" in result.output
 
@@ -285,8 +285,9 @@ class TestE2ECLIIntegration:
                 ["history", "history-last-test", "--trace-dir", str(trace_dir), "--last", "3"],
             )
 
-            full_lines = [l for l in full_result.output.strip().split("\n") if l.startswith("step")]
-            limited_lines = [l for l in limited_result.output.strip().split("\n") if l.startswith("step")]
+            # Count data rows in rich table (rows containing "running" status)
+            full_lines = [l for l in full_result.output.split("\n") if "running" in l or "completed" in l]
+            limited_lines = [l for l in limited_result.output.split("\n") if "running" in l or "completed" in l]
 
             assert len(limited_lines) == 3
             assert len(full_lines) > 3

@@ -14,14 +14,14 @@ Watch the execution:
 
 After completion, inspect the trace:
     doeff-flow history error-demo
+
+Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
 import random
 import time
-from pathlib import Path
 
 from doeff import do
-from doeff.effects import Pure
 
 from doeff_flow import run_workflow
 
@@ -41,9 +41,8 @@ def call_external_api(endpoint: str, attempt: int = 1):
     if random.random() < 0.3:  # 30% failure rate
         raise ConnectionError(f"Failed to connect to {endpoint}")
 
-    response = yield Pure({"status": "ok", "endpoint": endpoint})
     print(f"  [API] Success: {endpoint}")
-    return response
+    return {"status": "ok", "endpoint": endpoint}
 
 
 @do
@@ -51,20 +50,18 @@ def fetch_user(user_id: int):
     """Fetch user data from API."""
     endpoint = f"/users/{user_id}"
     response = yield call_external_api(endpoint)
-    user = yield Pure({"id": user_id, "name": f"User{user_id}", **response})
-    return user
+    return {"id": user_id, "name": f"User{user_id}", **response}
 
 
 @do
 def fetch_orders(user_id: int):
     """Fetch orders for a user."""
     endpoint = f"/users/{user_id}/orders"
-    response = yield call_external_api(endpoint)
-    orders = yield Pure([
+    yield call_external_api(endpoint)
+    return [
         {"order_id": i, "user_id": user_id, "amount": random.randint(10, 100)}
         for i in range(3)
-    ])
-    return orders
+    ]
 
 
 @do
@@ -82,11 +79,11 @@ def process_user_data(user_id: int):
 
     # Step 3: Calculate total
     total = sum(o["amount"] for o in orders)
-    result = yield Pure({
+    result = {
         "user": user,
         "orders": orders,
         "total_amount": total,
-    })
+    }
 
     print(f"  [Data] Total amount: ${total}")
     return result
@@ -119,19 +116,26 @@ def workflow_with_errors():
             failed.append({"user_id": user_id, "error": str(e)})
             # Continue processing other users
 
-    summary = yield Pure({
+    summary = {
         "successful": len(results),
         "failed": len(failed),
         "total_processed": len(results) + len(failed),
         "results": results,
         "failures": failed,
-    })
+    }
 
     print("\n" + "=" * 60)
     print(f"Workflow Complete: {len(results)} success, {len(failed)} failed")
     print("=" * 60)
 
     return summary
+
+
+@do
+def do_step(name: str):
+    """Simple step that prints completion."""
+    print(f"  {name} complete")
+    return name
 
 
 @do
@@ -144,11 +148,8 @@ def workflow_that_fails():
     print("=" * 60)
 
     # Some successful steps first
-    step1 = yield Pure("Step 1 complete")
-    print(f"  {step1}")
-
-    step2 = yield Pure("Step 2 complete")
-    print(f"  {step2}")
+    yield do_step("Step 1")
+    yield do_step("Step 2")
 
     # This step will fail
     print("  Step 3: About to fail...")
@@ -177,7 +178,6 @@ def main():
     result1 = run_workflow(
         workflow_with_errors(),
         workflow_id="error-demo",
-        trace_dir=Path(".doeff-flow"),
     )
 
     if result1.is_ok:
@@ -191,7 +191,6 @@ def main():
     result2 = run_workflow(
         workflow_that_fails(),
         workflow_id="failing-demo",
-        trace_dir=Path(".doeff-flow"),
     )
 
     if result2.is_ok:
