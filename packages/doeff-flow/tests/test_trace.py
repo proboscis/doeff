@@ -354,3 +354,143 @@ class TestRunWorkflow:
             trace_file = trace_dir / "nested-test" / "trace.jsonl"
             lines = trace_file.read_text().strip().split("\n")
             assert len(lines) > 0
+
+
+class TestSlogDetection:
+    """Tests for slog (structured log) detection in traces."""
+
+    def test_slog_captured_in_trace(self):
+        """slog effects should be captured as last_slog in trace."""
+        from doeff.effects.writer import slog
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            trace_dir = Path(tmp_dir)
+
+            @do
+            def workflow_with_slog():
+                yield slog(status="starting", msg="Beginning workflow")
+                result = yield Pure(42)
+                yield slog(status="completed", msg=f"Result: {result}")
+                return result
+
+            result = run_workflow(
+                workflow_with_slog(),
+                workflow_id="slog-test",
+                trace_dir=trace_dir,
+            )
+
+            assert result.is_ok
+            assert result.value == 42
+
+            # Check trace file for slog entries
+            trace_file = trace_dir / "slog-test" / "trace.jsonl"
+            lines = trace_file.read_text().strip().split("\n")
+
+            # Find entries with last_slog
+            slog_entries = []
+            for line in lines:
+                data = json.loads(line)
+                if data.get("last_slog"):
+                    slog_entries.append(data["last_slog"])
+
+            assert len(slog_entries) >= 2
+            # Check first slog
+            assert slog_entries[0]["status"] == "starting"
+            assert slog_entries[0]["msg"] == "Beginning workflow"
+            # Check second slog
+            assert slog_entries[1]["status"] == "completed"
+            assert "Result: 42" in slog_entries[1]["msg"]
+
+    def test_last_slog_field_in_livetrace(self):
+        """LiveTrace should have last_slog field."""
+        trace = LiveTrace(
+            workflow_id="test-wf",
+            step=1,
+            status="running",
+            current_effect="WriterTellEffect(...)",
+            trace=[],
+            started_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:01",
+            last_slog={"status": "reviewing", "msg": "Checking PR"},
+        )
+        assert trace.last_slog == {"status": "reviewing", "msg": "Checking PR"}
+
+    def test_last_slog_defaults_to_none(self):
+        """LiveTrace.last_slog should default to None."""
+        trace = LiveTrace(
+            workflow_id="test-wf",
+            step=1,
+            status="running",
+            current_effect=None,
+            trace=[],
+            started_at="2025-01-01T00:00:00",
+            updated_at="2025-01-01T00:00:01",
+        )
+        assert trace.last_slog is None
+
+    def test_non_dict_slog_not_captured(self):
+        """Non-dict slog messages should not be captured as last_slog."""
+        from doeff.effects.writer import tell
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            trace_dir = Path(tmp_dir)
+
+            @do
+            def workflow_with_string_log():
+                yield tell("This is a string message")
+                result = yield Pure(42)
+                return result
+
+            result = run_workflow(
+                workflow_with_string_log(),
+                workflow_id="string-log-test",
+                trace_dir=trace_dir,
+            )
+
+            assert result.is_ok
+
+            # Check trace file - string logs should not appear in last_slog
+            trace_file = trace_dir / "string-log-test" / "trace.jsonl"
+            lines = trace_file.read_text().strip().split("\n")
+
+            slog_entries = [
+                json.loads(line).get("last_slog")
+                for line in lines
+                if json.loads(line).get("last_slog") is not None
+            ]
+            # String messages should not be captured
+            assert len(slog_entries) == 0
+
+    def test_slog_written_to_jsonl(self):
+        """last_slog should be written to JSONL output."""
+        from doeff.effects.writer import slog
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            trace_dir = Path(tmp_dir)
+
+            @do
+            def workflow_with_slog():
+                yield slog(status="testing", msg="Test message", extra_data=123)
+                return (yield Pure("done"))
+
+            run_workflow(
+                workflow_with_slog(),
+                workflow_id="jsonl-slog-test",
+                trace_dir=trace_dir,
+            )
+
+            trace_file = trace_dir / "jsonl-slog-test" / "trace.jsonl"
+            lines = trace_file.read_text().strip().split("\n")
+
+            # Find entry with slog
+            slog_entry = None
+            for line in lines:
+                data = json.loads(line)
+                if data.get("last_slog"):
+                    slog_entry = data["last_slog"]
+                    break
+
+            assert slog_entry is not None
+            assert slog_entry["status"] == "testing"
+            assert slog_entry["msg"] == "Test message"
+            assert slog_entry["extra_data"] == 123
