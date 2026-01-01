@@ -60,6 +60,7 @@ members = ["packages/*"]
 doeff-pinjected = { workspace = true }
 doeff-indexer = { workspace = true }
 doeff-flow = { workspace = true }
+doeff-agents = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
