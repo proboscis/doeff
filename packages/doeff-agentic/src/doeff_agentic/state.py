@@ -23,12 +23,38 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from .types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to file atomically.
+
+    Writes to a temporary file first, then renames to target path.
+    This prevents corruption from crashes or concurrent access.
+
+    Args:
+        path: Target file path
+        content: Content to write
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        os.write(fd, content.encode())
+        os.close(fd)
+        os.rename(temp_path, path)
+    except Exception:
+        os.close(fd)
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
 
 
 def get_default_state_dir() -> Path:
@@ -114,17 +140,16 @@ class StateManager:
         return {}
 
     def _save_index(self, index: dict[str, str]) -> None:
-        """Save the workflow index.
+        """Save the workflow index atomically.
 
         Args:
             index: Dictionary mapping workflow ID to name
         """
         index_path = self._get_index_path()
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(json.dumps(index, indent=2))
+        _atomic_write(index_path, json.dumps(index, indent=2))
 
     def write_workflow_meta(self, workflow: WorkflowInfo) -> None:
-        """Write workflow metadata to state file.
+        """Write workflow metadata to state file atomically.
 
         Args:
             workflow: Workflow information to write
@@ -143,7 +168,7 @@ class StateManager:
             "last_slog": workflow.last_slog,
             "error": workflow.error,
         }
-        meta_path.write_text(json.dumps(meta, indent=2))
+        _atomic_write(meta_path, json.dumps(meta, indent=2))
 
         # Update index
         index = self._load_index()
@@ -151,7 +176,7 @@ class StateManager:
         self._save_index(index)
 
     def write_agent_state(self, workflow_id: str, agent: AgentInfo) -> None:
-        """Write agent state to file.
+        """Write agent state to file atomically.
 
         Args:
             workflow_id: Workflow identifier
@@ -159,7 +184,7 @@ class StateManager:
         """
         workflow_dir = self._ensure_dirs(workflow_id)
         agent_path = workflow_dir / "agents" / f"{agent.name}.json"
-        agent_path.write_text(json.dumps(agent.to_dict(), indent=2))
+        _atomic_write(agent_path, json.dumps(agent.to_dict(), indent=2))
 
     def read_workflow(self, workflow_id: str) -> WorkflowInfo | None:
         """Read workflow information from state files.
@@ -362,7 +387,11 @@ class StateManager:
                 yield workflow
 
             # Check for terminal status
-            if workflow.status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED):
+            if workflow.status in (
+                WorkflowStatus.COMPLETED,
+                WorkflowStatus.FAILED,
+                WorkflowStatus.STOPPED,
+            ):
                 return
 
             time.sleep(poll_interval)
