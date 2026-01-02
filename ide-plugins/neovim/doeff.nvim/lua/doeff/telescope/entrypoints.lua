@@ -211,57 +211,11 @@ local function build_preview_lines(value)
   return lines
 end
 
----Create previewer for entrypoints - shows source file with highlighted line
+---Create previewer for entrypoints - uses Telescope's optimized grep previewer
 ---@return table
 local function make_previewer()
-  return previewers.new_buffer_previewer({
-    title = 'Entrypoint Preview',
-    get_buffer_by_name = function(self, entry)
-      return entry.filename
-    end,
-    define_preview = function(self, entry, status)
-      if not entry or not entry.filename then
-        return
-      end
-
-      local bufnr = self.state.bufnr
-      if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then
-        return
-      end
-
-      -- Use Telescope's buffer previewer utils to show file with highlighting
-      conf.buffer_previewer_maker(entry.filename, bufnr, {
-        bufname = self.state.bufname,
-        winid = self.state.winid,
-        preview = self.state.preview,
-        callback = function(bufnr)
-          if not vim.api.nvim_buf_is_valid(bufnr) then
-            return
-          end
-
-          -- Set filetype for syntax highlighting
-          local ft = vim.filetype.match({ filename = entry.filename })
-          if ft then
-            vim.api.nvim_set_option_value('filetype', ft, { buf = bufnr })
-          end
-
-          -- Highlight the entrypoint line
-          if entry.lnum and entry.lnum > 0 then
-            pcall(function()
-              -- Scroll to the line
-              vim.api.nvim_win_set_cursor(self.state.winid, { entry.lnum, 0 })
-              -- Center the view
-              vim.api.nvim_win_call(self.state.winid, function()
-                vim.cmd('normal! zz')
-              end)
-              -- Add highlight to the line
-              vim.api.nvim_buf_add_highlight(bufnr, -1, 'TelescopePreviewLine', entry.lnum - 1, 0, -1)
-            end)
-          end
-        end,
-      })
-    end,
-  })
+  -- Use Telescope's built-in grep previewer which is optimized for file:line previews
+  return conf.grep_previewer({})
 end
 
 ---Create action to edit/jump to entrypoint (DEFAULT action)
