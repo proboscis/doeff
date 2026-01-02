@@ -137,7 +137,7 @@ local function make_entry_maker(root)
           { display_path, 'TelescopeResultsComment' },
         })
       end,
-      ordinal = entry.name .. ' ' .. entry.qualified_name .. ' ' .. relative_path .. ' ' .. (first_param_type or ''),
+      ordinal = entry.name .. ' ' .. entry.qualified_name .. ' ' .. relative_path .. ' ' .. type_display,
       filename = entry.file_path,
       lnum = entry.line,
     }
