@@ -211,11 +211,42 @@ local function build_preview_lines(value)
   return lines
 end
 
----Create previewer for entrypoints - uses Telescope's optimized grep previewer
+---Create async previewer using termopen (bat/cat)
 ---@return table
 local function make_previewer()
-  -- Use Telescope's built-in grep previewer which is optimized for file:line previews
-  return conf.grep_previewer({})
+  local from_entry = require('telescope.from_entry')
+  local utils = require('telescope.utils')
+
+  return previewers.new_termopen_previewer({
+    title = 'Preview',
+    get_command = function(entry, status)
+      local p = from_entry.path(entry, true)
+      if p == nil or p == '' then
+        return nil
+      end
+
+      local lnum = entry.lnum or 1
+      local context = 10  -- lines of context around the target line
+
+      -- Try bat first (with syntax highlighting), fallback to cat
+      if vim.fn.executable('bat') == 1 then
+        return {
+          'bat',
+          '--style=numbers,changes',
+          '--color=always',
+          '--pager=never',
+          '--highlight-line=' .. lnum,
+          '--line-range=' .. math.max(1, lnum - context) .. ':' .. (lnum + context),
+          p,
+        }
+      else
+        -- Fallback to sed for line range
+        local start_line = math.max(1, lnum - context)
+        local end_line = lnum + context
+        return { 'sed', '-n', start_line .. ',' .. end_line .. 'p', p }
+      end
+    end,
+  })
 end
 
 ---Create action to edit/jump to entrypoint (DEFAULT action)
@@ -293,7 +324,7 @@ function M.picker(opts)
   end
 
   pickers.new(opts, {
-    prompt_title = 'Doeff Entrypoints [Enter:goto C-r:run ?:help]',
+    prompt_title = 'Doeff Entrypoints [Enter:goto C-r:run]',
     finder = finders.new_table({
       results = entries,
       entry_maker = make_entry_maker(root),
