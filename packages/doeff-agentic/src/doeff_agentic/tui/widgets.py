@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from textual.app import ComposeResult
 from textual.widgets import Static
 
-from ..types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
+from ..types import AgentStatus, WorkflowInfo, WorkflowStatus
 
 
 def _format_relative_time(dt: datetime) -> str:
