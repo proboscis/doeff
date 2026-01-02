@@ -34,7 +34,7 @@ function M.setup_keymaps()
   if keymaps.entrypoints then
     vim.keymap.set('n', keymaps.entrypoints, function()
       M.pick_entrypoints()
-    end, { desc = 'Doeff: Search entrypoints' })
+    end, { desc = 'Doeff: Search entrypoints [P]' })
   end
 
   if keymaps.run_cursor then
@@ -53,6 +53,36 @@ function M.setup_keymaps()
     vim.keymap.set('n', keymaps.run_last, function()
       M.run_last()
     end, { desc = 'Doeff: Re-run last entrypoint' })
+  end
+
+  if keymaps.transforms then
+    vim.keymap.set('n', keymaps.transforms, function()
+      M.pick_transforms()
+    end, { desc = 'Doeff: Search transforms [T]' })
+  end
+
+  if keymaps.interpreters then
+    vim.keymap.set('n', keymaps.interpreters, function()
+      M.pick_interpreters()
+    end, { desc = 'Doeff: Search interpreters [I]' })
+  end
+
+  if keymaps.kleisli then
+    vim.keymap.set('n', keymaps.kleisli, function()
+      M.pick_kleisli()
+    end, { desc = 'Doeff: Search kleisli [K]' })
+  end
+
+  if keymaps.interceptors then
+    vim.keymap.set('n', keymaps.interceptors, function()
+      M.pick_interceptors()
+    end, { desc = 'Doeff: Search interceptors [IC]' })
+  end
+
+  if keymaps.all then
+    vim.keymap.set('n', keymaps.all, function()
+      M.pick_all()
+    end, { desc = 'Doeff: Search all entries' })
   end
 end
 
@@ -121,6 +151,32 @@ function M.pick_transforms(opts)
 
   local entrypoints = require('doeff.telescope.entrypoints')
   entrypoints.transforms(opts)
+end
+
+---Open interceptors picker
+---@param opts table|nil
+function M.pick_interceptors(opts)
+  local ok = pcall(require, 'telescope')
+  if not ok then
+    vim.notify('doeff.nvim: telescope.nvim is required', vim.log.levels.ERROR)
+    return
+  end
+
+  local entrypoints = require('doeff.telescope.entrypoints')
+  entrypoints.interceptors(opts)
+end
+
+---Open all entries picker
+---@param opts table|nil
+function M.pick_all(opts)
+  local ok = pcall(require, 'telescope')
+  if not ok then
+    vim.notify('doeff.nvim: telescope.nvim is required', vim.log.levels.ERROR)
+    return
+  end
+
+  local entrypoints = require('doeff.telescope.entrypoints')
+  entrypoints.all(opts)
 end
 
 ---Open playlists picker
