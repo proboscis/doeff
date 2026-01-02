@@ -44,9 +44,15 @@
     "onCommand:doeff-runner.setPlaylistsSortMode",
     "onCommand:doeff-runner.addCustomPlaylistItem",
     "onCommand:doeff-runner.copyPlaylistItemPath",
+    "onCommand:doeff-runner.listWorkflows",
+    "onCommand:doeff-runner.attachWorkflow",
+    "onCommand:doeff-runner.watchWorkflow",
+    "onCommand:doeff-runner.stopWorkflow",
+    "onCommand:doeff-runner.refreshWorkflows",
     "onView:doeff-programs",
     "onView:doeff-programs-all",
-    "onView:doeff-playlists"
+    "onView:doeff-playlists",
+    "onView:doeff-workflows"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -72,6 +78,10 @@
         {
           "id": "doeff-playlists",
           "name": "Playlists"
+        },
+        {
+          "id": "doeff-workflows",
+          "name": "Workflows"
         }
       ]
     },
@@ -236,6 +246,30 @@
         "command": "doeff-runner.copyPlaylistItemPath",
         "title": "Copy Path",
         "icon": "$(copy)"
+      },
+      {
+        "command": "doeff-runner.listWorkflows",
+        "title": "Doeff: List Workflows"
+      },
+      {
+        "command": "doeff-runner.attachWorkflow",
+        "title": "Doeff: Attach to Workflow",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "doeff-runner.watchWorkflow",
+        "title": "Doeff: Watch Workflow",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "doeff-runner.stopWorkflow",
+        "title": "Doeff: Stop Workflow",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "doeff-runner.refreshWorkflows",
+        "title": "Refresh Workflows",
+        "icon": "$(refresh)"
       }
     ],
     "configuration": {
@@ -348,6 +382,11 @@
           "command": "doeff-runner.addCustomPlaylistItem",
           "when": "view == doeff-playlists",
           "group": "navigation@5"
+        },
+        {
+          "command": "doeff-runner.refreshWorkflows",
+          "when": "view == doeff-workflows",
+          "group": "navigation@0"
         }
       ],
       "view/item/context": [
@@ -440,6 +479,26 @@
           "command": "doeff-runner.copyPlaylistItemPath",
           "when": "view == doeff-playlists && viewItem == customPlaylistItem",
           "group": "navigation"
+        },
+        {
+          "command": "doeff-runner.attachWorkflow",
+          "when": "view == doeff-workflows && viewItem == workflow",
+          "group": "inline@0"
+        },
+        {
+          "command": "doeff-runner.watchWorkflow",
+          "when": "view == doeff-workflows && viewItem == workflow",
+          "group": "inline@1"
+        },
+        {
+          "command": "doeff-runner.stopWorkflow",
+          "when": "view == doeff-workflows && viewItem == workflow",
+          "group": "inline@2"
+        },
+        {
+          "command": "doeff-runner.attachWorkflow",
+          "when": "view == doeff-workflows && viewItem == agent",
+          "group": "inline@0"
         }
       ]
     }
