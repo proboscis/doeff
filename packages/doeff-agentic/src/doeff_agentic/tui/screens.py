@@ -8,21 +8,18 @@ Contains:
 
 from __future__ import annotations
 
-import os
-import subprocess
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.message import Message
+from textual.containers import Container, Horizontal, VerticalScroll
+from textual.events import Key
 from textual.screen import Screen
+from textual.timer import Timer
 from textual.widgets import Footer, Header, Input, Static
 
-from ..api import AgenticAPI
-from ..types import AgentInfo, WorkflowInfo, WorkflowStatus
+from ..types import WorkflowInfo
 from .widgets import AgentOutputPane, WorkflowInfoPane, WorkflowListItem
 
 if TYPE_CHECKING:
@@ -105,6 +102,18 @@ class WorkflowListScreen(Screen[None]):
         color: $text-muted;
     }
 
+    .status-booting {
+        color: $primary;
+    }
+
+    .status-done {
+        color: $success;
+    }
+
+    .status-exited {
+        color: $text-muted;
+    }
+
     #footer-bar {
         dock: bottom;
         height: 1;
@@ -129,7 +138,8 @@ class WorkflowListScreen(Screen[None]):
     }
 
     #send-modal-content {
-        width: 60;
+        width: 60%;
+        max-width: 80;
         height: auto;
         padding: 1 2;
         border: round $primary;
@@ -146,8 +156,14 @@ class WorkflowListScreen(Screen[None]):
         super().__init__()
         self.workflows: list[WorkflowInfo] = []
         self.selected_index = 0
-        self.api = AgenticAPI()
-        self._refresh_timer: int | None = None
+        self._refresh_timer: Timer | None = None
+
+    @property
+    def tui_app(self) -> "AgenticTUI":
+        """Get the typed app instance."""
+        from .app import AgenticTUI
+        assert isinstance(self.app, AgenticTUI)
+        return self.app
 
     def compose(self) -> ComposeResult:
         """Compose the screen layout."""
@@ -176,12 +192,26 @@ class WorkflowListScreen(Screen[None]):
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
         if self._refresh_timer is not None:
-            self.clear_interval(self._refresh_timer)
+            self._refresh_timer.stop()
 
     @work(exclusive=True)
     async def refresh_workflows(self) -> None:
         """Refresh the workflow list from state files."""
-        self.workflows = self.api.list_workflows()
+        try:
+            workflows = self.tui_app.api.list_workflows()
+            # Post UI updates back to main thread
+            self.call_from_thread(self._apply_workflows, workflows)
+        except Exception as e:
+            self.call_from_thread(self.notify, f"Error refreshing: {e}", severity="error")
+
+    def _apply_workflows(self, workflows: list[WorkflowInfo]) -> None:
+        """Apply workflow data to UI (main thread only)."""
+        self.workflows = workflows
+        # Ensure selected_index is within bounds
+        if self.workflows:
+            self.selected_index = min(self.selected_index, len(self.workflows) - 1)
+        else:
+            self.selected_index = 0
         self._update_list_display()
 
     def _update_list_display(self) -> None:
@@ -235,7 +265,9 @@ class WorkflowListScreen(Screen[None]):
         # Suspend the app and exec tmux attach
         self.app.suspend()
         try:
-            self.api.attach(workflow.id)
+            self.tui_app.api.attach(workflow.id)
+        except Exception as e:
+            self.notify(f"Failed to attach: {e}", severity="error")
         finally:
             self.app.resume()
 
@@ -254,12 +286,19 @@ class WorkflowListScreen(Screen[None]):
             message = event.value
             workflow = self._get_selected_workflow()
             if workflow and message:
-                self.api.send_message(workflow.id, message)
+                try:
+                    success = self.tui_app.api.send_message(workflow.id, message)
+                    if success:
+                        self.notify("Message sent", severity="information")
+                    else:
+                        self.notify("Failed to send message", severity="error")
+                except Exception as e:
+                    self.notify(f"Error: {e}", severity="error")
             event.input.value = ""
             modal = self.query_one("#send-modal")
             modal.remove_class("visible")
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: Key) -> None:
         """Handle key events."""
         if event.key == "escape":
             modal = self.query_one("#send-modal")
@@ -271,7 +310,14 @@ class WorkflowListScreen(Screen[None]):
         """Kill the selected workflow."""
         workflow = self._get_selected_workflow()
         if workflow:
-            self.api.stop(workflow.id)
+            try:
+                stopped = self.tui_app.api.stop(workflow.id)
+                if stopped:
+                    self.notify(f"Stopped: {', '.join(stopped)}", severity="information")
+                else:
+                    self.notify("No agents to stop", severity="warning")
+            except Exception as e:
+                self.notify(f"Error: {e}", severity="error")
             self.refresh_workflows()
 
     def action_refresh(self) -> None:
@@ -369,7 +415,8 @@ class WatchScreen(Screen[None]):
     }
 
     #send-modal-content {
-        width: 60;
+        width: 60%;
+        max-width: 80;
         height: auto;
         padding: 1 2;
         border: round $primary;
@@ -386,9 +433,15 @@ class WatchScreen(Screen[None]):
         super().__init__()
         self.workflow_id = workflow_id
         self.workflow: WorkflowInfo | None = None
-        self.api = AgenticAPI()
         self.focused_pane = "workflow"  # or "agent"
-        self._refresh_timer: int | None = None
+        self._refresh_timer: Timer | None = None
+
+    @property
+    def tui_app(self) -> "AgenticTUI":
+        """Get the typed app instance."""
+        from .app import AgenticTUI
+        assert isinstance(self.app, AgenticTUI)
+        return self.app
 
     def compose(self) -> ComposeResult:
         """Compose the screen layout."""
@@ -434,25 +487,35 @@ class WatchScreen(Screen[None]):
     def on_unmount(self) -> None:
         """Called when the screen is unmounted."""
         if self._refresh_timer is not None:
-            self.clear_interval(self._refresh_timer)
+            self._refresh_timer.stop()
 
     @work(exclusive=True)
     async def refresh_workflow(self) -> None:
         """Refresh workflow and agent data."""
-        self.workflow = self.api.get_workflow(self.workflow_id)
-        if self.workflow is None:
-            # Workflow was deleted or not found
-            self.app.pop_screen()
-            return
+        try:
+            workflow = self.tui_app.api.get_workflow(self.workflow_id)
+            if workflow is None:
+                # Workflow was deleted or not found - go back to list
+                self.call_from_thread(self.app.pop_screen)
+                return
+
+            agent_output = self.tui_app.api.get_agent_output(self.workflow_id, lines=50)
+            # Post UI updates back to main thread
+            self.call_from_thread(self._apply_workflow_data, workflow, agent_output)
+        except Exception as e:
+            self.call_from_thread(self.notify, f"Error: {e}", severity="error")
+
+    def _apply_workflow_data(self, workflow: WorkflowInfo, agent_output: str) -> None:
+        """Apply workflow data to UI (main thread only)."""
+        self.workflow = workflow
 
         # Update workflow info pane
         info_pane = self.query_one("#workflow-info-content", WorkflowInfoPane)
-        info_pane.update_workflow(self.workflow)
+        info_pane.update_workflow(workflow)
 
         # Update agent output pane
         output_pane = self.query_one("#agent-output-content", AgentOutputPane)
-        agent_output = self.api.get_agent_output(self.workflow_id, lines=50)
-        output_pane.update_output(agent_output, self.workflow)
+        output_pane.update_output(agent_output, workflow)
 
     def action_switch_pane(self) -> None:
         """Switch focus between panes."""
@@ -489,7 +552,9 @@ class WatchScreen(Screen[None]):
         if self.workflow:
             self.app.suspend()
             try:
-                self.api.attach(self.workflow.id)
+                self.tui_app.api.attach(self.workflow.id)
+            except Exception as e:
+                self.notify(f"Failed to attach: {e}", severity="error")
             finally:
                 self.app.resume()
 
@@ -506,12 +571,19 @@ class WatchScreen(Screen[None]):
         if event.input.id == "send-input":
             message = event.value
             if self.workflow and message:
-                self.api.send_message(self.workflow.id, message)
+                try:
+                    success = self.tui_app.api.send_message(self.workflow.id, message)
+                    if success:
+                        self.notify("Message sent", severity="information")
+                    else:
+                        self.notify("Failed to send message", severity="error")
+                except Exception as e:
+                    self.notify(f"Error: {e}", severity="error")
             event.input.value = ""
             modal = self.query_one("#send-modal")
             modal.remove_class("visible")
 
-    def on_key(self, event) -> None:
+    def on_key(self, event: Key) -> None:
         """Handle key events."""
         if event.key == "escape":
             modal = self.query_one("#send-modal")
@@ -523,7 +595,12 @@ class WatchScreen(Screen[None]):
     def action_kill(self) -> None:
         """Kill the workflow."""
         if self.workflow:
-            self.api.stop(self.workflow.id)
+            try:
+                stopped = self.tui_app.api.stop(self.workflow.id)
+                if stopped:
+                    self.notify(f"Stopped: {', '.join(stopped)}", severity="information")
+            except Exception as e:
+                self.notify(f"Error: {e}", severity="error")
             self.app.pop_screen()
 
     def action_back(self) -> None:
