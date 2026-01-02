@@ -75,28 +75,5 @@ vim.api.nvim_create_user_command('DoeffWorkflowStop', function(opts)
   end
 end, { nargs = 1, desc = 'Stop a doeff workflow' })
 
--- Telescope integration
-vim.api.nvim_create_user_command('Telescope', function(opts)
-  local args = opts.fargs
-  if #args > 0 and args[1] == 'doeff' then
-    -- Handle :Telescope doeff <subcommand>
-    local subcommand = args[2]
-    if subcommand == 'entrypoints' or not subcommand then
-      require('doeff').pick_entrypoints()
-    elseif subcommand == 'interpreters' then
-      require('doeff').pick_interpreters()
-    elseif subcommand == 'kleisli' then
-      require('doeff').pick_kleisli()
-    elseif subcommand == 'transforms' then
-      require('doeff').pick_transforms()
-    elseif subcommand == 'playlists' then
-      require('doeff').pick_playlists()
-    elseif subcommand == 'workflows' then
-      require('doeff').pick_workflows()
-    end
-    return
-  end
-
-  -- Fall through to default Telescope behavior
-  -- This won't interfere with normal Telescope usage since we only handle 'doeff'
-end, { nargs = '*', complete = 'customlist,v:lua.require("telescope.command").complete' })
+-- Telescope integration is handled by lua/telescope/_extensions/doeff.lua
+-- Use :Telescope doeff <subcommand> after loading the extension

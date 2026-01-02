@@ -88,11 +88,16 @@ local function build_preview_lines(workflow)
   if workflow.last_slog then
     table.insert(lines, '')
     table.insert(lines, '## Last Status')
-    local ok, json_str = pcall(vim.json.encode, workflow.last_slog)
-    if ok then
-      -- Pretty print JSON
-      for line in json_str:gmatch('[^\r\n]+') do
-        table.insert(lines, '  ' .. line)
+    -- Format each key-value pair on its own line for readability
+    if type(workflow.last_slog) == 'table' then
+      for key, value in pairs(workflow.last_slog) do
+        local value_str = type(value) == 'table' and vim.json.encode(value) or tostring(value)
+        table.insert(lines, string.format('  %s: %s', key, value_str))
+      end
+    else
+      local ok, json_str = pcall(vim.json.encode, workflow.last_slog)
+      if ok then
+        table.insert(lines, '  ' .. json_str)
       end
     end
   end
@@ -112,7 +117,7 @@ end
 local function make_previewer()
   return previewers.new_buffer_previewer({
     title = 'Workflow Details',
-    define_preview = function(self, entry, status)
+    define_preview = function(self, entry, _status)
       local lines = build_preview_lines(entry.value)
       vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
       vim.api.nvim_set_option_value('filetype', 'markdown', { buf = self.state.bufnr })
