@@ -30,10 +30,15 @@ local M = {}
 ---@type DoeffConfig
 M.defaults = {
   keymaps = {
-    entrypoints = '<leader>de',
-    run_cursor = '<leader>dr',
-    playlists = '<leader>dp',
-    run_last = '<leader>dl',
+    entrypoints = '<leader>de',    -- Program entrypoints
+    run_cursor = '<leader>dr',     -- Run under cursor
+    playlists = '<leader>dP',      -- Playlists (capital P)
+    run_last = '<leader>dl',       -- Re-run last
+    transforms = '<leader>dt',     -- Transforms
+    interpreters = '<leader>di',   -- Interpreters
+    kleisli = '<leader>dk',        -- Kleisli functions
+    interceptors = '<leader>dc',   -- Interceptors
+    all = '<leader>da',            -- All entries
   },
   terminal = {
     direction = 'float', -- 'float', 'horizontal', 'vertical'
