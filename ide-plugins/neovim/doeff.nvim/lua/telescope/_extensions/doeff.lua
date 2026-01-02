@@ -20,6 +20,7 @@ return telescope.register_extension({
     interpreters = entrypoints.interpreters,
     kleisli = entrypoints.kleisli,
     transforms = entrypoints.transforms,
+    interceptors = entrypoints.interceptors,
     playlists = playlists.picker,
     workflows = workflows.picker,
   },
