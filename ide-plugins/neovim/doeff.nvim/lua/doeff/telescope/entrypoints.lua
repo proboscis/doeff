@@ -211,25 +211,21 @@ local function build_preview_lines(value)
   return lines
 end
 
----Create async previewer using termopen (bat/cat)
+---Create previewer - uses bat if available (async), otherwise Telescope's file previewer
 ---@return table
 local function make_previewer()
-  local from_entry = require('telescope.from_entry')
-  local utils = require('telescope.utils')
-
-  return previewers.new_termopen_previewer({
-    title = 'Preview',
-    get_command = function(entry, status)
-      local p = from_entry.path(entry, true)
-      if p == nil or p == '' then
-        return nil
-      end
-
-      local lnum = entry.lnum or 1
-      local context = 10  -- lines of context around the target line
-
-      -- Try bat first (with syntax highlighting), fallback to cat
-      if vim.fn.executable('bat') == 1 then
+  -- Use bat for async preview with syntax highlighting if available
+  if vim.fn.executable('bat') == 1 then
+    local from_entry = require('telescope.from_entry')
+    return previewers.new_termopen_previewer({
+      title = 'Preview',
+      get_command = function(entry, status)
+        local p = from_entry.path(entry, true)
+        if p == nil or p == '' then
+          return nil
+        end
+        local lnum = entry.lnum or 1
+        local context = 10
         return {
           'bat',
           '--style=numbers,changes',
@@ -239,14 +235,12 @@ local function make_previewer()
           '--line-range=' .. math.max(1, lnum - context) .. ':' .. (lnum + context),
           p,
         }
-      else
-        -- Fallback to sed for line range
-        local start_line = math.max(1, lnum - context)
-        local end_line = lnum + context
-        return { 'sed', '-n', start_line .. ',' .. end_line .. 'p', p }
-      end
-    end,
-  })
+      end,
+    })
+  else
+    -- Fallback to Telescope's file previewer (uses vim syntax highlighting)
+    return conf.file_previewer({})
+  end
 end
 
 ---Create action to edit/jump to entrypoint (DEFAULT action)
