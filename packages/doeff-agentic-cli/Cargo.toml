@@ -1,0 +1,32 @@
+[package]
+name = "doeff-agentic-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["doeff contributors"]
+description = "Fast CLI for doeff-agentic workflow management (for plugins)"
+license = "MIT"
+repository = "https://github.com/proboscis/doeff"
+keywords = ["doeff", "agentic", "workflow", "cli"]
+
+[[bin]]
+name = "doeff-agentic"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.4", features = ["derive", "env"] }
+dirs = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tabled = "0.15"
+walkdir = "2.5"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
