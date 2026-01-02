@@ -52,6 +52,29 @@ vim.api.nvim_create_user_command('DoeffCloseTerminals', function(opts)
   require('doeff').close_terminals()
 end, { desc = 'Close all doeff terminal windows' })
 
+-- Workflow commands
+vim.api.nvim_create_user_command('DoeffWorkflows', function(opts)
+  require('doeff').pick_workflows()
+end, { desc = 'Open doeff workflows picker' })
+
+vim.api.nvim_create_user_command('DoeffWorkflowAttach', function(opts)
+  require('doeff').workflow_attach()
+end, { desc = 'Attach to workflow agent' })
+
+vim.api.nvim_create_user_command('DoeffWorkflowStop', function(opts)
+  local workflow_id = opts.args
+  if workflow_id == '' then
+    vim.notify('doeff: Workflow ID required', vim.log.levels.ERROR)
+    return
+  end
+  local ok, err = require('doeff').stop_workflow(workflow_id)
+  if ok then
+    vim.notify('doeff: Workflow stopped', vim.log.levels.INFO)
+  else
+    vim.notify('doeff: ' .. (err or 'Failed to stop workflow'), vim.log.levels.ERROR)
+  end
+end, { nargs = 1, desc = 'Stop a doeff workflow' })
+
 -- Telescope integration
 vim.api.nvim_create_user_command('Telescope', function(opts)
   local args = opts.fargs
@@ -68,6 +91,8 @@ vim.api.nvim_create_user_command('Telescope', function(opts)
       require('doeff').pick_transforms()
     elseif subcommand == 'playlists' then
       require('doeff').pick_playlists()
+    elseif subcommand == 'workflows' then
+      require('doeff').pick_workflows()
     end
     return
   end

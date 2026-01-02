@@ -6,6 +6,7 @@ end
 
 local entrypoints = require('doeff.telescope.entrypoints')
 local playlists = require('doeff.telescope.playlists')
+local workflows = require('doeff.telescope.workflows')
 
 return telescope.register_extension({
   setup = function(ext_config, config)
@@ -20,5 +21,6 @@ return telescope.register_extension({
     kleisli = entrypoints.kleisli,
     transforms = entrypoints.transforms,
     playlists = playlists.picker,
+    workflows = workflows.picker,
   },
 })
