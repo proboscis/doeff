@@ -135,8 +135,12 @@ function M.attach(workflow_id, agent)
       end
     end)
   else
-    -- Not in tmux, open in terminal
-    vim.cmd('terminal ' .. table.concat(cmd, ' '))
+    -- Not in tmux, open in terminal with proper escaping
+    local escaped_cmd = vim.fn.shellescape(binary) .. ' attach ' .. vim.fn.shellescape(workflow_id)
+    if agent then
+      escaped_cmd = escaped_cmd .. ' --agent ' .. vim.fn.shellescape(agent)
+    end
+    vim.cmd('terminal ' .. escaped_cmd)
   end
 end
 
@@ -146,7 +150,7 @@ function M.watch(workflow_id)
   local cfg = config.get()
   local binary = cfg.workflows and cfg.workflows.binary or 'doeff-agentic'
 
-  vim.cmd('terminal ' .. binary .. ' watch ' .. vim.fn.shellescape(workflow_id))
+  vim.cmd('terminal ' .. vim.fn.shellescape(binary) .. ' watch ' .. vim.fn.shellescape(workflow_id))
 end
 
 ---Send message to workflow's agent
@@ -201,9 +205,13 @@ function M.format_status(status)
 end
 
 ---Format relative time from ISO timestamp
----@param iso_str string ISO timestamp string
+---@param iso_str string|nil ISO timestamp string
 ---@return string formatted
 function M.format_time(iso_str)
+  if not iso_str or type(iso_str) ~= 'string' then
+    return '-'
+  end
+
   -- Parse ISO 8601 timestamp
   local pattern = '(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)'
   local year, month, day, hour, min, sec = iso_str:match(pattern)
