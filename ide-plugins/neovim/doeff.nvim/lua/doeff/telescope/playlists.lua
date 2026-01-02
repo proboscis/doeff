@@ -3,39 +3,76 @@ local M = {}
 
 local indexer = require('doeff.indexer')
 local runner = require('doeff.runner')
-local config = require('doeff.config')
 
 local pickers = require('telescope.pickers')
 local finders = require('telescope.finders')
 local conf = require('telescope.config').values
 local actions = require('telescope.actions')
 local action_state = require('telescope.actions.state')
-local previewers = require('telescope.previewers')
 local entry_display = require('telescope.pickers.entry_display')
 
--- Playlist file names to search for
-local PLAYLIST_FILES = {
+-- Playlist file paths to search for (in order of priority)
+local PLAYLIST_RELPATHS = {
+  'doeff/playlists.json',                -- Inside .git or gitdir
+}
+
+local PLAYLIST_ROOT_PATHS = {
   '.doeff-runner.playlists.json',
   'doeff-runner.playlists.json',
   'playlists.json',
+  '.vscode/.doeff-runner.playlists.json',
+  '.vscode/doeff-runner.playlists.json',
+  '.vscode/playlists.json',
 }
+
+---Resolve gitdir (handles worktrees where .git is a file)
+---@param root string Project root
+---@return string|nil gitdir
+local function resolve_gitdir(root)
+  local git_path = root .. '/.git'
+
+  -- Check if .git is a directory
+  if vim.fn.isdirectory(git_path) == 1 then
+    return git_path
+  end
+
+  -- Check if .git is a file (worktree)
+  if vim.fn.filereadable(git_path) == 1 then
+    local content = vim.fn.readfile(git_path)
+    if content and content[1] then
+      local gitdir = content[1]:match('gitdir:%s*(.+)')
+      if gitdir and vim.fn.isdirectory(gitdir) == 1 then
+        return gitdir
+      end
+    end
+  end
+
+  return nil
+end
 
 ---Find playlist file in project
 ---@param root string Project root
 ---@return string|nil path Path to playlist file
 local function find_playlist_file(root)
-  for _, filename in ipairs(PLAYLIST_FILES) do
-    local path = root .. '/' .. filename
+  -- First check gitdir (handles worktrees)
+  local gitdir = resolve_gitdir(root)
+  if gitdir then
+    for _, relpath in ipairs(PLAYLIST_RELPATHS) do
+      local path = gitdir .. '/' .. relpath
+      if vim.fn.filereadable(path) == 1 then
+        return path
+      end
+    end
+  end
+
+  -- Then check root-level paths
+  for _, relpath in ipairs(PLAYLIST_ROOT_PATHS) do
+    local path = root .. '/' .. relpath
     if vim.fn.filereadable(path) == 1 then
       return path
     end
-
-    -- Also check .vscode directory
-    local vscode_path = root .. '/.vscode/' .. filename
-    if vim.fn.filereadable(vscode_path) == 1 then
-      return vscode_path
-    end
   end
+
   return nil
 end
 
@@ -111,73 +148,143 @@ local function make_entry_maker()
   end
 end
 
----Create previewer for playlist items
----@return table
-local function make_previewer()
-  return previewers.new_buffer_previewer({
-    title = 'Playlist Item Preview',
-    define_preview = function(self, entry, status)
-      local value = entry.value
-      local item = value.item
-      local lines = {}
+-- Note: Previewer disabled due to Telescope buffer timing issues
+-- The picker list shows item name, playlist, and type which is sufficient
 
-      table.insert(lines, '# ' .. item.name)
-      table.insert(lines, '')
-      table.insert(lines, 'Playlist: ' .. value.playlist_name)
-      table.insert(lines, 'Type: ' .. item.type)
-      table.insert(lines, '')
+---Check if value is a valid string (not nil, not vim.NIL)
+---@param val any
+---@return boolean
+local function is_valid_string(val)
+  return val ~= nil and val ~= vim.NIL and type(val) == 'string' and val ~= ''
+end
 
-      if item.type == 'doeff' then
-        table.insert(lines, '## Doeff Configuration')
-        table.insert(lines, '')
-        if item.program then
-          table.insert(lines, 'Program: ' .. item.program)
-        end
-        if item.interpreter then
-          table.insert(lines, 'Interpreter: ' .. item.interpreter)
-        end
-        if item.transform then
-          table.insert(lines, 'Transform: ' .. item.transform)
-        end
-        if item.apply then
-          table.insert(lines, 'Apply: ' .. item.apply)
-        end
+---Find worktree path for a given branch
+---@param branch string Branch name
+---@return string|nil worktree_path
+local function find_worktree_for_branch(branch)
+  local result = vim.fn.system('git worktree list --porcelain')
+  if vim.v.shell_error ~= 0 then
+    return nil
+  end
 
-        if item.args then
-          table.insert(lines, '')
-          table.insert(lines, '## Arguments')
-          for k, v in pairs(item.args) do
-            table.insert(lines, '  ' .. k .. ': ' .. vim.inspect(v))
-          end
-        end
-      else
-        table.insert(lines, '## Command')
-        table.insert(lines, '')
-        table.insert(lines, '```bash')
-        table.insert(lines, item.cmd or '')
-        table.insert(lines, '```')
-      end
+  local current_worktree = nil
+  for line in result:gmatch('[^\r\n]+') do
+    local worktree_path = line:match('^worktree%s+(.+)$')
+    if worktree_path then
+      current_worktree = worktree_path
+    end
+    local worktree_branch = line:match('^branch%s+refs/heads/(.+)$')
+    if worktree_branch and worktree_branch == branch and current_worktree then
+      return current_worktree
+    end
+  end
 
-      -- Additional options
-      table.insert(lines, '')
-      table.insert(lines, '## Options')
-      if item.branch then
-        table.insert(lines, 'Branch: ' .. item.branch)
-      end
-      if item.commit then
-        table.insert(lines, 'Commit: ' .. item.commit)
-      end
-      if item.worktree then
-        table.insert(lines, 'Worktree: ' .. item.worktree)
-      end
-      if item.cwd then
-        table.insert(lines, 'CWD: ' .. item.cwd)
-      end
+  return nil
+end
 
-      vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-      vim.api.nvim_set_option_value('filetype', 'markdown', { buf = self.state.bufnr })
-    end,
-  })
+---Resolve cwd for a playlist item
+---@param item table Playlist item
+---@return string cwd
+local function resolve_item_cwd(item)
+  -- 1. If explicit worktree path is specified, use it
+  if is_valid_string(item.worktree) then
+    if vim.fn.isdirectory(item.worktree) == 1 then
+      return item.worktree
+    end
+  end
+
+  -- 2. If branch is specified, find worktree for that branch
+  if is_valid_string(item.branch) then
+    local worktree_path = find_worktree_for_branch(item.branch)
+    if worktree_path then
+      return worktree_path
+    else
+      vim.notify('doeff: No worktree found for branch: ' .. item.branch, vim.log.levels.WARN)
+    end
+  end
+
+  -- 3. If explicit cwd is specified, use it
+  if is_valid_string(item.cwd) then
+    return item.cwd
+  end
+
+  -- 4. Fall back to project root or current directory
+  return indexer.find_root() or vim.fn.getcwd()
+end
+
+---Check if we're running inside tmux
+---@return boolean
+local function in_tmux()
+  return vim.env.TMUX ~= nil and vim.env.TMUX ~= ''
+end
+
+---Run command in a new tmux pane (split)
+---@param cmd string Command to run
+---@param cwd string Working directory
+---@param direction string 'horizontal' or 'vertical'
+local function run_in_tmux_pane(cmd, cwd, direction)
+  local split_flag = direction == 'horizontal' and '-v' or '-h'
+  local tmux_cmd = string.format(
+    'tmux split-window %s -c %s',
+    split_flag,
+    vim.fn.shellescape(cwd)
+  )
+  vim.fn.system(tmux_cmd)
+  -- Send the command to the new pane
+  vim.fn.system('tmux send-keys ' .. vim.fn.shellescape(cmd) .. ' Enter')
+end
+
+---Run command in a new tmux window
+---@param cmd string Command to run
+---@param cwd string Working directory
+---@param name string|nil Window name
+local function run_in_tmux_window(cmd, cwd, name)
+  local tmux_cmd = string.format(
+    'tmux new-window -c %s -n %s',
+    vim.fn.shellescape(cwd),
+    vim.fn.shellescape(name or 'doeff')
+  )
+  vim.fn.system(tmux_cmd)
+  -- Send the command to the new window
+  vim.fn.system('tmux send-keys ' .. vim.fn.shellescape(cmd) .. ' Enter')
+end
+
+---Run command in an external terminal (macOS)
+---@param cmd string Command to run
+---@param cwd string Working directory
+local function run_in_external_terminal(cmd, cwd)
+  local script = string.format(
+    [[tell application "Terminal"
+      activate
+      do script "cd %s && %s"
+    end tell]],
+    cwd:gsub('"', '\\"'),
+    cmd:gsub('"', '\\"')
+  )
+  vim.fn.system({ 'osascript', '-e', script })
+end
+
+---Run a custom command in tmux or external terminal
+---@param cmd string Command to run
+---@param cwd string Working directory
+---@param name string|nil Name for tmux window
+---@param direction string Terminal direction
+local function run_custom_command(cmd, cwd, name, direction)
+  if in_tmux() then
+    if direction == 'horizontal' then
+      run_in_tmux_pane(cmd, cwd, 'horizontal')
+      vim.notify('doeff: Running in tmux horizontal pane', vim.log.levels.INFO)
+    elseif direction == 'vertical' then
+      run_in_tmux_pane(cmd, cwd, 'vertical')
+      vim.notify('doeff: Running in tmux vertical pane', vim.log.levels.INFO)
+    else
+      run_in_tmux_window(cmd, cwd, name or 'doeff')
+      vim.notify('doeff: Running in new tmux window', vim.log.levels.INFO)
+    end
+  else
+    run_in_external_terminal(cmd, cwd)
+    vim.notify('doeff: Running in external terminal', vim.log.levels.INFO)
+  end
 end
 
 ---Run a playlist item
@@ -185,7 +292,6 @@ end
 ---@param direction string Terminal direction
 local function run_item(entry, direction)
   local item = entry.item
-  local cfg = config.get()
 
   if item.type == 'doeff' then
     runner.run({
@@ -193,6 +299,8 @@ local function run_item(entry, direction)
       interpreter = item.interpreter,
       transform = item.transform,
       cwd = item.cwd,
+      branch = item.branch,
+      worktree = item.worktree,
       args = item.args,
     }, direction)
   else
@@ -203,43 +311,10 @@ local function run_item(entry, direction)
       return
     end
 
-    local root = indexer.find_root()
-    local cwd = item.cwd or root or vim.fn.getcwd()
+    -- Resolve cwd (handles worktree, branch, cwd)
+    local cwd = resolve_item_cwd(item)
 
-    -- Create terminal and run command
-    local buf
-    if direction == 'float' then
-      local opts = cfg.terminal.float_opts
-      local width = math.floor(vim.o.columns * opts.width)
-      local height = math.floor(vim.o.lines * opts.height)
-      local row = math.floor((vim.o.lines - height) / 2)
-      local col = math.floor((vim.o.columns - width) / 2)
-
-      buf = vim.api.nvim_create_buf(false, true)
-      vim.api.nvim_open_win(buf, true, {
-        relative = 'editor',
-        width = width,
-        height = height,
-        row = row,
-        col = col,
-        style = 'minimal',
-        border = opts.border,
-        title = ' ' .. item.name .. ' ',
-        title_pos = 'center',
-      })
-    elseif direction == 'horizontal' then
-      vim.cmd('botright split')
-      buf = vim.api.nvim_create_buf(false, true)
-      vim.api.nvim_win_set_buf(0, buf)
-      vim.cmd('resize 15')
-    else
-      vim.cmd('botright vsplit')
-      buf = vim.api.nvim_create_buf(false, true)
-      vim.api.nvim_win_set_buf(0, buf)
-    end
-
-    vim.fn.termopen(cmd, { cwd = cwd })
-    vim.cmd('startinsert')
+    run_custom_command(cmd, cwd, item.name, direction)
   end
 end
 
@@ -252,6 +327,45 @@ local function run_action(direction)
     actions.close(prompt_bufnr)
     if selection then
       run_item(selection.value, direction)
+    end
+  end
+end
+
+---Create action to edit the playlist file
+---@return function
+local function edit_action()
+  return function(prompt_bufnr)
+    local selection = action_state.get_selected_entry()
+    actions.close(prompt_bufnr)
+    if selection and selection.value and selection.value.playlist_path then
+      vim.cmd('edit ' .. vim.fn.fnameescape(selection.value.playlist_path))
+      -- Try to search for the item name to jump to it
+      local item_name = selection.value.item.name or selection.value.item.id
+      if item_name then
+        vim.fn.search('"name":\\s*"' .. vim.fn.escape(item_name, '\\/'))
+      end
+    end
+  end
+end
+
+---Create action to copy the run command to clipboard
+---@return function
+local function copy_command_action()
+  return function(prompt_bufnr)
+    local selection = action_state.get_selected_entry()
+    if selection and selection.value then
+      local item = selection.value.item
+      local cmd
+      if item.type == 'doeff' then
+        cmd = 'uv run doeff run --program ' .. (item.program or '')
+        if is_valid_string(item.transform) then
+          cmd = cmd .. ' --transform ' .. item.transform
+        end
+      else
+        cmd = item.cmd or ''
+      end
+      vim.fn.setreg('+', cmd)
+      vim.notify('doeff: Copied command to clipboard', vim.log.levels.INFO)
     end
   end
 end
@@ -285,25 +399,36 @@ function M.picker(opts)
     return
   end
 
+  -- Store playlist path in each item for edit action
+  for _, item in ipairs(items) do
+    item.playlist_path = playlist_path
+  end
+
   pickers.new(opts, {
-    prompt_title = 'Doeff Playlists',
+    prompt_title = 'Doeff Playlists [Enter:run C-e:edit C-y:copy ?:help]',
     finder = finders.new_table({
       results = items,
       entry_maker = make_entry_maker(),
     }),
     sorter = conf.generic_sorter(opts),
-    previewer = make_previewer(),
+    previewer = false,
     attach_mappings = function(prompt_bufnr, map)
-      -- Default action: run in float
+      -- Default action: run in new tmux window
       actions.select_default:replace(run_action('float'))
 
-      -- Custom mappings
-      map('i', '<C-x>', run_action('horizontal'))
-      map('n', '<C-x>', run_action('horizontal'))
-      map('i', '<C-v>', run_action('vertical'))
-      map('n', '<C-v>', run_action('vertical'))
-      map('i', '<C-f>', run_action('float'))
-      map('n', '<C-f>', run_action('float'))
+      -- Run mappings
+      map('i', '<C-x>', run_action('horizontal'), { desc = 'Run in horizontal pane' })
+      map('n', '<C-x>', run_action('horizontal'), { desc = 'Run in horizontal pane' })
+      map('i', '<C-v>', run_action('vertical'), { desc = 'Run in vertical pane' })
+      map('n', '<C-v>', run_action('vertical'), { desc = 'Run in vertical pane' })
+
+      -- Edit playlist file
+      map('i', '<C-e>', edit_action(), { desc = 'Edit playlist file' })
+      map('n', '<C-e>', edit_action(), { desc = 'Edit playlist file' })
+
+      -- Copy command to clipboard
+      map('i', '<C-y>', copy_command_action(), { desc = 'Copy command to clipboard' })
+      map('n', '<C-y>', copy_command_action(), { desc = 'Copy command to clipboard' })
 
       return true
     end,

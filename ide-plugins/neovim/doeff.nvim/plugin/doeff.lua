@@ -23,6 +23,14 @@ vim.api.nvim_create_user_command('DoeffTransforms', function(opts)
   require('doeff').pick_transforms()
 end, { desc = 'Open doeff transforms picker' })
 
+vim.api.nvim_create_user_command('DoeffInterceptors', function(opts)
+  require('doeff').pick_interceptors()
+end, { desc = 'Open doeff interceptors picker' })
+
+vim.api.nvim_create_user_command('DoeffAll', function(opts)
+  require('doeff').pick_all()
+end, { desc = 'Open doeff all entries picker' })
+
 vim.api.nvim_create_user_command('DoeffPlaylists', function(opts)
   require('doeff').pick_playlists()
 end, { desc = 'Open doeff playlists picker' })
