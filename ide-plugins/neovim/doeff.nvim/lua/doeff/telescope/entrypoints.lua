@@ -1,4 +1,5 @@
 -- doeff.nvim entrypoints telescope picker
+-- Version: 2026-01-02-v2 (vim.NIL fix)
 local M = {}
 
 local indexer = require('doeff.indexer')
