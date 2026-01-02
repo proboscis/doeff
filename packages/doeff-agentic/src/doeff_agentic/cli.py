@@ -59,6 +59,7 @@ def _status_color(status: WorkflowStatus | AgentStatus) -> str:
             WorkflowStatus.BLOCKED: "yellow",
             WorkflowStatus.COMPLETED: "blue",
             WorkflowStatus.FAILED: "red",
+            WorkflowStatus.STOPPED: "magenta",
         }.get(status, "white")
     else:
         return {
@@ -224,7 +225,11 @@ def _watch_tui(api: AgenticAPI, workflow_id: str, poll_interval: float) -> None:
             live.update(generate_display(update.workflow))
 
             # Check for terminal status
-            if update.workflow.status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED):
+            if update.workflow.status in (
+                WorkflowStatus.COMPLETED,
+                WorkflowStatus.FAILED,
+                WorkflowStatus.STOPPED,
+            ):
                 break
 
 

@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-doeff-agentic = "doeff_agentic.cli:cli"
+doeff-agentic-tui = "doeff_agentic.cli:cli"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"

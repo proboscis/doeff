@@ -303,6 +303,31 @@ impl StateManager {
 
         Ok(workflows)
     }
+
+    fn update_workflow_status(&self, workflow_id: &str, status: &str) -> Result<()> {
+        let workflow_dir = self.state_dir.join("workflows").join(workflow_id);
+        let meta_path = workflow_dir.join("meta.json");
+
+        if !meta_path.exists() {
+            anyhow::bail!("Workflow not found: {}", workflow_id);
+        }
+
+        // Read current meta
+        let meta_content = fs::read_to_string(&meta_path)?;
+        let mut meta: WorkflowMeta = serde_json::from_str(&meta_content)?;
+
+        // Update status and timestamp
+        meta.status = status.to_string();
+        meta.updated_at = Utc::now().to_rfc3339();
+        meta.current_agent = None;
+
+        // Write atomically using temp file
+        let temp_path = meta_path.with_extension("tmp");
+        fs::write(&temp_path, serde_json::to_string_pretty(&meta)?)?;
+        fs::rename(&temp_path, &meta_path)?;
+
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -467,7 +492,10 @@ fn cmd_watch(state: &StateManager, workflow_id: &str, json: bool, poll: f64) -> 
         }
 
         // Check for terminal status
-        if workflow.status == "completed" || workflow.status == "failed" {
+        if workflow.status == "completed"
+            || workflow.status == "failed"
+            || workflow.status == "stopped"
+        {
             if json {
                 println!(
                     "{}",
@@ -605,6 +633,9 @@ fn cmd_stop(state: &StateManager, workflow_id: &str, json: bool) -> Result<()> {
             stopped.push(agent.name.clone());
         }
     }
+
+    // Update workflow status to stopped
+    state.update_workflow_status(&workflow.id, "stopped")?;
 
     if json {
         println!("{}", serde_json::json!({"ok": true, "stopped": stopped}));
