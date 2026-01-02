@@ -9,6 +9,7 @@ Commands:
     stop        Stop workflow and kill agents
     send        Send message to agent
     show        Show workflow details
+    tui         Launch interactive Textual TUI
 """
 
 from __future__ import annotations
@@ -439,6 +440,13 @@ def _workflow_details(workflow) -> str:
         lines.append(f"\n[bold red]Error:[/bold red] {workflow.error}")
 
     return "\n".join(lines)
+
+
+@cli.command()
+def tui() -> None:
+    """Launch interactive TUI for workflow management."""
+    from .tui import main as tui_main
+    tui_main()
 
 
 if __name__ == "__main__":
