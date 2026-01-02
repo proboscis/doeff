@@ -20,6 +20,7 @@ class WorkflowStatus(Enum):
     BLOCKED = "blocked"
     COMPLETED = "completed"
     FAILED = "failed"
+    STOPPED = "stopped"
 
 
 class AgentStatus(Enum):

@@ -27,6 +27,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -201,7 +202,7 @@ class AgenticAPI:
             session_name = f"doeff-{workflow.id}-{agent}"
 
         # Check if we're in tmux
-        in_tmux = "TMUX" in subprocess.os.environ
+        in_tmux = "TMUX" in os.environ
 
         if in_tmux:
             # Switch client
@@ -289,18 +290,17 @@ class AgenticAPI:
 
         # Update workflow status
         if workflow:
-            # Mark as completed/stopped
+            # Mark as stopped
             from datetime import datetime, timezone
-            from .types import WorkflowStatus
             updated = WorkflowInfo(
                 id=workflow.id,
                 name=workflow.name,
-                status=WorkflowStatus.COMPLETED,
+                status=WorkflowStatus.STOPPED,
                 started_at=workflow.started_at,
                 updated_at=datetime.now(timezone.utc),
                 current_agent=None,
                 agents=(),
-                error="Stopped by user",
+                error=None,
             )
             self._state_manager.write_workflow_meta(updated)
 
