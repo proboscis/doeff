@@ -6,6 +6,8 @@ local M = {}
 ---@field run_cursor string Keymap to run entrypoint under cursor
 ---@field playlists string Keymap to open playlist picker
 ---@field run_last string Keymap to re-run last entrypoint
+---@field workflows string Keymap to open workflow picker
+---@field workflow_attach string Keymap to attach to current workflow
 
 ---@class DoeffFloatOpts
 ---@field border string Border style for floating window
@@ -21,10 +23,14 @@ local M = {}
 ---@field auto_refresh boolean Auto-refresh index on file save
 ---@field cache_ttl number Cache TTL in milliseconds
 
+---@class DoeffWorkflowsConfig
+---@field binary string Path to doeff-agentic binary
+
 ---@class DoeffConfig
 ---@field keymaps DoeffKeymapConfig
 ---@field terminal DoeffTerminalConfig
 ---@field indexer DoeffIndexerConfig
+---@field workflows DoeffWorkflowsConfig
 ---@field root_markers string[] Markers for finding project root
 
 ---@type DoeffConfig
@@ -38,7 +44,9 @@ M.defaults = {
     interpreters = '<leader>di',   -- Interpreters
     kleisli = '<leader>dk',        -- Kleisli functions
     interceptors = '<leader>dc',   -- Interceptors
-    all = '<leader>da',            -- All entries
+    all = '<leader>dA',            -- All entries (capital A)
+    workflows = '<leader>dw',      -- Workflow picker
+    workflow_attach = '<leader>da', -- Attach to current workflow
   },
   terminal = {
     direction = 'float', -- 'float', 'horizontal', 'vertical'
@@ -52,6 +60,9 @@ M.defaults = {
     binary = 'doeff-indexer',
     auto_refresh = true,
     cache_ttl = 5000, -- 5 seconds
+  },
+  workflows = {
+    binary = 'doeff-agentic',
   },
   root_markers = {
     'pyproject.toml',
