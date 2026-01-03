@@ -34,6 +34,42 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 - Running a pinned item can create a temporary detached worktree at the pinned commit when needed.
 - Playlist item: click to **Go to Definition**; use the inline ▶ action to Run/Debug.
 
+## Agentic Workflows
+
+The extension integrates with `doeff-agentic` CLI for monitoring and managing agent-based workflows.
+
+### Workflows Tree View
+
+The **Workflows** view (in the doeff sidebar) displays:
+
+```
+DOEFF WORKFLOWS
+├─ ● a3f8b2c: pr-review-main [blocked]
+│   └─ review-agent (blocked)
+├─ ○ b7e1d4f: pr-review-feat-x [running]
+│   └─ fix-agent (running)
+└─ ✓ c9a2e6d: data-pipeline [done]
+```
+
+- **Status indicators**: ○ running, ● blocked, ✓ completed, ✗ failed, ◻ stopped
+- **Auto-refresh**: Tree updates every 5 seconds
+- **Status bar**: Shows active workflow count (click to list workflows)
+
+### Workflow Commands
+
+- `Doeff: List Workflows` - Show workflow picker with actions
+- `Doeff: Attach to Workflow` - Open terminal and attach to agent's tmux session
+- `Doeff: Watch Workflow` - Open terminal with live status updates
+- `Doeff: Stop Workflow` - Stop workflow and kill agent sessions
+
+### Requirements
+
+Workflow features require the `doeff-agentic` CLI. Install with:
+
+```bash
+cargo install doeff-agentic
+```
+
 ## Commands
 
 - `doeff-runner.runDefault`: Quick run with defaults
@@ -45,6 +81,10 @@ The extension bundles `doeff-indexer` binaries for common platforms (macOS, Linu
 - `doeff-runner.pickAndAddToPlaylist`: Pick a Program and add it to a playlist
 - `doeff-runner.pickPlaylistItem`: Pick a playlist item (reveal)
 - `doeff-runner.pickAndRunPlaylistItem`: Pick and run a playlist item
+- `doeff-runner.listWorkflows`: Show workflow picker
+- `doeff-runner.attachWorkflow`: Attach to workflow's agent tmux session
+- `doeff-runner.watchWorkflow`: Watch workflow updates
+- `doeff-runner.stopWorkflow`: Stop workflow and kill agents
 
 ## Development
 
