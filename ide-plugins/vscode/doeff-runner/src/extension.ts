@@ -559,6 +559,238 @@ interface KeyResolution {
   runtimeError?: string;
 }
 
+// =============================================================================
+// Workflow Types and Provider (doeff-agentic integration)
+// =============================================================================
+
+interface AgentState {
+  name: string;
+  status: string;
+  session_name: string;
+  pane_id?: string;
+  started_at: string;
+  last_output_hash?: string;
+}
+
+interface WorkflowInfo {
+  id: string;
+  name: string;
+  status: string;
+  started_at: string;
+  updated_at: string;
+  current_agent?: string;
+  agents: AgentState[];
+  last_slog?: unknown;
+  error?: string;
+}
+
+type WorkflowTreeNode = WorkflowNode | AgentNode;
+
+interface WorkflowNode {
+  type: 'workflow';
+  workflow: WorkflowInfo;
+}
+
+interface AgentNode {
+  type: 'agent';
+  workflow: WorkflowInfo;
+  agent: AgentState;
+}
+
+const WORKFLOW_STATUS_ICONS: Record<string, string> = {
+  running: '○',
+  blocked: '●',
+  completed: '✓',
+  failed: '✗',
+  stopped: '◻'
+};
+
+const AGENT_STATUS_ICONS: Record<string, string> = {
+  running: '▶',
+  blocked: '⏸',
+  completed: '✓',
+  failed: '✗',
+  idle: '○'
+};
+
+class DoeffWorkflowsProvider implements vscode.TreeDataProvider<WorkflowTreeNode>, vscode.Disposable {
+  private _onDidChangeTreeData = new vscode.EventEmitter<WorkflowTreeNode | undefined>();
+  readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
+
+  private workflows: WorkflowInfo[] = [];
+  private refreshTimer?: NodeJS.Timeout;
+  private cliAvailable: boolean | undefined;
+  private fetching = false;
+
+  constructor() {
+    // Start auto-refresh timer (every 5 seconds)
+    this.startAutoRefresh();
+  }
+
+  private startAutoRefresh(): void {
+    this.refreshTimer = setInterval(() => {
+      this.refresh();
+    }, 5000);
+  }
+
+  dispose(): void {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+    }
+    this._onDidChangeTreeData.dispose();
+  }
+
+  refresh(): void {
+    this._onDidChangeTreeData.fire(undefined);
+  }
+
+  getWorkflows(): WorkflowInfo[] {
+    return this.workflows;
+  }
+
+  getActiveWorkflowCount(): number {
+    return this.workflows.filter(w => w.status === 'running' || w.status === 'blocked').length;
+  }
+
+  getParent(element: WorkflowTreeNode): WorkflowTreeNode | undefined {
+    if (element.type === 'agent') {
+      return { type: 'workflow', workflow: element.workflow };
+    }
+    return undefined;
+  }
+
+  getTreeItem(element: WorkflowTreeNode): vscode.TreeItem {
+    if (element.type === 'workflow') {
+      return this.createWorkflowTreeItem(element.workflow);
+    } else {
+      return this.createAgentTreeItem(element);
+    }
+  }
+
+  private createWorkflowTreeItem(workflow: WorkflowInfo): vscode.TreeItem {
+    const icon = WORKFLOW_STATUS_ICONS[workflow.status] ?? '?';
+    const shortId = workflow.id.substring(0, 7);
+    const label = `${icon} ${shortId}: ${workflow.name}`;
+
+    const item = new vscode.TreeItem(
+      label,
+      workflow.agents.length > 0
+        ? vscode.TreeItemCollapsibleState.Collapsed
+        : vscode.TreeItemCollapsibleState.None
+    );
+
+    item.contextValue = 'workflow';
+    item.description = `[${workflow.status}]`;
+    item.tooltip = new vscode.MarkdownString(
+      `**Workflow:** ${workflow.name}\n\n` +
+      `**ID:** ${workflow.id}\n\n` +
+      `**Status:** ${workflow.status}\n\n` +
+      `**Started:** ${workflow.started_at}\n\n` +
+      `**Updated:** ${workflow.updated_at}` +
+      (workflow.current_agent ? `\n\n**Current Agent:** ${workflow.current_agent}` : '') +
+      (workflow.error ? `\n\n**Error:** ${workflow.error}` : '')
+    );
+
+    // Color based on status
+    if (workflow.status === 'running') {
+      item.iconPath = new vscode.ThemeIcon('sync~spin', new vscode.ThemeColor('charts.green'));
+    } else if (workflow.status === 'blocked') {
+      item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('charts.yellow'));
+    } else if (workflow.status === 'completed') {
+      item.iconPath = new vscode.ThemeIcon('check', new vscode.ThemeColor('charts.green'));
+    } else if (workflow.status === 'failed') {
+      item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+    } else if (workflow.status === 'stopped') {
+      item.iconPath = new vscode.ThemeIcon('debug-stop');
+    }
+
+    return item;
+  }
+
+  private createAgentTreeItem(node: AgentNode): vscode.TreeItem {
+    const { agent, workflow } = node;
+    const icon = AGENT_STATUS_ICONS[agent.status] ?? '?';
+    const isCurrent = workflow.current_agent === agent.name;
+    const label = `${icon} ${agent.name}${isCurrent ? ' *' : ''}`;
+
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.contextValue = 'agent';
+    item.description = `(${agent.status})`;
+    item.tooltip = new vscode.MarkdownString(
+      `**Agent:** ${agent.name}\n\n` +
+      `**Status:** ${agent.status}\n\n` +
+      `**Session:** ${agent.session_name}\n\n` +
+      `**Started:** ${agent.started_at}` +
+      (isCurrent ? '\n\n*Currently active*' : '')
+    );
+
+    // Icon based on status
+    if (agent.status === 'running') {
+      item.iconPath = new vscode.ThemeIcon('play', new vscode.ThemeColor('charts.green'));
+    } else if (agent.status === 'blocked') {
+      item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('charts.yellow'));
+    } else if (agent.status === 'completed') {
+      item.iconPath = new vscode.ThemeIcon('check');
+    } else if (agent.status === 'failed') {
+      item.iconPath = new vscode.ThemeIcon('error', new vscode.ThemeColor('charts.red'));
+    }
+
+    return item;
+  }
+
+  async getChildren(element?: WorkflowTreeNode): Promise<WorkflowTreeNode[]> {
+    if (!element) {
+      // Root level - fetch workflows
+      await this.fetchWorkflows();
+      return this.workflows.map(wf => ({ type: 'workflow' as const, workflow: wf }));
+    }
+
+    if (element.type === 'workflow') {
+      // Show agents under workflow
+      return element.workflow.agents.map(agent => ({
+        type: 'agent' as const,
+        workflow: element.workflow,
+        agent
+      }));
+    }
+
+    return [];
+  }
+
+  private async fetchWorkflows(): Promise<void> {
+    if (this.fetching) {
+      return;
+    }
+    this.fetching = true;
+    try {
+      const { stdout } = await execFileAsync('doeff-agentic', ['ps', '--json'], {
+        maxBuffer: 10 * 1024 * 1024,
+        timeout: 5000
+      });
+      const parsed = JSON.parse(stdout);
+      // Validate that parsed is an array
+      if (!Array.isArray(parsed)) {
+        throw new Error('Expected workflows array from doeff-agentic ps');
+      }
+      this.workflows = parsed as WorkflowInfo[];
+      this.cliAvailable = true;
+    } catch (error) {
+      if (this.cliAvailable !== false) {
+        // Only log on first failure
+        output.appendLine(`[warn] doeff-agentic CLI not available or failed: ${error instanceof Error ? error.message : 'unknown error'}`);
+      }
+      this.cliAvailable = false;
+      this.workflows = [];
+    } finally {
+      this.fetching = false;
+    }
+  }
+
+  isCliAvailable(): boolean {
+    return this.cliAvailable === true;
+  }
+}
+
 class DoeffProgramsProvider implements vscode.TreeDataProvider<TreeNode>, vscode.Disposable {
   private _onDidChangeTreeData = new vscode.EventEmitter<TreeNode | undefined>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
@@ -2710,6 +2942,36 @@ export function activate(context: vscode.ExtensionContext) {
     dragAndDropController: new PlaylistsDragAndDropController(playlistsStore)
   });
 
+  // Create workflow provider and tree view
+  const workflowsProvider = new DoeffWorkflowsProvider();
+  const workflowsTreeView = vscode.window.createTreeView('doeff-workflows', {
+    treeDataProvider: workflowsProvider,
+    showCollapseAll: true
+  });
+
+  // Create status bar item for active workflow count
+  const workflowStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+  workflowStatusBar.command = 'doeff-runner.listWorkflows';
+  workflowStatusBar.tooltip = 'Active doeff workflows (click to list)';
+
+  // Update status bar when workflows change
+  const updateWorkflowStatusBar = () => {
+    const count = workflowsProvider.getActiveWorkflowCount();
+    if (count > 0) {
+      workflowStatusBar.text = `$(pulse) ${count} workflow${count > 1 ? 's' : ''}`;
+      workflowStatusBar.show();
+    } else {
+      workflowStatusBar.hide();
+    }
+  };
+
+  // Subscribe to workflow changes to update status bar
+  const workflowStatusSubscription = workflowsProvider.onDidChangeTreeData(() => {
+    updateWorkflowStatusBar();
+  });
+
+  context.subscriptions.push(workflowsProvider, workflowStatusBar, workflowStatusSubscription);
+
   // Helper to update TreeView message based on debug mode and filter
   const updateTreeViewMessage = () => {
     const debugMode = stateStore.getDebugMode();
@@ -4136,6 +4398,7 @@ export function activate(context: vscode.ExtensionContext) {
     treeView,
     worktreesTreeView,
     playlistsTreeView,
+    workflowsTreeView,
     fileWatcher,
     vscode.languages.registerCodeLensProvider(
       { language: 'python' },
@@ -4870,7 +5133,213 @@ export function activate(context: vscode.ExtensionContext) {
         // Could reveal in tree view, but requires finding the node
         // Skipped for now to avoid performance impact
       }
-    })
+    }),
+    // Workflow commands
+    vscode.commands.registerCommand(
+      'doeff-runner.refreshWorkflows',
+      () => {
+        workflowsProvider.refresh();
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.listWorkflows',
+      async () => {
+        const workflows = workflowsProvider.getWorkflows();
+        if (workflows.length === 0) {
+          if (!workflowsProvider.isCliAvailable()) {
+            vscode.window.showWarningMessage(
+              'doeff-agentic CLI not available. Install with: cargo install doeff-agentic'
+            );
+          } else {
+            vscode.window.showInformationMessage('No active workflows');
+          }
+          return;
+        }
+
+        interface WorkflowQuickPickItem extends vscode.QuickPickItem {
+          workflow: WorkflowInfo;
+        }
+
+        const items: WorkflowQuickPickItem[] = workflows.map(wf => {
+          const icon = WORKFLOW_STATUS_ICONS[wf.status] ?? '?';
+          const shortId = wf.id.substring(0, 7);
+          return {
+            label: `${icon} ${wf.name}`,
+            description: `${shortId} [${wf.status}]`,
+            detail: wf.current_agent ? `Current agent: ${wf.current_agent}` : undefined,
+            workflow: wf
+          };
+        });
+
+        const selected = await vscode.window.showQuickPick(items, {
+          title: 'Select a workflow',
+          placeHolder: 'Pick a workflow to interact with'
+        });
+
+        if (selected) {
+          // Show workflow actions
+          const actionItems = [
+            { label: '$(terminal) Attach', action: 'attach' },
+            { label: '$(eye) Watch', action: 'watch' },
+            { label: '$(debug-stop) Stop', action: 'stop' }
+          ];
+
+          const action = await vscode.window.showQuickPick(actionItems, {
+            title: `Workflow: ${selected.workflow.name}`,
+            placeHolder: 'Select action'
+          });
+
+          if (action) {
+            switch (action.action) {
+              case 'attach':
+                await vscode.commands.executeCommand(
+                  'doeff-runner.attachWorkflow',
+                  { type: 'workflow', workflow: selected.workflow }
+                );
+                break;
+              case 'watch':
+                await vscode.commands.executeCommand(
+                  'doeff-runner.watchWorkflow',
+                  { type: 'workflow', workflow: selected.workflow }
+                );
+                break;
+              case 'stop':
+                await vscode.commands.executeCommand(
+                  'doeff-runner.stopWorkflow',
+                  { type: 'workflow', workflow: selected.workflow }
+                );
+                break;
+            }
+          }
+        }
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.attachWorkflow',
+      async (node?: WorkflowNode | AgentNode) => {
+        let workflow: WorkflowInfo;
+        let agentName: string | undefined;
+
+        if (node?.type === 'workflow') {
+          workflow = node.workflow;
+        } else if (node?.type === 'agent') {
+          workflow = node.workflow;
+          agentName = node.agent.name;
+        } else {
+          // Pick workflow from list
+          const workflows = workflowsProvider.getWorkflows();
+          if (workflows.length === 0) {
+            vscode.window.showInformationMessage('No active workflows');
+            return;
+          }
+
+          const selected = await vscode.window.showQuickPick(
+            workflows.map(wf => ({
+              label: wf.name,
+              description: `${wf.id.substring(0, 7)} [${wf.status}]`,
+              workflow: wf
+            })),
+            { title: 'Select workflow to attach' }
+          );
+
+          if (!selected) return;
+          workflow = selected.workflow;
+        }
+
+        const shortId = workflow.id.substring(0, 7);
+        const terminalName = agentName
+          ? `Doeff: ${workflow.name}/${agentName} (${shortId})`
+          : `Doeff: ${workflow.name} (${shortId})`;
+        const terminal = vscode.window.createTerminal(terminalName);
+        const cmd = agentName
+          ? `doeff-agentic attach ${workflow.id} --agent ${agentName}`
+          : `doeff-agentic attach ${workflow.id}`;
+        terminal.sendText(cmd);
+        terminal.show();
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.watchWorkflow',
+      async (node?: WorkflowNode) => {
+        let workflow: WorkflowInfo;
+
+        if (node?.type === 'workflow') {
+          workflow = node.workflow;
+        } else {
+          const workflows = workflowsProvider.getWorkflows();
+          if (workflows.length === 0) {
+            vscode.window.showInformationMessage('No active workflows');
+            return;
+          }
+
+          const selected = await vscode.window.showQuickPick(
+            workflows.map(wf => ({
+              label: wf.name,
+              description: `${wf.id.substring(0, 7)} [${wf.status}]`,
+              workflow: wf
+            })),
+            { title: 'Select workflow to watch' }
+          );
+
+          if (!selected) return;
+          workflow = selected.workflow;
+        }
+
+        const shortId = workflow.id.substring(0, 7);
+        const terminal = vscode.window.createTerminal(`Watch: ${workflow.name} (${shortId})`);
+        terminal.sendText(`doeff-agentic watch ${workflow.id}`);
+        terminal.show();
+      }
+    ),
+    vscode.commands.registerCommand(
+      'doeff-runner.stopWorkflow',
+      async (node?: WorkflowNode) => {
+        let workflow: WorkflowInfo;
+
+        if (node?.type === 'workflow') {
+          workflow = node.workflow;
+        } else {
+          const workflows = workflowsProvider.getWorkflows().filter(
+            wf => wf.status === 'running' || wf.status === 'blocked'
+          );
+          if (workflows.length === 0) {
+            vscode.window.showInformationMessage('No running workflows to stop');
+            return;
+          }
+
+          const selected = await vscode.window.showQuickPick(
+            workflows.map(wf => ({
+              label: wf.name,
+              description: `${wf.id.substring(0, 7)} [${wf.status}]`,
+              workflow: wf
+            })),
+            { title: 'Select workflow to stop' }
+          );
+
+          if (!selected) return;
+          workflow = selected.workflow;
+        }
+
+        const confirm = await vscode.window.showWarningMessage(
+          `Stop workflow '${workflow.name}'?`,
+          { modal: true },
+          'Stop'
+        );
+
+        if (confirm !== 'Stop') return;
+
+        try {
+          await execFileAsync('doeff-agentic', ['stop', workflow.id, '--json'], {
+            timeout: 10000
+          });
+          vscode.window.showInformationMessage(`Stopped workflow: ${workflow.name}`);
+          workflowsProvider.refresh();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to stop workflow';
+          vscode.window.showErrorMessage(`Failed to stop workflow: ${message}`);
+        }
+      }
+    )
   );
 }
 
