@@ -677,12 +677,15 @@ class OpenCodeHandler:
 
             url = f"{self._client.base_url}/event"
             client = httpx.Client(timeout=None)
-            with client.stream("GET", url) as response:
-                self._sse_connections[effect.session_id] = {
-                    "client": client,
-                    "response": response,
-                    "iter": response.iter_lines(),
-                }
+            # NOTE: We intentionally don't use a context manager here because
+            # we need to keep the streaming connection open across multiple
+            # calls to handle_next_event. The connection is closed in _close_sse.
+            response = client.stream("GET", url).__enter__()
+            self._sse_connections[effect.session_id] = {
+                "client": client,
+                "response": response,
+                "iter": response.iter_lines(),
+            }
 
         conn = self._sse_connections[effect.session_id]
 
