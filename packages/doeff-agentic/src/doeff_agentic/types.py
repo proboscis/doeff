@@ -2,10 +2,14 @@
 Type definitions for doeff-agentic.
 
 This module defines the core data types used throughout the package:
-- WorkflowInfo: Workflow metadata
-- AgentInfo: Agent state within a workflow
-- WatchUpdate: Real-time workflow updates
+- AgenticWorkflowHandle: Workflow metadata
+- AgenticSessionHandle: Session within a workflow
+- AgenticEnvironmentHandle: Environment context
+- AgenticMessage: Message content
+- AgenticEvent: Event from session stream
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -13,8 +17,302 @@ from enum import Enum
 from typing import Any
 
 
+# =============================================================================
+# Enums
+# =============================================================================
+
+
+class AgenticEnvironmentType(Enum):
+    """Type of environment for agent sessions."""
+
+    WORKTREE = "worktree"  # Fresh git worktree at specific commit
+    INHERITED = "inherited"  # Reuses working directory from another environment
+    COPY = "copy"  # Copy of directory at point in time
+    SHARED = "shared"  # Multiple agents same directory
+
+
+class AgenticSessionStatus(Enum):
+    """Session status enum.
+
+    State transitions:
+        PENDING -> BOOTING -> RUNNING <-> BLOCKED -> DONE
+                                     \\-> ERROR
+                                     \\-> ABORTED (via abort)
+    """
+
+    PENDING = "pending"  # Created but not started
+    BOOTING = "booting"  # Starting up
+    RUNNING = "running"  # Actively processing
+    BLOCKED = "blocked"  # Waiting for user input
+    DONE = "done"  # Completed successfully
+    ERROR = "error"  # Failed with error
+    ABORTED = "aborted"  # Manually aborted
+
+    def is_terminal(self) -> bool:
+        """Check if this is a terminal status."""
+        return self in (
+            AgenticSessionStatus.DONE,
+            AgenticSessionStatus.ERROR,
+            AgenticSessionStatus.ABORTED,
+        )
+
+
+class AgenticWorkflowStatus(Enum):
+    """Workflow status enum."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    DONE = "done"
+    ERROR = "error"
+    ABORTED = "aborted"
+
+    def is_terminal(self) -> bool:
+        """Check if this is a terminal status."""
+        return self in (
+            AgenticWorkflowStatus.DONE,
+            AgenticWorkflowStatus.ERROR,
+            AgenticWorkflowStatus.ABORTED,
+        )
+
+
+# =============================================================================
+# Handles
+# =============================================================================
+
+
+@dataclass
+class AgenticWorkflowHandle:
+    """Handle to a workflow instance."""
+
+    id: str  # 7-char hex ID
+    name: str | None
+    status: AgenticWorkflowStatus
+    created_at: datetime
+    metadata: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgenticWorkflowHandle:
+        """Create from dictionary."""
+        return cls(
+            id=data["id"],
+            name=data.get("name"),
+            status=AgenticWorkflowStatus(data["status"]),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            metadata=data.get("metadata"),
+        )
+
+
+@dataclass
+class AgenticEnvironmentHandle:
+    """Handle to an environment."""
+
+    id: str
+    env_type: AgenticEnvironmentType
+    name: str | None
+    working_dir: str
+    created_at: datetime
+    base_commit: str | None = None
+    source_environment_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "env_type": self.env_type.value,
+            "name": self.name,
+            "working_dir": self.working_dir,
+            "created_at": self.created_at.isoformat(),
+            "base_commit": self.base_commit,
+            "source_environment_id": self.source_environment_id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgenticEnvironmentHandle:
+        """Create from dictionary."""
+        return cls(
+            id=data["id"],
+            env_type=AgenticEnvironmentType(data["env_type"]),
+            name=data.get("name"),
+            working_dir=data["working_dir"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            base_commit=data.get("base_commit"),
+            source_environment_id=data.get("source_environment_id"),
+        )
+
+
+@dataclass
+class AgenticSessionHandle:
+    """Handle to an agent session."""
+
+    id: str  # Global unique ID (from OpenCode)
+    name: str  # Workflow-local identifier (user-provided)
+    workflow_id: str
+    environment_id: str
+    status: AgenticSessionStatus
+    created_at: datetime
+    title: str | None = None
+    agent: str | None = None
+    model: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "workflow_id": self.workflow_id,
+            "environment_id": self.environment_id,
+            "status": self.status.value,
+            "created_at": self.created_at.isoformat(),
+            "title": self.title,
+            "agent": self.agent,
+            "model": self.model,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgenticSessionHandle:
+        """Create from dictionary."""
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            workflow_id=data["workflow_id"],
+            environment_id=data["environment_id"],
+            status=AgenticSessionStatus(data["status"]),
+            created_at=datetime.fromisoformat(data["created_at"]),
+            title=data.get("title"),
+            agent=data.get("agent"),
+            model=data.get("model"),
+        )
+
+
+@dataclass
+class AgenticMessageHandle:
+    """Handle to a message."""
+
+    id: str
+    session_id: str
+    role: str  # "user" | "assistant"
+    created_at: datetime
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "role": self.role,
+            "created_at": self.created_at.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgenticMessageHandle:
+        """Create from dictionary."""
+        return cls(
+            id=data["id"],
+            session_id=data["session_id"],
+            role=data["role"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+        )
+
+
+@dataclass
+class AgenticMessage:
+    """Full message content."""
+
+    id: str
+    session_id: str
+    role: str
+    content: str
+    created_at: datetime
+    parts: list[dict[str, Any]] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "role": self.role,
+            "content": self.content,
+            "created_at": self.created_at.isoformat(),
+            "parts": self.parts,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgenticMessage:
+        """Create from dictionary."""
+        return cls(
+            id=data["id"],
+            session_id=data["session_id"],
+            role=data["role"],
+            content=data["content"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            parts=data.get("parts"),
+        )
+
+
+# =============================================================================
+# Events
+# =============================================================================
+
+
+@dataclass
+class AgenticEvent:
+    """Event from session stream."""
+
+    event_type: str  # e.g., "message.chunk", "session.done"
+    session_id: str
+    data: dict[str, Any]
+    timestamp: datetime
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "event_type": self.event_type,
+            "session_id": self.session_id,
+            "data": self.data,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgenticEvent:
+        """Create from dictionary."""
+        return cls(
+            event_type=data["event_type"],
+            session_id=data["session_id"],
+            data=data["data"],
+            timestamp=datetime.fromisoformat(data["timestamp"]),
+        )
+
+
+@dataclass(frozen=True)
+class AgenticEndOfEvents:
+    """Sentinel indicating end of event stream.
+
+    Returned when:
+    - Session reaches terminal state (done, error, aborted)
+    - SSE connection is closed by server
+    """
+
+    reason: str  # "session_done" | "session_error" | "connection_closed"
+    final_status: AgenticSessionStatus | None = None
+
+
+# =============================================================================
+# Legacy types (for backward compatibility during migration)
+# =============================================================================
+
+
 class WorkflowStatus(Enum):
-    """Workflow execution status."""
+    """Workflow execution status (deprecated - use AgenticWorkflowStatus)."""
+
     PENDING = "pending"
     RUNNING = "running"
     BLOCKED = "blocked"
@@ -24,7 +322,8 @@ class WorkflowStatus(Enum):
 
 
 class AgentStatus(Enum):
-    """Agent execution status within a workflow."""
+    """Agent execution status (deprecated - use AgenticSessionStatus)."""
+
     PENDING = "pending"
     BOOTING = "booting"
     RUNNING = "running"
@@ -37,16 +336,8 @@ class AgentStatus(Enum):
 
 @dataclass(frozen=True)
 class AgentInfo:
-    """Information about an agent within a workflow.
+    """Information about an agent (deprecated - use AgenticSessionHandle)."""
 
-    Attributes:
-        name: Agent identifier (e.g., "review-agent")
-        status: Current agent status
-        session_name: Tmux session name (e.g., "doeff-a3f8b2c-review-agent")
-        pane_id: Tmux pane identifier
-        started_at: When the agent was started
-        last_output_hash: Hash of last captured output (for change detection)
-    """
     name: str
     status: AgentStatus
     session_name: str
@@ -66,7 +357,7 @@ class AgentInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AgentInfo":
+    def from_dict(cls, data: dict[str, Any]) -> AgentInfo:
         """Create from dictionary."""
         return cls(
             name=data["name"],
@@ -80,19 +371,8 @@ class AgentInfo:
 
 @dataclass(frozen=True)
 class WorkflowInfo:
-    """Information about a workflow.
+    """Information about a workflow (deprecated - use AgenticWorkflowHandle)."""
 
-    Attributes:
-        id: Short hex identifier (7 chars, e.g., "a3f8b2c")
-        name: Human-readable workflow name
-        status: Current workflow status
-        started_at: When the workflow started
-        updated_at: Last update timestamp
-        current_agent: Name of the currently active agent
-        agents: List of all agents in this workflow
-        last_slog: Last structured log entry
-        error: Error message if failed
-    """
     id: str
     name: str
     status: WorkflowStatus
@@ -118,7 +398,7 @@ class WorkflowInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "WorkflowInfo":
+    def from_dict(cls, data: dict[str, Any]) -> WorkflowInfo:
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -134,7 +414,8 @@ class WorkflowInfo:
 
 
 class WatchEventType(Enum):
-    """Types of watch events."""
+    """Types of watch events (deprecated)."""
+
     STATUS_CHANGE = "status_change"
     AGENT_CHANGE = "agent_change"
     SLOG = "slog"
@@ -144,13 +425,8 @@ class WatchEventType(Enum):
 
 @dataclass(frozen=True)
 class WatchUpdate:
-    """Real-time update from watching a workflow.
+    """Real-time update from watching a workflow (deprecated)."""
 
-    Attributes:
-        workflow: Current workflow state
-        event: Type of event that triggered this update
-        data: Event-specific data
-    """
     workflow: WorkflowInfo
     event: WatchEventType
     data: dict[str, Any] = field(default_factory=dict)
@@ -166,15 +442,8 @@ class WatchUpdate:
 
 @dataclass(frozen=True)
 class AgentConfig:
-    """Configuration for launching an agent.
+    """Configuration for launching an agent (deprecated)."""
 
-    Attributes:
-        agent_type: Type of agent (claude, codex, gemini)
-        prompt: Initial prompt for the agent
-        profile: Agent profile to use (optional)
-        resume: Whether to resume an existing session
-        work_dir: Working directory for the agent
-    """
     agent_type: str
     prompt: str
     profile: str | None = None
@@ -190,3 +459,26 @@ class AgentConfig:
             "resume": self.resume,
             "work_dir": self.work_dir,
         }
+
+
+__all__ = [
+    # New types (spec-compliant)
+    "AgenticEnvironmentType",
+    "AgenticSessionStatus",
+    "AgenticWorkflowStatus",
+    "AgenticWorkflowHandle",
+    "AgenticEnvironmentHandle",
+    "AgenticSessionHandle",
+    "AgenticMessageHandle",
+    "AgenticMessage",
+    "AgenticEvent",
+    "AgenticEndOfEvents",
+    # Legacy types (for backward compatibility)
+    "WorkflowStatus",
+    "AgentStatus",
+    "AgentInfo",
+    "WorkflowInfo",
+    "WatchEventType",
+    "WatchUpdate",
+    "AgentConfig",
+]

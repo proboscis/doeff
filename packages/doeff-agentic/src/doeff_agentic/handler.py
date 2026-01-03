@@ -257,7 +257,7 @@ class AgenticHandler:
                     break
 
         if handle is None:
-            raise AgentNotRunningError(f"Agent {effect.session_name} not found")
+            raise AgentNotRunningError(effect.session_name, "not_found")
 
         send_effect = Send(
             handle,
@@ -270,7 +270,7 @@ class AgenticHandler:
         """Handle WaitForStatus effect."""
         handle = self._context.sessions.get(effect.session_name)
         if handle is None:
-            raise AgentNotRunningError(f"Agent {effect.session_name} not found")
+            raise AgentNotRunningError(effect.session_name, "not_found")
 
         # Normalize target_status to tuple
         targets = effect.target_status
@@ -315,7 +315,7 @@ class AgenticHandler:
         """Handle CaptureOutput effect."""
         handle = self._context.sessions.get(effect.session_name)
         if handle is None:
-            raise AgentNotRunningError(f"Agent {effect.session_name} not found")
+            raise AgentNotRunningError(effect.session_name, "not_found")
 
         return self.tmux_handler.handle_capture(Capture(handle, lines=effect.lines))
 
@@ -326,7 +326,7 @@ class AgenticHandler:
         """
         handle = self._context.sessions.get(effect.session_name)
         if handle is None:
-            raise AgentNotRunningError(f"Agent {effect.session_name} not found")
+            raise AgentNotRunningError(effect.session_name, "not_found")
 
         # Update workflow to blocked status with prompt
         self._update_workflow_status(
@@ -355,7 +355,7 @@ class AgenticHandler:
         while True:
             if deadline and time.time() > deadline:
                 input_request_file.unlink(missing_ok=True)
-                raise UserInputTimeoutError("Timeout waiting for user input")
+                raise UserInputTimeoutError("wait_for_user_input", effect.timeout or 0)
 
             if input_response_file.exists():
                 response = input_response_file.read_text()
