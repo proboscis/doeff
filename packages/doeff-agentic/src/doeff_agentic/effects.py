@@ -15,11 +15,14 @@ Effect Categories:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Generator, TypeVar
 
 
 from .types import AgenticEnvironmentType, AgenticSessionStatus
+
+
+E = TypeVar("E", bound="AgenticEffectBase")
 
 
 # =============================================================================
@@ -31,20 +34,30 @@ from .types import AgenticEnvironmentType, AgenticSessionStatus
 class AgenticEffectBase:
     """Base class for agentic effects.
 
-    All agentic effects inherit from this class.
+    All agentic effects inherit from this class and are compatible with
+    doeff's CESK interpreter through the Effect protocol.
     """
 
     created_at: Any = field(default=None, compare=False)  # EffectCreationContext | None
 
-    def with_created_at(
-        self, created_at: Any  # EffectCreationContext | None
-    ) -> AgenticEffectBase:
+    def with_created_at(self: E, created_at: Any) -> E:  # EffectCreationContext | None
         """Return a copy with updated creation context."""
-        new = object.__new__(self.__class__)
-        for fld in self.__dataclass_fields__:
-            val = created_at if fld == "created_at" else getattr(self, fld)
-            object.__setattr__(new, fld, val)
-        return new
+        if created_at is self.created_at:
+            return self
+        return replace(self, created_at=created_at)
+
+    def intercept(self: E, transform: Callable[[Any], Any]) -> E:
+        """Return a copy where any nested programs are intercepted.
+
+        Agentic effects don't contain nested programs, so this returns self unchanged.
+        Required for CESK interpreter compatibility.
+        """
+        return self
+
+    def to_generator(self) -> Generator[Any, Any, Any]:
+        """An Effect is a single-step program that yields itself."""
+        result = yield self
+        return result
 
 
 # =============================================================================
