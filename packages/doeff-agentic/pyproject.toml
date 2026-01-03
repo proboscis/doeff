@@ -30,7 +30,8 @@ dependencies = [
 ]
 
 [project.scripts]
-doeff-agentic = "doeff_agentic.cli:cli"
+# Note: doeff-agentic binary is provided by the Rust package (doeff-agentic-cli)
+# for fast plugin integration (~5ms startup). This Python package only provides the TUI.
 doeff-agentic-tui = "doeff_agentic.tui:main"
 
 [project.urls]
