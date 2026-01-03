@@ -155,10 +155,16 @@ from .state import (
 # API
 from .api import AgenticAPI
 
-# OpenCode Handler (new)
+# OpenCode Handler (new - primary)
 from .opencode_handler import (
     OpenCodeHandler,
     opencode_handler,
+)
+
+# Tmux Handler (legacy fallback)
+from .tmux_handler import (
+    TmuxHandler,
+    tmux_handler,
 )
 
 # Legacy Handler (deprecated - requires doeff-agents)
@@ -249,10 +255,13 @@ __all__ = [
     "get_default_state_dir",
     # API
     "AgenticAPI",
-    # OpenCode Handler (new)
+    # OpenCode Handler (new - primary)
     "OpenCodeHandler",
     "opencode_handler",
-    # Handler (legacy)
+    # Tmux Handler (legacy fallback)
+    "TmuxHandler",
+    "tmux_handler",
+    # Handler (deprecated - requires doeff-agents)
     "AgenticHandler",
     "agent_handler",
     "agentic_effectful_handlers",
