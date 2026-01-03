@@ -23,10 +23,16 @@ classifiers = [
 dependencies = [
     "doeff>=0.1.9",
     "doeff-flow>=0.1.0",
-    "doeff-agents>=0.1.0",
     "click>=8.0.0",
     "rich>=13.0.0",
     "textual>=0.44.0",
+    "httpx>=0.27.0",
+]
+
+[project.optional-dependencies]
+# Legacy tmux-based handler (deprecated)
+legacy = [
+    "doeff-agents>=0.1.0",
 ]
 
 [project.scripts]
@@ -48,4 +54,3 @@ packages = ["src/doeff_agentic"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-flow = { workspace = true }
-doeff-agents = { workspace = true }

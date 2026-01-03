@@ -1,50 +1,77 @@
 """
 doeff-agentic: Agent-based workflow orchestration.
 
-This package combines doeff-flow (durable execution) and doeff-agents
-(session management) to orchestrate multi-agent workflows.
+This package provides a unified system for orchestrating multi-agent workflows
+with proper environment isolation and session management.
 
-Key Features:
-- Effect-based agent invocation (RunAgent, SendMessage, etc.)
-- State file management for CLI/plugin consumers
-- Real-time workflow observability
-- Human-in-the-loop workflow support
+Architecture:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    Workflow Layer                                │
+    │  - Orchestrates multiple agent sessions                          │
+    │  - doeff-flow integration (Checkpoint, Slog)                     │
+    │  - Workflow metadata, status, history                            │
+    └─────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    Environment Layer                             │
+    │  - Manages working directories / git worktrees                   │
+    │  - Handles state inheritance between agents                      │
+    │  - Types: worktree, inherited, copy, shared                      │
+    └─────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+    ┌─────────────────────────────────────────────────────────────────┐
+    │                    Session Layer                                 │
+    │  - OpenCode server API (primary)                                 │
+    │  - tmux (legacy fallback)                                        │
+    └─────────────────────────────────────────────────────────────────┘
 
 Quick Start:
     from doeff import do
-    from doeff_agentic import RunAgent, AgentConfig
-    from doeff_flow import run_workflow
+    from doeff_agentic import (
+        AgenticCreateSession,
+        AgenticSendMessage,
+        AgenticEnvironmentType,
+    )
 
     @do
     def my_workflow():
-        result = yield RunAgent(
-            config=AgentConfig(
-                agent_type="claude",
-                prompt="Hello, world!",
-            ),
+        session = yield AgenticCreateSession(
+            name="reviewer",
+            title="Code Reviewer",
         )
-        return result
-
-    run_workflow(my_workflow(), workflow_id="hello")
-
-API Usage:
-    from doeff_agentic.api import AgenticAPI
-
-    api = AgenticAPI()
-    workflows = api.list_workflows()
-    api.attach("a3f")
+        yield AgenticSendMessage(
+            session_id=session.id,
+            content="Review the changes in this PR",
+            wait=True,
+        )
+        return "Done"
 
 CLI Usage:
-    $ doeff-agentic ps                    # List workflows
-    $ doeff-agentic watch <id>            # Monitor workflow
-    $ doeff-agentic attach <id>           # Attach to agent
-    $ doeff-agentic send <id> "message"   # Send message
-    $ doeff-agentic stop <id>             # Stop workflow
-    $ doeff-agentic tui                   # Interactive TUI
-    $ doeff-agentic-tui                   # Alternative TUI entry point
+    $ doeff-agentic ps                           # List workflows
+    $ doeff-agentic watch <id>                   # Monitor workflow
+    $ doeff-agentic attach <id>:<session>        # Attach to session
+    $ doeff-agentic logs <id>                    # View logs
+    $ doeff-agentic stop <id>                    # Stop workflow
 """
 
+# Types - new spec-compliant types
 from .types import (
+    # Enums
+    AgenticEnvironmentType,
+    AgenticSessionStatus,
+    AgenticWorkflowStatus,
+    # Handles
+    AgenticWorkflowHandle,
+    AgenticEnvironmentHandle,
+    AgenticSessionHandle,
+    AgenticMessageHandle,
+    AgenticMessage,
+    # Events
+    AgenticEvent,
+    AgenticEndOfEvents,
+    # Legacy types (deprecated)
     AgentConfig,
     AgentInfo,
     AgentStatus,
@@ -54,45 +81,112 @@ from .types import (
     WorkflowStatus,
 )
 
+# Exceptions
+from .exceptions import (
+    AgenticError,
+    AgenticSessionNotFoundError,
+    AgenticEnvironmentNotFoundError,
+    AgenticWorkflowNotFoundError,
+    AgenticSessionNotRunningError,
+    AgenticEnvironmentInUseError,
+    AgenticUnsupportedOperationError,
+    AgenticServerError,
+    AgenticTimeoutError,
+    AgenticDuplicateNameError,
+    AgenticAmbiguousPrefixError,
+)
+
+# Effects - new spec-compliant effects
 from .effects import (
-    # Effect types
+    # Effect base
+    AgenticEffectBase,
+    # Workflow effects
+    AgenticCreateWorkflow,
+    AgenticGetWorkflow,
+    # Environment effects
+    AgenticCreateEnvironment,
+    AgenticGetEnvironment,
+    AgenticDeleteEnvironment,
+    # Session effects
+    AgenticCreateSession,
+    AgenticForkSession,
+    AgenticGetSession,
+    AgenticAbortSession,
+    AgenticDeleteSession,
+    # Message effects
+    AgenticSendMessage,
+    AgenticGetMessages,
+    # Event effects
+    AgenticNextEvent,
+    # Parallel effects
+    AgenticGather,
+    AgenticRace,
+    # Status effects
+    AgenticGetSessionStatus,
+    AgenticSupportsCapability,
+    # Legacy effects (deprecated)
     RunAgentEffect,
     SendMessageEffect,
     WaitForStatusEffect,
     CaptureOutputEffect,
     WaitForUserInputEffect,
     StopAgentEffect,
-    # Constructors
+    # Legacy constructors (deprecated)
     RunAgent,
     SendMessage,
     WaitForStatus,
     CaptureOutput,
     WaitForUserInput,
     StopAgent,
-    # Errors
-    AgenticError,
+    # Legacy error aliases
     WorkflowNotFoundError,
     AgentNotRunningError,
     UserInputTimeoutError,
     AmbiguousPrefixError,
 )
 
-from .handler import (
-    AgenticHandler,
-    agent_handler,
-    agentic_effectful_handlers,
-)
-
+# State management
 from .state import (
     StateManager,
     generate_workflow_id,
     get_default_state_dir,
 )
 
+# API
 from .api import AgenticAPI
 
+# OpenCode Handler (new)
+from .opencode_handler import (
+    OpenCodeHandler,
+    opencode_handler,
+)
+
+# Legacy Handler (deprecated - requires doeff-agents)
+try:
+    from .handler import (
+        AgenticHandler,
+        agent_handler,
+        agentic_effectful_handlers,
+    )
+except ImportError:
+    # doeff-agents not installed, handlers not available
+    AgenticHandler = None  # type: ignore
+    agent_handler = None  # type: ignore
+    agentic_effectful_handlers = None  # type: ignore
+
 __all__ = [
-    # Types
+    # Types - new
+    "AgenticEnvironmentType",
+    "AgenticSessionStatus",
+    "AgenticWorkflowStatus",
+    "AgenticWorkflowHandle",
+    "AgenticEnvironmentHandle",
+    "AgenticSessionHandle",
+    "AgenticMessageHandle",
+    "AgenticMessage",
+    "AgenticEvent",
+    "AgenticEndOfEvents",
+    # Types - legacy
     "AgentConfig",
     "AgentInfo",
     "AgentStatus",
@@ -100,34 +194,66 @@ __all__ = [
     "WatchUpdate",
     "WorkflowInfo",
     "WorkflowStatus",
-    # Effects
+    # Exceptions
+    "AgenticError",
+    "AgenticSessionNotFoundError",
+    "AgenticEnvironmentNotFoundError",
+    "AgenticWorkflowNotFoundError",
+    "AgenticSessionNotRunningError",
+    "AgenticEnvironmentInUseError",
+    "AgenticUnsupportedOperationError",
+    "AgenticServerError",
+    "AgenticTimeoutError",
+    "AgenticDuplicateNameError",
+    "AgenticAmbiguousPrefixError",
+    # Effects - new
+    "AgenticEffectBase",
+    "AgenticCreateWorkflow",
+    "AgenticGetWorkflow",
+    "AgenticCreateEnvironment",
+    "AgenticGetEnvironment",
+    "AgenticDeleteEnvironment",
+    "AgenticCreateSession",
+    "AgenticForkSession",
+    "AgenticGetSession",
+    "AgenticAbortSession",
+    "AgenticDeleteSession",
+    "AgenticSendMessage",
+    "AgenticGetMessages",
+    "AgenticNextEvent",
+    "AgenticGather",
+    "AgenticRace",
+    "AgenticGetSessionStatus",
+    "AgenticSupportsCapability",
+    # Effects - legacy
     "RunAgentEffect",
     "SendMessageEffect",
     "WaitForStatusEffect",
     "CaptureOutputEffect",
     "WaitForUserInputEffect",
     "StopAgentEffect",
-    # Effect Constructors
     "RunAgent",
     "SendMessage",
     "WaitForStatus",
     "CaptureOutput",
     "WaitForUserInput",
     "StopAgent",
-    # Errors
-    "AgenticError",
+    # Errors - legacy aliases
     "WorkflowNotFoundError",
     "AgentNotRunningError",
     "UserInputTimeoutError",
     "AmbiguousPrefixError",
-    # Handler
-    "AgenticHandler",
-    "agent_handler",
-    "agentic_effectful_handlers",
     # State
     "StateManager",
     "generate_workflow_id",
     "get_default_state_dir",
     # API
     "AgenticAPI",
+    # OpenCode Handler (new)
+    "OpenCodeHandler",
+    "opencode_handler",
+    # Handler (legacy)
+    "AgenticHandler",
+    "agent_handler",
+    "agentic_effectful_handlers",
 ]
