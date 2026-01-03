@@ -1,0 +1,24 @@
+[project]
+name = "doeff-agentic-cli"
+version = "0.1.0"
+description = "Fast Rust CLI for doeff-agentic workflow management"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Kento Masui", email = "nameissoap@gmail.com"}
+]
+keywords = ["doeff", "agentic", "workflow", "cli", "rust"]
+
+# This is a Rust CLI - no Python dependencies
+dependencies = []
+
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+# Build as a pure Rust binary, not a Python extension
+bindings = "bin"
+# The binary will be named doeff-agentic (from Cargo.toml [[bin]] name)
+strip = true
