@@ -26,10 +26,12 @@ dependencies = [
     "doeff-agents>=0.1.0",
     "click>=8.0.0",
     "rich>=13.0.0",
+    "textual>=0.44.0",
 ]
 
 [project.scripts]
-doeff-agentic-tui = "doeff_agentic.cli:cli"
+doeff-agentic = "doeff_agentic.cli:cli"
+doeff-agentic-tui = "doeff_agentic.tui:main"
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"

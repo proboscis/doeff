@@ -40,6 +40,8 @@ CLI Usage:
     $ doeff-agentic attach <id>           # Attach to agent
     $ doeff-agentic send <id> "message"   # Send message
     $ doeff-agentic stop <id>             # Stop workflow
+    $ doeff-agentic tui                   # Interactive TUI
+    $ doeff-agentic-tui                   # Alternative TUI entry point
 """
 
 from .types import (
