@@ -3,6 +3,7 @@ local M = {}
 
 M.entrypoints = require('doeff.telescope.entrypoints')
 M.playlists = require('doeff.telescope.playlists')
+M.workflows = require('doeff.telescope.workflows')
 
 ---Register telescope extension
 function M.register()
@@ -17,6 +18,7 @@ function M.register()
       doeff = M.entrypoints.picker,
       entrypoints = M.entrypoints.picker,
       playlists = M.playlists.picker,
+      workflows = M.workflows.picker,
     },
   })
 
