@@ -117,7 +117,8 @@ def is_agent_exited(output: str, ui_patterns: list[str] | None = None) -> bool:
 
 def is_completed(output: str) -> bool:
     """Check if agent completed successfully."""
-    lines = "\n".join(output.split("\n")[-5:]).lower()
+    # Check last 10 lines instead of 5 to account for UI chrome after completion
+    lines = "\n".join(output.split("\n")[-10:]).lower()
     patterns = [
         "task completed successfully",
         "all tasks completed",
