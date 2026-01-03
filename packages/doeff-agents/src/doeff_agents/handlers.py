@@ -156,9 +156,9 @@ class TmuxAgentHandler(AgentHandler):
         command = shlex.join(argv)
 
         if adapter.injection_method == InjectionMethod.ARG:
-            tmux.send_keys(session_info.pane_id, command)
+            tmux.send_keys(session_info.pane_id, command, literal=False)
         else:
-            tmux.send_keys(session_info.pane_id, command)
+            tmux.send_keys(session_info.pane_id, command, literal=False)
             if adapter.ready_pattern and not self._wait_for_ready(
                 session_info.pane_id, adapter.ready_pattern, effect.ready_timeout
             ):
