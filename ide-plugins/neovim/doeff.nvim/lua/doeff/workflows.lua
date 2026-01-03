@@ -24,12 +24,39 @@ local config = require('doeff.config')
 ---@field last_slog table|nil Last structured log entry
 ---@field error string|nil Error message if failed
 
+local indexer = require('doeff.indexer')
+
+---Check if we're in a uv project (has pyproject.toml)
+---@return boolean
+local function is_uv_project()
+  local root = indexer.find_root()
+  if not root then
+    return false
+  end
+  return vim.fn.filereadable(root .. '/pyproject.toml') == 1
+end
+
 ---Check if doeff-agentic CLI is available
 ---@return boolean
 function M.is_available()
+  -- If in uv project, assume doeff-agentic is available via uv
+  if is_uv_project() then
+    return vim.fn.executable('uv') == 1
+  end
   local cfg = config.get()
   local binary = cfg.workflows and cfg.workflows.binary or 'doeff-agentic'
   return vim.fn.executable(binary) == 1
+end
+
+---Build the command prefix for doeff-agentic
+---@return string[] cmd Command parts
+local function build_cmd_prefix()
+  if is_uv_project() then
+    return { 'uv', 'run', 'doeff-agentic' }
+  end
+  local cfg = config.get()
+  local binary = cfg.workflows and cfg.workflows.binary or 'doeff-agentic'
+  return { binary }
 end
 
 ---Execute doeff-agentic command
@@ -37,9 +64,8 @@ end
 ---@return table|nil result Parsed JSON result or nil on error
 ---@return string|nil error Error message if any
 function M.exec(args)
-  local cfg = config.get()
-  local binary = cfg.workflows and cfg.workflows.binary or 'doeff-agentic'
-  local cmd = vim.list_extend({ binary }, args)
+  local cmd = build_cmd_prefix()
+  vim.list_extend(cmd, args)
 
   local result = vim.system(cmd, { text = true }):wait()
 
@@ -114,10 +140,9 @@ end
 ---@param workflow_id string Workflow ID or prefix
 ---@param agent string|nil Specific agent name
 function M.attach(workflow_id, agent)
-  local cfg = config.get()
-  local binary = cfg.workflows and cfg.workflows.binary or 'doeff-agentic'
-
-  local cmd = { binary, 'attach', workflow_id }
+  local cmd = build_cmd_prefix()
+  table.insert(cmd, 'attach')
+  table.insert(cmd, workflow_id)
   if agent then
     table.insert(cmd, '--agent')
     table.insert(cmd, agent)
@@ -136,21 +161,26 @@ function M.attach(workflow_id, agent)
     end)
   else
     -- Not in tmux, open in terminal with proper escaping
-    local escaped_cmd = vim.fn.shellescape(binary) .. ' attach ' .. vim.fn.shellescape(workflow_id)
-    if agent then
-      escaped_cmd = escaped_cmd .. ' --agent ' .. vim.fn.shellescape(agent)
+    local escaped_parts = {}
+    for _, part in ipairs(cmd) do
+      table.insert(escaped_parts, vim.fn.shellescape(part))
     end
-    vim.cmd('terminal ' .. escaped_cmd)
+    vim.cmd('terminal ' .. table.concat(escaped_parts, ' '))
   end
 end
 
 ---Watch workflow updates in terminal
 ---@param workflow_id string Workflow ID or prefix
 function M.watch(workflow_id)
-  local cfg = config.get()
-  local binary = cfg.workflows and cfg.workflows.binary or 'doeff-agentic'
+  local cmd = build_cmd_prefix()
+  table.insert(cmd, 'watch')
+  table.insert(cmd, workflow_id)
 
-  vim.cmd('terminal ' .. vim.fn.shellescape(binary) .. ' watch ' .. vim.fn.shellescape(workflow_id))
+  local escaped_parts = {}
+  for _, part in ipairs(cmd) do
+    table.insert(escaped_parts, vim.fn.shellescape(part))
+  end
+  vim.cmd('terminal ' .. table.concat(escaped_parts, ' '))
 end
 
 ---Send message to workflow's agent
