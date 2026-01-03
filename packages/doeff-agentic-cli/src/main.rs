@@ -10,6 +10,7 @@
 //!   attach      Attach to agent's tmux session
 //!   send        Send message to agent
 //!   stop        Stop workflow
+//!   tui         Launch interactive TUI (Python)
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -114,6 +115,9 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Launch interactive TUI (Python Textual)
+    Tui,
 }
 
 // =============================================================================
@@ -617,6 +621,22 @@ fn cmd_send(
     Ok(())
 }
 
+fn cmd_tui() -> Result<()> {
+    // Try doeff-agentic-tui first (installed via pip/uv)
+    // Fall back to python -m doeff_agentic.tui
+    let err = Command::new("doeff-agentic-tui").exec();
+
+    // If doeff-agentic-tui not found, try python module
+    let err2 = Command::new("python")
+        .args(["-m", "doeff_agentic.tui"])
+        .exec();
+
+    anyhow::bail!(
+        "Failed to launch TUI. Tried:\n  1. doeff-agentic-tui: {}\n  2. python -m doeff_agentic.tui: {}\n\nInstall with: uv pip install doeff-agentic",
+        err, err2
+    );
+}
+
 fn cmd_stop(state: &StateManager, workflow_id: &str, json: bool) -> Result<()> {
     let workflow = state
         .read_workflow(workflow_id)?
@@ -705,5 +725,6 @@ fn main() -> Result<()> {
             json,
         } => cmd_send(&state, &workflow_id, &message, agent, json),
         Commands::Stop { workflow_id, json } => cmd_stop(&state, &workflow_id, json),
+        Commands::Tui => cmd_tui(),
     }
 }
