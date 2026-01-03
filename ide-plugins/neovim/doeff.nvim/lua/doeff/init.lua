@@ -6,6 +6,7 @@ local M = {}
 local config = require('doeff.config')
 local indexer = require('doeff.indexer')
 local runner = require('doeff.runner')
+local workflows = require('doeff.workflows')
 
 ---Setup the plugin with user configuration
 ---@param opts DoeffConfig|nil
@@ -83,6 +84,18 @@ function M.setup_keymaps()
     vim.keymap.set('n', keymaps.all, function()
       M.pick_all()
     end, { desc = 'Doeff: Search all entries' })
+  end
+
+  if keymaps.workflows then
+    vim.keymap.set('n', keymaps.workflows, function()
+      M.pick_workflows()
+    end, { desc = 'Doeff: List workflows' })
+  end
+
+  if keymaps.workflow_attach then
+    vim.keymap.set('n', keymaps.workflow_attach, function()
+      M.workflow_attach()
+    end, { desc = 'Doeff: Attach to workflow agent' })
   end
 end
 
@@ -192,6 +205,71 @@ function M.pick_playlists(opts)
   playlists.picker(opts)
 end
 
+---Open workflows picker
+---@param opts table|nil
+function M.pick_workflows(opts)
+  local ok = pcall(require, 'telescope')
+  if not ok then
+    vim.notify('doeff.nvim: telescope.nvim is required', vim.log.levels.ERROR)
+    return
+  end
+
+  local wf_picker = require('doeff.telescope.workflows')
+  wf_picker.picker(opts)
+end
+
+---Attach to current/most recent workflow's agent
+---Opens the workflow picker if multiple workflows are running
+function M.workflow_attach()
+  if not workflows.is_available() then
+    vim.notify('doeff: doeff-agentic CLI not found', vim.log.levels.ERROR)
+    return
+  end
+
+  local wf_list, err = workflows.list({ status = { 'running', 'blocked' } })
+  if err then
+    vim.notify('doeff: ' .. err, vim.log.levels.ERROR)
+    return
+  end
+
+  if not wf_list or #wf_list == 0 then
+    vim.notify('doeff: No active workflows', vim.log.levels.INFO)
+    return
+  end
+
+  if #wf_list == 1 then
+    -- Single workflow, attach directly
+    workflows.attach(wf_list[1].id)
+  else
+    -- Multiple workflows, open picker
+    M.pick_workflows()
+  end
+end
+
+---List all workflows
+---@param opts table|nil Options (status, agent_status filters)
+---@return table|nil workflows
+---@return string|nil error
+function M.list_workflows(opts)
+  return workflows.list(opts)
+end
+
+---Get workflow details
+---@param workflow_id string
+---@return table|nil workflow
+---@return string|nil error
+function M.get_workflow(workflow_id)
+  return workflows.get(workflow_id)
+end
+
+---Stop a workflow
+---@param workflow_id string
+---@return boolean success
+---@return string|nil error
+function M.stop_workflow(workflow_id)
+  return workflows.stop(workflow_id)
+end
+
 ---Run entrypoint under cursor
 ---@param direction string|nil Terminal direction
 function M.run_cursor(direction)
@@ -241,5 +319,6 @@ end
 M.config = config
 M.indexer = indexer
 M.runner = runner
+M.workflows = workflows
 
 return M
