@@ -121,7 +121,7 @@ class WorkflowListScreen(Screen[None]):
         padding: 0 1;
     }
 
-    #empty-message {
+    .empty-message {
         text-align: center;
         padding: 2;
         color: $text-muted;
@@ -194,15 +194,15 @@ class WorkflowListScreen(Screen[None]):
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
 
-    @work(exclusive=True)
-    async def refresh_workflows(self) -> None:
+    @work(exclusive=True, thread=True)
+    def refresh_workflows(self) -> None:
         """Refresh the workflow list from state files."""
         try:
             workflows = self.tui_app.api.list_workflows()
             # Post UI updates back to main thread
-            self.call_from_thread(self._apply_workflows, workflows)
+            self.app.call_from_thread(self._apply_workflows, workflows)
         except Exception as e:
-            self.call_from_thread(self.notify, f"Error refreshing: {e}", severity="error")
+            self.app.call_from_thread(self.notify, f"Error refreshing: {e}", severity="error")
 
     def _apply_workflows(self, workflows: list[WorkflowInfo]) -> None:
         """Apply workflow data to UI (main thread only)."""
@@ -221,7 +221,7 @@ class WorkflowListScreen(Screen[None]):
 
         if not self.workflows:
             list_container.mount(
-                Static("No active workflows", id="empty-message")
+                Static("No active workflows", classes="empty-message")
             )
             return
 
@@ -489,21 +489,21 @@ class WatchScreen(Screen[None]):
         if self._refresh_timer is not None:
             self._refresh_timer.stop()
 
-    @work(exclusive=True)
-    async def refresh_workflow(self) -> None:
+    @work(exclusive=True, thread=True)
+    def refresh_workflow(self) -> None:
         """Refresh workflow and agent data."""
         try:
             workflow = self.tui_app.api.get_workflow(self.workflow_id)
             if workflow is None:
                 # Workflow was deleted or not found - go back to list
-                self.call_from_thread(self.app.pop_screen)
+                self.app.call_from_thread(self.app.pop_screen)
                 return
 
             agent_output = self.tui_app.api.get_agent_output(self.workflow_id, lines=50)
             # Post UI updates back to main thread
-            self.call_from_thread(self._apply_workflow_data, workflow, agent_output)
+            self.app.call_from_thread(self._apply_workflow_data, workflow, agent_output)
         except Exception as e:
-            self.call_from_thread(self.notify, f"Error: {e}", severity="error")
+            self.app.call_from_thread(self.notify, f"Error: {e}", severity="error")
 
     def _apply_workflow_data(self, workflow: WorkflowInfo, agent_output: str) -> None:
         """Apply workflow data to UI (main thread only)."""
