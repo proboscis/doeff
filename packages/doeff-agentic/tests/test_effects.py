@@ -155,14 +155,15 @@ class TestStopAgentEffect:
         assert effect.session_name == "my-agent"
 
 
-class TestEffectIntercept:
-    """Tests for effect intercept method."""
+class TestEffectImmutable:
+    """Tests for effect immutability."""
 
-    def test_intercept_returns_self(self):
-        """Test that intercept returns self for simple effects."""
+    def test_effect_is_frozen(self):
+        """Test that effects are immutable dataclasses."""
         config = AgentConfig(agent_type="claude", prompt="Test")
         effect = RunAgent(config)
 
-        # intercept should return self since there are no nested programs
-        result = effect.intercept(lambda x: x)
-        assert result is effect
+        # Effects should be frozen dataclasses
+        import pytest
+        with pytest.raises(AttributeError):
+            effect.poll_interval = 5.0  # type: ignore
