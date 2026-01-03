@@ -3,8 +3,9 @@ Custom widgets for doeff-agentic TUI.
 
 Contains:
 - WorkflowListItem: A single row in the workflow list
-- WorkflowInfoPane: Detailed workflow information panel
-- AgentOutputPane: Agent output display panel
+- WorkflowHeaderPane: Workflow info header
+- AgentListItem: A single agent row with status and snippet
+- CurrentActivityPane: Selected agent's output
 """
 
 from __future__ import annotations
@@ -14,13 +15,12 @@ from datetime import datetime, timezone
 from textual.app import ComposeResult
 from textual.widgets import Static
 
-from ..types import AgentStatus, WorkflowInfo, WorkflowStatus
+from ..types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
 
 
 def _format_relative_time(dt: datetime) -> str:
     """Format a datetime as relative time (e.g., '5m ago', '2h ago')."""
     now = datetime.now(timezone.utc)
-    # Ensure dt is timezone-aware
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     diff = now - dt
@@ -43,12 +43,14 @@ def _format_relative_time(dt: datetime) -> str:
 def _get_status_symbol(status: WorkflowStatus | AgentStatus) -> str:
     """Get the status indicator symbol."""
     status_symbols = {
+        # Workflow statuses
         WorkflowStatus.PENDING: "○",
         WorkflowStatus.RUNNING: "●",
         WorkflowStatus.BLOCKED: "◉",
         WorkflowStatus.COMPLETED: "✓",
         WorkflowStatus.FAILED: "✗",
         WorkflowStatus.STOPPED: "○",
+        # Agent statuses
         AgentStatus.PENDING: "○",
         AgentStatus.BOOTING: "◐",
         AgentStatus.RUNNING: "●",
@@ -70,7 +72,7 @@ class WorkflowListItem(Static):
     """A single workflow item in the list view.
 
     Display format:
-      ● a3f8b2c  pr-review-main       review-agent  [blocked]  2m
+      ● a3f8b2c  pr-review      reviewer(done), fixer(running)  2m
     """
 
     def __init__(self, workflow: WorkflowInfo, is_selected: bool = False) -> None:
@@ -82,14 +84,22 @@ class WorkflowListItem(Static):
         """Compose the widget."""
         wf = self.workflow
         symbol = _get_status_symbol(wf.status)
-        status_text = wf.status.value
-        agent = wf.current_agent or "-"
         time_str = _format_relative_time(wf.updated_at)
 
-        # Format: symbol  id       name                agent        [status]  time
+        # Format agents list
+        agents_str = "-"
+        if wf.agents:
+            agent_parts = []
+            for a in wf.agents:
+                agent_parts.append(f"{a.name}({a.status.value})")
+            agents_str = ", ".join(agent_parts)
+            # Truncate if too long
+            if len(agents_str) > 40:
+                agents_str = agents_str[:37] + "..."
+
+        # Format: symbol  id       name            agents                    time
         content = (
-            f"  {symbol}  {wf.id}  {wf.name:<20}  {agent:<14}  "
-            f"[{status_text:<9}]  {time_str:>4}"
+            f"  {symbol}  {wf.id}  {wf.name:<14}  {agents_str:<40}  {time_str:>4}"
         )
         yield Static(content)
 
@@ -101,13 +111,127 @@ class WorkflowListItem(Static):
             self.add_class("selected")
 
 
+class WorkflowHeaderPane(Static):
+    """Workflow info header pane.
+
+    Shows:
+    - Workflow ID and name
+    - Status
+    - Started time
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.workflow: WorkflowInfo | None = None
+
+    def update_workflow(self, workflow: WorkflowInfo) -> None:
+        """Update the displayed workflow information."""
+        self.workflow = workflow
+        self._render_content()
+
+    def _render_content(self) -> None:
+        """Render the workflow header content."""
+        if self.workflow is None:
+            self.update("No workflow selected")
+            return
+
+        wf = self.workflow
+        symbol = _get_status_symbol(wf.status)
+        started = _format_relative_time(wf.started_at)
+
+        lines = [
+            f"Workflow {wf.id}: {wf.name or 'Unnamed'}",
+            f"Status: {symbol} {wf.status.value}",
+            f"Started: {started} ago",
+        ]
+
+        if wf.error:
+            lines.append(f"Error: {wf.error}")
+
+        self.update("\n".join(lines))
+
+
+class AgentListItem(Static):
+    """A single agent item in the agents list.
+
+    Display format:
+      > ● reviewer    [done]     env-abc  "Found 3 issues"
+    """
+
+    def __init__(
+        self,
+        agent: AgentInfo,
+        snippet: str = "-",
+        is_selected: bool = False,
+    ) -> None:
+        super().__init__()
+        self.agent = agent
+        self.snippet = snippet
+        self.is_selected = is_selected
+
+    def compose(self) -> ComposeResult:
+        """Compose the widget."""
+        a = self.agent
+        symbol = _get_status_symbol(a.status)
+        marker = ">" if self.is_selected else " "
+
+        # Extract env from session name (doeff-<workflow>-<name>)
+        env_hint = "shared"
+        if a.session_name:
+            parts = a.session_name.split("-")
+            if len(parts) >= 2:
+                env_hint = parts[1][:6]
+
+        # Truncate snippet
+        snippet = self.snippet
+        if len(snippet) > 30:
+            snippet = snippet[:27] + "..."
+
+        # Format: marker symbol name       [status]   env      snippet
+        content = (
+            f"  {marker} {symbol} {a.name:<12}  [{a.status.value:<8}]  "
+            f"{env_hint:<8}  \"{snippet}\""
+        )
+        yield Static(content)
+
+    def on_mount(self) -> None:
+        """Apply styles on mount."""
+        self.add_class("agent-item")
+        self.add_class(_get_status_class(self.agent.status))
+        if self.is_selected:
+            self.add_class("selected")
+
+
+class CurrentActivityPane(Static):
+    """Displays current activity output for the selected agent."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.output: str = ""
+
+    def update_output(self, output: str) -> None:
+        """Update the displayed output."""
+        self.output = output
+        self._render_content()
+
+    def _render_content(self) -> None:
+        """Render the output content."""
+        if self.output:
+            # Show last lines with > prefix
+            lines = self.output.strip().split("\n")[-15:]
+            formatted = "\n".join(f"> {line}" for line in lines)
+            self.update(formatted)
+        else:
+            self.update("(No activity)")
+
+
+# Legacy widgets for backward compatibility
+
+
 class WorkflowInfoPane(Static):
     """Displays detailed workflow information in the watch view.
 
-    Shows:
-    - Current status and progress
-    - Workflow trace/stack
-    - All agents with their status
+    (Legacy - kept for backward compatibility)
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -128,13 +252,11 @@ class WorkflowInfoPane(Static):
         wf = self.workflow
         lines: list[str] = []
 
-        # Status header
         symbol = _get_status_symbol(wf.status)
         status_desc = self._get_status_description(wf)
         lines.append(f"[{wf.status.value}] {status_desc}")
         lines.append("")
 
-        # Workflow info
         lines.append(f"ID:      {wf.id}")
         lines.append(f"Name:    {wf.name}")
         lines.append(f"Status:  {symbol} {wf.status.value}")
@@ -142,7 +264,6 @@ class WorkflowInfoPane(Static):
         lines.append(f"Updated: {_format_relative_time(wf.updated_at)} ago")
         lines.append("")
 
-        # Agent tree/list
         if wf.agents:
             lines.append("Agents:")
             for agent in wf.agents:
@@ -153,7 +274,6 @@ class WorkflowInfoPane(Static):
                     f"  {symbol} {agent.name:<16} [{agent.status.value}] {marker}"
                 )
 
-            # Current agent details
             if wf.current_agent:
                 lines.append("")
                 current = next(
@@ -165,14 +285,12 @@ class WorkflowInfoPane(Static):
                     if current.pane_id:
                         lines.append(f"  Pane: {current.pane_id}")
 
-        # Last slog if available
         if wf.last_slog:
             lines.append("")
             lines.append("Last Log:")
             for key, value in wf.last_slog.items():
                 lines.append(f"  {key}: {value}")
 
-        # Error if any
         if wf.error:
             lines.append("")
             lines.append(f"Error: {wf.error}")
@@ -199,7 +317,7 @@ class WorkflowInfoPane(Static):
 class AgentOutputPane(Static):
     """Displays agent output in the watch view.
 
-    Shows the captured output from the agent's tmux pane.
+    (Legacy - kept for backward compatibility)
     """
 
     def __init__(self, *args, **kwargs) -> None:
@@ -220,7 +338,6 @@ class AgentOutputPane(Static):
         if self.workflow:
             wf = self.workflow
             if wf.current_agent:
-                # Find the agent
                 agent = next(
                     (a for a in wf.agents if a.name == wf.current_agent), None
                 )
