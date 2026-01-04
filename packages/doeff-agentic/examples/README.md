@@ -1,6 +1,6 @@
 # doeff-agentic Examples
 
-Progressive examples that teach you how to build agent workflows.
+Progressive examples that teach you how to build agent workflows using the new effects API.
 
 ## Prerequisites
 
@@ -10,20 +10,27 @@ Progressive examples that teach you how to build agent workflows.
    uv sync
    ```
 
-2. Ensure you have an agent CLI available (e.g., Claude Code):
-   ```bash
-   claude --version
-   ```
+2. Ensure you have an agent backend available:
+   - **OpenCode** (recommended): `opencode --version`
+   - **tmux** (fallback): `tmux -V`
 
-3. Ensure tmux is installed:
-   ```bash
-   tmux -V
-   ```
+## Effects API Overview
+
+The new effects API uses a layered approach:
+
+| Effect | Description |
+|--------|-------------|
+| `AgenticCreateSession` | Create a new agent session |
+| `AgenticSendMessage` | Send a message to a session |
+| `AgenticGetMessages` | Get messages from a session |
+| `AgenticNextEvent` | Wait for next event (SSE) |
+| `AgenticGather` | Wait for multiple sessions |
+| `AgenticGetSessionStatus` | Get session status |
 
 ## Examples
 
 ### 01. Hello Agent
-Minimal example - launch a single agent and get output.
+Minimal example - create a session and get a response.
 ```bash
 uv run python examples/01_hello_agent.py
 ```
@@ -57,7 +64,7 @@ doeff-agentic send <workflow-id> "approve"
 ```
 
 ### 06. Parallel Agents
-Run multiple agents with different perspectives.
+Run multiple agents concurrently with AgenticGather.
 ```bash
 uv run python examples/06_parallel_agents.py
 ```
@@ -79,7 +86,7 @@ doeff-agentic ps
 # Watch a specific workflow
 doeff-agentic watch <workflow-id>
 
-# Attach to agent's tmux session
+# Attach to agent's session
 doeff-agentic attach <workflow-id>
 
 # View agent output
@@ -97,20 +104,89 @@ doeff-agentic stop <workflow-id>
 You can also use the Python API directly:
 
 ```python
-from doeff_agentic.api import AgenticAPI
+from doeff import do
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+)
+from doeff_agentic.handler import agentic_effectful_handlers
 
-api = AgenticAPI()
 
-# List workflows
-workflows = api.list_workflows()
+@do
+def my_workflow():
+    # Create a session
+    session = yield AgenticCreateSession(
+        name="my-agent",
+        title="My Agent",
+    )
+    
+    # Send a message and wait for response
+    yield AgenticSendMessage(
+        session_id=session.id,
+        content="Hello, agent!",
+        wait=True,
+    )
+    
+    # Get the response
+    messages = yield AgenticGetMessages(session_id=session.id)
+    
+    # Find assistant's response
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return msg.content
+    
+    return "No response"
 
-# Get workflow details
-wf = api.get_workflow("a3f")
 
-# Watch for updates
-for update in api.watch("a3f"):
-    print(update.workflow.status)
+# Run the workflow
+from doeff import run_sync
 
-# Send message
-api.send_message("a3f", "continue")
+handlers = agentic_effectful_handlers(workflow_name="my-workflow")
+result = run_sync(my_workflow(), handlers=handlers)
+print(result)
 ```
+
+## Migration from Legacy API
+
+The legacy `RunAgent` effect is deprecated. Use the new effects instead:
+
+### Before (Legacy)
+```python
+from doeff_agentic import RunAgent, AgentConfig
+
+result = yield RunAgent(
+    config=AgentConfig(
+        agent_type="claude",
+        prompt="Hello!",
+    ),
+    session_name="my-agent",
+)
+```
+
+### After (New API)
+```python
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+)
+
+session = yield AgenticCreateSession(name="my-agent")
+
+yield AgenticSendMessage(
+    session_id=session.id,
+    content="Hello!",
+    wait=True,
+)
+
+messages = yield AgenticGetMessages(session_id=session.id)
+result = messages[-1].content  # Get last message
+```
+
+The new API provides:
+- More control over session lifecycle
+- Non-blocking message sending (`wait=False`)
+- SSE event streaming (`AgenticNextEvent`)
+- Session forking (OpenCode only)
+- Parallel execution (`AgenticGather`, `AgenticRace`)

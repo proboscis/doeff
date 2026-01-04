@@ -6,7 +6,7 @@ Pause workflow for human review.
 This demonstrates how to create workflows that wait for
 human input before continuing. The user can provide input via:
 - doeff-agentic send <workflow-id> "approve"
-- Attaching to the tmux session
+- Attaching to the session
 
 Run:
     cd packages/doeff-agentic
@@ -21,8 +21,23 @@ In another terminal, when the workflow is waiting:
 from doeff import do
 from doeff.effects.writer import slog
 
-from doeff_agentic import AgentConfig, RunAgent, WaitForUserInput
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+    AgenticNextEvent,
+    AgenticGetSessionStatus,
+)
+from doeff_agentic.types import AgenticSessionStatus
 from doeff_agentic.handler import agentic_effectful_handlers
+
+
+def get_assistant_response(messages):
+    """Extract the latest assistant response from messages."""
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return msg.content
+    return ""
 
 
 @do
@@ -31,17 +46,24 @@ def draft_with_approval(task: str):
 
     yield slog(status="drafting", msg="Creating initial draft")
 
-    draft = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=f"{task}\n\nCreate a draft. Then exit.",
-        ),
-        session_name="drafter",
+    # Create drafter session
+    drafter = yield AgenticCreateSession(
+        name="drafter",
+        title="Draft Agent",
     )
+
+    yield AgenticSendMessage(
+        session_id=drafter.id,
+        content=f"{task}\n\nCreate a draft. Then wait for feedback.",
+        wait=True,
+    )
+
+    messages = yield AgenticGetMessages(session_id=drafter.id)
+    draft = get_assistant_response(messages)
 
     yield slog(status="waiting-approval", msg="Draft ready for review")
 
-    # Workflow pauses here - user reviews via CLI or tmux
+    # Display draft for user
     print("\n" + "=" * 50)
     print("DRAFT READY FOR REVIEW")
     print("=" * 50)
@@ -54,30 +76,48 @@ def draft_with_approval(task: str):
     print("  doeff-agentic send <workflow-id> 'reject'")
     print("=" * 50 + "\n")
 
-    approval = yield WaitForUserInput(
-        session_name="drafter",
-        prompt="Review the draft. Reply: approve / revise <feedback> / reject",
-        timeout=300,  # 5 minute timeout
-    )
+    # Wait for session to become blocked (waiting for input)
+    while True:
+        status = yield AgenticGetSessionStatus(session_id=drafter.id)
+        if status == AgenticSessionStatus.BLOCKED:
+            break
+        if status in (AgenticSessionStatus.DONE, AgenticSessionStatus.ERROR):
+            break
+        # Wait for next event
+        yield AgenticNextEvent(session_id=drafter.id, timeout=5.0)
 
-    if approval.lower().startswith("revise"):
-        feedback = approval.replace("revise", "").strip(": ")
-        yield slog(status="revising", msg=f"Revising based on: {feedback}")
+    # When user sends a message, the session will process it
+    # Wait for the response
+    yield AgenticNextEvent(session_id=drafter.id, timeout=300.0)  # 5 min timeout
 
-        revised = yield RunAgent(
-            config=AgentConfig(
-                agent_type="claude",
-                prompt=(
-                    f"Revise based on this feedback:\n{feedback}\n\n"
-                    f"Original draft:\n{draft}\n\n"
-                    "Output the revised version. Then exit."
-                ),
-            ),
-            session_name="reviser",
+    messages = yield AgenticGetMessages(session_id=drafter.id)
+    approval = get_assistant_response(messages)
+
+    if "revise" in approval.lower():
+        feedback = approval
+        yield slog(status="revising", msg=f"Revising based on feedback")
+
+        # Create reviser session
+        reviser = yield AgenticCreateSession(
+            name="reviser",
+            title="Revision Agent",
         )
+
+        yield AgenticSendMessage(
+            session_id=reviser.id,
+            content=(
+                f"Revise based on this feedback:\n{feedback}\n\n"
+                f"Original draft:\n{draft}\n\n"
+                "Output the revised version. Then exit."
+            ),
+            wait=True,
+        )
+
+        messages = yield AgenticGetMessages(session_id=reviser.id)
+        revised = get_assistant_response(messages)
         return {"status": "revised", "content": revised}
 
-    if approval.lower() == "reject":
+    if "reject" in approval.lower():
         yield slog(status="rejected", msg="Draft rejected")
         return {"status": "rejected", "content": draft}
 

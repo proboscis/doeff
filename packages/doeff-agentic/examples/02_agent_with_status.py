@@ -18,7 +18,11 @@ In another terminal:
 from doeff import do
 from doeff.effects.writer import slog
 
-from doeff_agentic import AgentConfig, RunAgent
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+)
 from doeff_agentic.handler import agentic_effectful_handlers
 
 
@@ -27,13 +31,27 @@ def agent_with_status():
     """Workflow with status updates visible in the CLI."""
     yield slog(status="starting", msg="Launching agent...")
 
-    result = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt="Count from 1 to 5, with a 1 second pause between each number. Then exit.",
-        ),
-        session_name="counter",
+    # Create session
+    session = yield AgenticCreateSession(
+        name="counter",
+        title="Counter Agent",
     )
+
+    # Send message and wait
+    yield AgenticSendMessage(
+        session_id=session.id,
+        content="Count from 1 to 5, with a 1 second pause between each number. Then exit.",
+        wait=True,
+    )
+
+    # Get response
+    messages = yield AgenticGetMessages(session_id=session.id)
+
+    result = ""
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            result = msg.content
+            break
 
     yield slog(status="complete", msg=f"Agent finished: {result[:50]}...")
     return result

@@ -14,8 +14,20 @@ Run:
 from doeff import do
 from doeff.effects.writer import slog
 
-from doeff_agentic import AgentConfig, RunAgent
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+)
 from doeff_agentic.handler import agentic_effectful_handlers
+
+
+def get_assistant_response(messages):
+    """Extract the latest assistant response from messages."""
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return msg.content
+    return ""
 
 
 @do
@@ -24,17 +36,24 @@ def review_and_maybe_fix(code: str):
 
     yield slog(status="reviewing", msg="Reviewing code")
 
-    review = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=(
-                f"Review this code. If it looks good, respond with just 'LGTM'. "
-                f"Otherwise, list the issues briefly.\n\nCode:\n```python\n{code}\n```\n\n"
-                "Then exit."
-            ),
-        ),
-        session_name="reviewer",
+    # Create reviewer session
+    reviewer = yield AgenticCreateSession(
+        name="reviewer",
+        title="Code Reviewer",
     )
+
+    yield AgenticSendMessage(
+        session_id=reviewer.id,
+        content=(
+            f"Review this code. If it looks good, respond with just 'LGTM'. "
+            f"Otherwise, list the issues briefly.\n\nCode:\n```python\n{code}\n```\n\n"
+            "Then exit."
+        ),
+        wait=True,
+    )
+
+    messages = yield AgenticGetMessages(session_id=reviewer.id)
+    review = get_assistant_response(messages)
 
     if "LGTM" in review:
         yield slog(status="approved", msg="Code looks good!")
@@ -42,17 +61,24 @@ def review_and_maybe_fix(code: str):
 
     yield slog(status="fixing", msg="Issues found, fixing...")
 
-    fixed = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=(
-                f"Fix these issues:\n{review}\n\n"
-                f"Original code:\n```python\n{code}\n```\n\n"
-                "Output only the fixed code. Then exit."
-            ),
-        ),
-        session_name="fixer",
+    # Create fixer session
+    fixer = yield AgenticCreateSession(
+        name="fixer",
+        title="Code Fixer",
     )
+
+    yield AgenticSendMessage(
+        session_id=fixer.id,
+        content=(
+            f"Fix these issues:\n{review}\n\n"
+            f"Original code:\n```python\n{code}\n```\n\n"
+            "Output only the fixed code. Then exit."
+        ),
+        wait=True,
+    )
+
+    messages = yield AgenticGetMessages(session_id=fixer.id)
+    fixed = get_assistant_response(messages)
 
     yield slog(status="complete", msg="Fixes applied")
 
