@@ -23,13 +23,15 @@ from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
     AgenticGetMessages,
+    AgenticMessage,
     AgenticNextEvent,
     AgenticSendMessage,
+    AgenticTimeoutError,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
 
-def get_last_assistant_message(messages: list) -> str:
+def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
     """Extract the last assistant message from a list of messages."""
     for msg in reversed(messages):
         if msg.role == "assistant":
@@ -39,24 +41,45 @@ def get_last_assistant_message(messages: list) -> str:
 
 @do
 def wait_for_user_input(session_id: str, prompt: str, timeout: float = 300.0):
-    """Wait for user input by monitoring session events."""
+    """Wait for user input by polling for new messages.
+
+    Uses message-delta polling which is handler-agnostic
+    (works with both OpenCode and tmux handlers).
+    """
     print(f"\n{prompt}")
     print("Waiting for input...")
 
+    # Track initial message count to detect new messages
+    messages = yield AgenticGetMessages(session_id=session_id)
+    initial_count = len(messages)
+    # Track the last user message to avoid returning duplicates
+    last_user_msg_id = None
+    for msg in reversed(messages):
+        if msg.role == "user":
+            last_user_msg_id = msg.id
+            break
+
     start = time.time()
     while time.time() - start < timeout:
-        event = yield AgenticNextEvent(session_id=session_id, timeout=5.0)
+        # Wait for any event (use as a "tick" mechanism)
+        try:
+            event = yield AgenticNextEvent(session_id=session_id, timeout=5.0)
+        except AgenticTimeoutError:
+            # Timeout on single event poll is OK, continue the loop
+            continue
 
         if isinstance(event, AgenticEndOfEvents):
             break
 
-        if event.event_type == "message.started" and event.data.get("role") == "user":
-            messages = yield AgenticGetMessages(session_id=session_id)
+        # Check for new user message (handler-agnostic approach)
+        messages = yield AgenticGetMessages(session_id=session_id)
+        if len(messages) > initial_count:
+            # Find the newest user message
             for msg in reversed(messages):
-                if msg.role == "user":
+                if msg.role == "user" and msg.id != last_user_msg_id:
                     return msg.content
-            break
 
+    # Timeout or end of events
     return None
 
 
