@@ -14,8 +14,20 @@ Run:
 from doeff import do
 from doeff.effects.writer import slog
 
-from doeff_agentic import AgentConfig, RunAgent
-from doeff_agentic.handler import agentic_effectful_handlers
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticGetMessages,
+    AgenticSendMessage,
+)
+from doeff_agentic.opencode_handler import opencode_handler
+
+
+def get_last_assistant_message(messages: list) -> str:
+    """Extract the last assistant message from a list of messages."""
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return msg.content
+    return ""
 
 
 @do
@@ -24,23 +36,27 @@ def research_and_summarize(topic: str):
 
     yield slog(status="researching", msg=f"Researching {topic}")
 
-    research = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=f"Research {topic} and list 5 key points. Be concise. Then exit.",
-        ),
-        session_name="researcher",
+    # Agent 1: Researcher
+    researcher = yield AgenticCreateSession(name="researcher")
+    yield AgenticSendMessage(
+        session_id=researcher.id,
+        content=f"Research {topic} and list 5 key points. Be concise. Then exit.",
+        wait=True,
     )
+    messages = yield AgenticGetMessages(session_id=researcher.id)
+    research = get_last_assistant_message(messages)
 
     yield slog(status="summarizing", msg="Creating summary")
 
-    summary = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=f"Summarize this research in 2-3 sentences:\n{research}\n\nThen exit.",
-        ),
-        session_name="summarizer",
+    # Agent 2: Summarizer
+    summarizer = yield AgenticCreateSession(name="summarizer")
+    yield AgenticSendMessage(
+        session_id=summarizer.id,
+        content=f"Summarize this research in 2-3 sentences:\n{research}\n\nThen exit.",
+        wait=True,
     )
+    messages = yield AgenticGetMessages(session_id=summarizer.id)
+    summary = get_last_assistant_message(messages)
 
     yield slog(status="complete", msg="Done!")
 
@@ -55,9 +71,7 @@ if __name__ == "__main__":
     print(f"Starting research workflow for: {topic}")
     print()
 
-    handlers = agentic_effectful_handlers(
-        workflow_name=f"research-{topic.replace(' ', '-')}",
-    )
+    handlers = opencode_handler()
 
     try:
         result = run_sync(research_and_summarize(topic), handlers=handlers)
