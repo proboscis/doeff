@@ -98,9 +98,7 @@ class WorkflowListItem(Static):
                 agents_str = agents_str[:37] + "..."
 
         # Format: symbol  id       name            agents                    time
-        content = (
-            f"  {symbol}  {wf.id}  {wf.name:<14}  {agents_str:<40}  {time_str:>4}"
-        )
+        content = f"  {symbol}  {wf.id}  {wf.name:<14}  {agents_str:<40}  {time_str:>4}"
         yield Static(content)
 
     def on_mount(self) -> None:
@@ -189,8 +187,7 @@ class AgentListItem(Static):
 
         # Format: marker symbol name       [status]   env      snippet
         content = (
-            f"  {marker} {symbol} {a.name:<12}  [{a.status.value:<8}]  "
-            f"{env_hint:<8}  \"{snippet}\""
+            f'  {marker} {symbol} {a.name:<12}  [{a.status.value:<8}]  {env_hint:<8}  "{snippet}"'
         )
         yield Static(content)
 
@@ -270,15 +267,11 @@ class WorkflowInfoPane(Static):
                 is_current = agent.name == wf.current_agent
                 symbol = _get_status_symbol(agent.status)
                 marker = "←" if is_current else " "
-                lines.append(
-                    f"  {symbol} {agent.name:<16} [{agent.status.value}] {marker}"
-                )
+                lines.append(f"  {symbol} {agent.name:<16} [{agent.status.value}] {marker}")
 
             if wf.current_agent:
                 lines.append("")
-                current = next(
-                    (a for a in wf.agents if a.name == wf.current_agent), None
-                )
+                current = next((a for a in wf.agents if a.name == wf.current_agent), None)
                 if current:
                     lines.append(f"Current Agent: {current.name}")
                     lines.append(f"  Session: {current.session_name}")
@@ -338,9 +331,7 @@ class AgentOutputPane(Static):
         if self.workflow:
             wf = self.workflow
             if wf.current_agent:
-                agent = next(
-                    (a for a in wf.agents if a.name == wf.current_agent), None
-                )
+                agent = next((a for a in wf.agents if a.name == wf.current_agent), None)
                 if agent:
                     symbol = _get_status_symbol(agent.status)
                     lines.append(f"Agent: {agent.name}")

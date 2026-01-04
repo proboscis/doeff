@@ -138,9 +138,7 @@ class WorkflowListScreen(Screen[None]):
             workflows = self.tui_app.api.list_workflows()
             self.app.call_from_thread(self._apply_workflows, workflows)
         except Exception as e:
-            self.app.call_from_thread(
-                self.notify, f"Error refreshing: {e}", severity="error"
-            )
+            self.app.call_from_thread(self.notify, f"Error refreshing: {e}", severity="error")
 
     def _apply_workflows(self, workflows: list[WorkflowInfo]) -> None:
         """Apply workflow data to UI (main thread only)."""
@@ -157,9 +155,7 @@ class WorkflowListScreen(Screen[None]):
         list_container.remove_children()
 
         if not self.workflows:
-            list_container.mount(
-                Static("No active workflows", classes="empty-message")
-            )
+            list_container.mount(Static("No active workflows", classes="empty-message"))
             return
 
         for i, workflow in enumerate(self.workflows):
@@ -412,9 +408,7 @@ class WorkflowWatchScreen(Screen[None]):
 
         # Ensure selected index is valid
         if workflow.agents:
-            self.selected_agent_index = min(
-                self.selected_agent_index, len(workflow.agents) - 1
-            )
+            self.selected_agent_index = min(self.selected_agent_index, len(workflow.agents) - 1)
         else:
             self.selected_agent_index = 0
 
@@ -590,9 +584,7 @@ class AgentLogsScreen(Screen[None]):
     def refresh_logs(self) -> None:
         """Refresh log content."""
         try:
-            output = self.tui_app.api.get_agent_output(
-                self.workflow_id, self.agent_name, lines=200
-            )
+            output = self.tui_app.api.get_agent_output(self.workflow_id, self.agent_name, lines=200)
             self.app.call_from_thread(self._apply_logs, output)
         except Exception as e:
             self.app.call_from_thread(self._apply_logs, f"Error: {e}")

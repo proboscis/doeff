@@ -281,9 +281,7 @@ class StateManager:
 
             # Apply agent_status filter
             if agent_status:
-                has_matching_agent = any(
-                    a.status in agent_status for a in workflow.agents
-                )
+                has_matching_agent = any(a.status in agent_status for a in workflow.agents)
                 if not has_matching_agent:
                     continue
 

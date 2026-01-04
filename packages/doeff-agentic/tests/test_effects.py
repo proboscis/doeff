@@ -165,5 +165,6 @@ class TestEffectImmutable:
 
         # Effects should be frozen dataclasses
         import pytest
+
         with pytest.raises(AttributeError):
             effect.poll_interval = 5.0  # type: ignore
