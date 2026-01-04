@@ -18,6 +18,8 @@ In another terminal, when the workflow is waiting:
     doeff-agentic send <workflow-id>:drafter "revise: make it shorter"
 """
 
+import time
+
 from doeff import do
 from doeff.effects.writer import slog
 
@@ -25,14 +27,15 @@ from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
     AgenticGetMessages,
+    AgenticMessage,
     AgenticNextEvent,
     AgenticSendMessage,
-    AgenticSessionStatus,
+    AgenticTimeoutError,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
 
-def get_last_assistant_message(messages: list) -> str:
+def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
     """Extract the last assistant message from a list of messages."""
     for msg in reversed(messages):
         if msg.role == "assistant":
@@ -42,38 +45,44 @@ def get_last_assistant_message(messages: list) -> str:
 
 @do
 def wait_for_user_input(session_id: str, prompt: str, timeout: float = 300.0):
-    """Wait for user input by monitoring session events.
+    """Wait for user input by polling for new messages.
 
     This is the new pattern replacing WaitForUserInput effect.
-    It monitors the session for BLOCKED status, which indicates
-    the agent is waiting for user input.
+    It uses message-delta polling which is handler-agnostic
+    (works with both OpenCode and tmux handlers).
     """
     print(f"\n{prompt}")
     print("Waiting for input...")
 
-    # Monitor events until we get user input or timeout
-    import time
+    # Track initial message count to detect new messages
+    messages = yield AgenticGetMessages(session_id=session_id)
+    initial_count = len(messages)
+    # Track the last user message to avoid returning duplicates
+    last_user_msg_id = None
+    for msg in reversed(messages):
+        if msg.role == "user":
+            last_user_msg_id = msg.id
+            break
 
     start = time.time()
     while time.time() - start < timeout:
-        event = yield AgenticNextEvent(session_id=session_id, timeout=5.0)
+        # Wait for any event (use as a "tick" mechanism)
+        try:
+            event = yield AgenticNextEvent(session_id=session_id, timeout=5.0)
+        except AgenticTimeoutError:
+            # Timeout on single event poll is OK, continue the loop
+            continue
 
         if isinstance(event, AgenticEndOfEvents):
             break
 
-        # Check if session became blocked (waiting for input)
-        if event.event_type == "session.blocked":
-            # Session is waiting - user needs to send input
-            continue
-
-        # Check if we got a new user message (input received)
-        if event.event_type == "message.started" and event.data.get("role") == "user":
-            messages = yield AgenticGetMessages(session_id=session_id)
-            # Find the latest user message (the input)
+        # Check for new user message (handler-agnostic approach)
+        messages = yield AgenticGetMessages(session_id=session_id)
+        if len(messages) > initial_count:
+            # Find the newest user message
             for msg in reversed(messages):
-                if msg.role == "user":
+                if msg.role == "user" and msg.id != last_user_msg_id:
                     return msg.content
-            break
 
     # Timeout or end of events
     return None

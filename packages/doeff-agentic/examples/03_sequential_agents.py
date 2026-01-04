@@ -17,12 +17,13 @@ from doeff.effects.writer import slog
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
+    AgenticMessage,
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
 
-def get_last_assistant_message(messages: list) -> str:
+def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
     """Extract the last assistant message from a list of messages."""
     for msg in reversed(messages):
         if msg.role == "assistant":
