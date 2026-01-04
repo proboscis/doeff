@@ -34,9 +34,14 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .state import StateManager, generate_workflow_id, get_default_state_dir
+from .event_log import EventLogManager, WorkflowState
 from .types import (
     AgentConfig,
     AgentStatus,
+    AgenticSessionHandle,
+    AgenticSessionStatus,
+    AgenticWorkflowHandle,
+    AgenticWorkflowStatus,
     WatchEventType,
     WatchUpdate,
     WorkflowInfo,
@@ -65,6 +70,7 @@ class AgenticAPI:
         """
         self.state_dir = Path(state_dir) if state_dir else get_default_state_dir()
         self._state_manager = StateManager(self.state_dir)
+        self._event_log = EventLogManager(self.state_dir)
 
     def list_workflows(
         self,
@@ -423,6 +429,77 @@ class AgenticAPI:
             List of trace entries
         """
         return self._state_manager.read_trace(workflow_id)
+
+    def get_workflow_handle(self, workflow_id: str) -> AgenticWorkflowHandle | None:
+        """Get workflow handle using new JSONL event log.
+
+        Args:
+            workflow_id: Full or prefix workflow ID
+
+        Returns:
+            AgenticWorkflowHandle or None if not found
+        """
+        return self._event_log.get_workflow_handle(workflow_id)
+
+    def get_workflow_state(self, workflow_id: str) -> WorkflowState | None:
+        """Get full workflow state including sessions and environments.
+
+        Args:
+            workflow_id: Full or prefix workflow ID
+
+        Returns:
+            WorkflowState or None if not found
+        """
+        return self._event_log.reconstruct_workflow_state(workflow_id)
+
+    def list_workflow_handles(
+        self,
+        status: list[AgenticWorkflowStatus] | None = None,
+    ) -> list[AgenticWorkflowHandle]:
+        """List workflows using new JSONL event log.
+
+        Args:
+            status: Filter by workflow status
+
+        Returns:
+            List of AgenticWorkflowHandle
+        """
+        return self._event_log.list_workflows(status=status)
+
+    def get_session_handle(
+        self,
+        workflow_id: str,
+        session_name: str,
+    ) -> AgenticSessionHandle | None:
+        """Get session handle by name.
+
+        Args:
+            workflow_id: Full or prefix workflow ID
+            session_name: Session name
+
+        Returns:
+            AgenticSessionHandle or None if not found
+        """
+        state = self._event_log.reconstruct_workflow_state(workflow_id)
+        if state is None:
+            return None
+        return state.sessions.get(session_name)
+
+    def watch_workflow_state(
+        self,
+        workflow_id: str,
+        poll_interval: float = 1.0,
+    ) -> Iterator[WorkflowState]:
+        """Watch workflow state changes using JSONL event log.
+
+        Args:
+            workflow_id: Full or prefix workflow ID
+            poll_interval: Seconds between polls
+
+        Yields:
+            WorkflowState on each change
+        """
+        yield from self._event_log.watch_workflow(workflow_id, poll_interval)
 
 
 __all__ = ["AgenticAPI"]

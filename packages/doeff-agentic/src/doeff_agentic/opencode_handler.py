@@ -66,6 +66,7 @@ from .types import (
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )
+from .event_log import EventLogManager, get_default_state_dir
 
 
 # =============================================================================
@@ -172,6 +173,7 @@ class OpenCodeHandler:
         port: int | None = None,
         startup_timeout: float = 30.0,
         working_dir: str | None = None,
+        state_dir: str | Path | None = None,
     ) -> None:
         """Initialize the OpenCode handler.
 
@@ -181,17 +183,20 @@ class OpenCodeHandler:
             port: Port for auto-started server (auto-assign if None)
             startup_timeout: Timeout for server startup
             working_dir: Default working directory
+            state_dir: Directory for JSONL event logs (defaults to XDG state dir)
         """
         self._server_url = server_url
         self._hostname = hostname
         self._port = port
         self._startup_timeout = startup_timeout
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
+        self._state_dir = Path(state_dir) if state_dir else get_default_state_dir()
 
         self._client: SyncHttpClient | None = None
         self._server_process: subprocess.Popen | None = None
         self._workflow: WorkflowState | None = None
         self._sse_connections: dict[str, Any] = {}  # session_id -> SSE iterator
+        self._event_log: EventLogManager = EventLogManager(self._state_dir)
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -297,6 +302,10 @@ class OpenCodeHandler:
             metadata=effect.metadata,
         )
 
+        self._event_log.log_workflow_created(
+            workflow_id, effect.name, effect.metadata
+        )
+
         return AgenticWorkflowHandle(
             id=workflow_id,
             name=effect.name,
@@ -368,6 +377,7 @@ class OpenCodeHandler:
         )
 
         self._workflow.environments[env_id] = handle
+        self._event_log.log_environment_created(self._workflow.id, handle)
         return handle
 
     def handle_get_environment(
@@ -408,6 +418,7 @@ class OpenCodeHandler:
             shutil.rmtree(handle.working_dir, ignore_errors=True)
 
         del self._workflow.environments[effect.environment_id]
+        self._event_log.log_environment_deleted(self._workflow.id, effect.environment_id)
         return True
 
     # -------------------------------------------------------------------------
@@ -468,6 +479,7 @@ class OpenCodeHandler:
 
         self._workflow.sessions[effect.name] = handle
         self._workflow.session_by_id[session_id] = effect.name
+        self._event_log.log_session_created(self._workflow.id, handle)
         return handle
 
     def handle_fork_session(self, effect: AgenticForkSession) -> AgenticSessionHandle:
@@ -510,6 +522,7 @@ class OpenCodeHandler:
 
         self._workflow.sessions[effect.name] = handle
         self._workflow.session_by_id[new_session_id] = effect.name
+        self._event_log.log_session_created(self._workflow.id, handle)
         return handle
 
     def handle_get_session(self, effect: AgenticGetSession) -> AgenticSessionHandle:
@@ -553,6 +566,9 @@ class OpenCodeHandler:
                 agent=session.agent,
                 model=session.model,
             )
+            self._event_log.log_session_status(
+                self._workflow.id, name, AgenticSessionStatus.ABORTED  # type: ignore
+            )
 
     def handle_delete_session(self, effect: AgenticDeleteSession) -> bool:
         """Handle AgenticDeleteSession effect."""
@@ -562,10 +578,10 @@ class OpenCodeHandler:
 
         result = self._client.delete(f"/session/{effect.session_id}")
 
-        # Update local state
         name = self._workflow.session_by_id.pop(effect.session_id, None)
         if name:
             self._workflow.sessions.pop(name, None)
+            self._event_log.log_session_deleted(self._workflow.id, name)
 
         return bool(result)
 
@@ -577,8 +593,8 @@ class OpenCodeHandler:
         """Handle AgenticSendMessage effect."""
         self._ensure_workflow()
         assert self._client is not None
+        assert self._workflow is not None
 
-        # Build request body
         body: dict[str, Any] = {
             "parts": [{"type": "text", "text": effect.content}],
         }
@@ -588,15 +604,17 @@ class OpenCodeHandler:
         if effect.model:
             body["model"] = effect.model
 
+        session_name = self._workflow.session_by_id.get(effect.session_id, "unknown")
+
         if effect.wait:
-            # Synchronous: wait for response
             result = self._client.post(
                 f"/session/{effect.session_id}/message", json=body
             )
         else:
-            # Asynchronous: fire and forget
             self._client.post(f"/session/{effect.session_id}/prompt_async", json=body)
-            # Return a placeholder handle
+            self._event_log.log_message_sent(
+                self._workflow.id, session_name, "user", effect.content
+            )
             return AgenticMessageHandle(
                 id=f"msg-{time.time_ns()}",
                 session_id=effect.session_id,
@@ -607,8 +625,10 @@ class OpenCodeHandler:
         assert result is not None
         info = result.get("info", {})
 
-        # Update session status
         self._update_session_status(effect.session_id, AgenticSessionStatus.RUNNING)
+        self._event_log.log_message_sent(
+            self._workflow.id, session_name, "user", effect.content
+        )
 
         return AgenticMessageHandle(
             id=info.get("id", f"msg-{time.time_ns()}"),
@@ -937,6 +957,7 @@ def opencode_handler(
     port: int | None = None,
     startup_timeout: float = 30.0,
     working_dir: str | None = None,
+    state_dir: str | Path | None = None,
 ) -> dict[type, Any]:
     """Create CESK-compatible handlers for agentic effects using OpenCode.
 
@@ -946,6 +967,7 @@ def opencode_handler(
         port: Port for auto-started server (auto-assign if None)
         startup_timeout: Timeout for server startup
         working_dir: Default working directory
+        state_dir: Directory for JSONL event logs
 
     Returns:
         Handler dictionary suitable for use with doeff's run_sync.
@@ -963,6 +985,7 @@ def opencode_handler(
         port=port,
         startup_timeout=startup_timeout,
         working_dir=working_dir,
+        state_dir=state_dir,
     )
 
     return {

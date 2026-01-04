@@ -27,7 +27,12 @@ from rich.table import Table
 from rich.text import Text
 
 from .api import AgenticAPI
-from .types import AgentStatus, WorkflowStatus
+from .types import (
+    AgentStatus,
+    AgenticSessionStatus,
+    AgenticWorkflowStatus,
+    WorkflowStatus,
+)
 
 console = Console()
 
@@ -50,7 +55,9 @@ def _format_duration(dt: datetime) -> str:
         return f"{seconds // 86400}d ago"
 
 
-def _status_color(status: WorkflowStatus | AgentStatus) -> str:
+def _status_color(
+    status: WorkflowStatus | AgentStatus | AgenticWorkflowStatus | AgenticSessionStatus,
+) -> str:
     """Get Rich color for a status."""
     if isinstance(status, WorkflowStatus):
         return {
@@ -60,6 +67,24 @@ def _status_color(status: WorkflowStatus | AgentStatus) -> str:
             WorkflowStatus.COMPLETED: "blue",
             WorkflowStatus.FAILED: "red",
             WorkflowStatus.STOPPED: "magenta",
+        }.get(status, "white")
+    elif isinstance(status, AgenticWorkflowStatus):
+        return {
+            AgenticWorkflowStatus.PENDING: "dim",
+            AgenticWorkflowStatus.RUNNING: "green",
+            AgenticWorkflowStatus.DONE: "blue",
+            AgenticWorkflowStatus.ERROR: "red",
+            AgenticWorkflowStatus.ABORTED: "magenta",
+        }.get(status, "white")
+    elif isinstance(status, AgenticSessionStatus):
+        return {
+            AgenticSessionStatus.PENDING: "dim",
+            AgenticSessionStatus.BOOTING: "cyan",
+            AgenticSessionStatus.RUNNING: "green",
+            AgenticSessionStatus.BLOCKED: "yellow",
+            AgenticSessionStatus.DONE: "blue",
+            AgenticSessionStatus.ERROR: "red",
+            AgenticSessionStatus.ABORTED: "magenta",
         }.get(status, "white")
     else:
         return {

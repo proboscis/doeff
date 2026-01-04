@@ -71,6 +71,7 @@ from .types import (
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )
+from .event_log import EventLogManager, get_default_state_dir
 
 
 # =============================================================================
@@ -260,18 +261,24 @@ class TmuxHandler:
     - Polling-based status detection
     """
 
-    SUPPORTED_CAPABILITIES = frozenset({"worktree"})  # worktree via git commands
+    SUPPORTED_CAPABILITIES = frozenset({"worktree"})
 
-    def __init__(self, working_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        working_dir: str | None = None,
+        state_dir: str | Path | None = None,
+    ) -> None:
         """Initialize the tmux handler.
 
         Args:
             working_dir: Default working directory
+            state_dir: Directory for JSONL event logs
         """
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
+        self._state_dir = Path(state_dir) if state_dir else get_default_state_dir()
         self._workflow: TmuxWorkflowState | None = None
+        self._event_log: EventLogManager = EventLogManager(self._state_dir)
 
-        # Verify tmux is available
         if not is_tmux_available():
             raise AgenticServerError("tmux is not installed or not in PATH")
 
@@ -308,6 +315,10 @@ class TmuxHandler:
             status=AgenticWorkflowStatus.RUNNING,
             created_at=datetime.now(timezone.utc),
             metadata=effect.metadata,
+        )
+
+        self._event_log.log_workflow_created(
+            workflow_id, effect.name, effect.metadata
         )
 
         return AgenticWorkflowHandle(
@@ -371,6 +382,7 @@ class TmuxHandler:
         )
 
         self._workflow.environments[env_id] = handle
+        self._event_log.log_environment_created(self._workflow.id, handle)
         return handle
 
     def handle_get_environment(
@@ -470,6 +482,7 @@ class TmuxHandler:
         state = TmuxSessionState(handle=handle, pane_id=pane_id)
         self._workflow.sessions[effect.name] = state
         self._workflow.session_by_id[session_id] = effect.name
+        self._event_log.log_session_created(self._workflow.id, handle)
 
         return handle
 
@@ -919,11 +932,15 @@ class TmuxHandler:
 # =============================================================================
 
 
-def tmux_handler(working_dir: str | None = None) -> dict[type, Any]:
+def tmux_handler(
+    working_dir: str | None = None,
+    state_dir: str | Path | None = None,
+) -> dict[type, Any]:
     """Create CESK-compatible handlers for agentic effects using tmux.
 
     Args:
         working_dir: Default working directory
+        state_dir: Directory for JSONL event logs
 
     Returns:
         Handler dictionary suitable for use with doeff's run_sync.
@@ -935,7 +952,7 @@ def tmux_handler(working_dir: str | None = None) -> dict[type, Any]:
         handlers = tmux_handler()
         result = run_sync(my_workflow(), handlers=handlers)
     """
-    handler = TmuxHandler(working_dir=working_dir)
+    handler = TmuxHandler(working_dir=working_dir, state_dir=state_dir)
 
     return {
         # Workflow
