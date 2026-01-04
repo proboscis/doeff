@@ -14,11 +14,50 @@ Run:
     uv run python examples/07_pr_review_workflow.py
 """
 
+import time
+
 from doeff import do
 from doeff.effects.writer import slog
 
-from doeff_agentic import AgentConfig, RunAgent, WaitForUserInput
-from doeff_agentic.handler import agentic_effectful_handlers
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticEndOfEvents,
+    AgenticGetMessages,
+    AgenticNextEvent,
+    AgenticSendMessage,
+)
+from doeff_agentic.opencode_handler import opencode_handler
+
+
+def get_last_assistant_message(messages: list) -> str:
+    """Extract the last assistant message from a list of messages."""
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return msg.content
+    return ""
+
+
+@do
+def wait_for_user_input(session_id: str, prompt: str, timeout: float = 300.0):
+    """Wait for user input by monitoring session events."""
+    print(f"\n{prompt}")
+    print("Waiting for input...")
+
+    start = time.time()
+    while time.time() - start < timeout:
+        event = yield AgenticNextEvent(session_id=session_id, timeout=5.0)
+
+        if isinstance(event, AgenticEndOfEvents):
+            break
+
+        if event.event_type == "message.started" and event.data.get("role") == "user":
+            messages = yield AgenticGetMessages(session_id=session_id)
+            for msg in reversed(messages):
+                if msg.role == "user":
+                    return msg.content
+            break
+
+    return None
 
 
 @do
@@ -38,23 +77,28 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
     yield slog(status="automated-review", msg="Starting automated review")
 
     # Phase 1: Automated Review
-    review = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=(
-                f"Review the PR at {pr_url}\n\n"
-                "Check for:\n"
-                "- Code style issues\n"
-                "- Potential bugs\n"
-                "- Missing tests\n"
-                "- Documentation gaps\n\n"
-                "List any issues found, or say 'LGTM' if everything looks good.\n"
-                "Then exit."
-            ),
-            profile="code-review",
-        ),
-        session_name="review-agent",
+    review_session = yield AgenticCreateSession(
+        name="review-agent",
+        title="Code Reviewer",
     )
+
+    yield AgenticSendMessage(
+        session_id=review_session.id,
+        content=(
+            f"Review the PR at {pr_url}\n\n"
+            "Check for:\n"
+            "- Code style issues\n"
+            "- Potential bugs\n"
+            "- Missing tests\n"
+            "- Documentation gaps\n\n"
+            "List any issues found, or say 'LGTM' if everything looks good.\n"
+            "Then exit."
+        ),
+        wait=True,
+    )
+
+    messages = yield AgenticGetMessages(session_id=review_session.id)
+    review = get_last_assistant_message(messages)
 
     # Check if issues were found
     has_issues = "LGTM" not in review.upper()
@@ -62,27 +106,30 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
     if has_issues:
         yield slog(
             status="issues-found",
-            msg=f"Found issues in review",
+            msg="Found issues in review",
             issues_count=review.count("\n- ") if "\n- " in review else 1,
         )
 
         # Phase 2: Fix Issues
         yield slog(status="fixing", msg="Attempting to fix issues")
 
-        fix_result = yield RunAgent(
-            config=AgentConfig(
-                agent_type="claude",
-                prompt=(
-                    f"The following issues were found in the PR:\n{review}\n\n"
-                    "For each issue:\n"
-                    "1. Explain what needs to change\n"
-                    "2. Show the fix (if code-related)\n"
-                    "3. Verify the fix is correct\n\n"
-                    "Then exit."
-                ),
+        fix_session = yield AgenticCreateSession(name="fix-agent")
+
+        yield AgenticSendMessage(
+            session_id=fix_session.id,
+            content=(
+                f"The following issues were found in the PR:\n{review}\n\n"
+                "For each issue:\n"
+                "1. Explain what needs to change\n"
+                "2. Show the fix (if code-related)\n"
+                "3. Verify the fix is correct\n\n"
+                "Then exit."
             ),
-            session_name="fix-agent",
+            wait=True,
         )
+
+        messages = yield AgenticGetMessages(session_id=fix_session.id)
+        fix_result = get_last_assistant_message(messages)
 
         yield slog(status="fixes-ready", msg="Fixes prepared")
 
@@ -111,17 +158,17 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
             print(f"\nProposed fixes:\n{result['fixes'][:500]}...")
         print("\n" + "=" * 60)
         print("Run in another terminal:")
-        print("  doeff-agentic send <workflow-id> 'approve'")
-        print("  doeff-agentic send <workflow-id> 'reject'")
+        print("  doeff-agentic send <workflow-id>:review-agent 'approve'")
+        print("  doeff-agentic send <workflow-id>:review-agent 'reject'")
         print("=" * 60 + "\n")
 
-        approval = yield WaitForUserInput(
-            session_name="review-agent",
+        approval = yield from wait_for_user_input(
+            session_id=review_session.id,
             prompt="Review complete. Enter 'approve' or 'reject':",
-            timeout=600,  # 10 minutes
+            timeout=600.0,
         )
 
-        if approval.lower().strip() == "reject":
+        if approval and approval.lower().strip() == "reject":
             yield slog(status="rejected", msg="Review rejected by human")
             result["status"] = "rejected"
             result["human_decision"] = "rejected"
@@ -149,9 +196,7 @@ if __name__ == "__main__":
     print(f"Require approval: {require_approval}")
     print()
 
-    handlers = agentic_effectful_handlers(
-        workflow_name="pr-review",
-    )
+    handlers = opencode_handler()
 
     try:
         result = run_sync(
