@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urljoin
 
+from .event_log import EventLogWriter, get_default_event_log_dir
 from .effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -191,6 +192,7 @@ class OpenCodeHandler:
         self._client: SyncHttpClient | None = None
         self._server_process: subprocess.Popen | None = None
         self._workflow: WorkflowState | None = None
+        self._event_log: EventLogWriter | None = None
         self._sse_connections: dict[str, Any] = {}  # session_id -> SSE iterator
 
     # -------------------------------------------------------------------------
@@ -297,13 +299,19 @@ class OpenCodeHandler:
             metadata=effect.metadata,
         )
 
-        return AgenticWorkflowHandle(
+        self._event_log = EventLogWriter(workflow_id)
+
+        handle = AgenticWorkflowHandle(
             id=workflow_id,
             name=effect.name,
             status=AgenticWorkflowStatus.RUNNING,
             created_at=self._workflow.created_at,
             metadata=effect.metadata,
         )
+
+        self._event_log.log_workflow_created(handle)
+
+        return handle
 
     def handle_get_workflow(self, effect: AgenticGetWorkflow) -> AgenticWorkflowHandle:
         """Handle AgenticGetWorkflow effect."""
@@ -368,6 +376,10 @@ class OpenCodeHandler:
         )
 
         self._workflow.environments[env_id] = handle
+
+        if self._event_log:
+            self._event_log.log_environment_created(handle)
+
         return handle
 
     def handle_get_environment(
@@ -408,6 +420,10 @@ class OpenCodeHandler:
             shutil.rmtree(handle.working_dir, ignore_errors=True)
 
         del self._workflow.environments[effect.environment_id]
+
+        if self._event_log:
+            self._event_log.log_environment_deleted(effect.environment_id)
+
         return True
 
     # -------------------------------------------------------------------------
@@ -468,6 +484,10 @@ class OpenCodeHandler:
 
         self._workflow.sessions[effect.name] = handle
         self._workflow.session_by_id[session_id] = effect.name
+
+        if self._event_log:
+            self._event_log.log_session_created(handle)
+
         return handle
 
     def handle_fork_session(self, effect: AgenticForkSession) -> AgenticSessionHandle:
@@ -510,6 +530,10 @@ class OpenCodeHandler:
 
         self._workflow.sessions[effect.name] = handle
         self._workflow.session_by_id[new_session_id] = effect.name
+
+        if self._event_log:
+            self._event_log.log_session_forked(handle, effect.session_id, effect.message_id)
+
         return handle
 
     def handle_get_session(self, effect: AgenticGetSession) -> AgenticSessionHandle:
@@ -534,15 +558,15 @@ class OpenCodeHandler:
     def handle_abort_session(self, effect: AgenticAbortSession) -> None:
         """Handle AgenticAbortSession effect."""
         self._ensure_workflow()
+        assert self._workflow is not None
         assert self._client is not None
 
         self._client.post(f"/session/{effect.session_id}/abort")
 
-        # Update local state
-        name = self._workflow.session_by_id.get(effect.session_id)  # type: ignore
-        if name and name in self._workflow.sessions:  # type: ignore
-            session = self._workflow.sessions[name]  # type: ignore
-            self._workflow.sessions[name] = AgenticSessionHandle(  # type: ignore
+        name = self._workflow.session_by_id.get(effect.session_id)
+        if name and name in self._workflow.sessions:
+            session = self._workflow.sessions[name]
+            self._workflow.sessions[name] = AgenticSessionHandle(
                 id=session.id,
                 name=session.name,
                 workflow_id=session.workflow_id,
@@ -554,6 +578,9 @@ class OpenCodeHandler:
                 model=session.model,
             )
 
+            if self._event_log:
+                self._event_log.log_session_aborted(name, effect.session_id)
+
     def handle_delete_session(self, effect: AgenticDeleteSession) -> bool:
         """Handle AgenticDeleteSession effect."""
         self._ensure_workflow()
@@ -562,10 +589,12 @@ class OpenCodeHandler:
 
         result = self._client.delete(f"/session/{effect.session_id}")
 
-        # Update local state
         name = self._workflow.session_by_id.pop(effect.session_id, None)
         if name:
             self._workflow.sessions.pop(name, None)
+
+            if self._event_log:
+                self._event_log.log_session_deleted(name, effect.session_id)
 
         return bool(result)
 
@@ -576,9 +605,9 @@ class OpenCodeHandler:
     def handle_send_message(self, effect: AgenticSendMessage) -> AgenticMessageHandle:
         """Handle AgenticSendMessage effect."""
         self._ensure_workflow()
+        assert self._workflow is not None
         assert self._client is not None
 
-        # Build request body
         body: dict[str, Any] = {
             "parts": [{"type": "text", "text": effect.content}],
         }
@@ -588,17 +617,21 @@ class OpenCodeHandler:
         if effect.model:
             body["model"] = effect.model
 
+        session_name = self._workflow.session_by_id.get(effect.session_id)
+
         if effect.wait:
-            # Synchronous: wait for response
             result = self._client.post(
                 f"/session/{effect.session_id}/message", json=body
             )
         else:
-            # Asynchronous: fire and forget
             self._client.post(f"/session/{effect.session_id}/prompt_async", json=body)
-            # Return a placeholder handle
+            msg_id = f"msg-{time.time_ns()}"
+
+            if self._event_log and session_name:
+                self._event_log.log_message_sent(session_name, msg_id, "user", effect.content)
+
             return AgenticMessageHandle(
-                id=f"msg-{time.time_ns()}",
+                id=msg_id,
                 session_id=effect.session_id,
                 role="user",
                 created_at=datetime.now(timezone.utc),
@@ -606,12 +639,15 @@ class OpenCodeHandler:
 
         assert result is not None
         info = result.get("info", {})
+        msg_id = info.get("id", f"msg-{time.time_ns()}")
 
-        # Update session status
         self._update_session_status(effect.session_id, AgenticSessionStatus.RUNNING)
 
+        if self._event_log and session_name:
+            self._event_log.log_message_sent(session_name, msg_id, "user", effect.content)
+
         return AgenticMessageHandle(
-            id=info.get("id", f"msg-{time.time_ns()}"),
+            id=msg_id,
             session_id=effect.session_id,
             role=info.get("role", "user"),
             created_at=datetime.now(timezone.utc),
@@ -888,6 +924,8 @@ class OpenCodeHandler:
             return
 
         session = self._workflow.sessions[name]
+        old_status = session.status
+
         self._workflow.sessions[name] = AgenticSessionHandle(
             id=session.id,
             name=session.name,
@@ -899,6 +937,9 @@ class OpenCodeHandler:
             agent=session.agent,
             model=session.model,
         )
+
+        if self._event_log and old_status != status:
+            self._event_log.log_session_status(name, status)
 
     def _refresh_session_status(self, session_id: str) -> None:
         """Refresh session status from server."""

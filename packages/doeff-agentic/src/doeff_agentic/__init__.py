@@ -152,6 +152,19 @@ from .state import (
     get_default_state_dir,
 )
 
+# Event logging
+from .event_log import (
+    EventLogWriter,
+    EventLogReader,
+    WorkflowState,
+    LogEvent,
+    WorkflowEventType,
+    SessionEventType,
+    MessageEventType,
+    EnvironmentEventType,
+    get_default_event_log_dir,
+)
+
 # API
 from .api import AgenticAPI
 
@@ -253,6 +266,16 @@ __all__ = [
     "StateManager",
     "generate_workflow_id",
     "get_default_state_dir",
+    # Event logging
+    "EventLogWriter",
+    "EventLogReader",
+    "WorkflowState",
+    "LogEvent",
+    "WorkflowEventType",
+    "SessionEventType",
+    "MessageEventType",
+    "EnvironmentEventType",
+    "get_default_event_log_dir",
     # API
     "AgenticAPI",
     # OpenCode Handler (new - primary)
