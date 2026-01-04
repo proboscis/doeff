@@ -486,15 +486,66 @@ def env_list(
         env-abc     worktree   /tmp/doeff/worktrees/abc123    reviewer, fixer
         env-def     worktree   /tmp/doeff/worktrees/def456    tester
     """
-    api: AgenticAPI = ctx.obj["api"]
+    from .event_log import EventLogReader, WorkflowIndex
 
-    # Note: Environment tracking is currently in-memory per handler
-    # This command shows a placeholder for future persistent storage
-    if output_json:
-        click.echo(json.dumps({"environments": [], "note": "Environment listing requires persistent storage"}))
+    reader = EventLogReader()
+    index = WorkflowIndex()
+
+    # Get workflows to scan
+    if workflow:
+        try:
+            resolved = index.resolve_prefix(workflow)
+            workflow_ids = [resolved] if resolved else []
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
     else:
-        console.print("[dim]Environment listing not yet implemented for persistent storage[/dim]")
-        console.print("[dim]Environments are tracked in-memory per workflow handler[/dim]")
+        workflow_ids = reader.list_workflows()
+
+    environments = []
+
+    for wf_id in workflow_ids:
+        for env_id in reader.list_environments(wf_id):
+            env = reader.reconstruct_environment_state(wf_id, env_id)
+            if env:
+                sessions = reader.get_sessions_for_environment(wf_id, env_id)
+                environments.append({
+                    "workflow_id": wf_id,
+                    "env_id": env_id,
+                    "env_type": env.env_type.value,
+                    "name": env.name,
+                    "working_dir": env.working_dir,
+                    "sessions": sessions,
+                })
+
+    if output_json:
+        click.echo(json.dumps({"environments": environments}))
+    else:
+        if not environments:
+            console.print("[dim]No environments found[/dim]")
+            return
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("ENV ID", style="cyan")
+        table.add_column("TYPE")
+        table.add_column("WORKING DIR")
+        table.add_column("SESSIONS")
+
+        for env in environments:
+            sessions_str = ", ".join(env["sessions"]) if env["sessions"] else "-"
+            # Truncate working dir if too long
+            work_dir = env["working_dir"]
+            if len(work_dir) > 40:
+                work_dir = "..." + work_dir[-37:]
+
+            table.add_row(
+                env["env_id"][:8],
+                env["env_type"],
+                work_dir,
+                sessions_str,
+            )
+
+        console.print(table)
 
 
 @env.command("cleanup")

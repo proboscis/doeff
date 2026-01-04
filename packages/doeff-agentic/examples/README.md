@@ -1,6 +1,6 @@
 # doeff-agentic Examples
 
-Progressive examples that teach you how to build agent workflows.
+Progressive examples that teach you how to build agent workflows using the new spec-compliant API.
 
 ## Prerequisites
 
@@ -10,15 +10,52 @@ Progressive examples that teach you how to build agent workflows.
    uv sync
    ```
 
-2. Ensure you have an agent CLI available (e.g., Claude Code):
-   ```bash
-   claude --version
-   ```
+2. Ensure you have OpenCode server available, or the CLI will auto-start one.
 
-3. Ensure tmux is installed:
-   ```bash
-   tmux -V
-   ```
+## New API Overview
+
+These examples use the new spec-compliant API:
+
+| Effect | Description |
+|--------|-------------|
+| `AgenticCreateSession` | Create a new agent session |
+| `AgenticSendMessage` | Send a message to a session |
+| `AgenticGetMessages` | Get messages from a session |
+| `AgenticNextEvent` | Wait for next event from session |
+| `AgenticGather` | Wait for multiple sessions to complete |
+| `opencode_handler()` | Create handlers for use with `run_sync` |
+
+### Basic Pattern
+
+```python
+from doeff import do, run_sync
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+)
+from doeff_agentic.opencode_handler import opencode_handler
+
+@do
+def my_workflow():
+    # Create a session
+    session = yield AgenticCreateSession(name="my-agent")
+    
+    # Send a message and wait for completion
+    yield AgenticSendMessage(
+        session_id=session.id,
+        content="Your prompt here",
+        wait=True,
+    )
+    
+    # Get the response
+    messages = yield AgenticGetMessages(session_id=session.id)
+    return messages[-1].content
+
+# Run the workflow
+handlers = opencode_handler()
+result = run_sync(my_workflow(), handlers=handlers)
+```
 
 ## Examples
 
@@ -53,11 +90,11 @@ Pause workflow for human review.
 ```bash
 uv run python examples/05_human_in_loop.py
 # When waiting, in another terminal:
-doeff-agentic send <workflow-id> "approve"
+doeff-agentic send <workflow-id>:drafter "approve"
 ```
 
 ### 06. Parallel Agents
-Run multiple agents with different perspectives.
+Run multiple agents concurrently with AgenticGather.
 ```bash
 uv run python examples/06_parallel_agents.py
 ```
@@ -79,20 +116,20 @@ doeff-agentic ps
 # Watch a specific workflow
 doeff-agentic watch <workflow-id>
 
-# Attach to agent's tmux session
-doeff-agentic attach <workflow-id>
+# Attach to agent's session
+doeff-agentic attach <workflow-id>:<session-name>
 
 # View agent output
 doeff-agentic logs <workflow-id>
 
-# Send a message to an agent
-doeff-agentic send <workflow-id> "your message"
+# Send a message to a session
+doeff-agentic send <workflow-id>:<session-name> "your message"
 
 # Stop a workflow
 doeff-agentic stop <workflow-id>
 ```
 
-## Using the API
+## Using the Python API
 
 You can also use the Python API directly:
 
@@ -114,3 +151,17 @@ for update in api.watch("a3f"):
 # Send message
 api.send_message("a3f", "continue")
 ```
+
+## Migration from Legacy API
+
+If you have existing code using the old API, here's how to migrate:
+
+| Old API | New API |
+|---------|---------|
+| `RunAgent(config=AgentConfig(...))` | `AgenticCreateSession(name=...)` + `AgenticSendMessage(wait=True)` |
+| `SendMessage(session_name, msg)` | `AgenticSendMessage(session_id, content)` |
+| `WaitForStatus(session_name, status)` | Loop with `AgenticNextEvent` |
+| `CaptureOutput(session_name)` | `AgenticGetMessages(session_id)` |
+| `WaitForUserInput(session_name, prompt)` | Loop with `AgenticNextEvent` checking BLOCKED status |
+| `StopAgent(session_name)` | `AgenticAbortSession(session_id)` |
+| `agentic_effectful_handlers()` | `opencode_handler()` |

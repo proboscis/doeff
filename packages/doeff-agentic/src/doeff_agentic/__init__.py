@@ -152,6 +152,13 @@ from .state import (
     get_default_state_dir,
 )
 
+# Event logging (new - JSONL event logs)
+from .event_log import (
+    EventLogWriter,
+    EventLogReader,
+    WorkflowIndex,
+)
+
 # API
 from .api import AgenticAPI
 
@@ -253,6 +260,10 @@ __all__ = [
     "StateManager",
     "generate_workflow_id",
     "get_default_state_dir",
+    # Event logging
+    "EventLogWriter",
+    "EventLogReader",
+    "WorkflowIndex",
     # API
     "AgenticAPI",
     # OpenCode Handler (new - primary)
