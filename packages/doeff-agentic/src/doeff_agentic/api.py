@@ -29,13 +29,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
-from .state import StateManager, generate_workflow_id, get_default_state_dir
+from .state import StateManager, get_default_state_dir
 from .types import (
-    AgentConfig,
     AgentStatus,
     WatchEventType,
     WatchUpdate,
@@ -206,10 +205,10 @@ class AgenticAPI:
 
         if in_tmux:
             # Switch client
-            subprocess.run(["tmux", "switch-client", "-t", session_name])
+            subprocess.run(["tmux", "switch-client", "-t", session_name], check=False)
         else:
             # Attach
-            subprocess.run(["tmux", "attach-session", "-t", session_name])
+            subprocess.run(["tmux", "attach-session", "-t", session_name], check=False)
 
     def send_message(
         self,
@@ -262,7 +261,7 @@ class AgenticAPI:
         target = pane_id or session_name
         result = subprocess.run(
             ["tmux", "send-keys", "-t", target, "-l", message, "Enter"],
-            capture_output=True,
+            check=False, capture_output=True,
         )
         return result.returncode == 0
 
@@ -283,7 +282,7 @@ class AgenticAPI:
         for agent in workflow.agents:
             result = subprocess.run(
                 ["tmux", "kill-session", "-t", agent.session_name],
-                capture_output=True,
+                check=False, capture_output=True,
             )
             if result.returncode == 0:
                 stopped.append(agent.name)
@@ -347,18 +346,23 @@ class AgenticAPI:
 
         result = subprocess.run(
             ["tmux", "capture-pane", "-p", "-t", pane_id, "-S", f"-{lines}"],
-            capture_output=True,
+            check=False, capture_output=True,
             text=True,
         )
         return result.stdout if result.returncode == 0 else ""
 
     def run(
         self,
-        workflow,  # Generator/Program from doeff
+        workflow: Any,  # Generator/Program from doeff
         name: str | None = None,
         workflow_id: str | None = None,
     ) -> str:
         """Run a workflow.
+
+        NOTE: This method is not yet fully implemented. The integration between
+        agentic effects and the doeff CESK interpreter requires using EffectDispatcher
+        with custom effectful_handlers. For now, use the handlers directly with
+        doeff's run_program or ProgramInterpreter.
 
         Args:
             workflow: doeff Program (generator) to run
@@ -367,40 +371,15 @@ class AgenticAPI:
 
         Returns:
             Workflow ID
+
+        Raises:
+            NotImplementedError: This method is not yet fully implemented.
         """
-        from doeff import run_sync
-        from .handler import agentic_effectful_handlers
-
-        wf_name = name or "unnamed"
-        wf_id = workflow_id or generate_workflow_id(wf_name)
-
-        handlers = agentic_effectful_handlers(
-            workflow_id=wf_id,
-            workflow_name=wf_name,
-            state_dir=self.state_dir,
+        raise NotImplementedError(
+            "AgenticAPI.run() is not yet fully implemented. "
+            "Use opencode_handler() or tmux_handler() directly with doeff's "
+            "effect dispatch system instead."
         )
-
-        try:
-            run_sync(workflow, handlers=handlers)
-        except Exception as e:
-            # Update workflow as failed
-            workflow_info = self.get_workflow(wf_id)
-            if workflow_info:
-                from datetime import datetime, timezone
-                updated = WorkflowInfo(
-                    id=workflow_info.id,
-                    name=workflow_info.name,
-                    status=WorkflowStatus.FAILED,
-                    started_at=workflow_info.started_at,
-                    updated_at=datetime.now(timezone.utc),
-                    current_agent=None,
-                    agents=workflow_info.agents,
-                    error=str(e),
-                )
-                self._state_manager.write_workflow_meta(updated)
-            raise
-
-        return wf_id
 
     def delete(self, workflow_id: str) -> bool:
         """Delete a workflow and its state files.

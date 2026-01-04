@@ -72,7 +72,6 @@ from .types import (
     AgenticWorkflowStatus,
 )
 
-
 # =============================================================================
 # Tmux utilities (inline to avoid doeff-agents dependency)
 # =============================================================================
@@ -281,7 +280,7 @@ class TmuxHandler:
 
     def initialize(self) -> None:
         """Initialize handler."""
-        pass  # No-op for tmux
+        # No-op for tmux
 
     def close(self) -> None:
         """Clean up resources."""

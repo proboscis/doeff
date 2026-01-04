@@ -24,10 +24,11 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
 
@@ -316,14 +317,13 @@ class StateManager:
 
         if len(matches) == 0:
             return None
-        elif len(matches) == 1:
+        if len(matches) == 1:
             return matches[0]
-        else:
-            # Ambiguous prefix
-            match_details = ", ".join(f"{wf_id} ({index[wf_id]})" for wf_id in matches)
-            raise ValueError(
-                f"Ambiguous prefix '{prefix}' matches multiple workflows: {match_details}"
-            )
+        # Ambiguous prefix
+        match_details = ", ".join(f"{wf_id} ({index[wf_id]})" for wf_id in matches)
+        raise ValueError(
+            f"Ambiguous prefix '{prefix}' matches multiple workflows: {match_details}"
+        )
 
     def delete_workflow(self, workflow_id: str) -> bool:
         """Delete a workflow and all its state files.
