@@ -66,6 +66,11 @@ from .types import (
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )
+from .event_log import (
+    EventLogWriter,
+    WorkflowIndex,
+    get_default_state_dir,
+)
 
 
 # =============================================================================
@@ -191,7 +196,9 @@ class OpenCodeHandler:
         self._client: SyncHttpClient | None = None
         self._server_process: subprocess.Popen | None = None
         self._workflow: WorkflowState | None = None
-        self._sse_connections: dict[str, Any] = {}  # session_id -> SSE iterator
+        self._sse_connections: dict[str, Any] = {}
+        self._event_log: EventLogWriter | None = None
+        self._workflow_index = WorkflowIndex()
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -296,6 +303,10 @@ class OpenCodeHandler:
             created_at=datetime.now(timezone.utc),
             metadata=effect.metadata,
         )
+        
+        self._event_log = EventLogWriter(workflow_id=workflow_id)
+        self._event_log.write_workflow_created(effect.name, effect.metadata)
+        self._workflow_index.add(workflow_id, effect.name)
 
         return AgenticWorkflowHandle(
             id=workflow_id,
@@ -368,6 +379,17 @@ class OpenCodeHandler:
         )
 
         self._workflow.environments[env_id] = handle
+        
+        if self._event_log:
+            self._event_log.write_environment_created(
+                env_id=env_id,
+                env_type=effect.env_type,
+                name=effect.name,
+                working_dir=working_dir,
+                base_commit=effect.base_commit,
+                source_environment_id=effect.source_environment_id,
+            )
+        
         return handle
 
     def handle_get_environment(
@@ -408,11 +430,11 @@ class OpenCodeHandler:
             shutil.rmtree(handle.working_dir, ignore_errors=True)
 
         del self._workflow.environments[effect.environment_id]
+        
+        if self._event_log:
+            self._event_log.write_environment_deleted(effect.environment_id, effect.force)
+        
         return True
-
-    # -------------------------------------------------------------------------
-    # Session Effects
-    # -------------------------------------------------------------------------
 
     def handle_create_session(
         self, effect: AgenticCreateSession
@@ -468,6 +490,17 @@ class OpenCodeHandler:
 
         self._workflow.sessions[effect.name] = handle
         self._workflow.session_by_id[session_id] = effect.name
+        
+        if self._event_log:
+            self._event_log.write_session_created(
+                name=effect.name,
+                session_id=session_id,
+                environment_id=env_id,
+                title=effect.title,
+                agent=effect.agent,
+                model=effect.model,
+            )
+        
         return handle
 
     def handle_fork_session(self, effect: AgenticForkSession) -> AgenticSessionHandle:
@@ -562,23 +595,19 @@ class OpenCodeHandler:
 
         result = self._client.delete(f"/session/{effect.session_id}")
 
-        # Update local state
         name = self._workflow.session_by_id.pop(effect.session_id, None)
         if name:
             self._workflow.sessions.pop(name, None)
+            if self._event_log:
+                self._event_log.write_session_deleted(name, effect.session_id)
 
         return bool(result)
 
-    # -------------------------------------------------------------------------
-    # Message Effects
-    # -------------------------------------------------------------------------
-
     def handle_send_message(self, effect: AgenticSendMessage) -> AgenticMessageHandle:
-        """Handle AgenticSendMessage effect."""
         self._ensure_workflow()
+        assert self._workflow is not None
         assert self._client is not None
 
-        # Build request body
         body: dict[str, Any] = {
             "parts": [{"type": "text", "text": effect.content}],
         }
@@ -588,17 +617,21 @@ class OpenCodeHandler:
         if effect.model:
             body["model"] = effect.model
 
+        session_name = self._workflow.session_by_id.get(effect.session_id)
+
         if effect.wait:
-            # Synchronous: wait for response
             result = self._client.post(
                 f"/session/{effect.session_id}/message", json=body
             )
         else:
-            # Asynchronous: fire and forget
             self._client.post(f"/session/{effect.session_id}/prompt_async", json=body)
-            # Return a placeholder handle
+            msg_id = f"msg-{time.time_ns()}"
+            
+            if self._event_log and session_name:
+                self._event_log.write_message_sent(session_name, "user", effect.content, msg_id)
+            
             return AgenticMessageHandle(
-                id=f"msg-{time.time_ns()}",
+                id=msg_id,
                 session_id=effect.session_id,
                 role="user",
                 created_at=datetime.now(timezone.utc),
@@ -606,12 +639,15 @@ class OpenCodeHandler:
 
         assert result is not None
         info = result.get("info", {})
+        msg_id = info.get("id", f"msg-{time.time_ns()}")
+        
+        if self._event_log and session_name:
+            self._event_log.write_message_sent(session_name, "user", effect.content, msg_id)
 
-        # Update session status
         self._update_session_status(effect.session_id, AgenticSessionStatus.RUNNING)
 
         return AgenticMessageHandle(
-            id=info.get("id", f"msg-{time.time_ns()}"),
+            id=msg_id,
             session_id=effect.session_id,
             role=info.get("role", "user"),
             created_at=datetime.now(timezone.utc),
@@ -879,7 +915,6 @@ class OpenCodeHandler:
     def _update_session_status(
         self, session_id: str, status: AgenticSessionStatus
     ) -> None:
-        """Update local session status."""
         if self._workflow is None:
             return
 
@@ -888,6 +923,8 @@ class OpenCodeHandler:
             return
 
         session = self._workflow.sessions[name]
+        old_status = session.status
+        
         self._workflow.sessions[name] = AgenticSessionHandle(
             id=session.id,
             name=session.name,
@@ -899,6 +936,9 @@ class OpenCodeHandler:
             agent=session.agent,
             model=session.model,
         )
+        
+        if self._event_log and old_status != status:
+            self._event_log.write_session_status(name, status)
 
     def _refresh_session_status(self, session_id: str) -> None:
         """Refresh session status from server."""

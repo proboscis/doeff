@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -263,15 +264,17 @@ class TmuxHandler:
     SUPPORTED_CAPABILITIES = frozenset({"worktree"})  # worktree via git commands
 
     def __init__(self, working_dir: str | None = None) -> None:
-        """Initialize the tmux handler.
-
-        Args:
-            working_dir: Default working directory
-        """
+        warnings.warn(
+            "TmuxHandler is deprecated and will be removed in a future version. "
+            "Use OpenCodeHandler for full feature support including session forking, "
+            "SSE events, and environment management.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
         self._workflow: TmuxWorkflowState | None = None
 
-        # Verify tmux is available
         if not is_tmux_available():
             raise AgenticServerError("tmux is not installed or not in PATH")
 

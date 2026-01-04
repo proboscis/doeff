@@ -145,11 +145,19 @@ from .effects import (
     AmbiguousPrefixError,
 )
 
-# State management
 from .state import (
     StateManager,
     generate_workflow_id,
     get_default_state_dir,
+)
+
+from .event_log import (
+    EventLogWriter,
+    EventLogReader,
+    WorkflowEvent,
+    SessionEvent,
+    EnvironmentEvent,
+    WorkflowIndex,
 )
 
 # API
@@ -249,10 +257,15 @@ __all__ = [
     "AgentNotRunningError",
     "UserInputTimeoutError",
     "AmbiguousPrefixError",
-    # State
     "StateManager",
     "generate_workflow_id",
     "get_default_state_dir",
+    "EventLogWriter",
+    "EventLogReader",
+    "WorkflowEvent",
+    "SessionEvent",
+    "EnvironmentEvent",
+    "WorkflowIndex",
     # API
     "AgenticAPI",
     # OpenCode Handler (new - primary)

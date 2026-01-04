@@ -37,11 +37,15 @@ from .state import StateManager, generate_workflow_id, get_default_state_dir
 from .types import (
     AgentConfig,
     AgentStatus,
+    AgenticEnvironmentHandle,
+    AgenticSessionHandle,
+    AgenticWorkflowHandle,
     WatchEventType,
     WatchUpdate,
     WorkflowInfo,
     WorkflowStatus,
 )
+from .event_log import EventLogReader, WorkflowIndex
 
 
 class AgenticAPI:
@@ -414,15 +418,59 @@ class AgenticAPI:
         return self._state_manager.delete_workflow(workflow_id)
 
     def get_trace(self, workflow_id: str) -> list[dict[str, Any]]:
-        """Get the effect trace for a workflow.
-
-        Args:
-            workflow_id: Full or prefix workflow ID
-
-        Returns:
-            List of trace entries
-        """
         return self._state_manager.read_trace(workflow_id)
+
+    def list_workflows_v2(self) -> list[AgenticWorkflowHandle]:
+        index = WorkflowIndex(state_dir=self.state_dir)
+        workflows: list[AgenticWorkflowHandle] = []
+        
+        for wf_id, _name in index.iter_workflows():
+            reader = EventLogReader(workflow_id=wf_id, state_dir=self.state_dir)
+            workflow = reader.reconstruct_workflow()
+            if workflow:
+                workflows.append(workflow)
+        
+        workflows.sort(key=lambda w: w.created_at, reverse=True)
+        return workflows
+
+    def get_workflow_v2(self, workflow_id: str) -> AgenticWorkflowHandle | None:
+        index = WorkflowIndex(state_dir=self.state_dir)
+        full_id = index.resolve_prefix(workflow_id)
+        if not full_id:
+            return None
+        
+        reader = EventLogReader(workflow_id=full_id, state_dir=self.state_dir)
+        return reader.reconstruct_workflow()
+
+    def get_sessions(self, workflow_id: str) -> dict[str, AgenticSessionHandle]:
+        index = WorkflowIndex(state_dir=self.state_dir)
+        full_id = index.resolve_prefix(workflow_id)
+        if not full_id:
+            return {}
+        
+        reader = EventLogReader(workflow_id=full_id, state_dir=self.state_dir)
+        return reader.reconstruct_sessions()
+
+    def get_environments(self, workflow_id: str) -> dict[str, AgenticEnvironmentHandle]:
+        index = WorkflowIndex(state_dir=self.state_dir)
+        full_id = index.resolve_prefix(workflow_id)
+        if not full_id:
+            return {}
+        
+        reader = EventLogReader(workflow_id=full_id, state_dir=self.state_dir)
+        return reader.reconstruct_environments()
+
+    def list_all_environments(self) -> list[tuple[str, AgenticEnvironmentHandle]]:
+        index = WorkflowIndex(state_dir=self.state_dir)
+        all_envs: list[tuple[str, AgenticEnvironmentHandle]] = []
+        
+        for wf_id, _name in index.iter_workflows():
+            reader = EventLogReader(workflow_id=wf_id, state_dir=self.state_dir)
+            envs = reader.reconstruct_environments()
+            for env in envs.values():
+                all_envs.append((wf_id, env))
+        
+        return all_envs
 
 
 __all__ = ["AgenticAPI"]

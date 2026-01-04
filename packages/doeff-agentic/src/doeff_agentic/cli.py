@@ -482,19 +482,52 @@ def env_list(
     """List environments.
 
     Example output:
-        ENV ID      TYPE       WORKING DIR                    SESSIONS
-        env-abc     worktree   /tmp/doeff/worktrees/abc123    reviewer, fixer
-        env-def     worktree   /tmp/doeff/worktrees/def456    tester
+        ENV ID      TYPE       WORKING DIR                    WORKFLOW
+        env-abc     worktree   /tmp/doeff/worktrees/abc123    a3f8b2c
+        env-def     worktree   /tmp/doeff/worktrees/def456    b7e1d4f
     """
     api: AgenticAPI = ctx.obj["api"]
 
-    # Note: Environment tracking is currently in-memory per handler
-    # This command shows a placeholder for future persistent storage
-    if output_json:
-        click.echo(json.dumps({"environments": [], "note": "Environment listing requires persistent storage"}))
+    if workflow:
+        envs_dict = api.get_environments(workflow)
+        all_envs = [(workflow, env) for env in envs_dict.values()]
     else:
-        console.print("[dim]Environment listing not yet implemented for persistent storage[/dim]")
-        console.print("[dim]Environments are tracked in-memory per workflow handler[/dim]")
+        all_envs = api.list_all_environments()
+
+    if output_json:
+        env_list_json = [
+            {
+                "workflow_id": wf_id,
+                "environment": env.to_dict(),
+            }
+            for wf_id, env in all_envs
+        ]
+        click.echo(json.dumps({"environments": env_list_json}, indent=2))
+        return
+
+    if not all_envs:
+        console.print("[dim]No environments found[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("ENV ID", style="cyan")
+    table.add_column("TYPE")
+    table.add_column("NAME")
+    table.add_column("WORKING DIR")
+    table.add_column("WORKFLOW")
+    table.add_column("CREATED")
+
+    for wf_id, env in all_envs:
+        table.add_row(
+            env.id[:12] if len(env.id) > 12 else env.id,
+            env.env_type.value,
+            env.name or "-",
+            str(env.working_dir)[:40] + "..." if len(str(env.working_dir)) > 40 else str(env.working_dir),
+            wf_id[:7],
+            _format_duration(env.created_at),
+        )
+
+    console.print(table)
 
 
 @env.command("cleanup")
