@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import urljoin
 
+from .event_log import EventLogWriter, WorkflowIndex
 from .effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -193,6 +194,10 @@ class OpenCodeHandler:
         self._workflow: WorkflowState | None = None
         self._sse_connections: dict[str, Any] = {}  # session_id -> SSE iterator
 
+        # Event logging
+        self._event_log = EventLogWriter()
+        self._workflow_index = WorkflowIndex()
+
     # -------------------------------------------------------------------------
     # Lifecycle
     # -------------------------------------------------------------------------
@@ -297,6 +302,12 @@ class OpenCodeHandler:
             metadata=effect.metadata,
         )
 
+        # Log workflow creation
+        self._event_log.log_workflow_created(
+            workflow_id, effect.name, effect.metadata
+        )
+        self._workflow_index.add(workflow_id, effect.name)
+
         return AgenticWorkflowHandle(
             id=workflow_id,
             name=effect.name,
@@ -368,6 +379,10 @@ class OpenCodeHandler:
         )
 
         self._workflow.environments[env_id] = handle
+
+        # Log environment creation
+        self._event_log.log_environment_created(self._workflow.id, handle)
+
         return handle
 
     def handle_get_environment(
@@ -406,6 +421,11 @@ class OpenCodeHandler:
             self._delete_worktree(handle.working_dir)
         elif handle.env_type == AgenticEnvironmentType.COPY:
             shutil.rmtree(handle.working_dir, ignore_errors=True)
+
+        # Log environment deletion
+        self._event_log.log_environment_deleted(
+            self._workflow.id, effect.environment_id, effect.force
+        )
 
         del self._workflow.environments[effect.environment_id]
         return True
@@ -468,6 +488,13 @@ class OpenCodeHandler:
 
         self._workflow.sessions[effect.name] = handle
         self._workflow.session_by_id[session_id] = effect.name
+
+        # Log session creation
+        self._event_log.log_session_created(self._workflow.id, handle)
+        self._event_log.log_session_bound_to_environment(
+            self._workflow.id, env_id, effect.name
+        )
+
         return handle
 
     def handle_fork_session(self, effect: AgenticForkSession) -> AgenticSessionHandle:
@@ -576,7 +603,11 @@ class OpenCodeHandler:
     def handle_send_message(self, effect: AgenticSendMessage) -> AgenticMessageHandle:
         """Handle AgenticSendMessage effect."""
         self._ensure_workflow()
+        assert self._workflow is not None
         assert self._client is not None
+
+        # Get session name for logging
+        session_name = self._workflow.session_by_id.get(effect.session_id)
 
         # Build request body
         body: dict[str, Any] = {
@@ -587,6 +618,12 @@ class OpenCodeHandler:
             body["agent"] = effect.agent
         if effect.model:
             body["model"] = effect.model
+
+        # Log message sent
+        if session_name:
+            self._event_log.log_message_sent(
+                self._workflow.id, session_name, effect.content, effect.wait
+            )
 
         if effect.wait:
             # Synchronous: wait for response
@@ -609,6 +646,10 @@ class OpenCodeHandler:
 
         # Update session status
         self._update_session_status(effect.session_id, AgenticSessionStatus.RUNNING)
+
+        # Log message complete
+        if session_name:
+            self._event_log.log_message_complete(self._workflow.id, session_name)
 
         return AgenticMessageHandle(
             id=info.get("id", f"msg-{time.time_ns()}"),
@@ -888,6 +929,8 @@ class OpenCodeHandler:
             return
 
         session = self._workflow.sessions[name]
+        old_status = session.status
+
         self._workflow.sessions[name] = AgenticSessionHandle(
             id=session.id,
             name=session.name,
@@ -899,6 +942,10 @@ class OpenCodeHandler:
             agent=session.agent,
             model=session.model,
         )
+
+        # Log status change if different
+        if old_status != status:
+            self._event_log.log_session_status(self._workflow.id, name, status)
 
     def _refresh_session_status(self, session_id: str) -> None:
         """Refresh session status from server."""

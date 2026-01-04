@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .event_log import EventLogWriter, WorkflowIndex
 from .effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -271,6 +272,10 @@ class TmuxHandler:
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
         self._workflow: TmuxWorkflowState | None = None
 
+        # Event logging
+        self._event_log = EventLogWriter()
+        self._workflow_index = WorkflowIndex()
+
         # Verify tmux is available
         if not is_tmux_available():
             raise AgenticServerError("tmux is not installed or not in PATH")
@@ -309,6 +314,12 @@ class TmuxHandler:
             created_at=datetime.now(timezone.utc),
             metadata=effect.metadata,
         )
+
+        # Log workflow creation
+        self._event_log.log_workflow_created(
+            workflow_id, effect.name, effect.metadata
+        )
+        self._workflow_index.add(workflow_id, effect.name)
 
         return AgenticWorkflowHandle(
             id=workflow_id,
@@ -371,6 +382,10 @@ class TmuxHandler:
         )
 
         self._workflow.environments[env_id] = handle
+
+        # Log environment creation
+        self._event_log.log_environment_created(self._workflow.id, handle)
+
         return handle
 
     def handle_get_environment(
@@ -470,6 +485,12 @@ class TmuxHandler:
         state = TmuxSessionState(handle=handle, pane_id=pane_id)
         self._workflow.sessions[effect.name] = state
         self._workflow.session_by_id[session_id] = effect.name
+
+        # Log session creation
+        self._event_log.log_session_created(self._workflow.id, handle)
+        self._event_log.log_session_bound_to_environment(
+            self._workflow.id, env_id, effect.name
+        )
 
         return handle
 
@@ -572,6 +593,11 @@ class TmuxHandler:
                 effect.session_id, state.handle.status.value
             )
 
+        # Log message sent
+        self._event_log.log_message_sent(
+            self._workflow.id, name, effect.content, effect.wait
+        )
+
         # Send message to tmux
         send_keys(state.pane_id, effect.content, literal=True, enter=True)
 
@@ -587,6 +613,7 @@ class TmuxHandler:
         )
 
         # Update status to running
+        old_status = state.handle.status
         state.handle = AgenticSessionHandle(
             id=state.handle.id,
             name=state.handle.name,
@@ -599,9 +626,17 @@ class TmuxHandler:
             model=state.handle.model,
         )
 
+        # Log status change if different
+        if old_status != AgenticSessionStatus.RUNNING:
+            self._event_log.log_session_status(
+                self._workflow.id, name, AgenticSessionStatus.RUNNING
+            )
+
         if effect.wait:
             # Poll until completion or blocked
             self._wait_for_completion(state)
+            # Log message complete
+            self._event_log.log_message_complete(self._workflow.id, name)
 
         return AgenticMessageHandle(
             id=msg_id,
@@ -861,19 +896,26 @@ class TmuxHandler:
         assert self._workflow is not None
 
         session_name = f"doeff-{self._workflow.id}-{state.handle.name}"
+        old_status = state.handle.status
 
         if not has_session(session_name):
+            new_status = AgenticSessionStatus.DONE
             state.handle = AgenticSessionHandle(
                 id=state.handle.id,
                 name=state.handle.name,
                 workflow_id=state.handle.workflow_id,
                 environment_id=state.handle.environment_id,
-                status=AgenticSessionStatus.DONE,
+                status=new_status,
                 created_at=state.handle.created_at,
                 title=state.handle.title,
                 agent=state.handle.agent,
                 model=state.handle.model,
             )
+            # Log status change
+            if old_status != new_status:
+                self._event_log.log_session_status(
+                    self._workflow.id, state.handle.name, new_status
+                )
             return
 
         try:
@@ -890,6 +932,11 @@ class TmuxHandler:
                 agent=state.handle.agent,
                 model=state.handle.model,
             )
+            # Log status change
+            if old_status != new_status:
+                self._event_log.log_session_status(
+                    self._workflow.id, state.handle.name, new_status
+                )
         except Exception:
             pass
 
