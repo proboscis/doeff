@@ -152,6 +152,30 @@ for update in api.watch("a3f"):
 api.send_message("a3f", "continue")
 ```
 
+## Testing Without OpenCode
+
+You can test the implementation without requiring OpenCode:
+
+### Test Event Logging
+```bash
+uv run python examples/test_event_logging.py
+```
+This tests the JSONL event logging system - creates workflows, sessions, environments and verifies state reconstruction.
+
+### Test Workflow Patterns
+```bash
+uv run python examples/test_mock_workflow.py
+```
+This demonstrates workflow patterns (sequential, conditional, parallel) using mock data without any external services.
+
+### Run Unit Tests
+```bash
+uv run pytest tests/ -v
+```
+Runs all 121 unit tests for effects, types, event logging, and state management.
+
+For comprehensive testing documentation, see [docs/testing-guide.md](../docs/testing-guide.md).
+
 ## Migration from Legacy API
 
 If you have existing code using the old API, here's how to migrate:
