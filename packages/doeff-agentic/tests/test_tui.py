@@ -11,16 +11,19 @@ class TestTUIImports:
     def test_import_app(self):
         """Test that AgenticTUI can be imported."""
         from doeff_agentic.tui import AgenticTUI
+
         assert AgenticTUI is not None
 
     def test_import_main(self):
         """Test that main function can be imported."""
         from doeff_agentic.tui import main
+
         assert callable(main)
 
     def test_import_screens(self):
         """Test that screens can be imported."""
         from doeff_agentic.tui.screens import WorkflowListScreen, WatchScreen
+
         assert WorkflowListScreen is not None
         assert WatchScreen is not None
 
@@ -31,6 +34,7 @@ class TestTUIImports:
             WorkflowInfoPane,
             AgentOutputPane,
         )
+
         assert WorkflowListItem is not None
         assert WorkflowInfoPane is not None
         assert AgentOutputPane is not None

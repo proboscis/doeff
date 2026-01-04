@@ -216,9 +216,7 @@ def _watch_tui(api: AgenticAPI, workflow_id: str, poll_interval: float) -> None:
             for a in workflow.agents:
                 a_style = _status_color(a.status)
                 marker = ">" if a.name == workflow.current_agent else " "
-                content.append(
-                    f"  {marker} {a.name}: [{a_style}]{a.status.value}[/{a_style}]"
-                )
+                content.append(f"  {marker} {a.name}: [{a_style}]{a.status.value}[/{a_style}]")
 
         if workflow.error:
             content.append(f"\n[red]Error:[/red] {workflow.error}")
@@ -238,9 +236,7 @@ def _watch_tui(api: AgenticAPI, workflow_id: str, poll_interval: float) -> None:
         console.print(f"[red]Workflow not found:[/red] {workflow_id}")
         return
 
-    with Live(
-        generate_display(workflow), refresh_per_second=1, console=console
-    ) as live:
+    with Live(generate_display(workflow), refresh_per_second=1, console=console) as live:
         for update in api.watch(workflow_id, poll_interval):
             live.update(generate_display(update.workflow))
 
@@ -444,9 +440,7 @@ def _workflow_details(workflow) -> str:
         lines.append("\n[bold]Agents:[/bold]")
         for a in workflow.agents:
             style = _status_color(a.status)
-            lines.append(
-                f"  - {a.name}: [{style}]{a.status.value}[/{style}] ({a.session_name})"
-            )
+            lines.append(f"  - {a.name}: [{style}]{a.status.value}[/{style}] ({a.session_name})")
 
     if workflow.last_slog:
         lines.append("\n[bold]Last Status:[/bold]")
@@ -491,7 +485,11 @@ def env_list(
     # Note: Environment tracking is currently in-memory per handler
     # This command shows a placeholder for future persistent storage
     if output_json:
-        click.echo(json.dumps({"environments": [], "note": "Environment listing requires persistent storage"}))
+        click.echo(
+            json.dumps(
+                {"environments": [], "note": "Environment listing requires persistent storage"}
+            )
+        )
     else:
         console.print("[dim]Environment listing not yet implemented for persistent storage[/dim]")
         console.print("[dim]Environments are tracked in-memory per workflow handler[/dim]")
@@ -531,6 +529,7 @@ def env_cleanup(
                             if base_dir == worktree_dir:
                                 # Remove git worktree
                                 import subprocess
+
                                 subprocess.run(
                                     ["git", "worktree", "remove", "--force", str(item)],
                                     capture_output=True,
@@ -542,10 +541,14 @@ def env_cleanup(
                             pass
 
     if output_json:
-        click.echo(json.dumps({
-            "dry_run": dry_run,
-            "cleaned": cleaned,
-        }))
+        click.echo(
+            json.dumps(
+                {
+                    "dry_run": dry_run,
+                    "cleaned": cleaned,
+                }
+            )
+        )
     else:
         if cleaned:
             action = "Would clean" if dry_run else "Cleaned"

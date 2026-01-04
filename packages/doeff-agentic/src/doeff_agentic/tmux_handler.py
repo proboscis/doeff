@@ -71,6 +71,7 @@ from .types import (
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )
+from .event_log import EventLogWriter
 
 
 # =============================================================================
@@ -93,9 +94,7 @@ def is_tmux_available() -> bool:
 
 def has_session(name: str) -> bool:
     """Check if a tmux session exists."""
-    result = subprocess.run(
-        ["tmux", "has-session", "-t", name], check=False, capture_output=True
-    )
+    result = subprocess.run(["tmux", "has-session", "-t", name], check=False, capture_output=True)
     return result.returncode == 0
 
 
@@ -109,9 +108,7 @@ def new_session(session_name: str, work_dir: Path | None = None) -> str:
     return result.stdout.strip()
 
 
-def send_keys(
-    target: str, keys: str, *, literal: bool = True, enter: bool = True
-) -> None:
+def send_keys(target: str, keys: str, *, literal: bool = True, enter: bool = True) -> None:
     """Send keys to a tmux pane."""
     args = ["tmux", "send-keys", "-t", target]
     if literal:
@@ -270,6 +267,7 @@ class TmuxHandler:
         """
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
         self._workflow: TmuxWorkflowState | None = None
+        self._event_log: EventLogWriter | None = None
 
         # Verify tmux is available
         if not is_tmux_available():
@@ -297,10 +295,18 @@ class TmuxHandler:
     # Workflow Effects
     # -------------------------------------------------------------------------
 
-    def handle_create_workflow(
-        self, effect: AgenticCreateWorkflow
-    ) -> AgenticWorkflowHandle:
+    def handle_create_workflow(self, effect: AgenticCreateWorkflow) -> AgenticWorkflowHandle:
         """Handle AgenticCreateWorkflow effect."""
+        import warnings
+
+        # Emit deprecation warning for tmux handler
+        warnings.warn(
+            "TmuxHandler is deprecated. Use OpenCodeHandler for full functionality. "
+            "TmuxHandler has limited support: no fork, no SSE events, polling-based status.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         workflow_id = generate_workflow_id(effect.name)
         self._workflow = TmuxWorkflowState(
             id=workflow_id,
@@ -310,13 +316,19 @@ class TmuxHandler:
             metadata=effect.metadata,
         )
 
-        return AgenticWorkflowHandle(
+        handle = AgenticWorkflowHandle(
             id=workflow_id,
             name=effect.name,
             status=AgenticWorkflowStatus.RUNNING,
             created_at=self._workflow.created_at,
             metadata=effect.metadata,
         )
+
+        # Initialize event log and log workflow creation
+        self._event_log = EventLogWriter(workflow_id=workflow_id)
+        self._event_log.log_workflow_created(handle)
+
+        return handle
 
     def handle_get_workflow(self, effect: AgenticGetWorkflow) -> AgenticWorkflowHandle:
         """Handle AgenticGetWorkflow effect."""
@@ -371,11 +383,14 @@ class TmuxHandler:
         )
 
         self._workflow.environments[env_id] = handle
+
+        # Log environment creation
+        if self._event_log:
+            self._event_log.log_environment_created(handle)
+
         return handle
 
-    def handle_get_environment(
-        self, effect: AgenticGetEnvironment
-    ) -> AgenticEnvironmentHandle:
+    def handle_get_environment(self, effect: AgenticGetEnvironment) -> AgenticEnvironmentHandle:
         """Handle AgenticGetEnvironment effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -409,15 +424,18 @@ class TmuxHandler:
             self._delete_worktree(handle.working_dir)
 
         del self._workflow.environments[effect.environment_id]
+
+        # Log environment deletion
+        if self._event_log:
+            self._event_log.log_environment_deleted(effect.environment_id)
+
         return True
 
     # -------------------------------------------------------------------------
     # Session Effects
     # -------------------------------------------------------------------------
 
-    def handle_create_session(
-        self, effect: AgenticCreateSession
-    ) -> AgenticSessionHandle:
+    def handle_create_session(self, effect: AgenticCreateSession) -> AgenticSessionHandle:
         """Handle AgenticCreateSession effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -470,6 +488,11 @@ class TmuxHandler:
         state = TmuxSessionState(handle=handle, pane_id=pane_id)
         self._workflow.sessions[effect.name] = state
         self._workflow.session_by_id[session_id] = effect.name
+
+        # Log session creation and environment binding
+        if self._event_log:
+            self._event_log.log_session_created(handle)
+            self._event_log.log_environment_session_bound(env_id, effect.name)
 
         return handle
 
@@ -534,6 +557,10 @@ class TmuxHandler:
             model=state.handle.model,
         )
 
+        # Log session status change
+        if self._event_log:
+            self._event_log.log_session_status(name, AgenticSessionStatus.ABORTED)
+
     def handle_delete_session(self, effect: AgenticDeleteSession) -> bool:
         """Handle AgenticDeleteSession effect."""
         self._ensure_workflow()
@@ -548,6 +575,10 @@ class TmuxHandler:
 
         self._workflow.session_by_id.pop(effect.session_id, None)
         self._workflow.sessions.pop(name, None)
+
+        # Log session deletion
+        if self._event_log:
+            self._event_log.log_session_deleted(name)
 
         return True
 
@@ -568,9 +599,7 @@ class TmuxHandler:
 
         # Check if session is running
         if not has_session(f"doeff-{self._workflow.id}-{name}"):
-            raise AgenticSessionNotRunningError(
-                effect.session_id, state.handle.status.value
-            )
+            raise AgenticSessionNotRunningError(effect.session_id, state.handle.status.value)
 
         # Send message to tmux
         send_keys(state.pane_id, effect.content, literal=True, enter=True)
@@ -603,12 +632,18 @@ class TmuxHandler:
             # Poll until completion or blocked
             self._wait_for_completion(state)
 
-        return AgenticMessageHandle(
+        msg_handle = AgenticMessageHandle(
             id=msg_id,
             session_id=effect.session_id,
             role="user",
             created_at=datetime.now(timezone.utc),
         )
+
+        # Log message sent
+        if self._event_log:
+            self._event_log.log_message_sent(name, effect.content, msg_id)
+
+        return msg_handle
 
     def handle_get_messages(self, effect: AgenticGetMessages) -> list[AgenticMessage]:
         """Handle AgenticGetMessages effect."""
@@ -661,9 +696,7 @@ class TmuxHandler:
     # Event Effects
     # -------------------------------------------------------------------------
 
-    def handle_next_event(
-        self, effect: AgenticNextEvent
-    ) -> AgenticEvent | AgenticEndOfEvents:
+    def handle_next_event(self, effect: AgenticNextEvent) -> AgenticEvent | AgenticEndOfEvents:
         """Handle AgenticNextEvent effect - uses polling."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -801,9 +834,7 @@ class TmuxHandler:
     # Status Effects
     # -------------------------------------------------------------------------
 
-    def handle_get_session_status(
-        self, effect: AgenticGetSessionStatus
-    ) -> AgenticSessionStatus:
+    def handle_get_session_status(self, effect: AgenticGetSessionStatus) -> AgenticSessionStatus:
         """Handle AgenticGetSessionStatus effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -893,9 +924,7 @@ class TmuxHandler:
         except Exception:
             pass
 
-    def _wait_for_completion(
-        self, state: TmuxSessionState, timeout: float = 300.0
-    ) -> None:
+    def _wait_for_completion(self, state: TmuxSessionState, timeout: float = 300.0) -> None:
         """Wait for session to complete or become blocked."""
         assert self._workflow is not None
 
@@ -908,7 +937,10 @@ class TmuxHandler:
 
             self._refresh_session_status(state)
 
-            if state.handle.status.is_terminal() or state.handle.status == AgenticSessionStatus.BLOCKED:
+            if (
+                state.handle.status.is_terminal()
+                or state.handle.status == AgenticSessionStatus.BLOCKED
+            ):
                 return
 
             time.sleep(1.0)

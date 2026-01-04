@@ -84,16 +84,12 @@ class AgenticAPI:
         workflow_status: list[WorkflowStatus] | None = None
         if status:
             workflow_status = [
-                s if isinstance(s, WorkflowStatus) else WorkflowStatus(s)
-                for s in status
+                s if isinstance(s, WorkflowStatus) else WorkflowStatus(s) for s in status
             ]
 
         agent_st: list[AgentStatus] | None = None
         if agent_status:
-            agent_st = [
-                s if isinstance(s, AgentStatus) else AgentStatus(s)
-                for s in agent_status
-            ]
+            agent_st = [s if isinstance(s, AgentStatus) else AgentStatus(s) for s in agent_status]
 
         return self._state_manager.list_workflows(
             status=workflow_status,
@@ -250,9 +246,7 @@ class AgenticAPI:
             session_name = f"doeff-{workflow.id}-{agent}"
 
         # Check if this is a user input response
-        input_response_file = (
-            self.state_dir / "workflows" / workflow.id / "input_response.txt"
-        )
+        input_response_file = self.state_dir / "workflows" / workflow.id / "input_response.txt"
         if (self.state_dir / "workflows" / workflow.id / "input_request.json").exists():
             # This is a response to WaitForUserInput
             input_response_file.write_text(message)
@@ -292,6 +286,7 @@ class AgenticAPI:
         if workflow:
             # Mark as stopped
             from datetime import datetime, timezone
+
             updated = WorkflowInfo(
                 id=workflow.id,
                 name=workflow.name,
@@ -387,6 +382,7 @@ class AgenticAPI:
             workflow_info = self.get_workflow(wf_id)
             if workflow_info:
                 from datetime import datetime, timezone
+
                 updated = WorkflowInfo(
                     id=workflow_info.id,
                     name=workflow_info.name,

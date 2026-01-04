@@ -43,9 +43,7 @@ class AgenticSessionNotRunningError(AgenticError):
     """Operation requires session to be running."""
 
     def __init__(self, session_id: str, current_status: str) -> None:
-        super().__init__(
-            f"Session '{session_id}' is not running (status: {current_status})"
-        )
+        super().__init__(f"Session '{session_id}' is not running (status: {current_status})")
         self.session_id = session_id
         self.current_status = current_status
 
@@ -54,9 +52,7 @@ class AgenticEnvironmentInUseError(AgenticError):
     """Cannot delete environment while sessions are using it."""
 
     def __init__(self, environment_id: str, session_names: list[str]) -> None:
-        super().__init__(
-            f"Environment '{environment_id}' is in use by sessions: {session_names}"
-        )
+        super().__init__(f"Environment '{environment_id}' is in use by sessions: {session_names}")
         self.environment_id = environment_id
         self.session_names = session_names
 
@@ -95,9 +91,7 @@ class AgenticDuplicateNameError(AgenticError):
     """Session name already exists in workflow."""
 
     def __init__(self, name: str, workflow_id: str) -> None:
-        super().__init__(
-            f"Session name '{name}' already exists in workflow '{workflow_id}'"
-        )
+        super().__init__(f"Session name '{name}' already exists in workflow '{workflow_id}'")
         self.name = name
         self.workflow_id = workflow_id
 
@@ -106,9 +100,7 @@ class AgenticAmbiguousPrefixError(AgenticError):
     """Workflow ID prefix matches multiple workflows."""
 
     def __init__(self, prefix: str, matches: list[str]) -> None:
-        super().__init__(
-            f"Prefix '{prefix}' matches multiple workflows: {matches}"
-        )
+        super().__init__(f"Prefix '{prefix}' matches multiple workflows: {matches}")
         self.prefix = prefix
         self.matches = matches
 

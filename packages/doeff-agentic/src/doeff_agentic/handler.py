@@ -156,13 +156,15 @@ class AgenticHandler:
             except Exception:
                 agent_status = AgentStatus.EXITED
 
-            agents.append(AgentInfo(
-                name=name,
-                status=agent_status,
-                session_name=handle.session_name,
-                pane_id=handle.pane_id,
-                started_at=handle.started_at,
-            ))
+            agents.append(
+                AgentInfo(
+                    name=name,
+                    status=agent_status,
+                    session_name=handle.session_name,
+                    pane_id=handle.pane_id,
+                    started_at=handle.started_at,
+                )
+            )
 
         workflow = WorkflowInfo(
             id=self.workflow_id,
@@ -232,9 +234,7 @@ class AgenticHandler:
             # Check for terminal status
             if obs.is_terminal:
                 # Capture final output
-                last_output = self.tmux_handler.handle_capture(
-                    Capture(handle, lines=500)
-                )
+                last_output = self.tmux_handler.handle_capture(Capture(handle, lines=500))
                 break
 
             # Poll
@@ -341,11 +341,16 @@ class AgenticHandler:
         input_response_file = workflow_dir / "input_response.txt"
 
         import json
-        input_request_file.write_text(json.dumps({
-            "session_name": effect.session_name,
-            "prompt": effect.prompt,
-            "requested_at": datetime.now(timezone.utc).isoformat(),
-        }))
+
+        input_request_file.write_text(
+            json.dumps(
+                {
+                    "session_name": effect.session_name,
+                    "prompt": effect.prompt,
+                    "requested_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        )
 
         # Wait for response
         deadline = None
