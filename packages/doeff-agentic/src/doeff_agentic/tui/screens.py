@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.events import Key
+from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.timer import Timer
 from textual.widgets import Footer, Header, Static
@@ -104,7 +103,7 @@ class WorkflowListScreen(Screen[None]):
         self._refresh_timer: Timer | None = None
 
     @property
-    def tui_app(self) -> "AgenticTUI":
+    def tui_app(self) -> AgenticTUI:
         """Get the typed app instance."""
         from .app import AgenticTUI
 
@@ -324,7 +323,7 @@ class WorkflowWatchScreen(Screen[None]):
         self._refresh_timer: Timer | None = None
 
     @property
-    def tui_app(self) -> "AgenticTUI":
+    def tui_app(self) -> AgenticTUI:
         """Get the typed app instance."""
         from .app import AgenticTUI
 
@@ -488,7 +487,7 @@ class WorkflowWatchScreen(Screen[None]):
             except Exception as e:
                 self.notify(f"Failed to attach: {e}", severity="error")
             finally:
-                self.app.resume()
+                self.app.resume()  # type: ignore[attr-defined]
 
     def action_logs(self) -> None:
         """View logs for the selected agent."""
@@ -554,7 +553,7 @@ class AgentLogsScreen(Screen[None]):
         self._refresh_timer: Timer | None = None
 
     @property
-    def tui_app(self) -> "AgenticTUI":
+    def tui_app(self) -> AgenticTUI:
         """Get the typed app instance."""
         from .app import AgenticTUI
 

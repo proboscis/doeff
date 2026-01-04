@@ -12,10 +12,8 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
-import os
 import shutil
 import subprocess
 import time
@@ -23,7 +21,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import urljoin
 
 from .effects import (
     AgenticAbortSession,
@@ -50,9 +47,7 @@ from .exceptions import (
     AgenticEnvironmentNotFoundError,
     AgenticServerError,
     AgenticSessionNotFoundError,
-    AgenticSessionNotRunningError,
     AgenticTimeoutError,
-    AgenticUnsupportedOperationError,
 )
 from .types import (
     AgenticEndOfEvents,
@@ -66,7 +61,6 @@ from .types import (
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )
-
 
 # =============================================================================
 # HTTP Client

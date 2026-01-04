@@ -15,12 +15,11 @@ Effect Categories:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Generator, TypeVar
+from typing import Any, TypeVar
 
-
-from .types import AgenticEnvironmentType, AgenticSessionStatus
-
+from .types import AgenticEnvironmentType
 
 E = TypeVar("E", bound="AgenticEffectBase")
 
@@ -86,7 +85,6 @@ class AgenticGetWorkflow(AgenticEffectBase):
     Yields: AgenticWorkflowHandle
     """
 
-    pass
 
 
 # =============================================================================
@@ -510,17 +508,17 @@ def StopAgent(session_name: str) -> StopAgentEffect:  # noqa: N802
 # =============================================================================
 
 from .exceptions import (
-    AgenticError,
-    AgenticSessionNotFoundError,
-    AgenticEnvironmentNotFoundError,
-    AgenticWorkflowNotFoundError,
-    AgenticSessionNotRunningError,
-    AgenticEnvironmentInUseError,
-    AgenticUnsupportedOperationError,
-    AgenticServerError,
-    AgenticTimeoutError,
-    AgenticDuplicateNameError,
     AgenticAmbiguousPrefixError,
+    AgenticDuplicateNameError,
+    AgenticEnvironmentInUseError,
+    AgenticEnvironmentNotFoundError,
+    AgenticError,
+    AgenticServerError,
+    AgenticSessionNotFoundError,
+    AgenticSessionNotRunningError,
+    AgenticTimeoutError,
+    AgenticUnsupportedOperationError,
+    AgenticWorkflowNotFoundError,
 )
 
 # Legacy error aliases
