@@ -33,10 +33,15 @@ import sys
 from pathlib import Path
 from typing import Any, Iterator
 
+from .event_log import EventLogReader, get_default_event_log_dir
 from .state import StateManager, generate_workflow_id, get_default_state_dir
 from .types import (
     AgentConfig,
     AgentStatus,
+    AgenticSessionHandle,
+    AgenticSessionStatus,
+    AgenticWorkflowHandle,
+    AgenticWorkflowStatus,
     WatchEventType,
     WatchUpdate,
     WorkflowInfo,
@@ -65,6 +70,7 @@ class AgenticAPI:
         """
         self.state_dir = Path(state_dir) if state_dir else get_default_state_dir()
         self._state_manager = StateManager(self.state_dir)
+        self._event_log_reader = EventLogReader(get_default_event_log_dir())
 
     def list_workflows(
         self,
@@ -423,6 +429,57 @@ class AgenticAPI:
             List of trace entries
         """
         return self._state_manager.read_trace(workflow_id)
+
+    def get_workflow_v2(self, workflow_id: str) -> AgenticWorkflowHandle | None:
+        """Get workflow using new JSONL event log system.
+
+        Args:
+            workflow_id: Full or prefix workflow ID
+
+        Returns:
+            AgenticWorkflowHandle if found, None otherwise
+        """
+        state = self._event_log_reader.reconstruct_workflow(workflow_id)
+        if state is None:
+            return None
+        return state.to_handle()
+
+    def list_workflows_v2(self) -> list[str]:
+        """List all workflow IDs using new JSONL event log system.
+
+        Returns:
+            List of workflow IDs
+        """
+        return self._event_log_reader.list_workflows()
+
+    def get_session_events(
+        self,
+        workflow_id: str,
+        session_name: str,
+    ) -> list[dict[str, Any]]:
+        """Get all events for a specific session.
+
+        Args:
+            workflow_id: Workflow identifier
+            session_name: Session name
+
+        Returns:
+            List of event dictionaries in chronological order
+        """
+        events = self._event_log_reader.get_session_events(workflow_id, session_name)
+        return [e.to_dict() for e in events]
+
+    def get_workflow_events(self, workflow_id: str) -> list[dict[str, Any]]:
+        """Get all workflow-level events.
+
+        Args:
+            workflow_id: Workflow identifier
+
+        Returns:
+            List of event dictionaries in chronological order
+        """
+        events = self._event_log_reader.get_workflow_events(workflow_id)
+        return [e.to_dict() for e in events]
 
 
 __all__ = ["AgenticAPI"]

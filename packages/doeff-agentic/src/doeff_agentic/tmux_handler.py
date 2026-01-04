@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .event_log import EventLogWriter
 from .effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -270,8 +271,8 @@ class TmuxHandler:
         """
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
         self._workflow: TmuxWorkflowState | None = None
+        self._event_log: EventLogWriter | None = None
 
-        # Verify tmux is available
         if not is_tmux_available():
             raise AgenticServerError("tmux is not installed or not in PATH")
 
@@ -310,13 +311,19 @@ class TmuxHandler:
             metadata=effect.metadata,
         )
 
-        return AgenticWorkflowHandle(
+        self._event_log = EventLogWriter(workflow_id)
+
+        handle = AgenticWorkflowHandle(
             id=workflow_id,
             name=effect.name,
             status=AgenticWorkflowStatus.RUNNING,
             created_at=self._workflow.created_at,
             metadata=effect.metadata,
         )
+
+        self._event_log.log_workflow_created(handle)
+
+        return handle
 
     def handle_get_workflow(self, effect: AgenticGetWorkflow) -> AgenticWorkflowHandle:
         """Handle AgenticGetWorkflow effect."""
@@ -371,6 +378,10 @@ class TmuxHandler:
         )
 
         self._workflow.environments[env_id] = handle
+
+        if self._event_log:
+            self._event_log.log_environment_created(handle)
+
         return handle
 
     def handle_get_environment(
@@ -409,6 +420,10 @@ class TmuxHandler:
             self._delete_worktree(handle.working_dir)
 
         del self._workflow.environments[effect.environment_id]
+
+        if self._event_log:
+            self._event_log.log_environment_deleted(effect.environment_id)
+
         return True
 
     # -------------------------------------------------------------------------
@@ -471,6 +486,9 @@ class TmuxHandler:
         self._workflow.sessions[effect.name] = state
         self._workflow.session_by_id[session_id] = effect.name
 
+        if self._event_log:
+            self._event_log.log_session_created(handle)
+
         return handle
 
     def handle_fork_session(self, effect: AgenticForkSession) -> AgenticSessionHandle:
@@ -512,16 +530,13 @@ class TmuxHandler:
         state = self._workflow.sessions[name]
         session_name = f"doeff-{self._workflow.id}-{name}"
 
-        # Send Ctrl+C to abort
         try:
             send_keys(state.pane_id, "C-c", literal=False, enter=False)
         except Exception:
             pass
 
-        # Kill the tmux session
         kill_session(session_name)
 
-        # Update status
         state.handle = AgenticSessionHandle(
             id=state.handle.id,
             name=state.handle.name,
@@ -533,6 +548,9 @@ class TmuxHandler:
             agent=state.handle.agent,
             model=state.handle.model,
         )
+
+        if self._event_log:
+            self._event_log.log_session_aborted(name, effect.session_id)
 
     def handle_delete_session(self, effect: AgenticDeleteSession) -> bool:
         """Handle AgenticDeleteSession effect."""
@@ -548,6 +566,9 @@ class TmuxHandler:
 
         self._workflow.session_by_id.pop(effect.session_id, None)
         self._workflow.sessions.pop(name, None)
+
+        if self._event_log:
+            self._event_log.log_session_deleted(name, effect.session_id)
 
         return True
 
@@ -566,16 +587,13 @@ class TmuxHandler:
 
         state = self._workflow.sessions[name]
 
-        # Check if session is running
         if not has_session(f"doeff-{self._workflow.id}-{name}"):
             raise AgenticSessionNotRunningError(
                 effect.session_id, state.handle.status.value
             )
 
-        # Send message to tmux
         send_keys(state.pane_id, effect.content, literal=True, enter=True)
 
-        # Record message
         msg_id = f"msg_{time.time_ns()}"
         state.message_history.append(
             {
@@ -586,7 +604,6 @@ class TmuxHandler:
             }
         )
 
-        # Update status to running
         state.handle = AgenticSessionHandle(
             id=state.handle.id,
             name=state.handle.name,
@@ -599,8 +616,10 @@ class TmuxHandler:
             model=state.handle.model,
         )
 
+        if self._event_log:
+            self._event_log.log_message_sent(name, msg_id, "user", effect.content)
+
         if effect.wait:
-            # Poll until completion or blocked
             self._wait_for_completion(state)
 
         return AgenticMessageHandle(
