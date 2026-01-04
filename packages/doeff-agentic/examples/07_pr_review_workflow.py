@@ -17,8 +17,23 @@ Run:
 from doeff import do
 from doeff.effects.writer import slog
 
-from doeff_agentic import AgentConfig, RunAgent, WaitForUserInput
+from doeff_agentic import (
+    AgenticCreateSession,
+    AgenticSendMessage,
+    AgenticGetMessages,
+    AgenticGetSessionStatus,
+    AgenticNextEvent,
+)
+from doeff_agentic.types import AgenticSessionStatus
 from doeff_agentic.handler import agentic_effectful_handlers
+
+
+def get_assistant_response(messages):
+    """Extract the latest assistant response from messages."""
+    for msg in reversed(messages):
+        if msg.role == "assistant":
+            return msg.content
+    return ""
 
 
 @do
@@ -38,23 +53,29 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
     yield slog(status="automated-review", msg="Starting automated review")
 
     # Phase 1: Automated Review
-    review = yield RunAgent(
-        config=AgentConfig(
-            agent_type="claude",
-            prompt=(
-                f"Review the PR at {pr_url}\n\n"
-                "Check for:\n"
-                "- Code style issues\n"
-                "- Potential bugs\n"
-                "- Missing tests\n"
-                "- Documentation gaps\n\n"
-                "List any issues found, or say 'LGTM' if everything looks good.\n"
-                "Then exit."
-            ),
-            profile="code-review",
-        ),
-        session_name="review-agent",
+    reviewer = yield AgenticCreateSession(
+        name="review-agent",
+        title="PR Reviewer",
+        agent="code-review",
     )
+
+    yield AgenticSendMessage(
+        session_id=reviewer.id,
+        content=(
+            f"Review the PR at {pr_url}\n\n"
+            "Check for:\n"
+            "- Code style issues\n"
+            "- Potential bugs\n"
+            "- Missing tests\n"
+            "- Documentation gaps\n\n"
+            "List any issues found, or say 'LGTM' if everything looks good.\n"
+            "Then exit."
+        ),
+        wait=True,
+    )
+
+    messages = yield AgenticGetMessages(session_id=reviewer.id)
+    review = get_assistant_response(messages)
 
     # Check if issues were found
     has_issues = "LGTM" not in review.upper()
@@ -62,27 +83,33 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
     if has_issues:
         yield slog(
             status="issues-found",
-            msg=f"Found issues in review",
+            msg="Found issues in review",
             issues_count=review.count("\n- ") if "\n- " in review else 1,
         )
 
         # Phase 2: Fix Issues
         yield slog(status="fixing", msg="Attempting to fix issues")
 
-        fix_result = yield RunAgent(
-            config=AgentConfig(
-                agent_type="claude",
-                prompt=(
-                    f"The following issues were found in the PR:\n{review}\n\n"
-                    "For each issue:\n"
-                    "1. Explain what needs to change\n"
-                    "2. Show the fix (if code-related)\n"
-                    "3. Verify the fix is correct\n\n"
-                    "Then exit."
-                ),
-            ),
-            session_name="fix-agent",
+        fixer = yield AgenticCreateSession(
+            name="fix-agent",
+            title="Issue Fixer",
         )
+
+        yield AgenticSendMessage(
+            session_id=fixer.id,
+            content=(
+                f"The following issues were found in the PR:\n{review}\n\n"
+                "For each issue:\n"
+                "1. Explain what needs to change\n"
+                "2. Show the fix (if code-related)\n"
+                "3. Verify the fix is correct\n\n"
+                "Then exit."
+            ),
+            wait=True,
+        )
+
+        fix_messages = yield AgenticGetMessages(session_id=fixer.id)
+        fix_result = get_assistant_response(fix_messages)
 
         yield slog(status="fixes-ready", msg="Fixes prepared")
 
@@ -115,13 +142,22 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
         print("  doeff-agentic send <workflow-id> 'reject'")
         print("=" * 60 + "\n")
 
-        approval = yield WaitForUserInput(
-            session_name="review-agent",
-            prompt="Review complete. Enter 'approve' or 'reject':",
-            timeout=600,  # 10 minutes
-        )
+        # Wait for session to become blocked
+        while True:
+            status = yield AgenticGetSessionStatus(session_id=reviewer.id)
+            if status == AgenticSessionStatus.BLOCKED:
+                break
+            if status in (AgenticSessionStatus.DONE, AgenticSessionStatus.ERROR):
+                break
+            yield AgenticNextEvent(session_id=reviewer.id, timeout=5.0)
 
-        if approval.lower().strip() == "reject":
+        # Wait for user input (up to 10 minutes)
+        yield AgenticNextEvent(session_id=reviewer.id, timeout=600.0)
+
+        messages = yield AgenticGetMessages(session_id=reviewer.id)
+        approval = get_assistant_response(messages)
+
+        if "reject" in approval.lower():
             yield slog(status="rejected", msg="Review rejected by human")
             result["status"] = "rejected"
             result["human_decision"] = "rejected"
