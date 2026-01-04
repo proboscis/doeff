@@ -145,11 +145,17 @@ from .effects import (
     AmbiguousPrefixError,
 )
 
-# State management
 from .state import (
     StateManager,
     generate_workflow_id,
     get_default_state_dir,
+)
+
+from .event_log import (
+    EventLogManager,
+    WorkflowEvent,
+    SessionEvent,
+    WorkflowState,
 )
 
 # API
@@ -253,6 +259,10 @@ __all__ = [
     "StateManager",
     "generate_workflow_id",
     "get_default_state_dir",
+    "EventLogManager",
+    "WorkflowEvent",
+    "SessionEvent",
+    "WorkflowState",
     # API
     "AgenticAPI",
     # OpenCode Handler (new - primary)
