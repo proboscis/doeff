@@ -153,7 +153,7 @@ asyncio.run(main())
 | **IO** | IO, Print | [06](06-io-effects.md) |
 | **Cache** | CacheGet, CachePut | [07](07-cache-system.md) |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph | [08](08-graph-tracking.md) |
-| **Gather** | Gather, GatherDict | [09](09-advanced-effects.md#gather-effects) |
+| **Gather** | Gather | [09](09-advanced-effects.md#gather-effects) |
 | **Memo** | MemoGet, MemoPut | [09](09-advanced-effects.md#memo-effects) |
 | **Dep** | Dep | [10](10-pinjected-integration.md) |
 

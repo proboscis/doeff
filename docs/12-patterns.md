@@ -403,13 +403,16 @@ Fetch multiple resources concurrently:
 ```python
 @do
 def fetch_user_dashboard(user_id):
-    # Fetch all data in parallel
-    results = yield GatherDict({
+    # Fetch all data in parallel using Gather + dict reconstruction
+    programs = {
         "user": fetch_user(user_id),
         "posts": fetch_user_posts(user_id),
         "followers": fetch_followers(user_id),
         "notifications": fetch_notifications(user_id)
-    })
+    }
+    keys = list(programs.keys())
+    values = yield Gather(*programs.values())
+    results = dict(zip(keys, values))
     
     return {
         "user": results["user"],
