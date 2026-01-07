@@ -14,7 +14,7 @@ from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 from doeff.effects.cache import CacheGetEffect, CachePutEffect
 from doeff.effects.dep import DepInjectEffect
 from doeff.effects.future import FutureAwaitEffect
-from doeff.effects.gather import GatherDictEffect, GatherEffect
+from doeff.effects.gather import GatherEffect
 from doeff.effects.graph import (
     GraphAnnotateEffect,
     GraphCaptureEffect,
@@ -153,17 +153,6 @@ async def test_result_finally_effect_intercept_rewrites_programs() -> None:
     assert (await writer_message(result.sub_program)).endswith(SUFFIX)
     assert isinstance(result.finalizer, Program)
     assert (await writer_message(result.finalizer)).endswith(SUFFIX)
-
-
-@pytest.mark.asyncio
-async def test_gather_dict_effect_intercept_rewrites_each_program() -> None:
-    base = GatherDictEffect(programs={"a": writer_program("one"), "b": writer_program("two")})
-
-    result = base.intercept(tagging_transform)
-
-    assert result is not base
-    messages = {key: await writer_message(program) for key, program in result.programs.items()}
-    assert messages == {"a": f"one{SUFFIX}", "b": f"two{SUFFIX}"}
 
 
 @pytest.mark.asyncio

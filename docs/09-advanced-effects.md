@@ -24,16 +24,21 @@ def parallel_programs():
     return users
 ```
 
-### GatherDict - Named Parallel Programs
+### User-Side Dict Pattern
+
+If you need to run a dict of Programs in parallel, use `Gather` with dict reconstruction:
 
 ```python
 @do
 def parallel_dict():
-    results = yield GatherDict({
+    programs = {
         "user": fetch_user(123),
         "posts": fetch_posts(123),
         "comments": fetch_comments(123)
-    })
+    }
+    keys = list(programs.keys())
+    values = yield Gather(*programs.values())
+    results = dict(zip(keys, values))
     
     # results = {"user": ..., "posts": [...], "comments": [...]}
     return results
@@ -310,7 +315,6 @@ interpreter responds to this key directly.
 | Effect | Purpose | Use Case |
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
-| `GatherDict(dict)` | Named parallel Programs | Structured parallel data |
 | `MemoGet(key)` | Get memoized value | Within-execution caching |
 | `MemoPut(key, val)` | Store memoized value | Deduplication |
 | `AtomicGet(key)` | Thread-safe read | Concurrent reads |

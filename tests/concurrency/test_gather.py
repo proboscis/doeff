@@ -3,8 +3,6 @@ Interpreter tests for Gather effect.
 
 Tests sequential gathering of Programs, parameterized to run against
 both CESK interpreter and ProgramInterpreter.
-
-Note: GatherDictEffect is only supported by ProgramInterpreter, not CESK.
 """
 
 import asyncio
@@ -12,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from doeff import Await, Gather, GatherDict, Get, Log, Program, Put, do, EffectGenerator
+from doeff import Await, Gather, Get, Log, Program, Put, do, EffectGenerator
 
 if TYPE_CHECKING:
     from tests.conftest import Interpreter
@@ -45,36 +43,6 @@ async def test_gather_list_basic(interpreter: "Interpreter") -> None:
     assert "Making value 2" in result.log[1]
     assert "Making value 3" in result.log[2]
     assert "Gathered results: [2, 4, 6]" in result.log[3]
-
-
-@pytest.mark.asyncio
-async def test_gather_dict_basic(interpreter: "Interpreter") -> None:
-    """Test GatherDict effect with a dict of Programs."""
-    if interpreter.interpreter_type == "cesk":
-        pytest.skip("GatherDictEffect not yet implemented in CESK")
-    engine = interpreter
-
-    @do
-    def compute(x: int) -> EffectGenerator[int]:
-        yield Log(f"Computing with {x}")
-        return x ** 2
-
-    @do
-    def gather_dict_test() -> EffectGenerator[dict]:
-        programs = {
-            "first": compute(2),
-            "second": compute(3),
-            "third": compute(4),
-        }
-        results = yield GatherDict(programs)
-        yield Log(f"Gathered dict: {results}")
-        return results
-
-    result = await engine.run_async(gather_dict_test())
-
-    assert result.is_ok
-    assert result.value == {"first": 4, "second": 9, "third": 16}
-    assert len(result.log) == 4
 
 
 @pytest.mark.asyncio
@@ -131,24 +99,6 @@ async def test_gather_empty(interpreter: "Interpreter") -> None:
 
     assert result.is_ok
     assert result.value == []
-
-
-@pytest.mark.asyncio
-async def test_gather_dict_empty(interpreter: "Interpreter") -> None:
-    """Test GatherDict with empty dict returns empty dict."""
-    if interpreter.interpreter_type == "cesk":
-        pytest.skip("GatherDictEffect not yet implemented in CESK")
-    engine = interpreter
-
-    @do
-    def empty_gather_dict() -> EffectGenerator[dict]:
-        results = yield GatherDict({})
-        return results
-
-    result = await engine.run_async(empty_gather_dict())
-
-    assert result.is_ok
-    assert result.value == {}
 
 
 @pytest.mark.asyncio
@@ -241,38 +191,6 @@ async def test_gather_pure_programs(interpreter: "Interpreter") -> None:
     assert result.is_ok
     assert result.value == [10, 20, 30]
     assert len(result.log) == 0
-
-
-@pytest.mark.asyncio
-async def test_gather_dict_mixed(interpreter: "Interpreter") -> None:
-    """Test GatherDict with mixed Program types."""
-    if interpreter.interpreter_type == "cesk":
-        pytest.skip("GatherDictEffect not yet implemented in CESK")
-    engine = interpreter
-
-    @do
-    def with_effect(x: int) -> EffectGenerator[int]:
-        yield Put(f"value_{x}", x)
-        yield Log(f"Processing {x}")
-        return x * 10
-
-    @do
-    def gather_mixed() -> EffectGenerator[dict]:
-        programs = {
-            "pure": Program.pure(5),
-            "effect": with_effect(3),
-            "another_pure": Program.pure("hello"),
-        }
-        results = yield GatherDict(programs)
-        return results
-
-    result = await engine.run_async(gather_mixed())
-
-    assert result.is_ok
-    assert result.value == {"pure": 5, "effect": 30, "another_pure": "hello"}
-    assert result.state["value_3"] == 3
-    assert len(result.log) == 1
-    assert "Processing 3" in result.log[0]
 
 
 @pytest.mark.asyncio

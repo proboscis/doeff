@@ -94,7 +94,6 @@ from doeff.effects import (
     Dep,
     # Effects - Gather for parallel Programs
     Gather,
-    GatherDict,
     MemoGet,
     MemoPut,
     # Effects - Cache
@@ -225,7 +224,6 @@ __all__ = [  # noqa: RUF022
     "Dep",
     "Fail",
     "Gather",
-    "GatherDict",
     "MemoGet",
     "MemoPut",
     "CacheGet",
