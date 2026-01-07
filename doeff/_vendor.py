@@ -17,6 +17,7 @@ from frozendict import frozendict
 if TYPE_CHECKING:
     from doeff.kleisli import KleisliProgram
     from doeff.program import Program
+    from doeff.traceback import EffectTraceback
 
 # =========================================================
 # Type Vars
@@ -261,9 +262,10 @@ class Ok(Result[T], Generic[T]):
 
 @dataclass(frozen=True)
 class Err(Result[NoReturn]):
-    """Error result."""
+    """Error result with optional captured traceback."""
 
     error: Exception
+    captured_traceback: Maybe["EffectTraceback"] = field(default_factory=lambda: NOTHING)
 
 
 class Maybe(Generic[T_co]):
