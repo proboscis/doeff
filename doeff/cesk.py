@@ -28,18 +28,13 @@ to the actual doeff API effects:
 | Spawn (program)      | SpawnEffect                | Async child machine     |
 | Tell (message)       | WriterTellEffect           | Single message append   |
 
-NOTE: Recover/Retry/Fail/Safe are NOT handled in CESK core.
+NOTE: Recover/Retry/Fail are NOT handled in CESK core.
 They can be implemented as library sugar over Catch in the Pure interpreter.
 
-NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern.
+NOTE: Safe IS supported in CESK - see SafeFrame and ResultSafeEffect handling.
+Safe captures K stack traceback BEFORE unwinding on error (ISSUE-CORE-429).
 
-Design Note: Result/Maybe as Values
------------------------------------
-Domain-level Result/Maybe types are treated as VALUES, not effects.
-The interpreter's Error/exception handling is kept separate.
-Therefore, ResultSafeEffect (which wraps in Ok/Err) is NOT supported
-in the CESK core. Users should use Catch for error handling and construct
-Result values explicitly if needed at domain boundaries.
+NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern.
 
 Suspension Model (Continuation-based):
 -------------------------------------
@@ -303,6 +298,17 @@ class GatherFrame:
     saved_env: Environment
 
 
+@dataclass(frozen=True)
+class SafeFrame:
+    """Safe boundary - captures K stack on error, returns Result.
+    
+    On success: wraps value in Ok and passes through
+    On error: captures K stack snapshot, wraps in Err with traceback attached
+    """
+
+    saved_env: Environment
+
+
 Frame: TypeAlias = (
     ReturnFrame
     | CatchFrame
@@ -311,6 +317,7 @@ Frame: TypeAlias = (
     | InterceptFrame
     | ListenFrame
     | GatherFrame
+    | SafeFrame
 )
 
 # Kontinuation is a stack of frames
@@ -466,16 +473,16 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
         LocalEffect,
         ResultCatchEffect,
         ResultFinallyEffect,
+        ResultSafeEffect,
         WriterListenEffect,
     )
 
-    # Note: Recover/Retry/Fail/Safe are NOT included - they are library sugar
-    # handled by the Pure interpreter, not CESK core
     return isinstance(
         effect,
         (
             ResultCatchEffect,
             ResultFinallyEffect,
+            ResultSafeEffect,
             LocalEffect,
             InterceptEffect,
             WriterListenEffect,
@@ -1258,10 +1265,12 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
             LocalEffect,
             ResultCatchEffect,
             ResultFinallyEffect,
+            ResultSafeEffect,
             WriterListenEffect,
         )
-        # Note: Recover/Retry/Fail/Safe are NOT handled in CESK core
+        # Note: Recover/Retry/Fail are NOT handled in CESK core
         # They are library sugar handled by the Pure interpreter
+        # Note: Safe IS handled - see SafeFrame and ResultSafeEffect handling below
         # Note: For parallel execution, use asyncio.create_task + Await + Gather pattern
 
         if isinstance(effect, ResultCatchEffect):
@@ -1321,8 +1330,6 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
             )
 
         if isinstance(effect, GatherEffect):
-            # GatherEffect runs programs sequentially per CESK spec
-            # Each program sees S modifications from previous (state accumulates)
             programs = list(effect.programs)
             if not programs:
                 return CESKState(C=Value([]), E=E, S=S, K=K)
@@ -1332,6 +1339,14 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
                 E=E,
                 S=S,
                 K=[GatherFrame(rest, [], E)] + K,
+            )
+
+        if isinstance(effect, ResultSafeEffect):
+            return CESKState(
+                C=ProgramControl(effect.sub_program),
+                E=E,
+                S=S,
+                K=[SafeFrame(E)] + K,
             )
 
         # =====================================================================
@@ -1594,11 +1609,9 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
 
         if isinstance(frame, GatherFrame):
             if not frame.remaining_programs:
-                # All programs complete - restore saved_env
                 final_results = frame.collected_results + [C.v]
                 return CESKState(C=Value(final_results), E=frame.saved_env, S=S, K=K_rest)
 
-            # More programs to run (sequential: S accumulates)
             next_prog, *rest = frame.remaining_programs
             return CESKState(
                 C=ProgramControl(next_prog),
@@ -1606,6 +1619,9 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
                 S=S,
                 K=[GatherFrame(rest, frame.collected_results + [C.v], frame.saved_env)] + K_rest,
             )
+
+        if isinstance(frame, SafeFrame):
+            return CESKState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
 
     # =========================================================================
     # ERROR + Frames → propagate error through continuation
@@ -1714,8 +1730,19 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
             return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GatherFrame):
-            # Propagate (partial results discarded), restore env - preserve traceback
             return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.saved_env, S=S, K=K_rest)
+
+        if isinstance(frame, SafeFrame):
+            from doeff._vendor import NOTHING, Some
+            from doeff.cesk_traceback import capture_traceback_safe
+
+            if C.captured_traceback is not None:
+                captured_maybe = Some(C.captured_traceback)
+            else:
+                captured = capture_traceback_safe(K_rest, C.ex)
+                captured_maybe = Some(captured) if captured else NOTHING
+            err_result = Err(C.ex, captured_traceback=captured_maybe)
+            return CESKState(C=Value(err_result), E=frame.saved_env, S=S, K=K_rest)
 
     # =========================================================================
     # CATCH-ALL (should never reach - indicates bug in rules)
