@@ -136,6 +136,19 @@ class CapturedTraceback:
     exception: BaseException
     capture_timestamp: float | None = None
     interpreter_version: str = "cesk-v1"
+    
+    def format(self) -> str:
+        """Full human-readable traceback (implements EffectTraceback protocol)."""
+        return format_traceback(self)
+    
+    def format_short(self) -> str:
+        """One-line summary (implements EffectTraceback protocol)."""
+        return format_traceback_short(self)
+    
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-serializable representation (implements EffectTraceback protocol)."""
+        result = to_dict(self)
+        return result if result is not None else {}
 
 
 # ============================================================================
