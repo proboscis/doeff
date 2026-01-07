@@ -264,14 +264,16 @@ class ProgramBase(ABC, Generic[T]):
             arg_programs = [ProgramBase.lift(arg) for arg in args]
             kw_programs = {name: ProgramBase.lift(value) for name, value in kwargs.items()}
 
-            from doeff.effects import gather, gather_dict
+            from doeff.effects import gather
 
             def gather_inputs() -> Generator[
                 Effect | Program, Any, tuple[list[Any], dict[str, Any]]
             ]:
                 resolved_args = yield gather(*arg_programs)
-                resolved_kwargs = yield gather_dict(kw_programs)
-                return list(resolved_args), dict(resolved_kwargs)
+                kw_keys = list(kw_programs.keys())
+                kw_values = yield gather(*kw_programs.values())
+                resolved_kwargs = dict(zip(kw_keys, kw_values))
+                return list(resolved_args), resolved_kwargs
 
             def call_program() -> Generator[Effect | Program, Any, Any]:
                 resolved_args, resolved_kwargs = yield GeneratorProgram(gather_inputs)
@@ -418,13 +420,13 @@ class ProgramBase(ABC, Generic[T]):
     ) -> Program[dict[Any, V]]:
         raw = dict(*mapping, **kwargs)
 
-        from doeff.effects import gather_dict
+        from doeff.effects import gather
 
         def dict_generator():
             program_map = {key: ProgramBase.lift(value) for key, value in raw.items()}
-            effect = gather_dict(program_map)
-            result = yield effect
-            return dict(result)
+            keys = list(program_map.keys())
+            values = yield gather(*program_map.values())
+            return dict(zip(keys, values))
 
         return GeneratorProgram(dict_generator)
 
@@ -480,7 +482,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
     def to_generator(self) -> Generator[Effect | Program, Any, T]:
         """Create generator by invoking the captured Kleisli program."""
 
-        from doeff.effects import Gather, GatherDict
+        from doeff.effects import Gather
 
         kleisli = self.kleisli_source
         strategy = self.auto_unwrap_strategy
@@ -528,7 +530,9 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
                     regular_args[idx] = unwrapped_value
 
             if program_kwargs:
-                unwrapped_kwargs = yield GatherDict(program_kwargs)
+                keys = list(program_kwargs.keys())
+                values = yield Gather(*program_kwargs.values())
+                unwrapped_kwargs = dict(zip(keys, values))
                 regular_kwargs.update(unwrapped_kwargs)
 
             final_args = tuple(regular_args)

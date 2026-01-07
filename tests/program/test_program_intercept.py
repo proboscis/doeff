@@ -17,7 +17,6 @@ from doeff import (
     Finally,
     FirstSuccess,
     Gather,
-    GatherDict,
     Get,
     Listen,
     Local,
@@ -30,7 +29,7 @@ from doeff import (
     Safe,
     do,
 )
-from doeff.effects.gather import GatherDictEffect, GatherEffect
+from doeff.effects.gather import GatherEffect
 from doeff.effects.graph import GraphCaptureEffect
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import (
@@ -160,21 +159,6 @@ def _build_gather_program() -> Program:
     def _program() -> EffectGenerator[str]:
         yield Gather(child(1), child(2))
         yield Log("after gather")
-        return "done"
-
-    return _program()
-
-
-def _build_gather_dict_program() -> Program:
-    @do
-    def child(name: str) -> EffectGenerator[str]:
-        yield Log(f"child {name}")
-        return name
-
-    @do
-    def _program() -> EffectGenerator[str]:
-        yield GatherDict({"a": child("a"), "b": child("b")})
-        yield Log("after gather dict")
         return "done"
 
     return _program()
@@ -341,12 +325,6 @@ INTERCEPT_CASES: tuple[InterceptCase, ...] = (
         build_program=_build_gather_program,
         build_context=lambda: None,
         expected=(GatherEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
-    ),
-    InterceptCase(
-        name="gather_dict_with_log_children",
-        build_program=_build_gather_dict_program,
-        build_context=lambda: None,
-        expected=(GatherDictEffect, WriterTellEffect, WriterTellEffect, WriterTellEffect),
     ),
     InterceptCase(
         name="capture_graph_with_log",

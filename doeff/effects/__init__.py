@@ -29,7 +29,7 @@ from .callstack import (
 )
 from .dep import Dep, DepInjectEffect, inject
 from .future import Await, FutureAwaitEffect, await_
-from .gather import Gather, GatherDict, GatherDictEffect, GatherEffect, gather, gather_dict
+from .gather import Gather, GatherEffect, gather
 from .graph import (
     Annotate,
     CaptureGraph,
@@ -153,8 +153,6 @@ __all__ = [
     "FirstSuccess",
     "FutureAwaitEffect",
     "Gather",
-    "GatherDict",
-    "GatherDictEffect",
     "GatherEffect",
     "Get",
     "GraphAnnotateEffect",
@@ -223,7 +221,6 @@ __all__ = [
     "finally_",
     "first_success_effect",
     "gather",
-    "gather_dict",
     "get",
     "graph",
     "inject",

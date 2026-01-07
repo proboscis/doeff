@@ -20,7 +20,6 @@ from doeff.effects import (
     CachePutEffect,
     DepInjectEffect,
     FutureAwaitEffect,
-    GatherDictEffect,
     GatherEffect,
     GraphAnnotateEffect,
     GraphCaptureEffect,
@@ -658,8 +657,6 @@ class ProgramInterpreter:
         """Handle Gather/Memo/Cache effects. Returns _NO_HANDLER if not matched."""
         if _effect_is(effect, GatherEffect):
             return await self._handle_gather_effect(effect, ctx)
-        if _effect_is(effect, GatherDictEffect):
-            return await self._handle_gather_dict_effect(effect, ctx)
         if _effect_is(effect, MemoGetEffect):
             return await self.memo_handler.handle_get(effect, ctx)
         if _effect_is(effect, MemoPutEffect):
@@ -672,13 +669,6 @@ class ProgramInterpreter:
 
     async def _handle_gather_effect(self, effect: GatherEffect, ctx: ExecutionContext) -> Any:
         return await self._run_gather_sequence(list(effect.programs), ctx)
-
-    async def _handle_gather_dict_effect(
-        self, effect: GatherDictEffect, ctx: ExecutionContext
-    ) -> Any:
-        program_list = list(effect.programs.values())
-        results = await self._run_gather_sequence(program_list, ctx)
-        return dict(zip(effect.programs.keys(), results, strict=False))
 
     async def _run_gather_sequence(
         self, programs: list[Program], ctx: ExecutionContext
