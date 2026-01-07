@@ -742,26 +742,6 @@ results = yield Gather(
 
 ---
 
-### GatherDict(programs)
-
-Execute named Programs in parallel.
-
-```python
-results = yield GatherDict({
-    "user": fetch_user(123),
-    "posts": fetch_posts(123),
-    "comments": fetch_comments(123)
-})
-```
-
-**Parameters:** `programs: dict[str, Program[T]]` - Named programs
-
-**Returns:** `dict[str, T]` - Results with same keys
-
-**See:** [Advanced Effects](09-advanced-effects.md#gatherdict)
-
----
-
 ### MemoGet(key)
 
 Get memoized value.
@@ -1098,7 +1078,7 @@ await write_graph_html(result.graph, "output.html")
 | **IO** | IO, Print |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
-| **Advanced** | Spawn, Gather, GatherDict, MemoGet, MemoPut |
+| **Advanced** | Spawn, Gather, MemoGet, MemoPut |
 | **DI** | Dep (doeff-pinjected) |
 
 ### Common Imports
@@ -1126,7 +1106,7 @@ from doeff import CacheGet, CachePut, cache
 from doeff import Step, Annotate, Snapshot, CaptureGraph, graph_to_html
 
 # Advanced
-from doeff import Gather, GatherDict, MemoGet, MemoPut, AtomicGet, AtomicUpdate
+from doeff import Gather, MemoGet, MemoPut, AtomicGet, AtomicUpdate
 
 # Pinjected (separate package)
 from doeff import Dep
