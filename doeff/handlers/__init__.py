@@ -1171,7 +1171,10 @@ class ResultEffectHandler:
     async def handle_safe(
         self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
-        """Handle result.safe effect by capturing the program outcome."""
+        """Handle result.safe effect by capturing the program outcome with traceback."""
+        from doeff._vendor import Some
+        from doeff.traceback import capture_python_traceback
+
         pragmatic_result = await engine.run_async(effect.sub_program, ctx)
         result = pragmatic_result.result
 
@@ -1183,9 +1186,11 @@ class ResultEffectHandler:
                     unwrapped = unwrapped.cause
 
                 if isinstance(unwrapped, Exception):
-                    return Err(unwrapped)
+                    trace = capture_python_traceback(unwrapped)
+                    return Err(unwrapped, captured_traceback=Some(trace))
 
-            return result
+            trace = capture_python_traceback(error)
+            return Err(error, captured_traceback=Some(trace))
 
         return result
 
