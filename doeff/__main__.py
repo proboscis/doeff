@@ -530,34 +530,16 @@ def handle_run_code(args: argparse.Namespace) -> int:
         print("Error: No code provided", file=sys.stderr)
         return 1
 
-    result = execute_doeff_code(code, filename="<doeff-code>")
-
-    if result is None:
-        print("Error: Code did not produce a result", file=sys.stderr)
-        return 1
-
-    if not isinstance(result, Program):
-        if args.format == "json":
-            payload = {
-                "status": "ok",
-                "result": _json_safe(result),
-                "result_type": type(result).__name__,
-            }
-            print(json.dumps(payload))
-        else:
-            print(result)
-        return 0
-
-    program: Program[Any] = result
     interpreter_path = args.interpreter
-    env_paths = args.envs or []
-
     if interpreter_path is None:
         print(
             "Error: -c mode requires --interpreter (auto-discovery not available)",
             file=sys.stderr,
         )
         return 1
+
+    program: Program[Any] = execute_doeff_code(code, filename="<doeff-code>")
+    env_paths = args.envs or []
 
     resolver = SymbolResolver()
     interpreter_obj = resolver.resolve(interpreter_path)
