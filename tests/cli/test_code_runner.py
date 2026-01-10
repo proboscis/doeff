@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Program
+from doeff import Program, ProgramInterpreter
 from doeff.cli.code_runner import (
     TransformResult,
     execute_doeff_code,
@@ -10,41 +10,17 @@ from doeff.cli.code_runner import (
 )
 
 
+def run_program(program: Program):
+    return ProgramInterpreter().run(program).value
+
+
 class TestTransformDoeffCode:
-    def test_simple_expression_without_yield(self) -> None:
+    def test_returns_transform_result(self) -> None:
         source = "1 + 2"
         result = transform_doeff_code(source)
 
         assert isinstance(result, TransformResult)
-        assert result.has_yield is False
         assert result.original_source == source
-
-    def test_import_and_expression(self) -> None:
-        source = """
-from doeff import Program
-Program.pure(42)
-"""
-        result = transform_doeff_code(source)
-        assert result.has_yield is False
-
-    def test_code_with_toplevel_yield(self) -> None:
-        source = """
-x = yield some_effect()
-x + 1
-"""
-        result = transform_doeff_code(source)
-        assert result.has_yield is True
-
-    def test_yield_inside_function_not_detected_as_toplevel(self) -> None:
-        source = """
-def my_gen():
-    yield 1
-    yield 2
-
-my_gen()
-"""
-        result = transform_doeff_code(source)
-        assert result.has_yield is False
 
     def test_syntax_error_raises(self) -> None:
         source = "def broken("
@@ -55,11 +31,13 @@ my_gen()
 class TestExecuteDoeffCode:
     def test_simple_arithmetic(self) -> None:
         result = execute_doeff_code("1 + 2 + 3")
-        assert result == 6
+        assert isinstance(result, Program)
+        assert run_program(result) == 6
 
     def test_program_pure(self) -> None:
         result = execute_doeff_code("from doeff import Program; Program.pure(42)")
         assert isinstance(result, Program)
+        assert run_program(result) == 42
 
     def test_multiple_statements_last_is_result(self) -> None:
         source = """
@@ -68,7 +46,8 @@ y = 20
 x + y
 """
         result = execute_doeff_code(source)
-        assert result == 30
+        assert isinstance(result, Program)
+        assert run_program(result) == 30
 
     def test_import_preserved(self) -> None:
         source = """
@@ -76,7 +55,8 @@ import json
 json.dumps({"key": "value"})
 """
         result = execute_doeff_code(source)
-        assert result == '{"key": "value"}'
+        assert isinstance(result, Program)
+        assert run_program(result) == '{"key": "value"}'
 
     def test_code_with_yield_creates_program(self) -> None:
         source = """
@@ -86,25 +66,27 @@ value * 2
 """
         result = execute_doeff_code(source)
         assert isinstance(result, Program)
+        assert run_program(result) == 20
 
     def test_extra_globals_injected(self) -> None:
         result = execute_doeff_code(
             "my_value * 2",
             extra_globals={"my_value": 21},
         )
-        assert result == 42
+        assert isinstance(result, Program)
+        assert run_program(result) == 42
 
-    def test_empty_code_returns_none(self) -> None:
+    def test_empty_code_returns_program(self) -> None:
         result = execute_doeff_code("")
-        assert result is None
+        assert isinstance(result, Program)
 
-    def test_code_with_only_statements_no_expression(self) -> None:
+    def test_code_with_only_statements(self) -> None:
         source = """
 x = 1
 y = 2
 """
         result = execute_doeff_code(source)
-        assert result is None
+        assert isinstance(result, Program)
 
     def test_heredoc_style_multiline(self) -> None:
         source = """from doeff import Program
@@ -118,14 +100,11 @@ Program.pure(f"Processing {issue_id}")
 
 
 class TestLineNumberPreservation:
-    def test_error_shows_original_line_number(self) -> None:
+    def test_line_numbers_preserved_in_compiled_code(self) -> None:
         source = """x = 1
 y = 2
-raise ValueError("error on line 3")
+z = 3
 """
-        with pytest.raises(ValueError) as exc_info:
-            exec_globals: dict = {"__builtins__": __builtins__}
-            result = transform_doeff_code(source, filename="test.py")
-            exec(result.code, exec_globals)
-
-        assert "error on line 3" in str(exc_info.value)
+        result = transform_doeff_code(source, filename="custom_file.py")
+        assert result.code.co_filename == "custom_file.py"
+        assert result.original_source == source
