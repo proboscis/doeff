@@ -519,7 +519,105 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
     return 0
 
 
+def handle_run_code(args: argparse.Namespace) -> int:
+    from doeff.cli.code_runner import execute_doeff_code
+
+    code = args.code
+    if code == "-":
+        code = sys.stdin.read()
+
+    if not code or not code.strip():
+        print("Error: No code provided", file=sys.stderr)
+        return 1
+
+    result = execute_doeff_code(code, filename="<doeff-code>")
+
+    if result is None:
+        print("Error: Code did not produce a result", file=sys.stderr)
+        return 1
+
+    if not isinstance(result, Program):
+        if args.format == "json":
+            payload = {
+                "status": "ok",
+                "result": _json_safe(result),
+                "result_type": type(result).__name__,
+            }
+            print(json.dumps(payload))
+        else:
+            print(result)
+        return 0
+
+    program: Program[Any] = result
+    interpreter_path = args.interpreter
+    env_paths = args.envs or []
+
+    if interpreter_path is None:
+        print(
+            "Error: -c mode requires --interpreter (auto-discovery not available)",
+            file=sys.stderr,
+        )
+        return 1
+
+    resolver = SymbolResolver()
+    interpreter_obj = resolver.resolve(interpreter_path)
+
+    if env_paths:
+        from doeff.effects import Local
+
+        services = RunServices()
+        merged_env_program = services.merger.merge_envs(env_paths)
+        temp_interpreter = ProgramInterpreter()
+        env_result = temp_interpreter.run(merged_env_program)
+        if env_result.is_err:
+            print(f"[DOEFF] Environment merge failed: {env_result.result}", file=sys.stderr)
+            return 1
+        local_effect = Local(env_result.value, program)
+        program = local_effect  # type: ignore[assignment]
+
+    if isinstance(interpreter_obj, ProgramInterpreter):
+        run_result = interpreter_obj.run(program)
+        final_value = _unwrap_run_result(run_result)
+    elif callable(interpreter_obj):
+        exec_result = _call_interpreter(interpreter_obj, program)
+        final_value, run_result = _finalize_result(exec_result)
+    else:
+        print(
+            "Error: --interpreter must resolve to callable or ProgramInterpreter",
+            file=sys.stderr,
+        )
+        return 1
+
+    if args.format == "json":
+        payload = {
+            "status": "ok",
+            "result": _json_safe(final_value),
+            "result_type": type(final_value).__name__,
+        }
+        if getattr(args, "report", False) and run_result is not None:
+            payload["report"] = run_result.display(verbose=getattr(args, "report_verbose", False))
+            call_tree = _call_tree_ascii(run_result)
+            if call_tree:
+                payload["call_tree"] = call_tree
+        print(json.dumps(payload))
+    else:
+        print(final_value)
+        if getattr(args, "report", False) and run_result is not None:
+            print()
+            print(run_result.display(verbose=getattr(args, "report_verbose", False)))
+
+    return 0
+
+
 def handle_run(args: argparse.Namespace) -> int:
+    code_arg = getattr(args, "code", None)
+    if code_arg is not None:
+        return handle_run_code(args)
+
+    if not getattr(args, "program", None):
+        print("Error: --program is required when not using -c", file=sys.stderr)
+        return 1
+
     context = RunContext(
         program_path=args.program,
         interpreter_path=args.interpreter,
@@ -531,9 +629,7 @@ def handle_run(args: argparse.Namespace) -> int:
         report_verbose=getattr(args, "report_verbose", False),
     )
 
-    # Check if script is provided (either as positional arg or stdin)
     script = getattr(args, "script", None)
-    # Only handle script if it's "-" (stdin) or a non-empty string
     if script == "-" or (script is not None and script.strip()):
         return handle_run_with_script(context, script)
 
@@ -552,24 +648,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute a Program via an interpreter",
         description=(
             "Execute a Program via an interpreter. Supports auto-discovery of interpreters "
-            "and environments. Optionally execute a Python script after program execution "
-            "with access to 'program', 'value', and 'interpreter' variables.\n\n"
+            "and environments. Use --program for module paths or -c for inline code.\n\n"
             "Examples:\n"
             "  # Basic execution\n"
             "  doeff run --program myapp.program --interpreter myapp.interpreter\n\n"
             "  # With auto-discovery\n"
             "  doeff run --program myapp.features.auth.login_program\n\n"
-            "  # With script execution (heredoc style)\n"
-            "  doeff run --program myapp.program - <<'PY'\n"
-            "  print(f'Value: {value}')\n"
-            "  run_again = interpreter.run(program)\n"
-            "  PY\n\n"
-            "  # With script execution (stdin)\n"
-            "  echo \"print(value)\" | doeff run --program myapp.program -"
+            "  # Inline code with -c (simple expression)\n"
+            "  doeff run -c 'from myapp import my_program; my_program()' --interpreter myapp.interp\n\n"
+            "  # Inline code with top-level yield (heredoc)\n"
+            "  doeff run --interpreter myapp.interp -c - <<'EOF'\n"
+            "  from doeff import Ask, Log\n"
+            "  config = yield Ask('config')\n"
+            "  yield Log(f'Got config: {config}')\n"
+            "  config\n"
+            "  EOF"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    run_parser.add_argument("--program", required=True, help="Fully-qualified path to the Program instance")
+
+    source_group = run_parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--program", help="Fully-qualified path to the Program instance")
+    source_group.add_argument(
+        "-c",
+        dest="code",
+        metavar="CODE",
+        help=(
+            "Execute doeff code directly. Supports top-level yield statements. "
+            "Use '-' to read from stdin."
+        ),
+    )
     run_parser.add_argument(
         "--interpreter",
         help="Callable that accepts the Program as its first argument (auto-discovered if not specified)",
