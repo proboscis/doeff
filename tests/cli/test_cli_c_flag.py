@@ -59,13 +59,16 @@ class TestCFlagBasic:
         assert payload["status"] == "ok"
         assert payload["result"] == 6
 
-    def test_missing_interpreter_error(self) -> None:
+    def test_auto_discovers_interpreter(self) -> None:
         result = run_cli(
             "-c", "from doeff import Program; Program.pure(42)",
             "--format", "json",
         )
-        assert result.returncode == 1
-        assert "requires --interpreter" in result.stderr
+        assert result.returncode == 0, f"stderr: {result.stderr}"
+        assert "[DOEFF][DISCOVERY] Interpreter:" in result.stderr
+        payload = parse_json(result.stdout)
+        assert payload["status"] == "ok"
+        assert payload["result"] == 42
 
     def test_empty_code_error(self) -> None:
         result = run_cli(

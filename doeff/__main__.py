@@ -519,6 +519,46 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
     return 0
 
 
+def _discover_topmost_interpreter() -> str | None:
+    from doeff.cli.profiling import is_profiling_enabled, profile
+
+    with profile("Auto-discover interpreter for -c", indent=1):
+        try:
+            from doeff_indexer import Indexer
+        except ImportError:
+            return None
+
+        cwd_package = _detect_cwd_package()
+        if cwd_package is None:
+            return None
+
+        try:
+            indexer = Indexer.for_module(cwd_package)
+        except RuntimeError:
+            return None
+
+        symbols = indexer.find_symbols(tags=["interpreter", "default"], symbol_type="function")
+        if not symbols:
+            return None
+
+        topmost = min(symbols, key=lambda s: s.module_path.count("."))
+        if is_profiling_enabled():
+            print(f"[DOEFF][DISCOVERY] Interpreter: {topmost.full_path}", file=sys.stderr)
+        return topmost.full_path
+
+
+def _detect_cwd_package() -> str | None:
+    from pathlib import Path
+
+    cwd = Path.cwd()
+    if (cwd / "__init__.py").exists():
+        return cwd.name
+    for child in cwd.iterdir():
+        if child.is_dir() and (child / "__init__.py").exists():
+            return child.name
+    return None
+
+
 def handle_run_code(args: argparse.Namespace) -> int:
     from doeff.cli.code_runner import execute_doeff_code
 
@@ -532,11 +572,14 @@ def handle_run_code(args: argparse.Namespace) -> int:
 
     interpreter_path = args.interpreter
     if interpreter_path is None:
-        print(
-            "Error: -c mode requires --interpreter (auto-discovery not available)",
-            file=sys.stderr,
-        )
-        return 1
+        interpreter_path = _discover_topmost_interpreter()
+        if interpreter_path is None:
+            print(
+                "Error: No default interpreter found. "
+                "Please specify --interpreter or add '# doeff: interpreter, default' marker.",
+                file=sys.stderr,
+            )
+            return 1
 
     program: Program[Any] = execute_doeff_code(code, filename="<doeff-code>")
     env_paths = args.envs or []
@@ -632,14 +675,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Execute a Program via an interpreter. Supports auto-discovery of interpreters "
             "and environments. Use --program for module paths or -c for inline code.\n\n"
             "Examples:\n"
-            "  # Basic execution\n"
+            "  # Basic execution with explicit interpreter\n"
             "  doeff run --program myapp.program --interpreter myapp.interpreter\n\n"
-            "  # With auto-discovery\n"
+            "  # With auto-discovery (finds # doeff: interpreter, default)\n"
             "  doeff run --program myapp.features.auth.login_program\n\n"
-            "  # Inline code with -c (simple expression)\n"
-            "  doeff run -c 'from myapp import my_program; my_program()' --interpreter myapp.interp\n\n"
+            "  # Inline code with -c (auto-discovers interpreter)\n"
+            "  doeff run -c 'from doeff import Program; Program.pure(42)'\n\n"
             "  # Inline code with top-level yield (heredoc)\n"
-            "  doeff run --interpreter myapp.interp -c - <<'EOF'\n"
+            "  doeff run -c - <<'EOF'\n"
             "  from doeff import Ask, Log\n"
             "  config = yield Ask('config')\n"
             "  yield Log(f'Got config: {config}')\n"
