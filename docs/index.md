@@ -4,9 +4,9 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 
 ## Quick Links
 
-- **[GitHub Repository](https://github.com/proboscis/doeff)**
+- **[GitHub Repository](https://github.com/CyberAgentAILab/doeff)**
 - **[PyPI Package](https://pypi.org/project/doeff/)**
-- **[Issue Tracker](https://github.com/proboscis/doeff/issues)**
+- **[Issue Tracker](https://github.com/CyberAgentAILab/doeff/issues)**
 
 ## Table of Contents
 
@@ -200,14 +200,14 @@ def process_batch(items):
 
 ## Contributing
 
-See the [GitHub repository](https://github.com/proboscis/doeff) for:
+See the [GitHub repository](https://github.com/CyberAgentAILab/doeff) for:
 - Filing issues
 - Submitting pull requests
 - Development guidelines
 
 ## License
 
-MIT License - see [LICENSE](https://github.com/proboscis/doeff/blob/main/LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/CyberAgentAILab/doeff/blob/main/LICENSE) for details.
 
 ## Author
 
