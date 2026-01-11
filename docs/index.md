@@ -32,6 +32,10 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 12. **[Patterns](12-patterns.md)** - Best practices and common patterns
 13. **[API Reference](13-api-reference.md)** - Complete API documentation
 
+### Runtime & Scheduling
+
+20. **[Runtime Scheduler](20-runtime-scheduler.md)** - Single-shot continuations, pluggable schedulers, and simulation effects
+
 ### CLI Tools
 
 14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
