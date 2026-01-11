@@ -164,6 +164,36 @@ from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 # Program runner (CLI-equivalent API)
 from doeff.run import run_program, ProgramRunResult
 
+# Runtime: Single-shot Algebraic Effects with Pluggable Scheduler
+from doeff.runtime import (
+    # Handler Results
+    Resume,
+    Suspend,
+    Scheduled,
+    HandlerResult,
+    # Continuation
+    Continuation,
+    # Scheduler Protocol and Implementations
+    Scheduler,
+    FIFOScheduler,
+    PriorityScheduler,
+    SimulationScheduler,
+    RealtimeScheduler,
+    # Handler Protocol
+    ScheduledEffectHandler,
+    ScheduledHandlerRegistry,
+    # Runtime
+    run_with_scheduler,
+    run_with_scheduler_sync,
+    # Adapters
+    adapt_pure_handler,
+    adapt_async_handler,
+    # Simulation Effects
+    SimDelay,
+    SimWaitUntil,
+    SimSubmit,
+)
+
 __version__ = "0.1.7"
 
 # Shorthand alias matching lowercase helpers
@@ -294,4 +324,24 @@ __all__ = [  # noqa: RUF022
     # Program runner (CLI-equivalent API)
     "run_program",
     "ProgramRunResult",
+    # Runtime: Scheduler-based execution
+    "Resume",
+    "Suspend",
+    "Scheduled",
+    "HandlerResult",
+    "Continuation",
+    "Scheduler",
+    "FIFOScheduler",
+    "PriorityScheduler",
+    "SimulationScheduler",
+    "RealtimeScheduler",
+    "ScheduledEffectHandler",
+    "ScheduledHandlerRegistry",
+    "run_with_scheduler",
+    "run_with_scheduler_sync",
+    "adapt_pure_handler",
+    "adapt_async_handler",
+    "SimDelay",
+    "SimWaitUntil",
+    "SimSubmit",
 ]
