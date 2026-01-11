@@ -20,7 +20,8 @@ from doeff.types import capture_traceback
 
 @dataclass
 class RunContext:
-    program_path: str
+    program_path: str | None
+    program_instance: Program[Any] | None
     interpreter_path: str | None
     env_paths: list[str]
     apply_path: str | None
@@ -31,9 +32,16 @@ class RunContext:
 
 
 @dataclass
-class ResolvedRunContext(RunContext):
+class ResolvedRunContext:
+    program_path: str | None
+    program_instance: Program[Any] | None
     interpreter_path: str
     env_paths: list[str]
+    apply_path: str | None
+    transformer_paths: list[str]
+    output_format: str
+    report: bool
+    report_verbose: bool
 
 
 @dataclass
@@ -87,6 +95,10 @@ class ProgramBuilder:
         self._merger = merger
 
     def load(self, context: ResolvedRunContext) -> Program[Any]:
+        if context.program_instance is not None:
+            return context.program_instance
+        if context.program_path is None:
+            raise ValueError("Either program_path or program_instance must be provided")
         return self._resolver.program(context.program_path, "--program")
 
     def inject_envs(self, program: Program[Any], env_sources: list[str], *, report_verbose: bool) -> Program[Any]:
@@ -150,13 +162,23 @@ class RunCommand:
         env_paths = list(context.env_paths)
 
         if interpreter_path is None:
-            interpreter_path = self._auto_discover_interpreter(context.program_path)
+            if context.program_path is not None:
+                interpreter_path = self._auto_discover_interpreter(context.program_path)
+            else:
+                discovered = _discover_topmost_interpreter()
+                if discovered is None:
+                    raise RuntimeError(
+                        "No default interpreter found. "
+                        "Please specify --interpreter or add '# doeff: interpreter, default' marker."
+                    )
+                interpreter_path = discovered
 
-        if not env_paths:
+        if not env_paths and context.program_path is not None:
             env_paths = self._auto_discover_envs(context.program_path)
 
         return ResolvedRunContext(
             program_path=context.program_path,
+            program_instance=context.program_instance,
             interpreter_path=interpreter_path,
             env_paths=env_paths,
             apply_path=context.apply_path,
@@ -570,67 +592,23 @@ def handle_run_code(args: argparse.Namespace) -> int:
         print("Error: No code provided", file=sys.stderr)
         return 1
 
-    interpreter_path = args.interpreter
-    if interpreter_path is None:
-        interpreter_path = _discover_topmost_interpreter()
-        if interpreter_path is None:
-            print(
-                "Error: No default interpreter found. "
-                "Please specify --interpreter or add '# doeff: interpreter, default' marker.",
-                file=sys.stderr,
-            )
-            return 1
-
     program: Program[Any] = execute_doeff_code(code, filename="<doeff-code>")
-    env_paths = args.envs or []
 
-    resolver = SymbolResolver()
-    interpreter_obj = resolver.resolve(interpreter_path)
+    context = RunContext(
+        program_path=None,
+        program_instance=program,
+        interpreter_path=args.interpreter,
+        env_paths=args.envs or [],
+        apply_path=getattr(args, "apply", None),
+        transformer_paths=getattr(args, "transform", None) or [],
+        output_format=args.format,
+        report=getattr(args, "report", False),
+        report_verbose=getattr(args, "report_verbose", False),
+    )
 
-    if env_paths:
-        from doeff.effects import Local
-
-        services = RunServices()
-        merged_env_program = services.merger.merge_envs(env_paths)
-        temp_interpreter = ProgramInterpreter()
-        env_result = temp_interpreter.run(merged_env_program)
-        if env_result.is_err:
-            print(f"[DOEFF] Environment merge failed: {env_result.result}", file=sys.stderr)
-            return 1
-        local_effect = Local(env_result.value, program)
-        program = local_effect  # type: ignore[assignment]
-
-    if isinstance(interpreter_obj, ProgramInterpreter):
-        run_result = interpreter_obj.run(program)
-        final_value = _unwrap_run_result(run_result)
-    elif callable(interpreter_obj):
-        exec_result = _call_interpreter(interpreter_obj, program)
-        final_value, run_result = _finalize_result(exec_result)
-    else:
-        print(
-            "Error: --interpreter must resolve to callable or ProgramInterpreter",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.format == "json":
-        payload = {
-            "status": "ok",
-            "result": _json_safe(final_value),
-            "result_type": type(final_value).__name__,
-        }
-        if getattr(args, "report", False) and run_result is not None:
-            payload["report"] = run_result.display(verbose=getattr(args, "report_verbose", False))
-            call_tree = _call_tree_ascii(run_result)
-            if call_tree:
-                payload["call_tree"] = call_tree
-        print(json.dumps(payload))
-    else:
-        print(final_value)
-        if getattr(args, "report", False) and run_result is not None:
-            print()
-            print(run_result.display(verbose=getattr(args, "report_verbose", False)))
-
+    command = RunCommand(context)
+    resolved_context, execution = command.execute()
+    _render_run_output(resolved_context, execution)
     return 0
 
 
@@ -645,6 +623,7 @@ def handle_run(args: argparse.Namespace) -> int:
 
     context = RunContext(
         program_path=args.program,
+        program_instance=None,
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
         apply_path=args.apply,
