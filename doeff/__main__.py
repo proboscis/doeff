@@ -20,7 +20,8 @@ from doeff.types import capture_traceback
 
 @dataclass
 class RunContext:
-    program_path: str
+    program_path: str | None
+    program_instance: Program[Any] | None
     interpreter_path: str | None
     env_paths: list[str]
     apply_path: str | None
@@ -31,9 +32,16 @@ class RunContext:
 
 
 @dataclass
-class ResolvedRunContext(RunContext):
+class ResolvedRunContext:
+    program_path: str | None
+    program_instance: Program[Any] | None
     interpreter_path: str
     env_paths: list[str]
+    apply_path: str | None
+    transformer_paths: list[str]
+    output_format: str
+    report: bool
+    report_verbose: bool
 
 
 @dataclass
@@ -87,6 +95,10 @@ class ProgramBuilder:
         self._merger = merger
 
     def load(self, context: ResolvedRunContext) -> Program[Any]:
+        if context.program_instance is not None:
+            return context.program_instance
+        if context.program_path is None:
+            raise ValueError("Either program_path or program_instance must be provided")
         return self._resolver.program(context.program_path, "--program")
 
     def inject_envs(self, program: Program[Any], env_sources: list[str], *, report_verbose: bool) -> Program[Any]:
@@ -150,13 +162,23 @@ class RunCommand:
         env_paths = list(context.env_paths)
 
         if interpreter_path is None:
-            interpreter_path = self._auto_discover_interpreter(context.program_path)
+            if context.program_path is not None:
+                interpreter_path = self._auto_discover_interpreter(context.program_path)
+            else:
+                discovered = _discover_topmost_interpreter()
+                if discovered is None:
+                    raise RuntimeError(
+                        "No default interpreter found. "
+                        "Please specify --interpreter or add '# doeff: interpreter, default' marker."
+                    )
+                interpreter_path = discovered
 
-        if not env_paths:
+        if not env_paths and context.program_path is not None:
             env_paths = self._auto_discover_envs(context.program_path)
 
         return ResolvedRunContext(
             program_path=context.program_path,
+            program_instance=context.program_instance,
             interpreter_path=interpreter_path,
             env_paths=env_paths,
             apply_path=context.apply_path,
@@ -519,9 +541,89 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
     return 0
 
 
+def _discover_topmost_interpreter() -> str | None:
+    from doeff.cli.profiling import is_profiling_enabled, profile
+
+    with profile("Auto-discover interpreter for -c", indent=1):
+        try:
+            from doeff_indexer import Indexer
+        except ImportError:
+            return None
+
+        cwd_package = _detect_cwd_package()
+        if cwd_package is None:
+            return None
+
+        try:
+            indexer = Indexer.for_module(cwd_package)
+        except RuntimeError:
+            return None
+
+        symbols = indexer.find_symbols(tags=["interpreter", "default"], symbol_type="function")
+        if not symbols:
+            return None
+
+        topmost = min(symbols, key=lambda s: s.module_path.count("."))
+        if is_profiling_enabled():
+            print(f"[DOEFF][DISCOVERY] Interpreter: {topmost.full_path}", file=sys.stderr)
+        return topmost.full_path
+
+
+def _detect_cwd_package() -> str | None:
+    from pathlib import Path
+
+    cwd = Path.cwd()
+    if (cwd / "__init__.py").exists():
+        return cwd.name
+    for child in cwd.iterdir():
+        if child.is_dir() and (child / "__init__.py").exists():
+            return child.name
+    return None
+
+
+def handle_run_code(args: argparse.Namespace) -> int:
+    from doeff.cli.code_runner import execute_doeff_code
+
+    code = args.code
+    if code == "-":
+        code = sys.stdin.read()
+
+    if not code or not code.strip():
+        print("Error: No code provided", file=sys.stderr)
+        return 1
+
+    program: Program[Any] = execute_doeff_code(code, filename="<doeff-code>")
+
+    context = RunContext(
+        program_path=None,
+        program_instance=program,
+        interpreter_path=args.interpreter,
+        env_paths=args.envs or [],
+        apply_path=getattr(args, "apply", None),
+        transformer_paths=getattr(args, "transform", None) or [],
+        output_format=args.format,
+        report=getattr(args, "report", False),
+        report_verbose=getattr(args, "report_verbose", False),
+    )
+
+    command = RunCommand(context)
+    resolved_context, execution = command.execute()
+    _render_run_output(resolved_context, execution)
+    return 0
+
+
 def handle_run(args: argparse.Namespace) -> int:
+    code_arg = getattr(args, "code", None)
+    if code_arg is not None:
+        return handle_run_code(args)
+
+    if not getattr(args, "program", None):
+        print("Error: --program is required when not using -c", file=sys.stderr)
+        return 1
+
     context = RunContext(
         program_path=args.program,
+        program_instance=None,
         interpreter_path=args.interpreter,
         env_paths=args.envs or [],
         apply_path=args.apply,
@@ -531,9 +633,7 @@ def handle_run(args: argparse.Namespace) -> int:
         report_verbose=getattr(args, "report_verbose", False),
     )
 
-    # Check if script is provided (either as positional arg or stdin)
     script = getattr(args, "script", None)
-    # Only handle script if it's "-" (stdin) or a non-empty string
     if script == "-" or (script is not None and script.strip()):
         return handle_run_with_script(context, script)
 
@@ -552,24 +652,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute a Program via an interpreter",
         description=(
             "Execute a Program via an interpreter. Supports auto-discovery of interpreters "
-            "and environments. Optionally execute a Python script after program execution "
-            "with access to 'program', 'value', and 'interpreter' variables.\n\n"
+            "and environments. Use --program for module paths or -c for inline code.\n\n"
             "Examples:\n"
-            "  # Basic execution\n"
+            "  # Basic execution with explicit interpreter\n"
             "  doeff run --program myapp.program --interpreter myapp.interpreter\n\n"
-            "  # With auto-discovery\n"
+            "  # With auto-discovery (finds # doeff: interpreter, default)\n"
             "  doeff run --program myapp.features.auth.login_program\n\n"
-            "  # With script execution (heredoc style)\n"
-            "  doeff run --program myapp.program - <<'PY'\n"
-            "  print(f'Value: {value}')\n"
-            "  run_again = interpreter.run(program)\n"
-            "  PY\n\n"
-            "  # With script execution (stdin)\n"
-            "  echo \"print(value)\" | doeff run --program myapp.program -"
+            "  # Inline code with -c (auto-discovers interpreter)\n"
+            "  doeff run -c 'from doeff import Program; Program.pure(42)'\n\n"
+            "  # Inline code with top-level yield (heredoc)\n"
+            "  doeff run -c - <<'EOF'\n"
+            "  from doeff import Ask, Log\n"
+            "  config = yield Ask('config')\n"
+            "  yield Log(f'Got config: {config}')\n"
+            "  config\n"
+            "  EOF"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    run_parser.add_argument("--program", required=True, help="Fully-qualified path to the Program instance")
+
+    source_group = run_parser.add_mutually_exclusive_group(required=True)
+    source_group.add_argument("--program", help="Fully-qualified path to the Program instance")
+    source_group.add_argument(
+        "-c",
+        dest="code",
+        metavar="CODE",
+        help=(
+            "Execute doeff code directly. Supports top-level yield statements. "
+            "Use '-' to read from stdin."
+        ),
+    )
     run_parser.add_argument(
         "--interpreter",
         help="Callable that accepts the Program as its first argument (auto-discovered if not specified)",
