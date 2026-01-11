@@ -41,6 +41,7 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
 15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
 16. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
+17. **[Workflow Observability](17-workflow-observability.md)** - Live effect tracing with doeff-flow
 
 ### Agent Session Management
 
@@ -52,6 +53,19 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 - **[MARKERS.md](MARKERS.md)** - Marker-based Program manipulation
 - **[cache.md](cache.md)** - Detailed cache system documentation
 - **[seedream.md](seedream.md)** - SeeDream integration
+- **[IDE Plugins](ide-plugins.md)** - PyCharm and VS Code extensions
+- **[Program Architecture](program-architecture-overview.md)** - Runtime internals overview
+
+### Gemini Integration
+
+- **[Gemini Setup](gemini_client_setup.md)** - API key and ADC configuration
+- **[Gemini Cost Hook](gemini_cost_hook.md)** - Custom cost calculation
+
+### Design Notes
+
+- **[CLI Architecture](cli-run-command-architecture.md)** - Run command pipeline design
+- **[Filesystem Effects](filesystem-effect-architecture.md)** - Filesystem effect design (draft)
+- **[Abstraction Concern](abstraction_concern.md)** - Interpreter design discussion
 
 ## What is doeff?
 
