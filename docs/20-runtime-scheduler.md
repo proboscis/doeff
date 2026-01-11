@@ -1,4 +1,4 @@
-# 15. Runtime Scheduler
+# 20. Runtime Scheduler
 
 The `doeff.runtime` module implements a sophisticated execution model based on single-shot algebraic effects with pluggable schedulers. This architecture enables the same business logic to run in diverse environments—such as discrete event simulations, realtime production systems, or priority-based actor systems—simply by swapping the scheduler implementation.
 
