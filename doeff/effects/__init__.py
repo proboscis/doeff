@@ -104,6 +104,17 @@ from .writer import (
     slog,
     tell,
 )
+from .sim import (
+    SimAwait,
+    SimAwaitEffect,
+    SimTime,
+    SimTimeEffect,
+    SimulationScheduler,
+    handle_sim_await,
+    handle_sim_time,
+    SIM_SCHEDULER_KEY,
+    SIM_TIME_KEY,
+)
 
 # Lowercase compatibility aliases
 # Functions imported above already provide lowercase helpers
@@ -245,4 +256,14 @@ __all__ = [
     "step",
     "tell",
     "unwrap_result",
+    # Simulation effects
+    "SimAwait",
+    "SimAwaitEffect",
+    "SimTime",
+    "SimTimeEffect",
+    "SimulationScheduler",
+    "handle_sim_await",
+    "handle_sim_time",
+    "SIM_SCHEDULER_KEY",
+    "SIM_TIME_KEY",
 ]

@@ -147,6 +147,165 @@ class HandlerRegistryError(Exception):
     """Raised when there's a conflict or invalid handler registration."""
 
 
+# ============================================================================
+# New Handler Protocol with Continuation (k) parameter
+# ============================================================================
+# This follows the algebraic effects semantics where handlers receive
+# the continuation and decide how to use it.
+
+
+@dataclass(frozen=True)
+class Resume:
+    """Handler result: immediately resume with value.
+
+    Equivalent to calling k(value) in algebraic effects.
+    This is the common case for pure effects like State, Ask, etc.
+    """
+    value: Any
+    store: Store
+
+
+@dataclass(frozen=True)
+class Suspend:
+    """Handler result: suspend execution, await externally, then resume.
+
+    The runtime will:
+    1. await the awaitable
+    2. call continuation.resume(result, store)
+
+    This is used for I/O effects that need external async handling.
+    """
+    awaitable: Awaitable[Any]
+    continuation: Continuation
+    store: Store
+
+
+@dataclass(frozen=True)
+class Next:
+    """Handler result: transition to a specific next state.
+
+    Used for effects that manipulate control flow, such as:
+    - SimAwait: schedule current continuation, switch to another process
+    - Fork: create multiple continuations
+
+    The handler directly computes the next CESKState.
+    """
+    state: CESKState
+
+
+# Union type for handler results
+HandlerResult: TypeAlias = Resume | Suspend | Next
+
+
+@dataclass
+class Continuation:
+    """Wrapper around CESK continuation for use in handlers.
+
+    Provides a clean interface for handlers to work with continuations
+    without needing to know CESK internals.
+    """
+    _frames: Kontinuation
+    _env: Environment
+
+    def resume(self, value: Any, store: Store) -> CESKState:
+        """Resume the continuation with a value.
+
+        Equivalent to k(value) in algebraic effects.
+        """
+        return CESKState(
+            C=Value(value),
+            E=self._env,
+            S=store,
+            K=self._frames,
+        )
+
+    def resume_error(self, ex: BaseException, store: Store) -> CESKState:
+        """Resume the continuation with an error.
+
+        Used when the effect handling fails.
+        """
+        return CESKState(
+            C=Error(ex),
+            E=self._env,
+            S=store,
+            K=self._frames,
+        )
+
+    @property
+    def frames(self) -> Kontinuation:
+        """Access the raw frames (for advanced use like inspection)."""
+        return self._frames
+
+    @property
+    def env(self) -> Environment:
+        """Access the saved environment."""
+        return self._env
+
+
+class EffectHandlerWithK(Protocol[E, R]):
+    """Effect handler that receives the continuation.
+
+    This follows the algebraic effects semantics:
+        handler { op(arg, k) → ... }
+
+    The handler decides how to use the continuation:
+    - Resume(value, store): call k(value) immediately
+    - Suspend(awaitable, k, store): await externally, then k(result)
+    - Next(state): directly specify next state (for control flow)
+
+    Contract:
+    - Handler is pure (no async def)
+    - Handler returns HandlerResult
+    - Handler may inspect/store the continuation
+
+    Args:
+        effect: The effect instance to handle
+        env: Read-only environment (FrozenDict)
+        store: Current store
+        k: The continuation (what to do after effect is handled)
+
+    Returns:
+        HandlerResult indicating how to proceed
+    """
+
+    def __call__(
+        self,
+        effect: E,
+        env: Environment,
+        store: Store,
+        k: Continuation,
+    ) -> HandlerResult: ...
+
+
+# Type alias for new-style handler registry
+HandlersWithK: TypeAlias = dict[type[EffectBase], EffectHandlerWithK[Any, Any]]
+
+
+def wrap_legacy_sync_handler(handler: SyncEffectHandler[E, R]) -> EffectHandlerWithK[E, R]:
+    """Wrap a legacy sync handler to the new protocol with k.
+
+    The wrapped handler always returns Resume(value, store).
+    """
+    def wrapped(effect: E, env: Environment, store: Store, k: Continuation) -> HandlerResult:
+        value, new_store = handler(effect, env, store)
+        return Resume(value, new_store)
+    return wrapped
+
+
+def wrap_legacy_async_handler(handler: AsyncEffectHandler[E, R]) -> EffectHandlerWithK[E, R]:
+    """Wrap a legacy async handler to the new protocol with k.
+
+    The wrapped handler returns Suspend(awaitable, k, store).
+    """
+    def wrapped(effect: E, env: Environment, store: Store, k: Continuation) -> HandlerResult:
+        awaitable = handler(effect, env, store)
+        # The awaitable returns (value, new_store), but Suspend expects
+        # the continuation to be called with just the value.
+        # We need to handle this in the runtime.
+        return Suspend(awaitable, k, store)
+    return wrapped
+
+
 
 # ============================================================================
 # CESK State Components
@@ -2297,6 +2456,15 @@ __all__ = [
     # Handler Wrapping
     "wrap_sync_handler",
     "wrap_async_handler",
+    # New Handler Protocol (with k)
+    "Resume",
+    "Suspend",
+    "Next",
+    "HandlerResult",
+    "Continuation",
+    "EffectHandlerWithK",
+    "wrap_legacy_sync_handler",
+    "wrap_legacy_async_handler",
     # Registry Merging
     "merge_handler_registries",
     # Transform
