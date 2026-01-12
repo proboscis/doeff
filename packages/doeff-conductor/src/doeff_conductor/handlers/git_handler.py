@@ -1,72 +1,64 @@
 """
 Git handler for doeff-conductor.
-
-Handles Commit, Push, CreatePR, MergePR effects
-by executing git and gh commands.
 """
 
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
+
+from ..exceptions import GitCommandError
 
 if TYPE_CHECKING:
     from ..effects.git import Commit, CreatePR, MergePR, Push
     from ..types import MergeStrategy, PRHandle, WorktreeEnv
 
 
-class GitHandler:
-    """Handler for git effects.
-
-    Executes git commands and uses gh CLI for GitHub operations.
-    """
-
-    def __init__(self):
-        """Initialize handler."""
-        pass
-
-    def handle_commit(self, effect: Commit) -> str:
-        """Handle Commit effect.
-
-        Stages changes and creates a commit.
-        """
-        worktree_path = effect.env.path
-
-        # Stage changes
-        if effect.all:
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=worktree_path,
-                check=True,
-                capture_output=True,
-            )
-
-        # Create commit
-        result = subprocess.run(
-            ["git", "commit", "-m", effect.message],
-            cwd=worktree_path,
+def _run_git(
+    args: list[str],
+    cwd: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a git/gh command. Raises GitCommandError on failure."""
+    try:
+        return subprocess.run(
+            args,
+            cwd=cwd,
             check=True,
             capture_output=True,
             text=True,
         )
+    except subprocess.CalledProcessError as e:
+        raise GitCommandError.from_subprocess_error(e, cwd=str(cwd) if cwd else None) from e
 
-        # Get commit SHA
-        sha_result = subprocess.run(
+
+class GitHandler:
+    """Handler for git effects using git and gh CLI."""
+
+    def __init__(self):
+        pass
+
+    def handle_commit(self, effect: Commit) -> str:
+        """Stage changes and create a commit. Returns commit SHA."""
+        worktree_path = effect.env.path
+
+        if effect.all:
+            _run_git(["git", "add", "-A"], cwd=str(worktree_path))
+
+        _run_git(
+            ["git", "commit", "-m", effect.message],
+            cwd=str(worktree_path),
+        )
+
+        sha_result = _run_git(
             ["git", "rev-parse", "HEAD"],
-            cwd=worktree_path,
-            check=True,
-            capture_output=True,
-            text=True,
+            cwd=str(worktree_path),
         )
 
         return sha_result.stdout.strip()
 
-    def handle_push(self, effect: Push) -> bool:
-        """Handle Push effect.
-
-        Pushes branch to remote.
-        """
+    def handle_push(self, effect: Push) -> None:
+        """Push branch to remote. Raises GitCommandError on failure."""
         worktree_path = effect.env.path
 
         args = ["git", "push"]
@@ -79,22 +71,10 @@ class GitHandler:
         if effect.force:
             args.insert(2, "--force")
 
-        try:
-            subprocess.run(
-                args,
-                cwd=worktree_path,
-                check=True,
-                capture_output=True,
-            )
-            return True
-        except subprocess.CalledProcessError:
-            return False
+        _run_git(args, cwd=str(worktree_path))
 
     def handle_create_pr(self, effect: CreatePR) -> PRHandle:
-        """Handle CreatePR effect.
-
-        Creates a pull request using gh CLI.
-        """
+        """Create a pull request using gh CLI."""
         from ..types import PRHandle
 
         worktree_path = effect.env.path
@@ -119,18 +99,9 @@ class GitHandler:
         if effect.draft:
             args.append("--draft")
 
-        result = subprocess.run(
-            args,
-            cwd=worktree_path,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        result = _run_git(args, cwd=str(worktree_path))
 
         pr_url = result.stdout.strip()
-
-        # Extract PR number from URL
-        # Format: https://github.com/owner/repo/pull/123
         pr_number = int(pr_url.split("/")[-1])
 
         return PRHandle(
@@ -143,11 +114,8 @@ class GitHandler:
             created_at=datetime.now(timezone.utc),
         )
 
-    def handle_merge_pr(self, effect: MergePR) -> bool:
-        """Handle MergePR effect.
-
-        Merges a pull request using gh CLI.
-        """
+    def handle_merge_pr(self, effect: MergePR) -> None:
+        """Merge a pull request using gh CLI. Raises GitCommandError on failure."""
         from ..types import MergeStrategy
 
         args = ["gh", "pr", "merge", str(effect.pr.number)]
@@ -163,15 +131,7 @@ class GitHandler:
         if effect.delete_branch:
             args.append("--delete-branch")
 
-        try:
-            subprocess.run(
-                args,
-                check=True,
-                capture_output=True,
-            )
-            return True
-        except subprocess.CalledProcessError:
-            return False
+        _run_git(args)
 
 
 __all__ = ["GitHandler"]

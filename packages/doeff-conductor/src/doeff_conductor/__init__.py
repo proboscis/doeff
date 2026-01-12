@@ -100,6 +100,25 @@ from .handlers import (
     IssueHandler,
     AgentHandler,
     GitHandler,
+    # Handler utilities
+    make_scheduled_handler,
+    make_scheduled_handler_with_store,
+    make_async_scheduled_handler,
+    make_blocking_scheduled_handler,
+    make_blocking_scheduled_handler_with_store,
+    default_scheduled_handlers,
+)
+
+# Exceptions
+from .exceptions import (
+    ConductorError,
+    IssueNotFoundError,
+    IssueAlreadyExistsError,
+    GitCommandError,
+    WorktreeError,
+    AgentError,
+    AgentTimeoutError,
+    PRError,
 )
 
 # API
@@ -155,6 +174,22 @@ __all__ = [
     "IssueHandler",
     "AgentHandler",
     "GitHandler",
+    # Handler utilities
+    "make_scheduled_handler",
+    "make_scheduled_handler_with_store",
+    "make_async_scheduled_handler",
+    "make_blocking_scheduled_handler",
+    "make_blocking_scheduled_handler_with_store",
+    "default_scheduled_handlers",
+    # Exceptions
+    "ConductorError",
+    "IssueNotFoundError",
+    "IssueAlreadyExistsError",
+    "GitCommandError",
+    "WorktreeError",
+    "AgentError",
+    "AgentTimeoutError",
+    "PRError",
     # API
     "ConductorAPI",
     # Templates
