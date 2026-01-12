@@ -173,22 +173,12 @@ from doeff.runtime import (
     HandlerResult,
     # Continuation
     Continuation,
-    # Scheduler Protocol and Implementations
     Scheduler,
     FIFOScheduler,
     PriorityScheduler,
     SimulationScheduler,
     RealtimeScheduler,
-    # Handler Protocol
     ScheduledEffectHandler,
-    ScheduledHandlerRegistry,
-    # Runtime
-    run_with_scheduler,
-    run_with_scheduler_sync,
-    # Adapters
-    adapt_pure_handler,
-    adapt_async_handler,
-    # Simulation Effects
     SimDelay,
     SimWaitUntil,
     SimSubmit,
@@ -336,11 +326,6 @@ __all__ = [  # noqa: RUF022
     "SimulationScheduler",
     "RealtimeScheduler",
     "ScheduledEffectHandler",
-    "ScheduledHandlerRegistry",
-    "run_with_scheduler",
-    "run_with_scheduler_sync",
-    "adapt_pure_handler",
-    "adapt_async_handler",
     "SimDelay",
     "SimWaitUntil",
     "SimSubmit",

@@ -26,10 +26,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Generic, Protocol, TypeVar
 
+from doeff._types_internal import EffectBase
+
 if TYPE_CHECKING:
+    from typing import Callable
     from doeff.cesk import CESKState, Environment, Store
     from doeff.program import Program
-    from doeff._types_internal import EffectBase
+    from doeff.types import Effect
 
 
 T = TypeVar("T")
@@ -430,263 +433,12 @@ class RealtimeScheduler:
 
 
 # ============================================================================
-# Handler Registry
-# ============================================================================
-
-
-class ScheduledHandlerRegistry:
-    """Registry of handlers for the new scheduler-based model.
-    
-    Supports MRO-based lookup with caching, similar to EffectDispatcher
-    but for the new ScheduledEffectHandler protocol.
-    """
-    
-    def __init__(
-        self,
-        handlers: ScheduledHandlers | None = None,
-    ) -> None:
-        self._handlers: ScheduledHandlers = handlers or {}
-        self._cache: dict[type, ScheduledEffectHandler | None] = {}
-    
-    def register(
-        self,
-        effect_type: type["EffectBase"],
-        handler: ScheduledEffectHandler,
-    ) -> None:
-        """Register a handler for an effect type."""
-        self._handlers[effect_type] = handler
-        # Invalidate cache
-        self._cache.clear()
-    
-    def lookup(self, effect: "EffectBase") -> ScheduledEffectHandler | None:
-        """Lookup handler for an effect using MRO fallback."""
-        effect_type = type(effect)
-        
-        # Check cache
-        if effect_type in self._cache:
-            return self._cache[effect_type]
-        
-        # Exact match
-        if effect_type in self._handlers:
-            handler = self._handlers[effect_type]
-            self._cache[effect_type] = handler
-            return handler
-        
-        # MRO fallback
-        for base in effect_type.__mro__[1:]:
-            if base in self._handlers:
-                handler = self._handlers[base]
-                self._cache[effect_type] = handler
-                return handler
-        
-        # Not found
-        self._cache[effect_type] = None
-        return None
-
-
-# ============================================================================
-# Runtime Main Loop (Scheduler-based)
-# ============================================================================
-
-
-async def run_with_scheduler(
-    program: "Program",
-    scheduler: Scheduler,
-    handlers: ScheduledHandlerRegistry,
-    env: "Environment | dict[Any, Any] | None" = None,
-    store: "Store | None" = None,
-) -> Any:
-    """Run a program with a pluggable scheduler.
-    
-    This is the new main loop that uses the Scheduler abstraction
-    instead of the single-continuation model.
-    
-    Args:
-        program: The program to execute.
-        scheduler: The scheduler to use for continuation management.
-        handlers: Registry of effect handlers.
-        env: Initial environment (default: empty).
-        store: Initial store (default: empty).
-        
-    Returns:
-        The final result of the program.
-        
-    Raises:
-        Exception: If the program fails with an unhandled error.
-    """
-    from doeff._vendor import FrozenDict
-    from doeff.cesk import (
-        CESKState,
-        Done,
-        Error,
-        Failed,
-        Suspended,
-        Value,
-        step,
-    )
-    
-    # Initialize environment
-    if env is None:
-        E = FrozenDict()
-    elif isinstance(env, FrozenDict):
-        E = env
-    else:
-        E = FrozenDict(env)
-    
-    # Initialize store
-    S: Store = store if store is not None else {}
-    
-    # Create initial continuation and submit to scheduler
-    initial_k = Continuation.from_program(program, E, S)
-    scheduler.submit(initial_k)
-    
-    # Final result storage
-    final_result: Any = None
-    final_error: BaseException | None = None
-    
-    while (k := scheduler.next()) is not None:
-        # Resume continuation to get initial state
-        state = k.resume(None, k.store)
-        
-        while True:
-            result = step(state)
-            
-            if isinstance(result, Done):
-                # This continuation completed successfully
-                final_result = result.value
-                break
-            
-            if isinstance(result, Failed):
-                # This continuation failed
-                final_error = result.exception
-                break
-            
-            if isinstance(result, Suspended):
-                # Effect needs handling
-                effect = result.effect
-                
-                # Create new continuation from suspended state
-                new_k = Continuation(
-                    _resume=result.resume,
-                    _resume_error=result.resume_error,
-                    env=state.E,
-                    store=state.S,
-                )
-                
-                # Look up handler
-                handler = handlers.lookup(effect)
-                if handler is None:
-                    # No handler found - resume with error
-                    from doeff.cesk import UnhandledEffectError
-                    error = UnhandledEffectError(f"No handler for {type(effect).__name__}")
-                    state = new_k.resume_error(error, state.S)
-                    continue
-                
-                # Call handler
-                handler_result = handler(effect, state.E, state.S, new_k, scheduler)
-                
-                if isinstance(handler_result, Resume):
-                    # Resume immediately
-                    state = new_k.resume(handler_result.value, handler_result.store)
-                    continue
-                
-                elif isinstance(handler_result, Suspend):
-                    # Await async operation
-                    try:
-                        value = await handler_result.awaitable
-                        state = new_k.resume(value, handler_result.store)
-                    except Exception as ex:
-                        state = new_k.resume_error(ex, handler_result.store)
-                    continue
-                
-                elif isinstance(handler_result, Scheduled):
-                    # Continuation was submitted to scheduler, pick next
-                    break
-                
-                else:
-                    raise TypeError(f"Unknown handler result: {type(handler_result)}")
-            
-            if isinstance(result, CESKState):
-                # Normal state transition
-                state = result
-                continue
-            
-            raise TypeError(f"Unknown step result: {type(result)}")
-    
-    if final_error is not None:
-        raise final_error
-    
-    return final_result
-
-
-def run_with_scheduler_sync(
-    program: "Program",
-    scheduler: Scheduler,
-    handlers: ScheduledHandlerRegistry,
-    env: "Environment | dict[Any, Any] | None" = None,
-    store: "Store | None" = None,
-) -> Any:
-    """Synchronous wrapper for run_with_scheduler."""
-    return asyncio.run(run_with_scheduler(program, scheduler, handlers, env, store))
-
-
-# ============================================================================
-# Default Handler Adapters
-# ============================================================================
-
-
-def adapt_pure_handler(
-    sync_handler: Callable[["EffectBase", "Environment", "Store"], tuple[Any, "Store"]],
-) -> ScheduledEffectHandler:
-    """Adapt a pure (synchronous) handler to the new protocol.
-    
-    Pure handlers that return (value, store) are adapted to return Resume.
-    The continuation and scheduler are ignored since the handler
-    completes synchronously.
-    """
-    def adapted(
-        effect: "EffectBase",
-        env: "Environment",
-        store: "Store",
-        k: Continuation,
-        scheduler: Scheduler,
-    ) -> HandlerResult:
-        value, new_store = sync_handler(effect, env, store)
-        return Resume(value, new_store)
-    
-    return adapted
-
-
-def adapt_async_handler(
-    async_handler: Callable[["EffectBase", "Environment", "Store"], Awaitable[tuple[Any, "Store"]]],
-) -> ScheduledEffectHandler:
-    """Adapt an async handler to the new protocol.
-    
-    Async handlers that return awaitable are adapted to return Suspend.
-    """
-    def adapted(
-        effect: "EffectBase",
-        env: "Environment",
-        store: "Store",
-        k: Continuation,
-        scheduler: Scheduler,
-    ) -> HandlerResult:
-        async def do_async():
-            value, new_store = await async_handler(effect, env, store)
-            return value
-        
-        return Suspend(do_async(), store)
-    
-    return adapted
-
-
-# ============================================================================
 # Simulation Effects (examples from spec)
 # ============================================================================
 
 
-@dataclass(frozen=True)
-class SimDelay:
+@dataclass(frozen=True, kw_only=True)
+class SimDelay(EffectBase):
     """Simulation delay effect - wait for a duration.
     
     In simulation mode, this advances simulation time.
@@ -694,31 +446,54 @@ class SimDelay:
     """
     seconds: float
 
+    def intercept(
+        self, transform: "Callable[[Effect], Effect | Program]"
+    ) -> "SimDelay":
+        return self
 
-@dataclass(frozen=True)
-class SimWaitUntil:
+
+@dataclass(frozen=True, kw_only=True)
+class SimWaitUntil(EffectBase):
     """Simulation wait until time effect.
     
     Wait until a specific simulation time.
     """
     target_time: datetime
 
+    def intercept(
+        self, transform: "Callable[[Effect], Effect | Program]"
+    ) -> "SimWaitUntil":
+        return self
 
-@dataclass(frozen=True)
-class SimSubmit:
+
+@dataclass(frozen=True, kw_only=True)
+class SimSubmit(EffectBase):
     """Submit a new program to the scheduler.
     
     Creates a new continuation in the same scheduler.
     Useful for concurrent processes in simulation.
+    
+    Note: The `daemon` field is reserved for future use.
     """
     program: "Program"
     daemon: bool = False
+
+    def intercept(
+        self, transform: "Callable[[Effect], Effect | Program]"
+    ) -> "SimSubmit":
+        from doeff.program import Program
+        new_program = self.program.intercept(transform)
+        if new_program is self.program:
+            return self
+        return SimSubmit(program=new_program, daemon=self.daemon, created_at=self.created_at)
 
 
 def create_sim_delay_handler() -> ScheduledEffectHandler:
     """Create handler for SimDelay effect.
     
     Schedules continuation for later based on delay.
+    For SimulationScheduler: uses scheduler's time-based scheduling.
+    For RealtimeScheduler: uses Suspend with asyncio.sleep for wall-clock delay.
     """
     def handler(
         effect: "EffectBase",
@@ -731,12 +506,53 @@ def create_sim_delay_handler() -> ScheduledEffectHandler:
         if isinstance(scheduler, SimulationScheduler):
             target_time = scheduler.current_time + timedelta(seconds=effect.seconds)
             scheduler.submit(k, hint=target_time)
+            return Scheduled(store)
         elif isinstance(scheduler, RealtimeScheduler):
-            scheduler.submit(k, hint=effect.seconds)
+            async def wait_and_resume():
+                await asyncio.sleep(effect.seconds)
+                return None
+            return Suspend(wait_and_resume(), store)
         else:
             scheduler.submit(k, hint=timedelta(seconds=effect.seconds))
-        
-        return Scheduled(store)
+            return Scheduled(store)
+    
+    return handler
+
+
+def create_sim_wait_until_handler() -> ScheduledEffectHandler:
+    """Create handler for SimWaitUntil effect.
+    
+    Schedules continuation until target time is reached.
+    For SimulationScheduler: uses scheduler's time-based scheduling.
+    For RealtimeScheduler: uses Suspend with asyncio.sleep for wall-clock delay.
+    If target time is in the past, resumes immediately.
+    """
+    def handler(
+        effect: "EffectBase",
+        env: "Environment",
+        store: "Store",
+        k: Continuation,
+        scheduler: Scheduler,
+    ) -> HandlerResult:
+        assert isinstance(effect, SimWaitUntil)
+        if isinstance(scheduler, SimulationScheduler):
+            if effect.target_time <= scheduler.current_time:
+                scheduler.submit(k, hint=None)
+            else:
+                scheduler.submit(k, hint=effect.target_time)
+            return Scheduled(store)
+        elif isinstance(scheduler, RealtimeScheduler):
+            now = datetime.now()
+            delay = (effect.target_time - now).total_seconds()
+            if delay <= 0:
+                return Resume(None, store)
+            async def wait_and_resume():
+                await asyncio.sleep(delay)
+                return None
+            return Suspend(wait_and_resume(), store)
+        else:
+            scheduler.submit(k, hint=effect.target_time)
+            return Scheduled(store)
     
     return handler
 
@@ -767,33 +583,22 @@ def create_sim_submit_handler() -> ScheduledEffectHandler:
 
 
 __all__ = [
-    # Handler Results
     "Resume",
     "Suspend",
     "Scheduled",
     "HandlerResult",
-    # Continuation
     "Continuation",
-    # Scheduler Protocol and Implementations
     "Scheduler",
     "FIFOScheduler",
     "PriorityScheduler",
     "SimulationScheduler",
     "RealtimeScheduler",
-    # Handler Protocol
     "ScheduledEffectHandler",
     "ScheduledHandlers",
-    "ScheduledHandlerRegistry",
-    # Runtime
-    "run_with_scheduler",
-    "run_with_scheduler_sync",
-    # Adapters
-    "adapt_pure_handler",
-    "adapt_async_handler",
-    # Simulation Effects
     "SimDelay",
     "SimWaitUntil",
     "SimSubmit",
     "create_sim_delay_handler",
+    "create_sim_wait_until_handler",
     "create_sim_submit_handler",
 ]
