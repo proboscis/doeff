@@ -110,8 +110,10 @@ Executes continuations based on a priority value provided in the `hint`. Lower v
 ### SimulationScheduler
 A discrete event simulation (DES) scheduler. It maintains a "ready" stack (LIFO) for immediate tasks and a "timed" priority queue for future tasks. Time advances only when the ready stack is empty, jumping to the next scheduled event time.
 
-### RealtimeScheduler
+### RealtimeScheduler (Experimental)
 Integrates with the `asyncio` event loop. It uses `asyncio.sleep()` for timed delays, allowing `doeff` programs to interact with real wall-clock time.
+
+> **Note**: `RealtimeScheduler` is experimental. When timers are pending but no continuation is immediately ready, the current implementation may not behave as expected. For production use with wall-clock timing, consider using `Suspend` with `asyncio.sleep()` directly.
 
 ## Simulation Effects
 
@@ -125,22 +127,34 @@ The module provides built-in effects that take advantage of the scheduler model:
 
 ### Basic Usage
 
-Running a simple program with the `FIFOScheduler`:
+The standard `run()` and `run_sync()` functions now accept an optional `scheduler` parameter:
 
 ```python
 from doeff import do, Program
-from doeff.runtime import run_with_scheduler, FIFOScheduler, ScheduledHandlerRegistry
+from doeff.cesk import run, run_sync
+from doeff.runtime import FIFOScheduler, SimulationScheduler
 
 @do
 def hello():
     return "Hello, Scheduler!"
 
+# Default: uses FIFOScheduler internally
+result = run_sync(hello())
+
+# Explicit scheduler
+result = run_sync(hello(), scheduler=SimulationScheduler())
+```
+
+For custom schedulers, pass them to `run()` or `run_sync()`:
+
+```python
+from doeff.cesk import run
+from doeff.runtime import SimulationScheduler
+
 async def main():
-    scheduler = FIFOScheduler()
-    registry = ScheduledHandlerRegistry()
-    
-    result = await run_with_scheduler(hello(), scheduler, registry)
-    print(result) # "Hello, Scheduler!"
+    scheduler = SimulationScheduler()
+    result = await run(hello(), scheduler=scheduler)
+    print(result.value)  # "Hello, Scheduler!"
 ```
 
 ### Simulation vs Realtime
@@ -151,9 +165,9 @@ The following trading strategy runs instantly in simulation but follows real tim
 from datetime import timedelta
 from typing import Any
 from doeff import do, Program
+from doeff.cesk import run
 from doeff.runtime import (
-    SimDelay, SimulationScheduler, RealtimeScheduler, 
-    run_with_scheduler, ScheduledHandlerRegistry,
+    SimDelay, SimulationScheduler, RealtimeScheduler,
     create_sim_delay_handler
 )
 
@@ -167,15 +181,15 @@ def trading_strategy() -> Program[str]:
 # To run in Simulation:
 async def run_sim() -> None:
     sched = SimulationScheduler()
-    reg = ScheduledHandlerRegistry({SimDelay: create_sim_delay_handler()})
-    await run_with_scheduler(trading_strategy(), sched, reg)
+    handlers = {SimDelay: create_sim_delay_handler()}
+    await run(trading_strategy(), scheduler=sched, scheduled_handlers=handlers)
     # This completes instantly and current_time advances by 1 hour.
 
 # To run in Realtime:
 async def run_realtime() -> None:
     sched = RealtimeScheduler()
-    reg = ScheduledHandlerRegistry({SimDelay: create_sim_delay_handler()})
-    await run_with_scheduler(trading_strategy(), sched, reg)
+    handlers = {SimDelay: create_sim_delay_handler()}
+    await run(trading_strategy(), scheduler=sched, scheduled_handlers=handlers)
     # This actually takes 1 hour to complete.
 ```
 
@@ -185,64 +199,61 @@ Creating a handler that spawns a background worker:
 
 ```python
 from dataclasses import dataclass
-from typing import Any
-from doeff import Program, Effect
-from doeff.types import Environment, Store, EffectBase
-from doeff.runtime import ScheduledEffectHandler, Resume, Continuation, Scheduler, HandlerResult
+from doeff import Program
+from doeff.types import EffectBase
+from doeff.cesk import Environment, Store
+from doeff.runtime import Resume, Continuation, Scheduler, HandlerResult
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SpawnWorker(EffectBase):
     worker_program: Program
 
     def intercept(self, transform):
-        return self # Simple effects don't always need complex interception
+        return self
 
 def handle_spawn_worker(
-    effect: Effect,
+    effect: EffectBase,
     env: Environment,
     store: Store,
     k: Continuation,
     scheduler: Scheduler
 ) -> HandlerResult:
     assert isinstance(effect, SpawnWorker)
-    
-    # Create a new continuation for the worker
     worker_k = Continuation.from_program(effect.worker_program, env, store)
-    
-    # Submit worker to scheduler (hint=None for immediate execution)
     scheduler.submit(worker_k)
-    
-    # Resume the original caller immediately
     return Resume(None, store)
 ```
 
 ## Migration Guide
 
-If you have existing handlers designed for the `ProgramInterpreter`, you can adapt them to the new `ScheduledEffectHandler` protocol using utility functions:
+The legacy `SyncEffectHandler` and `AsyncEffectHandler` protocols have been removed. All effect handlers now use the unified `ScheduledEffectHandler` protocol.
 
-### Synchronous Handlers
-Use `adapt_pure_handler` for handlers that don't need async or scheduling:
+### Writing Handlers
 
-```python
-from doeff.runtime import adapt_pure_handler
-
-def my_old_sync_handler(effect, env, store):
-    return "result", store
-
-new_handler = adapt_pure_handler(my_old_sync_handler)
-```
-
-### Asynchronous Handlers
-Use `adapt_async_handler` for standard async handlers:
+Handlers must use the `ScheduledEffectHandler` signature:
 
 ```python
-from doeff.runtime import adapt_async_handler
+from doeff.runtime import ScheduledEffectHandler, Resume, Suspend, Scheduled
 
-async def my_old_async_handler(effect, env, store):
-    await asyncio.sleep(1)
-    return "result", store
-
-new_handler = adapt_async_handler(my_old_async_handler)
+def my_handler(effect, env, store, k, scheduler) -> HandlerResult:
+    # For immediate resume:
+    return Resume(value, store)
+    
+    # For async operations:
+    return Suspend(awaitable, store)
+    
+    # For scheduler-managed resumption:
+    scheduler.submit(k, hint=some_hint)
+    return Scheduled(store)
 ```
 
-These adapters wrap the old logic and return `Resume` or `Suspend` respectively, ensuring compatibility with the scheduler-based loop.
+### API Changes
+
+| Old API | New API |
+|---------|---------|
+| `run(program, pure_handlers=..., effectful_handlers=...)` | `run(program, scheduled_handlers=..., scheduler=...)` |
+| `SyncEffectHandler` protocol | `ScheduledEffectHandler` |
+| `AsyncEffectHandler` protocol | `ScheduledEffectHandler` |
+| `EffectDispatcher` class | `ScheduledEffectDispatcher` |
+| `default_pure_handlers()` | `default_scheduled_handlers()` |
+| `default_effectful_handlers()` | `default_scheduled_handlers()` |

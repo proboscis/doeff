@@ -82,65 +82,21 @@ if TYPE_CHECKING:
     from doeff.types import Effect
 
 from doeff._types_internal import EffectBase, ListenResult
+from doeff.runtime import (
+    Continuation,
+    HandlerResult,
+    Resume,
+    Scheduled,
+    ScheduledEffectHandler,
+    ScheduledHandlers,
+    Scheduler,
+    Suspend,
+)
 from doeff.utils import BoundedLog
 
 T = TypeVar("T")
 E = TypeVar("E", bound=EffectBase)
 R = TypeVar("R")
-
-
-# ============================================================================
-# Handler Protocols and Registry Types
-# ============================================================================
-
-
-class SyncEffectHandler(Protocol[E, R]):
-    """Pure effect handler - executed within a single CESK step.
-
-    Contract:
-    - MUST NOT perform I/O or spawn processes
-    - MUST NOT run sub-programs or call the interpreter recursively
-    - MAY raise exceptions for invalid operations (e.g., missing key)
-    - Returns (raw_value, new_store) - step function wraps in Value(raw_value)
-
-    Args:
-        effect: The effect instance to handle
-        env: Read-only environment (FrozenDict)
-        store: Current store (copy-on-write semantics)
-
-    Returns:
-        Tuple of (result_value, new_store)
-    """
-
-    def __call__(self, effect: E, env: Environment, store: Store) -> tuple[R, Store]: ...
-
-
-class AsyncEffectHandler(Protocol[E, R]):
-    """Effectful handler - causes suspension, resumed later.
-
-    Contract:
-    - May perform external I/O
-    - MUST NOT run sub-programs in the same machine (use Spawn for independent machines)
-    - May raise exceptions (converted to Error by main loop)
-    - Returns (raw_value, new_store) - main loop wraps in Value(raw_value)
-
-    Args:
-        effect: The effect instance to handle
-        env: Read-only environment (FrozenDict)
-        store: Current store
-
-    Returns:
-        Awaitable of tuple (result_value, new_store)
-    """
-
-    def __call__(
-        self, effect: E, env: Environment, store: Store
-    ) -> Awaitable[tuple[R, Store]]: ...
-
-
-# Type aliases for handler registries
-PureHandlers: TypeAlias = dict[type[EffectBase], SyncEffectHandler[Any, Any]]
-EffectfulHandlers: TypeAlias = dict[type[EffectBase], AsyncEffectHandler[Any, Any]]
 
 
 class HandlerRegistryError(Exception):
@@ -671,352 +627,7 @@ def _handle_durable_cache_exists(effect: EffectBase, env: Environment, store: St
     return (storage.exists(effect.key), store)
 
 
-def default_pure_handlers() -> PureHandlers:
-    """Create the default registry of pure effect handlers.
 
-    Returns:
-        A dict mapping effect types to their sync handlers.
-    """
-    from doeff.effects import (
-        AskEffect,
-        MemoGetEffect,
-        MemoPutEffect,
-        StateGetEffect,
-        StateModifyEffect,
-        StatePutEffect,
-        WriterTellEffect,
-    )
-    from doeff.effects.durable_cache import (
-        DurableCacheDelete,
-        DurableCacheExists,
-        DurableCacheGet,
-        DurableCachePut,
-    )
-    from doeff.effects.pure import PureEffect
-
-    return {
-        StateGetEffect: _handle_state_get,
-        StatePutEffect: _handle_state_put,
-        StateModifyEffect: _handle_state_modify,
-        AskEffect: _handle_ask,
-        WriterTellEffect: _handle_writer_tell,
-        MemoGetEffect: _handle_memo_get,
-        MemoPutEffect: _handle_memo_put,
-        PureEffect: _handle_pure_effect,
-        DurableCacheGet: _handle_durable_cache_get,
-        DurableCachePut: _handle_durable_cache_put,
-        DurableCacheDelete: _handle_durable_cache_delete,
-        DurableCacheExists: _handle_durable_cache_exists,
-    }
-
-
-# ============================================================================
-# Effect Dispatcher with MRO-based Lookup
-# ============================================================================
-
-
-class EffectDispatcher:
-    """Dispatch effects to handlers with MRO-based fallback and caching.
-
-    Dispatch strategy (per specification):
-    1. Exact type match: user registry → built-in registry
-    2. MRO fallback: traverse T.__mro__[1:], user registry → built-in for each
-    3. Cache resolved handler for O(1) subsequent dispatch
-    4. Raise UnhandledEffectError if no handler found
-
-    Thread safety: Each dispatcher instance should be used by a single interpreter run.
-    The caches are not thread-safe but each run() gets its own dispatcher.
-    """
-
-    def __init__(
-        self,
-        user_pure: PureHandlers | None = None,
-        builtin_pure: PureHandlers | None = None,
-        user_effectful: EffectfulHandlers | None = None,
-        builtin_effectful: EffectfulHandlers | None = None,
-    ):
-        self._user_pure = user_pure or {}
-        self._builtin_pure = builtin_pure or {}
-        self._user_effectful = user_effectful or {}
-        self._builtin_effectful = builtin_effectful or {}
-
-        # Dispatch caches: effect_type -> (handler, is_pure)
-        self._pure_cache: dict[type[EffectBase], SyncEffectHandler[Any, Any]] = {}
-        self._effectful_cache: dict[type[EffectBase], AsyncEffectHandler[Any, Any]] = {}
-
-    def _lookup_pure(self, effect_type: type[EffectBase]) -> SyncEffectHandler[Any, Any] | None:
-        """Lookup pure handler using MRO fallback."""
-        # Check cache first
-        if effect_type in self._pure_cache:
-            return self._pure_cache[effect_type]
-
-        # Exact match in user registry
-        if effect_type in self._user_pure:
-            handler = self._user_pure[effect_type]
-            self._pure_cache[effect_type] = handler
-            return handler
-
-        # Exact match in builtin registry
-        if effect_type in self._builtin_pure:
-            handler = self._builtin_pure[effect_type]
-            self._pure_cache[effect_type] = handler
-            return handler
-
-        # MRO fallback (skip the type itself)
-        for base in effect_type.__mro__[1:]:
-            if base in self._user_pure:
-                handler = self._user_pure[base]
-                self._pure_cache[effect_type] = handler
-                return handler
-            if base in self._builtin_pure:
-                handler = self._builtin_pure[base]
-                self._pure_cache[effect_type] = handler
-                return handler
-
-        return None
-
-    def _lookup_effectful(self, effect_type: type[EffectBase]) -> AsyncEffectHandler[Any, Any] | None:
-        """Lookup effectful handler using MRO fallback."""
-        # Check cache first
-        if effect_type in self._effectful_cache:
-            return self._effectful_cache[effect_type]
-
-        # Exact match in user registry
-        if effect_type in self._user_effectful:
-            handler = self._user_effectful[effect_type]
-            self._effectful_cache[effect_type] = handler
-            return handler
-
-        # Exact match in builtin registry
-        if effect_type in self._builtin_effectful:
-            handler = self._builtin_effectful[effect_type]
-            self._effectful_cache[effect_type] = handler
-            return handler
-
-        # MRO fallback (skip the type itself)
-        for base in effect_type.__mro__[1:]:
-            if base in self._user_effectful:
-                handler = self._user_effectful[base]
-                self._effectful_cache[effect_type] = handler
-                return handler
-            if base in self._builtin_effectful:
-                handler = self._builtin_effectful[base]
-                self._effectful_cache[effect_type] = handler
-                return handler
-
-        return None
-
-    def is_pure(self, effect: EffectBase) -> bool:
-        """Check if effect has a pure handler."""
-        return self._lookup_pure(type(effect)) is not None
-
-    def is_effectful(self, effect: EffectBase) -> bool:
-        """Check if effect has an effectful handler."""
-        return self._lookup_effectful(type(effect)) is not None
-
-    def dispatch_pure(
-        self, effect: EffectBase, env: Environment, store: Store
-    ) -> tuple[Any, Store]:
-        """Dispatch a pure effect to its handler.
-
-        Raises:
-            UnhandledEffectError: If no pure handler found for the effect.
-        """
-        handler = self._lookup_pure(type(effect))
-        if handler is None:
-            raise UnhandledEffectError(f"No pure handler for {type(effect).__name__}")
-        return handler(effect, env, store)
-
-    async def dispatch_effectful(
-        self, effect: EffectBase, env: Environment, store: Store
-    ) -> tuple[Any, Store]:
-        """Dispatch an effectful effect to its handler.
-
-        Raises:
-            UnhandledEffectError: If no effectful handler found for the effect.
-        """
-        handler = self._lookup_effectful(type(effect))
-        if handler is None:
-            raise UnhandledEffectError(f"No effectful handler for {type(effect).__name__}")
-        return await handler(effect, env, store)
-
-
-# ============================================================================
-# Handler Wrapping Utilities
-# ============================================================================
-
-
-def wrap_sync_handler(
-    handler: SyncEffectHandler[E, R],
-    wrapper: Callable[[E, Environment, Store, SyncEffectHandler[E, R]], tuple[R, Store]],
-) -> SyncEffectHandler[E, R]:
-    """Wrap a sync handler with aspect-style behavior.
-
-    The wrapper receives:
-    - effect: The effect being handled
-    - env: The environment
-    - store: The store
-    - next_handler: The wrapped handler to call
-
-    Example:
-        ```python
-        def audit_wrapper(effect, env, store, next_handler):
-            print(f"Handling {type(effect).__name__}")
-            result, new_store = next_handler(effect, env, store)
-            print(f"Completed with {result}")
-            return result, new_store
-
-        wrapped = wrap_sync_handler(original_handler, audit_wrapper)
-        ```
-
-    Returns:
-        A new handler that applies the wrapper around the original.
-    """
-
-    def wrapped(effect: E, env: Environment, store: Store) -> tuple[R, Store]:
-        return wrapper(effect, env, store, handler)
-
-    return wrapped
-
-
-def wrap_async_handler(
-    handler: AsyncEffectHandler[E, R],
-    wrapper: Callable[
-        [E, Environment, Store, AsyncEffectHandler[E, R]], Awaitable[tuple[R, Store]]
-    ],
-) -> AsyncEffectHandler[E, R]:
-    """Wrap an async handler with aspect-style behavior.
-
-    The wrapper receives:
-    - effect: The effect being handled
-    - env: The environment
-    - store: The store
-    - next_handler: The wrapped handler to call
-
-    Example:
-        ```python
-        async def timing_wrapper(effect, env, store, next_handler):
-            start = time.time()
-            result, new_store = await next_handler(effect, env, store)
-            print(f"Took {time.time() - start:.3f}s")
-            return result, new_store
-
-        wrapped = wrap_async_handler(original_handler, timing_wrapper)
-        ```
-
-    Returns:
-        A new handler that applies the wrapper around the original.
-    """
-
-    async def wrapped(effect: E, env: Environment, store: Store) -> tuple[R, Store]:
-        return await wrapper(effect, env, store, handler)
-
-    return wrapped
-
-
-# ============================================================================
-# Registry Merging and Validation
-# ============================================================================
-
-
-def merge_handler_registries(
-    user_pure: PureHandlers | None,
-    user_effectful: EffectfulHandlers | None,
-    builtin_pure: PureHandlers,
-    builtin_effectful: EffectfulHandlers,
-    override_builtins: bool = False,
-) -> tuple[PureHandlers, EffectfulHandlers]:
-    """Merge user registries with built-in registries.
-
-    Rules:
-    - User handlers take precedence over built-ins for the same type
-    - An effect type cannot be registered in both pure and effectful
-    - Overriding built-ins requires override_builtins=True
-
-    Args:
-        user_pure: User-provided pure handlers
-        user_effectful: User-provided effectful handlers
-        builtin_pure: Built-in pure handlers
-        builtin_effectful: Built-in effectful handlers
-        override_builtins: If True, allow user handlers to override built-ins
-
-    Returns:
-        Tuple of (merged_pure, merged_effectful) registries
-
-    Raises:
-        HandlerRegistryError: If there are conflicts
-    """
-    user_pure = user_pure or {}
-    user_effectful = user_effectful or {}
-
-    # Check for pure/effectful conflicts within user registries
-    user_conflicts = set(user_pure.keys()) & set(user_effectful.keys())
-    if user_conflicts:
-        raise HandlerRegistryError(
-            f"Effect types cannot be in both pure and effectful registries: "
-            f"{[t.__name__ for t in user_conflicts]}"
-        )
-
-    # Check for override conflicts without override_builtins
-    if not override_builtins:
-        builtin_pure_overrides = set(user_pure.keys()) & set(builtin_pure.keys())
-        builtin_effectful_overrides = set(user_effectful.keys()) & set(builtin_effectful.keys())
-
-        if builtin_pure_overrides:
-            raise HandlerRegistryError(
-                f"Cannot override built-in pure handlers without override_builtins=True: "
-                f"{[t.__name__ for t in builtin_pure_overrides]}"
-            )
-        if builtin_effectful_overrides:
-            raise HandlerRegistryError(
-                f"Cannot override built-in effectful handlers without override_builtins=True: "
-                f"{[t.__name__ for t in builtin_effectful_overrides]}"
-            )
-
-    # Check for category conflicts (user trying to make a built-in pure effect effectful or vice versa)
-    pure_to_effectful = set(user_effectful.keys()) & set(builtin_pure.keys())
-    effectful_to_pure = set(user_pure.keys()) & set(builtin_effectful.keys())
-
-    if pure_to_effectful and not override_builtins:
-        raise HandlerRegistryError(
-            f"Cannot register built-in pure effects as effectful without override_builtins=True: "
-            f"{[t.__name__ for t in pure_to_effectful]}"
-        )
-    if effectful_to_pure and not override_builtins:
-        raise HandlerRegistryError(
-            f"Cannot register built-in effectful effects as pure without override_builtins=True: "
-            f"{[t.__name__ for t in effectful_to_pure]}"
-        )
-
-    # Merge registries (user handlers override built-ins)
-    merged_pure = {**builtin_pure, **user_pure}
-    merged_effectful = {**builtin_effectful, **user_effectful}
-
-    # Remove any types that changed category
-    if override_builtins:
-        for t in pure_to_effectful:
-            merged_pure.pop(t, None)
-        for t in effectful_to_pure:
-            merged_effectful.pop(t, None)
-
-    return merged_pure, merged_effectful
-
-
-def handle_pure(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """
-    Pure effect handler - deterministic, no external side effects.
-
-    This is a convenience function that delegates to the default pure handlers registry.
-    For custom handlers, use run/run_sync with the pure_handlers parameter instead.
-
-    Contract:
-    - MUST NOT perform I/O or spawn processes (except durable cache via __durable_storage__)
-    - MUST NOT run sub-programs or call the interpreter recursively
-    - MAY raise exceptions for invalid operations (e.g., missing key)
-    - Returns (raw_value, new_store) - step function wraps in Value(raw_value)
-    """
-    dispatcher = EffectDispatcher(builtin_pure=default_pure_handlers())
-    return dispatcher.dispatch_pure(effect, env, store)
 
 
 # ============================================================================
@@ -1226,14 +837,14 @@ def to_generator(program: Program) -> Generator[Any, Any, Any]:
 # ============================================================================
 
 
-def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepResult:
+def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) -> StepResult:
     """
     Single step of the CESK machine.
 
     Args:
         state: Current CESK machine state.
-        dispatcher: Effect dispatcher for handler lookup. If None, uses legacy
-            isinstance-based dispatch for backward compatibility.
+        dispatcher: Scheduled effect dispatcher for handler lookup. If None, uses default
+            handlers with legacy isinstance-based dispatch for backward compatibility.
 
     Returns:
     - CESKState for continued execution
@@ -1375,26 +986,9 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
                     # Transform returned control-flow effect - handle it normally
                     return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
 
-                # Use dispatcher if available for transformed effect
-                trans_is_pure = dispatcher.is_pure(transformed) if dispatcher else is_pure_effect(transformed)
-                trans_is_effectful = dispatcher.is_effectful(transformed) if dispatcher else is_effectful(transformed)
+                has_handler = dispatcher.has_handler(transformed) if dispatcher else (is_pure_effect(transformed) or is_effectful(transformed))
 
-                if trans_is_pure:
-                    # Transform returned pure Effect - handle inline
-                    try:
-                        if dispatcher:
-                            v, S_new = dispatcher.dispatch_pure(transformed, E, S)
-                        else:
-                            v, S_new = handle_pure(transformed, E, S)
-                        return CESKState(C=Value(v), E=E, S=S_new, K=K)
-                    except Exception as ex:
-                        # Pure effect handler raised after transform - capture traceback
-                        captured = capture_traceback_safe(K, ex)
-                        return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
-
-                if trans_is_effectful:
-                    # Transform returned effectful Effect - async boundary
-                    # Note: resume_error traceback capture happens in _run_internal
+                if has_handler:
                     return Suspended(
                         effect=transformed,
                         resume=lambda v, new_store, E=E, K=K: CESKState(
@@ -1405,7 +999,6 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
                         ),
                     )
 
-                # Effect not handled by any category - return as unhandled
                 unhandled_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
                 captured = capture_traceback_safe(K, unhandled_ex)
                 return CESKState(
@@ -1430,33 +1023,12 @@ def step(state: CESKState, dispatcher: EffectDispatcher | None = None) -> StepRe
             )
 
         # =====================================================================
-        # PURE EFFECTS → handle and return value
+        # EFFECT HANDLING → check dispatcher for handler, return Suspended
         # =====================================================================
 
-        # Use dispatcher if available, otherwise fall back to legacy checks
-        effect_is_pure = dispatcher.is_pure(effect) if dispatcher else is_pure_effect(effect)
-        effect_is_effectful = dispatcher.is_effectful(effect) if dispatcher else is_effectful(effect)
+        has_handler = dispatcher.has_handler(effect) if dispatcher else (is_pure_effect(effect) or is_effectful(effect))
 
-        if effect_is_pure:
-            from doeff.cesk_traceback import capture_traceback_safe
-
-            try:
-                if dispatcher:
-                    v, S_new = dispatcher.dispatch_pure(effect, E, S)
-                else:
-                    v, S_new = handle_pure(effect, E, S)
-                return CESKState(C=Value(v), E=E, S=S_new, K=K)
-            except Exception as ex:
-                # Pure effect handler raised - capture traceback
-                captured = capture_traceback_safe(K, ex)
-                return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
-
-        # =====================================================================
-        # EFFECTFUL EFFECTS → async boundary
-        # =====================================================================
-
-        if effect_is_effectful:
-            # Note: resume_error traceback capture happens in _run_internal
+        if has_handler:
             return Suspended(
                 effect=effect,
                 resume=lambda v, new_store, E=E, K=K: CESKState(
@@ -1955,55 +1527,140 @@ async def _handle_task_join(effect: EffectBase, env: Environment, store: Store) 
     raise ValueError(f"Cannot join task with handle type: {type(task._handle)}")
 
 
-def default_effectful_handlers() -> EffectfulHandlers:
-    """Create the default registry of effectful effect handlers.
+# ============================================================================
+# Scheduled Effect Handlers (New Protocol - ISSUE-CORE-432)
+# ============================================================================
 
-    Returns:
-        A dict mapping effect types to their async handlers.
-    """
+
+def _make_pure_scheduled_handler(
+    sync_handler: Callable[[EffectBase, Environment, Store], tuple[Any, Store]],
+) -> ScheduledEffectHandler:
+    def handler(
+        effect: EffectBase,
+        env: Environment,
+        store: Store,
+        k: Continuation,
+        scheduler: "Scheduler",
+    ) -> HandlerResult:
+        value, new_store = sync_handler(effect, env, store)
+        return Resume(value, new_store)
+    return handler
+
+
+def _make_async_scheduled_handler(
+    async_handler: Callable[[EffectBase, Environment, Store], Awaitable[tuple[Any, Store]]],
+) -> ScheduledEffectHandler:
+    def handler(
+        effect: EffectBase,
+        env: Environment,
+        store: Store,
+        k: Continuation,
+        scheduler: Scheduler,
+    ) -> HandlerResult:
+        async def do_async() -> tuple[Any, Store]:
+            return await async_handler(effect, env, store)
+        return Suspend(do_async(), store)
+    return handler
+
+
+def default_scheduled_handlers() -> ScheduledHandlers:
     from doeff.effects import (
+        AskEffect,
         FutureAwaitEffect,
         IOPerformEffect,
         IOPrintEffect,
+        MemoGetEffect,
+        MemoPutEffect,
         SpawnEffect,
+        StateGetEffect,
+        StateModifyEffect,
+        StatePutEffect,
         TaskJoinEffect,
         ThreadEffect,
+        WriterTellEffect,
     )
+    from doeff.effects.durable_cache import (
+        DurableCacheDelete,
+        DurableCacheExists,
+        DurableCacheGet,
+        DurableCachePut,
+    )
+    from doeff.effects.pure import PureEffect
 
     return {
-        IOPerformEffect: _handle_io_perform,
-        IOPrintEffect: _handle_io_print,
-        FutureAwaitEffect: _handle_future_await,
-        SpawnEffect: _handle_spawn,
-        ThreadEffect: _handle_thread,
-        TaskJoinEffect: _handle_task_join,
+        StateGetEffect: _make_pure_scheduled_handler(_handle_state_get),
+        StatePutEffect: _make_pure_scheduled_handler(_handle_state_put),
+        StateModifyEffect: _make_pure_scheduled_handler(_handle_state_modify),
+        AskEffect: _make_pure_scheduled_handler(_handle_ask),
+        WriterTellEffect: _make_pure_scheduled_handler(_handle_writer_tell),
+        MemoGetEffect: _make_pure_scheduled_handler(_handle_memo_get),
+        MemoPutEffect: _make_pure_scheduled_handler(_handle_memo_put),
+        PureEffect: _make_pure_scheduled_handler(_handle_pure_effect),
+        DurableCacheGet: _make_pure_scheduled_handler(_handle_durable_cache_get),
+        DurableCachePut: _make_pure_scheduled_handler(_handle_durable_cache_put),
+        DurableCacheDelete: _make_pure_scheduled_handler(_handle_durable_cache_delete),
+        DurableCacheExists: _make_pure_scheduled_handler(_handle_durable_cache_exists),
+        IOPerformEffect: _make_async_scheduled_handler(_handle_io_perform),
+        IOPrintEffect: _make_async_scheduled_handler(_handle_io_print),
+        FutureAwaitEffect: _make_async_scheduled_handler(_handle_future_await),
+        SpawnEffect: _make_async_scheduled_handler(_handle_spawn),
+        ThreadEffect: _make_async_scheduled_handler(_handle_thread),
+        TaskJoinEffect: _make_async_scheduled_handler(_handle_task_join),
     }
 
 
-# ============================================================================
-# Effectful Effect Handlers (Legacy Dispatch)
-# ============================================================================
+class ScheduledEffectDispatcher:
+    def __init__(
+        self,
+        user_handlers: ScheduledHandlers | None = None,
+        builtin_handlers: ScheduledHandlers | None = None,
+    ):
+        self._user = user_handlers or {}
+        self._builtin = builtin_handlers or {}
+        self._cache: dict[type[EffectBase], ScheduledEffectHandler | None] = {}
 
+    def _lookup(self, effect_type: type[EffectBase]) -> ScheduledEffectHandler | None:
+        if effect_type in self._cache:
+            return self._cache[effect_type]
 
-async def handle_effectful(
-    effect: EffectBase,
-    env: Environment,
-    store: Store,
-) -> tuple[Any, Store]:
-    """
-    Effectful handler - may perform I/O, spawn processes, etc.
+        if effect_type in self._user:
+            handler = self._user[effect_type]
+            self._cache[effect_type] = handler
+            return handler
 
-    This is a convenience function that delegates to the default effectful handlers registry.
-    For custom handlers, use run/run_sync with the effectful_handlers parameter instead.
+        if effect_type in self._builtin:
+            handler = self._builtin[effect_type]
+            self._cache[effect_type] = handler
+            return handler
 
-    Contract:
-    - May perform external I/O
-    - MUST NOT run sub-programs in the same machine (use Spawn for independent machines)
-    - May raise exceptions (converted to Error by main loop)
-    - Returns (raw_value, new_store) - main loop wraps in Value(raw_value)
-    """
-    dispatcher = EffectDispatcher(builtin_effectful=default_effectful_handlers())
-    return await dispatcher.dispatch_effectful(effect, env, store)
+        for base in effect_type.__mro__[1:]:
+            if base in self._user:
+                handler = self._user[base]
+                self._cache[effect_type] = handler
+                return handler
+            if base in self._builtin:
+                handler = self._builtin[base]
+                self._cache[effect_type] = handler
+                return handler
+
+        self._cache[effect_type] = None
+        return None
+
+    def has_handler(self, effect: EffectBase) -> bool:
+        return self._lookup(type(effect)) is not None
+
+    def dispatch(
+        self,
+        effect: EffectBase,
+        env: Environment,
+        store: Store,
+        k: Continuation,
+        scheduler: "Scheduler",
+    ) -> HandlerResult:
+        handler = self._lookup(type(effect))
+        if handler is None:
+            raise UnhandledEffectError(f"No handler for {type(effect).__name__}")
+        return handler(effect, env, store, k, scheduler)
 
 
 # ============================================================================
@@ -2017,38 +1674,19 @@ async def _run_internal(
     store: Store,
     on_step: OnStepCallback | None = None,
     storage: DurableStorage | None = None,
-    dispatcher: EffectDispatcher | None = None,
+    dispatcher: ScheduledEffectDispatcher | None = None,
+    scheduler: Scheduler | None = None,
 ) -> tuple[Result[T], Store, CapturedTraceback | None]:
-    """
-    Internal main interpreter loop that returns result, final store, and traceback.
-
-    Used for Spawn where we need the child's final store for merging.
-
-    Args:
-        program: The program to execute.
-        env: Initial environment.
-        store: Initial store.
-        on_step: Optional callback invoked after each interpreter step.
-        storage: Optional durable storage backend for cache effects.
-        dispatcher: Effect dispatcher for handler lookup. If None, uses default handlers.
-
-    Returns:
-        Tuple of (Result[T], Store, CapturedTraceback | None)
-        - Result is Ok on success, Err on error
-        - Store is the final state
-        - CapturedTraceback is provided on error, None on success
-    """
     from doeff.cesk_observability import ExecutionSnapshot
     from doeff.cesk_traceback import capture_traceback_safe
+    from doeff.runtime import FIFOScheduler
 
-    # Create default dispatcher if not provided
     if dispatcher is None:
-        dispatcher = EffectDispatcher(
-            builtin_pure=default_pure_handlers(),
-            builtin_effectful=default_effectful_handlers(),
-        )
+        dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
 
-    # Store dispatcher in store so child machines (Spawn/Thread) can inherit it
+    if scheduler is None:
+        scheduler = FIFOScheduler()
+
     store = {**store, "__dispatcher__": dispatcher}
 
     state = CESKState.initial(program, env, store)
@@ -2058,29 +1696,19 @@ async def _run_internal(
         result = step(state, dispatcher)
         step_count += 1
 
-        # Call on_step callback if provided
         if on_step is not None:
             try:
                 if isinstance(result, Done):
-                    snapshot = ExecutionSnapshot.from_state(
-                        state, "completed", step_count, storage
-                    )
+                    snapshot = ExecutionSnapshot.from_state(state, "completed", step_count, storage)
                 elif isinstance(result, Failed):
-                    snapshot = ExecutionSnapshot.from_state(
-                        state, "failed", step_count, storage
-                    )
+                    snapshot = ExecutionSnapshot.from_state(state, "failed", step_count, storage)
                 elif isinstance(result, Suspended):
-                    snapshot = ExecutionSnapshot.from_state(
-                        state, "paused", step_count, storage
-                    )
+                    snapshot = ExecutionSnapshot.from_state(state, "paused", step_count, storage)
                 else:
-                    snapshot = ExecutionSnapshot.from_state(
-                        result, "running", step_count, storage
-                    )
+                    snapshot = ExecutionSnapshot.from_state(result, "running", step_count, storage)
                 on_step(snapshot)
             except Exception as e:
                 import logging
-
                 logging.warning(f"on_step callback error (ignored): {e}", exc_info=True)
 
         if isinstance(result, Done):
@@ -2090,20 +1718,53 @@ async def _run_internal(
             return Err(result.exception), result.store, result.captured_traceback
 
         if isinstance(result, Suspended):
-            # Async boundary - use continuation-based resumption
             effect = result.effect
-            original_store = state.S  # Capture for error case
+            original_store = state.S
 
-            # Handle effectful effects via dispatcher and resume with continuation
+            k = Continuation(
+                _resume=result.resume,
+                _resume_error=result.resume_error,
+                env=state.E,
+                store=original_store,
+            )
+
             try:
-                v, new_store = await dispatcher.dispatch_effectful(effect, state.E, original_store)
-                state = result.resume(v, new_store)
+                handler_result = dispatcher.dispatch(effect, state.E, original_store, k, scheduler)
+
+                if isinstance(handler_result, Resume):
+                    state = result.resume(handler_result.value, handler_result.store)
+                elif isinstance(handler_result, Suspend):
+                    try:
+                        async_result = await handler_result.awaitable
+                        if isinstance(async_result, tuple) and len(async_result) == 2:
+                            value, new_store = async_result
+                        else:
+                            value, new_store = async_result, handler_result.store
+                        state = result.resume(value, new_store)
+                    except Exception as ex:
+                        captured = capture_traceback_safe(state.K, ex)
+                        error_state = result.resume_error(ex)
+                        if isinstance(error_state.C, Error) and error_state.C.captured_traceback is None:
+                            error_state = CESKState(
+                                C=Error(ex, captured_traceback=captured),
+                                E=error_state.E,
+                                S=error_state.S,
+                                K=error_state.K,
+                            )
+                        state = error_state
+                elif isinstance(handler_result, Scheduled):
+                    next_k = scheduler.next()
+                    if next_k is not None:
+                        state = next_k.resume(None, handler_result.store)
+                    else:
+                        raise InterpreterInvariantError("Scheduled but no continuation in scheduler")
+                else:
+                    raise InterpreterInvariantError(f"Unknown handler result: {type(handler_result)}")
+            except UnhandledEffectError:
+                raise
             except Exception as ex:
-                # Capture traceback for effectful handler exception
                 captured = capture_traceback_safe(state.K, ex)
-                # Create error state with captured traceback
                 error_state = result.resume_error(ex)
-                # If the resumed state has Error control, attach our traceback
                 if isinstance(error_state.C, Error) and error_state.C.captured_traceback is None:
                     error_state = CESKState(
                         C=Error(ex, captured_traceback=captured),
@@ -2115,11 +1776,9 @@ async def _run_internal(
             continue
 
         if isinstance(result, CESKState):
-            # Normal state transition
             state = result
             continue
 
-        # Should never reach here
         raise InterpreterInvariantError(f"Unexpected step result: {type(result).__name__}")
 
 
@@ -2130,36 +1789,9 @@ async def run(
     *,
     storage: DurableStorage | None = None,
     on_step: OnStepCallback | None = None,
-    pure_handlers: PureHandlers | None = None,
-    effectful_handlers: EffectfulHandlers | None = None,
-    override_builtins: bool = False,
+    scheduled_handlers: ScheduledHandlers | None = None,
+    scheduler: Scheduler | None = None,
 ) -> CESKResult[T]:
-    """
-    Main interpreter loop.
-
-    Pure stepping is synchronous. Async boundaries occur for:
-    - Effectful handlers (IO, Await, Thread, Spawn) via Suspended
-
-    For parallel execution, use asyncio.create_task + Await + Gather pattern.
-
-    Args:
-        program: The program to execute.
-        env: Initial environment (default: empty).
-        store: Initial store (default: empty).
-        storage: Optional durable storage backend for cache effects.
-        on_step: Optional callback invoked after each interpreter step.
-        pure_handlers: Optional user-provided pure effect handlers.
-        effectful_handlers: Optional user-provided effectful effect handlers.
-        override_builtins: If True, allow user handlers to override built-in handlers.
-
-    Returns:
-        CESKResult containing Ok(value) or Err(exception) with captured traceback.
-
-    Raises:
-        HandlerRegistryError: If there are handler registration conflicts.
-    """
-
-    # Coerce env to FrozenDict to ensure immutability
     if env is None:
         E = FrozenDict()
     elif isinstance(env, FrozenDict):
@@ -2167,32 +1799,17 @@ async def run(
     else:
         E = FrozenDict(env)
 
-    # Initialize store with durable storage if provided
     S = store if store is not None else {}
     if storage is not None:
         S = {**S, "__durable_storage__": storage}
 
-    # Create effect dispatcher with merged registries
-    builtin_pure = default_pure_handlers()
-    builtin_effectful = default_effectful_handlers()
-
-    # Validate and merge registries
-    merged_pure, merged_effectful = merge_handler_registries(
-        pure_handlers,
-        effectful_handlers,
-        builtin_pure,
-        builtin_effectful,
-        override_builtins,
-    )
-
-    # Use merged registries to properly handle category changes with override_builtins
-    dispatcher = EffectDispatcher(
-        builtin_pure=merged_pure,
-        builtin_effectful=merged_effectful,
+    dispatcher = ScheduledEffectDispatcher(
+        user_handlers=scheduled_handlers,
+        builtin_handlers=default_scheduled_handlers(),
     )
 
     result, _, captured_traceback = await _run_internal(
-        program, E, S, on_step=on_step, storage=storage, dispatcher=dispatcher
+        program, E, S, on_step=on_step, storage=storage, dispatcher=dispatcher, scheduler=scheduler
     )
     return CESKResult(result, captured_traceback)
 
@@ -2204,29 +1821,9 @@ def run_sync(
     *,
     storage: DurableStorage | None = None,
     on_step: OnStepCallback | None = None,
-    pure_handlers: PureHandlers | None = None,
-    effectful_handlers: EffectfulHandlers | None = None,
-    override_builtins: bool = False,
+    scheduled_handlers: ScheduledHandlers | None = None,
+    scheduler: Scheduler | None = None,
 ) -> CESKResult[T]:
-    """
-    Synchronous wrapper for the run function.
-
-    Args:
-        program: The program to execute.
-        env: Initial environment (default: empty).
-        store: Initial store (default: empty).
-        storage: Optional durable storage backend for cache effects (default: None).
-        on_step: Optional callback invoked after each interpreter step.
-        pure_handlers: Optional user-provided pure effect handlers.
-        effectful_handlers: Optional user-provided effectful effect handlers.
-        override_builtins: If True, allow user handlers to override built-in handlers.
-
-    Returns:
-        CESKResult containing Ok(value) or Err(exception) with captured traceback.
-
-    Raises:
-        HandlerRegistryError: If there are handler registration conflicts.
-    """
     return asyncio.run(
         run(
             program,
@@ -2234,9 +1831,8 @@ def run_sync(
             store,
             storage=storage,
             on_step=on_step,
-            pure_handlers=pure_handlers,
-            effectful_handlers=effectful_handlers,
-            override_builtins=override_builtins,
+            scheduled_handlers=scheduled_handlers,
+            scheduler=scheduler,
         )
     )
 
@@ -2272,33 +1868,19 @@ __all__ = [
     "Terminal",
     # Public result type
     "CESKResult",
-    # Classification (legacy)
+    # Classification
     "is_control_flow_effect",
     "is_pure_effect",
     "is_effectful",
     "has_intercept_frame",
     "find_intercept_frame_index",
-    # Handlers (legacy)
-    "handle_pure",
-    "handle_effectful",
+    # Errors
     "UnhandledEffectError",
     "InterpreterInvariantError",
-    # Handler Protocols and Registry Types
-    "SyncEffectHandler",
-    "AsyncEffectHandler",
-    "PureHandlers",
-    "EffectfulHandlers",
     "HandlerRegistryError",
-    # Effect Dispatcher
-    "EffectDispatcher",
-    # Default Handler Registries
-    "default_pure_handlers",
-    "default_effectful_handlers",
-    # Handler Wrapping
-    "wrap_sync_handler",
-    "wrap_async_handler",
-    # Registry Merging
-    "merge_handler_registries",
+    # Effect Dispatcher (new protocol)
+    "ScheduledEffectDispatcher",
+    "default_scheduled_handlers",
     # Transform
     "apply_transforms",
     "apply_intercept_chain",
