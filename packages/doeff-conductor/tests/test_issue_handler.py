@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
+from doeff_conductor.exceptions import IssueNotFoundError
 from doeff_conductor.handlers.issue_handler import IssueHandler
 from doeff_conductor.types import IssueStatus
 
@@ -63,7 +64,7 @@ class TestIssueHandler:
         """Test getting a non-existent issue."""
         effect = GetIssue(id="ISSUE-NONEXISTENT")
 
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(IssueNotFoundError, match="ISSUE-NONEXISTENT"):
             handler.handle_get_issue(effect)
 
     def test_list_issues_empty(self, handler: IssueHandler):
