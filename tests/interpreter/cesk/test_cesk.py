@@ -22,9 +22,7 @@ from doeff.effects.result import (
     ResultCatchEffect,
     ResultFinallyEffect,
 )
-# Note: Recover/Retry/Fail/Safe removed from CESK core - library sugar for Pure interpreter
 from doeff.cesk import (
-    # State components
     Environment,
     Store,
     Control,
@@ -32,34 +30,27 @@ from doeff.cesk import (
     Error,
     EffectControl,
     ProgramControl,
-    # Frames
     ReturnFrame,
     CatchFrame,
-    # Note: RecoverFrame removed - Result/Maybe are values, not effects
     FinallyFrame,
     LocalFrame,
     InterceptFrame,
     ListenFrame,
     GatherFrame,
-    # State
     CESKState,
-    # Step results
     Done,
     Failed,
-    Suspended,  # Continuation-based suspension (replaces NeedAsync/NeedParallel)
-    # Classification
+    Suspended,
     is_control_flow_effect,
     is_pure_effect,
     is_effectful,
     has_intercept_frame,
     find_intercept_frame_index,
-    # Handlers
-    handle_pure,
     UnhandledEffectError,
     InterpreterInvariantError,
-    # Step function
+    ScheduledEffectDispatcher,
+    default_scheduled_handlers,
     step,
-    # Main loop
     run,
     run_sync,
 )
@@ -120,95 +111,102 @@ class TestEffectClassification:
 
 
 # ============================================================================
-# Test Pure Handlers
+# Test Scheduled Handlers (Pure Effects)
 # ============================================================================
 
 
-class TestPureHandlers:
-    """Test pure effect handlers in isolation."""
+class TestScheduledHandlers:
+    """Test scheduled effect handlers via dispatcher."""
+
+    def _dispatch_pure(self, effect, env, store):
+        from doeff.runtime import Resume, FIFOScheduler, Continuation
+        dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
+        scheduler = FIFOScheduler()
+        dummy_state = CESKState(C=Value(None), E=env, S=store, K=[])
+        k = Continuation(
+            _resume=lambda v, s: dummy_state,
+            _resume_error=lambda e: dummy_state,
+            env=env,
+            store=store,
+        )
+        result = dispatcher.dispatch(effect, env, store, k, scheduler)
+        assert isinstance(result, Resume)
+        return result.value, result.store
 
     def test_handle_state_get_existing_key(self):
-        """StateGetEffect returns value for existing key."""
         effect = state.StateGetEffect(key="counter")
         store = {"counter": 42}
         env = FrozenDict()
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result == 42
-        assert new_store == store  # Store unchanged for Get
+        assert new_store == store
 
     def test_handle_state_get_missing_key(self):
-        """StateGetEffect returns None for missing key."""
         effect = state.StateGetEffect(key="missing")
         store = {}
         env = FrozenDict()
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result is None
         assert new_store == store
 
     def test_handle_state_put(self):
-        """StatePutEffect updates store."""
         effect = state.StatePutEffect(key="counter", value=100)
         store = {"counter": 42}
         env = FrozenDict()
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result is None
         assert new_store["counter"] == 100
 
     def test_handle_state_modify(self):
-        """StateModifyEffect applies function and returns new value."""
         effect = state.StateModifyEffect(key="counter", func=lambda x: (x or 0) + 1)
         store = {"counter": 42}
         env = FrozenDict()
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result == 43
         assert new_store["counter"] == 43
 
     def test_handle_ask_existing_key(self):
-        """AskEffect returns value for existing key."""
         effect = reader.AskEffect(key="config")
         env = FrozenDict({"config": "value"})
         store = {}
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result == "value"
         assert new_store == store
 
     def test_handle_ask_missing_key(self):
-        """AskEffect raises KeyError for missing key."""
         effect = reader.AskEffect(key="missing")
         env = FrozenDict()
         store = {}
 
         with pytest.raises(KeyError, match="Missing environment key"):
-            handle_pure(effect, env, store)
+            self._dispatch_pure(effect, env, store)
 
     def test_handle_tell(self):
-        """WriterTellEffect appends to log."""
         effect = writer.WriterTellEffect(message="hello")
         env = FrozenDict()
         store = {"__log__": ["previous"]}
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result is None
         assert new_store["__log__"] == ["previous", "hello"]
 
     def test_handle_tell_empty_log(self):
-        """WriterTellEffect creates log if missing."""
         effect = writer.WriterTellEffect(message="first")
         env = FrozenDict()
         store = {}
 
-        result, new_store = handle_pure(effect, env, store)
+        result, new_store = self._dispatch_pure(effect, env, store)
 
         assert result is None
         assert new_store["__log__"] == ["first"]
@@ -243,15 +241,15 @@ class TestStepTerminalStates:
 
 
 # ============================================================================
-# Test Step Function - Pure Effect Handling
+# Test Step Function - Effect Handling (Returns Suspended)
 # ============================================================================
 
 
-class TestStepPureEffects:
-    """Test step function handling of pure effects."""
+class TestStepEffectHandling:
+    """Test step function handling of effects - now returns Suspended for ALL effects."""
 
-    def test_pure_effect_state_get(self):
-        """Pure StateGetEffect is handled synchronously."""
+    def test_effect_state_get_returns_suspended(self):
+        """StateGetEffect causes step to return Suspended (dispatcher handles it in main loop)."""
         effect = state.StateGetEffect(key="counter")
         state_obj = CESKState(
             C=EffectControl(effect),
@@ -262,12 +260,11 @@ class TestStepPureEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert result.C.v == 42
+        assert isinstance(result, Suspended)
+        assert result.effect is effect
 
-    def test_pure_effect_ask_error_becomes_error_state(self):
-        """Pure effect raising exception becomes Error state."""
+    def test_effect_ask_returns_suspended(self):
+        """AskEffect causes step to return Suspended."""
         effect = reader.AskEffect(key="missing")
         state_obj = CESKState(
             C=EffectControl(effect),
@@ -278,9 +275,8 @@ class TestStepPureEffects:
 
         result = step(state_obj)
 
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Error)
-        assert isinstance(result.C.ex, KeyError)
+        assert isinstance(result, Suspended)
+        assert result.effect is effect
 
 
 # ============================================================================
