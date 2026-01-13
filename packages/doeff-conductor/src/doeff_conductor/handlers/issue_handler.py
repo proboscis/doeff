@@ -1,13 +1,9 @@
 """
 Issue handler for doeff-conductor.
-
-Handles CreateIssue, ListIssues, GetIssue, ResolveIssue effects
-by managing markdown files with YAML frontmatter.
 """
 
 from __future__ import annotations
 
-import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -15,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
+
+from ..exceptions import IssueNotFoundError
 
 if TYPE_CHECKING:
     from ..effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
@@ -208,13 +206,13 @@ class IssueHandler:
         file_path = self.issues_dir / f"{effect.id}.md"
 
         if not file_path.exists():
-            raise ValueError(f"Issue not found: {effect.id}")
+            raise IssueNotFoundError(effect.id)
 
         content = file_path.read_text()
         frontmatter, body = _parse_frontmatter(content)
 
         if not frontmatter.get("id"):
-            raise ValueError(f"Invalid issue file: {effect.id}")
+            raise IssueNotFoundError(effect.id, f"Invalid issue file (missing id): {effect.id}")
 
         # Parse dates
         created_at = datetime.now(timezone.utc)
@@ -251,7 +249,7 @@ class IssueHandler:
         file_path = self.issues_dir / f"{effect.issue.id}.md"
 
         if not file_path.exists():
-            raise ValueError(f"Issue not found: {effect.issue.id}")
+            raise IssueNotFoundError(effect.issue.id)
 
         content = file_path.read_text()
         frontmatter, body = _parse_frontmatter(content)

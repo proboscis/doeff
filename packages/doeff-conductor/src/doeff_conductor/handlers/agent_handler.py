@@ -1,8 +1,5 @@
 """
 Agent handler for doeff-conductor.
-
-Handles RunAgent, SpawnAgent, SendMessage, WaitForStatus, CaptureOutput effects
-by delegating to doeff-agentic.
 """
 
 from __future__ import annotations
@@ -10,6 +7,8 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
+
+from ..exceptions import AgentError, AgentTimeoutError
 
 if TYPE_CHECKING:
     from doeff_agentic import AgenticSessionStatus
@@ -25,17 +24,9 @@ if TYPE_CHECKING:
 
 
 class AgentHandler:
-    """Handler for agent effects.
-
-    Delegates to doeff-agentic for actual agent session management.
-    """
+    """Handler for agent effects. Delegates to doeff-agentic."""
 
     def __init__(self, workflow_id: str | None = None):
-        """Initialize handler.
-
-        Args:
-            workflow_id: Parent workflow ID for tracking.
-        """
         self.workflow_id = workflow_id or secrets.token_hex(4)
         self._sessions: dict[str, AgentRef] = {}
         self._opencode_handler = None
@@ -177,17 +168,13 @@ class AgentHandler:
         handler.handle(msg_effect)
 
     def handle_wait_for_status(self, effect: WaitForStatus) -> AgenticSessionStatus:
-        """Handle WaitForStatus effect.
-
-        Waits for an agent to reach a specific status.
-        """
+        """Wait for an agent to reach a specific status."""
         import time
 
         from doeff_agentic import AgenticGetSessionStatus, AgenticSessionStatus
 
         handler = self._get_opencode_handler()
 
-        # Normalize targets
         targets = effect.target
         if isinstance(targets, AgenticSessionStatus):
             targets = (targets,)
@@ -203,13 +190,15 @@ class AgentHandler:
             if status in targets:
                 return status
 
-            # Check for terminal status not in targets
             if status.is_terminal() and status not in targets:
                 return status
 
-            # Check timeout
             if deadline and time.time() > deadline:
-                return status
+                raise AgentTimeoutError(
+                    agent_id=effect.agent_ref.id,
+                    timeout=effect.timeout or 0.0,
+                    last_status=str(status),
+                )
 
             time.sleep(effect.poll_interval)
 
