@@ -65,10 +65,7 @@ For parallel execution, use asyncio.create_task + Await + Gather pattern.
 from __future__ import annotations
 
 import asyncio
-import copy
-import threading
-from collections.abc import Awaitable, Callable, Generator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar
 
@@ -92,6 +89,7 @@ from doeff.runtime import (
     Scheduler,
     Suspend,
 )
+from doeff.scheduled_handlers import default_scheduled_handlers
 from doeff.utils import BoundedLog
 
 T = TypeVar("T")
@@ -538,93 +536,7 @@ class InterpreterInvariantError(Exception):
 
 
 
-# ============================================================================
-# Individual Pure Effect Handlers
-# ============================================================================
 
-
-def _handle_state_get(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle StateGetEffect."""
-    return (store.get(effect.key), store)
-
-
-def _handle_state_put(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle StatePutEffect."""
-    new_store = {**store, effect.key: effect.value}
-    return (None, new_store)
-
-
-def _handle_state_modify(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle StateModifyEffect."""
-    old_value = store.get(effect.key)
-    new_value = effect.func(old_value)
-    new_store = {**store, effect.key: new_value}
-    return (new_value, new_store)
-
-
-def _handle_ask(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle AskEffect."""
-    if effect.key not in env:
-        raise KeyError(f"Missing environment key: {effect.key!r}")
-    return (env[effect.key], store)
-
-
-def _handle_writer_tell(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle WriterTellEffect."""
-    log = store.get("__log__", [])
-    new_log = log + [effect.message]
-    new_store = {**store, "__log__": new_log}
-    return (None, new_store)
-
-
-def _handle_memo_get(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle MemoGetEffect."""
-    memo = store.get("__memo__", {})
-    return (memo.get(effect.key), store)
-
-
-def _handle_memo_put(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle MemoPutEffect."""
-    memo = {**store.get("__memo__", {}), effect.key: effect.value}
-    new_store = {**store, "__memo__": memo}
-    return (None, new_store)
-
-
-def _handle_pure_effect(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle PureEffect."""
-    return (effect.value, store)
-
-
-def _handle_durable_cache_get(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle DurableCacheGet."""
-    storage = store.get("__durable_storage__")
-    if storage is None:
-        return (None, store)
-    return (storage.get(effect.key), store)
-
-
-def _handle_durable_cache_put(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle DurableCachePut."""
-    storage = store.get("__durable_storage__")
-    if storage is not None:
-        storage.put(effect.key, effect.value)
-    return (None, store)
-
-
-def _handle_durable_cache_delete(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle DurableCacheDelete."""
-    storage = store.get("__durable_storage__")
-    if storage is None:
-        return (False, store)
-    return (storage.delete(effect.key), store)
-
-
-def _handle_durable_cache_exists(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle DurableCacheExists."""
-    storage = store.get("__durable_storage__")
-    if storage is None:
-        return (False, store)
-    return (storage.exists(effect.key), store)
 
 
 
@@ -1325,288 +1237,18 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
 
 
 # ============================================================================
-# Thread Pool Management (for ThreadEffect strategy support)
+# Thread Pool Management (delegated to scheduled_handlers.concurrency)
 # ============================================================================
-
-_shared_executor: ThreadPoolExecutor | None = None
-_shared_executor_lock = threading.Lock()
-
-
-def _get_shared_executor() -> ThreadPoolExecutor:
-    """Get or create the shared thread pool executor for 'pooled' strategy."""
-    global _shared_executor
-    if _shared_executor is None:
-        with _shared_executor_lock:
-            if _shared_executor is None:
-                _shared_executor = ThreadPoolExecutor(
-                    max_workers=4,  # Default pool size
-                    thread_name_prefix="cesk-pooled",
-                )
-    return _shared_executor
 
 
 def shutdown_shared_executor(wait: bool = True) -> None:
     """Shutdown the shared executor. Call this on application exit."""
-    global _shared_executor
-    if _shared_executor is not None:
-        with _shared_executor_lock:
-            if _shared_executor is not None:
-                _shared_executor.shutdown(wait=wait)
-                _shared_executor = None
-
-
-# ============================================================================
-# Individual Effectful Effect Handlers
-# ============================================================================
-
-
-async def _handle_io_perform(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle IOPerformEffect."""
-    result = effect.action()
-    return (result, store)
-
-
-async def _handle_io_print(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle IOPrintEffect."""
-    print(effect.message)
-    return (None, store)
-
-
-async def _handle_future_await(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle FutureAwaitEffect."""
-    result = await effect.awaitable
-    return (result, store)
-
-
-async def _handle_spawn(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle SpawnEffect - creates an independent CESK machine."""
-    from doeff.effects.spawn import Task
-
-    # Inherit dispatcher from parent so custom handlers are available in child
-    parent_dispatcher = store.get("__dispatcher__")
-
-    # Child gets deep copy of store and env; starts with fresh K (no InterceptFrame inheritance)
-    # Exclude __dispatcher__ from deep-copy (it's passed explicitly and may not be deepcopyable)
-    store_without_dispatcher = {k: v for k, v in store.items() if k != "__dispatcher__"}
-    child_store = copy.deepcopy(store_without_dispatcher)
-    child_env = env  # Environment is immutable, shared is fine
-
-    # Create a container to hold the child's final store for later merging
-    final_store_holder: dict[str, Any] = {"store": None}
-
-    async def run_and_capture_store():
-        """Run child and capture final store for later merging at join time."""
-        result, final_store, _ = await _run_internal(
-            effect.program, child_env, child_store, dispatcher=parent_dispatcher
-        )
-        final_store_holder["store"] = final_store
-        return result
-
-    # Create asyncio task for the child machine
-    async_task = asyncio.create_task(run_and_capture_store())
-
-    # Return doeff Task handle - compatible with Task.join() effect
-    task = Task(
-        backend=effect.preferred_backend or "thread",
-        _handle=async_task,
-        _env_snapshot=dict(env),
-        _state_snapshot=final_store_holder,
-    )
-    return (task, store)
-
-
-async def _handle_thread(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle ThreadEffect - runs program in a separate thread."""
-    # Inherit dispatcher from parent so custom handlers are available in child
-    parent_dispatcher = store.get("__dispatcher__")
-
-    # Exclude __dispatcher__ from deep-copy (it's passed explicitly and may not be deepcopyable)
-    store_without_dispatcher = {k: v for k, v in store.items() if k != "__dispatcher__"}
-    child_store = copy.deepcopy(store_without_dispatcher)
-    child_env = env
-    strategy = effect.strategy
-    loop = asyncio.get_running_loop()
-
-    def run_in_thread() -> tuple[Result, Store]:
-        """Run async interpreter in a new event loop in this thread."""
-        thread_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(thread_loop)
-        try:
-            result, final_store, _ = thread_loop.run_until_complete(
-                _run_internal(effect.program, child_env, child_store, dispatcher=parent_dispatcher)
-            )
-            return result, final_store
-        finally:
-            thread_loop.close()
-
-    if strategy == "pooled":
-        executor = _get_shared_executor()
-
-        if effect.await_result:
-            result, child_final_store = await loop.run_in_executor(executor, run_in_thread)
-            if isinstance(result, Ok):
-                merged_store = _merge_thread_state(store, child_final_store)
-                return (result.value, merged_store)
-            if isinstance(result, Err):
-                raise result.error
-            return (result, store)
-        raw_future = loop.run_in_executor(executor, run_in_thread)
-
-        async def unwrap_thread_result():
-            result, _ = await raw_future
-            if isinstance(result, Ok):
-                return result.value
-            if isinstance(result, Err):
-                raise result.error
-            return result
-
-        return (unwrap_thread_result(), store)
-
-    is_daemon = strategy == "daemon"
-    future: asyncio.Future[tuple[Result, Store]] = loop.create_future()
-
-    def thread_target() -> None:
-        try:
-            result = run_in_thread()
-        except BaseException as exc:
-            loop.call_soon_threadsafe(future.set_exception, exc)
-        else:
-            loop.call_soon_threadsafe(future.set_result, result)
-
-    thread = threading.Thread(
-        target=thread_target,
-        name=f"cesk-{'daemon' if is_daemon else 'dedicated'}",
-        daemon=is_daemon,
-    )
-    thread.start()
-
-    if effect.await_result:
-        result, child_final_store = await future
-        if isinstance(result, Ok):
-            merged_store = _merge_thread_state(store, child_final_store)
-            return (result.value, merged_store)
-        if isinstance(result, Err):
-            raise result.error
-        return (result, store)
-
-    async def unwrap_thread_result():
-        result, _ = await future
-        if isinstance(result, Ok):
-            return result.value
-        if isinstance(result, Err):
-            raise result.error
-        return result
-
-    return (unwrap_thread_result(), store)
-
-
-async def _handle_task_join(effect: EffectBase, env: Environment, store: Store) -> tuple[Any, Store]:
-    """Handle TaskJoinEffect - waits for spawned task to complete and merges state."""
-    task = effect.task
-    if hasattr(task, "_handle") and isinstance(task._handle, asyncio.Task):
-        result = await task._handle
-
-        if isinstance(result, Err):
-            raise result.error
-
-        final_store_holder = task._state_snapshot
-        if isinstance(final_store_holder, dict) and "store" in final_store_holder:
-            # Use pop to atomically get and remove the store, preventing double-merge
-            # on concurrent joins (pop returns None on second call)
-            child_final_store = final_store_holder.pop("store", None)
-            if child_final_store is not None:
-                merged_store = merge_store(store, child_final_store)
-            else:
-                merged_store = store
-        else:
-            merged_store = store
-
-        if isinstance(result, Ok):
-            return (result.value, merged_store)
-        return (result, merged_store)
-    raise ValueError(f"Cannot join task with handle type: {type(task._handle)}")
-
-
-# ============================================================================
-# Scheduled Effect Handlers (New Protocol - ISSUE-CORE-432)
-# ============================================================================
-
-
-def _make_pure_scheduled_handler(
-    sync_handler: Callable[[EffectBase, Environment, Store], tuple[Any, Store]],
-) -> ScheduledEffectHandler:
-    def handler(
-        effect: EffectBase,
-        env: Environment,
-        store: Store,
-        k: Continuation,
-        scheduler: "Scheduler",
-    ) -> HandlerResult:
-        value, new_store = sync_handler(effect, env, store)
-        return Resume(value, new_store)
-    return handler
-
-
-def _make_async_scheduled_handler(
-    async_handler: Callable[[EffectBase, Environment, Store], Awaitable[tuple[Any, Store]]],
-) -> ScheduledEffectHandler:
-    def handler(
-        effect: EffectBase,
-        env: Environment,
-        store: Store,
-        k: Continuation,
-        scheduler: Scheduler,
-    ) -> HandlerResult:
-        async def do_async() -> tuple[Any, Store]:
-            return await async_handler(effect, env, store)
-        return Suspend(do_async(), store)
-    return handler
-
-
-def default_scheduled_handlers() -> ScheduledHandlers:
-    from doeff.effects import (
-        AskEffect,
-        FutureAwaitEffect,
-        IOPerformEffect,
-        IOPrintEffect,
-        MemoGetEffect,
-        MemoPutEffect,
-        SpawnEffect,
-        StateGetEffect,
-        StateModifyEffect,
-        StatePutEffect,
-        TaskJoinEffect,
-        ThreadEffect,
-        WriterTellEffect,
-    )
-    from doeff.effects.durable_cache import (
-        DurableCacheDelete,
-        DurableCacheExists,
-        DurableCacheGet,
-        DurableCachePut,
-    )
-    from doeff.effects.pure import PureEffect
-
-    return {
-        StateGetEffect: _make_pure_scheduled_handler(_handle_state_get),
-        StatePutEffect: _make_pure_scheduled_handler(_handle_state_put),
-        StateModifyEffect: _make_pure_scheduled_handler(_handle_state_modify),
-        AskEffect: _make_pure_scheduled_handler(_handle_ask),
-        WriterTellEffect: _make_pure_scheduled_handler(_handle_writer_tell),
-        MemoGetEffect: _make_pure_scheduled_handler(_handle_memo_get),
-        MemoPutEffect: _make_pure_scheduled_handler(_handle_memo_put),
-        PureEffect: _make_pure_scheduled_handler(_handle_pure_effect),
-        DurableCacheGet: _make_pure_scheduled_handler(_handle_durable_cache_get),
-        DurableCachePut: _make_pure_scheduled_handler(_handle_durable_cache_put),
-        DurableCacheDelete: _make_pure_scheduled_handler(_handle_durable_cache_delete),
-        DurableCacheExists: _make_pure_scheduled_handler(_handle_durable_cache_exists),
-        IOPerformEffect: _make_async_scheduled_handler(_handle_io_perform),
-        IOPrintEffect: _make_async_scheduled_handler(_handle_io_print),
-        FutureAwaitEffect: _make_async_scheduled_handler(_handle_future_await),
-        SpawnEffect: _make_async_scheduled_handler(_handle_spawn),
-        ThreadEffect: _make_async_scheduled_handler(_handle_thread),
-        TaskJoinEffect: _make_async_scheduled_handler(_handle_task_join),
-    }
+    import doeff.scheduled_handlers.concurrency as concurrency_module
+    if concurrency_module._shared_executor is not None:
+        with concurrency_module._shared_executor_lock:
+            if concurrency_module._shared_executor is not None:
+                concurrency_module._shared_executor.shutdown(wait=wait)
+                concurrency_module._shared_executor = None
 
 
 class ScheduledEffectDispatcher:
