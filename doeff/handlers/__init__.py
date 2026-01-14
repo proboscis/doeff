@@ -3,9 +3,22 @@ Effect handlers for the doeff system.
 
 This module contains handler classes for each effect category.
 Each handler is responsible for interpreting specific effects.
+
+.. deprecated::
+    This module is deprecated along with ProgramInterpreter.
+    Use EffectRuntime with scheduled_handlers instead.
 """
 
 from __future__ import annotations
+
+import warnings as _warnings
+
+_warnings.warn(
+    "doeff.handlers is deprecated. Use EffectRuntime with scheduled_handlers instead. "
+    "See doeff.scheduled_handlers for the new handler implementations.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 import asyncio
 import hashlib
