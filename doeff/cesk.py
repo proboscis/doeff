@@ -83,6 +83,7 @@ from doeff.runtime import (
     Continuation,
     HandlerResult,
     Resume,
+    Schedule,
     Scheduled,
     ScheduledEffectHandler,
     ScheduledHandlers,
@@ -1296,13 +1297,11 @@ class ScheduledEffectDispatcher:
         effect: EffectBase,
         env: Environment,
         store: Store,
-        k: Continuation,
-        scheduler: "Scheduler",
     ) -> HandlerResult:
         handler = self._lookup(type(effect))
         if handler is None:
             raise UnhandledEffectError(f"No handler for {type(effect).__name__}")
-        return handler(effect, env, store, k, scheduler)
+        return handler(effect, env, store)
 
 
 # ============================================================================
@@ -1363,18 +1362,46 @@ async def _run_internal(
             effect = result.effect
             original_store = state.S
 
-            k = Continuation(
-                _resume=result.resume,
-                _resume_error=result.resume_error,
-                env=state.E,
-                store=original_store,
-            )
-
             try:
-                handler_result = dispatcher.dispatch(effect, state.E, original_store, k, scheduler)
+                handler_result = dispatcher.dispatch(effect, state.E, original_store)
 
                 if isinstance(handler_result, Resume):
                     state = result.resume(handler_result.value, handler_result.store)
+                elif isinstance(handler_result, Schedule):
+                    payload = handler_result.payload
+                    try:
+                        from collections.abc import Awaitable
+                        if isinstance(payload, Awaitable):
+                            async_result = await payload
+                            if isinstance(async_result, tuple) and len(async_result) == 2:
+                                value, new_store = async_result
+                            else:
+                                value, new_store = async_result, handler_result.store
+                            state = result.resume(value, new_store)
+                        else:
+                            k = Continuation(
+                                _resume=result.resume,
+                                _resume_error=result.resume_error,
+                                env=state.E,
+                                store=original_store,
+                            )
+                            await scheduler.submit(k, payload)
+                            next_k = scheduler.next()
+                            if next_k is not None:
+                                state = next_k.resume(None, handler_result.store)
+                            else:
+                                raise InterpreterInvariantError("Schedule but no continuation in scheduler")
+                    except Exception as ex:
+                        captured = capture_traceback_safe(state.K, ex)
+                        error_state = result.resume_error(ex)
+                        if isinstance(error_state.C, Error) and error_state.C.captured_traceback is None:
+                            error_state = CESKState(
+                                C=Error(ex, captured_traceback=captured),
+                                E=error_state.E,
+                                S=error_state.S,
+                                K=error_state.K,
+                            )
+                        state = error_state
                 elif isinstance(handler_result, Suspend):
                     try:
                         async_result = await handler_result.awaitable
@@ -1434,6 +1461,12 @@ async def run(
     scheduled_handlers: ScheduledHandlers | None = None,
     scheduler: Scheduler | None = None,
 ) -> CESKResult[T]:
+    import warnings
+    warnings.warn(
+        "run() is deprecated. Use EffectRuntime(scheduler).run() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if env is None:
         E = FrozenDict()
     elif isinstance(env, FrozenDict):
@@ -1466,6 +1499,12 @@ def run_sync(
     scheduled_handlers: ScheduledHandlers | None = None,
     scheduler: Scheduler | None = None,
 ) -> CESKResult[T]:
+    import warnings
+    warnings.warn(
+        "run_sync() is deprecated. Use EffectRuntime(scheduler).run_sync() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return asyncio.run(
         run(
             program,

@@ -13,17 +13,13 @@ from doeff.runtime import HandlerResult, Resume
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
     from doeff.cesk import Environment, Store
-    from doeff.runtime import Continuation, Scheduler
 
 
 def handle_durable_cache_get(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle DurableCacheGet - retrieves value from durable storage."""
     storage = store.get("__durable_storage__")
     if storage is None:
         return Resume(None, store)
@@ -35,10 +31,7 @@ def handle_durable_cache_put(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle DurableCachePut - stores value in durable storage."""
     storage = store.get("__durable_storage__")
     if storage is not None:
         storage.put(effect.key, effect.value)
@@ -49,10 +42,7 @@ def handle_durable_cache_delete(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle DurableCacheDelete - deletes value from durable storage."""
     storage = store.get("__durable_storage__")
     if storage is None:
         return Resume(False, store)
@@ -64,10 +54,7 @@ def handle_durable_cache_exists(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle DurableCacheExists - checks if value exists in durable storage."""
     storage = store.get("__durable_storage__")
     if storage is None:
         return Resume(False, store)
