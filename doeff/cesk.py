@@ -82,12 +82,15 @@ from doeff._types_internal import EffectBase, ListenResult
 from doeff.runtime import (
     Continuation,
     HandlerResult,
+    Pending,
+    Ready,
     Resume,
     Schedule,
     Scheduled,
     ScheduledEffectHandler,
     ScheduledHandlers,
     Scheduler,
+    SchedulerItem,
     Suspend,
 )
 from doeff.scheduled_handlers import default_scheduled_handlers
@@ -1368,29 +1371,26 @@ async def _run_internal(
                 if isinstance(handler_result, Resume):
                     state = result.resume(handler_result.value, handler_result.store)
                 elif isinstance(handler_result, Schedule):
-                    payload = handler_result.payload
                     try:
-                        from collections.abc import Awaitable
-                        if isinstance(payload, Awaitable):
-                            async_result = await payload
-                            if isinstance(async_result, tuple) and len(async_result) == 2:
-                                value, new_store = async_result
-                            else:
-                                value, new_store = async_result, handler_result.store
-                            state = result.resume(value, new_store)
-                        else:
-                            k = Continuation(
-                                _resume=result.resume,
-                                _resume_error=result.resume_error,
-                                env=state.E,
-                                store=original_store,
-                            )
-                            await scheduler.submit(k, payload)
-                            next_k = scheduler.next()
-                            if next_k is not None:
-                                state = next_k.resume(None, handler_result.store)
-                            else:
-                                raise InterpreterInvariantError("Schedule but no continuation in scheduler")
+                        k = Continuation(
+                            _resume=result.resume,
+                            _resume_error=result.resume_error,
+                            env=state.E,
+                            store=handler_result.store,
+                        )
+                        scheduler.submit(k, handler_result.payload, handler_result.store)
+                        item = scheduler.next()
+                        if item is None:
+                            raise InterpreterInvariantError("Schedule but no continuation in scheduler")
+                        
+                        match item.result:
+                            case Ready(value):
+                                state = item.k.resume(value, item.store)
+                            case Pending(awaitable):
+                                value, new_store = await awaitable
+                                state = item.k.resume(value, new_store)
+                            case _:
+                                raise InterpreterInvariantError(f"Unknown scheduler result: {type(item.result)}")
                     except Exception as ex:
                         captured = capture_traceback_safe(state.K, ex)
                         error_state = result.resume_error(ex)
@@ -1422,9 +1422,16 @@ async def _run_internal(
                             )
                         state = error_state
                 elif isinstance(handler_result, Scheduled):
-                    next_k = scheduler.next()
-                    if next_k is not None:
-                        state = next_k.resume(None, handler_result.store)
+                    item = scheduler.next()
+                    if item is not None:
+                        match item.result:
+                            case Ready(value):
+                                state = item.k.resume(value, item.store)
+                            case Pending(awaitable):
+                                value, new_store = await awaitable
+                                state = item.k.resume(value, new_store)
+                            case _:
+                                raise InterpreterInvariantError(f"Unknown scheduler result: {type(item.result)}")
                     else:
                         raise InterpreterInvariantError("Scheduled but no continuation in scheduler")
                 else:

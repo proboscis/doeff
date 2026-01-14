@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from doeff._vendor import Err, Ok, Result
-from doeff.runtime import HandlerResult, Schedule
+from doeff.runtime import AwaitPayload, HandlerResult, Schedule
 
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
@@ -109,7 +109,7 @@ def handle_future_await(
     async def do_async() -> tuple[Any, Store]:
         result = await effect.awaitable
         return (result, store)
-    return Schedule(do_async(), store)
+    return Schedule(AwaitPayload(do_async()), store)
 
 
 def handle_spawn(
@@ -146,7 +146,7 @@ def handle_spawn(
         )
         return (task, store)
 
-    return Schedule(do_async(), store)
+    return Schedule(AwaitPayload(do_async()), store)
 
 
 def handle_thread(
@@ -237,7 +237,7 @@ def handle_thread(
 
         return (unwrap_thread_result(), store)
 
-    return Schedule(do_async(), store)
+    return Schedule(AwaitPayload(do_async()), store)
 
 
 def handle_task_join(
@@ -268,7 +268,7 @@ def handle_task_join(
             return (result, merged_store)
         raise ValueError(f"Cannot join task with handle type: {type(task._handle)}")
 
-    return Schedule(do_async(), store)
+    return Schedule(AwaitPayload(do_async()), store)
 
 
 __all__ = [
