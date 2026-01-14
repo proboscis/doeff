@@ -93,6 +93,14 @@ class Suspend:
             stacklevel=3,
         )
 
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "Suspend is deprecated. Use Schedule(AwaitPayload(awaitable), store) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
 
 # Deprecated: Use Schedule instead
 @dataclass(frozen=True)
@@ -110,6 +118,14 @@ class Scheduled:
             "Scheduled is deprecated. Use Schedule(payload, store) instead.",
             DeprecationWarning,
             stacklevel=3,
+        )
+
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "Scheduled is deprecated. Use Schedule(payload, store) instead.",
+            DeprecationWarning,
+            stacklevel=2,
         )
 
 
