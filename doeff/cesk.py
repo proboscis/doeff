@@ -82,11 +82,15 @@ from doeff._types_internal import EffectBase, ListenResult
 from doeff.runtime import (
     Continuation,
     HandlerResult,
+    Pending,
+    Ready,
     Resume,
+    Schedule,
     Scheduled,
     ScheduledEffectHandler,
     ScheduledHandlers,
     Scheduler,
+    SchedulerItem,
     Suspend,
 )
 from doeff.scheduled_handlers import default_scheduled_handlers
@@ -1296,13 +1300,11 @@ class ScheduledEffectDispatcher:
         effect: EffectBase,
         env: Environment,
         store: Store,
-        k: Continuation,
-        scheduler: "Scheduler",
     ) -> HandlerResult:
         handler = self._lookup(type(effect))
         if handler is None:
             raise UnhandledEffectError(f"No handler for {type(effect).__name__}")
-        return handler(effect, env, store, k, scheduler)
+        return handler(effect, env, store)
 
 
 # ============================================================================
@@ -1363,18 +1365,43 @@ async def _run_internal(
             effect = result.effect
             original_store = state.S
 
-            k = Continuation(
-                _resume=result.resume,
-                _resume_error=result.resume_error,
-                env=state.E,
-                store=original_store,
-            )
-
             try:
-                handler_result = dispatcher.dispatch(effect, state.E, original_store, k, scheduler)
+                handler_result = dispatcher.dispatch(effect, state.E, original_store)
 
                 if isinstance(handler_result, Resume):
                     state = result.resume(handler_result.value, handler_result.store)
+                elif isinstance(handler_result, Schedule):
+                    try:
+                        k = Continuation(
+                            _resume=result.resume,
+                            _resume_error=result.resume_error,
+                            env=state.E,
+                            store=handler_result.store,
+                        )
+                        scheduler.submit(k, handler_result.payload, handler_result.store)
+                        item = scheduler.next()
+                        if item is None:
+                            raise InterpreterInvariantError("Schedule but no continuation in scheduler")
+                        
+                        match item.result:
+                            case Ready(value):
+                                state = item.k.resume(value, item.store)
+                            case Pending(awaitable):
+                                value, new_store = await awaitable
+                                state = item.k.resume(value, new_store)
+                            case _:
+                                raise InterpreterInvariantError(f"Unknown scheduler result: {type(item.result)}")
+                    except Exception as ex:
+                        captured = capture_traceback_safe(state.K, ex)
+                        error_state = result.resume_error(ex)
+                        if isinstance(error_state.C, Error) and error_state.C.captured_traceback is None:
+                            error_state = CESKState(
+                                C=Error(ex, captured_traceback=captured),
+                                E=error_state.E,
+                                S=error_state.S,
+                                K=error_state.K,
+                            )
+                        state = error_state
                 elif isinstance(handler_result, Suspend):
                     try:
                         async_result = await handler_result.awaitable
@@ -1395,9 +1422,16 @@ async def _run_internal(
                             )
                         state = error_state
                 elif isinstance(handler_result, Scheduled):
-                    next_k = scheduler.next()
-                    if next_k is not None:
-                        state = next_k.resume(None, handler_result.store)
+                    item = scheduler.next()
+                    if item is not None:
+                        match item.result:
+                            case Ready(value):
+                                state = item.k.resume(value, item.store)
+                            case Pending(awaitable):
+                                value, new_store = await awaitable
+                                state = item.k.resume(value, new_store)
+                            case _:
+                                raise InterpreterInvariantError(f"Unknown scheduler result: {type(item.result)}")
                     else:
                         raise InterpreterInvariantError("Scheduled but no continuation in scheduler")
                 else:
@@ -1434,6 +1468,12 @@ async def run(
     scheduled_handlers: ScheduledHandlers | None = None,
     scheduler: Scheduler | None = None,
 ) -> CESKResult[T]:
+    import warnings
+    warnings.warn(
+        "run() is deprecated. Use EffectRuntime(scheduler).run() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if env is None:
         E = FrozenDict()
     elif isinstance(env, FrozenDict):
@@ -1466,6 +1506,12 @@ def run_sync(
     scheduled_handlers: ScheduledHandlers | None = None,
     scheduler: Scheduler | None = None,
 ) -> CESKResult[T]:
+    import warnings
+    warnings.warn(
+        "run_sync() is deprecated. Use EffectRuntime(scheduler).run_sync() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return asyncio.run(
         run(
             program,

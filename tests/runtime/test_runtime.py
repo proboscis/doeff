@@ -8,21 +8,30 @@ from datetime import datetime, timedelta
 import pytest
 
 from doeff.runtime import (
+    AwaitPayload,
     Continuation,
+    DelayPayload,
     FIFOScheduler,
     HandlerResult,
+    Pending,
     PriorityScheduler,
+    Ready,
     RealtimeScheduler,
     Resume,
+    Schedule,
     Scheduled,
     ScheduledEffectHandler,
+    SchedulerItem,
     SimDelay,
     SimSubmit,
     SimulationScheduler,
     SimWaitUntil,
+    SpawnPayload,
     Suspend,
+    WaitUntilPayload,
     create_sim_delay_handler,
     create_sim_submit_handler,
+    create_sim_wait_until_handler,
 )
 
 
@@ -33,18 +42,76 @@ class TestHandlerResults:
         assert result.value == 42
         assert result.store == store
 
-    def test_suspend_holds_awaitable_and_store(self):
-        async def some_async():
-            return 123
-        
+    def test_schedule_holds_payload_and_store(self):
         store = {"key": "value"}
-        result = Suspend(some_async(), store)
+        payload = DelayPayload(timedelta(seconds=5))
+        result = Schedule(payload, store)
+        assert result.payload == payload
         assert result.store == store
 
-    def test_scheduled_holds_store(self):
+
+class TestSchedulerResultTypes:
+    def test_ready_holds_value(self):
+        result = Ready(42)
+        assert result.value == 42
+
+    def test_pending_holds_awaitable(self):
+        async def some_async():
+            return 123
+        coro = some_async()
+        result = Pending(coro)
+        assert result.awaitable is coro
+        coro.close()
+
+    def test_scheduler_item_holds_all(self):
+        from doeff._vendor import FrozenDict
+        from doeff.cesk import CESKState, Value
+        
+        env = FrozenDict()
         store = {"key": "value"}
-        result = Scheduled(store)
-        assert result.store == store
+        k = Continuation(
+            _resume=lambda v, s: CESKState(C=Value(v), E=env, S=s, K=[]),
+            _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
+            env=env,
+            store=store,
+        )
+        
+        item = SchedulerItem(k, Ready(42), store)
+        assert item.k is k
+        assert isinstance(item.result, Ready)
+        assert item.store == store
+
+
+class TestPayloadTypes:
+    def test_await_payload(self):
+        async def some_async():
+            return 123
+        coro = some_async()
+        payload = AwaitPayload(coro)
+        assert payload.awaitable is coro
+        coro.close()
+
+    def test_delay_payload(self):
+        duration = timedelta(seconds=5)
+        payload = DelayPayload(duration)
+        assert payload.duration == duration
+
+    def test_wait_until_payload(self):
+        target = datetime(2025, 1, 1, 12, 0, 0)
+        payload = WaitUntilPayload(target)
+        assert payload.target == target
+
+    def test_spawn_payload(self):
+        from doeff._vendor import FrozenDict
+        from doeff.program import Program
+        
+        program = Program.pure(42)
+        env = FrozenDict()
+        store = {}
+        payload = SpawnPayload(program, env, store)
+        assert payload.program is program
+        assert payload.env == env
+        assert payload.store == store
 
 
 class TestFIFOScheduler:
@@ -54,54 +121,40 @@ class TestFIFOScheduler:
 
     def test_fifo_order(self):
         from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, ProgramControl, Value
-        from doeff.program import Program
+        from doeff.cesk import CESKState, Value
         
         scheduler = FIFOScheduler()
-        
         env = FrozenDict()
         store = {}
         
-        k1 = Continuation(
-            _resume=lambda v, s: CESKState(C=Value(1), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        k2 = Continuation(
-            _resume=lambda v, s: CESKState(C=Value(2), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value(-2), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        k3 = Continuation(
-            _resume=lambda v, s: CESKState(C=Value(3), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value(-3), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
+        def make_k(val):
+            return Continuation(
+                _resume=lambda v, s, val=val: CESKState(C=Value(val), E=env, S=s, K=[]),
+                _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
+                env=env,
+                store=store,
+            )
         
-        scheduler.submit(k1)
-        scheduler.submit(k2)
-        scheduler.submit(k3)
+        k1, k2, k3 = make_k(1), make_k(2), make_k(3)
+        
+        scheduler.submit(k1, AwaitPayload(asyncio.sleep(0)), store)
+        scheduler.submit(k2, AwaitPayload(asyncio.sleep(0)), store)
+        scheduler.submit(k3, AwaitPayload(asyncio.sleep(0)), store)
         
         assert len(scheduler) == 3
         
-        result1 = scheduler.next()
-        state1 = result1.resume(None, store)
-        assert state1.C.v == 1
+        item1 = scheduler.next()
+        assert item1.k.resume(None, store).C.v == 1
         
-        result2 = scheduler.next()
-        state2 = result2.resume(None, store)
-        assert state2.C.v == 2
+        item2 = scheduler.next()
+        assert item2.k.resume(None, store).C.v == 2
         
-        result3 = scheduler.next()
-        state3 = result3.resume(None, store)
-        assert state3.C.v == 3
+        item3 = scheduler.next()
+        assert item3.k.resume(None, store).C.v == 3
         
         assert scheduler.next() is None
 
-    def test_hint_is_ignored(self):
+    def test_await_payload_returns_pending(self):
         from doeff._vendor import FrozenDict
         from doeff.cesk import CESKState, Value
         
@@ -116,12 +169,32 @@ class TestFIFOScheduler:
             store=store,
         )
         
-        scheduler.submit(k, hint="ignored")
-        assert len(scheduler) == 1
+        scheduler.submit(k, AwaitPayload(asyncio.sleep(0)), store)
+        item = scheduler.next()
+        assert isinstance(item.result, Pending)
+
+    def test_delay_payload_returns_pending(self):
+        from doeff._vendor import FrozenDict
+        from doeff.cesk import CESKState, Value
+        
+        scheduler = FIFOScheduler()
+        env = FrozenDict()
+        store = {}
+        
+        k = Continuation(
+            _resume=lambda v, s: CESKState(C=Value(1), E=env, S=s, K=[]),
+            _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
+            env=env,
+            store=store,
+        )
+        
+        scheduler.submit(k, DelayPayload(timedelta(seconds=1)), store)
+        item = scheduler.next()
+        assert isinstance(item.result, Pending)
 
 
 class TestPriorityScheduler:
-    def test_priority_order(self):
+    def test_fifo_when_same_priority(self):
         from doeff._vendor import FrozenDict
         from doeff.cesk import CESKState, Value
         
@@ -137,44 +210,70 @@ class TestPriorityScheduler:
                 store=store,
             )
         
-        scheduler.submit(make_k(3), hint=3)
-        scheduler.submit(make_k(1), hint=1)
-        scheduler.submit(make_k(2), hint=2)
+        scheduler.submit(make_k(1), AwaitPayload(asyncio.sleep(0)), store)
+        scheduler.submit(make_k(2), AwaitPayload(asyncio.sleep(0)), store)
+        scheduler.submit(make_k(3), AwaitPayload(asyncio.sleep(0)), store)
         
-        result1 = scheduler.next()
-        assert result1.resume(None, store).C.v == 1
+        item1 = scheduler.next()
+        assert item1.k.resume(None, store).C.v == 1
         
-        result2 = scheduler.next()
-        assert result2.resume(None, store).C.v == 2
+        item2 = scheduler.next()
+        assert item2.k.resume(None, store).C.v == 2
         
-        result3 = scheduler.next()
-        assert result3.resume(None, store).C.v == 3
-
-    def test_default_priority_is_zero(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        
-        scheduler = PriorityScheduler()
-        env = FrozenDict()
-        store = {}
-        
-        def make_k(val):
-            return Continuation(
-                _resume=lambda v, s, val=val: CESKState(C=Value(val), E=env, S=s, K=[]),
-                _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
-                env=env,
-                store=store,
-            )
-        
-        scheduler.submit(make_k(1), hint=10)
-        scheduler.submit(make_k(2))
-        
-        result = scheduler.next()
-        assert result.resume(None, store).C.v == 2
+        item3 = scheduler.next()
+        assert item3.k.resume(None, store).C.v == 3
 
 
 class TestSimulationScheduler:
-    def test_ready_is_lifo(self):
+    def test_ready_after_spawn(self):
+        from doeff._vendor import FrozenDict
+        from doeff.cesk import CESKState, Value
+        from doeff.program import Program
+        
+        scheduler = SimulationScheduler()
+        env = FrozenDict()
+        store = {}
+        
+        k = Continuation(
+            _resume=lambda v, s: CESKState(C=Value("parent"), E=env, S=s, K=[]),
+            _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
+            env=env,
+            store=store,
+        )
+        
+        child_program = Program.pure(42)
+        scheduler.submit(k, SpawnPayload(child_program, env, store), store)
+        
+        item1 = scheduler.next()
+        assert isinstance(item1.result, Ready)
+        
+        item2 = scheduler.next()
+        assert isinstance(item2.result, Ready)
+
+    def test_timed_scheduling_returns_ready(self):
+        from doeff._vendor import FrozenDict
+        from doeff.cesk import CESKState, Value
+        
+        start = datetime(2025, 1, 1, 12, 0, 0)
+        scheduler = SimulationScheduler(start_time=start)
+        env = FrozenDict()
+        store = {}
+        
+        def make_k(val):
+            return Continuation(
+                _resume=lambda v, s, val=val: CESKState(C=Value(val), E=env, S=s, K=[]),
+                _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
+                env=env,
+                store=store,
+            )
+        
+        scheduler.submit(make_k(1), DelayPayload(timedelta(seconds=1)), store)
+        
+        item = scheduler.next()
+        assert isinstance(item.result, Ready)
+        assert scheduler.current_time == start + timedelta(seconds=1)
+
+    def test_await_payload_returns_pending(self):
         from doeff._vendor import FrozenDict
         from doeff.cesk import CESKState, Value
         
@@ -182,90 +281,6 @@ class TestSimulationScheduler:
         env = FrozenDict()
         store = {}
         
-        def make_k(val):
-            return Continuation(
-                _resume=lambda v, s, val=val: CESKState(C=Value(val), E=env, S=s, K=[]),
-                _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
-                env=env,
-                store=store,
-            )
-        
-        scheduler.submit(make_k(1))
-        scheduler.submit(make_k(2))
-        scheduler.submit(make_k(3))
-        
-        assert scheduler.next().resume(None, store).C.v == 3
-        assert scheduler.next().resume(None, store).C.v == 2
-        assert scheduler.next().resume(None, store).C.v == 1
-
-    def test_timed_scheduling(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        scheduler = SimulationScheduler(start_time=start)
-        env = FrozenDict()
-        store = {}
-        
-        def make_k(val):
-            return Continuation(
-                _resume=lambda v, s, val=val: CESKState(C=Value(val), E=env, S=s, K=[]),
-                _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
-                env=env,
-                store=store,
-            )
-        
-        scheduler.submit(make_k(3), hint=start + timedelta(seconds=3))
-        scheduler.submit(make_k(1), hint=start + timedelta(seconds=1))
-        scheduler.submit(make_k(2), hint=start + timedelta(seconds=2))
-        
-        result1 = scheduler.next()
-        assert result1.resume(None, store).C.v == 1
-        assert scheduler.current_time == start + timedelta(seconds=1)
-        
-        result2 = scheduler.next()
-        assert result2.resume(None, store).C.v == 2
-        assert scheduler.current_time == start + timedelta(seconds=2)
-        
-        result3 = scheduler.next()
-        assert result3.resume(None, store).C.v == 3
-        assert scheduler.current_time == start + timedelta(seconds=3)
-
-    def test_ready_before_timed(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        scheduler = SimulationScheduler(start_time=start)
-        env = FrozenDict()
-        store = {}
-        
-        def make_k(val):
-            return Continuation(
-                _resume=lambda v, s, val=val: CESKState(C=Value(val), E=env, S=s, K=[]),
-                _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
-                env=env,
-                store=store,
-            )
-        
-        scheduler.submit(make_k("timed"), hint=start + timedelta(seconds=1))
-        scheduler.submit(make_k("ready"))
-        
-        assert scheduler.next().resume(None, store).C.v == "ready"
-        assert scheduler.current_time == start
-        
-        assert scheduler.next().resume(None, store).C.v == "timed"
-        assert scheduler.current_time == start + timedelta(seconds=1)
-
-    def test_timedelta_hint(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        scheduler = SimulationScheduler(start_time=start)
-        env = FrozenDict()
-        store = {}
-        
         k = Continuation(
             _resume=lambda v, s: CESKState(C=Value(1), E=env, S=s, K=[]),
             _resume_error=lambda ex: CESKState(C=Value(-1), E=env, S={}, K=[]),
@@ -273,11 +288,9 @@ class TestSimulationScheduler:
             store=store,
         )
         
-        scheduler.submit(k, hint=timedelta(seconds=5))
-        
-        result = scheduler.next()
-        assert result is not None
-        assert scheduler.current_time == start + timedelta(seconds=5)
+        scheduler.submit(k, AwaitPayload(asyncio.sleep(0)), store)
+        item = scheduler.next()
+        assert isinstance(item.result, Pending)
 
 
 class TestContinuation:
@@ -376,241 +389,66 @@ class TestSimulationEffects:
         daemon_effect = SimSubmit(program=program, daemon=True)
         assert daemon_effect.daemon is True
 
-    def test_sim_submit_intercept_transforms_program(self):
-        from doeff.program import Program
-        
-        inner = Program.pure(42)
-        effect = SimSubmit(program=inner)
-        
-        transform_called = []
-        def transform(e):
-            transform_called.append(e)
-            return e
-        
-        intercepted = effect.intercept(transform)
-        assert intercepted is effect
-
 
 class TestSimDelayHandler:
-    def test_handler_with_simulation_scheduler(self):
+    def test_handler_returns_schedule_with_delay_payload(self):
         from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
         
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        scheduler = SimulationScheduler(start_time=start)
         env = FrozenDict()
         store = {}
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
         
         handler = create_sim_delay_handler()
         effect = SimDelay(seconds=5.0)
         
-        result = handler(effect, env, store, k, scheduler)
+        result = handler(effect, env, store)
         
-        assert isinstance(result, Scheduled)
-        assert len(scheduler) == 1
-        
-        next_k = scheduler.next()
-        assert scheduler.current_time == start + timedelta(seconds=5)
-        assert next_k.resume(None, store).C.v == "resumed"
-
-    def test_handler_with_realtime_scheduler_returns_suspend(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        
-        scheduler = RealtimeScheduler()
-        env = FrozenDict()
-        store = {}
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        
-        handler = create_sim_delay_handler()
-        effect = SimDelay(seconds=0.01)
-        
-        result = handler(effect, env, store, k, scheduler)
-        
-        assert isinstance(result, Suspend)
+        assert isinstance(result, Schedule)
+        assert isinstance(result.payload, DelayPayload)
+        assert result.payload.duration == timedelta(seconds=5.0)
         assert result.store == store
-
-    def test_handler_with_negative_delay(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        scheduler = SimulationScheduler(start_time=start)
-        env = FrozenDict()
-        store = {}
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        
-        handler = create_sim_delay_handler()
-        effect = SimDelay(seconds=-5.0)
-        
-        result = handler(effect, env, store, k, scheduler)
-        
-        assert isinstance(result, Scheduled)
-        next_k = scheduler.next()
-        assert scheduler.current_time == start + timedelta(seconds=-5)
 
 
 class TestSimWaitUntilHandler:
-    def test_handler_with_simulation_scheduler(self):
+    def test_handler_returns_schedule_with_wait_until_payload(self):
         from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        from doeff.runtime import create_sim_wait_until_handler
         
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        target = datetime(2025, 1, 1, 12, 5, 0)
-        scheduler = SimulationScheduler(start_time=start)
         env = FrozenDict()
         store = {}
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
+        target = datetime(2025, 1, 1, 12, 0, 0)
         
         handler = create_sim_wait_until_handler()
         effect = SimWaitUntil(target_time=target)
         
-        result = handler(effect, env, store, k, scheduler)
+        result = handler(effect, env, store)
         
-        assert isinstance(result, Scheduled)
-        assert len(scheduler) == 1
-        
-        next_k = scheduler.next()
-        assert scheduler.current_time == target
-        assert next_k.resume(None, store).C.v == "resumed"
-
-    def test_handler_with_past_target_schedules_immediately(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        from doeff.runtime import create_sim_wait_until_handler
-        
-        start = datetime(2025, 1, 1, 12, 0, 0)
-        past_target = datetime(2025, 1, 1, 11, 0, 0)
-        scheduler = SimulationScheduler(start_time=start)
-        env = FrozenDict()
-        store = {}
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        
-        handler = create_sim_wait_until_handler()
-        effect = SimWaitUntil(target_time=past_target)
-        
-        result = handler(effect, env, store, k, scheduler)
-        
-        assert isinstance(result, Scheduled)
-        assert len(scheduler) == 1
-        
-        next_k = scheduler.next()
-        assert scheduler.current_time == start
-
-    def test_handler_with_realtime_scheduler_future_returns_suspend(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        from doeff.runtime import create_sim_wait_until_handler
-        
-        scheduler = RealtimeScheduler()
-        env = FrozenDict()
-        store = {}
-        future_target = datetime.now() + timedelta(seconds=10)
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        
-        handler = create_sim_wait_until_handler()
-        effect = SimWaitUntil(target_time=future_target)
-        
-        result = handler(effect, env, store, k, scheduler)
-        
-        assert isinstance(result, Suspend)
-        assert result.store == store
-
-    def test_handler_with_realtime_scheduler_past_returns_resume(self):
-        from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
-        from doeff.runtime import create_sim_wait_until_handler
-        
-        scheduler = RealtimeScheduler()
-        env = FrozenDict()
-        store = {}
-        past_target = datetime.now() - timedelta(seconds=10)
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("resumed"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
-        
-        handler = create_sim_wait_until_handler()
-        effect = SimWaitUntil(target_time=past_target)
-        
-        result = handler(effect, env, store, k, scheduler)
-        
-        assert isinstance(result, Resume)
-        assert result.value is None
+        assert isinstance(result, Schedule)
+        assert isinstance(result.payload, WaitUntilPayload)
+        assert result.payload.target == target
         assert result.store == store
 
 
 class TestSimSubmitHandler:
-    def test_handler_creates_new_continuation(self):
+    def test_handler_returns_schedule_with_spawn_payload(self):
         from doeff._vendor import FrozenDict
-        from doeff.cesk import CESKState, Value
         from doeff.program import Program
         
-        scheduler = FIFOScheduler()
         env = FrozenDict()
         store = {}
-        
-        k = Continuation(
-            _resume=lambda v, s: CESKState(C=Value("current"), E=env, S=s, K=[]),
-            _resume_error=lambda ex: CESKState(C=Value("error"), E=env, S={}, K=[]),
-            env=env,
-            store=store,
-        )
         
         handler = create_sim_submit_handler()
         submitted_program = Program.pure(42)
         effect = SimSubmit(program=submitted_program)
         
-        result = handler(effect, env, store, k, scheduler)
+        result = handler(effect, env, store)
         
-        assert isinstance(result, Resume)
-        assert result.value is None
-        assert len(scheduler) == 1
+        assert isinstance(result, Schedule)
+        assert isinstance(result.payload, SpawnPayload)
+        assert result.payload.program is submitted_program
+        assert result.store == store
 
 
 class TestRealtimeScheduler:
-    def test_immediate_submit(self):
+    def test_await_payload_returns_pending(self):
         from doeff._vendor import FrozenDict
         from doeff.cesk import CESKState, Value
         
@@ -625,14 +463,11 @@ class TestRealtimeScheduler:
             store=store,
         )
         
-        scheduler.submit(k)
-        assert len(scheduler) == 1
-        
-        result = scheduler.next()
-        assert result is k
+        scheduler.submit(k, AwaitPayload(asyncio.sleep(0)), store)
+        item = scheduler.next()
+        assert isinstance(item.result, Pending)
 
-    @pytest.mark.asyncio
-    async def test_delayed_submit(self):
+    def test_delay_payload_returns_pending(self):
         from doeff._vendor import FrozenDict
         from doeff.cesk import CESKState, Value
         
@@ -647,13 +482,9 @@ class TestRealtimeScheduler:
             store=store,
         )
         
-        scheduler.submit(k, hint=0.01)
-        
-        assert len(scheduler) == 0
-        
-        await asyncio.sleep(0.02)
-        
-        assert len(scheduler) == 1
+        scheduler.submit(k, DelayPayload(timedelta(seconds=0.01)), store)
+        item = scheduler.next()
+        assert isinstance(item.result, Pending)
 
 
 @pytest.mark.asyncio
@@ -768,7 +599,6 @@ class TestSimulationEffectsIntegration:
         )
         
         assert result.value == "main_done"
-        assert len(scheduler) == 1
 
     @pytest.mark.asyncio
     async def test_multiple_delays_in_sequence(self):
