@@ -1,20 +1,19 @@
 """Scheduled effect handlers for the doeff CESK interpreter.
 
-This module provides direct ScheduledEffectHandler implementations
-for all built-in effects. Each handler has the unified signature:
+This module provides ScheduledEffectHandler implementations for all built-in effects.
+Each handler is a pure function with the signature:
 
-    def handler(
-        effect: EffectBase,
-        env: Environment,
-        store: Store,
-        k: Continuation,
-        scheduler: Scheduler | None,
-    ) -> HandlerResult
+    def handler(effect: EffectBase, env: Environment, store: Store) -> HandlerResult
 
-This replaces the legacy wrapper approach where old handlers were
-wrapped via _make_pure_scheduled_handler() and _make_async_scheduled_handler().
-Direct implementations give handlers access to k (continuation) and
-scheduler for advanced patterns like simulation time-based delays.
+Handlers return one of:
+- Resume(value, store): Resume immediately with value
+- Schedule(payload, store): Defer to scheduler with explicit payload type
+  - AwaitPayload(awaitable): Await async operation
+  - DelayPayload(duration): Wait for duration
+  - WaitUntilPayload(target): Wait until datetime
+  - SpawnPayload(program, env, store): Spawn child program
+
+The runtime takes care of passing payloads to the scheduler and managing continuations.
 
 Module Organization:
 - state.py: handle_state_get, handle_state_put, handle_state_modify
@@ -84,8 +83,7 @@ def default_scheduled_handlers() -> ScheduledHandlers:
     """Return the default handlers for all built-in effects.
     
     Returns a mapping from effect type to handler function.
-    Each handler is a direct ScheduledEffectHandler implementation
-    with full access to continuation (k) and scheduler.
+    Each handler has the signature: (effect, env, store) -> HandlerResult.
     """
     from doeff.effects import (
         AskEffect,
