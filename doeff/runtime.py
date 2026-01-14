@@ -65,11 +65,12 @@ class Schedule:
     payload and resumes the continuation when ready.
     
     Payload types:
-    - Awaitable: await it, resume with result
-    - SimDelay: advance simulation time, resume with None
-    - Custom payloads: scheduler-specific interpretation
+    - AwaitPayload: await the awaitable, resume with result
+    - DelayPayload: wait for duration, resume with None
+    - WaitUntilPayload: wait until target time, resume with None
+    - SpawnPayload: spawn child program, resume parent with None
     """
-    payload: Any
+    payload: "SchedulePayload"
     store: "Store"
 
 
@@ -97,6 +98,51 @@ class Scheduled:
 
 
 HandlerResult = Resume | Schedule | Suspend | Scheduled
+
+
+@dataclass(frozen=True)
+class AwaitPayload:
+    awaitable: Awaitable[Any]
+
+
+@dataclass(frozen=True)
+class DelayPayload:
+    duration: timedelta
+
+
+@dataclass(frozen=True)
+class WaitUntilPayload:
+    target: datetime
+
+
+@dataclass(frozen=True)
+class SpawnPayload:
+    program: "Program"
+    env: "Environment"
+    store: "Store"
+
+
+SchedulePayload = AwaitPayload | DelayPayload | WaitUntilPayload | SpawnPayload
+
+
+@dataclass(frozen=True)
+class Ready:
+    value: Any
+
+
+@dataclass(frozen=True)
+class Pending:
+    awaitable: Awaitable[tuple[Any, "Store"]]
+
+
+SchedulerResult = Ready | Pending
+
+
+@dataclass
+class SchedulerItem:
+    k: "Continuation"
+    result: SchedulerResult
+    store: "Store"
 
 
 # ============================================================================
@@ -199,41 +245,9 @@ class Continuation:
         )
 
 
-# ============================================================================
-# Scheduler Protocol
-# ============================================================================
-
-
 class Scheduler(Protocol):
-    """Manages pool of continuations with pluggable scheduling policy.
-    
-    The Scheduler protocol is minimal by design:
-    - submit(): Add a continuation to the pool
-    - next(): Pick the next continuation to run
-    
-    The `hint` parameter is opaque - each scheduler interprets it differently:
-    - FIFOScheduler: ignores hint
-    - PriorityScheduler: hint = priority (int)
-    - SimulationScheduler: hint = timestamp
-    - ActorScheduler: hint = (actor_id, message)
-    """
-    
-    def submit(self, k: Continuation, hint: Any = None) -> None:
-        """Add continuation to pool.
-        
-        Args:
-            k: The continuation to schedule.
-            hint: Scheduler-specific metadata (e.g., priority, timestamp).
-        """
-        ...
-    
-    def next(self) -> Continuation | None:
-        """Pick next continuation to run.
-        
-        Returns:
-            The next continuation to execute, or None if done.
-        """
-        ...
+    def submit(self, k: Continuation, payload: SchedulePayload, store: "Store") -> None: ...
+    def next(self) -> SchedulerItem | None: ...
 
 
 # ============================================================================
@@ -355,191 +369,179 @@ def create_runtime(
 # ============================================================================
 
 
+async def _sleep_with_store(seconds: float, store: "Store") -> tuple[None, "Store"]:
+    await asyncio.sleep(seconds)
+    return (None, store)
+
+
+def _compute_delay_seconds(target: datetime) -> float:
+    now = datetime.now(tz=target.tzinfo)
+    return max(0.0, (target - now).total_seconds())
+
+
 class FIFOScheduler:
-    """First-In-First-Out scheduler (simplest).
-    
-    Continuations are executed in the order they were submitted.
-    Useful for simple sequential execution and testing.
-    """
-    
     def __init__(self) -> None:
-        self._queue: deque[Continuation] = deque()
+        self._queue: deque[SchedulerItem] = deque()
     
-    def submit(self, k: Continuation, hint: Any = None) -> None:
-        """Add continuation to queue (hint ignored)."""
-        self._queue.append(k)
+    def submit(self, k: Continuation, payload: SchedulePayload, store: "Store") -> None:
+        match payload:
+            case AwaitPayload(awaitable):
+                self._queue.append(SchedulerItem(k, Pending(awaitable), store))
+            case DelayPayload(duration):
+                self._queue.append(SchedulerItem(k, Pending(_sleep_with_store(duration.total_seconds(), store)), store))
+            case WaitUntilPayload(target):
+                delay = _compute_delay_seconds(target)
+                self._queue.append(SchedulerItem(k, Pending(_sleep_with_store(delay, store)), store))
+            case SpawnPayload(program, env, st):
+                new_k = Continuation.from_program(program, env, st)
+                self._queue.append(SchedulerItem(k, Ready(None), store))
+                self._queue.append(SchedulerItem(new_k, Ready(None), st))
+            case _:
+                raise TypeError(f"Unknown payload type: {type(payload)}")
     
-    def next(self) -> Continuation | None:
-        """Get next continuation from queue."""
+    def next(self) -> SchedulerItem | None:
         return self._queue.popleft() if self._queue else None
     
     def __len__(self) -> int:
-        """Number of pending continuations."""
         return len(self._queue)
 
 
 class PriorityScheduler:
-    """Priority-based scheduler.
-    
-    Continuations with lower priority values are executed first.
-    Uses sequence counter for deterministic FIFO tie-breaking.
-    """
-    
     def __init__(self) -> None:
-        self._queue: list[tuple[int, int, Continuation]] = []
+        self._queue: list[tuple[int, int, SchedulerItem]] = []
         self._seq: int = 0
     
-    def submit(self, k: Continuation, hint: Any = None) -> None:
-        """Add continuation with priority (hint = priority, default 0)."""
-        priority = hint if hint is not None else 0
-        heapq.heappush(self._queue, (priority, self._seq, k))
+    def submit(self, k: Continuation, payload: SchedulePayload, store: "Store") -> None:
+        match payload:
+            case AwaitPayload(awaitable):
+                item = SchedulerItem(k, Pending(awaitable), store)
+            case DelayPayload(duration):
+                item = SchedulerItem(k, Pending(_sleep_with_store(duration.total_seconds(), store)), store)
+            case WaitUntilPayload(target):
+                delay = _compute_delay_seconds(target)
+                item = SchedulerItem(k, Pending(_sleep_with_store(delay, store)), store)
+            case SpawnPayload(program, env, st):
+                new_k = Continuation.from_program(program, env, st)
+                heapq.heappush(self._queue, (0, self._seq, SchedulerItem(new_k, Ready(None), st)))
+                self._seq += 1
+                item = SchedulerItem(k, Ready(None), store)
+            case _:
+                raise TypeError(f"Unknown payload type: {type(payload)}")
+        heapq.heappush(self._queue, (0, self._seq, item))
         self._seq += 1
     
-    def next(self) -> Continuation | None:
-        """Get highest-priority continuation."""
+    def next(self) -> SchedulerItem | None:
         if self._queue:
-            _, _, k = heapq.heappop(self._queue)
-            return k
+            _, _, item = heapq.heappop(self._queue)
+            return item
         return None
     
     def __len__(self) -> int:
-        """Number of pending continuations."""
         return len(self._queue)
 
 
 class SimulationScheduler:
-    """Simulation scheduler with time-based scheduling.
-    
-    Manages two pools:
-    - ready: LIFO stack for immediately runnable continuations
-    - timed: Priority queue for time-scheduled continuations
-    
-    Time advances discretely - when ready is empty, the scheduler
-    pops from timed and advances current_time.
-    
-    This is compatible with proboscis-ema's simulation semantics.
-    """
-    
     def __init__(self, start_time: datetime | None = None) -> None:
-        self._ready: list[Continuation] = []  # LIFO stack
-        self._timed: list[tuple[datetime, int, Continuation]] = []  # heapq
+        self._ready: list[tuple[Continuation, "Store"]] = []
+        self._ready_async: list[tuple[Continuation, Awaitable[Any], "Store"]] = []
+        self._timed: list[tuple[datetime, int, Continuation, "Store"]] = []
         self._current_time: datetime = start_time or datetime.now()
         self._seq: int = 0
     
     @property
     def current_time(self) -> datetime:
-        """Current simulation time."""
         return self._current_time
     
-    def submit(self, k: Continuation, hint: Any = None) -> None:
-        """Add continuation (hint = None for ready, datetime for timed)."""
-        if hint is None:
-            # Ready immediately - push to stack (LIFO for depth-first)
-            self._ready.append(k)
-        else:
-            # Time-scheduled
-            if isinstance(hint, timedelta):
-                target_time = self._current_time + hint
-            elif isinstance(hint, datetime):
-                target_time = hint
-            else:
-                raise TypeError(f"SimulationScheduler hint must be datetime or timedelta, got {type(hint)}")
-            heapq.heappush(self._timed, (target_time, self._seq, k))
-            self._seq += 1
+    def submit(self, k: Continuation, payload: SchedulePayload, store: "Store") -> None:
+        match payload:
+            case AwaitPayload(awaitable):
+                self._ready_async.append((k, awaitable, store))
+            case DelayPayload(duration):
+                target_time = self._current_time + duration
+                heapq.heappush(self._timed, (target_time, self._seq, k, store))
+                self._seq += 1
+            case WaitUntilPayload(target):
+                heapq.heappush(self._timed, (target, self._seq, k, store))
+                self._seq += 1
+            case SpawnPayload(program, env, st):
+                new_k = Continuation.from_program(program, env, st)
+                self._ready.append((new_k, st))
+                self._ready.append((k, store))
+            case _:
+                raise TypeError(f"Unknown payload type: {type(payload)}")
     
-    def next(self) -> Continuation | None:
-        """Get next continuation, advancing time if needed."""
+    def next(self) -> SchedulerItem | None:
+        if self._ready_async:
+            k, awaitable, store = self._ready_async.pop()
+            return SchedulerItem(k, Pending(awaitable), store)
         if self._ready:
-            return self._ready.pop()  # LIFO - depth first
-        elif self._timed:
-            time, _, k = heapq.heappop(self._timed)
-            self._current_time = time  # Advance simulation time
-            return k
+            k, store = self._ready.pop()
+            return SchedulerItem(k, Ready(None), store)
+        if self._timed:
+            time, _, k, store = heapq.heappop(self._timed)
+            self._current_time = time
+            return SchedulerItem(k, Ready(None), store)
         return None
     
     def advance_time(self, delta: timedelta) -> None:
-        """Manually advance simulation time."""
         self._current_time += delta
     
     def set_time(self, time: datetime) -> None:
-        """Set simulation time directly."""
         self._current_time = time
     
     def __len__(self) -> int:
-        """Number of pending continuations."""
-        return len(self._ready) + len(self._timed)
+        return len(self._ready) + len(self._ready_async) + len(self._timed)
 
 
 class RealtimeScheduler:
-    """Realtime scheduler using asyncio for wall-clock timing.
-    
-    Integrates with asyncio event loop for actual time delays.
-    Useful for production systems where real timing is needed.
-    """
-    
     def __init__(self) -> None:
-        self._ready: deque[Continuation] = deque()
-        self._pending_timers: int = 0
+        self._queue: deque[SchedulerItem] = deque()
     
-    def submit(self, k: Continuation, hint: Any = None) -> None:
-        """Add continuation (hint = None for ready, float for delay in seconds)."""
-        if hint is None:
-            self._ready.append(k)
-        else:
-            # Schedule with delay
-            delay_seconds = float(hint)
-            self._pending_timers += 1
-            
-            async def delayed_submit():
-                await asyncio.sleep(delay_seconds)
-                self._ready.append(k)
-                self._pending_timers -= 1
-            
-            # Create task to run the delayed submit
-            asyncio.create_task(delayed_submit())
+    def submit(self, k: Continuation, payload: SchedulePayload, store: "Store") -> None:
+        match payload:
+            case AwaitPayload(awaitable):
+                self._queue.append(SchedulerItem(k, Pending(awaitable), store))
+            case DelayPayload(duration):
+                self._queue.append(SchedulerItem(k, Pending(_sleep_with_store(duration.total_seconds(), store)), store))
+            case WaitUntilPayload(target):
+                delay = _compute_delay_seconds(target)
+                self._queue.append(SchedulerItem(k, Pending(_sleep_with_store(delay, store)), store))
+            case SpawnPayload(program, env, st):
+                new_k = Continuation.from_program(program, env, st)
+                self._queue.append(SchedulerItem(k, Ready(None), store))
+                self._queue.append(SchedulerItem(new_k, Ready(None), st))
+            case _:
+                raise TypeError(f"Unknown payload type: {type(payload)}")
     
-    def next(self) -> Continuation | None:
-        """Get next ready continuation."""
-        return self._ready.popleft() if self._ready else None
-    
-    @property
-    def has_pending(self) -> bool:
-        """Check if there are pending timer callbacks."""
-        return self._pending_timers > 0 or len(self._ready) > 0
+    def next(self) -> SchedulerItem | None:
+        return self._queue.popleft() if self._queue else None
     
     def __len__(self) -> int:
-        return len(self._ready)
+        return len(self._queue)
 
 
 class AsyncioScheduler:
     def __init__(self) -> None:
-        self._pending_tasks: list[asyncio.Task] = []
+        self._queue: deque[SchedulerItem] = deque()
     
-    async def submit(self, k: Continuation, payload: Any) -> None:
-        if isinstance(payload, Awaitable):
-            result = await payload
-            if isinstance(result, tuple) and len(result) == 2:
-                value, new_store = result
-            else:
-                value, new_store = result, k.store
-            k.resume(value, new_store)
-        elif isinstance(payload, timedelta):
-            await asyncio.sleep(payload.total_seconds())
-            k.resume(None, k.store)
-        elif isinstance(payload, datetime):
-            delay = (payload - datetime.now()).total_seconds()
-            if delay > 0:
-                await asyncio.sleep(delay)
-            k.resume(None, k.store)
-        elif isinstance(payload, SimSpawnPayload):
-            new_k = Continuation.from_program(payload.program, payload.env, payload.store)
-            self._pending_tasks.append(asyncio.create_task(self._run_continuation(new_k)))
-            k.resume(None, k.store)
-        else:
-            raise TypeError(f"AsyncioScheduler cannot handle payload type: {type(payload)}")
+    def submit(self, k: Continuation, payload: SchedulePayload, store: "Store") -> None:
+        match payload:
+            case AwaitPayload(awaitable):
+                self._queue.append(SchedulerItem(k, Pending(awaitable), store))
+            case DelayPayload(duration):
+                self._queue.append(SchedulerItem(k, Pending(_sleep_with_store(duration.total_seconds(), store)), store))
+            case WaitUntilPayload(target):
+                delay = _compute_delay_seconds(target)
+                self._queue.append(SchedulerItem(k, Pending(_sleep_with_store(delay, store)), store))
+            case SpawnPayload(program, env, st):
+                new_k = Continuation.from_program(program, env, st)
+                self._queue.append(SchedulerItem(k, Ready(None), store))
+                self._queue.append(SchedulerItem(new_k, Ready(None), st))
+            case _:
+                raise TypeError(f"Unknown payload type: {type(payload)}")
     
-    async def _run_continuation(self, k: Continuation) -> None:
-        pass
+    def next(self) -> SchedulerItem | None:
+        return self._queue.popleft() if self._queue else None
 
 
 # ============================================================================
@@ -605,7 +607,7 @@ def create_sim_delay_handler() -> ScheduledEffectHandler:
         store: "Store",
     ) -> HandlerResult:
         assert isinstance(effect, SimDelay)
-        return Schedule(timedelta(seconds=effect.seconds), store)
+        return Schedule(DelayPayload(timedelta(seconds=effect.seconds)), store)
     
     return handler
 
@@ -617,16 +619,9 @@ def create_sim_wait_until_handler() -> ScheduledEffectHandler:
         store: "Store",
     ) -> HandlerResult:
         assert isinstance(effect, SimWaitUntil)
-        return Schedule(effect.target_time, store)
+        return Schedule(WaitUntilPayload(effect.target_time), store)
     
     return handler
-
-
-@dataclass(frozen=True)
-class SimSpawnPayload:
-    program: "Program"
-    env: "Environment"
-    store: "Store"
 
 
 def create_sim_submit_handler() -> ScheduledEffectHandler:
@@ -636,8 +631,7 @@ def create_sim_submit_handler() -> ScheduledEffectHandler:
         store: "Store",
     ) -> HandlerResult:
         assert isinstance(effect, SimSubmit)
-        payload = SimSpawnPayload(program=effect.program, env=env, store=store)
-        return Schedule(payload, store)
+        return Schedule(SpawnPayload(program=effect.program, env=env, store=store), store)
     
     return handler
 
@@ -653,6 +647,15 @@ __all__ = [
     "Suspend",
     "Scheduled",
     "HandlerResult",
+    "AwaitPayload",
+    "DelayPayload",
+    "WaitUntilPayload",
+    "SpawnPayload",
+    "SchedulePayload",
+    "Ready",
+    "Pending",
+    "SchedulerResult",
+    "SchedulerItem",
     "Continuation",
     "Scheduler",
     "FIFOScheduler",
@@ -669,7 +672,6 @@ __all__ = [
     "SimDelay",
     "SimWaitUntil",
     "SimSubmit",
-    "SimSpawnPayload",
     "create_sim_delay_handler",
     "create_sim_wait_until_handler",
     "create_sim_submit_handler",
