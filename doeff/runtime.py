@@ -79,11 +79,19 @@ class Schedule:
 class Suspend:
     """[DEPRECATED] Await external async operation, then resume.
     
-    Use Schedule(awaitable, store) instead. This class is kept for
+    Use Schedule(AwaitPayload(awaitable), store) instead. This class is kept for
     backward compatibility and will be removed in a future version.
     """
     awaitable: Awaitable[Any]
     store: "Store"
+
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "Suspend is deprecated. Use Schedule(AwaitPayload(awaitable), store) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 # Deprecated: Use Schedule instead
@@ -95,6 +103,14 @@ class Scheduled:
     backward compatibility and will be removed in a future version.
     """
     store: "Store"
+
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "Scheduled is deprecated. Use Schedule(payload, store) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 HandlerResult = Resume | Schedule | Suspend | Scheduled
