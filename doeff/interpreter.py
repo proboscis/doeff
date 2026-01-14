@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import warnings
 from typing import Any, Callable, Generator, TypeVar
 
 from doeff._vendor import Err, Ok, WGraph, WNode, WStep
@@ -172,7 +173,17 @@ class ProgramInterpreter:
             spawn_ray_address: Ray cluster address for Spawn Ray backend.
             spawn_ray_init_kwargs: Extra kwargs passed to ray.init().
             spawn_ray_runtime_env: Default runtime_env for Ray tasks.
+
+        .. deprecated::
+            ProgramInterpreter is deprecated. Use EffectRuntime instead.
+            Example: ``runtime = create_runtime(); await runtime.run(program)``
         """
+        warnings.warn(
+            "ProgramInterpreter is deprecated. Use EffectRuntime instead. "
+            "Example: runtime = create_runtime(); await runtime.run(program)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if max_log_entries is not None and max_log_entries < 0:
             raise ValueError("max_log_entries must be >= 0 or None")
 
