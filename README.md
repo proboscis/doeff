@@ -35,7 +35,7 @@ pip install doeff-pinjected
 ## Quick Start
 
 ```python
-from doeff import do, Program, Put, Get, Log
+from doeff import do, Program, Put, Get, Log, create_runtime
 
 @do
 def counter_program() -> Program[int]:
@@ -47,17 +47,26 @@ def counter_program() -> Program[int]:
 
 # Run the program
 import asyncio
-from doeff import ProgramInterpreter
 
 async def main():
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(counter_program())
+    runtime = create_runtime()
+    result = await runtime.run(counter_program())
     print(f"Result: {result.result}")  # Ok(1)
-    print(f"Final state: {result.state}")  # {'counter': 1}
-    print(f"Log: {result.log}")  # ['Starting computation']
+    print(f"Value: {result.value}")    # 1
 
 asyncio.run(main())
 ```
+
+## Migration from ProgramInterpreter
+
+`ProgramInterpreter` is deprecated in favor of `EffectRuntime`. Here's how to migrate:
+
+| ProgramInterpreter (deprecated) | EffectRuntime (new) |
+|--------------------------------|---------------------|
+| `engine = ProgramInterpreter()` | `runtime = create_runtime()` |
+| `engine.run(program)` | `runtime.run_sync(program)` |
+| `await engine.run_async(program)` | `await runtime.run(program)` |
+| `result.context.state` | `result.store` |
 
 ## Effects
 
@@ -186,8 +195,8 @@ def my_interpreter(prog: Program[Any]) -> Any:
     Custom interpreter for myapp.
     # doeff: interpreter, default
     """
-    engine = ProgramInterpreter()
-    return engine.run(prog).value
+    runtime = create_runtime()
+    return runtime.run_sync(prog).value
 ```
 
 **Discovery Rules:**
