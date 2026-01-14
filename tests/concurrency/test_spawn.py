@@ -25,6 +25,12 @@ if TYPE_CHECKING:
     from tests.conftest import Interpreter
 
 
+def skip_if_cesk(interpreter: "Interpreter"):
+    """Skip test if running on CESK interpreter (Recover/Fail not supported)."""
+    if interpreter.interpreter_type == "cesk":
+        pytest.skip("Recover/Fail not supported in CESK core")
+
+
 @pytest.mark.asyncio
 async def test_spawn_join_basic(interpreter: "Interpreter"):
     """Basic spawn and join returns correct value."""
@@ -133,6 +139,7 @@ async def test_spawn_worker_gather_programs(interpreter: "Interpreter"):
 @pytest.mark.asyncio
 async def test_spawn_recover_handles_failure(interpreter: "Interpreter"):
     """Failed spawn can be recovered."""
+    skip_if_cesk(interpreter)
 
     @do
     def worker() -> EffectGenerator[int]:
@@ -204,6 +211,7 @@ async def test_spawn_state_merge_preserves_parent_updates(interpreter: "Interpre
 @pytest.mark.asyncio
 async def test_spawn_exception_propagates(interpreter: "Interpreter"):
     """Exceptions from spawned worker propagate correctly."""
+    skip_if_cesk(interpreter)
 
     @do
     def worker() -> EffectGenerator[int]:
