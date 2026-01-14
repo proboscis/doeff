@@ -166,12 +166,19 @@ from doeff.run import run_program, ProgramRunResult
 
 # Runtime: Single-shot Algebraic Effects with Pluggable Scheduler
 from doeff.runtime import (
-    # Handler Results
+    EffectRuntime,
+    RuntimeResult,
+    create_runtime,
     Resume,
     Suspend,
     Scheduled,
+    Schedule,
     HandlerResult,
-    # Continuation
+    AwaitPayload,
+    DelayPayload,
+    WaitUntilPayload,
+    SpawnPayload,
+    SchedulePayload,
     Continuation,
     Scheduler,
     FIFOScheduler,
@@ -315,10 +322,19 @@ __all__ = [  # noqa: RUF022
     "run_program",
     "ProgramRunResult",
     # Runtime: Scheduler-based execution
+    "EffectRuntime",
+    "RuntimeResult",
+    "create_runtime",
     "Resume",
     "Suspend",
     "Scheduled",
+    "Schedule",
     "HandlerResult",
+    "AwaitPayload",
+    "DelayPayload",
+    "WaitUntilPayload",
+    "SpawnPayload",
+    "SchedulePayload",
     "Continuation",
     "Scheduler",
     "FIFOScheduler",
