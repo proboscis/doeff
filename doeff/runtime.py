@@ -30,6 +30,7 @@ from doeff._types_internal import EffectBase
 
 if TYPE_CHECKING:
     from typing import Callable
+    from doeff._vendor import Result
     from doeff.cesk import CESKState, Environment, Store
     from doeff.program import Program
     from doeff.types import Effect
@@ -56,29 +57,46 @@ class Resume:
 
 
 @dataclass(frozen=True)
-class Suspend:
-    """Await external async operation, then resume.
+class Schedule:
+    """Schedule continuation for later resumption via scheduler.
     
-    Used when the handler needs to perform async I/O.
-    The runtime will await the awaitable and resume the
-    continuation with the result.
+    Used when the handler needs to defer execution. The runtime
+    passes (k, payload) to the scheduler, which interprets the
+    payload and resumes the continuation when ready.
+    
+    Payload types:
+    - Awaitable: await it, resume with result
+    - SimDelay: advance simulation time, resume with None
+    - Custom payloads: scheduler-specific interpretation
+    """
+    payload: Any
+    store: "Store"
+
+
+# Deprecated: Use Schedule instead
+@dataclass(frozen=True)
+class Suspend:
+    """[DEPRECATED] Await external async operation, then resume.
+    
+    Use Schedule(awaitable, store) instead. This class is kept for
+    backward compatibility and will be removed in a future version.
     """
     awaitable: Awaitable[Any]
     store: "Store"
 
 
+# Deprecated: Use Schedule instead
 @dataclass(frozen=True)
 class Scheduled:
-    """Continuation was submitted to scheduler, pick next.
+    """[DEPRECATED] Continuation was submitted to scheduler, pick next.
     
-    Used when the handler has added the continuation to the
-    scheduler for later resumption (e.g., time-based delay).
-    The runtime should pick the next continuation from scheduler.
+    Use Schedule(payload, store) instead. This class is kept for
+    backward compatibility and will be removed in a future version.
     """
     store: "Store"
 
 
-HandlerResult = Resume | Suspend | Scheduled
+HandlerResult = Resume | Schedule | Suspend | Scheduled
 
 
 # ============================================================================
@@ -224,23 +242,30 @@ class Scheduler(Protocol):
 
 
 class ScheduledEffectHandler(Protocol):
-    """User-defined handler that receives continuation and scheduler.
+    """Pure effect handler: (effect, env, store) -> HandlerResult.
     
-    This is the new unified handler protocol that replaces the separate
-    SyncEffectHandler and AsyncEffectHandler protocols.
+    Handlers return one of:
+    - Resume(value, store): Immediate - resume with value
+    - Schedule(payload, store): Deferred - scheduler handles payload
     
-    Handlers can:
-    - Resume k immediately: return Resume(value, store)
-    - Store k in scheduler for later: scheduler.submit(k, hint); return Scheduled(store)
-    - Await external async: return Suspend(awaitable, store)
-    - Create new continuation: scheduler.submit(new_k); return Resume(None, store)
+    Handler is pure - no access to continuation or scheduler. The runtime
+    takes care of passing (k, payload) to the scheduler when Schedule is returned.
+    """
     
-    The handler signature provides explicit access to:
-    - effect: The effect instance to handle
-    - env: Read-only environment
-    - store: Current store (immutable - return new store)
-    - k: Continuation for later resumption
-    - scheduler: For scheduling work
+    def __call__(
+        self,
+        effect: "EffectBase",
+        env: "Environment",
+        store: "Store",
+    ) -> HandlerResult:
+        ...
+
+
+class LegacyScheduledEffectHandler(Protocol):
+    """[DEPRECATED] Legacy handler with k and scheduler access.
+    
+    Use ScheduledEffectHandler instead. This signature is kept for
+    backward compatibility during migration.
     """
     
     def __call__(
@@ -249,25 +274,80 @@ class ScheduledEffectHandler(Protocol):
         env: "Environment",
         store: "Store",
         k: Continuation,
-        scheduler: Scheduler,
+        scheduler: "Scheduler",
     ) -> HandlerResult:
-        """Handle an effect.
-        
-        Args:
-            effect: The effect instance to handle.
-            env: Read-only environment (FrozenDict).
-            store: Current store (immutable semantics - return new store).
-            k: Continuation to resume after handling.
-            scheduler: Scheduler for managing continuations.
-            
-        Returns:
-            HandlerResult indicating how to proceed.
-        """
         ...
 
 
 # Type alias for handler registry
 ScheduledHandlers = dict[type["EffectBase"], ScheduledEffectHandler]
+
+
+class EffectRuntime:
+    def __init__(
+        self,
+        scheduler: "Scheduler | None" = None,
+        handlers: ScheduledHandlers | None = None,
+    ):
+        self._scheduler = scheduler
+        self._handlers = handlers
+    
+    async def run(
+        self,
+        program: "Program[T]",
+        env: "Environment | dict | None" = None,
+        store: "Store | None" = None,
+    ) -> "RuntimeResult[T]":
+        from doeff.cesk import run as cesk_run
+        result = await cesk_run(
+            program,
+            env,
+            store,
+            scheduled_handlers=self._handlers,
+            scheduler=self._scheduler,
+        )
+        return RuntimeResult(result.result, result.captured_traceback)
+    
+    def run_sync(
+        self,
+        program: "Program[T]",
+        env: "Environment | dict | None" = None,
+        store: "Store | None" = None,
+    ) -> "RuntimeResult[T]":
+        return asyncio.run(self.run(program, env, store))
+
+
+@dataclass(frozen=True)
+class RuntimeResult(Generic[T]):
+    result: "Result[T]"
+    captured_traceback: Any = None
+    
+    @property
+    def is_ok(self) -> bool:
+        from doeff._vendor import Ok
+        return isinstance(self.result, Ok)
+    
+    @property
+    def is_err(self) -> bool:
+        from doeff._vendor import Err
+        return isinstance(self.result, Err)
+    
+    @property
+    def value(self) -> T:
+        return self.result.ok()
+    
+    @property
+    def error(self) -> BaseException:
+        return self.result.err()
+
+
+def create_runtime(
+    scheduler: "Scheduler | None" = None,
+    handlers: ScheduledHandlers | None = None,
+) -> EffectRuntime:
+    if scheduler is None:
+        scheduler = FIFOScheduler()
+    return EffectRuntime(scheduler=scheduler, handlers=handlers)
 
 
 # ============================================================================
@@ -428,8 +508,38 @@ class RealtimeScheduler:
         return self._pending_timers > 0 or len(self._ready) > 0
     
     def __len__(self) -> int:
-        """Number of immediately ready continuations."""
         return len(self._ready)
+
+
+class AsyncioScheduler:
+    def __init__(self) -> None:
+        self._pending_tasks: list[asyncio.Task] = []
+    
+    async def submit(self, k: Continuation, payload: Any) -> None:
+        if isinstance(payload, Awaitable):
+            result = await payload
+            if isinstance(result, tuple) and len(result) == 2:
+                value, new_store = result
+            else:
+                value, new_store = result, k.store
+            k.resume(value, new_store)
+        elif isinstance(payload, timedelta):
+            await asyncio.sleep(payload.total_seconds())
+            k.resume(None, k.store)
+        elif isinstance(payload, datetime):
+            delay = (payload - datetime.now()).total_seconds()
+            if delay > 0:
+                await asyncio.sleep(delay)
+            k.resume(None, k.store)
+        elif isinstance(payload, SimSpawnPayload):
+            new_k = Continuation.from_program(payload.program, payload.env, payload.store)
+            self._pending_tasks.append(asyncio.create_task(self._run_continuation(new_k)))
+            k.resume(None, k.store)
+        else:
+            raise TypeError(f"AsyncioScheduler cannot handle payload type: {type(payload)}")
+    
+    async def _run_continuation(self, k: Continuation) -> None:
+        pass
 
 
 # ============================================================================
@@ -489,90 +599,45 @@ class SimSubmit(EffectBase):
 
 
 def create_sim_delay_handler() -> ScheduledEffectHandler:
-    """Create handler for SimDelay effect.
-    
-    Schedules continuation for later based on delay.
-    For SimulationScheduler: uses scheduler's time-based scheduling.
-    For RealtimeScheduler: uses Suspend with asyncio.sleep for wall-clock delay.
-    """
     def handler(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: Continuation,
-        scheduler: Scheduler,
     ) -> HandlerResult:
         assert isinstance(effect, SimDelay)
-        if isinstance(scheduler, SimulationScheduler):
-            target_time = scheduler.current_time + timedelta(seconds=effect.seconds)
-            scheduler.submit(k, hint=target_time)
-            return Scheduled(store)
-        elif isinstance(scheduler, RealtimeScheduler):
-            async def wait_and_resume():
-                await asyncio.sleep(effect.seconds)
-                return None
-            return Suspend(wait_and_resume(), store)
-        else:
-            scheduler.submit(k, hint=timedelta(seconds=effect.seconds))
-            return Scheduled(store)
+        return Schedule(timedelta(seconds=effect.seconds), store)
     
     return handler
 
 
 def create_sim_wait_until_handler() -> ScheduledEffectHandler:
-    """Create handler for SimWaitUntil effect.
-    
-    Schedules continuation until target time is reached.
-    For SimulationScheduler: uses scheduler's time-based scheduling.
-    For RealtimeScheduler: uses Suspend with asyncio.sleep for wall-clock delay.
-    If target time is in the past, resumes immediately.
-    """
     def handler(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: Continuation,
-        scheduler: Scheduler,
     ) -> HandlerResult:
         assert isinstance(effect, SimWaitUntil)
-        if isinstance(scheduler, SimulationScheduler):
-            if effect.target_time <= scheduler.current_time:
-                scheduler.submit(k, hint=None)
-            else:
-                scheduler.submit(k, hint=effect.target_time)
-            return Scheduled(store)
-        elif isinstance(scheduler, RealtimeScheduler):
-            now = datetime.now()
-            delay = (effect.target_time - now).total_seconds()
-            if delay <= 0:
-                return Resume(None, store)
-            async def wait_and_resume():
-                await asyncio.sleep(delay)
-                return None
-            return Suspend(wait_and_resume(), store)
-        else:
-            scheduler.submit(k, hint=effect.target_time)
-            return Scheduled(store)
+        return Schedule(effect.target_time, store)
     
     return handler
 
 
+@dataclass(frozen=True)
+class SimSpawnPayload:
+    program: "Program"
+    env: "Environment"
+    store: "Store"
+
+
 def create_sim_submit_handler() -> ScheduledEffectHandler:
-    """Create handler for SimSubmit effect.
-    
-    Creates new continuation and adds to scheduler.
-    """
     def handler(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: Continuation,
-        scheduler: Scheduler,
     ) -> HandlerResult:
         assert isinstance(effect, SimSubmit)
-        new_k = Continuation.from_program(effect.program, env, store)
-        scheduler.submit(new_k, hint=None)
-        return Resume(None, store)
+        payload = SimSpawnPayload(program=effect.program, env=env, store=store)
+        return Schedule(payload, store)
     
     return handler
 
@@ -584,6 +649,7 @@ def create_sim_submit_handler() -> ScheduledEffectHandler:
 
 __all__ = [
     "Resume",
+    "Schedule",
     "Suspend",
     "Scheduled",
     "HandlerResult",
@@ -593,11 +659,17 @@ __all__ = [
     "PriorityScheduler",
     "SimulationScheduler",
     "RealtimeScheduler",
+    "AsyncioScheduler",
+    "EffectRuntime",
+    "RuntimeResult",
+    "create_runtime",
     "ScheduledEffectHandler",
+    "LegacyScheduledEffectHandler",
     "ScheduledHandlers",
     "SimDelay",
     "SimWaitUntil",
     "SimSubmit",
+    "SimSpawnPayload",
     "create_sim_delay_handler",
     "create_sim_wait_until_handler",
     "create_sim_submit_handler",

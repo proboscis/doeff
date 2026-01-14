@@ -13,12 +13,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
 from doeff._vendor import Err, Ok, Result
-from doeff.runtime import HandlerResult, Suspend
+from doeff.runtime import HandlerResult, Schedule
 
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
     from doeff.cesk import Environment, Store
-    from doeff.runtime import Continuation, Scheduler
 
 
 # ============================================================================
@@ -106,36 +105,29 @@ def handle_future_await(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle FutureAwaitEffect - awaits an async operation."""
     async def do_async() -> tuple[Any, Store]:
         result = await effect.awaitable
         return (result, store)
-    return Suspend(do_async(), store)
+    return Schedule(do_async(), store)
 
 
 def handle_spawn(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle SpawnEffect - creates an independent CESK machine."""
     from doeff.effects.spawn import Task
 
     parent_dispatcher = store.get("__dispatcher__")
 
-    store_without_dispatcher = {k: v for k, v in store.items() if k != "__dispatcher__"}
+    store_without_dispatcher = {key: v for key, v in store.items() if key != "__dispatcher__"}
     child_store = copy.deepcopy(store_without_dispatcher)
     child_env = env
 
     final_store_holder: dict[str, Any] = {"store": None}
 
     async def run_and_capture_store():
-        """Run child and capture final store for later merging at join time."""
         from doeff.cesk import _run_internal
         result, final_store, _ = await _run_internal(
             effect.program, child_env, child_store, dispatcher=parent_dispatcher
@@ -154,20 +146,17 @@ def handle_spawn(
         )
         return (task, store)
 
-    return Suspend(do_async(), store)
+    return Schedule(do_async(), store)
 
 
 def handle_thread(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle ThreadEffect - runs program in a separate thread."""
     parent_dispatcher = store.get("__dispatcher__")
 
-    store_without_dispatcher = {kv: v for kv, v in store.items() if kv != "__dispatcher__"}
+    store_without_dispatcher = {key: v for key, v in store.items() if key != "__dispatcher__"}
     child_store = copy.deepcopy(store_without_dispatcher)
     child_env = env
     strategy = effect.strategy
@@ -177,7 +166,6 @@ def handle_thread(
         loop = asyncio.get_running_loop()
 
         def run_in_thread() -> tuple[Result, Store]:
-            """Run async interpreter in a new event loop in this thread."""
             thread_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(thread_loop)
             try:
@@ -249,17 +237,14 @@ def handle_thread(
 
         return (unwrap_thread_result(), store)
 
-    return Suspend(do_async(), store)
+    return Schedule(do_async(), store)
 
 
 def handle_task_join(
     effect: EffectBase,
     env: Environment,
     store: Store,
-    k: Continuation,
-    scheduler: Scheduler | None,
 ) -> HandlerResult:
-    """Handle TaskJoinEffect - waits for spawned task to complete and merges state."""
     async def do_async() -> tuple[Any, Store]:
         task = effect.task
         if hasattr(task, "_handle") and isinstance(task._handle, asyncio.Task):
@@ -283,7 +268,7 @@ def handle_task_join(
             return (result, merged_store)
         raise ValueError(f"Cannot join task with handle type: {type(task._handle)}")
 
-    return Suspend(do_async(), store)
+    return Schedule(do_async(), store)
 
 
 __all__ = [

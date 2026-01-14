@@ -119,17 +119,9 @@ class TestScheduledHandlers:
     """Test scheduled effect handlers via dispatcher."""
 
     def _dispatch_pure(self, effect, env, store):
-        from doeff.runtime import Resume, FIFOScheduler, Continuation
+        from doeff.runtime import Resume
         dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
-        scheduler = FIFOScheduler()
-        dummy_state = CESKState(C=Value(None), E=env, S=store, K=[])
-        k = Continuation(
-            _resume=lambda v, s: dummy_state,
-            _resume_error=lambda e: dummy_state,
-            env=env,
-            store=store,
-        )
-        result = dispatcher.dispatch(effect, env, store, k, scheduler)
+        result = dispatcher.dispatch(effect, env, store)
         assert isinstance(result, Resume)
         return result.value, result.store
 
