@@ -16,7 +16,7 @@ from doeff import (
     Get,
     Log,
     Put,
-    Recover,
+    Safe,
     Spawn,
     do,
 )
@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
 
 def skip_if_cesk(interpreter: "Interpreter"):
-    """Skip test if running on CESK interpreter (Recover/Fail not supported)."""
+    """Skip test if running on CESK interpreter (Safe/Fail not supported)."""
     if interpreter.interpreter_type == "cesk":
-        pytest.skip("Recover/Fail not supported in CESK core")
+        pytest.skip("Safe/Fail not supported in CESK core")
 
 
 @pytest.mark.asyncio
@@ -137,8 +137,8 @@ async def test_spawn_worker_gather_programs(interpreter: "Interpreter"):
 
 
 @pytest.mark.asyncio
-async def test_spawn_recover_handles_failure(interpreter: "Interpreter"):
-    """Failed spawn can be recovered."""
+async def test_spawn_safe_handles_failure(interpreter: "Interpreter"):
+    """Failed spawn can be handled with Safe."""
     skip_if_cesk(interpreter)
 
     @do
@@ -149,7 +149,8 @@ async def test_spawn_recover_handles_failure(interpreter: "Interpreter"):
     @do
     def program() -> EffectGenerator[int]:
         task = yield Spawn(worker())
-        return (yield Recover(task.join(), fallback=42))
+        result = yield Safe(task.join())
+        return result.value if result.is_ok() else 42
 
     result = await interpreter.run_async(program())
 

@@ -72,7 +72,7 @@ class KFrameSnapshot:
     without exposing internal implementation details.
 
     Attributes:
-        frame_type: Type name of the frame (e.g., "ReturnFrame", "CatchFrame").
+        frame_type: Type name of the frame (e.g., "ReturnFrame", "FinallyFrame").
         location: Optional code location where this frame was created.
         description: Human-readable description of the frame's purpose.
     """
@@ -85,7 +85,6 @@ class KFrameSnapshot:
     def from_frame(cls, frame: "Frame") -> "KFrameSnapshot":
         """Create a snapshot from a CESK frame."""
         from doeff.cesk import (
-            CatchFrame,
             FinallyFrame,
             GatherFrame,
             InterceptFrame,
@@ -117,9 +116,6 @@ class KFrameSnapshot:
                     line=line,
                     function=function,
                 )
-
-        elif isinstance(frame, CatchFrame):
-            description = "Error handler boundary"
 
         elif isinstance(frame, FinallyFrame):
             description = "Cleanup handler (runs on success or error)"

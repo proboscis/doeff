@@ -12,7 +12,6 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
         GatherEffect,
         InterceptEffect,
         LocalEffect,
-        ResultCatchEffect,
         ResultFinallyEffect,
         ResultSafeEffect,
         WriterListenEffect,
@@ -21,7 +20,6 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
     return isinstance(
         effect,
         (
-            ResultCatchEffect,
             ResultFinallyEffect,
             ResultSafeEffect,
             LocalEffect,
