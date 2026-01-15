@@ -14,14 +14,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do
+from doeff import do, EffectGenerator
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
 
 
 @do
-def basic_pr(issue: Issue) -> PRHandle:
+def basic_pr(issue: Issue) -> EffectGenerator[PRHandle]:
     """Basic PR workflow: issue -> agent -> PR.
 
     Args:

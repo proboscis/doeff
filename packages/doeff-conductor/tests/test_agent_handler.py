@@ -57,12 +57,10 @@ class TestAgentHandler:
         mock_session = MagicMock(id="session-001")
         mock_message = MagicMock(role="assistant", content="Task completed successfully")
 
-        mock_handler.handle.side_effect = [
-            mock_env_handle,
-            mock_session,
-            None,
-            [mock_message],
-        ]
+        mock_handler.handle_create_environment.return_value = mock_env_handle
+        mock_handler.handle_create_session.return_value = mock_session
+        mock_handler.handle_send_message.return_value = None
+        mock_handler.handle_get_messages.return_value = [mock_message]
 
         effect = RunAgent(env=worktree_env, prompt="Do something")
         result = handler.handle_run_agent(effect)
@@ -79,12 +77,10 @@ class TestAgentHandler:
         mock_env_handle = MagicMock(id="env-001")
         mock_session = MagicMock(id="session-001")
 
-        mock_handler.handle.side_effect = [
-            mock_env_handle,
-            mock_session,
-            None,
-            [],
-        ]
+        mock_handler.handle_create_environment.return_value = mock_env_handle
+        mock_handler.handle_create_session.return_value = mock_session
+        mock_handler.handle_send_message.return_value = None
+        mock_handler.handle_get_messages.return_value = []
 
         effect = RunAgent(env=worktree_env, prompt="Do something")
         result = handler.handle_run_agent(effect)
@@ -101,7 +97,9 @@ class TestAgentHandler:
         mock_env_handle = MagicMock(id="env-001")
         mock_session = MagicMock(id="session-001")
 
-        mock_handler.handle.side_effect = [mock_env_handle, mock_session, None]
+        mock_handler.handle_create_environment.return_value = mock_env_handle
+        mock_handler.handle_create_session.return_value = mock_session
+        mock_handler.handle_send_message.return_value = None
 
         effect = SpawnAgent(env=worktree_env, prompt="Background task", name="bg-agent")
         ref = handler.handle_spawn_agent(effect)
@@ -121,7 +119,7 @@ class TestAgentHandler:
         effect = SendMessage(agent_ref=agent_ref, message="Continue working")
         handler.handle_send_message(effect)
 
-        mock_handler.handle.assert_called_once()
+        mock_handler.handle_send_message.assert_called_once()
 
     @patch("doeff_agentic.OpenCodeHandler")
     def test_wait_for_status_success(
@@ -132,7 +130,7 @@ class TestAgentHandler:
 
         from doeff_agentic import AgenticSessionStatus
 
-        mock_handler.handle.return_value = AgenticSessionStatus.DONE
+        mock_handler.handle_get_session_status.return_value = AgenticSessionStatus.DONE
 
         effect = WaitForStatus(
             agent_ref=agent_ref,
@@ -161,7 +159,7 @@ class TestAgentHandler:
 
         mock_status = MagicMock()
         mock_status.is_terminal.return_value = False
-        mock_handler.handle.return_value = mock_status
+        mock_handler.handle_get_session_status.return_value = mock_status
 
         mock_time.side_effect = [0, 5, 11]
 
@@ -189,7 +187,7 @@ class TestAgentHandler:
             MagicMock(role="assistant", content="Working on it"),
             MagicMock(role="assistant", content="Done"),
         ]
-        mock_handler.handle.return_value = mock_messages
+        mock_handler.handle_get_messages.return_value = mock_messages
 
         effect = CaptureOutput(agent_ref=agent_ref, lines=10)
         output = handler.handle_capture_output(effect)
