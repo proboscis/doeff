@@ -107,4 +107,5 @@ dev = [
     "pillow>=11.3.0",
     "beartype>=0.19.0",
     "httpx>=0.25.0",
+    "doeff-conductor",
 ]

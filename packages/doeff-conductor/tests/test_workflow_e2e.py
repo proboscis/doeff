@@ -10,10 +10,12 @@ from doeff.cesk import run_sync
 from doeff_conductor import (
     CreateWorktree,
     DeleteWorktree,
+    MergeBranches,
     CreateIssue,
     GetIssue,
     ResolveIssue,
     Commit,
+    Push,
     WorktreeHandler,
     IssueHandler,
     GitHandler,
@@ -267,6 +269,93 @@ class TestWorkflowE2E:
         assert workflow_result["issue_id"].startswith("ISSUE-")
         assert len(workflow_result["commit_sha"]) == 40
         assert workflow_result["resolved"] is True
+
+    def test_merge_branches_workflow(self, test_repo: Path, tmp_path: Path):
+        worktree_base = tmp_path / "worktrees"
+        worktree_base.mkdir()
+
+        @do
+        def merge_workflow():
+            env1 = yield CreateWorktree(suffix="feature1")
+            (env1.path / "feature1.py").write_text("# Feature 1\n")
+            yield Commit(env=env1, message="feat: add feature1")
+
+            env2 = yield CreateWorktree(suffix="feature2")
+            (env2.path / "feature2.py").write_text("# Feature 2\n")
+            yield Commit(env=env2, message="feat: add feature2")
+
+            merged = yield MergeBranches(envs=[env1, env2])
+
+            assert (merged.path / "feature1.py").exists()
+            assert (merged.path / "feature2.py").exists()
+
+            yield DeleteWorktree(env=env1, force=True)
+            yield DeleteWorktree(env=env2, force=True)
+            yield DeleteWorktree(env=merged, force=True)
+
+            return merged.branch
+
+        worktree_handler = WorktreeHandler(repo_path=test_repo)
+        worktree_handler.worktree_base = worktree_base
+        git_handler = GitHandler()
+
+        handlers = {
+            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
+            MergeBranches: make_scheduled_handler(worktree_handler.handle_merge_branches),
+            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
+            Commit: make_scheduled_handler(git_handler.handle_commit),
+        }
+
+        result = run_sync(merge_workflow(), scheduled_handlers=handlers)
+        assert result.is_ok
+        assert result.value.startswith("conductor-merged-")
+
+    def test_push_to_remote_workflow(self, test_repo: Path, tmp_path: Path):
+        worktree_base = tmp_path / "worktrees"
+        worktree_base.mkdir()
+
+        remote_path = tmp_path / "remote.git"
+        subprocess.run(
+            ["git", "init", "--bare", str(remote_path)],
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(remote_path)],
+            cwd=test_repo,
+            check=True,
+            capture_output=True,
+        )
+
+        @do
+        def push_workflow():
+            env = yield CreateWorktree(suffix="push-test")
+            (env.path / "pushed.py").write_text("# Pushed\n")
+            yield Commit(env=env, message="feat: push test")
+            yield Push(env=env, set_upstream=True)
+            yield DeleteWorktree(env=env, force=True)
+            return env.branch
+
+        worktree_handler = WorktreeHandler(repo_path=test_repo)
+        worktree_handler.worktree_base = worktree_base
+        git_handler = GitHandler()
+
+        handlers = {
+            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
+            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
+            Commit: make_scheduled_handler(git_handler.handle_commit),
+            Push: make_scheduled_handler(git_handler.handle_push),
+        }
+
+        result = run_sync(push_workflow(), scheduled_handlers=handlers)
+        assert result.is_ok
+
+        remote_refs = subprocess.run(
+            ["git", "ls-remote", str(remote_path)],
+            capture_output=True,
+            text=True,
+        )
+        assert result.value in remote_refs.stdout
 
 
 @pytest.mark.e2e
