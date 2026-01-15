@@ -149,7 +149,7 @@ def safe_operation():
 def with_fallback():
     result = yield Safe(fetch_data())
     
-    if result.is_ok:
+    if result.is_ok():
         return result.value
     else:
         yield Log(f"Fetch failed: {result.error}")
@@ -165,7 +165,7 @@ Transform errors while preserving the success path:
 def transform_errors():
     result = yield Safe(risky_operation())
     
-    if result.is_err:
+    if result.is_err():
         # Log and transform the error
         yield Log(f"Operation failed: {result.error}")
         yield Fail(RuntimeError(f"Wrapped error: {result.error}"))
@@ -186,8 +186,8 @@ def multiple_safe_operations():
         results.append(result)
     
     # Count successes and failures
-    successes = [r.value for r in results if r.is_ok]
-    failures = [r.error for r in results if r.is_err]
+    successes = [r.value for r in results if r.is_ok()]
+    failures = [r.error for r in results if r.is_err()]
     
     yield Log(f"Successes: {len(successes)}, Failures: {len(failures)}")
     
@@ -209,7 +209,7 @@ def parallel_safe_operations():
     results = yield Parallel(*[Await(t) for t in safe_tasks])
     
     # Process results
-    successes = [r.value for r in results if r.is_ok]
+    successes = [r.value for r in results if r.is_ok()]
     yield Log(f"Completed {len(successes)}/10 tasks")
     
     return successes
@@ -223,7 +223,7 @@ def fetch_with_fallback():
     # Try primary source
     result = yield Safe(fetch_from_primary())
     
-    if result.is_ok:
+    if result.is_ok():
         return result.value
     
     yield Log(f"Primary failed: {result.error}, trying backup...")
@@ -231,7 +231,7 @@ def fetch_with_fallback():
     # Try backup source
     backup_result = yield Safe(fetch_from_backup())
     
-    if backup_result.is_ok:
+    if backup_result.is_ok():
         return backup_result.value
     
     # Both failed, use default
@@ -248,7 +248,7 @@ def logged_safe_operation(operation_name):
     
     result = yield Safe(risky_operation())
     
-    if result.is_ok:
+    if result.is_ok():
         yield Log(f"{operation_name} succeeded with: {result.value}")
         return result.value
     else:
@@ -314,7 +314,7 @@ def retry_with_backoff():
     while attempts < 5:
         result = yield Safe(fetch_api_data())
         
-        if result.is_ok:
+        if result.is_ok():
             return result.value
         
         attempts += 1
@@ -514,7 +514,7 @@ def robust_api_call(url):
     for attempt in range(max_attempts):
         result = yield Safe(Await(httpx.get(url)))
         
-        if result.is_ok:
+        if result.is_ok():
             return result.value
         
         if attempt < max_attempts - 1:
@@ -538,7 +538,7 @@ def with_circuit_breaker(service_name):
     
     result = yield Safe(call_service(service_name))
     
-    if result.is_err:
+    if result.is_err():
         yield Modify(f"{service_name}_failures", lambda x: x + 1)
         yield Fail(result.error)
     else:
@@ -557,7 +557,7 @@ def process_batch_with_errors(items):
     for item in items:
         result = yield Safe(process_item(item))
         
-        if result.is_ok:
+        if result.is_ok():
             results.append(result.value)
         else:
             errors.append({"item": item, "error": str(result.error)})
@@ -583,7 +583,7 @@ if invalid_input:
 **Safe:** When you need to handle errors and continue
 ```python
 result = yield Safe(risky_operation())
-if result.is_ok:
+if result.is_ok():
     return result.value
 else:
     return fallback_value
@@ -636,7 +636,7 @@ result = yield Catch(
 **After:**
 ```python
 safe_result = yield Safe(risky_operation())
-result = safe_result.value if safe_result.is_ok else "fallback"
+result = safe_result.value if safe_result.is_ok() else "fallback"
 ```
 
 ### Catch with Error Transformation
@@ -652,7 +652,7 @@ result = yield Catch(
 **After:**
 ```python
 safe_result = yield Safe(risky_operation())
-if safe_result.is_ok:
+if safe_result.is_ok():
     result = safe_result.value
 else:
     result = handle_error(safe_result.error)
@@ -671,7 +671,7 @@ data = yield Recover(
 **After:**
 ```python
 safe_result = yield Safe(fetch_data())
-data = safe_result.value if safe_result.is_ok else []
+data = safe_result.value if safe_result.is_ok() else []
 ```
 
 ### Recover with Fallback Program
@@ -687,7 +687,7 @@ data = yield Recover(
 **After:**
 ```python
 safe_result = yield Safe(fetch_from_primary())
-if safe_result.is_ok:
+if safe_result.is_ok():
     data = safe_result.value
 else:
     data = yield fetch_from_backup()

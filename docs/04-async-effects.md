@@ -360,7 +360,7 @@ def safe_async_operation():
     # Safe wrapping for async errors
     safe_result = yield Safe(Await(risky_async()))
     
-    if safe_result.is_ok:
+    if safe_result.is_ok():
         result = safe_result.value
     else:
         result = f"Failed: {safe_result.error}"
@@ -481,8 +481,8 @@ def parallel_with_fallback():
     results = yield Parallel(*safe_tasks)
     
     # Filter successful results
-    successes = [r.value for r in results if r.is_ok]
-    failures = [r.error for r in results if r.is_err]
+    successes = [r.value for r in results if r.is_ok()]
+    failures = [r.error for r in results if r.is_err()]
     
     yield Log(f"Successes: {len(successes)}, Failures: {len(failures)}")
     return successes

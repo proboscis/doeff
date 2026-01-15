@@ -203,7 +203,7 @@ def broken():
 @do
 def correct():
     result = yield Safe(risky_operation())
-    value = result.value if result.is_ok else "fallback"
+    value = result.value if result.is_ok() else "fallback"
     return value
 ```
 

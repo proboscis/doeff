@@ -172,7 +172,7 @@ def user_service(user_id: int):
     # Try cache first
     cache_result = yield Safe(cache.get(f"user_{user_id}"))
     
-    if cache_result.is_ok:
+    if cache_result.is_ok():
         yield Log(f"Cache hit for user {user_id}")
         return cache_result.value
     
@@ -263,7 +263,7 @@ def api_handler(username, password):
     auth = yield auth_service()
     result = yield Safe(auth(username, password))
     
-    if result.is_err:
+    if result.is_err():
         return {"error": "Authentication failed"}
     
     user = result.value
@@ -355,7 +355,7 @@ async def test_error_handling():
     def error_handling_program():
         db = yield Dep("database")
         safe_result = yield Safe(db.query())
-        if safe_result.is_ok:
+        if safe_result.is_ok():
             return safe_result.value
         else:
             return {"error": str(safe_result.error)}

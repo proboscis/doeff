@@ -117,7 +117,7 @@ def with_internal_memo():
 @do
 def memoized_operation(key):
     safe_result = yield Safe(MemoGet(key))
-    if safe_result.is_ok:
+    if safe_result.is_ok():
         return safe_result.value
     else:
         return (yield compute_and_memo(key))
@@ -230,7 +230,7 @@ def parallel_with_memo():
 @do
 def memoized_fetch_user(user_id):
     safe_result = yield Safe(MemoGet(f"user_{user_id}"))
-    if safe_result.is_ok:
+    if safe_result.is_ok():
         return safe_result.value
     else:
         return (yield fetch_and_memo_user(user_id))
