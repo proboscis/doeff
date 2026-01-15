@@ -9,6 +9,7 @@ import pytest
 from doeff import (
     Effect,
     ExecutionContext,
+    Log,
     Program,
     ProgramInterpreter,
     Safe,
@@ -16,7 +17,6 @@ from doeff import (
     ask,
     await_,
     do,
-    fail,
     get,
     io,
     listen,
@@ -103,9 +103,9 @@ async def test_deep_mixed_monad_chain():  # noqa: PLR0915
 
     @do
     def maybe_fail(n: int) -> Generator[Effect, Any, int]:
-        """Sometimes fails."""
         if n == 3000:
-            yield fail(ValueError("Expected failure"))
+            raise ValueError("Expected failure")
+        yield Log("maybe_fail check")
         return n
 
     @do

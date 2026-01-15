@@ -22,8 +22,6 @@ import pytest
 from doeff import (
     Ask,
     EffectGenerator,
-    Fail,
-    Finally,
     Gather,
     Get,
     Listen,
@@ -31,7 +29,6 @@ from doeff import (
     Log,
     Program,
     Put,
-    Retry,
     Safe,
     do,
 )

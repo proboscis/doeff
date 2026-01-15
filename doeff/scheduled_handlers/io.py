@@ -20,18 +20,6 @@ def handle_io_perform(
     return Schedule(AwaitPayload(do_async()), store)
 
 
-def handle_io_print(
-    effect: EffectBase,
-    env: Environment,
-    store: Store,
-) -> HandlerResult:
-    async def do_async() -> tuple[Any, Store]:
-        print(effect.message)
-        return (None, store)
-    return Schedule(AwaitPayload(do_async()), store)
-
-
 __all__ = [
     "handle_io_perform",
-    "handle_io_print",
 ]

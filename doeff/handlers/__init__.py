@@ -50,16 +50,9 @@ from doeff.effects import (
     GraphSnapshotEffect,
     GraphStepEffect,
     IOPerformEffect,
-    IOPrintEffect,
     LocalEffect,
-    MemoGetEffect,
-    MemoPutEffect,
-    ResultFailEffect,
-    ResultFinallyEffect,
-    ResultRetryEffect,
     ResultSafeEffect,
     SpawnEffect,
-    ThreadEffect,
     Task,
     TaskJoinEffect,
     StateGetEffect,
@@ -69,7 +62,6 @@ from doeff.effects import (
     WriterTellEffect,
 )
 from doeff.effects.pure import PureEffect
-from doeff.effects.result import ResultFirstSuccessEffect, ResultUnwrapEffect
 from doeff.program import Program
 from doeff.types import EffectBase, EffectFailure, ExecutionContext, ListenResult
 from doeff.utils import BoundedLog
@@ -558,101 +550,6 @@ class FutureEffectHandler:
     # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
 
 
-class ThreadEffectHandler:
-    """Handles executing programs on worker threads."""
-
-    scope = HandlerScope.SHARED
-
-    def __init__(self, *, max_workers: int | None = None) -> None:
-        self._max_workers = max_workers
-        self._executor: ThreadPoolExecutor | None = None
-        self._executor_lock = threading.Lock()
-
-    def _ensure_executor(self) -> ThreadPoolExecutor:
-        executor = self._executor
-        if executor is not None:
-            return executor
-        with self._executor_lock:
-            if self._executor is None:
-                self._executor = ThreadPoolExecutor(  # noqa: DOEFF002
-                    max_workers=self._max_workers,
-                    thread_name_prefix="doeff-thread-pool",
-                )
-            return self._executor
-
-    def handle_thread(
-        self,
-        effect: ThreadEffect,
-        ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
-    ) -> Awaitable[Any]:
-        """Return awaitable that executes the nested program on a thread."""
-
-        return self._build_thread_awaitable(effect, ctx, engine)
-
-    def _build_thread_awaitable(
-        self,
-        effect: ThreadEffect,
-        ctx: ExecutionContext,
-        engine: "ProgramInterpreter",
-    ) -> Awaitable[Any]:
-        loop = asyncio.get_running_loop()
-        sub_ctx = ctx.copy()
-
-        def run_program() -> tuple[Any, ExecutionContext]:  # noqa: DOEFF006
-            pragmatic_result = engine.run(effect.program, sub_ctx)
-            if isinstance(pragmatic_result.result, Err):
-                raise pragmatic_result.result.error
-            return pragmatic_result.value, pragmatic_result.context
-
-        if effect.strategy == "pooled":
-            run_future = loop.run_in_executor(self._ensure_executor(), run_program)
-        else:
-            is_daemon = effect.strategy == "daemon"
-            run_future = self._run_in_thread(loop, run_program, daemon=is_daemon)
-
-        async def wrapper() -> Any:
-            value, result_ctx = await run_future
-            self._merge_context(ctx, result_ctx)
-            return value
-
-        return wrapper()
-
-    def _run_in_thread(
-        self,
-        loop: asyncio.AbstractEventLoop,
-        runner: Callable[[], tuple[Any, ExecutionContext]],
-        *,
-        daemon: bool,
-    ) -> asyncio.Future[tuple[Any, ExecutionContext]]:
-        future: asyncio.Future[tuple[Any, ExecutionContext]] = loop.create_future()
-
-        def target() -> None:
-            try:
-                result = runner()
-            except BaseException as exc:  # pragma: no cover - defensive guard
-                loop.call_soon_threadsafe(future.set_exception, exc)
-            else:
-                loop.call_soon_threadsafe(future.set_result, result)
-
-        thread = threading.Thread(
-            target=target,
-            name="doeff-thread",
-            daemon=daemon,
-        )
-        thread.start()
-        return future
-
-    def _merge_context(self, parent: ExecutionContext, child: ExecutionContext) -> None:
-        parent.env.clear()
-        parent.env.update(child.env)
-        parent.state.clear()
-        parent.state.update(child.state)
-        parent.log.clear()
-        parent.log.extend(child.log)
-        parent.graph = child.graph
-
-
 class SpawnEffectHandler:
     """Handles spawning programs in background tasks."""
 
@@ -1095,49 +992,6 @@ class ResultEffectHandler:
         """Handle pure effect - immediately return wrapped value."""
         return effect.value
 
-    async def handle_fail(self, effect: ResultFailEffect) -> None:
-        """Handle result.fail effect."""
-        raise effect.exception
-
-    async def handle_finally(
-        self,
-        effect: ResultFinallyEffect,
-        ctx: ExecutionContext,
-        engine: ProgramInterpreter,
-    ) -> Any:
-        """Handle result.finally effect ensuring finalizer runs on all outcomes."""
-
-        async def _run_finalizer() -> None:
-            finalizer_value = effect.finalizer
-
-            if callable(finalizer_value) and not isinstance(finalizer_value, Program):
-                finalizer_value = finalizer_value()
-
-            if finalizer_value is None:
-                return
-
-            if not isinstance(finalizer_value, (Program, EffectBase)):
-                return
-
-            finalizer_result = await engine.run_async(finalizer_value, ctx)
-            if isinstance(finalizer_result.result, Err):
-                raise finalizer_result.result.error
-
-        sub_program = effect.sub_program
-
-        try:
-            pragmatic_result = await engine.run_async(sub_program, ctx)
-        except BaseException:
-            await _run_finalizer()
-            raise
-
-        await _run_finalizer()
-
-        if isinstance(pragmatic_result.result, Err):
-            raise pragmatic_result.result.error
-
-        return pragmatic_result.value
-
     async def handle_safe(
         self, effect: ResultSafeEffect, ctx: ExecutionContext, engine: ProgramInterpreter
     ) -> Any:
@@ -1164,109 +1018,6 @@ class ResultEffectHandler:
 
         return result
 
-    async def handle_first_success(
-        self,
-        effect: ResultFirstSuccessEffect,
-        ctx: ExecutionContext,
-        engine: ProgramInterpreter,
-    ) -> Any:
-        """Handle sequential attempts, returning the first successful value."""
-
-        base_snapshot = ctx.copy()
-        base_snapshot.effect_observations = list(ctx.effect_observations)
-
-        last_error: Exception | None = None
-
-        for candidate in effect.programs:
-
-            attempt_ctx = base_snapshot.copy()
-            attempt_ctx.effect_observations = list(base_snapshot.effect_observations)
-
-            pragmatic_result = await engine.run_async(candidate, attempt_ctx)
-
-            if isinstance(pragmatic_result.result, Ok):
-                ctx.env = attempt_ctx.env
-                ctx.state = attempt_ctx.state
-                ctx.log = attempt_ctx.log
-                ctx.graph = attempt_ctx.graph
-                ctx.effect_observations = attempt_ctx.effect_observations
-                return pragmatic_result.value
-
-            last_error = pragmatic_result.result.error
-
-        if last_error is not None:
-            raise last_error
-
-        raise RuntimeError("All programs failed")
-
-    async def handle_unwrap(
-        self,
-        effect: ResultUnwrapEffect,
-        _ctx: ExecutionContext,
-        _engine: ProgramInterpreter,
-    ) -> Any:
-        """Handle result.unwrap effect by raising or returning the Result."""
-
-        result = effect.result
-        if isinstance(result, Ok):
-            return result.value
-
-        if isinstance(result, Err):
-            raise result.error
-
-        raise TypeError(
-            f"ResultUnwrapEffect expected Result, got {type(result)!r}"
-        )
-
-    async def handle_retry(
-        self, effect: ResultRetryEffect, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle result.retry effect - retry program on failure."""
-        import asyncio
-
-        from doeff._vendor import Ok
-        from doeff.program import Program
-
-        max_attempts = effect.max_attempts
-        delay_ms = effect.delay_ms
-        delay_strategy = effect.delay_strategy
-
-        sub_program = effect.sub_program
-
-        last_error = None
-        for attempt in range(max_attempts):
-            pragmatic_result = await engine.run_async(sub_program, ctx)
-
-            if isinstance(pragmatic_result.result, Ok):
-                return pragmatic_result.value
-
-            last_error = pragmatic_result.result.error
-
-            if attempt < max_attempts - 1:
-                delay_seconds: float | None = None
-                if delay_strategy is not None:
-                    try:
-                        delay_value = delay_strategy(attempt + 1, last_error)  # type: ignore[arg-type]
-                    except Exception as exc:
-                        raise RuntimeError(
-                            "Retry delay_strategy raised an exception"
-                        ) from exc
-                    if delay_value is None:
-                        delay_seconds = None
-                    else:
-                        delay_seconds = float(delay_value)
-                        if delay_seconds < 0:
-                            raise ValueError("Retry delay_strategy must not return a negative delay")
-                elif delay_ms > 0:
-                    delay_seconds = delay_ms / 1000.0
-
-                if delay_seconds is not None and delay_seconds > 0:
-                    await asyncio.sleep(delay_seconds)
-
-        if last_error:
-            raise last_error
-        raise RuntimeError(f"All {max_attempts} attempts failed")
-
 
 class IOEffectHandler:
     """Handles IO monad effects."""
@@ -1277,12 +1028,6 @@ class IOEffectHandler:
         if not ctx.io_allowed:
             raise PermissionError("IO not allowed in this context")
         return effect.action()
-
-    async def handle_print(self, effect: IOPrintEffect, ctx: ExecutionContext) -> None:
-        """Handle io.print effect."""
-        if not ctx.io_allowed:
-            raise PermissionError("IO not allowed in this context")
-        print(effect.message)
 
 
 class GraphEffectHandler:
@@ -1339,26 +1084,6 @@ class GraphEffectHandler:
 
         return GraphCaptureResult(value=result.value, graph=result.context.graph)
 
-
-
-class MemoEffectHandler:
-    """In-memory memoization handler."""
-
-    scope = HandlerScope.SHARED
-
-    def _serialize_key(self, key: Any) -> str:
-        key_bytes = _cloudpickle_dumps(key, "memo key")
-        return hashlib.sha256(key_bytes).hexdigest()
-
-    async def handle_get(self, effect: MemoGetEffect, ctx: ExecutionContext) -> Any:
-        serialized_key = self._serialize_key(effect.key)
-        if serialized_key not in ctx.cache:
-            raise KeyError("Memo miss for key")
-        return ctx.cache[serialized_key]
-
-    async def handle_put(self, effect: MemoPutEffect, ctx: ExecutionContext) -> None:
-        serialized_key = self._serialize_key(effect.key)
-        ctx.cache[serialized_key] = effect.value
 
 
 class CacheEffectHandler:
@@ -1474,11 +1199,9 @@ __all__ = [  # noqa: DOEFF021
     "GraphEffectHandler",
     "HandlerScope",
     "IOEffectHandler",
-    "MemoEffectHandler",
     "ReaderEffectHandler",
     "ResultEffectHandler",
     "SpawnEffectHandler",
     "StateEffectHandler",
-    "ThreadEffectHandler",
     "WriterEffectHandler",
 ]

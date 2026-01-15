@@ -17,7 +17,6 @@ def apply_transforms(
     transforms: tuple[Callable[[Effect], Effect | Program | None], ...],
     effect: Effect,
 ) -> Effect | Program:
-    """Apply transform functions in order. First non-None result wins."""
     for transform in transforms:
         result = transform(effect)
         if result is not None:
@@ -26,7 +25,6 @@ def apply_transforms(
 
 
 def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | Program:
-    """Apply intercept transforms from ALL InterceptFrames in the continuation stack."""
     current = effect
     for frame in K:
         if isinstance(frame, InterceptFrame):
@@ -39,7 +37,6 @@ def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | Program:
 
 
 def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store | None = None) -> Store:
-    """Merge child store into parent after child completion."""
     merged = {**parent_store}
 
     for key, value in child_store.items():
@@ -60,7 +57,6 @@ def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store |
 
 
 def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
-    """Merge thread state: child state replaces parent (except logs append)."""
     merged = {}
 
     for key, value in child_store.items():
@@ -88,49 +84,7 @@ def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
     return merged
 
 
-def _wrap_callable_as_program(func: Callable[[], Any]) -> Program:
-    """Wrap a callable (thunk) in a program that calls it."""
-    from doeff.do import do
-
-    @do
-    def call_thunk():
-        result = func()
-        from doeff.program import ProgramBase
-        from doeff.types import EffectBase
-
-        if isinstance(result, (ProgramBase, EffectBase)):
-            return (yield result)
-        return result
-
-    return call_thunk()
-
-
-def make_cleanup_then_return(cleanup: Program, value: Any) -> Program:
-    """Create program that runs cleanup then returns value."""
-    from doeff.do import do
-
-    @do
-    def cleanup_then_return_impl():
-        yield cleanup
-        return value
-
-    return cleanup_then_return_impl()
-
-
-def make_cleanup_then_raise(cleanup: Program, ex: BaseException) -> Program:
-    """Create program that runs cleanup then re-raises exception."""
-    from doeff.do import do
-
-    @do
-    def cleanup_then_raise_impl():
-        yield cleanup
-        raise ex.with_traceback(ex.__traceback__)
-
-    return cleanup_then_raise_impl()
-
-
 def to_generator(program: Program) -> Generator[Any, Any, Any]:
-    """Convert a program to a generator."""
     from doeff.program import KleisliProgramCall, ProgramBase
 
     if isinstance(program, KleisliProgramCall):
@@ -145,7 +99,6 @@ def to_generator(program: Program) -> Generator[Any, Any, Any]:
 
 
 def shutdown_shared_executor(wait: bool = True) -> None:
-    """Shutdown the shared executor. Call this on application exit."""
     import doeff.scheduled_handlers.concurrency as concurrency_module
     if concurrency_module._shared_executor is not None:
         with concurrency_module._shared_executor_lock:
@@ -159,9 +112,6 @@ __all__ = [
     "apply_intercept_chain",
     "merge_store",
     "_merge_thread_state",
-    "_wrap_callable_as_program",
-    "make_cleanup_then_return",
-    "make_cleanup_then_raise",
     "to_generator",
     "shutdown_shared_executor",
 ]
