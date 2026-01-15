@@ -67,7 +67,8 @@ result = await runtime.run(traced_program())
 ### Export to HTML
 
 ```python
-from doeff import graph_to_html, write_graph_html, create_runtime
+from doeff import graph_to_html, write_graph_html
+from doeff.runtimes import AsyncioRuntime
 
 # Run program with graph tracking
 runtime = AsyncioRuntime()
@@ -79,7 +80,8 @@ result = await runtime.run(my_program())
 ### Async Visualization
 
 ```python
-from doeff import graph_to_html_async, create_runtime
+from doeff import graph_to_html_async
+from doeff.runtimes import AsyncioRuntime
 
 runtime = AsyncioRuntime()
 result = await runtime.run(my_program())

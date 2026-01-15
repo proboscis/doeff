@@ -80,7 +80,8 @@ doeff is a pragmatic effects system for Python that provides:
 ## Quick Example
 
 ```python
-from doeff import do, Put, Get, Log, Await, create_runtime
+from doeff import do, Put, Get, Log, Await
+from doeff.runtimes import AsyncioRuntime
 import asyncio
 
 @do

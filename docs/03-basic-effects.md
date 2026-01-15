@@ -19,7 +19,8 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask, create_runtime
+from doeff import do, Ask
+from doeff.runtimes import AsyncioRuntime
 
 @do
 def connect_to_database():

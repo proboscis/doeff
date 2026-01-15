@@ -126,7 +126,7 @@ doeff provides effects for:
 
 1. **Creation**: Effect is instantiated with parameters
 2. **Yielding**: Effect is yielded in a `@do` function
-3. **Interpretation**: EffectRuntime handles the effect
+3. **Interpretation**: Runtime handles the effect
 4. **Resolution**: Effect produces a value
 5. **Continuation**: Value is sent back to the generator
 
@@ -144,7 +144,7 @@ class CustomEffect(EffectBase):
         return result if isinstance(result, Program) else Program.pure(result)
 ```
 
-Then add a handler to `EffectRuntime`.
+Then add a handler to the runtime.
 
 ## The @do Decorator
 
@@ -272,18 +272,18 @@ except StopIteration as e:
 
 ## Execution Model
 
-### EffectRuntime
+### Runtime
 
 The runtime executes programs by processing effects:
 
 ```python
-from doeff import create_runtime, EffectRuntime
+from doeff.runtimes import AsyncioRuntime
 
-# Create runtime with default scheduler
+# Create runtime for async execution
 runtime = AsyncioRuntime()
 
-# Or configure with custom scheduler/handlers
-runtime = EffectRuntime(scheduler=my_scheduler, handlers=my_handlers)
+# Or configure with custom handlers
+runtime = AsyncioRuntime(handlers=my_handlers)
 
 # Execute program
 result = await runtime.run(
@@ -494,12 +494,13 @@ from doeff import (
     Program,         # Program[T]
     Effect,          # Base effect type
     EffectGenerator, # Generator[Effect | Program, Any, T]
-    EffectRuntime,   # Runtime executor
-    create_runtime,  # Factory function
-    RuntimeResult,   # Result container
     Result,          # Ok[T] | Err[E]
     Ok,              # Success value
     Err,             # Error value
+)
+from doeff.runtimes import (
+    AsyncioRuntime,  # Runtime for async I/O
+    RuntimeResult,   # Result container
 )
 ```
 
@@ -559,7 +560,7 @@ result = identity("hello")  # Program[str]
 - **Effect**: Request for an operation (Reader, State, Writer, etc.)
 - **@do**: Converts generator functions to Programs with monadic operations
 - **Generator**: Python's coroutine mechanism enables do-notation syntax
-- **EffectRuntime**: Executes programs by handling effects
+- **AsyncioRuntime**: Executes programs by handling effects with real async I/O
 - **Environment/Store**: Tracks environment and mutable state during execution
 - **RuntimeResult[T]**: Contains final value and result
 - **Monadic Ops**: map, flat_map, sequence, pure enable composition
