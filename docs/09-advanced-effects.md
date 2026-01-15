@@ -67,68 +67,6 @@ def comparison():
     )
 ```
 
-## Memo Effects
-
-In-memory memoization within a single execution.
-
-### MemoGet / MemoPut
-
-```python
-@do
-def with_memo():
-    try:
-        # Try to get memoized value
-        result = yield MemoGet("expensive_key")
-        yield Log("Memo hit!")
-    except KeyError:
-        # Compute and memoize
-        yield Log("Memo miss, computing...")
-        result = yield expensive_computation()
-        yield MemoPut("expensive_key", result)
-    
-    return result
-```
-
-### Memo vs Cache
-
-| Feature | Memo | Cache |
-|---------|------|-------|
-| **Lifetime** | Single execution | Across executions |
-| **Storage** | Memory only | Memory/Disk/Distributed |
-| **Policy** | None | TTL, lifecycle, etc. |
-| **Use case** | Within-program dedup | Persistent caching |
-
-### Memo Pattern
-
-```python
-@do
-def with_internal_memo():
-    # First call computes
-    result1 = yield memoized_operation("key1")
-    
-    # Second call with same key uses memo
-    result2 = yield memoized_operation("key1")  # Instant
-    
-    # Different key computes again
-    result3 = yield memoized_operation("key2")
-    
-    return [result1, result2, result3]
-
-@do
-def memoized_operation(key):
-    safe_result = yield Safe(MemoGet(key))
-    if safe_result.is_ok():
-        return safe_result.value
-    else:
-        return (yield compute_and_memo(key))
-
-@do
-def compute_and_memo(key):
-    value = yield expensive_work(key)
-    yield MemoPut(key, value)
-    return value
-```
-
 ## Atomic Effects
 
 Thread-safe state operations.
@@ -211,31 +149,6 @@ def accumulate_result(value):
 
 ## Combining Advanced Effects
 
-### Gather + Memo
-
-```python
-@do
-def parallel_with_memo():
-    # Fetch multiple users in parallel, memoizing each
-    user_ids = [1, 2, 3, 4, 5]
-    
-    programs = [memoized_fetch_user(uid) for uid in user_ids]
-    users = yield Gather(*programs)
-    
-    # If we fetch same users again, they're memoized
-    user_1_again = yield memoized_fetch_user(1)  # From memo
-    
-    return users
-
-@do
-def memoized_fetch_user(user_id):
-    safe_result = yield Safe(MemoGet(f"user_{user_id}"))
-    if safe_result.is_ok():
-        return safe_result.value
-    else:
-        return (yield fetch_and_memo_user(user_id))
-```
-
 ### Gather + Atomic
 
 ```python
@@ -288,17 +201,6 @@ interpreter responds to this key directly.
 - Dependent computations (use sequential yields)
 - Single Program (just yield it directly)
 
-### When to Use Memo
-
-**DO:**
-- Expensive computations called multiple times in one execution
-- Deduplication within a Program
-- Temporary caching
-
-**DON'T:**
-- Cross-execution caching (use Cache instead)
-- Large data (limited by memory)
-
 ### When to Use Atomic
 
 **DO:**
@@ -315,8 +217,6 @@ interpreter responds to this key directly.
 | Effect | Purpose | Use Case |
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
-| `MemoGet(key)` | Get memoized value | Within-execution caching |
-| `MemoPut(key, val)` | Store memoized value | Deduplication |
 | `AtomicGet(key)` | Thread-safe read | Concurrent reads |
 | `AtomicUpdate(key, f)` | Thread-safe update | Concurrent modifications |
 

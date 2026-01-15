@@ -9,7 +9,7 @@ and the pinjected dependency injection framework.
 
 - Convert doeff Programs to pinjected IProxy objects
 - Seamless integration with pinjected's AsyncResolver
-- Support for dependency injection via Dep effect
+- Support for dependency injection via Ask effect
 
 ## Installation
 
@@ -20,12 +20,12 @@ pip install doeff-pinjected
 ## Usage
 
 ```python
-from doeff import do, Dep
+from doeff import do, Ask
 from doeff_pinjected import program_to_injected
 
 @do
 def my_program():
-    service = yield Dep("service")
+    service = yield Ask("service")
     result = yield service.process()
     return result
 

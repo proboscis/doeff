@@ -218,12 +218,12 @@ assert runtime.current_time == datetime(2024, 1, 1, 0, 1)  # 1 minute advanced
 All runtimes provide `run_safe()` which returns a `RuntimeResult` instead of raising exceptions:
 
 ```python
-from doeff import do, Program, Fail
+from doeff import do, Program
 from doeff.runtimes import SyncRuntime, RuntimeResult
 
 @do
 def risky_operation() -> Program[int]:
-    yield Fail(ValueError("Something went wrong"))
+    raise ValueError("Something went wrong")
     return 42  # Never reached
 
 runtime = SyncRuntime()
