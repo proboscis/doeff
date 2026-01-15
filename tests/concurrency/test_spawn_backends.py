@@ -14,7 +14,6 @@ from doeff import (
     Await,
     Effect,
     EffectGenerator,
-    Fail,
     Gather,
     Get,
     IO,
@@ -339,8 +338,7 @@ async def test_spawn_safe_handles_failure(backend: str) -> None:
 
         @do
         def worker() -> EffectGenerator[int]:
-            yield Fail(RuntimeError("boom"))
-            return 0
+            raise RuntimeError("boom")
 
         @do
         def program() -> EffectGenerator[int]:
@@ -474,8 +472,7 @@ async def test_spawn_exception_propagates(backend: str) -> None:
 
         @do
         def worker() -> EffectGenerator[int]:
-            yield Fail(ValueError("boom"))
-            return 0
+            raise ValueError("boom")
 
         @do
         def program() -> EffectGenerator[int]:
