@@ -114,7 +114,7 @@ async def test_display_error_with_traceback() -> None:
     # Verbose mode should show the full error chain
     verbose_output = result.display(verbose=True)
     assert "Error Chain (most recent first):" in verbose_output
-    assert "📍 Effect Creation Stack Trace:" in verbose_output
+    assert "🔥 Cause Stack Trace:" in verbose_output
 
 
 @pytest.mark.asyncio

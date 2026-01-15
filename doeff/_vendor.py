@@ -137,7 +137,6 @@ class Result(Generic[T_co]):
             result: Result[int] = Ok(21)
             program = result.and_then_k(process)  # Program[str] -> "42"
         """
-        from doeff.effects.result import fail
         from doeff.program import GeneratorProgram
 
         if isinstance(self, Ok):
@@ -146,7 +145,8 @@ class Result(Generic[T_co]):
         error = self.error
 
         def fail_generator() -> Any:
-            yield fail(error)
+            raise error
+            yield  # Make this a generator  # type: ignore[misc]
 
         return GeneratorProgram(fail_generator)
 

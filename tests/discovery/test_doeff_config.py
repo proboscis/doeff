@@ -30,8 +30,7 @@ def test_loads_default_env_from_home_doeff_py(monkeypatch):
         test_pkg = Path(tmpdir) / "testpkg"
         test_pkg.mkdir()
         (test_pkg / "__init__.py").write_text(textwrap.dedent("""
-            from doeff import Program, do
-            from doeff.effects import Dep
+            from doeff import Program, do, Ask
 
             # doeff: interpreter, default
             def my_interpreter(program):
@@ -40,8 +39,8 @@ def test_loads_default_env_from_home_doeff_py(monkeypatch):
 
             @do
             def my_program():
-                base_value = yield Dep("base_value")
-                base_msg = yield Dep("base_msg")
+                base_value = yield Ask("base_value")
+                base_msg = yield Ask("base_msg")
                 return f"{base_msg}: {base_value}"
         """))
 
@@ -106,8 +105,7 @@ def test_default_env_can_contain_program_values(monkeypatch):
         test_pkg = Path(tmpdir) / "testpkg"
         test_pkg.mkdir()
         (test_pkg / "__init__.py").write_text(textwrap.dedent("""
-            from doeff import Program, do
-            from doeff.effects import Dep
+            from doeff import Program, do, Ask
 
             # doeff: interpreter, default
             def my_interpreter(program):
@@ -116,8 +114,8 @@ def test_default_env_can_contain_program_values(monkeypatch):
 
             @do
             def my_program():
-                static = yield Dep("static_value")
-                dynamic = yield Dep("dynamic_value")
+                static = yield Ask("static_value")
+                dynamic = yield Ask("dynamic_value")
                 return static + dynamic
         """))
 
@@ -177,8 +175,7 @@ def test_explicit_env_overrides_default_env(monkeypatch):
         test_pkg = Path(tmpdir) / "testpkg"
         test_pkg.mkdir()
         (test_pkg / "__init__.py").write_text(textwrap.dedent("""
-            from doeff import Program, do
-            from doeff.effects import Dep
+            from doeff import Program, do, Ask
 
             # doeff: interpreter, default
             def my_interpreter(program):
@@ -192,8 +189,8 @@ def test_explicit_env_overrides_default_env(monkeypatch):
 
             @do
             def my_program():
-                value = yield Dep("value")
-                msg = yield Dep("msg")
+                value = yield Ask("value")
+                msg = yield Ask("msg")
                 return f"{msg}: {value}"
         """))
 
