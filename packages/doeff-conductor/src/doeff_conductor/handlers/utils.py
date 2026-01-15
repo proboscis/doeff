@@ -1,17 +1,22 @@
 """
 Handler utilities for doeff-conductor.
+
+Provides adapter functions to wrap simple handlers into ScheduledEffectHandler
+functions compatible with the doeff CESK runtime.
+
+Handler signature: (effect, env, store) -> HandlerResult
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar
 
-from doeff.runtime import Resume, Suspend
+from doeff.runtime import AwaitPayload, Resume, Schedule
 
 if TYPE_CHECKING:
     from doeff.cesk import Environment, Store
-    from doeff.runtime import Continuation, HandlerResult, Scheduler
+    from doeff.runtime import HandlerResult
     from doeff.types import EffectBase
 
     from .agent_handler import AgentHandler
@@ -26,11 +31,6 @@ R = TypeVar("R")
 SimpleHandler = Callable[[Any], Any]
 # Type for handlers that return (value, new_store)
 StoreAwareHandler = Callable[[Any, "Environment", "Store"], tuple[Any, "Store"]]
-
-
-def _is_tuple_result(result: Any) -> bool:
-    """Check if result is a (value, store) tuple."""
-    return isinstance(result, tuple) and len(result) == 2 and isinstance(result[1], dict)
 
 
 def make_scheduled_handler(
@@ -49,8 +49,6 @@ def make_scheduled_handler(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: "Continuation",
-        scheduler: "Scheduler",
     ) -> "HandlerResult":
         result = handler(effect)
         return Resume(result, store)
@@ -72,8 +70,6 @@ def make_scheduled_handler_with_store(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: "Continuation",
-        scheduler: "Scheduler",
     ) -> "HandlerResult":
         value, new_store = handler(effect, env, store)
         return Resume(value, new_store)
@@ -93,10 +89,8 @@ def make_async_scheduled_handler(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: "Continuation",
-        scheduler: "Scheduler",
     ) -> "HandlerResult":
-        return Suspend(handler(effect), store)
+        return Schedule(AwaitPayload(handler(effect)), store)
 
     return scheduled_handler
 
@@ -114,13 +108,11 @@ def make_blocking_scheduled_handler(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: "Continuation",
-        scheduler: "Scheduler",
     ) -> "HandlerResult":
         async def run_in_thread():
             return await asyncio.to_thread(handler, effect)
 
-        return Suspend(run_in_thread(), store)
+        return Schedule(AwaitPayload(run_in_thread()), store)
 
     return scheduled_handler
 
@@ -138,13 +130,11 @@ def make_blocking_scheduled_handler_with_store(
         effect: "EffectBase",
         env: "Environment",
         store: "Store",
-        k: "Continuation",
-        scheduler: "Scheduler",
     ) -> "HandlerResult":
         async def run_in_thread():
             return await asyncio.to_thread(handler, effect, env, store)
 
-        return Suspend(run_in_thread(), store)
+        return Schedule(AwaitPayload(run_in_thread()), store)
 
     return scheduled_handler
 
