@@ -192,7 +192,7 @@ async def test_complex():
     print(f"   Result type: {type(result.result)}")
     print(f"   Result: {result.result}")
 
-    assert result.is_ok, f"Expected Ok, got {result.result}"
+    assert result.is_ok(), f"Expected Ok, got {result.result}"
     assert result.value["name"] == "Alice"
     assert result.value["final_counter"] == 12  # (1+2+3)*2
     print(f"✅ Complex program completed for {result.value['name']}")
