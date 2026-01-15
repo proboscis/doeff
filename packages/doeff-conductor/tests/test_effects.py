@@ -64,10 +64,37 @@ class TestWorktreeEffects:
         assert effect.suffix == "impl"
 
     def test_merge_branches_requires_envs(self):
-        """Test MergeBranches requires environments."""
-        # This would be validated at runtime by the handler
         effect = MergeBranches(envs=())
         assert effect.envs == ()
+
+    def test_delete_worktree(self):
+        from doeff_conductor.types import WorktreeEnv
+        from pathlib import Path
+
+        env = WorktreeEnv(
+            id="test",
+            path=Path("/tmp/worktree"),
+            branch="test-branch",
+            base_commit="abc123",
+        )
+
+        effect = DeleteWorktree(env=env)
+        assert effect.env == env
+        assert effect.force is False
+
+    def test_delete_worktree_force(self):
+        from doeff_conductor.types import WorktreeEnv
+        from pathlib import Path
+
+        env = WorktreeEnv(
+            id="test",
+            path=Path("/tmp/worktree"),
+            branch="test-branch",
+            base_commit="abc123",
+        )
+
+        effect = DeleteWorktree(env=env, force=True)
+        assert effect.force is True
 
 
 class TestIssueEffects:
@@ -99,9 +126,41 @@ class TestIssueEffects:
         assert effect.limit == 10
 
     def test_get_issue_by_id(self):
-        """Test GetIssue effect."""
         effect = GetIssue(id="ISSUE-001")
         assert effect.id == "ISSUE-001"
+
+    def test_resolve_issue(self):
+        from doeff_conductor.types import Issue, IssueStatus
+        from datetime import datetime, timezone
+
+        issue = Issue(
+            id="ISSUE-001",
+            title="Test Issue",
+            body="Body",
+            status=IssueStatus.OPEN,
+            labels=(),
+            created_at=datetime.now(timezone.utc),
+        )
+
+        effect = ResolveIssue(issue=issue, pr_url="https://github.com/org/repo/pull/1")
+        assert effect.issue == issue
+        assert effect.pr_url == "https://github.com/org/repo/pull/1"
+
+    def test_resolve_issue_with_result(self):
+        from doeff_conductor.types import Issue, IssueStatus
+        from datetime import datetime, timezone
+
+        issue = Issue(
+            id="ISSUE-002",
+            title="Bug Fix",
+            body="Fix the bug",
+            status=IssueStatus.OPEN,
+            labels=("bug",),
+            created_at=datetime.now(timezone.utc),
+        )
+
+        effect = ResolveIssue(issue=issue, result="Fixed by refactoring")
+        assert effect.result == "Fixed by refactoring"
 
 
 class TestAgentEffects:
@@ -124,7 +183,6 @@ class TestAgentEffects:
         assert effect.agent_type == "claude"  # default
 
     def test_spawn_agent_name(self):
-        """Test SpawnAgent with custom name."""
         from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
 
@@ -137,6 +195,102 @@ class TestAgentEffects:
 
         effect = SpawnAgent(env=env, prompt="Start task", name="worker-1")
         assert effect.name == "worker-1"
+
+    def test_send_message(self):
+        from doeff_conductor.types import AgentRef
+
+        agent_ref = AgentRef(
+            id="session-001",
+            name="agent-1",
+            workflow_id="wf-001",
+            env_id="env-001",
+            agent_type="claude",
+        )
+
+        effect = SendMessage(agent_ref=agent_ref, message="Continue")
+        assert effect.agent_ref == agent_ref
+        assert effect.message == "Continue"
+        assert effect.wait is False  # default is False
+
+    def test_send_message_no_wait(self):
+        from doeff_conductor.types import AgentRef
+
+        agent_ref = AgentRef(
+            id="session-001",
+            name="agent-1",
+            workflow_id="wf-001",
+            env_id="env-001",
+            agent_type="claude",
+        )
+
+        effect = SendMessage(agent_ref=agent_ref, message="Fire and forget", wait=False)
+        assert effect.wait is False
+
+    def test_wait_for_status(self):
+        from doeff_conductor.types import AgentRef
+        from doeff_agentic import AgenticSessionStatus
+
+        agent_ref = AgentRef(
+            id="session-001",
+            name="agent-1",
+            workflow_id="wf-001",
+            env_id="env-001",
+            agent_type="claude",
+        )
+
+        effect = WaitForStatus(
+            agent_ref=agent_ref,
+            target=AgenticSessionStatus.DONE,
+            timeout=60.0,
+        )
+        assert effect.agent_ref == agent_ref
+        assert effect.target == AgenticSessionStatus.DONE
+        assert effect.timeout == 60.0
+
+    def test_wait_for_status_defaults(self):
+        from doeff_conductor.types import AgentRef
+        from doeff_agentic import AgenticSessionStatus
+
+        agent_ref = AgentRef(
+            id="session-001",
+            name="agent-1",
+            workflow_id="wf-001",
+            env_id="env-001",
+            agent_type="claude",
+        )
+
+        effect = WaitForStatus(agent_ref=agent_ref, target=AgenticSessionStatus.DONE)
+        assert effect.timeout is None
+        assert effect.poll_interval == 1.0
+
+    def test_capture_output(self):
+        from doeff_conductor.types import AgentRef
+
+        agent_ref = AgentRef(
+            id="session-001",
+            name="agent-1",
+            workflow_id="wf-001",
+            env_id="env-001",
+            agent_type="claude",
+        )
+
+        effect = CaptureOutput(agent_ref=agent_ref, lines=50)
+        assert effect.agent_ref == agent_ref
+        assert effect.lines == 50
+
+    def test_capture_output_defaults(self):
+        from doeff_conductor.types import AgentRef
+
+        agent_ref = AgentRef(
+            id="session-001",
+            name="agent-1",
+            workflow_id="wf-001",
+            env_id="env-001",
+            agent_type="claude",
+        )
+
+        effect = CaptureOutput(agent_ref=agent_ref)
+        assert effect.lines == 500  # default is 500
 
 
 class TestGitEffects:
@@ -191,3 +345,40 @@ class TestGitEffects:
         assert effect.title == "Add feature"
         assert effect.target == "main"
         assert effect.draft is False
+
+    def test_merge_pr(self):
+        from doeff_conductor.types import PRHandle, MergeStrategy
+        from datetime import datetime, timezone
+
+        pr = PRHandle(
+            url="https://github.com/org/repo/pull/42",
+            number=42,
+            title="Feature PR",
+            branch="feature-branch",
+            target="main",
+            status="open",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        effect = MergePR(pr=pr)
+        assert effect.pr == pr
+        assert effect.strategy is None
+        assert effect.delete_branch is True  # default is True
+
+    def test_merge_pr_with_strategy(self):
+        from doeff_conductor.types import PRHandle, MergeStrategy
+        from datetime import datetime, timezone
+
+        pr = PRHandle(
+            url="https://github.com/org/repo/pull/43",
+            number=43,
+            title="Squash PR",
+            branch="squash-branch",
+            target="main",
+            status="open",
+            created_at=datetime.now(timezone.utc),
+        )
+
+        effect = MergePR(pr=pr, strategy=MergeStrategy.SQUASH, delete_branch=True)
+        assert effect.strategy == MergeStrategy.SQUASH
+        assert effect.delete_branch is True
