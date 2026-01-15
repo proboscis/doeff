@@ -115,19 +115,17 @@ def do(
     EFFECT-BASED ALTERNATIVES (for complex error handling):
         @do
         def my_program():
-            # Option 1: Recover with fallback value
-            value = yield Recover(some_effect(), fallback=default_value)
-
-            # Option 2: Catch and handle error
-            value = yield Catch(some_effect(), lambda e: default_value)
-
-            # Option 3: Retry on failure
-            value = yield Retry(some_effect(), max_attempts=3)
+            # Use Safe to capture errors as Result values
+            safe_result = yield Safe(some_effect())
+            if safe_result.is_ok():
+                value = safe_result.value
+            else:
+                value = default_value
 
             return value
 
-    Both approaches work. Use native try-except for simple cases and effect-based
-    handlers (Catch, Recover, Retry) for complex error handling with composition.
+    Both approaches work. Use native try-except for simple cases and the Safe effect
+    for capturing errors as Result values that can be inspected and handled.
 
     TYPE SIGNATURE CHANGE:
     @do changes: (args) -> EffectGenerator[T]

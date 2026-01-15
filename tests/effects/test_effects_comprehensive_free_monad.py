@@ -13,10 +13,8 @@ import pytest
 from doeff import (
     IO,
     Annotate,
-    # Capitalized aliases
     Ask,
     Await,
-    Catch,
     Dep,
     EffectGenerator,
     ExecutionContext,
@@ -30,13 +28,12 @@ from doeff import (
     Print,
     ProgramInterpreter,
     Put,
+    Safe,
     Step,
     Tell,
     annotate,
-    # Backwards compatibility
     ask,
     await_,
-    catch,
     do,
     get,
     io,
@@ -454,8 +451,8 @@ async def test_result_fail_effect():  # noqa: PINJ040
 
 
 @pytest.mark.asyncio
-async def test_result_catch_effect():  # noqa: PINJ040
-    """Test Catch effect for error handling."""
+async def test_result_safe_effect():  # noqa: PINJ040
+    """Test Safe effect for error handling."""
 
     @do
     def failing_program() -> EffectGenerator[str]:
@@ -468,25 +465,23 @@ async def test_result_catch_effect():  # noqa: PINJ040
         return "success"
 
     @do
-    def recovery_handler(error: Exception) -> EffectGenerator[str]:
-        yield Log(f"Caught error: {error}")
-        return f"recovered from {type(error).__name__}"
-
-    @do
     def main_program() -> EffectGenerator[tuple]:
-        # Test with Effects API
-        result1 = yield Catch(failing_program(), recovery_handler)
+        result1 = yield Safe(failing_program())
+        val1 = f"recovered from {type(result1.error).__name__}" if result1.is_err else result1.value
+        yield Log(f"Caught error: {result1.error}" if result1.is_err else "no error")
 
-        # Test with capitalized alias
-        result2 = yield Catch(failing_program(), recovery_handler)
+        result2 = yield Safe(failing_program())
+        val2 = f"recovered from {type(result2.error).__name__}" if result2.is_err else result2.value
+        yield Log(f"Caught error: {result2.error}" if result2.is_err else "no error")
 
-        # Test with lowercase (backwards compatibility)
-        result3 = yield catch(failing_program(), recovery_handler)
+        result3 = yield Safe(failing_program())
+        val3 = f"recovered from {type(result3.error).__name__}" if result3.is_err else result3.value
+        yield Log(f"Caught error: {result3.error}" if result3.is_err else "no error")
 
-        # Test successful case - should not trigger recovery
-        result4 = yield Catch(success_program(), recovery_handler)
+        result4 = yield Safe(success_program())
+        val4 = result4.value if result4.is_ok else f"recovered from {type(result4.error).__name__}"
 
-        return (result1, result2, result3, result4)
+        return (val1, val2, val3, val4)
 
     engine = ProgramInterpreter()
     context = ExecutionContext()
@@ -729,17 +724,12 @@ async def test_all_effects_integration():  # noqa: PINJ040
                 yield Fail(ValueError("Intentional"))
             return "ok"
 
-        def catch_handler(e):
-            @do
-            def handle() -> EffectGenerator[str]:
-                yield Log(f"Caught: {e}")
-                return "recovered"
-            return handle()
-
-        status = yield Catch(
-            maybe_fail(),
-            catch_handler,
-        )
+        safe_result = yield Safe(maybe_fail())
+        if safe_result.is_err():
+            yield Log(f"Caught: {safe_result.error}")
+            status = "recovered"
+        else:
+            status = safe_result.value
 
         # Graph annotation
         yield Annotate({"phase": "complete", "status": status})
