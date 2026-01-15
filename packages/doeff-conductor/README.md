@@ -172,6 +172,41 @@ Pre-built workflow templates:
 +---------------------------------------------------------------------+
 ```
 
+## Testing
+
+doeff-conductor includes comprehensive tests at multiple levels:
+
+### Test Categories
+
+| Test Type | Description | Requirements |
+|-----------|-------------|--------------|
+| Unit tests | Handler logic with mocks | None |
+| Integration tests | Workflow execution | git |
+| E2E tests (mock) | HTTP API interaction | None |
+| E2E tests (real) | Full agent pipeline | OpenCode server |
+
+### Running Tests
+
+```bash
+# Run all unit and mock-based tests
+uv run pytest packages/doeff-conductor/tests/
+
+# Run E2E tests (requires CONDUCTOR_E2E=1)
+CONDUCTOR_E2E=1 uv run pytest packages/doeff-conductor/tests/
+
+# Run only tests requiring OpenCode
+CONDUCTOR_E2E=1 uv run pytest -m requires_opencode
+```
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `CONDUCTOR_E2E` | Set to `1` to enable E2E tests |
+| `CONDUCTOR_OPENCODE_URL` | OpenCode server URL (auto-detected if not set) |
+
+See `tests/README.md` for detailed testing documentation.
+
 ## State Storage
 
 Workflow state is stored at `~/.local/state/doeff-conductor/`:
