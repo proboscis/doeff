@@ -9,7 +9,6 @@ For full documentation, see the original ISSUE-CORE-422.md specification.
 
 from doeff.cesk.types import Environment, Store
 from doeff.cesk.frames import (
-    CatchFrame,
     FinallyFrame,
     Frame,
     GatherFrame,
@@ -78,7 +77,6 @@ __all__ = [
     # Frames
     "Frame",
     "ReturnFrame",
-    "CatchFrame",
     "FinallyFrame",
     "LocalFrame",
     "InterceptFrame",

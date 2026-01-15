@@ -10,7 +10,6 @@ import pytest
 from doeff import (
     Ask,
     CaptureGraph,
-    Catch,
     EffectGenerator,
     ExecutionContext,
     Fail,
@@ -24,7 +23,6 @@ from doeff import (
     Program,
     ProgramInterpreter,
     Put,
-    Recover,
     Retry,
     Safe,
     do,
@@ -33,11 +31,9 @@ from doeff.effects.gather import GatherEffect
 from doeff.effects.graph import GraphCaptureEffect
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import (
-    ResultCatchEffect,
     ResultFailEffect,
     ResultFinallyEffect,
     ResultFirstSuccessEffect,
-    ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
 )
@@ -129,24 +125,7 @@ def _build_safe_program() -> Program:
     return _program()
 
 
-def _build_catch_program() -> Program:
-    @do
-    def risky() -> EffectGenerator[str]:
-        yield Log("before fail")
-        yield Fail(ValueError("boom"))
 
-    @do
-    def handler(exc: Exception) -> EffectGenerator[str]:
-        yield Log(f"handled {exc}")
-        return "ok"
-
-    @do
-    def _program() -> EffectGenerator[str]:
-        yield Catch(risky(), handler)  # type: ignore[name-defined]
-        yield Log("after catch")
-        return "done"
-
-    return _program()
 
 
 def _build_gather_program() -> Program:
@@ -178,19 +157,7 @@ def _build_capture_program() -> Program:
     return _program()
 
 
-def _build_recover_program() -> Program:
-    @do
-    def fallback() -> EffectGenerator[str]:
-        yield Log("fallback log")
-        return "fallback"
 
-    @do
-    def _program() -> EffectGenerator[str]:
-        yield Recover(Fail(ValueError("boom")), fallback())
-        yield Log("after recover")
-        return "done"
-
-    return _program()
 
 
 def _build_finally_program() -> Program:
@@ -314,12 +281,7 @@ INTERCEPT_CASES: tuple[InterceptCase, ...] = (
         build_context=lambda: None,
         expected=(ResultSafeEffect, WriterTellEffect, ResultFailEffect, WriterTellEffect),
     ),
-    InterceptCase(
-        name="catch_with_log",
-        build_program=_build_catch_program,
-        build_context=lambda: None,
-        expected=(ResultCatchEffect, WriterTellEffect, ResultFailEffect, WriterTellEffect, WriterTellEffect),
-    ),
+
     InterceptCase(
         name="gather_with_log_children",
         build_program=_build_gather_program,
@@ -332,12 +294,7 @@ INTERCEPT_CASES: tuple[InterceptCase, ...] = (
         build_context=lambda: None,
         expected=(GraphCaptureEffect, WriterTellEffect, WriterTellEffect),
     ),
-    InterceptCase(
-        name="recover_with_log",
-        build_program=_build_recover_program,
-        build_context=lambda: None,
-        expected=(ResultRecoverEffect, WriterTellEffect, WriterTellEffect),
-    ),
+
     InterceptCase(
         name="finally_with_log",
         build_program=_build_finally_program,

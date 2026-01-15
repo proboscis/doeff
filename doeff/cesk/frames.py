@@ -29,18 +29,6 @@ class ReturnFrame:
 
 
 @dataclass(frozen=True)
-class CatchFrame:
-    """Error boundary - catches exceptions and invokes handler.
-
-    On success: passes value through, restores saved_env
-    On error: runs handler(ex) with saved_env, result becomes the value
-    """
-
-    handler: Callable[[Exception], Program]
-    saved_env: Environment
-
-
-@dataclass(frozen=True)
 class FinallyFrame:
     """Cleanup on exit - runs cleanup program on both success and error.
 
@@ -121,7 +109,6 @@ class SafeFrame:
 
 Frame: TypeAlias = (
     ReturnFrame
-    | CatchFrame
     | FinallyFrame
     | LocalFrame
     | InterceptFrame
@@ -135,7 +122,6 @@ Kontinuation: TypeAlias = list[Frame]
 
 __all__ = [
     "ReturnFrame",
-    "CatchFrame",
     "FinallyFrame",
     "LocalFrame",
     "InterceptFrame",
