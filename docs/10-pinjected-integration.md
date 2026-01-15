@@ -140,7 +140,7 @@ result = await resolver.provide(iproxy)
 1. **Program Definition**: Programs use `Dep` effects to request dependencies
 2. **Conversion**: `program_to_injected` wraps the Program
 3. **Interception**: `Dep` effects are intercepted and mapped to `resolver.provide(key)`
-4. **Execution**: ProgramInterpreter runs with resolved dependencies
+4. **Execution**: Runtime runs with resolved dependencies
 5. **Result**: Returns unwrapped value or full RunResult
 
 ```python
