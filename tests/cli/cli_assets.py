@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from doeff import Program, ProgramInterpreter, do
+from doeff import Program, CESKInterpreter, do
 from doeff.effects import Ask
 
 sample_program: Program[int] = Program.pure(5)
@@ -17,7 +17,7 @@ def add_three(program: Program[int]) -> Program[int]:
 
 
 def sync_interpreter(program: Program[int]) -> int:
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = interpreter.run(program)
     return result.value
 
@@ -29,7 +29,7 @@ def ask_program() -> Program[int]:
 
 
 def runresult_interpreter(program: Program[int]):
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     return interpreter.run(program)
 
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from doeff import ExecutionContext, Program, ProgramInterpreter, do
+from doeff import ExecutionContext, Program, CESKInterpreter, do
 from doeff.effects import WriterTellEffect
 from doeff.types import Effect, EffectBase, EffectGenerator
 
@@ -60,7 +60,7 @@ async def test_intercept_with_effect_to_program_no_recursion():
         return None
 
     # Create interpreter and context
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     context = ExecutionContext()
 
     # Apply the interceptor to the program
@@ -118,7 +118,7 @@ async def test_intercept_with_nested_intercept_no_recursion():
         yield CustomEffect("nested")
         return None
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     context = ExecutionContext()
 
     # Apply nested interceptors
@@ -158,7 +158,7 @@ async def test_intercept_direct_effect_return():
         result = yield CustomEffect("direct")
         return f"Result: {result}"
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     context = ExecutionContext()
 
     # This should work without any issues

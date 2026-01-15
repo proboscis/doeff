@@ -2,7 +2,7 @@
 
 import asyncio
 
-from doeff import Get, Log, Program, ProgramInterpreter, Put, do
+from doeff import Get, Log, Program, CESKInterpreter, Put, do
 
 
 @do
@@ -15,7 +15,7 @@ def counter_program() -> Program[int]:
     return count + 1
 
 async def main():
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(counter_program())
 
     print(f"Result: {result.result}")

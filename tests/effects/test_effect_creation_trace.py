@@ -9,7 +9,7 @@ from doeff import (
     EffectGenerator,
     Fail,
     Log,
-    ProgramInterpreter,
+    CESKInterpreter,
     Put,
     do,
 )
@@ -37,7 +37,7 @@ async def test_fail_effect_with_creation_trace():
             yield Fail(ValueError("Test error"))
             return "never reached"
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(failing_program())
 
         # Should have failed
@@ -78,7 +78,7 @@ async def test_ask_effect_missing_key_with_trace():
             value = yield Ask("missing_key")
             return f"Got {value}"
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program_with_missing_key())
 
         # Should have failed
@@ -156,7 +156,7 @@ async def test_nested_program_creation_trace():
             value = yield middle_program()
             return f"Result: {value}"
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(outer_program())
 
         assert result.is_err
@@ -248,7 +248,7 @@ async def test_display_with_creation_trace():
             yield Fail(ValueError("Test error for display"))
             return "Should not reach here"
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(test_program())
 
         # Verify the result is an error
@@ -331,7 +331,7 @@ async def test_nested_effect_error_chain():
             result = yield Catch(failing_parse(), handle_parse_error)
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(process_with_catch())
 
         # Should have failed

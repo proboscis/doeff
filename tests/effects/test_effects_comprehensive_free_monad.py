@@ -28,7 +28,7 @@ from doeff import (
     Log,
     Modify,
     Print,
-    ProgramInterpreter,
+    CESKInterpreter,
     Put,
     Step,
     Tell,
@@ -73,7 +73,7 @@ async def test_reader_ask_effect():  # noqa: PINJ040
 
         return f"{api_key}|{db_url}|{config}|{secret}"
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(
         env={
             "api_key": "key123",
@@ -119,7 +119,7 @@ async def test_reader_local_effect():  # noqa: PINJ040
 
         return (original_mode, inner1, inner2, final_mode)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(env={"mode": "dev", "debug": True})
 
     result = await engine.run_async(outer_program(), context)
@@ -156,7 +156,7 @@ async def test_state_get_effect():  # noqa: PINJ040
 
         return (count1, count2, count3, missing)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(state={"counter": 42})
 
     result = await engine.run_async(program(), context)
@@ -186,7 +186,7 @@ async def test_state_put_effect():  # noqa: PINJ040
 
         return {"name": name, "age": age, "city": city}
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -216,7 +216,7 @@ async def test_state_modify_effect():  # noqa: PINJ040
 
         return (new_counter, new_names, final_counter)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -247,7 +247,7 @@ async def test_writer_tell_effect():  # noqa: PINJ040
         # Test with lowercase (backwards compatibility)
         yield tell("Finishing up")
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -262,14 +262,14 @@ async def test_writer_tell_effect():  # noqa: PINJ040
 
 @pytest.mark.asyncio
 async def test_writer_log_limit_trims_entries():
-    """ProgramInterpreter trims the writer log when a limit is set."""
+    """CESKInterpreter trims the writer log when a limit is set."""
 
     @do
     def program() -> EffectGenerator[None]:
         for index in range(5):
             yield Tell(f"event-{index}")
 
-    engine = ProgramInterpreter(max_log_entries=3)
+    engine = CESKInterpreter(max_log_entries=3)
     result = await engine.run_async(program(), ExecutionContext())
 
     assert result.is_ok
@@ -304,7 +304,7 @@ async def test_writer_listen_effect():  # noqa: PINJ040
 
         return (value1, len(log1), value2, len(log2), value3, len(log3))
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(main_program(), context)
@@ -329,7 +329,7 @@ async def test_writer_listen_respects_log_limit():
         assert result == 7
         return list(captured)
 
-    engine = ProgramInterpreter(max_log_entries=2)
+    engine = CESKInterpreter(max_log_entries=2)
     run_result = await engine.run_async(main(), ExecutionContext())
 
     assert run_result.is_ok
@@ -362,7 +362,7 @@ async def test_future_await_effect():  # noqa: PINJ040
 
         return (result1, result2, result3)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -402,7 +402,7 @@ async def test_future_parallel_effect():  # noqa: PINJ040
 
         return (results1, results2, results3)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -425,7 +425,7 @@ async def test_result_fail_effect():  # noqa: PINJ040
         yield Fail(ValueError("Effects API error"))
         return "should not reach"
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -488,7 +488,7 @@ async def test_result_catch_effect():  # noqa: PINJ040
 
         return (result1, result2, result3, result4)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(main_program(), context)
@@ -529,7 +529,7 @@ async def test_io_run_effect():  # noqa: PINJ040
 
         return (result1, result2, result3)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(io_allowed=True)
 
     result = await engine.run_async(program(), context)
@@ -553,7 +553,7 @@ async def test_io_print_effect(capsys):  # noqa: PINJ040
         # Test with lowercase (backwards compatibility)
         yield print_("Message from print_")
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(io_allowed=True)
 
     result = await engine.run_async(program(), context)
@@ -573,7 +573,7 @@ async def test_io_not_allowed():  # noqa: PINJ040
     def program() -> EffectGenerator[None]:
         yield Print("Should fail")
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(io_allowed=False)
 
     result = await engine.run_async(program(), context)
@@ -611,7 +611,7 @@ async def test_graph_step_effect():  # noqa: PINJ040
 
         return (result1, result2, result3, result4)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -660,7 +660,7 @@ async def test_graph_annotate_effect():  # noqa: PINJ040
         # Test with lowercase (backwards compatibility)
         yield annotate({"stage": "complete", "version": 3})
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program(), context)
@@ -762,7 +762,7 @@ async def test_all_effects_integration():  # noqa: PINJ040
             "sub_log_count": len(sub_log),
         }
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     # Test successful case
     context = ExecutionContext(

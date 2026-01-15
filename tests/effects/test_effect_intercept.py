@@ -36,7 +36,7 @@ from doeff.effects.result import (
 )
 from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-from doeff.interpreter import ProgramInterpreter
+from doeff.cesk_adapter import CESKInterpreter
 from doeff.program import GeneratorProgram, Program
 from doeff.types import Effect
 
@@ -64,7 +64,7 @@ def writer_program(message: str) -> Program[str]:
 async def writer_message(program: Program[Any]) -> str:
     """Run ``program`` and return the first writer log entry."""
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     run_result = await interpreter.run_async(program)
     assert run_result.is_ok
     assert run_result.context.log

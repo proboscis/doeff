@@ -210,6 +210,7 @@ def _run_program_from_path(
 
     context = RunContext(
         program_path=program_path,
+        program_instance=None,
         interpreter_path=interpreter if isinstance(interpreter, str) else None,
         env_paths=env_paths,
         apply_path=apply if isinstance(apply, str) else None,
@@ -224,15 +225,15 @@ def _run_program_from_path(
 
     run_result = execution.run_result
     if run_result is None:
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
 
-        temp_interpreter = ProgramInterpreter()
+        temp_interpreter = CESKInterpreter()
         temp_result = temp_interpreter.run(Program.pure(execution.final_value))
         run_result = temp_result
 
     return ProgramRunResult(
         value=execution.final_value,
-        run_result=run_result,
+        run_result=run_result,  # type: ignore[arg-type]
         interpreter_path=resolved_context.interpreter_path,
         env_sources=resolved_context.env_paths,
         applied_kleisli=resolved_context.apply_path,
@@ -252,8 +253,7 @@ def _run_program_instance(
     quiet: bool,
     load_default_env: bool,
 ) -> ProgramRunResult:
-    """Run a Program instance directly with environment and transform support."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk_adapter import CESKInterpreter
     from doeff.__main__ import SymbolResolver
     from doeff.effects import Local
 
@@ -293,23 +293,22 @@ def _resolve_interpreter(
     interpreter: InterpreterLike,
     resolver: Any,
 ) -> tuple[Any, str]:
-    """Resolve interpreter to an object and its description."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk_adapter import CESKInterpreter
 
     if interpreter is None:
-        return ProgramInterpreter(), "<default ProgramInterpreter>"
+        return CESKInterpreter(), "<default CESKInterpreter>"
 
     if isinstance(interpreter, str):
         return resolver.resolve(interpreter), interpreter
 
-    if isinstance(interpreter, ProgramInterpreter):
-        return interpreter, "<ProgramInterpreter instance>"
+    if isinstance(interpreter, CESKInterpreter):
+        return interpreter, "<CESKInterpreter instance>"
 
     if callable(interpreter):
         func_name = getattr(interpreter, "__name__", str(interpreter))
         return interpreter, f"<callable: {func_name}>"
 
-    raise TypeError(f"interpreter must be str, ProgramInterpreter, or callable, got {type(interpreter)}")
+    raise TypeError(f"interpreter must be str, CESKInterpreter, or callable, got {type(interpreter)}")
 
 
 def _apply_kleisli(
@@ -376,53 +375,47 @@ def _apply_envs(
     load_default_env: bool,
     quiet: bool,
 ) -> tuple[Program[Any], list[str]]:
-    """Apply environments to the program, including default env from ~/.doeff.py."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk_adapter import CESKInterpreter
     from doeff.__main__ import RunServices
     from doeff.effects import Local
 
     env_sources: list[str] = []
     merged_env: dict[str, Any] = {}
 
-    # Load default env from ~/.doeff.py first (same as CLI behavior)
     if load_default_env:
         default_env_path = _load_default_env(quiet)
         if default_env_path:
             services = RunServices()
             env_program = services.merger.merge_envs([default_env_path])
-            temp_interpreter = ProgramInterpreter()
+            temp_interpreter = CESKInterpreter()
             env_result = temp_interpreter.run(env_program)
             if env_result.is_err:
-                raise env_result.result.error
+                raise env_result.error
             merged_env.update(env_result.value)
             env_sources.append("~/.doeff.py:__default_env__")
 
-    # Then apply user-specified envs
     for env in envs:
         if isinstance(env, str):
-            # String path - use merger for proper loading
             services = RunServices()
             env_program = services.merger.merge_envs([env])
-            temp_interpreter = ProgramInterpreter()
+            temp_interpreter = CESKInterpreter()
             env_result = temp_interpreter.run(env_program)
             if env_result.is_err:
-                raise env_result.result.error
+                raise env_result.error
             merged_env.update(env_result.value)
             env_sources.append(env)
 
         elif isinstance(env, Program):
-            # Program[dict] - run it to get the dict
-            temp_interpreter = ProgramInterpreter()
+            temp_interpreter = CESKInterpreter()
             env_result = temp_interpreter.run(env)
             if env_result.is_err:
-                raise env_result.result.error
+                raise env_result.error
             if not isinstance(env_result.value, dict):
                 raise TypeError(f"Environment Program must yield dict, got {type(env_result.value)}")
             merged_env.update(env_result.value)
             env_sources.append("<Program[dict]>")
 
         elif isinstance(env, Mapping):
-            # Direct dict/mapping
             merged_env.update(env)
             env_sources.append("<dict>")
 
@@ -430,7 +423,6 @@ def _apply_envs(
             raise TypeError(f"env must be str, Program[dict], or dict, got {type(env)}")
 
     if merged_env:
-        # Wrap program with Local effect
         program = Local(merged_env, program)  # type: ignore[assignment]
 
     return program, env_sources
@@ -487,22 +479,21 @@ def _execute_program(
     program: Program[Any],
     interpreter_obj: Any,
 ) -> RunResult[Any]:
-    """Execute the program with the given interpreter."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk_adapter import CESKInterpreter
     from doeff.__main__ import _call_interpreter, _finalize_result
 
-    if isinstance(interpreter_obj, ProgramInterpreter):
-        return interpreter_obj.run(program)
+    if isinstance(interpreter_obj, CESKInterpreter):
+        return interpreter_obj.run(program)  # type: ignore[return-value]
 
     if callable(interpreter_obj):
         result = _call_interpreter(interpreter_obj, program)
         final_value, run_result = _finalize_result(result)
         if run_result is None:
-            temp_interpreter = ProgramInterpreter()
-            return temp_interpreter.run(Program.pure(final_value))
+            temp_interpreter = CESKInterpreter()
+            return temp_interpreter.run(Program.pure(final_value))  # type: ignore[return-value]
         return run_result
 
-    raise TypeError(f"interpreter must be callable or ProgramInterpreter, got {type(interpreter_obj)}")
+    raise TypeError(f"interpreter must be callable or CESKInterpreter, got {type(interpreter_obj)}")
 
 
 class _QuietRunCommand:

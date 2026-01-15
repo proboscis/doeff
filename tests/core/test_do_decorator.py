@@ -12,7 +12,7 @@ from doeff import (
     ExecutionContext,
     Gather,
     Program,
-    ProgramInterpreter,
+    CESKInterpreter,
     annotate,
     ask,
     await_,
@@ -167,7 +167,7 @@ def deep_chain_program(depth: int) -> Generator[Effect, Any, int]:
 @pytest.mark.asyncio
 async def test_simple():
     """Test simple program with @do."""
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(env={"multiplier": 3})
 
     # Note: simple_program(5) returns a Program, not a generator!
@@ -182,7 +182,7 @@ async def test_simple():
 @pytest.mark.asyncio
 async def test_complex():
     """Test complex program with all monad types."""
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(
         env={"config": {"version": "1.0"}, "risk_level": 0.3, "multiplier": 2}
     )
@@ -204,7 +204,7 @@ async def test_complex():
 @pytest.mark.asyncio
 async def test_deep_chain():
     """Test deep chains with @do decorator."""
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(env={"multiplier": 1})
 
     # Test with 10,000 iterations
@@ -261,7 +261,7 @@ async def test_composition():
 
         return b_result
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     program = composed_program(5)

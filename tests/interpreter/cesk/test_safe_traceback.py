@@ -1,5 +1,5 @@
 """
-Tests for Safe effect with traceback capture in CESK and ProgramInterpreter.
+Tests for Safe effect with traceback capture in CESK and CESKInterpreter.
 
 ISSUE-CORE-429: Safe effect should capture K stack trace before unwinding.
 """
@@ -190,20 +190,20 @@ class TestSafeCESK:
         assert isinstance(value, Ok)
 
 
-class TestSafeProgramInterpreter:
-    """Test Safe effect with ProgramInterpreter."""
+class TestSafeCESKInterpreter:
+    """Test Safe effect with CESKInterpreter."""
 
     @pytest.mark.asyncio
     async def test_safe_wraps_success_in_ok(self):
         """Safe wraps successful value in Ok."""
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
 
         @do
         def program():
             result = yield Safe(succeeds())
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program())
         assert result.is_ok
         value = result.value
@@ -213,14 +213,14 @@ class TestSafeProgramInterpreter:
     @pytest.mark.asyncio
     async def test_safe_wraps_error_in_err(self):
         """Safe wraps error in Err."""
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
 
         @do
         def program():
             result = yield Safe(fails_with_effect())
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program())
         assert result.is_ok
         value = result.value
@@ -230,7 +230,7 @@ class TestSafeProgramInterpreter:
     @pytest.mark.asyncio
     async def test_safe_captures_python_traceback(self):
         """Safe captures PythonTraceback on error."""
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
         from doeff.traceback import PythonTraceback
 
         @do
@@ -238,7 +238,7 @@ class TestSafeProgramInterpreter:
             result = yield Safe(fails_with_effect())
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program())
         assert result.is_ok
         value = result.value
@@ -250,14 +250,14 @@ class TestSafeProgramInterpreter:
     @pytest.mark.asyncio
     async def test_safe_python_traceback_format(self):
         """Safe PythonTraceback format works."""
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
 
         @do
         def program():
             result = yield Safe(fails_with_effect())
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program())
         value = result.value
         trace = value.captured_traceback.unwrap()
@@ -268,14 +268,14 @@ class TestSafeProgramInterpreter:
     @pytest.mark.asyncio
     async def test_safe_python_traceback_format_short(self):
         """Safe PythonTraceback short format works."""
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
 
         @do
         def program():
             result = yield Safe(fails_with_effect())
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program())
         value = result.value
         trace = value.captured_traceback.unwrap()
@@ -285,7 +285,7 @@ class TestSafeProgramInterpreter:
     @pytest.mark.asyncio
     async def test_safe_python_traceback_to_dict(self):
         """Safe PythonTraceback can be serialized."""
-        from doeff.interpreter import ProgramInterpreter
+        from doeff.cesk_adapter import CESKInterpreter
         import json
 
         @do
@@ -293,7 +293,7 @@ class TestSafeProgramInterpreter:
             result = yield Safe(fails_with_effect())
             return result
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         result = await engine.run_async(program())
         value = result.value
         trace = value.captured_traceback.unwrap()

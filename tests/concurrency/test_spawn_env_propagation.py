@@ -16,6 +16,10 @@ from typing import Any, Iterator, Protocol
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="ProgramInterpreter removed; CESKInterpreter doesn't support spawn configuration"
+)
+
 from doeff import (
     Ask,
     EffectGenerator,

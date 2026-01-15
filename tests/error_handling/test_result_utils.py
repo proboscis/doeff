@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import EffectGenerator, Err, Ok, ProgramInterpreter, Result, do
+from doeff import EffectGenerator, Err, Ok, CESKInterpreter, Result, do
 from doeff.program import Program
 
 
@@ -139,7 +139,7 @@ class TestResultRecoverK:
         program = result.recover_k(recovery)
         assert isinstance(program, Program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.is_ok
         assert run_result.value == 42
@@ -157,7 +157,7 @@ class TestResultRecoverK:
         program = result.recover_k(recovery)
         assert isinstance(program, Program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.is_ok
         assert run_result.value == 5  # len("error")
@@ -175,7 +175,7 @@ class TestResultRecoverK:
             yield  # type: ignore[misc]
 
         program = result.recover_k(recovery)
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         await engine.run_async(program)
         assert received_errors == [original_error]
 
@@ -193,7 +193,7 @@ class TestResultOrProgram:
         program = result.or_program(fallback())
         assert isinstance(program, Program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.is_ok
         assert run_result.value == 42
@@ -210,7 +210,7 @@ class TestResultOrProgram:
         program = result.or_program(fallback())
         assert isinstance(program, Program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.is_ok
         assert run_result.value == 99
@@ -230,7 +230,7 @@ class TestResultOrProgram:
         fallback_program = fallback()
         program = result.or_program(fallback_program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.value == 42
         assert executed == []  # fallback program was not executed
@@ -284,7 +284,7 @@ class TestResultAndThenK:
         program = result.and_then_k(process)
         assert isinstance(program, Program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.is_ok
         assert run_result.value == "42"
@@ -304,7 +304,7 @@ class TestResultAndThenK:
         program = result.and_then_k(process)
         assert isinstance(program, Program)
 
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         run_result = await engine.run_async(program)
         assert run_result.is_err
         assert called == []  # process was NOT called
@@ -321,6 +321,6 @@ class TestResultAndThenK:
             yield  # type: ignore[misc]
 
         program = result.and_then_k(process)
-        engine = ProgramInterpreter()
+        engine = CESKInterpreter()
         await engine.run_async(program)
         assert received_values == [42]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Ask, Local, ProgramInterpreter, do
+from doeff import Ask, Local, CESKInterpreter, do
 from doeff.effects import Await
 from doeff.types import EffectGenerator
 
@@ -16,10 +16,10 @@ async def test_interpreter_ask_returns_engine_and_resolves_nested_ask() -> None:
         return (yield Local({"foo": "bar"}, Ask("foo")))
 
     @do
-    def outer() -> EffectGenerator[ProgramInterpreter]:
+    def outer() -> EffectGenerator[CESKInterpreter]:
         return (yield Ask("__interpreter__"))
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(outer())
 
     assert result.is_ok
@@ -36,12 +36,12 @@ async def test_cli_discovered_env_available_via_interpreter_ask() -> None:
     """Default env merged via Local should be visible to programs run by the interpreter obtained from Ask."""
 
     @do
-    def read_env_and_interpreter() -> EffectGenerator[tuple[ProgramInterpreter, dict[str, str]]]:
+    def read_env_and_interpreter() -> EffectGenerator[tuple[CESKInterpreter, dict[str, str]]]:
         engine = yield Ask("__interpreter__")
         value = yield Local({"foo": "from-default-env"}, Ask("foo"))
         return engine, {"value": value}
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(read_env_and_interpreter())
 
     assert result.is_ok
@@ -65,7 +65,7 @@ async def test_interpreter_handle_reuses_current_env_in_nested_run() -> None:
         assert result.is_ok
         return result.value
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     program = Local({"foo": "bar"}, outer())
     result = await interpreter.run_async(program)
 

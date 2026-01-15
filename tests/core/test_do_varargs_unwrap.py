@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Any
 
-from doeff import Effect, ExecutionContext, Program, ProgramInterpreter, do
+from doeff import Effect, ExecutionContext, Program, CESKInterpreter, do
 from doeff.effects import Ask
 from doeff.effects.reader import AskEffect
 from doeff.program import ProgramBase
@@ -39,7 +39,7 @@ def sum_typed_program_varargs(
 
 
 def test_do_varargs_program_annotation_preserves_program_instances():
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     program = collect_program_varargs(Program.pure(1), Program.pure(2))
     result = interpreter.run(program)
@@ -49,7 +49,7 @@ def test_do_varargs_program_annotation_preserves_program_instances():
 
 
 def test_do_varargs_typed_program_annotation_preserves_program_instances():
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     program = sum_typed_program_varargs(Program.pure(3), Program.pure(7))
     result = interpreter.run(program)
@@ -92,7 +92,7 @@ def collect_effect_varargs(*effects: Effect) -> Generator[Effect | Program, Any,
 
 def test_do_effect_annotation_preserves_effect_instance():
     """Single Effect-annotated parameter should not be auto-unwrapped."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     ask_effect = Ask("key")
     program = execute_effect(ask_effect)
@@ -105,7 +105,7 @@ def test_do_effect_annotation_preserves_effect_instance():
 
 def test_do_effect_base_annotation_preserves_effect_instance():
     """Single EffectBase-annotated parameter should not be auto-unwrapped."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     ask_effect = Ask("key")
     program = execute_effect_base(ask_effect)
@@ -118,7 +118,7 @@ def test_do_effect_base_annotation_preserves_effect_instance():
 
 def test_do_varargs_effect_annotation_preserves_effect_instances():
     """Varargs annotated as Effect should arrive as Effect instances."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     program = collect_effect_varargs(Ask("a"), Ask("b"), Ask("c"))
     ctx = ExecutionContext(env={"a": 1, "b": 2, "c": 3})
@@ -143,7 +143,7 @@ def execute_ask_effect(e: AskEffect) -> Generator[Effect | Program, Any, Any]:
 
 def test_do_effect_subclass_annotation_preserves_effect_instance():
     """Param annotated with EffectBase subclass should not be auto-unwrapped."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     ask_effect = Ask("key")
     program = execute_ask_effect(ask_effect)

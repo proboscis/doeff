@@ -13,7 +13,7 @@ from doeff import (
     Get,
     Log,
     Modify,
-    ProgramInterpreter,
+    CESKInterpreter,
     Put,
     Step,
     do,
@@ -112,7 +112,7 @@ def program_with_mixed_yields() -> Generator[Effect, Any, list]:
 @pytest.mark.asyncio
 async def test_basic_program_yield():
     """Test basic yielding of Programs."""
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(main_program(5), context)
@@ -138,7 +138,7 @@ async def test_basic_program_yield():
 @pytest.mark.asyncio
 async def test_deeply_nested_yields():
     """Test deeply nested Program yields."""
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(deeply_nested(5, 0), context)
@@ -156,7 +156,7 @@ async def test_deeply_nested_yields():
 @pytest.mark.asyncio
 async def test_mixed_yields():
     """Test mixing Effect and Program yields."""
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(program_with_mixed_yields(), context)
@@ -203,7 +203,7 @@ async def test_program_yield_with_error():
             yield Log(f"Caught error: {e}")
             return "Handled error"
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     # Test that error propagates through yielded Program
@@ -257,7 +257,7 @@ async def test_state_threading_through_programs():
         results.append(final)
         return results
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     result = await engine.run_async(main_counter(), context)

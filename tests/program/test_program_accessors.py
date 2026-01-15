@@ -7,15 +7,15 @@ from types import SimpleNamespace
 import pytest
 
 from doeff import Program
-from doeff.interpreter import ProgramInterpreter
+from doeff.cesk_adapter import CESKInterpreter
 
 
 @pytest.fixture
-def interpreter() -> ProgramInterpreter:
-    return ProgramInterpreter()
+def interpreter() -> CESKInterpreter:
+    return CESKInterpreter()
 
 
-def test_program_getitem(interpreter: ProgramInterpreter) -> None:
+def test_program_getitem(interpreter: CESKInterpreter) -> None:
     program = Program.pure({"mask": 42})["mask"]
 
     result = interpreter.run(program)
@@ -23,7 +23,7 @@ def test_program_getitem(interpreter: ProgramInterpreter) -> None:
     assert result.value == 42
 
 
-def test_program_getattr(interpreter: ProgramInterpreter) -> None:
+def test_program_getattr(interpreter: CESKInterpreter) -> None:
     namespace = SimpleNamespace(score=3.14)
     program = Program.pure(namespace).score
 
@@ -32,7 +32,7 @@ def test_program_getattr(interpreter: ProgramInterpreter) -> None:
     assert result.value == pytest.approx(3.14)
 
 
-def test_program_getattr_missing(interpreter: ProgramInterpreter) -> None:
+def test_program_getattr_missing(interpreter: CESKInterpreter) -> None:
     from doeff._types_internal import EffectFailureError
 
     program = Program.pure(object()).missing
@@ -47,7 +47,7 @@ def test_program_getattr_missing(interpreter: ProgramInterpreter) -> None:
     assert isinstance(error, AttributeError)
 
 
-def test_program_chained_access(interpreter: ProgramInterpreter) -> None:
+def test_program_chained_access(interpreter: CESKInterpreter) -> None:
     namespace = SimpleNamespace(scores=[1, 2, 3])
     program = Program.pure({"node": namespace})["node"].scores[2]
 
@@ -56,7 +56,7 @@ def test_program_chained_access(interpreter: ProgramInterpreter) -> None:
     assert result.value == 3
 
 
-def test_program_call_with_args(interpreter: ProgramInterpreter) -> None:
+def test_program_call_with_args(interpreter: CESKInterpreter) -> None:
     program = Program.pure(lambda x, y: x + y)
 
     result = interpreter.run(program(1, Program.pure(2)))
@@ -64,7 +64,7 @@ def test_program_call_with_args(interpreter: ProgramInterpreter) -> None:
     assert result.value == 3
 
 
-def test_program_call_flattens_nested_program(interpreter: ProgramInterpreter) -> None:
+def test_program_call_flattens_nested_program(interpreter: CESKInterpreter) -> None:
     program = Program.pure(lambda x: Program.pure(x * 2))
 
     result = interpreter.run(program(Program.pure(3)))
@@ -72,7 +72,7 @@ def test_program_call_flattens_nested_program(interpreter: ProgramInterpreter) -
     assert result.value == 6
 
 
-def test_program_call_non_callable(interpreter: ProgramInterpreter) -> None:
+def test_program_call_non_callable(interpreter: CESKInterpreter) -> None:
     from doeff._types_internal import EffectFailureError
 
     program = Program.pure(42)

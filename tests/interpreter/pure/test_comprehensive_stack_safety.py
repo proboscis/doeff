@@ -10,7 +10,7 @@ from doeff import (
     Effect,
     ExecutionContext,
     Program,
-    ProgramInterpreter,
+    CESKInterpreter,
     annotate,
     ask,
     await_,
@@ -127,7 +127,7 @@ async def test_deep_mixed_monad_chain():  # noqa: PLR0915
         return 42
 
     # Setup and run
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(env={"multiplier": 2}, io_allowed=True)
 
     program = GeneratorProgram(deep_mixed_program)
@@ -188,7 +188,7 @@ async def test_nested_monad_operations():
 
         return result + 1
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     # Test with depth 100 (should work fine)
@@ -239,7 +239,7 @@ async def test_parallel_async_operations():
 
         return results
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext()
 
     program = GeneratorProgram(parallel_program)
@@ -306,7 +306,7 @@ async def test_monad_composition_patterns():
         return results
 
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(env={"config": {"key": "value"}})
 
     program = GeneratorProgram(composition_program)

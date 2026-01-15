@@ -17,7 +17,7 @@ from doeff import (
     KleisliProgram,
     Log,
     Program,
-    ProgramInterpreter,
+    CESKInterpreter,
     # Effects
     Put,
     do,
@@ -44,7 +44,7 @@ async def test_kleisli_basic():
     assert isinstance(prog, (Program, KleisliProgramCall))
 
     # Run it
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog)
 
     assert result.is_ok
@@ -67,7 +67,7 @@ async def test_kleisli_unwrap_program_args():
     # Call with Program arguments - should unwrap automatically
     prog = add(prog_x, prog_y)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog)
 
     assert result.is_ok
@@ -92,7 +92,7 @@ async def test_kleisli_mixed_args():
     # Mix Program and regular arguments
     prog = multiply(prog_x, 3, prog_z)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog)
 
     assert result.is_ok
@@ -117,7 +117,7 @@ async def test_kleisli_kwargs():
     # Use kwargs with mixed Program and regular values
     prog = greet(name=prog_name, age=prog_age, city="Tokyo")
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog)
 
     assert result.is_ok
@@ -136,7 +136,7 @@ async def test_kleisli_respects_program_annotation():
         return result
 
     program_arg = Program.pure(42)
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(echo(program_arg))
 
     assert result.is_ok
@@ -171,7 +171,7 @@ async def test_kleisli_with_effects():
     # Pass them to compute - should unwrap automatically
     prog = compute(prog_x, prog_y)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     context = ExecutionContext(state={"input_x": 5, "input_y": 7})
     result = await engine.run_async(prog, context)
 
@@ -206,7 +206,7 @@ async def test_kleisli_composition():
     prog_added = add_ten(prog_doubled)  # Unwraps prog_doubled automatically
     prog_final = stringify(prog_added)  # Unwraps prog_added automatically
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog_final)
 
     assert result.is_ok
@@ -242,7 +242,7 @@ async def test_kleisli_async():
     # Process with Program arguments
     prog_result = process_data(prog_data, prog_prefix)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog_result)
 
     assert result.is_ok
@@ -266,7 +266,7 @@ async def test_kleisli_no_args():
     prog = get_constant()
     assert isinstance(prog, (Program, KleisliProgramCall))
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog)
 
     assert result.is_ok
@@ -291,7 +291,7 @@ async def test_kleisli_error_propagation():
     prog_fail = failing_prog()
     prog_result = use_value(prog_fail)  # Should propagate the error
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog_result)
 
     assert result.is_err
@@ -324,7 +324,7 @@ async def test_kleisli_all_program_args():
     # All args are Programs
     prog = concat_three(prog_a, prog_b, prog_c)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(prog)
 
     assert result.is_ok
@@ -342,7 +342,7 @@ async def test_kleisli_partial_application():
     part = add.partial(Program.pure(2))
     assert isinstance(part, PartiallyAppliedKleisliProgram)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     prog = part(Program.pure(5))
     result = await engine.run_async(prog)
@@ -366,7 +366,7 @@ async def test_kleisli_partial_with_kwargs():
         return (x + y) * scale
 
     part = scaled_sum.partial(Program.pure(4))
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     prog = part(Program.pure(6), scale=Program.pure(3))
     result = await engine.run_async(prog)
@@ -390,7 +390,7 @@ async def test_kleisli_partial_chain_kwargs():
     part2 = part1.partial(b=Program.pure(2))
     part3 = part2.partial(c=Program.pure(3))
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(part3())
 
     assert result.is_ok
@@ -428,7 +428,7 @@ async def test_kleisli_and_then_operator():
     chained = load_number.and_then_k(binder)
     chained_alias = load_number >> binder
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     result1 = await engine.run_async(chained(Program.pure(5)))
     result2 = await engine.run_async(chained_alias(Program.pure(5)))
@@ -449,7 +449,7 @@ async def test_kleisli_fmap():
         return value
 
     mapped = load_number.fmap(lambda n: n * 4)
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     result = await engine.run_async(mapped(Program.pure(6)))
 

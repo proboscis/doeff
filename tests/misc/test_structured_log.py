@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from doeff import Effect, ProgramInterpreter, StructuredLog, do, slog
+from doeff import Effect, CESKInterpreter, StructuredLog, do, slog
 
 
 @pytest.mark.asyncio
@@ -18,7 +18,7 @@ async def test_slog_emits_dict_entries() -> None:
         yield StructuredLog(event="progress", attempt=2)
         return None
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(program())
 
     assert result.is_ok
@@ -40,7 +40,7 @@ async def test_slog_defensive_copy() -> None:
         yield StructuredLog(**payload)
         return payload
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(program())
 
     assert result.is_ok

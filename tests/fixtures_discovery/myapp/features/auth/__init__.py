@@ -1,6 +1,6 @@
 """Auth feature module."""
 
-from doeff import Program, ProgramInterpreter
+from doeff import Program, CESKInterpreter
 
 
 def auth_interpreter(prog: Program[any]) -> any:
@@ -8,7 +8,7 @@ def auth_interpreter(prog: Program[any]) -> any:
     Custom auth interpreter (closer than base).
     # doeff: interpreter, default
     """
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     # Could add auth-specific handling here
     return engine.run(prog).value
 

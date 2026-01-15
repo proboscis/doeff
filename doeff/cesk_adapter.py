@@ -21,11 +21,42 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from doeff._vendor import Err, FrozenDict, Ok, Result
 from doeff.cesk import Environment, Store
+from doeff._types_internal import ExecutionContext
 
 if TYPE_CHECKING:
     from doeff.program import Program
 
 T = TypeVar("T")
+
+
+@dataclass
+class _CompatibilityContext:
+    """Minimal ExecutionContext-like object for RunResult compatibility."""
+    
+    env: dict[Any, Any]
+    state: dict[str, Any]
+    log: list[Any]
+    
+    @property
+    def graph(self) -> Any:
+        from doeff._vendor import WGraph, WNode, WStep
+        return WGraph(last=WStep(inputs=(), output=WNode("_root"), meta={}), steps=frozenset())
+    
+    @property
+    def io_allowed(self) -> bool:
+        return True
+    
+    @property
+    def cache(self) -> dict[str, Any]:
+        return {}
+    
+    @property
+    def effect_observations(self) -> list[Any]:
+        return []
+    
+    @property
+    def program_call_stack(self) -> list[Any]:
+        return []
 
 
 @dataclass
@@ -39,6 +70,7 @@ class CESKRunResult(Generic[T]):
     - .log
     - .state
     - .result
+    - .context (compatibility with RunResult)
     """
 
     _result: Result[T]
@@ -47,47 +79,66 @@ class CESKRunResult(Generic[T]):
 
     @property
     def result(self) -> Result[T]:
-        """The underlying Ok/Err result."""
         return self._result
 
     @property
     def is_ok(self) -> bool:
-        """Check if the result is successful."""
         return isinstance(self._result, Ok)
 
     @property
     def is_err(self) -> bool:
-        """Check if the result is an error."""
         return isinstance(self._result, Err)
 
     @property
     def value(self) -> T:
-        """Get the successful value or raise an exception."""
-        if isinstance(self._result, Ok):
-            return self._result.value
-        raise self._result.error
+        return self._result.unwrap()
 
     @property
     def log(self) -> list[Any]:
-        """Get the accumulated log (from __log__ in store)."""
         return self._final_store.get("__log__", [])
 
     @property
     def state(self) -> dict[str, Any]:
-        """Get the final state (store excluding reserved keys)."""
         return {k: v for k, v in self._final_store.items() if not k.startswith("__")}
 
     @property
     def env(self) -> dict[Any, Any]:
-        """Get the final environment."""
         return dict(self._final_env)
 
     @property
     def error(self) -> Exception:
-        """Get the error if result is Err, otherwise raise."""
-        if isinstance(self._result, Err):
-            return self._result.error
+        err = self._result.err()
+        if err is not None:
+            return err
         raise ValueError("Cannot access error on successful result")
+    
+    @property
+    def context(self) -> _CompatibilityContext:
+        return _CompatibilityContext(
+            env=self.env,
+            state=self.state,
+            log=self.log,
+        )
+    
+    @property
+    def formatted_error(self) -> str:
+        if self.is_err:
+            return str(self.error)
+        return ""
+    
+    @property
+    def graph(self) -> Any:
+        from doeff._vendor import WGraph, WNode, WStep
+        return WGraph(last=WStep(inputs=(), output=WNode("_root"), meta={}), steps=frozenset())
+    
+    def display(self, verbose: bool = False) -> str:
+        if self.is_ok:
+            return f"Ok({self.value!r})"
+        parts = [f"Err({self.error!r})"]
+        if verbose:
+            parts.append(f"\nState: {self.state}")
+            parts.append(f"\nLog: {self.log}")
+        return "".join(parts)
 
 
 class CESKInterpreter:
@@ -108,13 +159,21 @@ class CESKInterpreter:
     async def run_async(
         self,
         program: "Program",
-        env: dict[Any, Any] | None = None,
+        env: dict[Any, Any] | ExecutionContext | None = None,
         state: dict[str, Any] | None = None,
     ) -> CESKRunResult[T]:
         from doeff.runtimes import AsyncioRuntime
         
-        final_env = {**self._initial_env, **(env or {})}
-        final_state = {**self._initial_state, **(state or {})}
+        # Handle ExecutionContext for backward compatibility
+        if isinstance(env, ExecutionContext):
+            actual_env = env.env
+            actual_state = env.state
+        else:
+            actual_env = env or {}
+            actual_state = state or {}
+        
+        final_env = {**self._initial_env, **actual_env}
+        final_state = {**self._initial_state, **actual_state}
 
         if isinstance(final_env, FrozenDict):
             E = final_env
@@ -133,7 +192,7 @@ class CESKInterpreter:
     def run(
         self,
         program: "Program",
-        env: dict[Any, Any] | None = None,
+        env: dict[Any, Any] | ExecutionContext | None = None,
         state: dict[str, Any] | None = None,
     ) -> CESKRunResult[T]:
         return asyncio.run(self.run_async(program, env, state))
