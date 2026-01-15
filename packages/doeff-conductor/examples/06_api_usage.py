@@ -30,7 +30,6 @@ from doeff_conductor import (
     WorkflowStatus,
     # Templates
     get_available_templates,
-    get_template_source,
 )
 
 
@@ -46,14 +45,10 @@ def demo_list_templates():
         print(f"    {description}")
         print()
     
-    # Show source of a template
-    print("Source of 'basic_pr' template:")
-    print("-" * 40)
-    source = get_template_source("basic_pr")
-    # Print first 30 lines
-    for i, line in enumerate(source.split("\n")[:30]):
-        print(f"  {line}")
-    print("  ...")
+    print("To use a template:")
+    print("  from doeff_conductor import basic_pr, Issue")
+    print("  program = basic_pr(issue)")
+    print("  result = runtime.run(program)")
 
 
 def demo_api_workflow_management():
