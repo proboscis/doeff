@@ -19,8 +19,8 @@ def calculate_order_total(items):
 # Service layer - orchestration
 @do
 def order_service(order_id):
-    db = yield Dep("database")
-    cache = yield Dep("cache")
+    db = yield Ask("database")
+    cache = yield Ask("cache")
     
     # Fetch order
     order = yield db.get_order(order_id)
@@ -54,7 +54,7 @@ Centralize data access:
 ```python
 @do
 def create_repository(table_name):
-    db = yield Dep("database")
+    db = yield Ask("database")
     
     @do
     def find_by_id(id):
@@ -103,10 +103,10 @@ Centralized dependency access:
 @do
 def create_services():
     return {
-        "database": yield Dep("database"),
-        "cache": yield Dep("cache"),
-        "logger": yield Dep("logger"),
-        "config": yield Dep("config")
+        "database": yield Ask("database"),
+        "cache": yield Ask("cache"),
+        "logger": yield Ask("logger"),
+        "config": yield Ask("config")
     }
 
 @do
@@ -125,7 +125,7 @@ Transactional boundary:
 ```python
 @do
 def unit_of_work(operations):
-    db = yield Dep("database")
+    db = yield Ask("database")
     
     # Start transaction
     yield db.begin_transaction()
@@ -142,7 +142,7 @@ def unit_of_work(operations):
         # Rollback on error
         yield db.rollback()
         yield Log(f"Transaction rolled back: {e}")
-        yield Fail(e)
+        raise e
 
 # Usage
 @do
@@ -210,7 +210,7 @@ def retry_with_exponential_backoff(operation, max_attempts=5):
             yield Log(f"Retry {attempt} failed, waiting {delay}s")
             yield Await(asyncio.sleep(delay))
         else:
-            yield Fail(safe_result.error)
+            raise safe_result.error
 
 # Usage
 @do
@@ -222,35 +222,26 @@ def fetch_with_retry():
 
 ### Resource Management
 
-Ensure cleanup with Finally:
+Ensure cleanup with try/finally:
 
 ```python
 @do
 def with_resource(acquire, release, operation):
     resource = yield acquire()
     
-    @do
-    def operation_with_resource():
-        return yield operation(resource)
-    
-    @do
-    def cleanup():
+    try:
+        result = yield operation(resource)
+        return result
+    finally:
         yield release(resource)
         yield Log("Resource released")
-    
-    result = yield Finally(
-        operation_with_resource(),
-        cleanup()
-    )
-    
-    return result
 
 # Usage
 @do
 def use_database_connection():
     @do
     def acquire():
-        db = yield Dep("database")
+        db = yield Ask("database")
         conn = yield db.get_connection()
         yield Log("Connection acquired")
         return conn
@@ -281,7 +272,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
     if failures >= threshold:
         if last_failure_time and (now - last_failure_time) < timeout:
             yield Log("Circuit breaker OPEN")
-            yield Fail(Exception("Circuit breaker is open"))
+            raise Exception("Circuit breaker is open")
         else:
             # Reset after timeout
             yield AtomicUpdate("circuit_failures", lambda _: 0)
@@ -298,7 +289,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
         # Failure - update circuit breaker state
         yield AtomicUpdate("circuit_failures", lambda x: x + 1)
         yield Put("circuit_last_failure", now)
-        yield Fail(safe_result.error)
+        raise safe_result.error
 ```
 
 ## State Management Patterns
@@ -328,7 +319,7 @@ def order_state_machine(order_id):
         yield Log(f"Order {order_id}: shipped -> completed")
     
     else:
-        yield Fail(ValueError(f"Invalid state: {state}"))
+        raise ValueError(f"Invalid state: {state}")
     
     return yield Get(f"order_{order_id}_state")
 ```
@@ -372,10 +363,10 @@ def with_state_snapshot(operation):
     safe_result = yield Safe(operation())
     
     if safe_result.is_err():
-        # Restore state and fail
+        # Restore state and raise
         yield Put("_state", snapshot)
         yield Log("State restored from snapshot")
-        yield Fail(safe_result.error)
+        raise safe_result.error
     
     return safe_result.value
 ```
@@ -431,38 +422,6 @@ def batch_processor(items, batch_size=100):
     return results
 ```
 
-### Memoization
-
-Cache within execution:
-
-```python
-@do
-def expensive_computation(key):
-    # Try memo
-    safe_result = yield Safe(MemoGet(key))
-    if safe_result.is_ok():
-        return safe_result.value
-    else:
-        return (yield compute_and_memo(key))
-
-@do
-def compute_and_memo(key):
-    yield Log(f"Computing for key: {key}")
-    value = yield expensive_work(key)
-    yield MemoPut(key, value)
-    return value
-
-# Usage in loop
-@do
-def process_items(items):
-    results = []
-    for item in items:
-        # Deduplicates expensive computations
-        result = yield expensive_computation(item.key)
-        results.append(result)
-    return results
-```
-
 ## Testing Patterns
 
 ### Dependency Injection for Tests
@@ -471,8 +430,8 @@ def process_items(items):
 # Production code
 @do
 def user_workflow(user_id):
-    db = yield Dep("database")
-    email = yield Dep("email_service")
+    db = yield Ask("database")
+    email = yield Ask("email_service")
     
     user = yield db.get_user(user_id)
     yield email.send(user.email, "Welcome!")
@@ -649,7 +608,7 @@ def good_error_handling():
         yield Log(f"Error occurred: {result.error}")
         yield Annotate({"error": str(result.error)})
         # Return default value or re-raise
-        yield Fail(result.error)
+        raise result.error
     
     return result.value
 ```
@@ -702,7 +661,6 @@ def flat_structure():
 | **Circuit Breaker** | Prevent cascading failures |
 | **Retry with Backoff** | Handle transient failures |
 | **Parallel Fetching** | Performance optimization |
-| **Memoization** | Within-execution caching |
 
 ### Best Practices
 
@@ -710,7 +668,7 @@ def flat_structure():
 2. **Keep Programs pure**: Inject dependencies, don't create them
 3. **Handle errors explicitly**: Don't silently swallow errors
 4. **Prefer composition**: Small, focused Programs over large ones
-5. **Test with mocks**: Use Dep for testable dependency injection
+5. **Test with mocks**: Use Ask for testable dependency injection
 
 ## Next Steps
 

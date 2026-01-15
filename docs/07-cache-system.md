@@ -99,4 +99,4 @@ def smart_cache(key, fresh=False):
 
 - **[cache.md](cache.md)** - Complete cache system documentation
 - **[Patterns](12-patterns.md)** - Cache patterns and best practices
-- **[Advanced Effects](09-advanced-effects.md)** - Memo effects for in-memory caching
+- **[Advanced Effects](09-advanced-effects.md)** - Gather and Atomic effects

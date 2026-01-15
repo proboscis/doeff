@@ -72,7 +72,7 @@ class ExecutionContext:
 - **`state`** - Mutable state (Get/Put/Modify effects)
 - **`log`** - Log entries (Log/Tell effects)
 - **`graph`** - Execution graph (Step/Annotate effects)
-- **`memo`** - Within-execution cache (MemoGet/MemoPut)
+- **`memo`** - Within-execution cache (for internal use)
 - **`cache_handler`** - Persistent cache handler (CacheGet/CachePut)
 - **`atomic_state`** - Thread-safe state (AtomicGet/AtomicUpdate)
 - **`atomic_lock`** - Lock for atomic operations
@@ -392,52 +392,6 @@ results = yield Parallel(
 
 ## Error Handling Effects
 
-### Fail(error)
-
-Raise error in Program.
-
-```python
-yield Fail(ValueError("Invalid input"))
-```
-
-**Parameters:** `error: Exception` - Error to raise
-
-**Returns:** Never returns (raises error)
-
-**See:** [Error Handling](05-error-handling.md#fail)
-
----
-
-### Retry(program, max_attempts, delay_ms=0, delay_strategy=None)
-
-Retry failed program.
-
-```python
-result = yield Retry(
-    unstable_operation(),
-    max_attempts=5,
-    delay_ms=100
-)
-```
-
-**Parameters:**
-
-- **`program: Program[T]`** - Program to retry
-- **`max_attempts: int`** - Maximum retry attempts (default: 3)
-- **`delay_ms: int`** - Fixed delay between retries in milliseconds (default: 0)
-- **`delay_strategy: Callable[[int, Exception | None], float | int | None]`** -
-  Optional callback returning the delay in seconds for the next retry.
-  Receives the 1-based attempt number and the last error. Return ``None`` or ``0``
-  to skip waiting for that retry.
-
-**Returns:** First successful result
-
-**Raises:** Last error if all attempts fail
-
-**See:** [Error Handling](05-error-handling.md#retry)
-
----
-
 ### Safe(program)
 
 Wrap execution in a `Result` type for explicit error handling.
@@ -460,50 +414,6 @@ else:
 
 ---
 
-### Finally(program, cleanup)
-
-Ensure cleanup runs.
-
-```python
-result = yield Finally(
-    operation(),
-    cleanup()
-)
-```
-
-**Parameters:**
-
-- **`program: Program[T]`** - Main program
-- **`cleanup: Program[Any]`** - Cleanup program (always runs)
-
-**Returns:** Result of program
-
-**See:** [Error Handling](05-error-handling.md#finally)
-
----
-
-### FirstSuccess(*programs)
-
-Return first successful result.
-
-```python
-result = yield FirstSuccess(
-    try_primary(),
-    try_secondary(),
-    try_fallback()
-)
-```
-
-**Parameters:** `*programs: Program[T]` - Programs to try in order
-
-**Returns:** First successful result
-
-**Raises:** Last error if all fail
-
-**See:** [Error Handling](05-error-handling.md#firstsuccess)
-
----
-
 ## IO Effects
 
 ### IO(thunk)
@@ -519,22 +429,6 @@ timestamp = yield IO(lambda: time.time())
 **Returns:** Result of thunk
 
 **See:** [IO Effects](06-io-effects.md#io)
-
----
-
-### Print(message)
-
-Print to stdout.
-
-```python
-yield Print("Hello, world!")
-```
-
-**Parameters:** `message: str` - Message to print
-
-**Returns:** None
-
-**See:** [IO Effects](06-io-effects.md#print)
 
 ---
 
@@ -701,43 +595,6 @@ results = yield Gather(
 
 ---
 
-### MemoGet(key)
-
-Get memoized value.
-
-```python
-value = yield MemoGet("key")
-```
-
-**Parameters:** `key: str` - Memo key
-
-**Returns:** Memoized value
-
-**Raises:** KeyError if not memoized
-
-**See:** [Advanced Effects](09-advanced-effects.md#memo-effects)
-
----
-
-### MemoPut(key, value)
-
-Store memoized value.
-
-```python
-yield MemoPut("key", value)
-```
-
-**Parameters:**
-
-- **`key: str`** - Memo key
-- **`value: Any`** - Value to memoize
-
-**Returns:** None
-
-**See:** [Advanced Effects](09-advanced-effects.md#memoput)
-
----
-
 ### AtomicGet(key)
 
 Thread-safe state read.
@@ -774,24 +631,6 @@ new_value = yield AtomicUpdate("counter", lambda x: x + 1)
 ---
 
 ## Pinjected Integration
-
-### Dep(key)
-
-Request dependency from pinjected.
-
-```python
-database = yield Dep("database")
-```
-
-**Parameters:** `key: str` - Dependency key
-
-**Returns:** Resolved dependency
-
-**Requires:** doeff-pinjected package
-
-**See:** [Pinjected Integration](10-pinjected-integration.md#dep-effect)
-
----
 
 ### program_to_injected(program)
 
@@ -1047,12 +886,11 @@ await write_graph_html(result.graph, "output.html")
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate |
 | **Writer** | Log, Tell, Listen, StructuredLog |
 | **Async** | Await, Parallel |
-| **Error** | Fail, Retry, Safe, Finally, FirstSuccess |
-| **IO** | IO, Print |
+| **Error** | Safe |
+| **IO** | IO |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
-| **Advanced** | Spawn, Gather, MemoGet, MemoPut |
-| **DI** | Dep (doeff-pinjected) |
+| **Advanced** | Spawn, Gather |
 
 ### Common Imports
 
@@ -1068,10 +906,10 @@ from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen
 from doeff import Await, Parallel
 
 # Error Handling
-from doeff import Fail, Retry, Safe, Finally, FirstSuccess
+from doeff import Safe
 
 # IO
-from doeff import IO, Print
+from doeff import IO
 
 # Cache
 from doeff import CacheGet, CachePut, cache
@@ -1080,10 +918,9 @@ from doeff import CacheGet, CachePut, cache
 from doeff import Step, Annotate, Snapshot, CaptureGraph, graph_to_html
 
 # Advanced
-from doeff import Gather, MemoGet, MemoPut, AtomicGet, AtomicUpdate
+from doeff import Gather, AtomicGet, AtomicUpdate
 
 # Pinjected (separate package)
-from doeff import Dep
 from doeff_pinjected import program_to_injected, program_to_injected_result
 ```
 

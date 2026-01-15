@@ -1,6 +1,6 @@
 # Advanced Effects
 
-Advanced effects for parallel Program execution, memoization, and atomic operations.
+Advanced effects for parallel Program execution, background tasks, and atomic operations.
 
 ## Gather Effects
 
@@ -65,68 +65,6 @@ def comparison():
         program1(),
         program2()
     )
-```
-
-## Memo Effects
-
-In-memory memoization within a single execution.
-
-### MemoGet / MemoPut
-
-```python
-@do
-def with_memo():
-    try:
-        # Try to get memoized value
-        result = yield MemoGet("expensive_key")
-        yield Log("Memo hit!")
-    except KeyError:
-        # Compute and memoize
-        yield Log("Memo miss, computing...")
-        result = yield expensive_computation()
-        yield MemoPut("expensive_key", result)
-    
-    return result
-```
-
-### Memo vs Cache
-
-| Feature | Memo | Cache |
-|---------|------|-------|
-| **Lifetime** | Single execution | Across executions |
-| **Storage** | Memory only | Memory/Disk/Distributed |
-| **Policy** | None | TTL, lifecycle, etc. |
-| **Use case** | Within-program dedup | Persistent caching |
-
-### Memo Pattern
-
-```python
-@do
-def with_internal_memo():
-    # First call computes
-    result1 = yield memoized_operation("key1")
-    
-    # Second call with same key uses memo
-    result2 = yield memoized_operation("key1")  # Instant
-    
-    # Different key computes again
-    result3 = yield memoized_operation("key2")
-    
-    return [result1, result2, result3]
-
-@do
-def memoized_operation(key):
-    safe_result = yield Safe(MemoGet(key))
-    if safe_result.is_ok():
-        return safe_result.value
-    else:
-        return (yield compute_and_memo(key))
-
-@do
-def compute_and_memo(key):
-    value = yield expensive_work(key)
-    yield MemoPut(key, value)
-    return value
 ```
 
 ## Atomic Effects
@@ -209,32 +147,102 @@ def accumulate_result(value):
     return total
 ```
 
-## Combining Advanced Effects
+## Spawn Effect
 
-### Gather + Memo
+Execute Programs in the background and retrieve results later.
+
+### Basic Spawn
+
+```python
+from doeff import Spawn, do
+
+@do
+def background_work():
+    # Spawn a background task
+    task = yield Spawn(expensive_computation())
+    
+    # Do other work while task runs
+    yield Log("Doing other work...")
+    other_result = yield quick_operation()
+    
+    # Wait for background task to complete
+    background_result = yield task.join()
+    
+    return (other_result, background_result)
+```
+
+### Spawn with Backend Options
 
 ```python
 @do
-def parallel_with_memo():
-    # Fetch multiple users in parallel, memoizing each
-    user_ids = [1, 2, 3, 4, 5]
+def spawn_with_backend():
+    # Specify preferred backend
+    task = yield Spawn(
+        heavy_computation(),
+        preferred_backend="process"  # "thread", "process", or "ray"
+    )
     
-    programs = [memoized_fetch_user(uid) for uid in user_ids]
-    users = yield Gather(*programs)
-    
-    # If we fetch same users again, they're memoized
-    user_1_again = yield memoized_fetch_user(1)  # From memo
-    
-    return users
-
-@do
-def memoized_fetch_user(user_id):
-    safe_result = yield Safe(MemoGet(f"user_{user_id}"))
-    if safe_result.is_ok():
-        return safe_result.value
-    else:
-        return (yield fetch_and_memo_user(user_id))
+    result = yield task.join()
+    return result
 ```
+
+### Spawn with Ray
+
+For distributed computation, use Ray backend with resource hints:
+
+```python
+@do
+def distributed_spawn():
+    task = yield Spawn(
+        ml_training_job(),
+        preferred_backend="ray",
+        num_cpus=4,
+        num_gpus=1,
+        memory=8 * 1024 * 1024 * 1024  # 8GB
+    )
+    
+    result = yield task.join()
+    return result
+```
+
+### Multiple Background Tasks
+
+```python
+@do
+def parallel_background_work():
+    # Spawn multiple tasks
+    task1 = yield Spawn(computation_1())
+    task2 = yield Spawn(computation_2())
+    task3 = yield Spawn(computation_3())
+    
+    # Wait for all to complete
+    result1 = yield task1.join()
+    result2 = yield task2.join()
+    result3 = yield task3.join()
+    
+    return [result1, result2, result3]
+```
+
+### Spawn vs Gather
+
+| Effect | Execution | Use Case |
+|--------|-----------|----------|
+| `Gather(*progs)` | Parallel, blocking | Wait for all immediately |
+| `Spawn(prog)` | Background, non-blocking | Do other work while waiting |
+
+```python
+@do
+def comparison():
+    # Gather: blocks until all complete
+    results = yield Gather(prog1(), prog2(), prog3())
+    
+    # Spawn: non-blocking, can do work in between
+    task = yield Spawn(slow_prog())
+    yield do_other_work()  # Runs while task executes
+    result = yield task.join()  # Now wait for it
+```
+
+## Combining Advanced Effects
 
 ### Gather + Atomic
 
@@ -288,17 +296,6 @@ interpreter responds to this key directly.
 - Dependent computations (use sequential yields)
 - Single Program (just yield it directly)
 
-### When to Use Memo
-
-**DO:**
-- Expensive computations called multiple times in one execution
-- Deduplication within a Program
-- Temporary caching
-
-**DON'T:**
-- Cross-execution caching (use Cache instead)
-- Large data (limited by memory)
-
 ### When to Use Atomic
 
 **DO:**
@@ -315,8 +312,7 @@ interpreter responds to this key directly.
 | Effect | Purpose | Use Case |
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
-| `MemoGet(key)` | Get memoized value | Within-execution caching |
-| `MemoPut(key, val)` | Store memoized value | Deduplication |
+| `Spawn(prog)` | Background execution | Non-blocking tasks |
 | `AtomicGet(key)` | Thread-safe read | Concurrent reads |
 | `AtomicUpdate(key, f)` | Thread-safe update | Concurrent modifications |
 
