@@ -1,272 +1,467 @@
-# 20. Runtime Scheduler
+# 20. Runtime Variants
 
-The `doeff.runtime` module implements a sophisticated execution model based on single-shot algebraic effects with pluggable schedulers. This architecture enables the same business logic to run in diverse environments—such as discrete event simulations, realtime production systems, or priority-based actor systems—simply by swapping the scheduler implementation.
+The `doeff.runtimes` module provides three distinct runtime implementations optimized for different execution contexts. Choose the right runtime based on your application's needs—real async I/O, synchronous execution, or simulated time for testing.
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Core Concepts](#core-concepts)
-  - [Continuation](#continuation)
-  - [Scheduler Protocol](#scheduler-protocol)
-  - [ScheduledEffectHandler](#scheduledeffecthandler)
-  - [HandlerResult Types](#handlerresult-types)
-- [Reference Schedulers](#reference-schedulers)
-  - [FIFOScheduler](#fifoscheduler)
-  - [PriorityScheduler](#priorityscheduler)
-  - [SimulationScheduler](#simulationscheduler)
-  - [RealtimeScheduler](#realtimescheduler)
-- [Simulation Effects](#simulation-effects)
+- [Runtime Types](#runtime-types)
+  - [AsyncioRuntime](#asyncioruntime)
+  - [SyncRuntime](#syncruntime)
+  - [SimulationRuntime](#simulationruntime)
+- [Choosing a Runtime](#choosing-a-runtime)
 - [Usage Examples](#usage-examples)
   - [Basic Usage](#basic-usage)
-  - [Simulation vs Realtime](#simulation-vs-realtime)
+  - [Error Handling with run_safe()](#error-handling-with-run_safe)
   - [Custom Handlers](#custom-handlers)
+- [Simulation Features](#simulation-features)
+  - [Time Advancement](#time-advancement)
+  - [Mocking Awaitables](#mocking-awaitables)
+  - [Spawning Concurrent Tasks](#spawning-concurrent-tasks)
 - [Migration Guide](#migration-guide)
-
----
 
 ---
 
 ## Overview
 
-Traditional effect handlers in `doeff` typically resume the computation immediately or await an async operation. The `runtime` module introduces a **scheduler-based loop** where handlers can decide to suspend a computation and hand it over to a scheduler for later resumption.
+Each runtime implementation determines **how** effects are executed:
 
-This decoupling of "what happens" (the effect) from "when/how it happens" (the scheduler) is powerful for:
-- **Simulation**: Testing complex workflows with discrete event time.
-- **Realtime**: Running the same workflows with wall-clock timing in production.
-- **Resource Management**: Prioritizing tasks or implementing rate limits.
+| Runtime | Execution Model | Use Case |
+|---------|-----------------|----------|
+| `AsyncioRuntime` | Real async I/O with `asyncio` | Production applications, HTTP/DB operations |
+| `SyncRuntime` | Pure synchronous, no event loop | CLI tools, scripts, simple utilities |
+| `SimulationRuntime` | Simulated time (instant) | Testing, backtesting, deterministic replay |
 
-## Core Concepts
+All runtimes share a common interface:
+- `run(program, env, store)` - Execute program, raise `EffectError` on failure
+- `run_safe(program, env, store)` - Execute program, return `RuntimeResult` instead of raising
 
-### Continuation
+---
 
-A `Continuation` represents a suspended computation that can be resumed exactly once (**single-shot**).
+## Runtime Types
 
-```python
-@dataclass
-class Continuation:
-    def resume(self, value: Any, store: Store) -> CESKState:
-        """Resume with a success value."""
-        ...
+### AsyncioRuntime
 
-    def resume_error(self, ex: BaseException, store: Store) -> CESKState:
-        """Resume with an error."""
-        ...
-```
-
-Continuations capture the full execution state (Environment, Store, and Kontinuation stack). In Python, because generators cannot be cloned, attempts to resume a continuation more than once will raise a `RuntimeError`.
-
-### Scheduler Protocol
-
-A `Scheduler` manages a pool of pending continuations and decides which one to run next.
+The primary runtime for production applications. Executes effects using real async I/O operations through Python's `asyncio` event loop.
 
 ```python
-class Scheduler(Protocol):
-    def submit(self, k: Continuation, hint: Any = None) -> None:
-        """Add a continuation to the pool with an optional hint."""
-        ...
-    
-    def next(self) -> Continuation | None:
-        """Pick the next continuation to run, or return None if empty."""
-        ...
+from doeff import do, Program
+from doeff.effects import Delay, Await
+from doeff.runtimes import AsyncioRuntime
+
+@do
+def fetch_data() -> Program[dict]:
+    yield Delay(seconds=1)  # Real asyncio.sleep()
+    response = yield Await(http_client.get("/api/data"))
+    return response.json()
+
+async def main():
+    runtime = AsyncioRuntime()
+    result = await runtime.run(fetch_data())
+    print(result)
 ```
 
-The `hint` parameter is opaque and its meaning depends on the scheduler implementation (e.g., a priority integer, a timestamp, or a delay).
+**Supported Effects:**
 
-### ScheduledEffectHandler
+| Effect | Behavior |
+|--------|----------|
+| `Delay(seconds)` | Real `asyncio.sleep()` |
+| `WaitUntil(datetime)` | Sleep until wall-clock time |
+| `Await(coroutine)` | Await the coroutine |
+| `Spawn(program)` | Create background `asyncio.Task` |
 
-Handlers in the runtime model receive the scheduler as an argument, allowing them to schedule work or submit new computations.
+### SyncRuntime
+
+A synchronous runtime for programs that don't require async I/O. Ideal for CLI tools, scripts, and testing pure logic.
 
 ```python
-class ScheduledEffectHandler(Protocol):
-    def __call__(
-        self,
-        effect: EffectBase,
-        env: Environment,
-        store: Store,
-        k: Continuation,
-        scheduler: Scheduler,
-    ) -> HandlerResult:
-        ...
+from doeff import do, Program
+from doeff.effects import Get, Put
+from doeff.runtimes import SyncRuntime
+
+@do
+def counter() -> Program[int]:
+    count = yield Get("counter")
+    yield Put("counter", count + 1)
+    return count + 1
+
+runtime = SyncRuntime()
+result = runtime.run(counter(), store={"counter": 0})
+print(result)  # 1
 ```
 
-### HandlerResult Types
+**Limitations:**
 
-A handler must return one of three result types to indicate how the runtime should proceed:
+`SyncRuntime` raises `AsyncEffectInSyncRuntimeError` for async-only effects:
+- `Await` - Use `AsyncioRuntime` instead
+- `WaitUntil` - Use `AsyncioRuntime` instead
+- `Spawn` - Use `AsyncioRuntime` instead
 
-| Type | Description |
-|------|-------------|
-| `Resume(value, store)` | Resume the current continuation immediately with the given value. |
-| `Suspend(awaitable, store)` | Await an external `asyncio` operation, then resume with its result. |
-| `Scheduled(store)` | The continuation was submitted to the scheduler; the runtime should pick the next task. |
+`Delay` uses `time.sleep()` in SyncRuntime (blocks the thread).
 
-## Reference Schedulers
+### SimulationRuntime
 
-### FIFOScheduler
-The simplest scheduler. Continuations are executed in the exact order they were submitted. Ideal for simple sequential processing and unit tests.
-
-### PriorityScheduler
-Executes continuations based on a priority value provided in the `hint`. Lower values have higher priority. It uses a sequence counter to ensure deterministic FIFO behavior for equal priorities.
-
-### SimulationScheduler
-A discrete event simulation (DES) scheduler. It maintains a "ready" stack (LIFO) for immediate tasks and a "timed" priority queue for future tasks. Time advances only when the ready stack is empty, jumping to the next scheduled event time.
-
-### RealtimeScheduler (Experimental)
-Integrates with the `asyncio` event loop. It uses `asyncio.sleep()` for timed delays, allowing `doeff` programs to interact with real wall-clock time.
-
-> **Note**: `RealtimeScheduler` is experimental. When timers are pending but no continuation is immediately ready, the current implementation may not behave as expected. For production use with wall-clock timing, consider using `Suspend` with `asyncio.sleep()` directly.
-
-## Time Effects (Unified)
-
-The module provides unified time effects that work across all runtimes:
-
-| Effect | AsyncioRuntime / RealtimeScheduler | SimulationScheduler |
-|--------|-----------------------------------|---------------------|
-| `Delay(seconds)` | Real `asyncio.sleep()` | Instant, advances simulation time |
-| `WaitUntil(datetime)` | Real wait until wall-clock time | Instant, advances simulation time |
-| `Spawn(program)` | `asyncio.create_task()` | Queue child task |
-
-These unified effects are imported from `doeff.effects`:
+A discrete event simulation runtime where time advances instantly. Perfect for testing time-dependent logic, backtesting strategies, or deterministic replay.
 
 ```python
-from doeff.effects import Delay, WaitUntil, Spawn
+from datetime import datetime, timedelta
+from doeff import do, Program
+from doeff.effects import Delay
+from doeff.runtimes import SimulationRuntime
+
+@do
+def hourly_check() -> Program[str]:
+    yield Delay(seconds=3600)  # 1 hour - instant in simulation
+    yield Delay(seconds=3600)  # Another hour - still instant
+    return "Two hours passed"
+
+runtime = SimulationRuntime(start_time=datetime(2024, 1, 1, 9, 0))
+result = runtime.run(hourly_check())
+print(result)  # "Two hours passed"
+print(runtime.current_time)  # datetime(2024, 1, 1, 11, 0) - 2 hours advanced
 ```
 
-### Deprecated Effects
+**Key Features:**
+- Time advances only when the simulation processes `Delay` or `WaitUntil` effects
+- Spawned tasks run concurrently within the simulation
+- Awaitables can be mocked to return predetermined results
 
-The following effects are deprecated and will be removed in a future version:
+---
 
-- **`SimDelay`** - Use `Delay` instead
-- **`SimWaitUntil`** - Use `WaitUntil` instead
-- **`SimSubmit`** - Use `Spawn` instead
+## Choosing a Runtime
+
+| If you need... | Use |
+|----------------|-----|
+| Real HTTP/DB/file I/O | `AsyncioRuntime` |
+| Real wall-clock delays | `AsyncioRuntime` |
+| Background tasks (`asyncio.Task`) | `AsyncioRuntime` |
+| Simple sync execution (no async) | `SyncRuntime` |
+| CLI tools / scripts | `SyncRuntime` |
+| Unit tests (fast, deterministic) | `SimulationRuntime` |
+| Backtesting trading strategies | `SimulationRuntime` |
+| Mocking async operations | `SimulationRuntime` |
+
+### Feature Comparison
+
+| Feature | AsyncioRuntime | SyncRuntime | SimulationRuntime |
+|---------|----------------|-------------|-------------------|
+| `run()` method | `async` | sync | sync |
+| `Delay` effect | Real sleep | Real sleep (blocking) | Instant (time advances) |
+| `WaitUntil` effect | Real wait | Error | Instant (time advances) |
+| `Await` effect | Real await | Error | Mocked result |
+| `Spawn` effect | `asyncio.Task` | Error | Simulated concurrent task |
+| Time control | No | No | Yes (`current_time`) |
+| Deterministic | No | Yes | Yes |
+
+---
 
 ## Usage Examples
 
 ### Basic Usage
 
-The standard `run()` and `run_sync()` functions now accept an optional `scheduler` parameter:
-
+**AsyncioRuntime (async context):**
 ```python
+import asyncio
 from doeff import do, Program
-from doeff.cesk import run, run_sync
-from doeff.runtime import FIFOScheduler, SimulationScheduler
+from doeff.effects import Ask
+from doeff.runtimes import AsyncioRuntime
 
 @do
-def hello():
-    return "Hello, Scheduler!"
-
-# Default: uses FIFOScheduler internally
-result = run_sync(hello())
-
-# Explicit scheduler
-result = run_sync(hello(), scheduler=SimulationScheduler())
-```
-
-For custom schedulers, pass them to `run()` or `run_sync()`:
-
-```python
-from doeff.cesk import run
-from doeff.runtime import SimulationScheduler
+def greet() -> Program[str]:
+    name = yield Ask("name")
+    return f"Hello, {name}!"
 
 async def main():
-    scheduler = SimulationScheduler()
-    result = await run(hello(), scheduler=scheduler)
-    print(result.value)  # "Hello, Scheduler!"
+    runtime = AsyncioRuntime()
+    result = await runtime.run(greet(), env={"name": "World"})
+    print(result)  # "Hello, World!"
+
+asyncio.run(main())
 ```
 
-### Simulation vs Realtime
-
-The following trading strategy runs instantly in simulation but follows real time in production:
-
+**SyncRuntime (sync context):**
 ```python
 from doeff import do, Program
-from doeff.effects import Delay
-from doeff.cesk import run
-from doeff.runtime import SimulationScheduler, RealtimeScheduler
-from doeff.scheduled_handlers import default_scheduled_handlers
+from doeff.effects import Ask
+from doeff.runtimes import SyncRuntime
 
 @do
-def trading_strategy() -> Program[str]:
-    print("Checking markets...")
-    yield Delay(seconds=3600)  # Wait 1 hour
-    print("Checking markets again...")
-    return "Done"
+def greet() -> Program[str]:
+    name = yield Ask("name")
+    return f"Hello, {name}!"
 
-# To run in Simulation:
-async def run_sim() -> None:
-    sched = SimulationScheduler()
-    handlers = default_scheduled_handlers()
-    await run(trading_strategy(), scheduler=sched, scheduled_handlers=handlers)
-    # This completes instantly and current_time advances by 1 hour.
-
-# To run in Realtime:
-async def run_realtime() -> None:
-    sched = RealtimeScheduler()
-    handlers = default_scheduled_handlers()
-    await run(trading_strategy(), scheduler=sched, scheduled_handlers=handlers)
-    # This actually takes 1 hour to complete.
+runtime = SyncRuntime()
+result = runtime.run(greet(), env={"name": "World"})
+print(result)  # "Hello, World!"
 ```
+
+**SimulationRuntime (testing):**
+```python
+from datetime import datetime
+from doeff import do, Program
+from doeff.effects import Delay
+from doeff.runtimes import SimulationRuntime
+
+@do
+def delayed_response() -> Program[str]:
+    yield Delay(seconds=60)
+    return "Ready!"
+
+runtime = SimulationRuntime(start_time=datetime(2024, 1, 1))
+result = runtime.run(delayed_response())
+assert result == "Ready!"
+assert runtime.current_time == datetime(2024, 1, 1, 0, 1)  # 1 minute advanced
+```
+
+### Error Handling with run_safe()
+
+All runtimes provide `run_safe()` which returns a `RuntimeResult` instead of raising exceptions:
+
+```python
+from doeff import do, Program, Fail
+from doeff.runtimes import SyncRuntime, RuntimeResult
+
+@do
+def risky_operation() -> Program[int]:
+    yield Fail(ValueError("Something went wrong"))
+    return 42  # Never reached
+
+runtime = SyncRuntime()
+result: RuntimeResult[int] = runtime.run_safe(risky_operation())
+
+if result.is_ok:
+    print(f"Success: {result.unwrap()}")
+else:
+    print(f"Error: {result.unwrap_err()}")
+    if result.effect_traceback:
+        print(f"Traceback:\n{result.effect_traceback}")
+```
+
+**RuntimeResult API:**
+
+| Property/Method | Description |
+|-----------------|-------------|
+| `is_ok` | `True` if execution succeeded |
+| `is_err` | `True` if execution failed |
+| `unwrap()` | Get value or raise if error |
+| `unwrap_err()` | Get error or raise if ok |
+| `display()` | Human-readable result string |
+| `effect_traceback` | Effect-level traceback (if error) |
 
 ### Custom Handlers
 
-Creating a handler that spawns a background worker:
+Extend runtime behavior by providing custom effect handlers:
 
 ```python
 from dataclasses import dataclass
-from doeff import Program
+from doeff import do, Program
 from doeff.types import EffectBase
-from doeff.cesk import Environment, Store
-from doeff.runtime import Resume, Continuation, Scheduler, HandlerResult
+from doeff.runtime import Resume
+from doeff.runtimes import SyncRuntime
 
 @dataclass(frozen=True, kw_only=True)
-class SpawnWorker(EffectBase):
-    worker_program: Program
+class CustomLog(EffectBase):
+    message: str
 
-    def intercept(self, transform):
-        return self
+def handle_custom_log(effect, env, store, k, scheduler):
+    if isinstance(effect, CustomLog):
+        print(f"[LOG] {effect.message}")
+        return Resume(None, store)
+    return None
 
-def handle_spawn_worker(
-    effect: EffectBase,
-    env: Environment,
-    store: Store,
-    k: Continuation,
-    scheduler: Scheduler
-) -> HandlerResult:
-    assert isinstance(effect, SpawnWorker)
-    worker_k = Continuation.from_program(effect.worker_program, env, store)
-    scheduler.submit(worker_k)
-    return Resume(None, store)
+@do
+def program_with_logging() -> Program[str]:
+    yield CustomLog(message="Starting...")
+    yield CustomLog(message="Processing...")
+    return "Done"
+
+custom_handlers = {CustomLog: handle_custom_log}
+runtime = SyncRuntime(handlers=custom_handlers)
+result = runtime.run(program_with_logging())
 ```
+
+---
+
+## Simulation Features
+
+### Time Advancement
+
+`SimulationRuntime` tracks a virtual clock that advances when time-based effects are processed:
+
+```python
+from datetime import datetime, timedelta
+from doeff import do, Program
+from doeff.effects import Delay, WaitUntil
+from doeff.runtimes import SimulationRuntime
+
+@do
+def time_travel() -> Program[datetime]:
+    yield Delay(seconds=3600)  # +1 hour
+    yield Delay(seconds=1800)  # +30 minutes
+    target = datetime(2024, 1, 1, 12, 0)
+    yield WaitUntil(target)    # Jump to noon
+    return target
+
+start = datetime(2024, 1, 1, 9, 0)
+runtime = SimulationRuntime(start_time=start)
+result = runtime.run(time_travel())
+
+print(runtime.current_time)  # datetime(2024, 1, 1, 12, 0)
+```
+
+### Mocking Awaitables
+
+Mock async operations to return predetermined results:
+
+```python
+import aiohttp
+from doeff import do, Program
+from doeff.effects import Await
+from doeff.runtimes import SimulationRuntime
+
+@do
+def fetch_user() -> Program[dict]:
+    response = yield Await(session.get("/api/user/123"))
+    return response
+
+# Mock the coroutine type to return test data
+runtime = SimulationRuntime()
+runtime.mock(aiohttp.ClientResponse, {"id": 123, "name": "Test User"})
+
+result = runtime.run(fetch_user())
+print(result)  # {"id": 123, "name": "Test User"}
+```
+
+### Spawning Concurrent Tasks
+
+`Spawn` creates simulated concurrent tasks that run within the same simulation:
+
+```python
+from doeff import do, Program
+from doeff.effects import Delay, Spawn
+from doeff.runtimes import SimulationRuntime
+
+@do
+def background_job() -> Program[None]:
+    yield Delay(seconds=10)
+    print("Background job done")
+
+@do
+def main_job() -> Program[str]:
+    yield Spawn(background_job())  # Start background task
+    yield Delay(seconds=5)
+    return "Main done first"
+
+runtime = SimulationRuntime()
+result = runtime.run(main_job())
+# Both tasks complete within simulation
+```
+
+---
 
 ## Migration Guide
 
-The legacy `SyncEffectHandler` and `AsyncEffectHandler` protocols have been removed. All effect handlers now use the unified `ScheduledEffectHandler` protocol.
+### From EffectRuntime to New Runtimes
 
-### Writing Handlers
+The legacy `EffectRuntime` and `create_runtime()` API has been replaced by explicit runtime classes.
 
-Handlers must use the `ScheduledEffectHandler` signature:
+**Before (deprecated):**
+```python
+from doeff import create_runtime
+
+runtime = create_runtime()
+result = await runtime.run(program)
+# or
+result = runtime.run_sync(program)
+```
+
+**After:**
+```python
+from doeff.runtimes import AsyncioRuntime, SyncRuntime
+
+# For async execution
+runtime = AsyncioRuntime()
+result = await runtime.run(program)
+
+# For sync execution
+runtime = SyncRuntime()
+result = runtime.run(program)
+```
+
+### From run()/run_sync() to runtime.run()
+
+**Before:**
+```python
+from doeff.cesk import run, run_sync
+
+# Async
+result = await run(program)
+
+# Sync
+result = run_sync(program)
+```
+
+**After:**
+```python
+from doeff.runtimes import AsyncioRuntime, SyncRuntime
+
+# Async
+runtime = AsyncioRuntime()
+result = await runtime.run(program)
+
+# Sync
+runtime = SyncRuntime()
+result = runtime.run(program)
+```
+
+### Handler Migration
+
+Effect handlers now use the unified `ScheduledEffectHandler` signature:
 
 ```python
-from doeff.runtime import ScheduledEffectHandler, Resume, Suspend, Scheduled
+from doeff.runtime import Resume, Suspend, Schedule
 
-def my_handler(effect, env, store, k, scheduler) -> HandlerResult:
-    # For immediate resume:
+def my_handler(effect, env, store, k, scheduler):
+    # For immediate resume (pure effects):
     return Resume(value, store)
     
     # For async operations:
     return Suspend(awaitable, store)
     
-    # For scheduler-managed resumption:
-    scheduler.submit(k, hint=some_hint)
-    return Scheduled(store)
+    # For scheduler-managed effects (simulation):
+    return Schedule(payload, store)
 ```
 
-### API Changes
+### API Changes Summary
 
 | Old API | New API |
 |---------|---------|
-| `run(program, pure_handlers=..., effectful_handlers=...)` | `run(program, scheduled_handlers=..., scheduler=...)` |
-| `SyncEffectHandler` protocol | `ScheduledEffectHandler` |
-| `AsyncEffectHandler` protocol | `ScheduledEffectHandler` |
-| `EffectDispatcher` class | `ScheduledEffectDispatcher` |
-| `default_pure_handlers()` | `default_scheduled_handlers()` |
-| `default_effectful_handlers()` | `default_scheduled_handlers()` |
+| `create_runtime()` | `AsyncioRuntime()` or `SyncRuntime()` |
+| `runtime.run_sync(program)` | `SyncRuntime().run(program)` |
+| `await runtime.run(program)` | `await AsyncioRuntime().run(program)` |
+| `run(program, scheduler=...)` | Use `SimulationRuntime` |
+| `EffectRuntime` class | `AsyncioRuntime`, `SyncRuntime`, `SimulationRuntime` |
+
+---
+
+<details>
+<summary><h2>Legacy: Scheduler-Based Architecture (Archived)</h2></summary>
+
+> **Note**: This section documents the previous scheduler-based architecture for reference. New code should use the runtime classes described above.
+
+The previous architecture used pluggable schedulers (`FIFOScheduler`, `PriorityScheduler`, `SimulationScheduler`, `RealtimeScheduler`) with the `Scheduler` protocol:
+
+```python
+class Scheduler(Protocol):
+    def submit(self, k: Continuation, hint: Any = None) -> None: ...
+    def next(self) -> Continuation | None: ...
+```
+
+And handlers used `HandlerResult` types:
+- `Resume(value, store)` - Resume immediately
+- `Suspend(awaitable, store)` - Await async operation
+- `Scheduled(store)` - Task submitted to scheduler
+
+This architecture is still available in `doeff.runtime` for advanced use cases but the recommended approach is to use the typed runtime classes.
+
+</details>
