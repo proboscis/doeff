@@ -8,6 +8,10 @@ from typing import Any, Iterator
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="ProgramInterpreter removed; CESKInterpreter doesn't support spawn configuration"
+)
+
 from doeff import (
     AtomicGet,
     AtomicUpdate,

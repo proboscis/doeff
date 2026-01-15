@@ -49,17 +49,8 @@ from doeff.effects import (
     step,
     tell,
 )
-from doeff.handlers import (
-    FutureEffectHandler,
-    GraphEffectHandler,
-    IOEffectHandler,
-    ListenResult,
-    ReaderEffectHandler,
-    ResultEffectHandler,
-    StateEffectHandler,
-    WriterEffectHandler,
-)
-from doeff.interpreter import ProgramInterpreter, force_eval
+from doeff.types import ListenResult
+from doeff.runtimes import AsyncioRuntime, SyncRuntime, SimulationRuntime
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program
 from doeff.types import Effect, ExecutionContext, RunResult
@@ -75,17 +66,10 @@ __all__ = [
     "KleisliProgram",
     # Decorator
     "do",
-    # Interpreter
-    "ProgramInterpreter",
-    "force_eval",
-    # Handlers
-    "ReaderEffectHandler",
-    "StateEffectHandler",
-    "WriterEffectHandler",
-    "FutureEffectHandler",
-    "ResultEffectHandler",
-    "IOEffectHandler",
-    "GraphEffectHandler",
+    # Runtimes (replacement for deprecated ProgramInterpreter)
+    "AsyncioRuntime",
+    "SyncRuntime",
+    "SimulationRuntime",
     # Capitalized effect functions
     "Ask",
     "Local",

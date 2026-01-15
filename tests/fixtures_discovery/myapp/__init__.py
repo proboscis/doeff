@@ -1,6 +1,6 @@
 """Base module for test app."""
 
-from doeff import Program, ProgramInterpreter
+from doeff import Program, CESKInterpreter
 
 
 def base_interpreter(prog: Program[any]) -> any:
@@ -8,7 +8,7 @@ def base_interpreter(prog: Program[any]) -> any:
     Base interpreter for myapp.
     # doeff: interpreter, default
     """
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     return engine.run(prog).value
 
 

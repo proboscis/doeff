@@ -4,7 +4,7 @@ Interpreter tests for stack safety and deep nesting.
 Adapted from test_comprehensive_stack_safety.py - tests deep chains,
 nested operations, and monad composition patterns.
 
-Parameterized to run against both CESK interpreter and ProgramInterpreter.
+Parameterized to run against both CESK interpreter and CESKInterpreter.
 """
 
 import asyncio

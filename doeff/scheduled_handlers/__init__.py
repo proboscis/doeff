@@ -86,6 +86,20 @@ from doeff.scheduled_handlers.time import (
     handle_get_time,
 )
 
+# Graph handlers
+from doeff.scheduled_handlers.graph import (
+    handle_graph_step,
+    handle_graph_annotate,
+    handle_graph_capture,
+    handle_graph_snapshot,
+)
+
+# Atomic handlers
+from doeff.scheduled_handlers.atomic import (
+    handle_atomic_get,
+    handle_atomic_update,
+)
+
 
 def default_scheduled_handlers() -> ScheduledHandlers:
     from doeff.effects import (
@@ -113,6 +127,13 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         DurableCachePut,
     )
     from doeff.effects.pure import PureEffect
+    from doeff.effects.graph import (
+        GraphAnnotateEffect,
+        GraphCaptureEffect,
+        GraphSnapshotEffect,
+        GraphStepEffect,
+    )
+    from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 
     return {
         StateGetEffect: handle_state_get,
@@ -136,6 +157,12 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         DelayEffect: handle_delay,
         WaitUntilEffect: handle_wait_until,
         GetTimeEffect: handle_get_time,
+        GraphStepEffect: handle_graph_step,
+        GraphAnnotateEffect: handle_graph_annotate,
+        GraphCaptureEffect: handle_graph_capture,
+        GraphSnapshotEffect: handle_graph_snapshot,
+        AtomicGetEffect: handle_atomic_get,
+        AtomicUpdateEffect: handle_atomic_update,
     }
 
 
@@ -163,4 +190,10 @@ __all__ = [
     "handle_delay",
     "handle_wait_until",
     "handle_get_time",
+    "handle_graph_step",
+    "handle_graph_annotate",
+    "handle_graph_capture",
+    "handle_graph_snapshot",
+    "handle_atomic_get",
+    "handle_atomic_update",
 ]

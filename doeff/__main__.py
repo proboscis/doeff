@@ -11,7 +11,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from doeff import Program, ProgramInterpreter, RunResult
+from doeff import Program, RunResult
+from doeff.cesk_adapter import CESKInterpreter, CESKRunResult
 from doeff.analysis import EffectCallTree
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.kleisli import KleisliProgram
@@ -47,7 +48,7 @@ class ResolvedRunContext:
 @dataclass
 class RunExecutionResult:
     final_value: Any
-    run_result: RunResult[Any] | None
+    run_result: RunResult[Any] | CESKRunResult[Any] | None
     call_tree_ascii: str | None
 
 
@@ -108,21 +109,21 @@ class ProgramBuilder:
         from doeff.effects import Local
 
         merged_env_program = self._merger.merge_envs(env_sources)
-        temp_interpreter = ProgramInterpreter()
+        temp_interpreter = CESKInterpreter()
         env_result = temp_interpreter.run(merged_env_program)
         if env_result.is_err:
             diagnostic = env_result.display(verbose=report_verbose).strip()
             if not diagnostic:
                 diagnostic = env_result.formatted_error.strip()
             if not diagnostic:
-                diagnostic = repr(env_result.result.error)
+                diagnostic = repr(env_result.error)
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
             print(diagnostic, file=sys.stderr)
-            raise env_result.result.error
+            raise env_result.error
 
         merged_env_dict = env_result.value
         local_effect = Local(merged_env_dict, program)
-        return local_effect
+        return local_effect  # type: ignore[return-value]
 
     def apply_kleisli(
         self, program: Program[Any], context: ResolvedRunContext
@@ -221,17 +222,17 @@ class RunCommand:
 
     def _run_program(
         self, context: ResolvedRunContext, program: Program[Any]
-    ) -> tuple[RunResult[Any] | None, Any]:
+    ) -> tuple[RunResult[Any] | CESKRunResult[Any] | None, Any]:
         with profile("Load and run interpreter", indent=1):
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
-            if isinstance(interpreter_obj, ProgramInterpreter):
+            if isinstance(interpreter_obj, CESKInterpreter):
                 run_result = interpreter_obj.run(program)
-                final_value = _unwrap_run_result(run_result)
-                return run_result, final_value
+                final_value = _unwrap_run_result(run_result)  # type: ignore[arg-type]
+                return run_result, final_value  # type: ignore[return-value]
 
             if not callable(interpreter_obj):
                 raise TypeError(
-                    "--interpreter must resolve to a callable or ProgramInterpreter instance"
+                    "--interpreter must resolve to a callable or CESKInterpreter instance"
                 )
 
             result = _call_interpreter(interpreter_obj, program)
@@ -437,23 +438,23 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
             )
     result = func(*bound.args, **bound.kwargs)
     if inspect.isawaitable(result):
-        return asyncio.run(result)
+        return asyncio.run(result)  # type: ignore[arg-type]
     return result
 
 
-def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
+def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | CESKRunResult[Any] | None]:
     from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
-        interpreter = ProgramInterpreter()
+        interpreter = CESKInterpreter()
         run_result = interpreter.run(value)
         return _unwrap_run_result(run_result), run_result
-    if isinstance(value, RunResult):
+    if isinstance(value, (RunResult, CESKRunResult)):
         return _unwrap_run_result(value), value
     return value, None
 
 
-def _unwrap_run_result(result: RunResult[Any]) -> Any:
+def _unwrap_run_result(result: RunResult[Any] | CESKRunResult[Any]) -> Any:
     try:
         return result.value
     except Exception as exc:
@@ -468,8 +469,12 @@ def _json_safe(value: Any) -> Any:
         return repr(value)
 
 
-def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
-    observations = getattr(run_result.context, "effect_observations", None)
+def _call_tree_ascii(run_result: RunResult[Any] | CESKRunResult[Any]) -> str | None:
+    observations = getattr(run_result, "effect_observations", None)
+    if observations is None:
+        context = getattr(run_result, "context", None)
+        if context:
+            observations = getattr(context, "effect_observations", None)
     if not observations:
         return None
 
@@ -517,7 +522,7 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
         "interpreter": interpreter_obj,
         "RunResult": RunResult,
         "Program": Program,
-        "ProgramInterpreter": ProgramInterpreter,
+        "CESKInterpreter": CESKInterpreter,
     }
 
     # Add any additional useful imports
@@ -726,13 +731,13 @@ def build_parser() -> argparse.ArgumentParser:
             "Available variables in script:\n"
             "  - program: The executed Program (with envs/transforms applied)\n"
             "  - value: The final execution result\n"
-            "  - interpreter: The interpreter used (ProgramInterpreter or function)\n"
-            "  - Program, ProgramInterpreter, RunResult: Type classes\n"
+            "  - interpreter: The interpreter used (CESKInterpreter or function)\n"
+            "  - Program, CESKInterpreter, RunResult: Type classes\n"
             "  - sys, json: Standard library modules\n\n"
             "Example:\n"
             "  doeff run --program myapp.program - <<'PY'\n"
             "  print(f'Result: {value}')\n"
-            "  if isinstance(interpreter, ProgramInterpreter):\n"
+            "  if isinstance(interpreter, CESKInterpreter):\n"
             "      result = interpreter.run(program)\n"
             "      print(f'Re-run: {result.value}')\n"
             "  PY"

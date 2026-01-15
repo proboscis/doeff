@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import ProgramInterpreter
+from doeff import CESKInterpreter
 from doeff.effects import Ask, Pure
 from doeff.program import KleisliProgramCall, _AutoUnwrapStrategy
 from doeff.types import EffectCreationContext, ExecutionContext, Ok
@@ -69,7 +69,7 @@ async def test_kleisli_program_call_execution():
 
     kpcall = _make_call(gen_func, 7, 6)
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(kpcall)
 
     assert result.result == Ok(42)
@@ -77,7 +77,7 @@ async def test_kleisli_program_call_execution():
 
 
 def test_kleisli_program_call_run_sync():
-    """ProgramInterpreter.run should accept a KleisliProgramCall."""
+    """CESKInterpreter.run should accept a KleisliProgramCall."""
 
     def gen_func(x):
         value = yield Pure(x + 1)
@@ -85,7 +85,7 @@ def test_kleisli_program_call_run_sync():
 
     kpcall = _make_call(gen_func, 41)
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = interpreter.run(kpcall)
 
     assert result.result == Ok(42)
@@ -103,7 +103,7 @@ def test_kleisli_program_call_not_misclassified_as_effect():
 
     assert isinstance(kpcall, KleisliProgramCall)
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = interpreter.run(kpcall)
 
     assert result.value == 42
@@ -119,7 +119,7 @@ async def test_kleisli_program_call_with_kwargs():
 
     kpcall = _make_call(gen_func, 10, multiplier=5)
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(kpcall)
 
     assert result.value == 50
@@ -229,7 +229,7 @@ async def test_kleisli_program_call_with_effects():
 
     kpcall = _make_call(gen_func, "World")
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     ctx = ExecutionContext(env={"greeting": "Hello"})
     result = await interpreter.run_async(kpcall, ctx)
 
@@ -264,7 +264,7 @@ async def test_kleisli_program_call_nested():
 
     kpcall = _make_call(outer_gen, 5)
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(kpcall)
 
     # Should be (5 * 2) + 1 = 11

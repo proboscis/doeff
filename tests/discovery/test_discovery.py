@@ -7,7 +7,7 @@ from doeff.cli.discovery import (
     StandardEnvMerger,
     StandardSymbolLoader,
 )
-from doeff.interpreter import ProgramInterpreter
+from doeff.cesk_adapter import CESKInterpreter
 
 
 @pytest.fixture
@@ -131,7 +131,7 @@ def test_merge_envs_in_order(merger):
     merged_program = merger.merge_envs(env_sources)
 
     # Run the merged program to get result
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = interpreter.run(merged_program)
     merged = result.value
 
@@ -152,7 +152,7 @@ def test_merge_envs_empty_list(merger):
     """Should handle empty env list."""
     merged_program = merger.merge_envs([])
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = interpreter.run(merged_program)
     merged = result.value
 
@@ -165,7 +165,7 @@ def test_merge_envs_single_env(merger):
 
     merged_program = merger.merge_envs(env_sources)
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = interpreter.run(merged_program)
     merged = result.value
 
@@ -244,7 +244,7 @@ def test_full_discovery_flow(discovery, merger):
     merged_env_program = merger.merge_envs(env_paths)
 
     # 6. Run the merged env program to get the final environment
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = engine.run(merged_env_program)
     merged_env = result.value
 

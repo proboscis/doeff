@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import ProgramInterpreter, do
+from doeff import CESKInterpreter, do
 from doeff.effects import Ask, Pure, ProgramCallFrame, ProgramCallStack
 from doeff.program import Program
 from doeff.types import CallFrame, ExecutionContext
@@ -96,7 +96,7 @@ def test_call_frame_immutable():
 @pytest.mark.asyncio
 async def test_execution_context_initialized_with_empty_call_stack():
     """Execution should start with empty call stack."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     @do
     def simple_program() -> Program[int]:
@@ -116,7 +116,7 @@ async def test_execution_context_initialized_with_empty_call_stack():
 async def test_effect_observation_includes_call_stack_snapshot():
     """Effect observations should capture the current program call stack."""
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     @do
     def inner() -> Program[int]:
@@ -216,7 +216,7 @@ def test_call_frame_with_creation_context():
 async def test_program_call_stack_effects():
     """ProgramCallStack and ProgramCallFrame should reflect nested calls."""
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     @do
     def inner() -> Program[list[str]]:

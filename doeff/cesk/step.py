@@ -57,10 +57,14 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
             InterceptEffect,
             LocalEffect,
             ResultCatchEffect,
+            ResultFailEffect,
             ResultFinallyEffect,
             ResultSafeEffect,
             WriterListenEffect,
         )
+
+        if isinstance(effect, ResultFailEffect):
+            return CESKState(C=Error(effect.exception), E=E, S=S, K=K)
 
         if isinstance(effect, ResultCatchEffect):
             return CESKState(

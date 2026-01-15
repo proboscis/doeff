@@ -4,7 +4,7 @@ from typing import Protocol
 
 import pytest
 
-from doeff import Local, ProgramInterpreter, ask, do
+from doeff import Local, CESKInterpreter, ask, do
 from doeff.types import EffectGenerator
 
 
@@ -23,7 +23,7 @@ async def test_reader_accepts_hashable_class_keys() -> None:
         func: SomeFunc = yield ask(SomeFunc)
         return func()
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(Local({SomeFunc: _impl}, program()))
 
     assert result.is_ok

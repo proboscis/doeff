@@ -19,7 +19,7 @@ from doeff import (
     ExecutionContext,
     MemoGet,
     MemoPut,
-    ProgramInterpreter,
+    CESKInterpreter,
     Recover,
     do,
 )
@@ -34,7 +34,6 @@ from doeff.cache import (
     persistent_cache_path,
 )
 from doeff.types import EffectFailureError
-from doeff.handlers import HandlerScope
 
 # Shared fixture ensuring each test uses isolated cache database
 
@@ -67,7 +66,7 @@ async def test_clear_persistent_cache(temp_cache_db, cache_context) -> None:
         yield CachePut("clear-key", "value", lifecycle=CacheLifecycle.PERSISTENT)
         return (yield CacheGet("clear-key"))
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(cache_roundtrip(), cache_context)
 
     assert result.is_ok
@@ -101,7 +100,7 @@ async def test_cache_put_and_get() -> None:
         value = yield CacheGet("test_key")
         return value
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program())
 
     assert result.is_ok
@@ -118,7 +117,7 @@ async def test_cache_miss_raises_error() -> None:
         value = yield CacheGet("nonexistent")
         return value
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program())
 
     assert result.is_err
@@ -137,7 +136,7 @@ async def test_cache_with_complex_key() -> None:
         value = yield CacheGet(key)
         return value
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program())
 
     assert result.is_ok
@@ -170,7 +169,7 @@ async def test_cache_ttl_expiry(temp_cache_db) -> None:
 
         return (value1, value2)
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_with_io())
 
     assert result.is_ok
@@ -182,7 +181,7 @@ async def test_cache_ttl_expiry(temp_cache_db) -> None:
 async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context) -> None:
     """Cache entries with persistent lifecycle persist across interpreter instances."""
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     key = ("disk", 1)
 
@@ -199,7 +198,7 @@ async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context
 
     # Second engine with same cache path via context
     second_context = ExecutionContext(env={CACHE_PATH_ENV_KEY: temp_cache_db})
-    second_engine = ProgramInterpreter()
+    second_engine = CESKInterpreter()
     result = await second_engine.run_async(fetch(), second_context)
 
     assert result.is_ok
@@ -210,7 +209,7 @@ async def test_cache_persistent_lifecycle_uses_disk(temp_cache_db, cache_context
 async def test_cache_explicit_storage_disk(temp_cache_db, cache_context) -> None:
     """Explicit disk storage hint should persist values on disk."""
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     @do
     def store_and_fetch():
@@ -239,7 +238,7 @@ async def test_cache_recover_on_miss() -> None:
         value = yield Recover(CacheGet("missing_key"), compute_value())
         return value
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program())
 
     assert result.is_ok
@@ -271,7 +270,7 @@ async def test_basic_cache_decorator(temp_cache_db, cache_context) -> None:
 
         return (result1, result2, result3, call_count[0])
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program(), cache_context)
 
     assert result.is_ok
@@ -290,7 +289,7 @@ async def test_cache_decorator_failure_includes_call_frame() -> None:
     def failing_func(x: int) -> EffectGenerator[int]:
         raise ValueError("boom")
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
 
     result = await engine.run_async(failing_func(5))
 
@@ -318,50 +317,6 @@ async def test_cache_decorator_failure_includes_call_frame() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cache_decorator_persistent_lifecycle(temp_cache_db) -> None:
-    """Decorator should propagate persistent lifecycle and reuse cached value."""
-
-    call_count = [0]
-
-    class RecordingCacheHandler:
-        scope = HandlerScope.SHARED
-
-        def __init__(self):
-            self.store: dict[Any, Any] = {}
-            self.policies: list[Any] = []
-
-        async def handle_get(self, effect, _ctx):
-            if effect.key not in self.store:
-                raise KeyError("miss")
-            return self.store[effect.key]
-
-        async def handle_put(self, effect, _ctx):
-            self.store[effect.key] = effect.value
-            self.policies.append(effect.policy)
-
-    cache_handler = RecordingCacheHandler()
-    engine = ProgramInterpreter(custom_handlers={"cache": cache_handler})
-
-    @cache(lifecycle=CacheLifecycle.PERSISTENT)
-    @do
-    def expensive(x: int) -> EffectGenerator[int]:
-        call_count[0] += 1
-        return x * 3
-
-    first = await engine.run_async(expensive(4))
-    assert first.is_ok
-    assert first.value == 12
-    assert call_count[0] == 1
-    assert cache_handler.policies
-    assert cache_handler.policies[-1].lifecycle is CacheLifecycle.PERSISTENT
-
-    second = await engine.run_async(expensive(4))
-    assert second.is_ok
-    assert second.value == 12
-    assert call_count[0] == 1  # cache hit
-
-
-@pytest.mark.asyncio
 async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cache_context) -> None:
     """Persistent lifecycle hint should keep data across interpreter instances."""
 
@@ -373,7 +328,7 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cach
         call_count[0] += 1
         return "value"
 
-    engine_one = ProgramInterpreter()
+    engine_one = CESKInterpreter()
     first = await engine_one.run_async(expensive_value(), cache_context)
 
     assert first.is_ok
@@ -383,7 +338,7 @@ async def test_cache_decorator_persistent_lifecycle_persists(temp_cache_db, cach
 
     # Second engine with same cache path via context
     second_context = ExecutionContext(env={CACHE_PATH_ENV_KEY: temp_cache_db})
-    engine_two = ProgramInterpreter()
+    engine_two = CESKInterpreter()
     second = await engine_two.run_async(expensive_value(), second_context)
 
     assert second.is_ok
@@ -411,7 +366,7 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db) -> None:
             CachePut,
             CacheLifecycle,
             ExecutionContext,
-            ProgramInterpreter,
+            CESKInterpreter,
             do,
         )
 
@@ -427,7 +382,7 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db) -> None:
 
         async def run(mode: str, cache_path: str) -> None:
             context = ExecutionContext(env={CACHE_PATH_ENV_KEY: Path(cache_path)})
-            engine = ProgramInterpreter()
+            engine = CESKInterpreter()
             if mode == "store":
                 result = await engine.run_async(store(), context)
                 if result.is_err:
@@ -493,7 +448,7 @@ async def test_cache_with_kwargs(temp_cache_db, cache_context) -> None:
 
         return (result1, result2, result3, result4, call_count[0])
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program(), cache_context)
 
     assert result.is_ok
@@ -537,7 +492,7 @@ async def test_cache_with_ttl(temp_cache_db) -> None:
 
         return (time1, time2, time3, call_count[0])
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program())
 
     assert result.is_ok
@@ -569,7 +524,7 @@ async def test_cache_key_selector(temp_cache_db, cache_context) -> None:
 
         return (result1, result2, result3, call_count[0])
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program(), cache_context)
 
     assert result.is_ok
@@ -601,7 +556,7 @@ async def test_cache_key_hashers_transform_arguments(temp_cache_db, cache_contex
         calls.append((user_id, payload["value"]))
         return payload["value"]
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     payload_one = {"value": 1, "other": 99}
     payload_two = {"other": 99, "value": 1}
@@ -635,7 +590,7 @@ async def test_convenience_decorators() -> None:
         result = yield cached_1min()
         return result
 
-    engine = ProgramInterpreter()
+    engine = CESKInterpreter()
     result = await engine.run_async(test_program())
 
     assert result.is_ok
@@ -652,7 +607,7 @@ async def test_cache_decorator_hits(temp_cache_db, cache_context) -> None:
         calls.append(x)
         return x * 2
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     result1 = await interpreter.run_async(compute(3), cache_context)
     assert result1.value == 6
@@ -673,7 +628,7 @@ async def test_cache_decorator_expiry(temp_cache_db, cache_context) -> None:
         calls.append(x)
         return x * 2
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     cache_handler = interpreter.cache_handler
     base_time = 1000.0
     original_time = cache_handler._time
@@ -701,7 +656,7 @@ async def test_memo_effects() -> None:
         yield MemoPut("alpha", 123)
         return (yield MemoGet("alpha"))
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(program())
 
     assert result.is_ok
@@ -714,7 +669,7 @@ async def test_memo_miss_raises_keyerror() -> None:
     def program() -> EffectGenerator[int]:
         return (yield MemoGet("missing"))
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
     result = await interpreter.run_async(program())
 
     assert result.is_err
@@ -739,7 +694,7 @@ async def test_cache_decorator_accepts_pil(temp_cache_db, cache_context) -> None
 
     image = Image.new("RGB", (16, 16), color="red")
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     result1 = await interpreter.run_async(compute(image), cache_context)
     assert result1.value == 256

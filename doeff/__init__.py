@@ -141,9 +141,9 @@ from doeff.effects import (
     atomic_update,
 )
 
-# Import from new modular structure
-from doeff.interpreter import ProgramInterpreter
+# Import from modular structure
 from doeff.kleisli import KleisliProgram
+from doeff.cesk_adapter import CESKInterpreter
 from doeff.do import do
 from doeff.program import Program
 from doeff.graph_snapshot import (
@@ -226,8 +226,8 @@ __all__ = [  # noqa: RUF022
     "WGraph",
     "FrozenDict",
     # Core classes
-    "ProgramInterpreter",
     "KleisliProgram",
+    "CESKInterpreter",
     "EffectCallTree",
     # Decorator
     "do",

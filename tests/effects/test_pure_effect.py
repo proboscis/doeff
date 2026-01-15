@@ -2,7 +2,7 @@
 
 import pytest
 
-from doeff import ProgramInterpreter, do
+from doeff import CESKInterpreter, do
 from doeff.effects.pure import Pure, PureEffect
 from doeff.program import Program
 from doeff.types import Ok
@@ -11,7 +11,7 @@ from doeff.types import Ok
 @pytest.mark.asyncio
 async def test_pure_effect_returns_value():
     """PureEffect should immediately return its wrapped value."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     # Create a PureEffect directly
     effect = PureEffect(value=42)
@@ -33,7 +33,7 @@ async def test_pure_effect_returns_value():
 @pytest.mark.asyncio
 async def test_pure_effect_with_complex_value():
     """PureEffect should work with any value type."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     complex_value = {"key": "value", "nested": [1, 2, 3]}
     effect = PureEffect(value=complex_value)
@@ -52,7 +52,7 @@ async def test_pure_effect_with_complex_value():
 @pytest.mark.asyncio
 async def test_pure_effect_with_none():
     """PureEffect should handle None value."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     effect = PureEffect(value=None)
 
@@ -70,7 +70,7 @@ async def test_pure_effect_with_none():
 @pytest.mark.asyncio
 async def test_pure_factory_function():
     """Pure() factory should create PureEffect with trace context."""
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     @do
     def pure_program() -> Program[str]:
@@ -89,7 +89,7 @@ async def test_pure_effect_in_composition():
     from doeff.effects import Ask
     from doeff.types import ExecutionContext
 
-    interpreter = ProgramInterpreter()
+    interpreter = CESKInterpreter()
 
     @do
     def composed_program() -> Program[str]:

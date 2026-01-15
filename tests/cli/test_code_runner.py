@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Program, ProgramInterpreter
+from doeff import Program, CESKInterpreter
 from doeff.cli.code_runner import (
     TransformResult,
     execute_doeff_code,
@@ -11,7 +11,7 @@ from doeff.cli.code_runner import (
 
 
 def run_program(program: Program):
-    return ProgramInterpreter().run(program).value
+    return CESKInterpreter().run(program).value
 
 
 class TestTransformDoeffCode:
