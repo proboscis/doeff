@@ -41,11 +41,12 @@ async def test_fail_effect_with_creation_trace():
         assert result.is_err
 
         error_str = str(result.result.error)
+        display_str = result.display()
 
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
             assert "ValueError" in error_str
             assert "Test error" in error_str
-            assert "failing_program" in error_str
+            assert "failing_program" in display_str
     finally:
         # Restore original debug setting
         if "DOEFF_DEBUG" in os.environ:  # noqa: PINJ050
@@ -155,10 +156,11 @@ async def test_nested_program_creation_trace():
 
         assert result.is_err
         error_str = str(result.result.error)
+        display_str = result.display()
 
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
             assert "RuntimeError" in error_str
-            assert "inner_program" in error_str
+            assert "inner_program" in display_str
     finally:
         if "DOEFF_DEBUG" in os.environ:  # noqa: PINJ050
             del os.environ["DOEFF_DEBUG"]  # noqa: PINJ050
