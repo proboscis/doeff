@@ -663,7 +663,7 @@ class TestAsyncioRuntime:
         assert result == "config_value"
 
     @pytest.mark.asyncio
-    async def test_run_result_returns_runtime_result(self):
+    async def test_run_safe_returns_runtime_result(self):
         from doeff.do import do
         from doeff.runtimes import AsyncioRuntime
 
@@ -671,9 +671,9 @@ class TestAsyncioRuntime:
         def pure_program():
             return 99
 
-        result = await AsyncioRuntime().run_result(pure_program())
+        result = await AsyncioRuntime().run_safe(pure_program())
         assert result.is_ok
-        assert result.value == 99
+        assert result.unwrap() == 99
 
 
 class TestSyncRuntime:
@@ -705,7 +705,7 @@ class TestSyncRuntime:
         )
         assert result == "config_value"
 
-    def test_run_result_returns_runtime_result(self):
+    def test_run_safe_returns_runtime_result(self):
         from doeff.do import do
         from doeff.runtimes import SyncRuntime
 
@@ -713,14 +713,13 @@ class TestSyncRuntime:
         def pure_program():
             return 99
 
-        result = SyncRuntime().run_result(pure_program())
+        result = SyncRuntime().run_safe(pure_program())
         assert result.is_ok
-        assert result.value == 99
+        assert result.unwrap() == 99
 
 
 class TestSimulationRuntime:
-    @pytest.mark.asyncio
-    async def test_run_with_sim_delay(self):
+    def test_run_with_sim_delay(self):
         from doeff.do import do
         from doeff.runtime import SimDelay, create_sim_delay_handler
         from doeff.runtimes import SimulationRuntime
@@ -733,15 +732,15 @@ class TestSimulationRuntime:
             return "done"
 
         runtime = SimulationRuntime(
-            start_time=start,
             handlers={SimDelay: create_sim_delay_handler()},
+            start_time=start,
         )
-        result = await runtime.run(delay_program())
+        result = runtime.run(delay_program())
 
         assert result == "done"
         assert runtime.current_time == start + timedelta(seconds=10)
 
-    def test_run_sync(self):
+    def test_run_simple_program(self):
         from doeff.do import do
         from doeff.effects import Put, Get
         from doeff.runtimes import SimulationRuntime
@@ -751,5 +750,5 @@ class TestSimulationRuntime:
             yield Put("x", 100)
             return (yield Get("x"))
 
-        result = SimulationRuntime().run_sync(simple_program())
+        result = SimulationRuntime().run(simple_program())
         assert result == 100
