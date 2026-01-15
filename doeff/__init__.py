@@ -171,14 +171,9 @@ from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 # Program runner (CLI-equivalent API)
 from doeff.run import run_program, ProgramRunResult
 
-# Runtime: Single-shot Algebraic Effects with Pluggable Scheduler
+# Runtime: Single-shot Algebraic Effects
 from doeff.runtime import (
-    EffectRuntime,
-    RuntimeResult,
-    create_runtime,
     Resume,
-    Suspend,
-    Scheduled,
     Schedule,
     HandlerResult,
     AwaitPayload,
@@ -187,15 +182,8 @@ from doeff.runtime import (
     SpawnPayload,
     SchedulePayload,
     Continuation,
-    Scheduler,
-    FIFOScheduler,
-    PriorityScheduler,
-    SimulationScheduler,
-    RealtimeScheduler,
     ScheduledEffectHandler,
-    SimDelay,
-    SimWaitUntil,
-    SimSubmit,
+    ScheduledHandlers,
 )
 
 from doeff.runtimes import (
@@ -340,13 +328,8 @@ __all__ = [  # noqa: RUF022
     # Program runner (CLI-equivalent API)
     "run_program",
     "ProgramRunResult",
-    # Runtime: Scheduler-based execution
-    "EffectRuntime",
-    "RuntimeResult",
-    "create_runtime",
+    # Runtime: Effect handler types and payloads
     "Resume",
-    "Suspend",
-    "Scheduled",
     "Schedule",
     "HandlerResult",
     "AwaitPayload",
@@ -355,15 +338,9 @@ __all__ = [  # noqa: RUF022
     "SpawnPayload",
     "SchedulePayload",
     "Continuation",
-    "Scheduler",
-    "FIFOScheduler",
-    "PriorityScheduler",
-    "SimulationScheduler",
-    "RealtimeScheduler",
     "ScheduledEffectHandler",
-    "SimDelay",
-    "SimWaitUntil",
-    "SimSubmit",
+    "ScheduledHandlers",
+    # Runtime implementations
     "AsyncioRuntime",
     "SyncRuntime",
     "SimulationRuntime",
