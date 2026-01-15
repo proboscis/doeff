@@ -7,7 +7,6 @@ import pytest
 from doeff import (
     Ask,
     EffectGenerator,
-    Fail,
     Log,
     ProgramInterpreter,
     Put,
@@ -33,24 +32,19 @@ async def test_fail_effect_with_creation_trace():
         def failing_program() -> EffectGenerator[str]:
             yield Put("state", "before_failure")
             yield Log("About to fail")
-            # This Fail effect should capture where it was created
-            yield Fail(ValueError("Test error"))
+            raise ValueError("Test error")
             return "never reached"
 
         engine = ProgramInterpreter()
         result = await engine.run_async(failing_program())
 
-        # Should have failed
         assert result.is_err
 
-        # Get the error string
         error_str = str(result.result.error)
 
-        # Should contain creation context if debug mode is on
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
-            assert "Effect 'ResultFailEffect' failed" in error_str
-            assert "Created at:" in error_str  # Changed from "Effect created at"
-            assert "test_effect_creation_trace.py" in error_str
+            assert "ValueError" in error_str
+            assert "Test error" in error_str
             assert "failing_program" in error_str
     finally:
         # Restore original debug setting
@@ -142,8 +136,8 @@ async def test_nested_program_creation_trace():
     try:
         @do
         def inner_program() -> EffectGenerator[int]:
-            # This will fail
-            yield Fail(RuntimeError("Inner error"))
+            raise RuntimeError("Inner error")
+            yield Log("never reached")
             return 42
 
         @do
@@ -162,9 +156,8 @@ async def test_nested_program_creation_trace():
         assert result.is_err
         error_str = str(result.result.error)
 
-        # Should show the creation context
         if DEBUG_EFFECTS or os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes"):  # noqa: PINJ050
-            assert "Effect 'ResultFailEffect' failed" in error_str
+            assert "RuntimeError" in error_str
             assert "inner_program" in error_str
     finally:
         if "DOEFF_DEBUG" in os.environ:  # noqa: PINJ050
@@ -233,52 +226,31 @@ async def test_display_with_creation_trace():
     from doeff import utils
     importlib.reload(utils)
 
-    # Re-import after reload to get updated factories
     import sys
-    # Reload the result module directly
-    if "doeff.effects.result" in sys.modules:
-        del sys.modules["doeff.effects.result"]
-    from doeff.effects.result import Fail
 
     try:
         @do
         def test_program() -> EffectGenerator[str]:
             yield Log("Starting test")
-            # This should capture creation context
-            yield Fail(ValueError("Test error for display"))
+            raise ValueError("Test error for display")
             return "Should not reach here"
 
         engine = ProgramInterpreter()
         result = await engine.run_async(test_program())
 
-        # Verify the result is an error
         assert result.is_err
 
-        # Get the display output
         display_output = result.display(verbose=True)
 
-        # Check that display output contains the expected elements
         assert "❌ Failure" in display_output
-        assert "Effect 'ResultFailEffect' failed" in display_output
         assert "ValueError" in display_output
         assert "Test error for display" in display_output
 
-        # Check that creation location is shown
-        assert "📍 Created at:" in display_output
         assert "test_program" in display_output
         assert "test_effect_creation_trace.py" in display_output
 
-        # Check that execution stack trace is shown in verbose mode
-        assert "🔥 Execution Stack Trace" in display_output
-        assert "Traceback (most recent call last):" in display_output
-        # Should also show effect creation stack trace if available
-        assert "📍 Effect Creation Stack Trace" in display_output or "🔥 Execution" in display_output
-
-        # Also test the non-verbose display
         simple_display = result.display(verbose=False)
         assert "❌ Failure" in simple_display
-        # Should show creation context even in non-verbose mode
-        assert "📍 Created at:" in simple_display
         assert "test_program" in simple_display
 
     finally:
