@@ -271,9 +271,21 @@ def handle_task_join(
     return Schedule(AwaitPayload(do_async()), store)
 
 
+def handle_spawn_scheduled(
+    effect: EffectBase,
+    env: Environment,
+    store: Store,
+) -> HandlerResult:
+    from doeff.runtime import SpawnPayload
+    store_without_dispatcher = {key: v for key, v in store.items() if key != "__dispatcher__"}
+    child_store = copy.deepcopy(store_without_dispatcher)
+    return Schedule(SpawnPayload(program=effect.program, env=env, store=child_store), store)
+
+
 __all__ = [
     "handle_future_await",
     "handle_spawn",
+    "handle_spawn_scheduled",
     "handle_thread",
     "handle_task_join",
     "_get_shared_executor",
