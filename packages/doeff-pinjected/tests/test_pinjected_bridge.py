@@ -23,7 +23,6 @@ from doeff import (
     # Effects
     Ask,
     Await,
-    Catch,
     Dep,  # pinjected-compatible dependency alias
     Effect,
     ExecutionContext,
@@ -37,6 +36,7 @@ from doeff import (
     ProgramInterpreter,
     Put,
     RunResult,
+    Safe,
     Step,
     do,
 )
@@ -379,8 +379,8 @@ async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
 
 
 @pytest.mark.asyncio
-async def test_catch_effect_through_bridge(mock_resolver):  # noqa: PINJ040
-    """Test Catch effect through the bridge."""
+async def test_safe_effect_through_bridge(mock_resolver):  # noqa: PINJ040
+    """Test Safe effect through the bridge."""
 
     @do
     def risky_program(should_fail: bool) -> Generator[Effect | Program, Any, str]:
@@ -390,16 +390,18 @@ async def test_catch_effect_through_bridge(mock_resolver):  # noqa: PINJ040
         return "success"
 
     @do
-    def catch_program() -> Generator[Effect | Program, Any, dict]:
+    def safe_program() -> Generator[Effect | Program, Any, dict]:
         # Success case
-        success = yield Catch(risky_program(False), lambda e: f"caught: {e}")
+        safe_success = yield Safe(risky_program(False))
+        success = safe_success.value if safe_success.is_ok() else f"caught: {safe_success.error}"
 
         # Failure case with recovery
-        failure = yield Catch(risky_program(True), lambda e: f"recovered: {e}")
+        safe_failure = yield Safe(risky_program(True))
+        failure = safe_failure.value if safe_failure.is_ok() else f"recovered: {safe_failure.error}"
 
         return {"success": success, "failure": failure}
 
-    injected = program_to_injected_result(catch_program())
+    injected = program_to_injected_result(safe_program())
     result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok
@@ -539,10 +541,8 @@ async def test_all_effects_comprehensive(mock_resolver):  # noqa: PINJ040
         def failing_prog() -> Generator[Effect | Program, Any, int]:
             raise ZeroDivisionError("division by zero")
 
-        safe_result = yield Catch(
-            failing_prog(),  # Pass a Program that will raise
-            lambda e: "division_error",
-        )
+        safe_failing = yield Safe(failing_prog())  # Pass a Program that will raise
+        safe_result = safe_failing.value if safe_failing.is_ok() else "division_error"
 
         # Local environment
         @do

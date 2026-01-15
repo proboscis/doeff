@@ -12,7 +12,6 @@ from typing import Any
 from doeff import (
     Ask,
     AtomicUpdate,
-    Catch,
     EffectGenerator,
     Err,
     Fail,
@@ -20,6 +19,7 @@ from doeff import (
     Log,
     Ok,
     Put,
+    Safe,
     Step,
     do,
     slog,
@@ -207,13 +207,13 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
     def ask(name: str):
         return (yield Ask(name))
 
+    @do
     def ask_optional(name: str) -> EffectGenerator[Any]:
-        return Catch(ask(name), lambda exc: None if isinstance(exc, KeyError) else None)  # type: ignore[return-value]
+        safe_result = yield Safe(ask(name))
+        return safe_result.value if safe_result.is_ok() else None
 
-    client = yield Catch(
-        ask("gemini_client"),
-        lambda exc: None if isinstance(exc, KeyError) else None,
-    )
+    safe_client = yield Safe(ask("gemini_client"))
+    client = safe_client.value if safe_client.is_ok() else None
     if client:
         return client
 
@@ -456,25 +456,27 @@ def track_api_call(
     if token_usage:
         call_result = _build_cost_input()
 
-        calculator = yield Catch(
-            Ask("gemini_cost_calculator"),
-            lambda exc: None if isinstance(exc, KeyError) else Fail(exc),
-        )
+        safe_calculator = yield Safe(Ask("gemini_cost_calculator"))
+        calculator = safe_calculator.value if safe_calculator.is_ok() else None
 
         calculator_errors: list[str] = []
 
         estimate: GeminiCostEstimate | None = None
         if calculator is not None:
-            estimate = yield Catch(
-                _invoke_cost_calculator(calculator, call_result),
-                lambda exc: (calculator_errors.append(str(exc)) or None),
-            )
+            safe_estimate = yield Safe(_invoke_cost_calculator(calculator, call_result))
+            if safe_estimate.is_ok():
+                estimate = safe_estimate.value
+            else:
+                calculator_errors.append(str(safe_estimate.error))
 
         if estimate is None:
-            estimate = yield Catch(
-                _invoke_cost_calculator(gemini_cost_calculator__default, call_result),
-                lambda exc: (calculator_errors.append(str(exc)) or None),
+            safe_default_estimate = yield Safe(
+                _invoke_cost_calculator(gemini_cost_calculator__default, call_result)
             )
+            if safe_default_estimate.is_ok():
+                estimate = safe_default_estimate.value
+            else:
+                calculator_errors.append(str(safe_default_estimate.error))
 
         if estimate is None:
             message = (
