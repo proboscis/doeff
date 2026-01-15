@@ -7,12 +7,10 @@ from doeff.cesk.frames import InterceptFrame, Kontinuation
 
 
 def is_control_flow_effect(effect: EffectBase) -> bool:
-    """Check if effect is a control flow effect that pushes frames."""
     from doeff.effects import (
         GatherEffect,
         InterceptEffect,
         LocalEffect,
-        ResultFinallyEffect,
         ResultSafeEffect,
         WriterListenEffect,
     )
@@ -20,7 +18,6 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
     return isinstance(
         effect,
         (
-            ResultFinallyEffect,
             ResultSafeEffect,
             LocalEffect,
             InterceptEffect,
@@ -31,11 +28,8 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
 
 
 def is_pure_effect(effect: EffectBase) -> bool:
-    """Check if effect can be handled synchronously without I/O."""
     from doeff.effects import (
         AskEffect,
-        MemoGetEffect,
-        MemoPutEffect,
         StateGetEffect,
         StateModifyEffect,
         StatePutEffect,
@@ -57,8 +51,6 @@ def is_pure_effect(effect: EffectBase) -> bool:
             StateModifyEffect,
             AskEffect,
             WriterTellEffect,
-            MemoGetEffect,
-            MemoPutEffect,
             PureEffect,
             DurableCacheGet,
             DurableCachePut,
@@ -69,23 +61,18 @@ def is_pure_effect(effect: EffectBase) -> bool:
 
 
 def is_effectful(effect: EffectBase) -> bool:
-    """Check if effect may perform I/O (async boundary)."""
     from doeff.effects import (
         FutureAwaitEffect,
         IOPerformEffect,
-        IOPrintEffect,
         SpawnEffect,
         TaskJoinEffect,
-        ThreadEffect,
     )
 
     return isinstance(
         effect,
         (
             IOPerformEffect,
-            IOPrintEffect,
             FutureAwaitEffect,
-            ThreadEffect,
             SpawnEffect,
             TaskJoinEffect,
         ),
@@ -93,12 +80,10 @@ def is_effectful(effect: EffectBase) -> bool:
 
 
 def has_intercept_frame(K: Kontinuation) -> bool:
-    """Check if continuation stack contains an InterceptFrame."""
     return any(isinstance(f, InterceptFrame) for f in K)
 
 
 def find_intercept_frame_index(K: Kontinuation) -> int:
-    """Find index of first InterceptFrame in continuation stack."""
     for i, f in enumerate(K):
         if isinstance(f, InterceptFrame):
             return i

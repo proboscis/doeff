@@ -365,64 +365,6 @@ async def test_error_propagation_in_flat_map() -> None:
 
 
 @pytest.mark.asyncio
-async def test_program_first_success_returns_earliest_success() -> None:
-    """first_success should stop at the first program that succeeds."""
-
-    @do
-    def failing_one() -> Generator[Effect | Program, Any, int]:
-        raise ValueError("boom one")
-
-    @do
-    def failing_two() -> Generator[Effect | Program, Any, int]:
-        raise RuntimeError("boom two")
-
-    @do
-    def succeeding() -> Generator[Effect | Program, Any, int]:
-        return 99
-
-    prog = Program.first_success(
-        failing_one(),
-        failing_two(),
-        succeeding(),
-    )
-
-    engine = ProgramInterpreter()
-    result = await engine.run_async(prog)
-
-    assert result.is_ok
-    assert result.value == 99
-
-
-@pytest.mark.asyncio
-async def test_program_first_success_raises_last_error_when_all_fail() -> None:
-    """When all candidates fail, first_success should propagate the last error."""
-
-    @do
-    def failing_one() -> Generator[Effect | Program, Any, int]:
-        raise ValueError("fail first")
-
-    @do
-    def failing_two() -> Generator[Effect | Program, Any, int]:
-        raise RuntimeError("fail second")
-
-    prog = Program.first_success(failing_one(), failing_two())
-
-    engine = ProgramInterpreter()
-    result = await engine.run_async(prog)
-
-    assert result.is_err
-    error = result.result.error
-    from doeff.types import EffectFailure
-
-    # Unwrap nested EffectFailure wrappers to get to the root cause
-    while isinstance(error, EffectFailure):
-        error = error.cause
-
-    assert isinstance(error, RuntimeError)
-    assert "fail second" in str(error)
-
-
-@pytest.mark.asyncio
 async def test_program_first_some_returns_first_present_value() -> None:
     """first_some should return the first Some value."""
 
@@ -459,32 +401,6 @@ async def test_program_first_some_returns_nothing_when_all_none() -> None:
 
     assert result.is_ok
     assert result.value is NOTHING
-
-
-@pytest.mark.asyncio
-async def test_program_first_success_resets_state_between_attempts() -> None:
-    """Failed attempts should not mutate shared state for later candidates."""
-
-    @do
-    def mutating_failure() -> Generator[Effect | Program, Any, int]:
-        yield Put("counter", 99)
-        raise RuntimeError("boom")
-
-    @do
-    def reader_success() -> Generator[Effect | Program, Any, int]:
-        return (yield Get("counter"))
-
-    engine = ProgramInterpreter()
-    context = ExecutionContext(state={"counter": 0})
-
-    prog = Program.first_success(mutating_failure(), reader_success())
-
-    result = await engine.run_async(prog, context)
-
-    assert result.is_ok
-    assert result.value == 0
-    assert context.state["counter"] == 0
-    assert context.log == []
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ from doeff.cesk import (
     run_sync,
 )
 from doeff.do import do
-from doeff.effects import Thread, get, put
+from doeff.effects import get, put
 from doeff.effects.spawn import Spawn
 
 
@@ -218,20 +218,21 @@ class TestDispatcherExcludedFromDeepCopy:
         assert result.value == "child_done"
 
     @pytest.mark.asyncio
-    async def test_thread_works_with_dispatcher_in_store(self):
-        """Thread should work - dispatcher is passed explicitly, not deep-copied."""
+    async def test_spawn_works_with_dispatcher_in_store(self):
+        """Spawn should work - dispatcher is passed explicitly, not deep-copied."""
 
         @do
-        def thread_program():
-            yield put("from_thread", True)
-            return "thread_done"
+        def spawned_program():
+            yield put("from_spawned", True)
+            return "spawned_done"
 
         @do
         def parent_program():
-            result = yield Thread(thread_program(), await_result=True)
-            from_thread = yield get("from_thread")
-            return (result, from_thread)
+            task = yield Spawn(spawned_program(), preferred_backend="thread")
+            result = yield task.join()
+            from_spawned = yield get("from_spawned")
+            return (result, from_spawned)
 
         result = await run(parent_program())
-        assert result.value[0] == "thread_done"
+        assert result.value[0] == "spawned_done"
         assert result.value[1] is True
