@@ -298,20 +298,17 @@ def example_effect_trace():
 @do
 def workflow_with_cache():
     """A workflow that uses cache (observable storage access)."""
-    from doeff.effects import cacheget, cacheput
+    from doeff.effects import CacheGet, CachePut
 
-    # Check cache
-    cached = yield cacheget("result")
+    cached = yield CacheGet("result")
     if cached is not None:
         return cached
 
-    # Compute
     x = yield Pure(10)
     y = yield Pure(20)
     result = x + y
 
-    # Cache result
-    yield cacheput("result", result)
+    yield CachePut("result", result)
 
     return result
 

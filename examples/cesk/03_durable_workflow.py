@@ -19,7 +19,7 @@ from pathlib import Path
 
 from doeff import do
 from doeff.cesk import run_sync
-from doeff.effects import Pure, cacheget, cacheput, cachedelete, cacheexists
+from doeff.effects import Pure, CacheGet, CachePut, CacheDelete, CacheExists
 from doeff.storage import SQLiteStorage, InMemoryStorage
 
 
@@ -30,18 +30,14 @@ from doeff.storage import SQLiteStorage, InMemoryStorage
 
 @do
 def basic_cache_operations():
-    """Demonstrate basic cacheget/cacheput operations."""
-    # Check if value exists (should be None initially)
-    initial = yield cacheget("my_key")
+    """Demonstrate basic CacheGet/CachePut operations."""
+    initial = yield CacheGet("my_key")
 
-    # Store a value
-    yield cacheput("my_key", {"data": 42, "timestamp": time.time()})
+    yield CachePut("my_key", {"data": 42, "timestamp": time.time()})
 
-    # Retrieve the stored value
-    stored = yield cacheget("my_key")
+    stored = yield CacheGet("my_key")
 
-    # Check existence
-    exists = yield cacheexists("my_key")
+    exists = yield CacheExists("my_key")
 
     return {
         "initial_value": initial,
@@ -91,7 +87,7 @@ def idempotent_operation(request_id: str):
     cache_key = f"api_result:{request_id}"
 
     # Check cache first
-    cached = yield cacheget(cache_key)
+    cached = yield CacheGet(cache_key)
     if cached is not None:
         print(f"  [CACHE HIT] Returning cached result for {request_id}")
         return cached
@@ -101,7 +97,7 @@ def idempotent_operation(request_id: str):
     result = simulate_expensive_api_call(request_id)
 
     # Store in cache for future calls
-    yield cacheput(cache_key, result)
+    yield CachePut(cache_key, result)
 
     return result
 
@@ -152,34 +148,34 @@ def multi_step_workflow():
     results = []
 
     # Step 1: Data fetch
-    step1 = yield cacheget("workflow:step1")
+    step1 = yield CacheGet("workflow:step1")
     if step1 is None:
         print("  Executing Step 1: Fetching data...")
         time.sleep(0.3)
         step1 = {"step": 1, "data": "raw_data", "timestamp": time.time()}
-        yield cacheput("workflow:step1", step1)
+        yield CachePut("workflow:step1", step1)
     else:
         print("  Step 1: Using cached result")
     results.append(step1)
 
     # Step 2: Transform data
-    step2 = yield cacheget("workflow:step2")
+    step2 = yield CacheGet("workflow:step2")
     if step2 is None:
         print("  Executing Step 2: Transforming data...")
         time.sleep(0.3)
         step2 = {"step": 2, "data": f"transformed_{step1['data']}", "timestamp": time.time()}
-        yield cacheput("workflow:step2", step2)
+        yield CachePut("workflow:step2", step2)
     else:
         print("  Step 2: Using cached result")
     results.append(step2)
 
     # Step 3: Final processing
-    step3 = yield cacheget("workflow:step3")
+    step3 = yield CacheGet("workflow:step3")
     if step3 is None:
         print("  Executing Step 3: Final processing...")
         time.sleep(0.3)
         step3 = {"step": 3, "data": f"final_{step2['data']}", "timestamp": time.time()}
-        yield cacheput("workflow:step3", step3)
+        yield CachePut("workflow:step3", step3)
     else:
         print("  Step 3: Using cached result")
     results.append(step3)
@@ -226,23 +222,23 @@ def example_persistent_workflow():
 def cache_management_demo():
     """Demonstrate cache management operations."""
     # Populate cache
-    yield cacheput("temp:a", "value_a")
-    yield cacheput("temp:b", "value_b")
-    yield cacheput("temp:c", "value_c")
+    yield CachePut("temp:a", "value_a")
+    yield CachePut("temp:b", "value_b")
+    yield CachePut("temp:c", "value_c")
 
     # Check existence
-    exists_before = yield cacheexists("temp:b")
+    exists_before = yield CacheExists("temp:b")
 
     # Delete specific key
-    yield cachedelete("temp:b")
+    yield CacheDelete("temp:b")
 
     # Check again
-    exists_after = yield cacheexists("temp:b")
-    value_after = yield cacheget("temp:b")
+    exists_after = yield CacheExists("temp:b")
+    value_after = yield CacheGet("temp:b")
 
     # Other keys still exist
-    a_value = yield cacheget("temp:a")
-    c_value = yield cacheget("temp:c")
+    a_value = yield CacheGet("temp:a")
+    c_value = yield CacheGet("temp:c")
 
     return {
         "exists_before_delete": exists_before,
@@ -275,11 +271,11 @@ def example_cache_management():
 @do
 def storage_agnostic_workflow():
     """A workflow that works with any storage backend."""
-    yield cacheput("config:version", "1.0.0")
-    yield cacheput("config:environment", "production")
+    yield CachePut("config:version", "1.0.0")
+    yield CachePut("config:environment", "production")
 
-    version = yield cacheget("config:version")
-    env = yield cacheget("config:environment")
+    version = yield CacheGet("config:version")
+    env = yield CacheGet("config:environment")
 
     return f"Running version {version} in {env}"
 

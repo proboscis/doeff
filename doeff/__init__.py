@@ -99,6 +99,8 @@ from doeff.effects import (
     MemoGet,
     MemoPut,
     # Effects - Cache
+    CacheDelete,
+    CacheExists,
     CacheGet,
     CachePut,
     # Lowercase effect functions (aliases)
@@ -130,6 +132,8 @@ from doeff.effects import (
     annotate,
     snapshot,
     capture_graph,
+    cache_delete,
+    cache_exists,
     cache_get,
     cache_put,
     atomic_get,
@@ -250,6 +254,8 @@ __all__ = [  # noqa: RUF022
     "Gather",
     "MemoGet",
     "MemoPut",
+    "CacheDelete",
+    "CacheExists",
     "CacheGet",
     "CachePut",
     "CacheLifecycle",
@@ -302,6 +308,8 @@ __all__ = [  # noqa: RUF022
     "finally_",
     "memo_get",
     "memo_put",
+    "cache_delete",
+    "cache_exists",
     "cache_get",
     "cache_put",
     # Cache decorator

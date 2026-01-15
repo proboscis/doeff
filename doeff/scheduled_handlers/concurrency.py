@@ -78,8 +78,8 @@ def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
     if parent_memo or child_memo:
         merged["__memo__"] = {**parent_memo, **child_memo}
 
-    if "__durable_storage__" in parent_store:
-        merged["__durable_storage__"] = parent_store["__durable_storage__"]
+    if "__cache_storage__" in parent_store:
+        merged["__cache_storage__"] = parent_store["__cache_storage__"]
 
     return merged
 
