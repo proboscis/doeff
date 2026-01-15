@@ -35,7 +35,7 @@ assert isinstance(failure.error, Exception)
 ### Pattern Matching
 
 ```python
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(my_program())
 
 match result.result:
@@ -53,7 +53,7 @@ def my_program():
     yield Log("Processing...")
     return 42
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(my_program())
 
 # Check success
@@ -77,7 +77,7 @@ def failing_program():
     yield Log("This never executes")
     return "never returned"
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(failing_program())
 assert result.is_err
 assert str(result.error) == "Something went wrong"
@@ -98,7 +98,7 @@ def validate_input(value):
     return value
 
 # This fails
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(validate_input(-5))
 assert result.is_err
 ```
@@ -144,7 +144,7 @@ def with_catch():
     yield Log(f"Result: {result}")
     return result
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(with_catch())
 assert result.is_ok
 assert result.value == "Caught error: Operation failed"
@@ -276,7 +276,7 @@ def with_retry():
     return result
 
 # Will retry up to 5 times with 100ms delay
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(with_retry())
 ```
 

@@ -101,7 +101,7 @@ def example_workflow():
     return count
 
 async def main():
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     result = await runtime.run(example_workflow())
     print(f"Result: {result.value}")
 

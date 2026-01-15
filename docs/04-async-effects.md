@@ -175,7 +175,7 @@ def process_batch(item_ids):
     return results
 
 # Usage
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(process_batch([1, 2, 3, 4, 5]))
 # ["processed-1", "processed-2", "processed-3", "processed-4", "processed-5"]
 ```
@@ -501,7 +501,7 @@ async def test_async_program():
         yield Log(f"Result: {result}")
         return result
     
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     result = await runtime.run(my_program())
     
     assert result.is_ok
