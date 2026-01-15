@@ -1,17 +1,14 @@
 # Error Handling
 
-This chapter covers doeff's comprehensive error handling system using the Result monad and error effects.
+This chapter covers doeff's error handling approach using the Result monad and the Safe effect combined with native Python patterns.
 
 ## Table of Contents
 
 - [Result Type](#result-type)
-- [Fail Effect](#fail-effect)
 - [Safe Effect](#safe-effect)
-- [Retry Effect](#retry-effect)
-- [Finally Effect](#finally-effect)
-- [FirstSuccess Effect](#firstsuccess-effect)
+- [Native Python Patterns](#native-python-patterns)
 - [Error Patterns](#error-patterns)
-- [Migration from Catch/Recover](#migration-from-catchrecover)
+- [Migration from Dropped Effects](#migration-from-dropped-effects)
 
 ## Result Type
 
@@ -35,7 +32,7 @@ assert isinstance(failure.error, Exception)
 
 ```python
 runtime = AsyncioRuntime()
-result = await runtime.run(my_program())
+result = await runtime.run_safe(my_program())
 
 match result.result:
     case Ok(value):
@@ -53,7 +50,7 @@ def my_program():
     return 42
 
 runtime = AsyncioRuntime()
-result = await runtime.run(my_program())
+result = await runtime.run_safe(my_program())
 
 # Check success
 if result.is_ok:
@@ -62,69 +59,9 @@ else:
     print(f"Error: {result.error}")
 ```
 
-## Fail Effect
-
-`Fail(exception)` immediately fails the program with an exception.
-
-### Basic Failure
-
-```python
-@do
-def failing_program():
-    yield Log("About to fail...")
-    yield Fail(Exception("Something went wrong"))
-    yield Log("This never executes")
-    return "never returned"
-
-runtime = AsyncioRuntime()
-result = await runtime.run(failing_program())
-assert result.is_err
-assert str(result.error) == "Something went wrong"
-```
-
-### Conditional Failure
-
-```python
-@do
-def validate_input(value):
-    if value < 0:
-        yield Fail(ValueError("Value must be non-negative"))
-    
-    if value > 100:
-        yield Fail(ValueError("Value must be <= 100"))
-    
-    yield Log(f"Valid value: {value}")
-    return value
-
-# This fails
-runtime = AsyncioRuntime()
-result = await runtime.run(validate_input(-5))
-assert result.is_err
-```
-
-### Custom Exceptions
-
-```python
-class ValidationError(Exception):
-    def __init__(self, field, message):
-        self.field = field
-        self.message = message
-        super().__init__(f"{field}: {message}")
-
-@do
-def validate_user(user_data):
-    if "email" not in user_data:
-        yield Fail(ValidationError("email", "Email is required"))
-    
-    if "@" not in user_data["email"]:
-        yield Fail(ValidationError("email", "Invalid email format"))
-    
-    return user_data
-```
-
 ## Safe Effect
 
-`Safe(sub_program)` wraps execution and returns a `Result` type, allowing you to handle errors explicitly.
+`Safe(sub_program)` wraps execution and returns a `Result` type, allowing you to handle errors explicitly without stopping program execution.
 
 ### Basic Safe Usage
 
@@ -168,7 +105,7 @@ def transform_errors():
     if result.is_err():
         # Log and transform the error
         yield Log(f"Operation failed: {result.error}")
-        yield Fail(RuntimeError(f"Wrapped error: {result.error}"))
+        raise RuntimeError(f"Wrapped error: {result.error}")
     
     return result.value
 ```
@@ -194,7 +131,7 @@ def multiple_safe_operations():
     return successes
 ```
 
-### Safe with Parallel
+### Safe with Gather
 
 ```python
 @do
@@ -205,8 +142,8 @@ def parallel_safe_operations():
     # Wrap each in Safe to get Results
     safe_tasks = [Safe(task) for task in tasks]
     
-    # Run all in parallel
-    results = yield Parallel(*[Await(t) for t in safe_tasks])
+    # Run all in parallel using Gather
+    results = yield Gather(safe_tasks)
     
     # Process results
     successes = [r.value for r in results if r.is_ok()]
@@ -256,226 +193,113 @@ def logged_safe_operation(operation_name):
         return None
 ```
 
-## Retry Effect
+## Native Python Patterns
 
-`Retry(sub_program, max_attempts, delay_ms=0, delay_strategy=None)` retries on failure.
+doeff embraces native Python for error handling. Use `raise` to signal errors and try/except for handling them.
 
-### Basic Retry
-
-```python
-@do
-def unstable_operation():
-    import random
-    if random.random() < 0.7:
-        yield Fail(Exception("Random failure"))
-    yield Log("Operation succeeded!")
-    return "success"
-
-@do
-def with_retry():
-    result = yield Retry(
-        unstable_operation(),
-        max_attempts=5,
-        delay_ms=100
-    )
-    return result
-
-# Will retry up to 5 times with 100ms delay
-runtime = AsyncioRuntime()
-result = await runtime.run(with_retry())
-```
-
-### Randomized Backoff with delay_strategy
-
-```python
-import random
-
-def jittered_delay(attempt: int, _error: Exception | None) -> float:
-    upper = min(30.0, 2 ** (attempt - 1))
-    return random.uniform(1.0, max(1.0, upper))
-
-@do
-def fetch_with_retry():
-    return (yield Retry(
-        unstable_operation(),
-        max_attempts=5,
-        delay_strategy=jittered_delay,
-    ))
-```
-
-### Exponential Backoff (Manual)
+### Explicit Errors with raise
 
 ```python
 @do
-def retry_with_backoff():
-    attempts = 0
-    delay = 100  # Start with 100ms
+def validate_input(value):
+    if value < 0:
+        raise ValueError("Value must be non-negative")
     
-    while attempts < 5:
-        result = yield Safe(fetch_api_data())
+    if value > 100:
+        raise ValueError("Value must be <= 100")
+    
+    yield Log(f"Valid value: {value}")
+    return value
+```
+
+### Custom Exceptions
+
+```python
+class ValidationError(Exception):
+    def __init__(self, field, message):
+        self.field = field
+        self.message = message
+        super().__init__(f"{field}: {message}")
+
+@do
+def validate_user(user_data):
+    if "email" not in user_data:
+        raise ValidationError("email", "Email is required")
+    
+    if "@" not in user_data["email"]:
+        raise ValidationError("email", "Invalid email format")
+    
+    return user_data
+```
+
+### Retry Pattern with Native Python
+
+Implement retry logic using a simple loop:
+
+```python
+import asyncio
+
+@do
+def retry_with_backoff(operation, max_attempts=3, base_delay=0.1):
+    """Retry an operation with exponential backoff."""
+    last_error = None
+    
+    for attempt in range(max_attempts):
+        result = yield Safe(operation())
         
         if result.is_ok():
             return result.value
         
-        attempts += 1
-        if attempts < 5:
-            yield Log(f"Attempt {attempts} failed, waiting {delay}ms...")
-            yield Await(asyncio.sleep(delay / 1000))
-            delay *= 2  # Double the delay
+        last_error = result.error
+        if attempt < max_attempts - 1:
+            delay = base_delay * (2 ** attempt)
+            yield Log(f"Attempt {attempt + 1} failed, retrying in {delay}s...")
+            yield Await(asyncio.sleep(delay))
     
-    yield Fail(Exception("Max retries exceeded"))
+    raise Exception(f"Failed after {max_attempts} attempts: {last_error}")
 ```
 
-### Retry with Logging
+### Cleanup Pattern with Native Python
+
+Use try/finally for resource cleanup:
 
 ```python
 @do
-def logged_retry():
-    @do
-    def attempt():
-        attempt_num = yield Get("attempt")
-        yield Modify("attempt", lambda x: x + 1)
-        yield Log(f"Attempt #{attempt_num + 1}")
-        
-        # Simulated operation
-        success = yield unstable_operation()
-        return success
+def with_resource_cleanup():
+    yield Log("Acquiring resource...")
+    yield Put("resource_acquired", True)
     
-    yield Put("attempt", 0)
-    result = yield Retry(attempt(), max_attempts=3)
-    
-    final_attempt = yield Get("attempt")
-    yield Log(f"Succeeded after {final_attempt} attempts")
-    
-    return result
-```
-
-## Finally Effect
-
-`Finally(sub_program, finalizer)` ensures cleanup code runs.
-
-### Resource Cleanup
-
-```python
-@do
-def with_cleanup():
-    @do
-    def acquire_and_use():
-        yield Put("resource_acquired", True)
-        yield Log("Using resource...")
-        # Might fail here
+    try:
         result = yield risky_operation()
         return result
-    
-    @do
-    def cleanup():
+    finally:
         yield Log("Cleaning up resource...")
         yield Put("resource_acquired", False)
-    
-    # Cleanup always runs, even on failure
-    result = yield Finally(
-        acquire_and_use(),
-        cleanup()
-    )
-    
-    return result
 ```
 
-### File Handle Pattern
+### Multiple Fallbacks Pattern
+
+Try multiple sources sequentially:
 
 ```python
 @do
-def process_file(filename):
-    @do
-    def read_and_process():
-        yield Log(f"Opening {filename}")
-        content = yield Await(read_file(filename))
-        result = yield process_content(content)
-        return result
-    
-    @do
-    def close_file():
-        yield Log(f"Closing {filename}")
-        # Cleanup code here
-    
-    result = yield Finally(
-        read_and_process(),
-        close_file()
-    )
-    
-    return result
-```
-
-### Nested Finally
-
-```python
-@do
-def nested_cleanup():
-    @do
-    def with_db():
-        result = yield Finally(
-            db_operation(),
-            cleanup_db()
-        )
-        return result
-    
-    @do
-    def with_cache():
-        result = yield Finally(
-            with_db(),
-            cleanup_cache()
-        )
-        return result
-    
-    # Both cleanups run in reverse order
-    return (yield with_cache())
-```
-
-## FirstSuccess Effect
-
-`FirstSuccess(*programs)` tries programs until one succeeds.
-
-### Fallback Chain
-
-```python
-@do
-def multi_source_fetch():
-    result = yield FirstSuccess(
-        fetch_from_cache(),
-        fetch_from_primary_db(),
-        fetch_from_backup_db(),
-        fetch_from_default()
-    )
-    return result
-
-# Tries each in order, returns first success
-```
-
-### Service Discovery Pattern
-
-```python
-@do
-def fetch_from_any_server():
-    servers = [
-        "https://server1.example.com",
-        "https://server2.example.com",
-        "https://server3.example.com"
+def fetch_with_fallbacks():
+    sources = [
+        ("cache", fetch_from_cache),
+        ("primary_db", fetch_from_primary_db),
+        ("backup_db", fetch_from_backup_db),
     ]
     
-    # Try each server
-    result = yield FirstSuccess(*[
-        fetch_from_server(url) for url in servers
-    ])
+    for name, fetch_fn in sources:
+        result = yield Safe(fetch_fn())
+        if result.is_ok():
+            yield Log(f"Fetched from {name}")
+            return result.value
+        yield Log(f"{name} failed: {result.error}")
     
-    return result
-
-@do
-def fetch_from_server(url):
-    yield Log(f"Trying {url}")
-    response = yield Await(httpx.get(url))
-    if response.status_code != 200:
-        yield Fail(Exception(f"HTTP {response.status_code}"))
-    return response.json()
+    # All sources failed
+    yield Log("All sources failed, using default")
+    return get_default_data()
 ```
 
 ## Error Patterns
@@ -485,9 +309,9 @@ def fetch_from_server(url):
 ```python
 @do
 def validate_process_handle(data):
-    # Validation
+    # Validation with native raise
     if not data:
-        yield Fail(ValueError("Data cannot be empty"))
+        raise ValueError("Data cannot be empty")
     
     # Safe processing
     result = yield Safe(process_data(data))
@@ -503,28 +327,6 @@ def validate_process_handle(data):
             return default_value()
 ```
 
-### Retry with Exponential Backoff
-
-```python
-@do
-def robust_api_call(url):
-    max_attempts = 5
-    base_delay = 100
-    
-    for attempt in range(max_attempts):
-        result = yield Safe(Await(httpx.get(url)))
-        
-        if result.is_ok():
-            return result.value
-        
-        if attempt < max_attempts - 1:
-            delay = base_delay * (2 ** attempt)
-            yield Log(f"Attempt {attempt + 1} failed, retrying in {delay}ms...")
-            yield Await(asyncio.sleep(delay / 1000))
-    
-    yield Fail(Exception(f"Failed after {max_attempts} attempts"))
-```
-
 ### Circuit Breaker Pattern
 
 ```python
@@ -534,13 +336,13 @@ def with_circuit_breaker(service_name):
     
     if failures >= 5:
         yield Log(f"Circuit breaker OPEN for {service_name}")
-        yield Fail(Exception("Circuit breaker open"))
+        raise Exception("Circuit breaker open")
     
     result = yield Safe(call_service(service_name))
     
     if result.is_err():
         yield Modify(f"{service_name}_failures", lambda x: x + 1)
-        yield Fail(result.error)
+        raise result.error
     else:
         yield Put(f"{service_name}_failures", 0)
         return result.value
@@ -572,36 +374,29 @@ def process_batch_with_errors(items):
 
 ## Best Practices
 
-### When to Use Each Effect
+### When to Use Safe vs raise
 
-**Fail:** Explicit error conditions
+**Use `raise` for:**
+- Validation failures
+- Explicit error conditions that should stop execution
+- Unrecoverable errors
+
 ```python
 if invalid_input:
-    yield Fail(ValueError("Invalid input"))
+    raise ValueError("Invalid input")
 ```
 
-**Safe:** When you need to handle errors and continue
+**Use `Safe` for:**
+- Operations that might fail but you want to continue
+- When you need to inspect the error and decide what to do
+- Collecting results from multiple operations
+
 ```python
 result = yield Safe(risky_operation())
 if result.is_ok():
     return result.value
 else:
     return fallback_value
-```
-
-**Retry:** Transient failures
-```python
-result = yield Retry(network_call(), max_attempts=3)
-```
-
-**Finally:** Resource cleanup
-```python
-yield Finally(use_resource(), cleanup_resource())
-```
-
-**FirstSuccess:** Multiple fallback options
-```python
-data = yield FirstSuccess(cache(), db(), api())
 ```
 
 ### Error Context
@@ -611,21 +406,33 @@ Always provide context in errors:
 ```python
 @do
 def with_context():
-    try:
-        user_id = yield Get("user_id")
-        data = yield fetch_user_data(user_id)
-        return data
-    except KeyError:
-        yield Fail(ValueError(f"Missing user_id in state"))
+    user_id = yield Get("user_id")
+    if user_id is None:
+        raise ValueError("Missing user_id in state")
+    
+    data = yield fetch_user_data(user_id)
+    return data
 ```
 
-## Migration from Catch/Recover
+## Migration from Dropped Effects
 
-If you're migrating from older doeff versions that used `Catch` and `Recover`, here's how to update your code:
+If you're migrating from older doeff versions that used `Fail`, `Catch`, `Recover`, `Retry`, `Finally`, or `FirstSuccess`, here's how to update your code.
+
+### Fail to raise
+
+**Before (dropped):**
+```python
+yield Fail(ValueError("error"))
+```
+
+**After:**
+```python
+raise ValueError("error")
+```
 
 ### Catch to Safe
 
-**Before (deprecated):**
+**Before (dropped):**
 ```python
 result = yield Catch(
     risky_operation(),
@@ -639,28 +446,9 @@ safe_result = yield Safe(risky_operation())
 result = safe_result.value if safe_result.is_ok() else "fallback"
 ```
 
-### Catch with Error Transformation
-
-**Before (deprecated):**
-```python
-result = yield Catch(
-    risky_operation(),
-    lambda e: handle_error(e)
-)
-```
-
-**After:**
-```python
-safe_result = yield Safe(risky_operation())
-if safe_result.is_ok():
-    result = safe_result.value
-else:
-    result = handle_error(safe_result.error)
-```
-
 ### Recover to Safe
 
-**Before (deprecated):**
+**Before (dropped):**
 ```python
 data = yield Recover(
     fetch_data(),
@@ -674,42 +462,88 @@ safe_result = yield Safe(fetch_data())
 data = safe_result.value if safe_result.is_ok() else []
 ```
 
-### Recover with Fallback Program
+### Retry to Manual Loop
 
-**Before (deprecated):**
+**Before (dropped):**
 ```python
-data = yield Recover(
-    fetch_from_primary(),
-    fallback=fetch_from_backup()
+result = yield Retry(
+    unstable_operation(),
+    max_attempts=5,
+    delay_ms=100
 )
 ```
 
 **After:**
 ```python
-safe_result = yield Safe(fetch_from_primary())
-if safe_result.is_ok():
-    data = safe_result.value
+import asyncio
+
+for attempt in range(5):
+    result = yield Safe(unstable_operation())
+    if result.is_ok():
+        break
+    if attempt < 4:
+        yield Await(asyncio.sleep(0.1))
 else:
-    data = yield fetch_from_backup()
+    raise Exception("Max retries exceeded")
+
+final_result = result.value
 ```
 
-Or use `FirstSuccess`:
+### Finally to try/finally
+
+**Before (dropped):**
 ```python
-data = yield FirstSuccess(
-    fetch_from_primary(),
-    fetch_from_backup()
+result = yield Finally(
+    use_resource(),
+    cleanup_resource()
 )
+```
+
+**After:**
+```python
+try:
+    result = yield use_resource()
+finally:
+    yield cleanup_resource()
+```
+
+### FirstSuccess to Sequential Safe
+
+**Before (dropped):**
+```python
+result = yield FirstSuccess(
+    fetch_from_cache(),
+    fetch_from_db(),
+    fetch_from_api()
+)
+```
+
+**After:**
+```python
+for fetch_fn in [fetch_from_cache, fetch_from_db, fetch_from_api]:
+    result = yield Safe(fetch_fn())
+    if result.is_ok():
+        break
+else:
+    raise Exception("All sources failed")
+
+final_result = result.value
 ```
 
 ## Summary
 
-| Effect | Purpose | When to Use |
-|--------|---------|-------------|
-| `Fail(exc)` | Raise error | Validation, explicit failures |
+| Approach | Purpose | When to Use |
+|----------|---------|-------------|
+| `raise` | Signal error | Validation, explicit failures |
 | `Safe(prog)` | Get Result type | Need Ok/Err inspection, error recovery |
-| `Retry(prog, n)` | Retry on failure | Transient errors, network calls |
-| `Finally(prog, cleanup)` | Always cleanup | Resource management |
-| `FirstSuccess(*progs)` | Try alternatives | Multiple fallback sources |
+| `try/finally` | Ensure cleanup | Resource management |
+| Manual loop + Safe | Retry logic | Transient errors, network calls |
+
+**Key Principles:**
+- Use native Python `raise` for signaling errors
+- Use `Safe` effect to catch errors and continue execution
+- Use `try/finally` for cleanup logic
+- Implement retry and fallback patterns with loops and `Safe`
 
 ## Next Steps
 

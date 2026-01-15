@@ -115,12 +115,11 @@ doeff provides effects for:
 | **State** | `Get`, `Put`, `Modify` | Mutable state management |
 | **Writer** | `Log`, `Tell`, `Listen` | Accumulate output/logs |
 | **Future** | `Await`, `Parallel` | Async operations |
-| **Result** | `Fail`, `Safe`, `Retry` | Error handling |
-| **IO** | `IO`, `Print` | Side effects |
+| **Result** | `Safe` | Error handling |
+| **IO** | `IO` | Side effects |
 | **Cache** | `CacheGet`, `CachePut` | Caching with policies |
 | **Graph** | `Step`, `Annotate`, `Snapshot` | Execution tracking |
 | **Atomic** | `AtomicGet`, `AtomicUpdate` | Thread-safe state |
-| **Dep** | `Dep` | Dependency injection |
 
 ### Effect Lifecycle
 

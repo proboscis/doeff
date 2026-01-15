@@ -71,7 +71,7 @@ def fetch_api_data():
             yield Log("API request successful")
             return response.json()
         else:
-            yield Fail(Exception(f"HTTP {response.status_code}"))
+            raise Exception(f"HTTP {response.status_code}")
 ```
 
 ### With Database Operations
@@ -287,7 +287,7 @@ def with_timeout():
         return result
     except asyncio.TimeoutError:
         yield Log("Operation timed out")
-        yield Fail(Exception("Timeout exceeded"))
+        raise Exception("Timeout exceeded")
 ```
 
 ### Rate Limiting
@@ -527,6 +527,6 @@ async def test_async_program():
 
 ## Next Steps
 
-- **[Error Handling](05-error-handling.md)** - Fail, Retry, Safe for robust programs
+- **[Error Handling](05-error-handling.md)** - Safe effect for robust programs
 - **[Patterns](12-patterns.md)** - Common async patterns and best practices
 - **[Advanced Effects](09-advanced-effects.md)** - Gather for parallel Programs
