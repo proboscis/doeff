@@ -123,7 +123,7 @@ def fetch_posts(user: dict):
 fetch_user_posts = fetch_user.and_then_k(lambda user: fetch_posts(user))
 # Or: fetch_user_posts = fetch_user >> fetch_posts
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(fetch_user_posts(123))
 # Result: [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
 ```
@@ -155,7 +155,7 @@ pipeline = (
     >> (lambda d: process_data(d))
 )
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(pipeline("data.json"))
 # Result: {"result": 15}
 ```
@@ -172,7 +172,7 @@ def get_user():
 # Extract just the name
 get_name = get_user.fmap(lambda user: user["name"])
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(get_name())
 # Result: "Alice"
 ```
@@ -191,7 +191,7 @@ pipeline = (
     .and_then_k(lambda x: Program.pure(x + 10))  # 94
 )
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(pipeline())
 # Result: 94
 ```
@@ -211,7 +211,7 @@ def greet(greeting: str, name: str):
 # Partially apply greeting
 say_hello = greet.partial("Hello")
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(say_hello("Alice"))
 # Result: "Hello, Alice!"
 ```
@@ -270,7 +270,7 @@ class UserService:
         return updated
 
 service = UserService()
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(service.get_user(123))
 ```
 
@@ -318,7 +318,7 @@ def create_processor(config: dict) -> KleisliProgram:
 positive_doubler = create_processor({"filter": True, "double": True})
 simple_filter = create_processor({"filter": True})
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(positive_doubler([1, -2, 3, -4, 5]))
 # Result: [2, 6, 10]
 ```

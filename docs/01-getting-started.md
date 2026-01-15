@@ -39,7 +39,8 @@ Let's write a simple program that uses state management and logging:
 
 ```python
 import asyncio
-from doeff import do, Program, Put, Get, Log, create_runtime
+from doeff import do, Program, Put, Get, Log
+from doeff.runtimes import AsyncioRuntime
 
 @do
 def counter_program():
@@ -56,13 +57,9 @@ def counter_program():
     return final_count
 
 async def main():
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     result = await runtime.run(counter_program())
-    
-    if result.is_ok:
-        print(f"Result: {result.value}")
-    else:
-        print(f"Error: {result.error}")
+    print(f"Result: {result}")
 
 asyncio.run(main())
 ```
@@ -82,8 +79,8 @@ Let's break down what's happening:
    - `Put("counter", value)` - Sets state
    - `Get("counter")` - Retrieves state
    - `Log(message)` - Writes to log
-4. **`create_runtime()`**: Creates an `EffectRuntime` to execute programs and handle effects
-5. **`RuntimeResult`**: Contains the final value and execution result
+4. **`AsyncioRuntime`**: Executes programs with real async I/O support
+5. **Result**: The `run()` method returns the final value directly; use `run_safe()` for Result wrapping
 
 ## Key Concepts
 
@@ -101,7 +98,7 @@ def my_program():
 program = my_program()
 
 # Now it executes
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(program)
 ```
 
@@ -121,7 +118,7 @@ prog1 = get_timestamp()
 prog2 = get_timestamp()
 
 # Each execution is independent
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result1 = await runtime.run(prog1)
 result2 = await runtime.run(prog2)
 ```
@@ -154,7 +151,7 @@ def full_program():
 You can provide initial environment and store:
 
 ```python
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 
 # Pass initial environment and store to runtime.run()
 result = await runtime.run(
@@ -166,18 +163,29 @@ result = await runtime.run(
 
 ## Error Handling
 
-Programs return a `RuntimeResult` containing a `Result[T]` type that can be `Ok(value)` or `Err(error)`:
+The `run()` method returns the value directly and raises `EffectError` on failure.
+Use `run_safe()` for a `RuntimeResult` that wraps success/failure:
 
 ```python
-runtime = create_runtime()
-result = await runtime.run(my_program())
+from doeff.runtimes import AsyncioRuntime, EffectError
 
+runtime = AsyncioRuntime()
+
+# Option 1: Direct execution (raises on error)
+try:
+    result = await runtime.run(my_program())
+    print(f"Success: {result}")
+except EffectError as e:
+    print(f"Error: {e}")
+
+# Option 2: Safe execution (returns RuntimeResult)
+result = await runtime.run_safe(my_program())
 if result.is_ok:
     print(f"Success: {result.value}")
 else:
     print(f"Error: {result.error}")
-    
-# Or use pattern matching (Python 3.10+)
+
+# Option 3: Pattern matching (Python 3.10+)
 match result.result:
     case Ok(value):
         print(f"Success: {value}")
@@ -266,7 +274,7 @@ Don't reuse Program objects after running them with sub-effects:
 
 ```python
 # If you need to run a program multiple times, call the function again
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 prog = my_program()
 result1 = await runtime.run(prog)
 # Don't reuse prog - create a new one
@@ -291,8 +299,6 @@ Now that you understand the basics, explore:
 from doeff import (
     do,                    # Decorator for creating programs
     Program,               # Program type
-    create_runtime,        # Create EffectRuntime to execute programs
-    EffectRuntime,         # Runtime class (alternative to create_runtime)
     
     # State effects
     Get, Put, Modify,
@@ -315,12 +321,20 @@ from doeff import (
     # Result types
     Ok, Err, Result,
 )
+
+# Runtime types
+from doeff.runtimes import (
+    AsyncioRuntime,        # For async I/O (HTTP, DB, files)
+    SyncRuntime,           # For pure synchronous execution
+    SimulationRuntime,     # For testing with simulated time
+)
 ```
 
 ### Basic Program Template
 
 ```python
-from doeff import do, create_runtime, Log
+from doeff import do, Log
+from doeff.runtimes import AsyncioRuntime
 import asyncio
 
 @do
@@ -330,9 +344,9 @@ def my_program():
     return "result"
 
 async def main():
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     result = await runtime.run(my_program())
-    print(result.value)
+    print(result)
 
 if __name__ == "__main__":
     asyncio.run(main())
