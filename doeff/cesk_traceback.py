@@ -172,7 +172,7 @@ class KFrameInfo:
     # For ReturnFrame: the effect frame data
     effect_frame: EffectFrame | None = None
 
-    # For CatchFrame: handler info
+    # For FinallyFrame: handler info
     handler_name: str | None = None
 
     # For LocalFrame: env keys being restored
