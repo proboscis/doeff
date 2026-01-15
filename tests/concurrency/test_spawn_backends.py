@@ -717,7 +717,7 @@ class TestEnvSerializationIssues:
 
         result = await engine.run_async(program())
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == 10  # 5 * 2 = 10
 
     @pytest.mark.asyncio
@@ -747,7 +747,7 @@ class TestEnvSerializationIssues:
 
             result = await engine.run_async(program())
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == 10
 
     @pytest.mark.asyncio
@@ -796,7 +796,7 @@ class TestEnvSerializationIssues:
 
         result = await engine.run_async(program())
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == "expected_value"
 
 

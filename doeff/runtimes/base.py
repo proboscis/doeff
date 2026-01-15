@@ -65,12 +65,12 @@ class RuntimeResult(Generic[T]):
     final_store: "Store | None" = None
     final_env: "Environment | None" = None
     
-    @property
     def is_ok(self) -> bool:
+        """Return True when the result is successful."""
         return isinstance(self.result, Ok)
     
-    @property
     def is_err(self) -> bool:
+        """Return True when the result represents a failure."""
         return isinstance(self.result, Err)
     
     def unwrap(self) -> T:
@@ -82,7 +82,7 @@ class RuntimeResult(Generic[T]):
         return self.result.unwrap_err()
     
     def display(self) -> str:
-        if self.is_ok:
+        if self.is_ok():
             return f"Ok({self.result.ok()!r})"
         parts = [f"Err({self.result.err()!r})"]
         if self.effect_traceback:
