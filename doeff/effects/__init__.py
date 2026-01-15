@@ -92,6 +92,14 @@ from .spawn import (
     TaskJoinEffect,
     spawn,
 )
+from .time import (
+    Delay,
+    DelayEffect,
+    WaitUntil,
+    WaitUntilEffect,
+    delay,
+    wait_until,
+)
 from .thread import Thread, ThreadEffect, ThreadStrategy, thread
 from .writer import (
     Listen,
@@ -146,6 +154,13 @@ __all__ = [
     "ProgramCallStackEffect",
     "CaptureGraph",
     "Catch",
+    # Time effects
+    "Delay",
+    "DelayEffect",
+    "WaitUntil",
+    "WaitUntilEffect",
+    "delay",
+    "wait_until",
     "Dep",
     "DepInjectEffect",
     "Fail",

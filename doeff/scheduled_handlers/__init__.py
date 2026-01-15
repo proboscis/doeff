@@ -73,20 +73,23 @@ from doeff.scheduled_handlers.io import (
 from doeff.scheduled_handlers.concurrency import (
     handle_future_await,
     handle_spawn,
+    handle_spawn_scheduled,
     handle_thread,
     handle_task_join,
     _get_shared_executor,
 )
 
+# Time handlers
+from doeff.scheduled_handlers.time import (
+    handle_delay,
+    handle_wait_until,
+)
+
 
 def default_scheduled_handlers() -> ScheduledHandlers:
-    """Return the default handlers for all built-in effects.
-    
-    Returns a mapping from effect type to handler function.
-    Each handler has the signature: (effect, env, store) -> HandlerResult.
-    """
     from doeff.effects import (
         AskEffect,
+        DelayEffect,
         FutureAwaitEffect,
         IOPerformEffect,
         IOPrintEffect,
@@ -98,6 +101,7 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         StatePutEffect,
         TaskJoinEffect,
         ThreadEffect,
+        WaitUntilEffect,
         WriterTellEffect,
     )
     from doeff.effects.durable_cache import (
@@ -109,62 +113,50 @@ def default_scheduled_handlers() -> ScheduledHandlers:
     from doeff.effects.pure import PureEffect
 
     return {
-        # State effects
         StateGetEffect: handle_state_get,
         StatePutEffect: handle_state_put,
         StateModifyEffect: handle_state_modify,
-        # Reader effects
         AskEffect: handle_ask,
-        # Writer effects
         WriterTellEffect: handle_writer_tell,
-        # Memo effects
         MemoGetEffect: handle_memo_get,
         MemoPutEffect: handle_memo_put,
-        # Pure effects
         PureEffect: handle_pure_effect,
-        # Durable cache effects
         DurableCacheGet: handle_durable_cache_get,
         DurableCachePut: handle_durable_cache_put,
         DurableCacheDelete: handle_durable_cache_delete,
         DurableCacheExists: handle_durable_cache_exists,
-        # IO effects
         IOPerformEffect: handle_io_perform,
         IOPrintEffect: handle_io_print,
-        # Concurrency effects
         FutureAwaitEffect: handle_future_await,
         SpawnEffect: handle_spawn,
         ThreadEffect: handle_thread,
         TaskJoinEffect: handle_task_join,
+        DelayEffect: handle_delay,
+        WaitUntilEffect: handle_wait_until,
     }
 
 
 __all__ = [
-    # Main export
     "default_scheduled_handlers",
-    # State handlers
     "handle_state_get",
     "handle_state_put",
     "handle_state_modify",
-    # Reader handlers
     "handle_ask",
-    # Writer handlers
     "handle_writer_tell",
-    # Memo handlers
     "handle_memo_get",
     "handle_memo_put",
-    # Pure handlers
     "handle_pure_effect",
-    # Cache handlers
     "handle_durable_cache_get",
     "handle_durable_cache_put",
     "handle_durable_cache_delete",
     "handle_durable_cache_exists",
-    # IO handlers
     "handle_io_perform",
     "handle_io_print",
-    # Concurrency handlers
     "handle_future_await",
     "handle_spawn",
+    "handle_spawn_scheduled",
     "handle_thread",
     "handle_task_join",
+    "handle_delay",
+    "handle_wait_until",
 ]
