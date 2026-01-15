@@ -62,7 +62,7 @@ def create_embedding(
     # Get OpenAI client
     client = yield get_openai_client()
 
-    from doeff import Catch, Fail
+    from doeff import Fail, Safe
 
     # Define the main operation with retry support
     @do
@@ -91,10 +91,11 @@ def create_embedding(
 
             return response
 
-        # Error handler that tracks failed attempts
-        @do
-        def error_handler(e):
+        # Use Safe to track both success and failure
+        safe_result = yield Safe(api_call_with_tracking())
+        if safe_result.is_err():
             # Track failed API call attempt (tracking will log the error)
+            e = safe_result.error
             metadata = yield track_api_call(
                 operation="embedding",
                 model=model,
@@ -105,10 +106,7 @@ def create_embedding(
             )
             # Re-raise to trigger retry
             yield Fail(e)
-
-        # Use Catch to track both success and failure
-        result = yield Catch(api_call_with_tracking(), error_handler)
-        return result
+        return safe_result.value
 
     # Use Retry effect for transient failures (3 attempts by default)
     result = yield Retry(make_api_call(), max_attempts=3, delay_ms=1000)
@@ -141,7 +139,7 @@ def create_embedding_async(
     # Track start time
     start_time = time.time()
 
-    from doeff import Catch, Fail, do
+    from doeff import Fail, Safe, do
 
     # Define the main operation as a sub-program
     @do
@@ -164,10 +162,11 @@ def create_embedding_async(
 
         return response
 
-    # Use Catch to handle errors
-    @do
-    def error_handler(e):
+    # Execute with Safe to handle errors
+    safe_result = yield Safe(main_operation())
+    if safe_result.is_err():
         # Track error
+        e = safe_result.error
         metadata = yield track_api_call(
             operation="embedding",
             model=model,
@@ -177,10 +176,7 @@ def create_embedding_async(
             error=e,
         )
         yield Fail(e)
-
-    # Execute with error handling
-    result = yield Catch(main_operation(), error_handler)
-    return result
+    return safe_result.value
 
 
 @do
