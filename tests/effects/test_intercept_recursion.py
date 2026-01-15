@@ -71,7 +71,7 @@ async def test_intercept_with_effect_to_program_no_recursion():
     result = await interpreter.run_async(intercepted_program, context)
 
     # Verify the program ran successfully without recursion errors
-    assert result.is_ok, f"Program failed with error: {result.result}"
+    assert result.is_ok(), f"Program failed with error: {result.result}"
     assert len(interceptor_calls) > 0, "Interceptor was not called"
 
     # Check that interceptor was called for each effect
@@ -132,7 +132,7 @@ async def test_intercept_with_nested_intercept_no_recursion():
     # Verify both interceptors were called
     assert len(intercept_level1_calls) > 0, "Level 1 interceptor was not called"
     assert len(intercept_level2_calls) > 0, "Level 2 interceptor was not called"
-    assert result.is_ok, f"Program failed with error: {result.result}"
+    assert result.is_ok(), f"Program failed with error: {result.result}"
 
     # Check the transformation chain
     assert any(e.value == "nested" for e in intercept_level1_calls if isinstance(e, CustomEffect))
