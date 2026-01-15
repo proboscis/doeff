@@ -1,7 +1,7 @@
-"""Durable cache effect handlers.
+"""Cache effect handlers.
 
-Direct ScheduledEffectHandler implementations for DurableCacheGet,
-DurableCachePut, DurableCacheDelete, and DurableCacheExists.
+Direct ScheduledEffectHandler implementations for CacheGetEffect,
+CachePutEffect, CacheDeleteEffect, and CacheExistsEffect.
 """
 
 from __future__ import annotations
@@ -15,47 +15,47 @@ if TYPE_CHECKING:
     from doeff.cesk import Environment, Store
 
 
-def handle_durable_cache_get(
+def handle_cache_get(
     effect: EffectBase,
     env: Environment,
     store: Store,
 ) -> HandlerResult:
-    storage = store.get("__durable_storage__")
+    storage = store.get("__cache_storage__")
     if storage is None:
         return Resume(None, store)
     value = storage.get(effect.key)
     return Resume(value, store)
 
 
-def handle_durable_cache_put(
+def handle_cache_put(
     effect: EffectBase,
     env: Environment,
     store: Store,
 ) -> HandlerResult:
-    storage = store.get("__durable_storage__")
+    storage = store.get("__cache_storage__")
     if storage is not None:
         storage.put(effect.key, effect.value)
     return Resume(None, store)
 
 
-def handle_durable_cache_delete(
+def handle_cache_delete(
     effect: EffectBase,
     env: Environment,
     store: Store,
 ) -> HandlerResult:
-    storage = store.get("__durable_storage__")
+    storage = store.get("__cache_storage__")
     if storage is None:
         return Resume(False, store)
     result = storage.delete(effect.key)
     return Resume(result, store)
 
 
-def handle_durable_cache_exists(
+def handle_cache_exists(
     effect: EffectBase,
     env: Environment,
     store: Store,
 ) -> HandlerResult:
-    storage = store.get("__durable_storage__")
+    storage = store.get("__cache_storage__")
     if storage is None:
         return Resume(False, store)
     result = storage.exists(effect.key)
@@ -63,8 +63,8 @@ def handle_durable_cache_exists(
 
 
 __all__ = [
-    "handle_durable_cache_get",
-    "handle_durable_cache_put",
-    "handle_durable_cache_delete",
-    "handle_durable_cache_exists",
+    "handle_cache_get",
+    "handle_cache_put",
+    "handle_cache_delete",
+    "handle_cache_exists",
 ]

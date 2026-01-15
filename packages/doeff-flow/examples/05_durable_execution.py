@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 from doeff import do
-from doeff.effects.durable_cache import cacheget, cacheput
+from doeff.effects.cache import CacheGet, CachePut
 from doeff.storage import SQLiteStorage
 
 from doeff_flow import run_workflow
@@ -91,7 +91,7 @@ def fetch_step(step_id: str, endpoint: str):
     cache_key = f"fetch_{step_id}"
 
     # Check if we have a cached result
-    cached = yield cacheget(cache_key)
+    cached = yield CacheGet(cache_key)
     if cached is not None:
         print(f"  [CACHE HIT] Step '{step_id}' - using cached result")
         return cached
@@ -102,7 +102,7 @@ def fetch_step(step_id: str, endpoint: str):
     result = expensive_api_call(endpoint)
 
     # Cache the result for future runs
-    yield cacheput(cache_key, result)
+    yield CachePut(cache_key, result)
     print(f"  [CACHED] Step '{step_id}' result saved")
 
     return result
@@ -115,14 +115,14 @@ def compute_step(step_id: str, input_data: dict):
     """
     cache_key = f"compute_{step_id}"
 
-    cached = yield cacheget(cache_key)
+    cached = yield CacheGet(cache_key)
     if cached is not None:
         print(f"  [CACHE HIT] Step '{step_id}' - using cached result")
         return cached
 
     print(f"  [CACHE MISS] Step '{step_id}' - executing...")
     result = expensive_computation(input_data)
-    yield cacheput(cache_key, result)
+    yield CachePut(cache_key, result)
     print(f"  [CACHED] Step '{step_id}' result saved")
 
     return result
@@ -135,14 +135,14 @@ def aggregate_step(step_id: str, results: list[dict]):
     """
     cache_key = f"aggregate_{step_id}"
 
-    cached = yield cacheget(cache_key)
+    cached = yield CacheGet(cache_key)
     if cached is not None:
         print(f"  [CACHE HIT] Step '{step_id}' - using cached result")
         return cached
 
     print(f"  [CACHE MISS] Step '{step_id}' - executing...")
     result = expensive_aggregation(results)
-    yield cacheput(cache_key, result)
+    yield CachePut(cache_key, result)
     print(f"  [CACHED] Step '{step_id}' result saved")
 
     return result

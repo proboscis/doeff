@@ -51,6 +51,30 @@ class CachePutEffect(EffectBase):
         return self
 
 
+@dataclass(frozen=True)
+class CacheDeleteEffect(EffectBase):
+    """Deletes the value under the key and returns True if deleted, False otherwise."""
+
+    key: Any
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "CacheDeleteEffect":
+        return self
+
+
+@dataclass(frozen=True)
+class CacheExistsEffect(EffectBase):
+    """Checks if a key exists in the cache and returns True or False."""
+
+    key: Any
+
+    def intercept(
+        self, transform: Callable[[Effect], Effect | "Program"]
+    ) -> "CacheExistsEffect":
+        return self
+
+
 def cache_get(key: Any) -> CacheGetEffect:
     return create_effect_with_trace(CacheGetEffect(key=key))
 
@@ -103,13 +127,35 @@ def CachePut(
     )
 
 
+def cache_delete(key: Any) -> CacheDeleteEffect:
+    return create_effect_with_trace(CacheDeleteEffect(key=key))
+
+
+def cache_exists(key: Any) -> CacheExistsEffect:
+    return create_effect_with_trace(CacheExistsEffect(key=key))
+
+
+def CacheDelete(key: Any) -> Effect:
+    return create_effect_with_trace(CacheDeleteEffect(key=key), skip_frames=3)
+
+
+def CacheExists(key: Any) -> Effect:
+    return create_effect_with_trace(CacheExistsEffect(key=key), skip_frames=3)
+
+
 __all__ = [
     "CacheGetEffect",
     "CachePutEffect",
+    "CacheDeleteEffect",
+    "CacheExistsEffect",
     "cache_get",
     "cache_put",
+    "cache_delete",
+    "cache_exists",
     "CacheGet",
     "CachePut",
+    "CacheDelete",
+    "CacheExists",
     "CacheLifecycle",
     "CachePolicy",
     "CacheStorage",
