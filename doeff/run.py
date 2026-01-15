@@ -280,7 +280,7 @@ def _run_program_instance(
     run_result = _execute_program(program, interpreter_obj)
 
     return ProgramRunResult(
-        value=run_result.value if not run_result.is_err else None,
+        value=run_result.value if not run_result.is_err() else None,
         run_result=run_result,
         interpreter_path=interpreter_path,
         env_sources=env_sources,
@@ -392,7 +392,7 @@ def _apply_envs(
             env_program = services.merger.merge_envs([default_env_path])
             temp_interpreter = ProgramInterpreter()
             env_result = temp_interpreter.run(env_program)
-            if env_result.is_err:
+            if env_result.is_err():
                 raise env_result.result.error
             merged_env.update(env_result.value)
             env_sources.append("~/.doeff.py:__default_env__")
@@ -405,7 +405,7 @@ def _apply_envs(
             env_program = services.merger.merge_envs([env])
             temp_interpreter = ProgramInterpreter()
             env_result = temp_interpreter.run(env_program)
-            if env_result.is_err:
+            if env_result.is_err():
                 raise env_result.result.error
             merged_env.update(env_result.value)
             env_sources.append(env)
@@ -414,7 +414,7 @@ def _apply_envs(
             # Program[dict] - run it to get the dict
             temp_interpreter = ProgramInterpreter()
             env_result = temp_interpreter.run(env)
-            if env_result.is_err:
+            if env_result.is_err():
                 raise env_result.result.error
             if not isinstance(env_result.value, dict):
                 raise TypeError(f"Environment Program must yield dict, got {type(env_result.value)}")

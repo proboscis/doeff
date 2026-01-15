@@ -208,14 +208,14 @@ async def test_display_nested_safe_shows_leaf_creation_stack(monkeypatch) -> Non
     @do
     def safe_program() -> EffectGenerator[None]:
         result = yield Safe(try_cache_get())
-        if result.is_err:
+        if result.is_err():
             yield compute_and_cache()
         return None
 
     engine = ProgramInterpreter()
     result = await engine.run_async(safe_program())
 
-    assert result.is_err
+    assert result.is_err()
 
     display_output = result.display(verbose=False)
 

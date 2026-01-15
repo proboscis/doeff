@@ -435,27 +435,27 @@ class TestToDict:
 class TestCESKResultAPI:
     """Test CESKResult class API."""
 
-    def test_is_ok_property(self):
-        """Test is_ok property."""
+    def test_is_ok_method(self):
+        """Test is_ok method."""
         ok_result = run_sync(succeeds())
         err_result = run_sync(simple_raise())
 
-        assert ok_result.is_ok is True
-        assert err_result.is_ok is False
+        assert ok_result.is_ok() == True
+        assert err_result.is_ok() == False
 
-    def test_is_err_property(self):
-        """Test is_err property."""
+    def test_is_err_method(self):
+        """Test is_err method."""
         ok_result = run_sync(succeeds())
         err_result = run_sync(simple_raise())
 
-        assert ok_result.is_err is False
-        assert err_result.is_err is True
+        assert ok_result.is_err() == False
+        assert err_result.is_err() == True
 
     def test_value_property(self):
         """Test value property on success."""
         result = run_sync(succeeds())
 
-        assert result.is_ok
+        assert result.is_ok()
         assert result.value == 30
 
     def test_error_property(self):

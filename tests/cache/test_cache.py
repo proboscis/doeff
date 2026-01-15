@@ -432,11 +432,11 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db) -> None:
             engine = ProgramInterpreter()
             if mode == "store":
                 result = await engine.run_async(store(), context)
-                if result.is_err:
+                if result.is_err():
                     raise SystemExit(f"store failed: {result.result.error!r}")
             elif mode == "load":
                 result = await engine.run_async(load(), context)
-                if result.is_err:
+                if result.is_err():
                     raise result.result.error
                 if result.value != "persisted":
                     raise SystemExit(f"unexpected value: {result.value!r}")
