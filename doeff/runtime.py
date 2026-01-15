@@ -335,6 +335,12 @@ class EffectRuntime:
         scheduler: "Scheduler | None" = None,
         handlers: ScheduledHandlers | None = None,
     ):
+        import warnings
+        warnings.warn(
+            "EffectRuntime is deprecated. Use AsyncioRuntime or SyncRuntime from doeff.runtimes instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._scheduler = scheduler
         self._handlers = handlers
     
@@ -391,6 +397,12 @@ def create_runtime(
     scheduler: "Scheduler | None" = None,
     handlers: ScheduledHandlers | None = None,
 ) -> EffectRuntime:
+    import warnings
+    warnings.warn(
+        "create_runtime() is deprecated. Use AsyncioRuntime or SyncRuntime from doeff.runtimes instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if scheduler is None:
         scheduler = FIFOScheduler()
     return EffectRuntime(scheduler=scheduler, handlers=handlers)
