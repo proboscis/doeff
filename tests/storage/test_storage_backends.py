@@ -2,11 +2,11 @@
 Tests for durable storage backends.
 
 Test IDs from issue spec:
-- T1: cacheput then cacheget same key - Returns cached value
-- T2: cacheget non-existent key - Returns None
-- T3: cacheput overwrites existing - New value returned
-- T4: cachedelete existing key - Returns True, key gone
-- T5: cacheexists existing/non-existing - True/False
+- T1: CachePut then CacheGet same key - Returns cached value
+- T2: CacheGet non-existent key - Returns None
+- T3: CachePut overwrites existing - New value returned
+- T4: CacheDelete existing key - Returns True, key gone
+- T5: CacheExists existing/non-existing - True/False
 - T6: SQLite persists across connections - Value survives reconnect
 """
 
@@ -24,20 +24,20 @@ class TestInMemoryStorage:
     """Tests for InMemoryStorage backend."""
 
     def test_put_then_get_same_key(self) -> None:
-        """T1: cacheput then cacheget same key returns cached value."""
+        """T1: CachePut then CacheGet same key returns cached value."""
         storage = InMemoryStorage()
         storage.put("test_key", {"data": 42, "name": "test"})
         result = storage.get("test_key")
         assert result == {"data": 42, "name": "test"}
 
     def test_get_nonexistent_key(self) -> None:
-        """T2: cacheget non-existent key returns None."""
+        """T2: CacheGet non-existent key returns None."""
         storage = InMemoryStorage()
         result = storage.get("nonexistent")
         assert result is None
 
     def test_put_overwrites_existing(self) -> None:
-        """T3: cacheput overwrites existing value."""
+        """T3: CachePut overwrites existing value."""
         storage = InMemoryStorage()
         storage.put("key", "old_value")
         storage.put("key", "new_value")
@@ -45,7 +45,7 @@ class TestInMemoryStorage:
         assert result == "new_value"
 
     def test_delete_existing_key(self) -> None:
-        """T4: cachedelete existing key returns True, key gone."""
+        """T4: CacheDelete existing key returns True, key gone."""
         storage = InMemoryStorage()
         storage.put("key", "value")
         deleted = storage.delete("key")
@@ -53,19 +53,19 @@ class TestInMemoryStorage:
         assert storage.get("key") is None
 
     def test_delete_nonexistent_key(self) -> None:
-        """T4: cachedelete non-existent key returns False."""
+        """T4: CacheDelete non-existent key returns False."""
         storage = InMemoryStorage()
         deleted = storage.delete("nonexistent")
         assert deleted is False
 
     def test_exists_existing_key(self) -> None:
-        """T5: cacheexists on existing key returns True."""
+        """T5: CacheExists on existing key returns True."""
         storage = InMemoryStorage()
         storage.put("key", "value")
         assert storage.exists("key") is True
 
     def test_exists_nonexistent_key(self) -> None:
-        """T5: cacheexists on non-existent key returns False."""
+        """T5: CacheExists on non-existent key returns False."""
         storage = InMemoryStorage()
         assert storage.exists("nonexistent") is False
 
@@ -109,7 +109,7 @@ class TestSQLiteStorage:
     """Tests for SQLiteStorage backend."""
 
     def test_put_then_get_same_key(self, tmp_path: Path) -> None:
-        """T1: cacheput then cacheget same key returns cached value."""
+        """T1: CachePut then CacheGet same key returns cached value."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         storage.put("test_key", {"data": 42, "name": "test"})
@@ -118,7 +118,7 @@ class TestSQLiteStorage:
         storage.close()
 
     def test_get_nonexistent_key(self, tmp_path: Path) -> None:
-        """T2: cacheget non-existent key returns None."""
+        """T2: CacheGet non-existent key returns None."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         result = storage.get("nonexistent")
@@ -126,7 +126,7 @@ class TestSQLiteStorage:
         storage.close()
 
     def test_put_overwrites_existing(self, tmp_path: Path) -> None:
-        """T3: cacheput overwrites existing value."""
+        """T3: CachePut overwrites existing value."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         storage.put("key", "old_value")
@@ -136,7 +136,7 @@ class TestSQLiteStorage:
         storage.close()
 
     def test_delete_existing_key(self, tmp_path: Path) -> None:
-        """T4: cachedelete existing key returns True, key gone."""
+        """T4: CacheDelete existing key returns True, key gone."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         storage.put("key", "value")
@@ -146,7 +146,7 @@ class TestSQLiteStorage:
         storage.close()
 
     def test_delete_nonexistent_key(self, tmp_path: Path) -> None:
-        """T4: cachedelete non-existent key returns False."""
+        """T4: CacheDelete non-existent key returns False."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         deleted = storage.delete("nonexistent")
@@ -154,7 +154,7 @@ class TestSQLiteStorage:
         storage.close()
 
     def test_exists_existing_key(self, tmp_path: Path) -> None:
-        """T5: cacheexists on existing key returns True."""
+        """T5: CacheExists on existing key returns True."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         storage.put("key", "value")
@@ -162,7 +162,7 @@ class TestSQLiteStorage:
         storage.close()
 
     def test_exists_nonexistent_key(self, tmp_path: Path) -> None:
-        """T5: cacheexists on non-existent key returns False."""
+        """T5: CacheExists on non-existent key returns False."""
         db_path = tmp_path / "test.db"
         storage = SQLiteStorage(db_path)
         assert storage.exists("nonexistent") is False

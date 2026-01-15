@@ -21,8 +21,8 @@ Module Organization:
 - writer.py: handle_writer_tell
 - memo.py: handle_memo_get, handle_memo_put
 - pure.py: handle_pure_effect
-- cache.py: handle_durable_cache_get, handle_durable_cache_put,
-            handle_durable_cache_delete, handle_durable_cache_exists
+- cache.py: handle_cache_get, handle_cache_put,
+            handle_cache_delete, handle_cache_exists
 - io.py: handle_io_perform, handle_io_print
 - concurrency.py: handle_future_await, handle_spawn, handle_thread, handle_task_join
 """
@@ -57,10 +57,10 @@ from doeff.scheduled_handlers.pure import handle_pure_effect
 
 # Cache handlers
 from doeff.scheduled_handlers.cache import (
-    handle_durable_cache_get,
-    handle_durable_cache_put,
-    handle_durable_cache_delete,
-    handle_durable_cache_exists,
+    handle_cache_get,
+    handle_cache_put,
+    handle_cache_delete,
+    handle_cache_exists,
 )
 
 # IO handlers
@@ -106,11 +106,11 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         WaitUntilEffect,
         WriterTellEffect,
     )
-    from doeff.effects.durable_cache import (
-        DurableCacheDelete,
-        DurableCacheExists,
-        DurableCacheGet,
-        DurableCachePut,
+    from doeff.effects.cache import (
+        CacheDeleteEffect,
+        CacheExistsEffect,
+        CacheGetEffect,
+        CachePutEffect,
     )
     from doeff.effects.pure import PureEffect
 
@@ -123,10 +123,10 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         MemoGetEffect: handle_memo_get,
         MemoPutEffect: handle_memo_put,
         PureEffect: handle_pure_effect,
-        DurableCacheGet: handle_durable_cache_get,
-        DurableCachePut: handle_durable_cache_put,
-        DurableCacheDelete: handle_durable_cache_delete,
-        DurableCacheExists: handle_durable_cache_exists,
+        CacheGetEffect: handle_cache_get,
+        CachePutEffect: handle_cache_put,
+        CacheDeleteEffect: handle_cache_delete,
+        CacheExistsEffect: handle_cache_exists,
         IOPerformEffect: handle_io_perform,
         IOPrintEffect: handle_io_print,
         FutureAwaitEffect: handle_future_await,
@@ -149,10 +149,10 @@ __all__ = [
     "handle_memo_get",
     "handle_memo_put",
     "handle_pure_effect",
-    "handle_durable_cache_get",
-    "handle_durable_cache_put",
-    "handle_durable_cache_delete",
-    "handle_durable_cache_exists",
+    "handle_cache_get",
+    "handle_cache_put",
+    "handle_cache_delete",
+    "handle_cache_exists",
     "handle_io_perform",
     "handle_io_print",
     "handle_future_await",
