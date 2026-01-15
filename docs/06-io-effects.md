@@ -213,20 +213,19 @@ def trackable_side_effects():
 
 ### Testing IO Effects
 
-Mock IO effects in tests:
+Mock IO effects in tests by providing custom handlers:
 
 ```python
-# In tests
-class MockInterpreter(ProgramInterpreter):
-    def __init__(self):
-        super().__init__()
-        self.io_calls = []
-    
-    async def _handle_effect(self, effect, context):
-        if isinstance(effect, IOPerformEffect):
-            self.io_calls.append(effect)
-            return "mocked_result"
-        return await super()._handle_effect(effect, context)
+from doeff import create_runtime, EffectRuntime
+
+# Create runtime with custom handlers for testing
+def mock_io_handler(effect, env, store):
+    # Return mocked result instead of executing IO
+    return Resume("mocked_result", store)
+
+# Configure runtime with custom handlers
+runtime = EffectRuntime(handlers={"IO": mock_io_handler})
+result = await runtime.run(my_program())
 ```
 
 ### Print vs Log

@@ -42,7 +42,8 @@ def expensive_computation():
 program = expensive_computation()
 
 # Execution happens here
-result = await interpreter.run(program)
+runtime = create_runtime()
+result = await runtime.run(program)
 ```
 
 **Reusability**
@@ -53,9 +54,10 @@ def get_timestamp():
     return yield IO(lambda: time.time())
 
 # Unlike generators, this works:
+runtime = create_runtime()
 prog = get_timestamp()
-result1 = await interpreter.run(prog)  # 1234567890.123
-result2 = await interpreter.run(prog)  # 1234567890.456
+result1 = await runtime.run(prog)  # 1234567890.123
+result2 = await runtime.run(prog)  # 1234567890.456
 ```
 
 ### Creating Programs
@@ -124,7 +126,7 @@ doeff provides effects for:
 
 1. **Creation**: Effect is instantiated with parameters
 2. **Yielding**: Effect is yielded in a `@do` function
-3. **Interpretation**: ProgramInterpreter handles the effect
+3. **Interpretation**: EffectRuntime handles the effect
 4. **Resolution**: Effect produces a value
 5. **Continuation**: Value is sent back to the generator
 
@@ -142,7 +144,7 @@ class CustomEffect(EffectBase):
         return result if isinstance(result, Program) else Program.pure(result)
 ```
 
-Then add a handler to `ProgramInterpreter`.
+Then add a handler to `EffectRuntime`.
 
 ## The @do Decorator
 
@@ -270,30 +272,30 @@ except StopIteration as e:
 
 ## Execution Model
 
-### ProgramInterpreter
+### EffectRuntime
 
-The interpreter executes programs by processing effects:
+The runtime executes programs by processing effects:
 
 ```python
-class ProgramInterpreter:
-    def __init__(self, custom_handlers=None):
-        # Initialize effect handlers
-        self.state_handler = StateEffectHandler()
-        self.reader_handler = ReaderEffectHandler()
-        # ... other handlers
-    
-    async def run(
-        self, 
-        program: Program[T], 
-        context: ExecutionContext | None = None
-    ) -> RunResult[T]:
-        """Execute program and return result with final context"""
-        ...
+from doeff import create_runtime, EffectRuntime
+
+# Create runtime with default scheduler
+runtime = create_runtime()
+
+# Or configure with custom scheduler/handlers
+runtime = EffectRuntime(scheduler=my_scheduler, handlers=my_handlers)
+
+# Execute program
+result = await runtime.run(
+    program,
+    env={"key": "value"},  # Optional environment
+    store={"state": 123}   # Optional initial store
+)
 ```
 
 ### Execution Steps
 
-1. **Initialize Context**: Create or use provided `ExecutionContext`
+1. **Initialize State**: Create CESK machine state from program, environment, and store
 2. **Create Generator**: Call `program.generator_func()`
 3. **Process Loop**:
    - Get next yielded value
@@ -301,34 +303,32 @@ class ProgramInterpreter:
    - If `Effect`: handle via appropriate handler
    - Send result back to generator
 4. **Handle Completion**: Catch `StopIteration` and extract return value
-5. **Return Result**: `RunResult` with value and final context
+5. **Return Result**: `RuntimeResult` with value
 
-### ExecutionContext
+### Environment and Store
 
-Tracks all mutable state during execution:
+The runtime uses environment and store for execution:
 
 ```python
-@dataclass
-class ExecutionContext:
-    env: dict[str, Any]           # Reader environment
-    state: dict[str, Any]         # State storage
-    log: list[Any]                # Writer log
-    graph: WGraph                 # Execution graph
-    io_allowed: bool              # IO permission
-    memo: dict[Any, Any]          # Memoization cache
-    cache: dict[Any, Any]         # Cache storage
-    atomic_locks: dict[str, Any]  # Atomic operation locks
+# Environment: Read-only configuration (Ask/Local effects)
+env = {"database_url": "postgres://...", "api_key": "..."}
+
+# Store: Mutable state (Get/Put/Modify effects)
+store = {"counter": 0, "status": "ready"}
+
+# Pass to runtime
+result = await runtime.run(program, env=env, store=store)
 ```
 
-### RunResult
+### RuntimeResult
 
 Contains execution outcome:
 
 ```python
 @dataclass
-class RunResult(Generic[T]):
-    context: ExecutionContext     # Final context
+class RuntimeResult(Generic[T]):
     result: Result[T]            # Ok(value) or Err(error)
+    captured_traceback: Any      # Traceback for debugging
     
     @property
     def value(self) -> T:
@@ -341,6 +341,10 @@ class RunResult(Generic[T]):
     @property
     def is_err(self) -> bool:
         """Check if failed"""
+    
+    @property
+    def error(self) -> BaseException:
+        """Extract error (raises if Ok)"""
 ```
 
 ### Stack Safety
@@ -490,8 +494,9 @@ from doeff import (
     Program,         # Program[T]
     Effect,          # Base effect type
     EffectGenerator, # Generator[Effect | Program, Any, T]
-    ExecutionContext, # Execution state
-    RunResult,       # Result[T] with context
+    EffectRuntime,   # Runtime executor
+    create_runtime,  # Factory function
+    RuntimeResult,   # Result container
     Result,          # Ok[T] | Err[E]
     Ok,              # Success value
     Err,             # Error value
@@ -525,10 +530,10 @@ def create_program() -> Program[int]:
         return value
     return Program(gen)
 
-# Interpreter
-async def execute(prog: Program[T]) -> RunResult[T]:
-    interpreter = ProgramInterpreter()
-    return await interpreter.run(prog)
+# Runtime execution
+async def execute(prog: Program[T]) -> RuntimeResult[T]:
+    runtime = create_runtime()
+    return await runtime.run(prog)
 ```
 
 ### Generic Programs
@@ -554,9 +559,9 @@ result = identity("hello")  # Program[str]
 - **Effect**: Request for an operation (Reader, State, Writer, etc.)
 - **@do**: Converts generator functions to Programs with monadic operations
 - **Generator**: Python's coroutine mechanism enables do-notation syntax
-- **ProgramInterpreter**: Executes programs by handling effects
-- **ExecutionContext**: Tracks all mutable state during execution
-- **RunResult[T]**: Contains final value and context
+- **EffectRuntime**: Executes programs by handling effects
+- **Environment/Store**: Tracks environment and mutable state during execution
+- **RuntimeResult[T]**: Contains final value and result
 - **Monadic Ops**: map, flat_map, sequence, pure enable composition
 
 ## Next Steps
