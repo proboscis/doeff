@@ -219,7 +219,7 @@ async def run(
 
     S: "Store" = store if store is not None else {}
     if storage is not None:
-        S = {**S, "__durable_storage__": storage}
+        S = {**S, "__cache_storage__": storage}
 
     dispatcher = ScheduledEffectDispatcher(
         user_handlers=scheduled_handlers,

@@ -24,7 +24,7 @@ Error traceback capture and formatting:
 
 ### 03_durable_workflow.py
 Durable workflow execution with cache effects:
-- Basic cache operations (cacheget/cacheput)
+- Basic cache operations (CacheGet/CachePut)
 - Idempotent operation pattern
 - Persistent workflows with SQLite
 - Cache management (delete, clear)

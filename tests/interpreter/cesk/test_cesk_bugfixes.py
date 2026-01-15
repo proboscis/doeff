@@ -22,21 +22,21 @@ from doeff.effects.spawn import Spawn
 
 
 # ============================================================================
-# Test: _merge_thread_state preserves __durable_storage__
+# Test: _merge_thread_state preserves __cache_storage__
 # ============================================================================
 
 
-class TestMergeThreadStatePreservesDurableStorage:
-    """Regression test for: _merge_thread_state was losing __durable_storage__."""
+class TestMergeThreadStatePreservesCacheStorage:
+    """Regression test for: _merge_thread_state was losing __cache_storage__."""
 
-    def test_durable_storage_preserved_after_merge(self):
-        """__durable_storage__ from parent should be preserved in merged store."""
+    def test_cache_storage_preserved_after_merge(self):
+        """__cache_storage__ from parent should be preserved in merged store."""
         mock_storage = MagicMock()
         mock_storage.get.return_value = "cached_value"
 
         parent_store: Store = {
             "user_key": "parent_value",
-            "__durable_storage__": mock_storage,
+            "__cache_storage__": mock_storage,
             "__log__": ["parent_log"],
         }
         child_store: Store = {
@@ -47,33 +47,30 @@ class TestMergeThreadStatePreservesDurableStorage:
 
         merged = _merge_thread_state(parent_store, child_store)
 
-        # User keys should be merged (child wins)
         assert merged["user_key"] == "child_value"
         assert merged["child_only"] == 42
-        # Logs should be appended
         assert merged["__log__"] == ["parent_log", "child_log"]
-        # CRITICAL: durable storage should be preserved
-        assert "__durable_storage__" in merged
-        assert merged["__durable_storage__"] is mock_storage
+        assert "__cache_storage__" in merged
+        assert merged["__cache_storage__"] is mock_storage
 
-    def test_durable_storage_not_in_child_still_preserved(self):
-        """__durable_storage__ should come from parent even if child doesn't have it."""
+    def test_cache_storage_not_in_child_still_preserved(self):
+        """__cache_storage__ should come from parent even if child doesn't have it."""
         mock_storage = MagicMock()
-        parent_store: Store = {"__durable_storage__": mock_storage}
+        parent_store: Store = {"__cache_storage__": mock_storage}
         child_store: Store = {"some_key": "value"}
 
         merged = _merge_thread_state(parent_store, child_store)
 
-        assert merged["__durable_storage__"] is mock_storage
+        assert merged["__cache_storage__"] is mock_storage
 
-    def test_no_durable_storage_in_either(self):
-        """Merge should work fine when neither store has __durable_storage__."""
+    def test_no_cache_storage_in_either(self):
+        """Merge should work fine when neither store has __cache_storage__."""
         parent_store: Store = {"key": "parent"}
         child_store: Store = {"key": "child"}
 
         merged = _merge_thread_state(parent_store, child_store)
 
-        assert "__durable_storage__" not in merged
+        assert "__cache_storage__" not in merged
         assert merged["key"] == "child"
 
 

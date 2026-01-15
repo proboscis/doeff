@@ -35,11 +35,11 @@ def is_pure_effect(effect: EffectBase) -> bool:
         StatePutEffect,
         WriterTellEffect,
     )
-    from doeff.effects.durable_cache import (
-        DurableCacheDelete,
-        DurableCacheExists,
-        DurableCacheGet,
-        DurableCachePut,
+    from doeff.effects.cache import (
+        CacheDeleteEffect,
+        CacheExistsEffect,
+        CacheGetEffect,
+        CachePutEffect,
     )
     from doeff.effects.pure import PureEffect
 
@@ -52,10 +52,10 @@ def is_pure_effect(effect: EffectBase) -> bool:
             AskEffect,
             WriterTellEffect,
             PureEffect,
-            DurableCacheGet,
-            DurableCachePut,
-            DurableCacheDelete,
-            DurableCacheExists,
+            CacheGetEffect,
+            CachePutEffect,
+            CacheDeleteEffect,
+            CacheExistsEffect,
         ),
     )
 

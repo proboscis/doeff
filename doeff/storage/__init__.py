@@ -2,7 +2,7 @@
 Durable storage interfaces and implementations for doeff workflows.
 
 This module provides the storage abstraction layer for durable workflow execution.
-The storage is used by cache effects (cacheget/cacheput) to persist operation results
+The storage is used by cache effects (CacheGet/CachePut) to persist operation results
 across process restarts.
 
 Public API:
