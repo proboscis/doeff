@@ -13,10 +13,7 @@ Run:
     uv run python examples/02_issue_lifecycle.py
 """
 
-from typing import Any, Callable
-
 from doeff import do, EffectGenerator, SyncRuntime
-from doeff.runtime import Resume
 from doeff_conductor import (
     CreateIssue,
     ListIssues,
@@ -25,15 +22,8 @@ from doeff_conductor import (
     IssueHandler,
     Issue,
     IssueStatus,
+    make_scheduled_handler,
 )
-
-
-def sync_handler(fn: Callable[[Any], Any]) -> Callable:
-    """Wrap a simple handler function to match SyncRuntime's expected signature."""
-    def handler(effect: Any, env: Any, store: Any):
-        result = fn(effect)
-        return Resume(result, store)
-    return handler
 
 
 @do
@@ -90,10 +80,10 @@ def main():
     issue_handler = IssueHandler()
     
     handlers = {
-        CreateIssue: sync_handler(issue_handler.handle_create_issue),
-        ListIssues: sync_handler(issue_handler.handle_list_issues),
-        GetIssue: sync_handler(issue_handler.handle_get_issue),
-        ResolveIssue: sync_handler(issue_handler.handle_resolve_issue),
+        CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
+        ListIssues: make_scheduled_handler(issue_handler.handle_list_issues),
+        GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
+        ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
     }
     
     # Run the demo
