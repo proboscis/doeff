@@ -11,10 +11,10 @@ from doeff import (
     ExecutionContext,
     Program,
     CESKInterpreter,
+    Safe,
     annotate,
     ask,
     await_,
-    catch,
     do,
     fail,
     get,
@@ -66,16 +66,11 @@ async def test_deep_mixed_monad_chain():  # noqa: PLR0915
             if i % 2000 == 0:
                 yield io(lambda: None)  # No-op IO
 
-            # Result (error handling)
+            # Result
             if i % 1500 == 0:
-                def error_recovery(e, current_i=i):  # Capture i via default argument
-                    @do
-                    def recover() -> Generator[Effect, Any, int]:
-                        yield tell(f"Recovered from error at {current_i}: {e}")
-                        return -current_i
-                    return recover()
-
-                yield catch(maybe_fail(i), error_recovery)
+                safe_result = yield Safe(maybe_fail(i))
+                if safe_result.is_err():
+                    yield tell(f"Handled error at {i}: {safe_result.error}")
 
         # Final results
         final_total = yield get("total")
@@ -161,23 +156,16 @@ async def test_nested_monad_operations():
         yield put(f"depth_{depth}", depth)
         yield tell(f"At depth {depth}")
 
-        # Nested catch for error handling
         @do
         def next_level() -> Generator[Effect, Any, int]:
             return (yield from nested_program(depth - 1))
 
-        def error_handler(e):
-            """Error handler that returns a Program."""
-            @do
-            def handle() -> Generator[Effect, Any, int]:
-                yield tell(f"Error at depth {depth}: {e}")
-                return 0
-            return handle()
-
-        result = yield catch(
-            next_level(),
-            error_handler,
-        )
+        safe_result = yield Safe(next_level())
+        if safe_result.is_err():
+            yield tell(f"Error at depth {depth}: {safe_result.error}")
+            result = 0
+        else:
+            result = safe_result.value
 
         # State modification
         yield modify(f"depth_{depth}", lambda x: x * 2)
@@ -269,21 +257,18 @@ async def test_monad_composition_patterns():
         yield await_(asyncio.sleep(0.001))
         yield tell("Async completed")
 
-        # StateT over Result pattern
         @do
         def stateful_program() -> Generator[Effect, Any, int]:
             yield put("computed", 42)
             value = yield get("computed")
             return value
 
-        @do
-        def default_program() -> Generator[Effect, Any, int]:
+        safe_result = yield Safe(stateful_program())
+        if safe_result.is_err():
             yield put("computed", 0)
-            return 0
-
-        try_result = yield catch(
-            stateful_program(), lambda _e: default_program()
-        )
+            try_result = 0
+        else:
+            try_result = safe_result.value
 
         # Listen + Local pattern (Writer + Reader)
         @do

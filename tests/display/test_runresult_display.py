@@ -23,7 +23,7 @@ from doeff import (
     Log,
     CESKInterpreter,
     Put,
-    Recover,
+    Safe,
     Step,
     do,
 )
@@ -196,8 +196,8 @@ async def test_display_primary_effect_shows_creation_stack(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch) -> None:
-    """Recover failures should surface the root cause clearly."""
+async def test_display_nested_safe_shows_leaf_creation_stack(monkeypatch) -> None:
+    """Safe failures should surface the root cause clearly."""
 
     def failing_dumps(_value, _context):
         raise TypeError("synthetic cache failure")
@@ -215,12 +215,14 @@ async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch) -> 
         return None
 
     @do
-    def recover_program() -> EffectGenerator[None]:
-        yield Recover(try_cache_get(), compute_and_cache())
+    def safe_program() -> EffectGenerator[None]:
+        result = yield Safe(try_cache_get())
+        if result.is_err:
+            yield compute_and_cache()
         return None
 
     engine = CESKInterpreter()
-    result = await engine.run_async(recover_program())
+    result = await engine.run_async(safe_program())
 
     assert result.is_err
 
@@ -229,13 +231,13 @@ async def test_display_nested_recover_shows_leaf_creation_stack(monkeypatch) -> 
     # Non-verbose shows root cause first
     assert "Root Cause:" in display_output
     assert "TypeError: synthetic cache failure" in display_output
-    assert "Effect 'ResultRecoverEffect' failed" in display_output
-    assert "recover_program" in display_output
+    assert "Effect 'CachePutEffect' failed" in display_output
+    assert "safe_program" in display_output
 
     # Verbose mode shows full error chain with all creation stacks
     verbose_output = result.display(verbose=True)
     assert "Error Chain (most recent first):" in verbose_output
-    assert "Effect 'ResultRecoverEffect' failed" in verbose_output
+    assert "Effect 'CachePutEffect' failed" in verbose_output
     assert "📍 Effect Creation Stack Trace:" in verbose_output
     assert "compute_and_cache" in verbose_output
 

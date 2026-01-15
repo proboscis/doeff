@@ -15,7 +15,7 @@ from doeff.decorators import do_wrapper
 from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
-from doeff.effects.result import Recover, Safe
+from doeff.effects.result import Safe
 from doeff.effects.writer import Log, slog
 from doeff.types import EffectCreationContext, EffectGenerator
 
@@ -123,7 +123,7 @@ def cache(
     metadata: Mapping[str, Any] | None = None,
     policy: CachePolicy | Mapping[str, Any] | None = None,
 ):
-    """Cache decorator that uses CacheGet/CachePut effects with Recover for misses.
+    """Cache decorator that uses CacheGet/CachePut effects with Safe for misses.
 
     The decorator automatically caches results produced by the wrapped function. On a cache miss
     (when ``CacheGet`` fails), it evaluates the original function, caches the ``Result`` via
@@ -334,7 +334,11 @@ def cache(
                 yield ensure_serializable(cache_key_obj, log_success=False)
                 return (yield CacheGet(cache_key_obj))
 
-            result = yield Recover(try_cache_get(), compute_and_cache())
+            cache_result = yield Safe(try_cache_get())
+            if cache_result.is_ok():
+                result = cache_result.value
+            else:
+                result = yield compute_and_cache()
 
             if isinstance(result, Result):
                 return result.unwrap()

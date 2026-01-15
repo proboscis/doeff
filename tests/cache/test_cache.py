@@ -20,7 +20,7 @@ from doeff import (
     MemoGet,
     MemoPut,
     CESKInterpreter,
-    Recover,
+    Safe,
     do,
 )
 from doeff._vendor import FrozenDict
@@ -160,12 +160,12 @@ async def test_cache_ttl_expiry(temp_cache_db) -> None:
         # Sleep for longer than TTL
         yield IO(lambda: time.sleep(0.2))
 
-        # Use Recover to handle the expected cache miss
         @do
-        def on_cache_miss():
-            return "expired"
+        def try_cache_get():
+            return (yield CacheGet("ttl_key"))
 
-        value2 = yield Recover(CacheGet("ttl_key"), on_cache_miss())
+        cache_result = yield Safe(try_cache_get())
+        value2 = cache_result.value if cache_result.is_ok() else "expired"
 
         return (value1, value2)
 
@@ -224,18 +224,20 @@ async def test_cache_explicit_storage_disk(temp_cache_db, cache_context) -> None
 
 
 @pytest.mark.asyncio
-async def test_cache_recover_on_miss() -> None:
-    """Test using Recover effect with cache miss."""
+async def test_cache_safe_on_miss() -> None:
+    """Test using Safe effect with cache miss."""
+
+    @do
+    def try_cache_get():
+        return (yield CacheGet("missing_key"))
 
     @do
     def test_program():
-        # Define fallback computation
-        @do
-        def compute_value():
-            return "computed_value"
-
-        # Try cache get with recovery
-        value = yield Recover(CacheGet("missing_key"), compute_value())
+        cache_result = yield Safe(try_cache_get())
+        if cache_result.is_ok():
+            value = cache_result.value
+        else:
+            value = "computed_value"
         return value
 
     engine = CESKInterpreter()
