@@ -1,6 +1,6 @@
 # Advanced Effects
 
-Advanced effects for parallel Program execution, memoization, and atomic operations.
+Advanced effects for parallel Program execution, background tasks, and atomic operations.
 
 ## Gather Effects
 
@@ -147,6 +147,101 @@ def accumulate_result(value):
     return total
 ```
 
+## Spawn Effect
+
+Execute Programs in the background and retrieve results later.
+
+### Basic Spawn
+
+```python
+from doeff import Spawn, do
+
+@do
+def background_work():
+    # Spawn a background task
+    task = yield Spawn(expensive_computation())
+    
+    # Do other work while task runs
+    yield Log("Doing other work...")
+    other_result = yield quick_operation()
+    
+    # Wait for background task to complete
+    background_result = yield task.join()
+    
+    return (other_result, background_result)
+```
+
+### Spawn with Backend Options
+
+```python
+@do
+def spawn_with_backend():
+    # Specify preferred backend
+    task = yield Spawn(
+        heavy_computation(),
+        preferred_backend="process"  # "thread", "process", or "ray"
+    )
+    
+    result = yield task.join()
+    return result
+```
+
+### Spawn with Ray
+
+For distributed computation, use Ray backend with resource hints:
+
+```python
+@do
+def distributed_spawn():
+    task = yield Spawn(
+        ml_training_job(),
+        preferred_backend="ray",
+        num_cpus=4,
+        num_gpus=1,
+        memory=8 * 1024 * 1024 * 1024  # 8GB
+    )
+    
+    result = yield task.join()
+    return result
+```
+
+### Multiple Background Tasks
+
+```python
+@do
+def parallel_background_work():
+    # Spawn multiple tasks
+    task1 = yield Spawn(computation_1())
+    task2 = yield Spawn(computation_2())
+    task3 = yield Spawn(computation_3())
+    
+    # Wait for all to complete
+    result1 = yield task1.join()
+    result2 = yield task2.join()
+    result3 = yield task3.join()
+    
+    return [result1, result2, result3]
+```
+
+### Spawn vs Gather
+
+| Effect | Execution | Use Case |
+|--------|-----------|----------|
+| `Gather(*progs)` | Parallel, blocking | Wait for all immediately |
+| `Spawn(prog)` | Background, non-blocking | Do other work while waiting |
+
+```python
+@do
+def comparison():
+    # Gather: blocks until all complete
+    results = yield Gather(prog1(), prog2(), prog3())
+    
+    # Spawn: non-blocking, can do work in between
+    task = yield Spawn(slow_prog())
+    yield do_other_work()  # Runs while task executes
+    result = yield task.join()  # Now wait for it
+```
+
 ## Combining Advanced Effects
 
 ### Gather + Atomic
@@ -217,6 +312,7 @@ interpreter responds to this key directly.
 | Effect | Purpose | Use Case |
 |--------|---------|----------|
 | `Gather(*progs)` | Parallel Programs | Fan-out computation |
+| `Spawn(prog)` | Background execution | Non-blocking tasks |
 | `AtomicGet(key)` | Thread-safe read | Concurrent reads |
 | `AtomicUpdate(key, f)` | Thread-safe update | Concurrent modifications |
 

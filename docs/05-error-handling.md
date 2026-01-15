@@ -143,7 +143,7 @@ def parallel_safe_operations():
     safe_tasks = [Safe(task) for task in tasks]
     
     # Run all in parallel using Gather
-    results = yield Gather(safe_tasks)
+    results = yield Gather(*safe_tasks)
     
     # Process results
     successes = [r.value for r in results if r.is_ok()]
