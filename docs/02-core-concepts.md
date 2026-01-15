@@ -240,7 +240,7 @@ def my_program():
 
 1. **Generator Protocol**: `yield` suspends execution and produces a value
 2. **Effect Yielding**: The yielded value is an Effect instance
-3. **Interpreter Loop**: ProgramInterpreter processes each effect
+3. **Interpreter Loop**: Runtime processes each effect
 4. **Value Sending**: Result is sent back via `.send(value)`
 5. **Continuation**: Generator resumes with the value
 
