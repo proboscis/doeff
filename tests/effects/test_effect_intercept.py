@@ -12,7 +12,7 @@ from doeff._vendor import Ok
 from doeff.cache_policy import ensure_cache_policy
 from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 from doeff.effects.cache import CacheGetEffect, CachePutEffect
-from doeff.effects.dep import DepInjectEffect
+
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
 from doeff.effects.graph import (
@@ -21,16 +21,11 @@ from doeff.effects.graph import (
     GraphSnapshotEffect,
     GraphStepEffect,
 )
-from doeff.effects.io import IOPerformEffect, IOPrintEffect
-from doeff.effects.memo import MemoGetEffect, MemoPutEffect
+from doeff.effects.io import IOPerformEffect
+
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import (
-    ResultFailEffect,
-    ResultFinallyEffect,
-    ResultFirstSuccessEffect,
-    ResultRetryEffect,
     ResultSafeEffect,
-    ResultUnwrapEffect,
 )
 from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
@@ -84,18 +79,13 @@ def tagging_transform(effect: Effect) -> Effect:
         lambda: AtomicUpdateEffect(key="item", updater=lambda v: v, default_factory=None),
         lambda: CacheGetEffect(key="cache-key"),
         lambda: CachePutEffect(key="cache-key", value=1, policy=ensure_cache_policy(ttl=1)),
-        lambda: DepInjectEffect(key="service"),
+        lambda: AskEffect(key="service"),
         lambda: FutureAwaitEffect(awaitable=DummyAwaitable()),
         lambda: GraphStepEffect(value="value", meta={"step": 1}),
         lambda: GraphAnnotateEffect(meta={"tag": "test"}),
         lambda: GraphSnapshotEffect(),
         lambda: IOPerformEffect(action=lambda: "done"),
-        lambda: IOPrintEffect(message="hello"),
-        lambda: MemoGetEffect(key="memo"),
-        lambda: MemoPutEffect(key="memo", value="value"),
         lambda: AskEffect(key="env"),
-        lambda: ResultFailEffect(exception=RuntimeError("boom")),
-        lambda: ResultUnwrapEffect(result=Ok("value")),
         lambda: StateGetEffect(key="state"),
         lambda: StatePutEffect(key="state", value=5),
         lambda: StateModifyEffect(key="state", func=lambda v: v),
@@ -139,21 +129,6 @@ async def test_gather_effect_intercept_rewrites_each_program() -> None:
 
 
 @pytest.mark.asyncio
-async def test_result_finally_effect_intercept_rewrites_programs() -> None:
-    base = ResultFinallyEffect(
-        sub_program=writer_program("sub"),
-        finalizer=writer_program("final"),
-    )
-
-    result = base.intercept(tagging_transform)
-
-    assert result is not base
-    assert (await writer_message(result.sub_program)).endswith(SUFFIX)
-    assert isinstance(result.finalizer, Program)
-    assert (await writer_message(result.finalizer)).endswith(SUFFIX)
-
-
-@pytest.mark.asyncio
 async def test_graph_capture_effect_intercept_rewrites_program() -> None:
     base = GraphCaptureEffect(program=writer_program("graph"))
 
@@ -161,16 +136,6 @@ async def test_graph_capture_effect_intercept_rewrites_program() -> None:
 
     assert result is not base
     assert (await writer_message(result.program)).endswith(SUFFIX)
-
-
-@pytest.mark.asyncio
-async def test_result_retry_effect_intercept_rewrites_sub_program() -> None:
-    base = ResultRetryEffect(sub_program=writer_program("retry"))
-
-    result = base.intercept(tagging_transform)
-
-    assert result is not base
-    assert (await writer_message(result.sub_program)).endswith(SUFFIX)
 
 
 @pytest.mark.asyncio
@@ -183,12 +148,4 @@ async def test_result_safe_effect_intercept_rewrites_sub_program() -> None:
     assert (await writer_message(result.sub_program)).endswith(SUFFIX)
 
 
-@pytest.mark.asyncio
-async def test_result_first_success_effect_intercept_rewrites_programs() -> None:
-    base = ResultFirstSuccessEffect(programs=(writer_program("one"), writer_program("two")))
 
-    result = base.intercept(tagging_transform)
-
-    assert result is not base
-    messages = [await writer_message(program) for program in result.programs]
-    assert all(message.endswith(SUFFIX) for message in messages)
