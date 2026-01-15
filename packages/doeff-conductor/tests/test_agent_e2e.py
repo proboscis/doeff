@@ -165,7 +165,14 @@ def create_mock_agentic_handler():
         else:
             raise ValueError(f"Unknown effect type: {type(effect)}")
     
-    # Assign mock methods
+    # Assign specific handler methods (new interface)
+    mock.handle_create_environment = MagicMock(side_effect=handle_create_environment)
+    mock.handle_create_session = MagicMock(side_effect=handle_create_session)
+    mock.handle_send_message = MagicMock(side_effect=handle_send_message)
+    mock.handle_get_messages = MagicMock(side_effect=handle_get_messages)
+    mock.handle_get_session_status = MagicMock(side_effect=handle_get_session_status)
+    
+    # Keep legacy handle method for backwards compatibility
     mock.handle = MagicMock(side_effect=lambda effect: dispatch_effect(effect))
     
     return mock
@@ -503,7 +510,8 @@ class TestAgentErrorHandling:
         mock_handler = MagicMock()
         mock_status = MagicMock()
         mock_status.is_terminal.return_value = False  # Never terminal
-        mock_handler.handle.return_value = mock_status
+        # handle_get_session_status is called in the poll loop
+        mock_handler.handle_get_session_status.return_value = mock_status
         handler._opencode_handler = mock_handler
         
         session_id = "mock-session-001"
@@ -543,7 +551,8 @@ class TestAgentErrorHandling:
         # Create agent handler with mock that raises error
         handler = AgentHandler(workflow_id="error-test")
         mock_handler = MagicMock()
-        mock_handler.handle.side_effect = Exception("Simulated agent failure")
+        # handle_create_environment is called first in handle_run_agent
+        mock_handler.handle_create_environment.side_effect = Exception("Simulated agent failure")
         handler._opencode_handler = mock_handler
         
         # Create dummy env
