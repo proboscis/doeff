@@ -157,7 +157,7 @@ def deep_chain_program(depth: int) -> Generator[Effect, Any, int]:
             yield annotate({"progress": i / depth})
 
     final = yield get("total")
-    yield print_(f"Completed {depth} iterations with total: {final}")
+    yield tell(f"Completed {depth} iterations with total: {final}")
     return final
 
 
