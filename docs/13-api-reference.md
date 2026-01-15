@@ -717,7 +717,7 @@ result = yield task.join()
 **Notes:**
 
 - Ray tasks use cloudpickle serialization and inherit context from the spawn site.
-- Configure Ray via `EffectRuntime` options (`spawn_ray_address`,
+- Configure Ray via runtime options (`spawn_ray_address`,
   `spawn_ray_init_kwargs`, `spawn_ray_runtime_env`).
 
 **See:** [Advanced Effects](09-advanced-effects.md)
@@ -919,19 +919,19 @@ iproxy = program_to_iproxy_result(my_program())
 
 ## Execution
 
-### EffectRuntime
+### AsyncioRuntime
 
-Executes Programs by handling effects.
+Executes Programs by handling effects with real async I/O support.
 
 ```python
-from doeff import create_runtime, EffectRuntime
+from doeff.runtimes import AsyncioRuntime
 
-# Using factory function (recommended)
+# Create runtime for async execution
 runtime = AsyncioRuntime()
 result = await runtime.run(my_program())
 
-# Or with explicit configuration
-runtime = EffectRuntime(scheduler=my_scheduler, handlers=my_handlers)
+# Or with custom handlers
+runtime = AsyncioRuntime(handlers=my_handlers)
 result = await runtime.run(my_program(), env={"key": "value"}, store={"state": 0})
 ```
 
@@ -979,7 +979,7 @@ assert result.value == "ok"
 **Parameters:**
 
 - **`program`** (`str | Program`) - Program path (enables discovery) or Program instance.
-- **`interpreter`** (`str | EffectRuntime | callable | None`) - Override interpreter/runtime.
+- **`interpreter`** (`str | AsyncioRuntime | callable | None`) - Override interpreter/runtime.
 - **`envs`** (`list[str | Program[dict] | Mapping] | None`) - Environments to merge.
 - **`apply`** (`str | KleisliProgram | callable | None`) - Kleisli applied before run.
 - **`transform`** (`list[str | callable] | None`) - Additional Program transformers.
@@ -1099,7 +1099,8 @@ await write_graph_html(result.graph, "output.html")
 
 ```python
 # Core
-from doeff import do, Program, create_runtime, EffectRuntime, RuntimeResult
+from doeff import do, Program
+from doeff.runtimes import AsyncioRuntime, RuntimeResult
 
 # Basic Effects
 from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen

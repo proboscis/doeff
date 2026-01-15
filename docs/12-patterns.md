@@ -543,7 +543,7 @@ async def test_effects_executed():
         yield Step("step1")
         return "result"
     
-    from doeff import create_runtime
+    from doeff.runtimes import AsyncioRuntime
     
     # Run with result
     runtime = AsyncioRuntime()
@@ -558,7 +558,7 @@ async def test_effects_executed():
 
 ```python
 from hypothesis import given, strategies as st
-from doeff import create_runtime
+from doeff.runtimes import AsyncioRuntime
 
 @given(st.integers(min_value=0, max_value=1000))
 @pytest.mark.asyncio
