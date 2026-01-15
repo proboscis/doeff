@@ -22,12 +22,12 @@ from doeff import Ok, Err, Result
 
 # Success
 success: Result[int] = Ok(42)
-assert success.is_ok
+assert success.is_ok()  # Note: is_ok() is a method
 assert success.value == 42
 
 # Failure
 failure: Result[int] = Err(Exception("error"))
-assert failure.is_err
+assert failure.is_err()  # Note: is_err() is a method
 assert isinstance(failure.error, Exception)
 ```
 
