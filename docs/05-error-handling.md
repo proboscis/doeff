@@ -35,7 +35,8 @@ assert isinstance(failure.error, Exception)
 ### Pattern Matching
 
 ```python
-result = await interpreter.run(my_program())
+runtime = AsyncioRuntime()
+result = await runtime.run(my_program())
 
 match result.result:
     case Ok(value):
@@ -44,7 +45,7 @@ match result.result:
         print(f"Error: {error}")
 ```
 
-### Result in RunResult
+### Result in RuntimeResult
 
 ```python
 @do
@@ -52,7 +53,8 @@ def my_program():
     yield Log("Processing...")
     return 42
 
-result: RunResult[int] = await interpreter.run(my_program())
+runtime = AsyncioRuntime()
+result = await runtime.run(my_program())
 
 # Check success
 if result.is_ok:
@@ -75,7 +77,8 @@ def failing_program():
     yield Log("This never executes")
     return "never returned"
 
-result = await interpreter.run(failing_program())
+runtime = AsyncioRuntime()
+result = await runtime.run(failing_program())
 assert result.is_err
 assert str(result.error) == "Something went wrong"
 ```
@@ -95,7 +98,8 @@ def validate_input(value):
     return value
 
 # This fails
-result = await interpreter.run(validate_input(-5))
+runtime = AsyncioRuntime()
+result = await runtime.run(validate_input(-5))
 assert result.is_err
 ```
 
@@ -140,7 +144,8 @@ def with_catch():
     yield Log(f"Result: {result}")
     return result
 
-result = await interpreter.run(with_catch())
+runtime = AsyncioRuntime()
+result = await runtime.run(with_catch())
 assert result.is_ok
 assert result.value == "Caught error: Operation failed"
 ```
@@ -271,7 +276,8 @@ def with_retry():
     return result
 
 # Will retry up to 5 times with 100ms delay
-result = await interpreter.run(with_retry())
+runtime = AsyncioRuntime()
+result = await runtime.run(with_retry())
 ```
 
 ### Randomized Backoff with delay_strategy

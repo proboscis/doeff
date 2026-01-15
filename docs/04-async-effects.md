@@ -175,7 +175,8 @@ def process_batch(item_ids):
     return results
 
 # Usage
-result = await interpreter.run(process_batch([1, 2, 3, 4, 5]))
+runtime = AsyncioRuntime()
+result = await runtime.run(process_batch([1, 2, 3, 4, 5]))
 # ["processed-1", "processed-2", "processed-3", "processed-4", "processed-5"]
 ```
 
@@ -490,6 +491,8 @@ def parallel_with_fallback():
 ```python
 import asyncio
 import pytest
+from doeff import do, Await, Log
+from doeff.runtimes import AsyncioRuntime
 
 @pytest.mark.asyncio
 async def test_async_program():
@@ -499,12 +502,11 @@ async def test_async_program():
         yield Log(f"Result: {result}")
         return result
     
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(my_program())
+    runtime = AsyncioRuntime()
+    result = await runtime.run(my_program())
     
     assert result.is_ok
     assert result.value == "test"
-    assert "Result: test" in result.context.log
 ```
 
 ## Summary
