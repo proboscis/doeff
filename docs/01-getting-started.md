@@ -289,7 +289,7 @@ Now that you understand the basics, explore:
 - **[Core Concepts](02-core-concepts.md)** - Deep dive into Program, Effect, and execution model
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 - **[Async Effects](04-async-effects.md)** - Parallel execution and futures
-- **[Error Handling](05-error-handling.md)** - Result, Fail, Safe, Retry
+- **[Error Handling](05-error-handling.md)** - Result, Safe for error handling
 
 ## Quick Reference
 
@@ -313,10 +313,10 @@ from doeff import (
     Await, Parallel,
     
     # Error handling
-    Fail, Retry, Safe,
+    Safe,
     
     # IO effects
-    IO, Print,
+    IO,
     
     # Result types
     Ok, Err, Result,

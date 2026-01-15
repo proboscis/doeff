@@ -5,12 +5,12 @@ IO effects allow you to perform side effects in a controlled way within the doef
 ## Table of Contents
 
 - [IO Effect](#io-effect)
-- [Print Effect](#print-effect)
+- [Common IO Patterns](#common-io-patterns)
 - [Best Practices](#best-practices)
 
 ## IO Effect
 
-`IO(action)` executes a callable and returns its result.
+`IO(action)` executes a callable and returns its result. This is the primary way to perform synchronous side effects in doeff programs.
 
 ### Basic Usage
 
@@ -77,7 +77,7 @@ import os
 def get_env_var(key):
     value = yield IO(lambda: os.environ.get(key))
     if value is None:
-        yield Fail(KeyError(f"Environment variable {key} not found"))
+        raise KeyError(f"Environment variable {key} not found")
     return value
 ```
 
@@ -97,42 +97,36 @@ def run_command(cmd):
     
     if result.returncode != 0:
         yield Log(f"Command failed: {result.stderr}")
-        yield Fail(Exception(f"Command failed with code {result.returncode}"))
+        raise Exception(f"Command failed with code {result.returncode}")
     
     return result.stdout
 ```
 
-## Print Effect
+## Common IO Patterns
 
-`Print(message)` prints to stdout/stderr.
+### Printing to Console
 
-### Basic Printing
+Use native Python `print()` wrapped in IO for console output:
 
 ```python
 @do
-def with_print():
-    yield Print("Hello, world!")
-    yield Print("Processing data...")
+def with_console_output():
+    yield IO(lambda: print("Hello, world!"))
+    yield IO(lambda: print("Processing data..."))
     result = yield process_data()
-    yield Print(f"Result: {result}")
+    yield IO(lambda: print(f"Result: {result}"))
     return result
 ```
 
-### Debugging
+For internal logging, prefer the `Log` effect which captures logs in the execution context:
 
 ```python
 @do
-def debug_program():
-    x = yield Get("x")
-    yield Print(f"DEBUG: x = {x}")
-    
-    y = x * 2
-    yield Print(f"DEBUG: y = {y}")
-    
-    yield Put("result", y)
-    yield Print("DEBUG: Result stored")
-    
-    return y
+def with_logging():
+    yield Log("Starting operation...")  # Captured in logs
+    result = yield process_data()
+    yield Log(f"Completed with: {result}")  # Captured in logs
+    return result
 ```
 
 ### Progress Output
@@ -144,12 +138,29 @@ def process_items(items):
     total = len(items)
     
     for i, item in enumerate(items):
-        yield Print(f"Processing {i+1}/{total}...")
+        yield IO(lambda i=i: print(f"Processing {i+1}/{total}..."))
         result = yield process_item(item)
         results.append(result)
     
-    yield Print("All items processed!")
+    yield IO(lambda: print("All items processed!"))
     return results
+```
+
+### Debugging
+
+```python
+@do
+def debug_program():
+    x = yield Get("x")
+    yield IO(lambda: print(f"DEBUG: x = {x}"))
+    
+    y = x * 2
+    yield IO(lambda: print(f"DEBUG: y = {y}"))
+    
+    yield Put("result", y)
+    yield IO(lambda: print("DEBUG: Result stored"))
+    
+    return y
 ```
 
 ## Best Practices
@@ -162,6 +173,7 @@ def process_items(items):
 - Current time/date
 - Random number generation
 - External library calls with side effects
+- Console output
 
 ```python
 @do
@@ -174,6 +186,9 @@ def good_io_usage():
     
     # Random values
     rand_val = yield IO(lambda: random.random())
+    
+    # Console output
+    yield IO(lambda: print(f"Loaded config at {timestamp}"))
     
     return {"data": data, "time": timestamp, "random": rand_val}
 ```
@@ -228,36 +243,36 @@ runtime = AsyncioRuntime(handlers={"IO": mock_io_handler})
 result = await runtime.run(my_program())
 ```
 
-### Print vs Log
+### Console Output vs Log
 
-**Use Print for:**
+**Use `IO(print)` for:**
 - User-facing output
 - CLI progress messages
 - Interactive prompts
 - Actual terminal output
 
-**Use Log for:**
+**Use `Log` for:**
 - Debugging information
 - Audit trails
 - Internal program state
-- Structured logs
+- Structured logs captured in execution context
 
 ```python
 @do
 def good_separation():
-    # Log for internal tracking
+    # Log for internal tracking (captured in context)
     yield Log("Starting operation...")
     
-    # Print for user visibility
-    yield Print("Processing your request...")
+    # print via IO for user visibility (goes to stdout)
+    yield IO(lambda: print("Processing your request..."))
     
     result = yield do_work()
     
-    # Log the details
+    # Log the details (captured in context)
     yield Log(f"Operation completed with result: {result}")
     
-    # Print the summary
-    yield Print("Done!")
+    # print the summary (goes to stdout)
+    yield IO(lambda: print("Done!"))
     
     return result
 ```
@@ -266,13 +281,14 @@ def good_separation():
 
 | Effect | Purpose | Example |
 |--------|---------|---------|
-| `IO(action)` | Execute side-effectful callable | File I/O, system calls, time |
-| `Print(msg)` | Print to output stream | User messages, progress |
+| `IO(action)` | Execute side-effectful callable | File I/O, system calls, time, console output |
+| `Log(msg)` | Internal logging (captured) | Debugging, audit trails |
 
 **Key Points:**
 - IO isolates side effects for testability
-- Use IO for non-async side effects
-- Print for user-facing output, Log for internal tracking
+- Use IO for non-async side effects including console output
+- Use `IO(lambda: print(...))` for user-facing output
+- Use `Log` for internal tracking captured in execution context
 - Keep IO actions small and focused
 
 ## Next Steps
