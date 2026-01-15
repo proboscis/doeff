@@ -2,7 +2,7 @@
 CESK Interpreter Adapter - provides ProgramInterpreter-compatible interface.
 
 This module provides a compatibility layer for running tests written for
-ProgramInterpreter against the new CESK-based interpreter.
+ProgramInterpreter against the new runtime-based interpreter.
 
 Usage:
     # Replace:
@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from doeff._vendor import Err, FrozenDict, Ok, Result
-from doeff.cesk import _run_internal, Environment, Store
+from doeff.cesk import Environment, Store
+
+if TYPE_CHECKING:
+    from doeff.program import Program
 
 T = TypeVar("T")
 
@@ -89,7 +92,7 @@ class CESKRunResult(Generic[T]):
 
 class CESKInterpreter:
     """
-    ProgramInterpreter-compatible wrapper for the CESK interpreter.
+    ProgramInterpreter-compatible wrapper for the runtime-based interpreter.
 
     Provides the same interface as ProgramInterpreter for test compatibility.
     """
@@ -99,13 +102,6 @@ class CESKInterpreter:
         env: dict[Any, Any] | FrozenDict[Any, Any] | None = None,
         state: dict[str, Any] | None = None,
     ):
-        """
-        Initialize the interpreter.
-
-        Args:
-            env: Initial environment (reader monad context)
-            state: Initial state (state monad context)
-        """
         self._initial_env = env if env is not None else {}
         self._initial_state = state if state is not None else {}
 
@@ -115,34 +111,23 @@ class CESKInterpreter:
         env: dict[Any, Any] | None = None,
         state: dict[str, Any] | None = None,
     ) -> CESKRunResult[T]:
-        """
-        Run a program asynchronously using the CESK interpreter.
-
-        Args:
-            program: The program to run
-            env: Optional environment override
-            state: Optional state override
-
-        Returns:
-            CESKRunResult with the result and final state/log
-        """
-        # Merge initial env/state with overrides
+        from doeff.runtimes import AsyncioRuntime
+        
         final_env = {**self._initial_env, **(env or {})}
         final_state = {**self._initial_state, **(state or {})}
 
-        # Convert env to FrozenDict for CESK
         if isinstance(final_env, FrozenDict):
             E = final_env
         else:
             E = FrozenDict(final_env)
 
-        # Run through CESK (returns 3-element tuple: result, store, traceback)
-        result, final_store, _ = await _run_internal(program, E, final_state)
+        runtime = AsyncioRuntime()
+        runtime_result = await runtime.run_safe(program, E, final_state)
 
         return CESKRunResult(
-            _result=result,
-            _final_store=final_store,
-            _final_env=E,
+            _result=runtime_result.result,
+            _final_store=runtime_result.final_store or {},
+            _final_env=runtime_result.final_env or E,
         )
 
     def run(
@@ -151,21 +136,9 @@ class CESKInterpreter:
         env: dict[Any, Any] | None = None,
         state: dict[str, Any] | None = None,
     ) -> CESKRunResult[T]:
-        """
-        Run a program synchronously using the CESK interpreter.
-
-        Args:
-            program: The program to run
-            env: Optional environment override
-            state: Optional state override
-
-        Returns:
-            CESKRunResult with the result and final state/log
-        """
         return asyncio.run(self.run_async(program, env, state))
 
 
-# Convenience function for direct use
 async def cesk_run(
     program: "Program",
     env: dict[Any, Any] | None = None,
@@ -187,9 +160,7 @@ def cesk_run_sync(
     env: dict[Any, Any] | None = None,
     state: dict[str, Any] | None = None,
 ) -> CESKRunResult[T]:
-    """
-    Run a program synchronously using CESK.
-    """
+    """Run a program synchronously using CESK."""
     return asyncio.run(cesk_run(program, env, state))
 
 
