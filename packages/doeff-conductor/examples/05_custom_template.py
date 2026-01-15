@@ -16,11 +16,9 @@ Run:
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
 
 from doeff import do, EffectGenerator, SyncRuntime, IO
 from doeff.effects.io import IOPerformEffect
-from doeff.runtime import Resume
 from doeff_conductor import (
     # Types
     Issue,
@@ -34,16 +32,10 @@ from doeff_conductor import (
     Push,
     CreatePR,
     ResolveIssue,
+    # Handler utility
+    make_scheduled_handler,
 )
 from doeff_conductor.effects.base import ConductorEffectBase
-
-
-def sync_handler(fn: Callable[[Any], Any]) -> Callable:
-    """Wrap a simple handler function to match SyncRuntime's expected signature."""
-    def handler(effect: Any, env: Any, store: Any):
-        result = fn(effect)
-        return Resume(result, store)
-    return handler
 
 
 # Custom effect for running tests
@@ -287,15 +279,15 @@ Implement API rate limiting to prevent abuse.
     # Set up mock handlers (tests fail first time, pass second time)
     mock = CustomMockHandlers(test_should_pass=False, lint_should_pass=True)
     handlers = {
-        CreateWorktree: sync_handler(mock.handle_create_worktree),
-        RunAgent: sync_handler(mock.handle_run_agent),
-        RunTests: sync_handler(mock.handle_run_tests),
-        RunLinter: sync_handler(mock.handle_run_linter),
-        Commit: sync_handler(mock.handle_commit),
-        Push: sync_handler(mock.handle_push),
-        CreatePR: sync_handler(mock.handle_create_pr),
-        ResolveIssue: sync_handler(mock.handle_resolve_issue),
-        IOPerformEffect: sync_handler(mock.handle_io),
+        CreateWorktree: make_scheduled_handler(mock.handle_create_worktree),
+        RunAgent: make_scheduled_handler(mock.handle_run_agent),
+        RunTests: make_scheduled_handler(mock.handle_run_tests),
+        RunLinter: make_scheduled_handler(mock.handle_run_linter),
+        Commit: make_scheduled_handler(mock.handle_commit),
+        Push: make_scheduled_handler(mock.handle_push),
+        CreatePR: make_scheduled_handler(mock.handle_create_pr),
+        ResolveIssue: make_scheduled_handler(mock.handle_resolve_issue),
+        IOPerformEffect: make_scheduled_handler(mock.handle_io),
     }
     
     # Run the workflow
