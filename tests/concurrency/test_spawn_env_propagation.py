@@ -121,7 +121,7 @@ class TestEnvPropagationToSpawnedPrograms:
                 Local({"config_key": "config_value"}, program())
             )
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == "received:config_value"
 
     @pytest.mark.asyncio
@@ -204,7 +204,7 @@ class TestNestedSpawnEnvPropagation:
                 Local({"root_config": "from_root"}, program())
             )
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == "outer:from_root,inner:from_root"
 
     @pytest.mark.asyncio
@@ -253,7 +253,7 @@ class TestNestedSpawnEnvPropagation:
                 Local({"deep_config": "recursive_value"}, program())
             )
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == "A:recursive_value,B:recursive_value,C:recursive_value"
 
 
@@ -298,7 +298,7 @@ class TestProtocolBasedDependencyInjection:
                 Local({ConfigProvider: ActualConfigProvider()}, program())
             )
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == "injected_value"
 
     @pytest.mark.asyncio

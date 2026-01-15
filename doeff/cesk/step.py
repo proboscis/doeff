@@ -8,7 +8,6 @@ from doeff._vendor import NOTHING, Err, FrozenDict, Ok, Some
 from doeff._types_internal import EffectBase, ListenResult
 from doeff.cesk.types import Store
 from doeff.cesk.frames import (
-    FinallyFrame,
     GatherFrame,
     InterceptFrame,
     Kontinuation,
@@ -27,10 +26,7 @@ from doeff.cesk.classification import (
     is_pure_effect,
 )
 from doeff.cesk.helpers import (
-    _wrap_callable_as_program,
     apply_intercept_chain,
-    make_cleanup_then_raise,
-    make_cleanup_then_return,
     to_generator,
 )
 from doeff.utils import BoundedLog
@@ -40,7 +36,6 @@ if TYPE_CHECKING:
 
 
 def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) -> StepResult:
-    """Single step of the CESK machine."""
     C, E, S, K = state.C, state.E, state.S, state.K
 
     if isinstance(C, Value) and not K:
@@ -55,28 +50,9 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
             GatherEffect,
             InterceptEffect,
             LocalEffect,
-            ResultFinallyEffect,
             ResultSafeEffect,
             WriterListenEffect,
         )
-
-        if isinstance(effect, ResultFinallyEffect):
-            cleanup = effect.finalizer
-            from doeff.program import ProgramBase
-            from doeff.types import EffectBase
-
-            if not isinstance(cleanup, (ProgramBase, EffectBase)):
-                if callable(cleanup):
-                    cleanup = _wrap_callable_as_program(cleanup)
-                else:
-                    from doeff.program import Program
-                    cleanup = Program.pure(cleanup)
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[FinallyFrame(cleanup, E)] + K,
-            )
 
         if isinstance(effect, LocalEffect):
             new_env = E | FrozenDict(effect.env_update)
@@ -275,10 +251,6 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
                 captured = capture_traceback_safe(K_rest, ex, pre_captured=pre_captured)
                 return CESKState(C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
 
-        if isinstance(frame, FinallyFrame):
-            cleanup_program = make_cleanup_then_return(frame.cleanup_program, C.v)
-            return CESKState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
-
         if isinstance(frame, LocalFrame):
             return CESKState(C=Value(C.v), E=frame.restore_env, S=S, K=K_rest)
 
@@ -358,10 +330,6 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
                     S=S,
                     K=K_rest,
                 )
-
-        if isinstance(frame, FinallyFrame):
-            cleanup_program = make_cleanup_then_raise(frame.cleanup_program, C.ex)
-            return CESKState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, LocalFrame):
             return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.restore_env, S=S, K=K_rest)

@@ -17,8 +17,6 @@ from doeff import (
     CacheStorage,
     EffectGenerator,
     ExecutionContext,
-    MemoGet,
-    MemoPut,
     ProgramInterpreter,
     Safe,
     do,
@@ -432,11 +430,11 @@ async def test_cache_persistent_lifecycle_cross_process(temp_cache_db) -> None:
             engine = ProgramInterpreter()
             if mode == "store":
                 result = await engine.run_async(store(), context)
-                if result.is_err:
+                if result.is_err():
                     raise SystemExit(f"store failed: {result.result.error!r}")
             elif mode == "load":
                 result = await engine.run_async(load(), context)
-                if result.is_err:
+                if result.is_err():
                     raise result.result.error
                 if result.value != "persisted":
                     raise SystemExit(f"unexpected value: {result.value!r}")
@@ -694,33 +692,6 @@ async def test_cache_decorator_expiry(temp_cache_db, cache_context) -> None:
         assert calls == [5, 5]
     finally:
         cache_handler._time = original_time
-
-
-@pytest.mark.asyncio
-async def test_memo_effects() -> None:
-    @do
-    def program() -> EffectGenerator[int]:
-        yield MemoPut("alpha", 123)
-        return (yield MemoGet("alpha"))
-
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run_async(program())
-
-    assert result.is_ok
-    assert result.value == 123
-
-
-@pytest.mark.asyncio
-async def test_memo_miss_raises_keyerror() -> None:
-    @do
-    def program() -> EffectGenerator[int]:
-        return (yield MemoGet("missing"))
-
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run_async(program())
-
-    assert result.is_err
-    assert "Memo miss" in str(result.result.error)
 
 
 if __name__ == "__main__":

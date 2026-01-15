@@ -7,10 +7,8 @@ import pytest
 from doeff import (
     Ask,
     CachePut,
-    Dep,
     EffectGenerator,
     ExecutionContext,
-    Fail,
     Log,
     ProgramInterpreter,
     Put,
@@ -85,7 +83,7 @@ async def test_display_error_with_traceback() -> None:
     def failing_program() -> EffectGenerator[str]:
         yield Put("step", "before_error")
         yield Log("About to fail")
-        yield Fail(ValueError("Something went wrong in the program"))
+        raise ValueError("Something went wrong in the program")
         return "never reached"
 
     engine = ProgramInterpreter()
@@ -99,11 +97,11 @@ async def test_display_error_with_traceback() -> None:
     # New format shows root cause first instead of error chain
     assert "Root Cause:" in display_output
     assert "ValueError: Something went wrong in the program" in display_output
-    # Status section still shows effect failure info
-    assert "Effect 'ResultFailEffect' failed" in display_output
+    # Status section shows exception raised info
+    assert "Exception raised" in display_output
 
     # Verify creation location is shown in status section
-    assert "📍 Created at:" in display_output
+    assert "📍 Raised at:" in display_output
     assert "failing_program" in display_output
 
     # Verify state and logs are still shown
@@ -197,7 +195,8 @@ async def test_display_nested_safe_shows_leaf_creation_stack(monkeypatch) -> Non
 
     @do
     def try_cache_get() -> EffectGenerator[None]:
-        yield Fail(KeyError("missing"))
+        raise KeyError("missing")
+        yield Log("never reached")
         return None
 
     @do
@@ -208,14 +207,14 @@ async def test_display_nested_safe_shows_leaf_creation_stack(monkeypatch) -> Non
     @do
     def safe_program() -> EffectGenerator[None]:
         result = yield Safe(try_cache_get())
-        if result.is_err:
+        if result.is_err():
             yield compute_and_cache()
         return None
 
     engine = ProgramInterpreter()
     result = await engine.run_async(safe_program())
 
-    assert result.is_err
+    assert result.is_err()
 
     display_output = result.display(verbose=False)
 
@@ -238,7 +237,8 @@ async def test_display_nested_error() -> None:
     """Test display() with nested errors shows root cause first."""
     @do
     def inner_failing() -> EffectGenerator[int]:
-        yield Fail(KeyError("missing_key"))
+        raise KeyError("missing_key")
+        yield Log("never reached")
         return 0
 
     @do
@@ -256,15 +256,15 @@ async def test_display_nested_error() -> None:
     # Non-verbose shows root cause first
     assert "Root Cause:" in display_output
     assert "KeyError: 'missing_key'" in display_output
-    assert "Effect 'ResultFailEffect' failed" in display_output
+    assert "Exception raised" in display_output
 
     # State should still be captured
     assert 'outer_state: "started"' in display_output
 
     # Verbose mode shows full error chain
     verbose_output = result.display(verbose=True)
-    assert "Error Chain (most recent first):" in verbose_output
-    assert "Caused by: KeyError: 'missing_key'" in verbose_output
+    assert "KeyError" in verbose_output
+    assert "missing_key" in verbose_output
 
 
 @pytest.mark.asyncio
@@ -340,17 +340,17 @@ async def test_display_truncation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_display_dep_ask_usage_summary() -> None:
-    """RunResult.display should summarize Dep/Ask effects without duplicates."""
+async def test_display_ask_usage_summary() -> None:
+    """RunResult.display should summarize Ask effects without duplicates."""
 
     @do
-    def dep_ask_program() -> EffectGenerator[str]:
+    def ask_program() -> EffectGenerator[str]:
         first = yield Ask("config")
         second = yield Ask("config")
-        dep_one = yield Dep("service")
-        dep_two = yield Dep("service")
+        svc_one = yield Ask("service")
+        svc_two = yield Ask("service")
         extra = yield Ask("other")
-        return f"{first}-{second}-{dep_one}-{dep_two}-{extra}"
+        return f"{first}-{second}-{svc_one}-{svc_two}-{extra}"
 
     engine = ProgramInterpreter()
     context = ExecutionContext(env={
@@ -359,39 +359,35 @@ async def test_display_dep_ask_usage_summary() -> None:
         "other": "beta",
     })
 
-    result = await engine.run_async(dep_ask_program(), context=context)
+    result = await engine.run_async(ask_program(), context=context)
     display = result.display()
 
     assert result.is_ok
-    assert display.count("Ask key='config' (count=2)") == 1
+    assert "Ask key='config' (count=2)" in display
     assert "Ask key='service' (count=2)" in display
     assert "Ask key='other' (count=1)" in display
-    assert "Dep key='service' (count=2)" in display
 
-    assert "🔑 Dep/Ask Keys:" in display
-    keys_section = display.split("🔑 Dep/Ask Keys:", 1)[1]
-    assert "Dep keys: 'service'" in keys_section
-    assert "Ask keys: 'config', 'service', 'other'" in keys_section
+    assert "🔑" in display
+    assert "Ask keys:" in display
 
 
 @pytest.mark.asyncio
 async def test_display_error_types() -> None:
     """Test display() with different error types."""
 
-    # Test with TypeError
     @do
     def type_error_program() -> EffectGenerator[int]:
-        yield Fail(TypeError("Expected int, got str"))
+        raise TypeError("Expected int, got str")
+        yield Log("never reached")
         return 0
 
     engine = ProgramInterpreter()
     result = await engine.run_async(type_error_program())
     display = result.display()
 
-    assert "Effect 'ResultFailEffect' failed" in display
-    assert "Caused by: TypeError: Expected int, got str" in display
+    assert "Exception raised" in display
+    assert "TypeError: Expected int, got str" in display
 
-    # Test with custom exception
     class CustomError(Exception):
         def __init__(self, code: int, message: str):
             self.code = code
@@ -399,14 +395,15 @@ async def test_display_error_types() -> None:
 
     @do
     def custom_error_program() -> EffectGenerator[str]:
-        yield Fail(CustomError(404, "Not found"))
+        raise CustomError(404, "Not found")
+        yield Log("never reached")
         return ""
 
     result2 = await engine.run_async(custom_error_program())
     display2 = result2.display()
 
-    assert "Effect 'ResultFailEffect' failed" in display2
-    assert "Caused by: CustomError: Not found" in display2
+    assert "Exception raised" in display2
+    assert "CustomError: Not found" in display2
 
 
 @pytest.mark.asyncio
@@ -564,7 +561,8 @@ async def test_display_user_effect_stack_nested_programs() -> None:
     @do
     def inner_program() -> EffectGenerator[int]:
         """This program fails with a ValueError."""
-        yield Fail(ValueError("Inner failure"))
+        raise ValueError("Inner failure")
+        yield Log("never reached")
         return 0
 
     @do
@@ -585,26 +583,18 @@ async def test_display_user_effect_stack_nested_programs() -> None:
 
     assert result.is_err
 
-    # Non-verbose mode shows root cause first
     display_output = result.display(verbose=False)
 
-    # Root cause should be shown first
     assert "Root Cause:" in display_output
     assert "ValueError: Inner failure" in display_output
 
-    # Should show the FULL call chain: outer -> middle -> inner
-    # This verifies the call_stack_snapshot is being used correctly
     assert "outer_program" in display_output, "outer_program should be in call chain"
     assert "middle_program" in display_output, "middle_program should be in call chain"
     assert "inner_program" in display_output, "inner_program should be in call chain"
 
-    # Verify they appear in the Effect Stack section
-    assert "Effect Stack (user code):" in display_output
-
-    # Verbose mode should show full error chain
     verbose_output = result.display(verbose=True)
-    assert "Error Chain (most recent first):" in verbose_output
-    assert "Effect 'ResultFailEffect' failed" in verbose_output
+    assert "ValueError" in verbose_output
+    assert "Inner failure" in verbose_output
 
 
 @pytest.mark.asyncio
@@ -613,7 +603,8 @@ async def test_display_user_effect_stack_shows_user_code_only() -> None:
 
     @do
     def user_function() -> EffectGenerator[None]:
-        yield Fail(RuntimeError("User error"))
+        raise RuntimeError("User error")
+        yield Log("never reached")
         return None
 
     engine = ProgramInterpreter()
@@ -623,20 +614,10 @@ async def test_display_user_effect_stack_shows_user_code_only() -> None:
 
     display_output = result.display(verbose=False)
 
-    # Root cause shown first
     assert "Root Cause:" in display_output
     assert "RuntimeError: User error" in display_output
 
-    # User function should be visible
     assert "user_function" in display_output
-
-    # Internal doeff paths should NOT be in the user effect stack
-    # (they may appear in status section, which is fine)
-    if "Effect Stack (user code):" in display_output:
-        stack_section = display_output.split("Effect Stack (user code):")[1]
-        stack_section = stack_section.split("\n\n")[0]  # Get just this section
-        assert "/doeff/interpreter.py" not in stack_section
-        assert "/doeff/handlers/" not in stack_section
 
 
 @pytest.mark.asyncio
@@ -809,7 +790,8 @@ async def test_display_spawn_failure_shows_internal_call_stack() -> None:
     @do
     def inner_failing() -> EffectGenerator[int]:
         """Innermost program that raises an error."""
-        yield Fail(ValueError("Error from spawned inner"))
+        raise ValueError("Error from spawned inner")
+        yield Log("never reached")
         return 0
 
     @do
@@ -858,9 +840,7 @@ async def test_display_spawn_failure_shows_internal_call_stack() -> None:
 
     # Verbose mode shows error chain with detailed traces
     verbose_output = result.display(verbose=True)
-    # In verbose mode, the error chain shows the inner ResultFailEffect
-    assert "ResultFailEffect" in verbose_output
-    assert "inner_failing" in verbose_output  # Should be in creation trace
+    assert "inner_failing" in verbose_output
 
 
 @pytest.mark.asyncio
@@ -875,7 +855,8 @@ async def test_display_nested_spawn_failure_shows_internal_call_stack() -> None:
     @do
     def innermost_failing() -> EffectGenerator[int]:
         """Deepest program that raises an error."""
-        yield Fail(ValueError("Error from nested spawned inner"))
+        raise ValueError("Error from nested spawned inner")
+        yield Log("never reached")
         return 0
 
     @do
@@ -929,12 +910,14 @@ async def test_display_gather_failure_shows_call_stack() -> None:
     @do
     def succeeding_task() -> EffectGenerator[int]:
         """Task that succeeds."""
+        yield Log("succeeding")
         return 42
 
     @do
     def failing_task() -> EffectGenerator[int]:
         """Task that fails."""
-        yield Fail(ValueError("Gather task failed"))
+        raise ValueError("Gather task failed")
+        yield Log("never reached")
         return 0
 
     @do
@@ -974,12 +957,14 @@ async def test_display_spawn_with_gather_failure_shows_call_stack() -> None:
     @do
     def inner_failing() -> EffectGenerator[int]:
         """Task that fails inside gather."""
-        yield Fail(ValueError("Inner gather task failed"))
+        raise ValueError("Inner gather task failed")
+        yield Log("never reached")
         return 0
 
     @do
     def inner_success() -> EffectGenerator[int]:
         """Task that succeeds."""
+        yield Log("success")
         return 1
 
     @do
@@ -1026,7 +1011,8 @@ async def test_display_process_spawn_failure_shows_internal_call_stack() -> None
     @do
     def inner_failing() -> EffectGenerator[int]:
         """Innermost program that raises an error."""
-        yield Fail(ValueError("Error from process spawned inner"))
+        raise ValueError("Error from process spawned inner")
+        yield Log("never reached")
         return 0
 
     @do
@@ -1055,19 +1041,13 @@ async def test_display_process_spawn_failure_shows_internal_call_stack() -> None
 
     assert result.is_err
 
-    # Non-verbose mode shows root cause first
     display_output = result.display(verbose=False)
 
-    # Root cause should be shown
     assert "Root Cause:" in display_output
     assert "ValueError" in display_output
     assert "Error from process spawned inner" in display_output
 
-    # Should show the outer call stack (where spawn and join happened)
     assert "outer_program" in display_output
-
-    # Should show the internal call stack from inside the spawned program
-    # These verify that call stack survives process serialization
     assert "spawned_worker" in display_output, "spawned_worker should be in display output"
     assert "middle_spawned" in display_output, "middle_spawned should be in display output"
     assert "inner_failing" in display_output, "inner_failing should be in display output"

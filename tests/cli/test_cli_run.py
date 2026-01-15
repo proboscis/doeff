@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_cli(*args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:

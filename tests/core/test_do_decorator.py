@@ -18,11 +18,9 @@ from doeff import (
     ask,
     await_,
     do,
-    fail,
     get,
     listen,
     modify,
-    print_,
     put,
     step,
     tell,
@@ -53,8 +51,8 @@ def complex_program(name: str) -> Generator[Effect, Any, dict]:
     # Writer
     yield tell(f"Starting program for {name}")
 
-    # IO
-    yield print_(f"Processing {name}...")
+    # IO - print effect removed, using tell instead
+    yield tell(f"Processing {name}...")
 
     # Future
     data = yield await_(fetch_user_data(name))
@@ -103,7 +101,7 @@ def risky_operation() -> Generator[Effect, Any, str]:
     """Operation that might fail."""
     risk = yield ask("risk_level")
     if risk > 0.5:
-        yield fail(ValueError(f"Risk too high: {risk}"))
+        raise ValueError(f"Risk too high: {risk}")
     return "success"
 
 
@@ -192,7 +190,7 @@ async def test_complex():
     print(f"   Result type: {type(result.result)}")
     print(f"   Result: {result.result}")
 
-    assert result.is_ok, f"Expected Ok, got {result.result}"
+    assert result.is_ok(), f"Expected Ok, got {result.result}"
     assert result.value["name"] == "Alice"
     assert result.value["final_counter"] == 12  # (1+2+3)*2
     print(f"✅ Complex program completed for {result.value['name']}")

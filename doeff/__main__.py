@@ -110,7 +110,7 @@ class ProgramBuilder:
         merged_env_program = self._merger.merge_envs(env_sources)
         temp_interpreter = ProgramInterpreter()
         env_result = temp_interpreter.run(merged_env_program)
-        if env_result.is_err:
+        if env_result.is_err():
             diagnostic = env_result.display(verbose=report_verbose).strip()
             if not diagnostic:
                 diagnostic = env_result.formatted_error.strip()
