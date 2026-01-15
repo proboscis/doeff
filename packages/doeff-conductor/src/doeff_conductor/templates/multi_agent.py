@@ -43,10 +43,10 @@ def multi_agent(issue: Issue) -> PRHandle:
     )
 
     # Step 1: Create parallel worktrees
-    impl_env, test_env = yield Gather([
+    impl_env, test_env = yield Gather(
         CreateWorktree(issue=issue, suffix="impl"),
         CreateWorktree(issue=issue, suffix="tests"),
-    ])
+    )
 
     # Step 2: Run agents in parallel
     impl_prompt = f"""
@@ -75,16 +75,16 @@ Focus on writing comprehensive tests:
 Do NOT implement the feature - just write the tests.
 """
 
-    yield Gather([
+    yield Gather(
         RunAgent(env=impl_env, prompt=impl_prompt, name="implementer"),
         RunAgent(env=test_env, prompt=test_prompt, name="tester"),
-    ])
+    )
 
     # Step 3: Commit changes in parallel environments
-    yield Gather([
+    yield Gather(
         Commit(env=impl_env, message=f"feat: implement {issue.title}"),
         Commit(env=test_env, message=f"test: add tests for {issue.title}"),
-    ])
+    )
 
     # Step 4: Merge branches
     merged_env = yield MergeBranches(envs=(impl_env, test_env))
