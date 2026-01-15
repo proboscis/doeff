@@ -16,12 +16,11 @@ from pydantic import BaseModel, ValidationError
 from doeff import (
     Ask,
     Await,
-    Catch,
     EffectGenerator,
     Fail,
     Log,
-    Recover,
     Retry,
+    Safe,
     Step,
     do,
     slog,
@@ -510,8 +509,9 @@ def _gemini_json_fix(
         )
         return response
 
-    @do
-    def handle_error(exc: Exception) -> EffectGenerator[None]:
+    safe_result = yield Safe(api_call_with_tracking())
+    if safe_result.is_err():
+        exc = safe_result.error
         yield track_api_call(
             operation="repair_structured_output",
             model=model,
@@ -524,7 +524,7 @@ def _gemini_json_fix(
         )
         raise exc
 
-    response = yield Catch(api_call_with_tracking(), handle_error)
+    response = safe_result.value
 
     repaired = yield process_structured_response(response, response_format)
     return repaired
@@ -564,7 +564,8 @@ def repair_structured_response(
 
     fallback_sllm = default_sllm or gemini_sllm_for_json_fix
 
-    sllm_for_json_fix = yield Recover(Ask("sllm_for_json_fix"), lambda _: fallback_sllm)
+    safe_sllm = yield Safe(Ask("sllm_for_json_fix"))
+    sllm_for_json_fix = safe_sllm.value if safe_sllm.is_ok() else fallback_sllm
 
     if sllm_for_json_fix is fallback_sllm:
         yield Log("sllm_for_json_fix not provided. Falling back to default Gemini repair")
@@ -786,8 +787,9 @@ def structured_llm__gemini(
             )
             return response
 
-        @do
-        def handle_error(exc: Exception) -> EffectGenerator[None]:
+        safe_result = yield Safe(api_call_with_tracking())
+        if safe_result.is_err():
+            exc = safe_result.error
             yield track_api_call(
                 operation="generate_content",
                 model=model,
@@ -800,10 +802,17 @@ def structured_llm__gemini(
             )
             raise exc
 
-        return (yield Catch(api_call_with_tracking(), handle_error))
+        return safe_result.value
 
-    @do
-    def handle_retry_exhaustion(exc: Exception) -> EffectGenerator[Any]:
+    safe_retry_result = yield Safe(
+        Retry(
+            make_api_call(),
+            max_attempts=max_retries,
+            delay_strategy=_gemini_random_backoff,
+        )
+    )
+    if safe_retry_result.is_err():
+        exc = safe_retry_result.error
         yield slog(
             event="gemini.retry_exhausted",
             level="ERROR",
@@ -814,18 +823,12 @@ def structured_llm__gemini(
         )
         raise exc
 
-    response = yield Catch(
-        Retry(
-            make_api_call(),
-            max_attempts=max_retries,
-            delay_strategy=_gemini_random_backoff,
-        ),
-        handle_retry_exhaustion,
-    )
+    response = safe_retry_result.value
 
     if response_format is not None and issubclass(response_format, BaseModel):
-        @do
-        def handle_structured_error(exc: Exception) -> EffectGenerator[Any]:
+        safe_structured = yield Safe(process_structured_response(response, response_format))
+        if safe_structured.is_err():
+            exc = safe_structured.error
             if isinstance(exc, GeminiStructuredOutputError):
                 default_sllm = _make_gemini_json_fix_sllm(
                     model=model,
@@ -836,21 +839,17 @@ def structured_llm__gemini(
                     tool_config=tool_config,
                     generation_config_overrides=generation_config_overrides,
                 )
-                return (
-                    yield repair_structured_response(
-                        model=model,
-                        response_format=response_format,
-                        malformed_content=exc.raw_content,
-                        max_output_tokens=max_output_tokens,
-                        default_sllm=default_sllm,
-                    )
+                result = yield repair_structured_response(
+                    model=model,
+                    response_format=response_format,
+                    malformed_content=exc.raw_content,
+                    max_output_tokens=max_output_tokens,
+                    default_sllm=default_sllm,
                 )
-            raise exc
-
-        result = yield Catch(
-            process_structured_response(response, response_format),
-            handle_structured_error,
-        )
+            else:
+                raise exc
+        else:
+            result = safe_structured.value
     else:
         result = yield process_unstructured_response(response)
 
@@ -986,8 +985,9 @@ def edit_image__gemini(
             )
             return response
 
-        @do
-        def handle_error(exc: Exception) -> EffectGenerator[None]:
+        safe_result = yield Safe(api_call_with_tracking())
+        if safe_result.is_err():
+            exc = safe_result.error
             yield track_api_call(
                 operation="generate_content",
                 model=model,
@@ -1000,10 +1000,17 @@ def edit_image__gemini(
             )
             yield Fail(exc)
 
-        return (yield Catch(api_call_with_tracking(), handle_error))
+        return safe_result.value
 
-    @do
-    def handle_retry_exhaustion(exc: Exception) -> EffectGenerator[Any]:
+    safe_retry_result = yield Safe(
+        Retry(
+            make_api_call(),
+            max_attempts=max_retries,
+            delay_strategy=_gemini_random_backoff,
+        )
+    )
+    if safe_retry_result.is_err():
+        exc = safe_retry_result.error
         yield slog(
             event="gemini.retry_exhausted",
             level="ERROR",
@@ -1014,14 +1021,7 @@ def edit_image__gemini(
         )
         raise exc
 
-    response = yield Catch(
-        Retry(
-            make_api_call(),
-            max_attempts=max_retries,
-            delay_strategy=_gemini_random_backoff,
-        ),
-        handle_retry_exhaustion,
-    )
+    response = safe_retry_result.value
 
     result = yield process_image_edit_response(response)
 
