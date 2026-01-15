@@ -357,11 +357,13 @@ def safe_async_operation():
             raise Exception("Random failure")
         return "success"
     
-    # Catch async errors
-    result = yield Catch(
-        Await(risky_async()),
-        lambda e: f"Failed: {e}"
-    )
+    # Safe wrapping for async errors
+    safe_result = yield Safe(Await(risky_async()))
+    
+    if safe_result.is_ok:
+        result = safe_result.value
+    else:
+        result = f"Failed: {safe_result.error}"
     
     yield Log(f"Result: {result}")
     return result
@@ -520,11 +522,11 @@ async def test_async_program():
 - `Await` integrates Python's async/await with doeff
 - `Parallel` runs independent operations concurrently
 - Combine with other effects (State, Reader, Writer) freely
-- Use `Safe`/`Catch` for async error handling
+- Use `Safe` for async error handling
 - Sequential for dependent operations, Parallel for independent ones
 
 ## Next Steps
 
-- **[Error Handling](05-error-handling.md)** - Fail, Catch, Retry, Safe for robust programs
+- **[Error Handling](05-error-handling.md)** - Fail, Retry, Safe for robust programs
 - **[Patterns](12-patterns.md)** - Common async patterns and best practices
 - **[Advanced Effects](09-advanced-effects.md)** - Gather for parallel Programs

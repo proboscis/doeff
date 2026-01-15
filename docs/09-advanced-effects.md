@@ -116,11 +116,11 @@ def with_internal_memo():
 
 @do
 def memoized_operation(key):
-    result = yield Recover(
-        MemoGet(key),
-        fallback=compute_and_memo(key)
-    )
-    return result
+    safe_result = yield Safe(MemoGet(key))
+    if safe_result.is_ok:
+        return safe_result.value
+    else:
+        return (yield compute_and_memo(key))
 
 @do
 def compute_and_memo(key):
@@ -229,11 +229,11 @@ def parallel_with_memo():
 
 @do
 def memoized_fetch_user(user_id):
-    user = yield Recover(
-        MemoGet(f"user_{user_id}"),
-        fallback=fetch_and_memo_user(user_id)
-    )
-    return user
+    safe_result = yield Safe(MemoGet(f"user_{user_id}"))
+    if safe_result.is_ok:
+        return safe_result.value
+    else:
+        return (yield fetch_and_memo_user(user_id))
 ```
 
 ### Gather + Atomic

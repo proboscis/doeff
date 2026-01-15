@@ -87,10 +87,11 @@ def smart_cache(key, fresh=False):
         # Bypass cache
         value = yield compute_value()
     else:
-        value = yield Recover(
-            CacheGet(key),
-            fallback=compute_and_cache(key)
-        )
+        safe_result = yield Safe(CacheGet(key))
+        if safe_result.is_ok:
+            value = safe_result.value
+        else:
+            value = yield compute_and_cache(key)
     return value
 ```
 
