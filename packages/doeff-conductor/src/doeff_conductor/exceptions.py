@@ -7,6 +7,7 @@ Provides a hierarchy of exceptions for specific error handling in workflows.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from subprocess import CalledProcessError
 from typing import Any
 
 
@@ -80,7 +81,7 @@ class GitCommandError(ConductorError):
     @classmethod
     def from_subprocess_error(
         cls,
-        error: "subprocess.CalledProcessError",
+        error: "CalledProcessError",
         cwd: str | None = None,
     ) -> "GitCommandError":
         """Create from a subprocess.CalledProcessError.
@@ -92,8 +93,6 @@ class GitCommandError(ConductorError):
         Returns:
             A GitCommandError with details from the subprocess error.
         """
-        import subprocess
-
         return cls(
             command=list(error.cmd) if isinstance(error.cmd, (list, tuple)) else [str(error.cmd)],
             returncode=error.returncode,
