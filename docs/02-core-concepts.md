@@ -115,7 +115,7 @@ doeff provides effects for:
 | **State** | `Get`, `Put`, `Modify` | Mutable state management |
 | **Writer** | `Log`, `Tell`, `Listen` | Accumulate output/logs |
 | **Future** | `Await`, `Parallel` | Async operations |
-| **Result** | `Fail`, `Catch`, `Retry` | Error handling |
+| **Result** | `Fail`, `Safe`, `Retry` | Error handling |
 | **IO** | `IO`, `Print` | Side effects |
 | **Cache** | `CacheGet`, `CachePut` | Caching with policies |
 | **Graph** | `Step`, `Annotate`, `Snapshot` | Execution tracking |
@@ -202,10 +202,8 @@ def broken():
 # RIGHT - Use effect-based error handling
 @do
 def correct():
-    value = yield Catch(
-        risky_operation(),
-        lambda e: "fallback"
-    )
+    result = yield Safe(risky_operation())
+    value = result.value if result.is_ok else "fallback"
     return value
 ```
 

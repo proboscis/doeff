@@ -6,13 +6,12 @@ This chapter covers doeff's comprehensive error handling system using the Result
 
 - [Result Type](#result-type)
 - [Fail Effect](#fail-effect)
-- [Catch Effect](#catch-effect)
-- [Recover Effect](#recover-effect)
-- [Retry Effect](#retry-effect)
 - [Safe Effect](#safe-effect)
+- [Retry Effect](#retry-effect)
 - [Finally Effect](#finally-effect)
 - [FirstSuccess Effect](#firstsuccess-effect)
 - [Error Patterns](#error-patterns)
+- [Migration from Catch/Recover](#migration-from-catchrecover)
 
 ## Result Type
 
@@ -123,132 +122,138 @@ def validate_user(user_data):
     return user_data
 ```
 
-## Catch Effect
+## Safe Effect
 
-`Catch(sub_program, handler)` catches exceptions and handles them.
+`Safe(sub_program)` wraps execution and returns a `Result` type, allowing you to handle errors explicitly.
 
-### Basic Error Catching
-
-```python
-@do
-def risky_operation():
-    yield Log("Attempting risky operation...")
-    yield Fail(Exception("Operation failed"))
-
-@do
-def with_catch():
-    result = yield Catch(
-        risky_operation(),
-        lambda e: f"Caught error: {e}"
-    )
-    yield Log(f"Result: {result}")
-    return result
-
-runtime = AsyncioRuntime()
-result = await runtime.run(with_catch())
-assert result.is_ok
-assert result.value == "Caught error: Operation failed"
-```
-
-### Handler Returns Program
+### Basic Safe Usage
 
 ```python
 @do
-def fallback_program():
-    yield Log("Running fallback...")
-    return "fallback_value"
-
-@do
-def with_program_handler():
-    result = yield Catch(
-        risky_operation(),
-        lambda e: fallback_program()
-    )
-    return result
-```
-
-### Type-Specific Handling
-
-```python
-@do
-def handle_specific_errors():
-    def handler(exc):
-        if isinstance(exc, ValueError):
-            yield Log("ValueError caught")
-            return "value_error_handled"
-        elif isinstance(exc, KeyError):
-            yield Log("KeyError caught")
-            return "key_error_handled"
-        else:
-            # Re-raise unknown errors
-            yield Fail(exc)
+def safe_operation():
+    result = yield Safe(risky_operation())
     
-    result = yield Catch(
-        risky_operation(),
-        handler
-    )
-    return result
+    match result:
+        case Ok(value):
+            yield Log(f"Success: {value}")
+            return value
+        case Err(error):
+            yield Log(f"Error: {error}")
+            return "default"
 ```
 
-## Recover Effect
-
-`Recover(sub_program, fallback)` provides a fallback value or program on error.
-
-### Static Fallback
+### Using is_ok / is_err
 
 ```python
 @do
 def with_fallback():
-    # If fetch_data fails, use empty list
-    data = yield Recover(
-        fetch_data(),
-        fallback=[]
-    )
-    yield Log(f"Data length: {len(data)}")
-    return data
+    result = yield Safe(fetch_data())
+    
+    if result.is_ok:
+        return result.value
+    else:
+        yield Log(f"Fetch failed: {result.error}")
+        return []  # Fallback value
 ```
 
-### Dynamic Fallback
+### Safe with Error Transformation
+
+Transform errors while preserving the success path:
 
 ```python
 @do
-def with_dynamic_fallback():
-    # Fallback can be a function
-    data = yield Recover(
-        fetch_remote_config(),
-        fallback=lambda e: load_default_config()
-    )
-    return data
-
-@do
-def load_default_config():
-    yield Log("Loading default config...")
-    return {"timeout": 30, "retries": 3}
+def transform_errors():
+    result = yield Safe(risky_operation())
+    
+    if result.is_err:
+        # Log and transform the error
+        yield Log(f"Operation failed: {result.error}")
+        yield Fail(RuntimeError(f"Wrapped error: {result.error}"))
+    
+    return result.value
 ```
 
-### Fallback Program
+### Multiple Safe Operations
 
 ```python
 @do
-def fetch_from_cache():
-    cache_data = yield Get("cached_data")
-    if cache_data is None:
-        yield Fail(Exception("Cache miss"))
-    return cache_data
+def multiple_safe_operations():
+    results = []
+    
+    # Try multiple operations, collect results
+    for i in range(5):
+        result = yield Safe(process_item(i))
+        results.append(result)
+    
+    # Count successes and failures
+    successes = [r.value for r in results if r.is_ok]
+    failures = [r.error for r in results if r.is_err]
+    
+    yield Log(f"Successes: {len(successes)}, Failures: {len(failures)}")
+    
+    return successes
+```
 
-@do
-def fetch_from_database():
-    yield Log("Cache miss, fetching from DB...")
-    return {"id": 1, "name": "Data from DB"}
+### Safe with Parallel
 
+```python
 @do
-def with_cache_fallback():
-    # Try cache, fallback to DB
-    data = yield Recover(
-        fetch_from_cache(),
-        fallback=fetch_from_database()
-    )
-    return data
+def parallel_safe_operations():
+    # Run multiple operations, some might fail
+    tasks = [process_item(i) for i in range(10)]
+    
+    # Wrap each in Safe to get Results
+    safe_tasks = [Safe(task) for task in tasks]
+    
+    # Run all in parallel
+    results = yield Parallel(*[Await(t) for t in safe_tasks])
+    
+    # Process results
+    successes = [r.value for r in results if r.is_ok]
+    yield Log(f"Completed {len(successes)}/10 tasks")
+    
+    return successes
+```
+
+### Safe for Conditional Recovery
+
+```python
+@do
+def fetch_with_fallback():
+    # Try primary source
+    result = yield Safe(fetch_from_primary())
+    
+    if result.is_ok:
+        return result.value
+    
+    yield Log(f"Primary failed: {result.error}, trying backup...")
+    
+    # Try backup source
+    backup_result = yield Safe(fetch_from_backup())
+    
+    if backup_result.is_ok:
+        return backup_result.value
+    
+    # Both failed, use default
+    yield Log("All sources failed, using default")
+    return get_default_data()
+```
+
+### Safe with Logging
+
+```python
+@do
+def logged_safe_operation(operation_name):
+    yield Log(f"Starting: {operation_name}")
+    
+    result = yield Safe(risky_operation())
+    
+    if result.is_ok:
+        yield Log(f"{operation_name} succeeded with: {result.value}")
+        return result.value
+    else:
+        yield Log(f"{operation_name} failed with: {result.error}")
+        return None
 ```
 
 ## Retry Effect
@@ -343,68 +348,6 @@ def logged_retry():
     yield Log(f"Succeeded after {final_attempt} attempts")
     
     return result
-```
-
-## Safe Effect
-
-`Safe(sub_program)` wraps execution in a `Result` type.
-
-### Basic Safe Usage
-
-```python
-@do
-def safe_operation():
-    result = yield Safe(risky_operation())
-    
-    match result:
-        case Ok(value):
-            yield Log(f"Success: {value}")
-            return value
-        case Err(error):
-            yield Log(f"Error: {error}")
-            return "default"
-```
-
-### Multiple Safe Operations
-
-```python
-@do
-def multiple_safe_operations():
-    results = []
-    
-    # Try multiple operations, collect results
-    for i in range(5):
-        result = yield Safe(process_item(i))
-        results.append(result)
-    
-    # Count successes and failures
-    successes = [r.value for r in results if r.is_ok]
-    failures = [r.error for r in results if r.is_err]
-    
-    yield Log(f"Successes: {len(successes)}, Failures: {len(failures)}")
-    
-    return successes
-```
-
-### Safe with Parallel
-
-```python
-@do
-def parallel_safe_operations():
-    # Run multiple operations, some might fail
-    tasks = [process_item(i) for i in range(10)]
-    
-    # Wrap each in Safe to get Results
-    safe_tasks = [Safe(task) for task in tasks]
-    
-    # Run all in parallel
-    results = yield Parallel(*[Await(t) for t in safe_tasks])
-    
-    # Process results
-    successes = [r.value for r in results if r.is_ok]
-    yield Log(f"Completed {len(successes)}/10 tasks")
-    
-    return successes
 ```
 
 ## Finally Effect
@@ -637,25 +580,18 @@ if invalid_input:
     yield Fail(ValueError("Invalid input"))
 ```
 
-**Catch:** Transform or log errors
+**Safe:** When you need to handle errors and continue
 ```python
-result = yield Catch(operation(), lambda e: log_and_return_default(e))
-```
-
-**Recover:** Simple fallback values
-```python
-data = yield Recover(fetch_data(), fallback=[])
+result = yield Safe(risky_operation())
+if result.is_ok:
+    return result.value
+else:
+    return fallback_value
 ```
 
 **Retry:** Transient failures
 ```python
 result = yield Retry(network_call(), max_attempts=3)
-```
-
-**Safe:** When you need Result types
-```python
-result = yield Safe(risky_op())
-if result.is_ok: ...
 ```
 
 **Finally:** Resource cleanup
@@ -683,15 +619,95 @@ def with_context():
         yield Fail(ValueError(f"Missing user_id in state"))
 ```
 
+## Migration from Catch/Recover
+
+If you're migrating from older doeff versions that used `Catch` and `Recover`, here's how to update your code:
+
+### Catch to Safe
+
+**Before (deprecated):**
+```python
+result = yield Catch(
+    risky_operation(),
+    lambda e: "fallback"
+)
+```
+
+**After:**
+```python
+safe_result = yield Safe(risky_operation())
+result = safe_result.value if safe_result.is_ok else "fallback"
+```
+
+### Catch with Error Transformation
+
+**Before (deprecated):**
+```python
+result = yield Catch(
+    risky_operation(),
+    lambda e: handle_error(e)
+)
+```
+
+**After:**
+```python
+safe_result = yield Safe(risky_operation())
+if safe_result.is_ok:
+    result = safe_result.value
+else:
+    result = handle_error(safe_result.error)
+```
+
+### Recover to Safe
+
+**Before (deprecated):**
+```python
+data = yield Recover(
+    fetch_data(),
+    fallback=[]
+)
+```
+
+**After:**
+```python
+safe_result = yield Safe(fetch_data())
+data = safe_result.value if safe_result.is_ok else []
+```
+
+### Recover with Fallback Program
+
+**Before (deprecated):**
+```python
+data = yield Recover(
+    fetch_from_primary(),
+    fallback=fetch_from_backup()
+)
+```
+
+**After:**
+```python
+safe_result = yield Safe(fetch_from_primary())
+if safe_result.is_ok:
+    data = safe_result.value
+else:
+    data = yield fetch_from_backup()
+```
+
+Or use `FirstSuccess`:
+```python
+data = yield FirstSuccess(
+    fetch_from_primary(),
+    fetch_from_backup()
+)
+```
+
 ## Summary
 
 | Effect | Purpose | When to Use |
 |--------|---------|-------------|
 | `Fail(exc)` | Raise error | Validation, explicit failures |
-| `Catch(prog, handler)` | Handle error | Transform/log errors |
-| `Recover(prog, fallback)` | Fallback value | Default values, alternatives |
+| `Safe(prog)` | Get Result type | Need Ok/Err inspection, error recovery |
 | `Retry(prog, n)` | Retry on failure | Transient errors, network calls |
-| `Safe(prog)` | Get Result type | Need Ok/Err inspection |
 | `Finally(prog, cleanup)` | Always cleanup | Resource management |
 | `FirstSuccess(*progs)` | Try alternatives | Multiple fallback sources |
 
