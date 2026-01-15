@@ -74,24 +74,27 @@ class MockOpenCodeHandler:
         self._env_counter = 0
         self._sess_counter = 0
 
-    def handle(self, effect: Any) -> Any:
-        """Dispatch effect to appropriate handler method."""
-        effect_type = type(effect).__name__
+    # Public methods matching OpenCodeHandler interface
+    def handle_create_environment(
+        self, effect: AgenticCreateEnvironment
+    ) -> AgenticEnvironmentHandle:
+        return self._handle_create_environment(effect)
 
-        handlers = {
-            "AgenticCreateEnvironment": self._handle_create_environment,
-            "AgenticCreateSession": self._handle_create_session,
-            "AgenticSendMessage": self._handle_send_message,
-            "AgenticGetMessages": self._handle_get_messages,
-            "AgenticGetSessionStatus": self._handle_get_session_status,
-        }
+    def handle_create_session(self, effect: AgenticCreateSession) -> AgenticSessionHandle:
+        return self._handle_create_session(effect)
 
-        handler = handlers.get(effect_type)
-        if handler is None:
-            raise NotImplementedError(f"MockOpenCodeHandler does not support {effect_type}")
+    def handle_send_message(self, effect: AgenticSendMessage) -> AgenticMessage | None:
+        return self._handle_send_message(effect)
 
-        return handler(effect)
+    def handle_get_messages(self, effect: AgenticGetMessages) -> list[AgenticMessage]:
+        return self._handle_get_messages(effect)
 
+    def handle_get_session_status(
+        self, effect: AgenticGetSessionStatus
+    ) -> AgenticSessionStatus:
+        return self._handle_get_session_status(effect)
+
+    # Internal implementation methods
     def _handle_create_environment(
         self, effect: AgenticCreateEnvironment
     ) -> AgenticEnvironmentHandle:
