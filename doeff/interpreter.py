@@ -19,7 +19,6 @@ from doeff.effects import (
     AtomicUpdateEffect,
     CacheGetEffect,
     CachePutEffect,
-    DepInjectEffect,
     FutureAwaitEffect,
     GatherEffect,
     GraphAnnotateEffect,
@@ -28,21 +27,12 @@ from doeff.effects import (
     GraphStepEffect,
     InterceptEffect,
     IOPerformEffect,
-    IOPrintEffect,
     LocalEffect,
-    MemoGetEffect,
-    MemoPutEffect,
     ProgramCallFrameEffect,
     ProgramCallStackEffect,
-    ResultFailEffect,
-    ResultFinallyEffect,
-    ResultFirstSuccessEffect,
-    ResultRetryEffect,
     ResultSafeEffect,
-    ResultUnwrapEffect,
     SpawnBackend,
     SpawnEffect,
-    ThreadEffect,
     TaskJoinEffect,
     StateGetEffect,
     StateModifyEffect,
@@ -56,12 +46,10 @@ from doeff.handlers import (
     FutureEffectHandler,
     GraphEffectHandler,
     IOEffectHandler,
-    MemoEffectHandler,
     ReaderEffectHandler,
     ResultEffectHandler,
     SpawnEffectHandler,
     StateEffectHandler,
-    ThreadEffectHandler,
     WriterEffectHandler,
 )
 from doeff.program import Program
@@ -189,14 +177,12 @@ class ProgramInterpreter:
 
         self._max_log_entries = max_log_entries
 
-        # Initialize default handlers
         handlers = {
             "reader": ReaderEffectHandler(),
             "state": StateEffectHandler(),
             "atomic": AtomicEffectHandler(),
             "writer": WriterEffectHandler(),
             "future": FutureEffectHandler(),
-            "thread": ThreadEffectHandler(),
             "spawn": SpawnEffectHandler(
                 default_backend=spawn_default_backend,
                 thread_max_workers=spawn_thread_max_workers,
@@ -209,26 +195,21 @@ class ProgramInterpreter:
             "result": ResultEffectHandler(),
             "io": IOEffectHandler(),
             "graph": GraphEffectHandler(),
-            "memo": MemoEffectHandler(),
             "cache": CacheEffectHandler(),
         }
 
-        # Override with custom handlers if provided
         if custom_handlers:
             handlers.update(custom_handlers)
 
-        # Set handlers as attributes for backward compatibility
         self.reader_handler = handlers["reader"]
         self.state_handler = handlers["state"]
         self.atomic_handler = handlers["atomic"]
         self.writer_handler = handlers["writer"]
         self.future_handler = handlers["future"]
-        self.thread_handler = handlers["thread"]
         self.spawn_handler = handlers["spawn"]
         self.result_handler = handlers["result"]
         self.io_handler = handlers["io"]
         self.graph_handler = handlers["graph"]
-        self.memo_handler = handlers["memo"]
         self.cache_handler = handlers["cache"]
 
 
@@ -472,20 +453,15 @@ class ProgramInterpreter:
                 ctx.program_call_stack.pop()
 
     def _record_effect_usage(self, effect: Effect, ctx: ExecutionContext) -> None:
-        """Record Dep/Ask effect usage for later inspection."""
-
         try:
             observations = ctx.effect_observations
-        except AttributeError:  # Defensive: context without observation tracking
+        except AttributeError:
             return
 
         effect_type: str | None = None
         key: EnvKey | None = None
 
-        if _effect_is(effect, DepInjectEffect):
-            effect_type = "Dep"
-            key = getattr(effect, "key", None)
-        elif _effect_is(effect, AskEffect):
+        if _effect_is(effect, AskEffect):
             effect_type = "Ask"
             key = getattr(effect, "key", None)
 
@@ -554,15 +530,10 @@ class ProgramInterpreter:
         return sub_result.value
 
     async def _try_reader_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
-        """Handle Reader/Dep/Ask effects. Returns _NO_HANDLER if not matched."""
         if _effect_is(effect, AskEffect):
             return await self.reader_handler.handle_ask(effect, ctx, self)
         if _effect_is(effect, LocalEffect):
             return await self.reader_handler.handle_local(effect, ctx, self)
-        if _effect_is(effect, DepInjectEffect):
-            proxy_effect = AskEffect(key=effect.key, created_at=effect.created_at)
-            self._record_effect_usage(proxy_effect, ctx)
-            return await self.reader_handler.handle_ask(proxy_effect, ctx, self)
         return _NO_HANDLER
 
     async def _try_state_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:  # noqa: PLR0911
@@ -583,35 +554,23 @@ class ProgramInterpreter:
             return await self.writer_handler.handle_listen(effect, ctx, self)
         return _NO_HANDLER
 
-    async def _try_result_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:  # noqa: PLR0911
-        """Handle Result monad effects. Returns _NO_HANDLER if not matched."""
+    async def _try_result_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
         from doeff.effects.pure import PureEffect
 
         if _effect_is(effect, PureEffect):
             return await self.result_handler.handle_pure(effect)
-        if _effect_is(effect, ResultFailEffect):
-            return await self.result_handler.handle_fail(effect)
-        if _effect_is(effect, ResultFinallyEffect):
-            return await self.result_handler.handle_finally(effect, ctx, self)
-        if _effect_is(effect, ResultRetryEffect):
-            return await self.result_handler.handle_retry(effect, ctx, self)
-        if _effect_is(effect, ResultFirstSuccessEffect):
-            return await self.result_handler.handle_first_success(effect, ctx, self)
         if _effect_is(effect, ResultSafeEffect):
             return await self.result_handler.handle_safe(effect, ctx, self)
-        if _effect_is(effect, ResultUnwrapEffect):
-            return await self.result_handler.handle_unwrap(effect, ctx, self)
         return _NO_HANDLER
 
     async def _try_other_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
-        """Handle Future/IO/Graph effects. Returns _NO_HANDLER if not matched."""
         result = await self._try_future_io_graph_effects(effect, ctx)
         if result is not _NO_HANDLER:
             return result
         result = await self._try_callstack_effects(effect, ctx)
         if result is not _NO_HANDLER:
             return result
-        return await self._try_gather_memo_cache_effects(effect, ctx)
+        return await self._try_gather_cache_effects(effect, ctx)
 
     async def _try_callstack_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
         """Handle call-stack introspection effects."""
@@ -630,26 +589,15 @@ class ProgramInterpreter:
 
         return _NO_HANDLER
 
-    async def _try_future_io_graph_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:  # noqa: PLR0911
-        """Handle Future/IO/Graph effects. Returns _NO_HANDLER if not matched."""
+    async def _try_future_io_graph_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
         if _effect_is(effect, FutureAwaitEffect):
             return await self.future_handler.handle_await(effect)
-        # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
         if _effect_is(effect, SpawnEffect):
             return self.spawn_handler.handle_spawn(effect, ctx, self)
         if _effect_is(effect, TaskJoinEffect):
             return await self.spawn_handler.handle_join(effect, ctx)
-        if _effect_is(effect, ThreadEffect):
-            awaitable = self.thread_handler.handle_thread(effect, ctx, self)
-            if effect.await_result:
-                return await self.future_handler.handle_await(
-                    FutureAwaitEffect(awaitable=awaitable)
-                )
-            return awaitable
         if _effect_is(effect, IOPerformEffect):
             return await self.io_handler.handle_run(effect, ctx)
-        if _effect_is(effect, IOPrintEffect):
-            return await self.io_handler.handle_print(effect, ctx)
         if _effect_is(effect, GraphStepEffect):
             return await self.graph_handler.handle_step(effect, ctx)
         if _effect_is(effect, GraphAnnotateEffect):
@@ -660,14 +608,9 @@ class ProgramInterpreter:
             return await self.graph_handler.handle_capture(effect, ctx, self)
         return _NO_HANDLER
 
-    async def _try_gather_memo_cache_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:  # noqa: PLR0911
-        """Handle Gather/Memo/Cache effects. Returns _NO_HANDLER if not matched."""
+    async def _try_gather_cache_effects(self, effect: Effect, ctx: ExecutionContext) -> Any:
         if _effect_is(effect, GatherEffect):
             return await self._handle_gather_effect(effect, ctx)
-        if _effect_is(effect, MemoGetEffect):
-            return await self.memo_handler.handle_get(effect, ctx)
-        if _effect_is(effect, MemoPutEffect):
-            return await self.memo_handler.handle_put(effect, ctx)
         if _effect_is(effect, CacheGetEffect):
             return await self.cache_handler.handle_get(effect, ctx)
         if _effect_is(effect, CachePutEffect):

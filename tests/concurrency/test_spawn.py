@@ -11,7 +11,6 @@ import pytest
 
 from doeff import (
     EffectGenerator,
-    Fail,
     Gather,
     Get,
     Log,
@@ -143,8 +142,7 @@ async def test_spawn_safe_handles_failure(interpreter: "Interpreter"):
 
     @do
     def worker() -> EffectGenerator[int]:
-        yield Fail(RuntimeError("boom"))
-        return 0
+        raise RuntimeError("boom")
 
     @do
     def program() -> EffectGenerator[int]:
@@ -216,8 +214,7 @@ async def test_spawn_exception_propagates(interpreter: "Interpreter"):
 
     @do
     def worker() -> EffectGenerator[int]:
-        yield Fail(ValueError("boom"))
-        return 0
+        raise ValueError("boom")
 
     @do
     def program() -> EffectGenerator[int]:
@@ -287,8 +284,7 @@ async def test_spawn_state_no_merge_on_error(interpreter: "Interpreter"):
     @do
     def worker() -> EffectGenerator[int]:
         yield Put("worker_state", "set")
-        yield Fail(RuntimeError("boom"))
-        return 0
+        raise RuntimeError("boom")
 
     @do
     def program() -> EffectGenerator[str | None]:

@@ -1,8 +1,4 @@
-"""Concurrency effect handlers.
-
-Direct ScheduledEffectHandler implementations for FutureAwaitEffect,
-SpawnEffect, ThreadEffect, and TaskJoinEffect.
-"""
+"""Concurrency effect handlers."""
 
 from __future__ import annotations
 
@@ -56,36 +52,7 @@ def _merge_store(parent_store: Store, child_store: Store) -> Store:
     return merged
 
 
-def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
-    merged = {}
-
-    for key, value in child_store.items():
-        if not key.startswith("__"):
-            merged[key] = value
-    for key, value in parent_store.items():
-        if not key.startswith("__") and key not in merged:
-            merged[key] = value
-
-    parent_log = parent_store.get("__log__", [])
-    child_log = child_store.get("__log__", [])
-    if child_log:
-        merged["__log__"] = list(parent_log) + list(child_log)
-    elif parent_log:
-        merged["__log__"] = list(parent_log)
-
-    parent_memo = parent_store.get("__memo__", {})
-    child_memo = child_store.get("__memo__", {})
-    if parent_memo or child_memo:
-        merged["__memo__"] = {**parent_memo, **child_memo}
-
-    if "__durable_storage__" in parent_store:
-        merged["__durable_storage__"] = parent_store["__durable_storage__"]
-
-    return merged
-
-
 async def _run_program_internal(program, env, store, dispatcher=None):
-    """Internal helper to run a program and return (Result, Store)."""
     from doeff.runtimes import AsyncioRuntime
     
     E = FrozenDict(env) if not isinstance(env, FrozenDict) else env
@@ -145,96 +112,6 @@ def handle_spawn(
     return Schedule(AwaitPayload(do_async()), store)
 
 
-def handle_thread(
-    effect: EffectBase,
-    env: Environment,
-    store: Store,
-) -> HandlerResult:
-    parent_dispatcher = store.get("__dispatcher__")
-
-    store_without_dispatcher = {key: v for key, v in store.items() if key != "__dispatcher__"}
-    child_store = copy.deepcopy(store_without_dispatcher)
-    child_env = env
-    strategy = effect.strategy
-
-    async def do_async() -> tuple[Any, Store]:
-        from doeff.runtimes import SyncRuntime
-        
-        loop = asyncio.get_running_loop()
-
-        def run_in_thread() -> tuple[Result, Store]:
-            runtime = SyncRuntime()
-            E = FrozenDict(child_env) if not isinstance(child_env, FrozenDict) else child_env
-            child_store_with_dispatcher = {**child_store}
-            if parent_dispatcher is not None:
-                child_store_with_dispatcher["__dispatcher__"] = parent_dispatcher
-            result = runtime.run_safe(effect.program, E, child_store_with_dispatcher)
-            return result.result, result.final_store or child_store_with_dispatcher
-
-        if strategy == "pooled":
-            executor = _get_shared_executor()
-
-            if effect.await_result:
-                result, child_final_store = await loop.run_in_executor(executor, run_in_thread)
-                if isinstance(result, Ok):
-                    merged_store = _merge_thread_state(store, child_final_store)
-                    return (result.value, merged_store)
-                if isinstance(result, Err):
-                    raise result.error
-                return (result, store)
-
-            raw_future = loop.run_in_executor(executor, run_in_thread)
-
-            async def unwrap_thread_result():
-                result, _ = await raw_future
-                if isinstance(result, Ok):
-                    return result.value
-                if isinstance(result, Err):
-                    raise result.error
-                return result
-
-            return (unwrap_thread_result(), store)
-
-        is_daemon = strategy == "daemon"
-        future: asyncio.Future[tuple[Result, Store]] = loop.create_future()
-
-        def thread_target() -> None:
-            try:
-                result = run_in_thread()
-            except BaseException as exc:
-                loop.call_soon_threadsafe(future.set_exception, exc)
-            else:
-                loop.call_soon_threadsafe(future.set_result, result)
-
-        thread = threading.Thread(
-            target=thread_target,
-            name=f"cesk-{'daemon' if is_daemon else 'dedicated'}",
-            daemon=is_daemon,
-        )
-        thread.start()
-
-        if effect.await_result:
-            result, child_final_store = await future
-            if isinstance(result, Ok):
-                merged_store = _merge_thread_state(store, child_final_store)
-                return (result.value, merged_store)
-            if isinstance(result, Err):
-                raise result.error
-            return (result, store)
-
-        async def unwrap_thread_result():
-            result, _ = await future
-            if isinstance(result, Ok):
-                return result.value
-            if isinstance(result, Err):
-                raise result.error
-            return result
-
-        return (unwrap_thread_result(), store)
-
-    return Schedule(AwaitPayload(do_async()), store)
-
-
 def handle_task_join(
     effect: EffectBase,
     env: Environment,
@@ -281,7 +158,6 @@ __all__ = [
     "handle_future_await",
     "handle_spawn",
     "handle_spawn_scheduled",
-    "handle_thread",
     "handle_task_join",
     "_get_shared_executor",
 ]

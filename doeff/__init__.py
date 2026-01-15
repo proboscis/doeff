@@ -21,21 +21,16 @@ import sys as _sys
 
 _PKG_DIR = _os.path.dirname(__file__)
 if _PKG_DIR in _sys.path:
-    # Avoid shadowing stdlib modules (e.g., ``types``) when the package directory
-    # itself is placed on sys.path (as happens with some runpy-based launchers).
     _sys.path = [path for path in _sys.path if path != _PKG_DIR]
 
-# Core types from modular structure
 from doeff.types import (
     ExecutionContext,
     RunResult,
     Effect,
     EffectGenerator,
     ListenResult,
-    # Repr truncation configuration
     DEFAULT_REPR_LIMIT,
     REPR_LIMIT_KEY,
-    # Vendored types
     Ok,
     Err,
     Result,
@@ -53,55 +48,33 @@ from doeff.types import (
 from doeff.analysis import EffectCallTree
 
 from doeff.effects import (
-    # Effects - Reader
     Ask,
     Local,
-    # Effects - State
     Get,
     Put,
     Modify,
     AtomicGet,
     AtomicUpdate,
-    # Effects - Writer
     Log,
     StructuredLog,
     Tell,
     Listen,
-    # Effects - Future
     Await,
-    Thread,
     Spawn,
     Task,
-    # Effects - Time
     Delay,
     DelayEffect,
     WaitUntil,
     WaitUntilEffect,
-    # Effects - Result
-    Fail,
-    Finally,
     Safe,
-    Unwrap,
-    Retry,
-    FirstSuccess,
-    # Effects - IO
     IO,
-    Print,
-    # Effects - Graph tracking
     Step,
     Annotate,
     Snapshot,
     CaptureGraph,
-    # Effects - Dependency injection (pinjected compatible)
-    Dep,
-    # Effects - Gather for parallel Programs
     Gather,
-    MemoGet,
-    MemoPut,
-    # Effects - Cache
     CacheGet,
     CachePut,
-    # Lowercase effect functions (aliases)
     ask,
     local,
     get,
@@ -110,22 +83,12 @@ from doeff.effects import (
     tell,
     listen,
     slog,
-    finally_,
     await_,
-    thread,
     spawn,
     delay,
     wait_until,
-    fail,
     safe,
-    first_success_effect,
-    unwrap_result,
-    retry,
-    unwrap_result,
     io,
-    print_,
-    memo_get,
-    memo_put,
     step,
     annotate,
     snapshot,
@@ -136,7 +99,6 @@ from doeff.effects import (
     atomic_update,
 )
 
-# Import from new modular structure
 from doeff.interpreter import ProgramInterpreter
 from doeff.kleisli import KleisliProgram
 from doeff.do import do
@@ -149,7 +111,6 @@ from doeff.graph_snapshot import (
     write_graph_html_async,
 )
 
-# Import cache decorator
 from doeff.cache import (
     CACHE_PATH_ENV_KEY,
     cache,
@@ -163,10 +124,8 @@ from doeff.cache import (
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 
-# Program runner (CLI-equivalent API)
 from doeff.run import run_program, ProgramRunResult
 
-# Runtime: Single-shot Algebraic Effects
 from doeff.runtime import (
     Resume,
     Schedule,
@@ -189,11 +148,9 @@ from doeff.runtimes import (
 
 __version__ = "0.1.7"
 
-# Shorthand alias matching lowercase helpers
 capture = capture_graph
 
-__all__ = [  # noqa: RUF022
-    # Core types
+__all__ = [
     "Effect",
     "EffectGenerator",
     "Program",
@@ -203,10 +160,8 @@ __all__ = [  # noqa: RUF022
     "CacheLifecycle",
     "CachePolicy",
     "CacheStorage",
-    # Repr truncation configuration
     "DEFAULT_REPR_LIMIT",
     "REPR_LIMIT_KEY",
-    # Vendored types
     "Ok",
     "Err",
     "Result",
@@ -220,19 +175,15 @@ __all__ = [  # noqa: RUF022
     "WStep",
     "WGraph",
     "FrozenDict",
-    # Core classes
     "ProgramInterpreter",
     "KleisliProgram",
     "EffectCallTree",
-    # Decorator
     "do",
-    # Graph snapshot helpers
     "build_graph_snapshot",
     "graph_to_html",
     "graph_to_html_async",
     "write_graph_html",
     "write_graph_html_async",
-    # Effects - Uppercase
     "IO",
     "Annotate",
     "Ask",
@@ -241,15 +192,8 @@ __all__ = [  # noqa: RUF022
     "DelayEffect",
     "WaitUntil",
     "WaitUntilEffect",
-    "FirstSuccess",
     "Safe",
-    "Unwrap",
-    "Retry",
-    "Dep",
-    "Fail",
     "Gather",
-    "MemoGet",
-    "MemoPut",
     "CacheGet",
     "CachePut",
     "CacheLifecycle",
@@ -260,27 +204,19 @@ __all__ = [  # noqa: RUF022
     "Local",
     "Log",
     "StructuredLog",
-    "Finally",
     "Modify",
     "AtomicGet",
     "AtomicUpdate",
-    "Thread",
     "Spawn",
     "Task",
-    "Print",
     "Put",
     "Step",
     "CaptureGraph",
     "Tell",
-    # Effects - lowercase
     "annotate",
     "ask",
     "await_",
-    "first_success_effect",
     "safe",
-    "unwrap_result",
-    "retry",
-    "fail",
     "get",
     "io",
     "listen",
@@ -288,23 +224,17 @@ __all__ = [  # noqa: RUF022
     "modify",
     "atomic_get",
     "atomic_update",
-    "thread",
     "spawn",
     "delay",
     "wait_until",
-    "print_",
     "put",
     "step",
     "capture",
     "capture_graph",
     "tell",
     "slog",
-    "finally_",
-    "memo_get",
-    "memo_put",
     "cache_get",
     "cache_put",
-    # Cache decorator
     "CACHE_PATH_ENV_KEY",
     "cache",
     "cache_key",
@@ -314,10 +244,8 @@ __all__ = [  # noqa: RUF022
     "cache_forever",
     "clear_persistent_cache",
     "persistent_cache_path",
-    # Program runner (CLI-equivalent API)
     "run_program",
     "ProgramRunResult",
-    # Runtime: Effect handler types and payloads
     "Resume",
     "Schedule",
     "HandlerResult",
@@ -329,7 +257,6 @@ __all__ = [  # noqa: RUF022
     "Continuation",
     "ScheduledEffectHandler",
     "ScheduledHandlers",
-    # Runtime implementations
     "AsyncioRuntime",
     "SyncRuntime",
     "SimulationRuntime",
