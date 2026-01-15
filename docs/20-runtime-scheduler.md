@@ -115,13 +115,29 @@ Integrates with the `asyncio` event loop. It uses `asyncio.sleep()` for timed de
 
 > **Note**: `RealtimeScheduler` is experimental. When timers are pending but no continuation is immediately ready, the current implementation may not behave as expected. For production use with wall-clock timing, consider using `Suspend` with `asyncio.sleep()` directly.
 
-## Simulation Effects
+## Time Effects (Unified)
 
-The module provides built-in effects that take advantage of the scheduler model:
+The module provides unified time effects that work across all runtimes:
 
-- **`SimDelay(seconds: float)`**: Suspends the program for a specific duration.
-- **`SimWaitUntil(target_time: datetime)`**: Suspends until a specific point in time.
-- **`SimSubmit(program: Program)`**: Spawns a new concurrent computation in the same scheduler.
+| Effect | AsyncioRuntime / RealtimeScheduler | SimulationScheduler |
+|--------|-----------------------------------|---------------------|
+| `Delay(seconds)` | Real `asyncio.sleep()` | Instant, advances simulation time |
+| `WaitUntil(datetime)` | Real wait until wall-clock time | Instant, advances simulation time |
+| `Spawn(program)` | `asyncio.create_task()` | Queue child task |
+
+These unified effects are imported from `doeff.effects`:
+
+```python
+from doeff.effects import Delay, WaitUntil, Spawn
+```
+
+### Deprecated Effects
+
+The following effects are deprecated and will be removed in a future version:
+
+- **`SimDelay`** - Use `Delay` instead
+- **`SimWaitUntil`** - Use `WaitUntil` instead
+- **`SimSubmit`** - Use `Spawn` instead
 
 ## Usage Examples
 
@@ -162,33 +178,30 @@ async def main():
 The following trading strategy runs instantly in simulation but follows real time in production:
 
 ```python
-from datetime import timedelta
-from typing import Any
 from doeff import do, Program
+from doeff.effects import Delay
 from doeff.cesk import run
-from doeff.runtime import (
-    SimDelay, SimulationScheduler, RealtimeScheduler,
-    create_sim_delay_handler
-)
+from doeff.runtime import SimulationScheduler, RealtimeScheduler
+from doeff.scheduled_handlers import default_scheduled_handlers
 
 @do
 def trading_strategy() -> Program[str]:
     print("Checking markets...")
-    yield SimDelay(seconds=3600)  # Wait 1 hour
+    yield Delay(seconds=3600)  # Wait 1 hour
     print("Checking markets again...")
     return "Done"
 
 # To run in Simulation:
 async def run_sim() -> None:
     sched = SimulationScheduler()
-    handlers = {SimDelay: create_sim_delay_handler()}
+    handlers = default_scheduled_handlers()
     await run(trading_strategy(), scheduler=sched, scheduled_handlers=handlers)
     # This completes instantly and current_time advances by 1 hour.
 
 # To run in Realtime:
 async def run_realtime() -> None:
     sched = RealtimeScheduler()
-    handlers = {SimDelay: create_sim_delay_handler()}
+    handlers = default_scheduled_handlers()
     await run(trading_strategy(), scheduler=sched, scheduled_handlers=handlers)
     # This actually takes 1 hour to complete.
 ```
