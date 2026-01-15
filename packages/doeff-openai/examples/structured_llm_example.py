@@ -21,7 +21,7 @@ from doeff import (
     EffectGenerator,
     Ask,
     Log,
-    Catch,
+    Safe,
 )
 
 from doeff_openai import (
@@ -160,9 +160,7 @@ def example_code_analysis() -> EffectGenerator[Optional[CodeAnalysis]]:
         return total / len(numbers)
     '''
     
-    # Using Catch effect for error handling
-    from doeff import Fail
-    
+    # Using Safe effect for error handling
     @do
     def analyze_code():
         result = yield structured_llm__openai(
@@ -174,13 +172,14 @@ def example_code_analysis() -> EffectGenerator[Optional[CodeAnalysis]]:
         )
         return result
     
-    @do
-    def handle_error(error):
-        yield Log(f"Error analyzing code: {error}")
-        yield Log("Returning None as fallback")
-        return None
+    safe_result = yield Safe(analyze_code())
     
-    result = yield Catch(analyze_code(), handle_error)
+    if safe_result.is_err():
+        yield Log(f"Error analyzing code: {safe_result.error}")
+        yield Log("Returning None as fallback")
+        result = None
+    else:
+        result = safe_result.value
     
     if result:
         yield Log(f"Language: {result.language}")

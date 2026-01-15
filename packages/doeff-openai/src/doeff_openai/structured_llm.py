@@ -15,11 +15,11 @@ from pydantic import BaseModel
 
 from doeff import (
     Await,
-    Catch,
     EffectGenerator,
     Fail,
     Log,
     Retry,
+    Safe,
     Step,
     do,
 )
@@ -412,7 +412,7 @@ def process_structured_response(
     raw_content_for_log = _stringify_for_log(parse_source)
 
     # Parse the JSON response
-    from doeff import Catch, Fail, do
+    from doeff import Fail, Safe, do
 
     @do
     def parse_json():
@@ -431,14 +431,14 @@ def process_structured_response(
         yield Log(f"Successfully parsed response as {response_format.__name__}")
         return result_model
 
-    @do
-    def handle_parse_error(e):
+    # Execute with Safe to handle errors
+    safe_result = yield Safe(parse_json())
+    if safe_result.is_err():
+        e = safe_result.error
         yield Log(f"Failed to parse structured response: {e}")
         yield Log(f"Raw content: {raw_content_for_log}")
         yield Fail(e)
-
-    result = yield Catch(parse_json(), handle_parse_error)
-    return result
+    return safe_result.value
 
 
 @do
@@ -532,7 +532,7 @@ def structured_llm__openai(
         - Get/Put: Manages state for cost tracking
         - Await: Makes async API calls with the async OpenAI client
         - Retry: Handles transient failures
-        - Catch: Handles parsing errors
+        - Safe: Handles parsing errors
     """
     yield Log(f"structured_llm__openai called with model={model}, response_format={response_format}")
 
@@ -568,7 +568,7 @@ def structured_llm__openai(
         attempt_start_time = time.time()
         yield Log(f"Making OpenAI API call with model={model}")
 
-        # Use Catch to handle errors and track them
+        # Use Safe to handle errors and track them
         @do
         def api_call_with_tracking():
             # Make the actual API call
@@ -585,8 +585,10 @@ def structured_llm__openai(
             )
             return response
 
-        @do
-        def error_handler(error):
+        # Use Safe to track both success and failure
+        safe_result = yield Safe(api_call_with_tracking())
+        if safe_result.is_err():
+            error = safe_result.error
             # Track failed API call attempt (tracking will log the error)
             metadata = yield track_api_call(
                 operation="structured_llm",
@@ -598,10 +600,7 @@ def structured_llm__openai(
             )
             # Re-raise to trigger retry
             yield Fail(error)
-
-        # Use Catch to track both success and failure
-        response = yield Catch(api_call_with_tracking(), error_handler)
-        return response
+        return safe_result.value
 
     # Use Retry effect for transient failures
     response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)

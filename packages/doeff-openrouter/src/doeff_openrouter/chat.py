@@ -8,11 +8,11 @@ from typing import Any
 
 from doeff import (
     Await,
-    Catch,
     EffectGenerator,
     Fail,
     Log,
     Retry,
+    Safe,
     do,
 )
 
@@ -129,8 +129,9 @@ def chat_completion(
             )
             return response_data
 
-        @do
-        def handle_error(exc: Exception) -> EffectGenerator[Any]:
+        safe_result = yield Safe(perform())
+        if safe_result.is_err():
+            exc = safe_result.error
             if isinstance(exc, OpenRouterResponseError):
                 yield Log(f"OpenRouter responded with an error payload: {exc}")
                 yield Fail(exc)
@@ -149,7 +150,7 @@ def chat_completion(
             )
             yield Fail(exc)
 
-        return (yield Catch(perform(), handle_error))
+        return safe_result.value
 
     # Retry transient network errors up to three times by default
     response = yield Retry(make_api_call(), max_attempts=3, delay_ms=1000)
