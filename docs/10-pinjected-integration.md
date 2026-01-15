@@ -16,18 +16,18 @@ pip install doeff-pinjected
 - **Composition**: Combine doeff Programs with pinjected's DI system
 - **Separation of Concerns**: Business logic (Programs) separate from dependency management
 
-## The Dep Effect
+## The Ask Effect for Dependencies
 
-The `Dep` effect requests a dependency from pinjected's resolver.
+The `Ask` effect requests a dependency from the environment or pinjected's resolver.
 
 ```python
-from doeff import do, Dep
+from doeff import do, Ask
 
 @do
 def service_program():
     # Request dependencies
-    database = yield Dep("database")
-    cache = yield Dep("cache")
+    database = yield Ask("database")
+    cache = yield Ask("cache")
     
     # Use dependencies
     data = yield fetch_from_db(database)
@@ -36,14 +36,14 @@ def service_program():
     return data
 ```
 
-### Dep vs Ask
+### Ask with Runtime vs Pinjected
 
-| Effect | Purpose | Resolution |
-|--------|---------|------------|
-| `Ask(key)` | Environment variable | ExecutionContext.env |
-| `Dep(key)` | Dependency injection | pinjected resolver |
+| Context | Ask Resolution |
+|---------|----------------|
+| Direct Runtime | ExecutionContext.env |
+| program_to_injected | pinjected resolver |
 
-**Note**: When using `program_to_injected`, both `Ask` and `Dep` resolve from pinjected, but `Dep` is preferred for clarity.
+When using `program_to_injected`, Ask effects are intercepted and resolved through pinjected's dependency injection system.
 
 ## Bridge Functions
 
@@ -54,13 +54,13 @@ The `doeff-pinjected` package provides four conversion functions:
 Converts `Program[T]` to `Injected[T]`, returning only the result value.
 
 ```python
-from doeff import do, Put, Get, Dep
+from doeff import do, Put, Get, Ask
 from doeff_pinjected import program_to_injected
 from pinjected import design
 
 @do
 def counter_program():
-    multiplier = yield Dep("multiplier")
+    multiplier = yield Ask("multiplier")
     yield Put("count", 0)
     yield Put("count", 10)
     count = yield Get("count")
@@ -97,7 +97,7 @@ from doeff_pinjected import program_to_injected_result
 def stateful_program():
     yield Put("status", "initialized")
     yield Log("Starting computation")
-    config = yield Dep("config")
+    config = yield Ask("config")
     yield Put("config_loaded", True)
     return config["value"]
 
@@ -137,21 +137,21 @@ result = await resolver.provide(iproxy)
 
 ## How Dependency Resolution Works
 
-1. **Program Definition**: Programs use `Dep` effects to request dependencies
+1. **Program Definition**: Programs use `Ask` effects to request dependencies
 2. **Conversion**: `program_to_injected` wraps the Program
-3. **Interception**: `Dep` effects are intercepted and mapped to `resolver.provide(key)`
-4. **Execution**: ProgramInterpreter runs with resolved dependencies
+3. **Interception**: `Ask` effects are intercepted and mapped to `resolver.provide(key)`
+4. **Execution**: Runtime runs with resolved dependencies
 5. **Result**: Returns unwrapped value or full RunResult
 
 ```python
 # Internal flow
 @do
 def example():
-    db = yield Dep("database")  # 1. Dep effect requested
+    db = yield Ask("database")  # 1. Ask effect requested
     return db.query()
 
 injected = program_to_injected(example())  # 2. Wrapped for interception
-result = await resolver.provide(injected)  # 3. Dep -> resolver.provide("database")
+result = await resolver.provide(injected)  # 3. Ask -> resolver.provide("database")
                                           # 4. Program runs with resolved database
                                           # 5. Returns query result
 ```
@@ -161,13 +161,12 @@ result = await resolver.provide(injected)  # 3. Dep -> resolver.provide("databas
 ### Service Layer Pattern
 
 ```python
-from doeff import do, Dep, Log, Safe
+from doeff import do, Ask, Log, Safe
 
 @do
 def user_service(user_id: int):
-    db = yield Dep("database")
-    cache = yield Dep("cache")
-    logger = yield Dep("logger")
+    db = yield Ask("database")
+    cache = yield Ask("cache")
     
     # Try cache first
     cache_result = yield Safe(cache.get(f"user_{user_id}"))
@@ -194,7 +193,7 @@ user_service_injected = program_to_injected(user_service(123))
 ```python
 @do
 def user_repository():
-    db = yield Dep("database")
+    db = yield Ask("database")
     
     @do
     def get_user(user_id: int):
@@ -223,7 +222,7 @@ def app():
 ```python
 @do
 def application():
-    config = yield Dep("config")
+    config = yield Ask("config")
     
     # Use config throughout
     max_retries = config.get("max_retries", 3)
@@ -246,14 +245,14 @@ bindings = design(
 ```python
 @do
 def auth_service():
-    db = yield Dep("database")
+    db = yield Ask("database")
     
     @do
     def authenticate(username, password):
         user = yield db.find_user(username)
         if user and user.check_password(password):
             return user
-        yield Fail(ValueError("Invalid credentials"))
+        raise ValueError("Invalid credentials")
     
     return authenticate
 
@@ -276,14 +275,14 @@ def api_handler(username, password):
 
 ```python
 import pytest
-from doeff import do, Dep
+from doeff import do, Ask
 from doeff_pinjected import program_to_injected
 from pinjected import design, AsyncResolver
 
 @do
 def data_pipeline():
-    db = yield Dep("database")
-    api = yield Dep("external_api")
+    db = yield Ask("database")
+    api = yield Ask("external_api")
     
     data = yield db.fetch_data()
     processed = yield api.process(data)
@@ -353,7 +352,7 @@ async def test_error_handling():
     
     @do
     def error_handling_program():
-        db = yield Dep("database")
+        db = yield Ask("database")
         safe_result = yield Safe(db.query())
         if safe_result.is_ok():
             return safe_result.value
@@ -367,61 +366,44 @@ async def test_error_handling():
     assert "unavailable" in result["error"]
 ```
 
-## Migration from Ask to Dep
+## Migration from Dep to Ask
 
-If you have existing Programs using `Ask`, migration is straightforward:
+If you have existing Programs using the dropped `Dep` effect, migration is straightforward:
 
-**Before:**
+**Before (dropped):**
 ```python
+from doeff import do, Dep
+
 @do
 def old_program():
-    db = yield Ask("database")
+    db = yield Dep("database")
     result = yield db.query()
     return result
-
-# Run with ExecutionContext
-context = ExecutionContext(env={"database": my_db})
-result = await interpreter.run(old_program(), context)
 ```
 
 **After:**
 ```python
+from doeff import do, Ask
+
 @do
 def new_program():
-    db = yield Dep("database")  # Changed Ask -> Dep
+    db = yield Ask("database")  # Changed Dep -> Ask
     result = yield db.query()
     return result
-
-# Run with pinjected
-bindings = design(database=my_db)
-resolver = AsyncResolver(bindings)
-injected = program_to_injected(new_program())
-result = await resolver.provide(injected)
 ```
 
-**Gradual Migration:**
-```python
-# Both Ask and Dep work with program_to_injected
-@do
-def hybrid_program():
-    db = yield Ask("database")      # Still works
-    cache = yield Dep("cache")       # Preferred
-    return (db, cache)
-
-# Both resolve from pinjected
-injected = program_to_injected(hybrid_program())
-```
+The behavior remains the same when using `program_to_injected` - Ask effects are resolved through pinjected's resolver.
 
 ## Best Practices
 
-### Use Dep for External Dependencies
+### Use Ask for External Dependencies
 
 **DO:**
 ```python
 @do
 def good_design():
-    db = yield Dep("database")        # External dependency
-    cache = yield Dep("cache")        # External dependency
+    db = yield Ask("database")        # External dependency
+    cache = yield Ask("cache")        # External dependency
     
     value = yield Get("counter")      # Internal state
     yield Log("Processing")           # Internal effect
@@ -431,8 +413,8 @@ def good_design():
 ```python
 @do
 def poor_design():
-    counter = yield Dep("counter")    # Don't inject state
-    log_func = yield Dep("logger")    # Use Log effect instead
+    counter = yield Ask("counter")    # Don't inject state - use Get
+    # Instead use: counter = yield Get("counter")
 ```
 
 ### Keep Programs Pure
@@ -441,7 +423,7 @@ def poor_design():
 # Good: Program requests dependencies
 @do
 def pure_program():
-    db = yield Dep("database")
+    db = yield Ask("database")
     return yield db.query()
 
 # Bad: Program creates dependencies
@@ -463,7 +445,7 @@ class DatabaseInterface(ABC):
 
 @do
 def interface_based_program():
-    db: DatabaseInterface = yield Dep("database")
+    db: DatabaseInterface = yield Ask("database")
     # Type hints document expected interface
     return yield db.query("SELECT * FROM users")
 ```
@@ -478,7 +460,7 @@ def interface_based_program():
 | `program_to_iproxy_result` | `IProxy[RunResult[T]]` | Proxy for full context |
 
 **Effect:**
-- `Dep(key)` - Request dependency from pinjected resolver
+- `Ask(key)` - Request dependency from environment or pinjected resolver
 
 ## Next Steps
 

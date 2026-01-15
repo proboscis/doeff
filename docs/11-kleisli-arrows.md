@@ -140,7 +140,7 @@ def load_data(filename: str):
 def validate_data(data: dict):
     yield Log("Validating data")
     if not data["data"]:
-        yield Fail(ValueError("Empty data"))
+        raise ValueError("Empty data")
     return data
 
 @do

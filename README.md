@@ -98,7 +98,7 @@ def with_logging():
     return result
 ```
 
-### Result (Fail, Safe)
+### Result (Safe)
 ```python
 @do
 def with_error_handling():
@@ -139,13 +139,13 @@ behaviour of the bundled sqlite-backed handler.
 ## Pinjected Integration
 
 ```python
-from doeff import do, Dep
+from doeff import do, Ask
 from doeff_pinjected import program_to_injected
 
 @do
 def service_program():
-    db = yield Dep("database")
-    cache = yield Dep("cache")
+    db = yield Ask("database")
+    cache = yield Ask("cache")
     result = yield process_data(db, cache)
     return result
 

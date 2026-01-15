@@ -19,11 +19,11 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 
 3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
 4. **[Async Effects](04-async-effects.md)** - Future, Await, Parallel for async operations
-5. **[Error Handling](05-error-handling.md)** - Result, Fail, Safe, Retry
-6. **[IO Effects](06-io-effects.md)** - IO and Print for side effects
+5. **[Error Handling](05-error-handling.md)** - Result, Safe for error handling
+6. **[IO Effects](06-io-effects.md)** - IO for side effects
 7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers
 8. **[Graph Tracking](08-graph-tracking.md)** - Execution tracking and visualization
-9. **[Advanced Effects](09-advanced-effects.md)** - Gather, Memo, Atomic operations
+9. **[Advanced Effects](09-advanced-effects.md)** - Gather, Atomic operations
 
 ### Integration & Advanced Topics
 
@@ -127,7 +127,7 @@ asyncio.run(main())
 
 ### For Advanced Users
 
-1. **[Advanced Effects](09-advanced-effects.md)** for Gather, Memo, Atomic
+1. **[Advanced Effects](09-advanced-effects.md)** for Gather, Atomic
 2. **[Graph Tracking](08-graph-tracking.md)** for execution visualization
 3. **[Pinjected Integration](10-pinjected-integration.md)** for DI patterns
 4. **[API Reference](13-api-reference.md)** for complete API details
@@ -168,13 +168,11 @@ asyncio.run(main())
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate | [03](03-basic-effects.md#state-effects), [09](09-advanced-effects.md#atomic-effects) |
 | **Writer** | Log, Tell, Listen, StructuredLog | [03](03-basic-effects.md#writer-effects) |
 | **Future** | Await, Parallel | [04](04-async-effects.md) |
-| **Result** | Fail, Safe, Retry, Finally, FirstSuccess | [05](05-error-handling.md) |
-| **IO** | IO, Print | [06](06-io-effects.md) |
+| **Result** | Safe | [05](05-error-handling.md) |
+| **IO** | IO | [06](06-io-effects.md) |
 | **Cache** | CacheGet, CachePut | [07](07-cache-system.md) |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph | [08](08-graph-tracking.md) |
 | **Gather** | Gather | [09](09-advanced-effects.md#gather-effects) |
-| **Memo** | MemoGet, MemoPut | [09](09-advanced-effects.md#memo-effects) |
-| **Dep** | Dep | [10](10-pinjected-integration.md) |
 
 ## Common Patterns
 
@@ -190,17 +188,17 @@ def application():
     return result
 ```
 
-### Async + Error Handling + Retry
+### Async + Error Handling
 
 ```python
 @do
 def robust_fetch(url):
-    result = yield Retry(
-        Await(httpx.get(url)),
-        max_attempts=3,
-        delay_ms=1000
-    )
-    return result
+    result = yield Safe(Await(httpx.get(url)))
+    if result.is_ok():
+        return result.value
+    else:
+        yield Log(f"Fetch failed: {result.error}")
+        return None
 ```
 
 ### Parallel Processing + Aggregation
