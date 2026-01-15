@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Ask, Catch, EffectGenerator, Fail, Get, Log, Put, do
+from doeff import Ask, EffectGenerator, Fail, Get, Log, Put, Safe, do
 
 DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/cloud-platform",
@@ -73,13 +73,13 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
     def ask(name: str):
         return (yield Ask(name))
 
+    @do
     def ask_optional(name: str) -> EffectGenerator[Any]:
-        return Catch(ask(name), lambda exc: None if isinstance(exc, KeyError) else None)  # type: ignore[arg-type]
+        safe_result = yield Safe(ask(name))
+        return safe_result.value if safe_result.is_ok() else None
 
-    existing_client = yield Catch(
-        ask("secret_manager_client"),
-        lambda exc: None if isinstance(exc, KeyError) else None,
-    )
+    safe_existing_client = yield Safe(ask("secret_manager_client"))
+    existing_client = safe_existing_client.value if safe_existing_client.is_ok() else None
     if existing_client:
         return existing_client
 
