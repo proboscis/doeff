@@ -717,7 +717,7 @@ result = yield task.join()
 **Notes:**
 
 - Ray tasks use cloudpickle serialization and inherit context from the spawn site.
-- Configure Ray via `ProgramInterpreter` options (`spawn_ray_address`,
+- Configure Ray via `EffectRuntime` options (`spawn_ray_address`,
   `spawn_ray_init_kwargs`, `spawn_ray_runtime_env`).
 
 **See:** [Advanced Effects](09-advanced-effects.md)
@@ -919,15 +919,20 @@ iproxy = program_to_iproxy_result(my_program())
 
 ## Execution
 
-### ProgramInterpreter
+### EffectRuntime
 
 Executes Programs by handling effects.
 
 ```python
-from doeff import ProgramInterpreter, ExecutionContext
+from doeff import create_runtime, EffectRuntime
 
-interpreter = ProgramInterpreter()
-result = await interpreter.run(my_program(), ExecutionContext())
+# Using factory function (recommended)
+runtime = create_runtime()
+result = await runtime.run(my_program())
+
+# Or with explicit configuration
+runtime = EffectRuntime(scheduler=my_scheduler, handlers=my_handlers)
+result = await runtime.run(my_program(), env={"key": "value"}, store={"state": 0})
 ```
 
 **Methods:**
@@ -936,16 +941,25 @@ result = await interpreter.run(my_program(), ExecutionContext())
 async def run(
     self,
     program: Program[T],
-    context: ExecutionContext | None = None
-) -> RunResult[T]
+    env: Environment | dict | None = None,
+    store: Store | None = None,
+) -> RuntimeResult[T]
+
+def run_sync(
+    self,
+    program: Program[T],
+    env: Environment | dict | None = None,
+    store: Store | None = None,
+) -> RuntimeResult[T]
 ```
 
 **Parameters:**
 
 - **`program`** - Program to execute
-- **`context`** (optional) - Initial execution context
+- **`env`** (optional) - Initial environment (Reader effects)
+- **`store`** (optional) - Initial store (State effects)
 
-**Returns:** RunResult with result and full context
+**Returns:** RuntimeResult with result value
 
 **See:** [Core Concepts](02-core-concepts.md#execution-model)
 
@@ -965,7 +979,7 @@ assert result.value == "ok"
 **Parameters:**
 
 - **`program`** (`str | Program`) - Program path (enables discovery) or Program instance.
-- **`interpreter`** (`str | ProgramInterpreter | callable | None`) - Override interpreter.
+- **`interpreter`** (`str | EffectRuntime | callable | None`) - Override interpreter/runtime.
 - **`envs`** (`list[str | Program[dict] | Mapping] | None`) - Environments to merge.
 - **`apply`** (`str | KleisliProgram | callable | None`) - Kleisli applied before run.
 - **`transform`** (`list[str | callable] | None`) - Additional Program transformers.
@@ -1085,7 +1099,7 @@ await write_graph_html(result.graph, "output.html")
 
 ```python
 # Core
-from doeff import do, Program, ProgramInterpreter, ExecutionContext, RunResult
+from doeff import do, Program, create_runtime, EffectRuntime, RuntimeResult
 
 # Basic Effects
 from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen

@@ -80,7 +80,7 @@ doeff is a pragmatic effects system for Python that provides:
 ## Quick Example
 
 ```python
-from doeff import do, Put, Get, Log, Await, ProgramInterpreter
+from doeff import do, Put, Get, Log, Await, create_runtime
 import asyncio
 
 @do
@@ -101,8 +101,8 @@ def example_workflow():
     return count
 
 async def main():
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(example_workflow())
+    runtime = create_runtime()
+    result = await runtime.run(example_workflow())
     print(f"Result: {result.value}")
 
 asyncio.run(main())
