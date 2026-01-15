@@ -854,14 +854,12 @@ class RunResult(Generic[T]):
             return self.result.value
         raise self.result.error
 
-    @property
     def is_ok(self) -> bool:
-        """Check if the result is successful."""
+        """Return True when the result is successful."""
         return isinstance(self.result, Ok)
 
-    @property
     def is_err(self) -> bool:
-        """Check if the result is an error."""
+        """Return True when the result represents a failure."""
         return isinstance(self.result, Err)
 
     @property
@@ -898,7 +896,7 @@ class RunResult(Generic[T]):
         return self.context.effect_observations
 
     def _failure_details(self) -> RunFailureDetails | None:  # noqa: DOEFF013
-        if not self.is_err:
+        if not self.is_err():
             return None
         return RunFailureDetails.from_error(self.result.error)
 
@@ -921,7 +919,7 @@ class RunResult(Generic[T]):
 
     def format_error(self, *, condensed: bool = False) -> str:
         """Return a formatted traceback for the failure if present."""
-        if self.is_ok:
+        if self.is_ok():
             return ""
 
         error = self.result.error
@@ -972,7 +970,7 @@ class RunResult(Generic[T]):
 
     def __repr__(self) -> str:
         limit = self.context.env.get(REPR_LIMIT_KEY, DEFAULT_REPR_LIMIT)
-        if self.is_ok:
+        if self.is_ok():
             value_repr = _truncate_repr(self.result.value, limit)
             return (
                 f"RunResult(Ok({value_repr}), "
@@ -1383,7 +1381,7 @@ class _StatusSection(_BaseSection):
         rr = self.context.run_result
         lines = ["📊 Result Status:"]
 
-        if rr.is_ok:
+        if rr.is_ok():
             lines.append(self.indent(1, "✅ Success"))
             value_repr = pformat(rr.result.value, width=80, compact=False)
             # Apply truncation based on env config
@@ -2036,7 +2034,7 @@ class _SummarySection(_BaseSection):
     def render(self) -> list[str]:
         rr = self.context.run_result
         lines = ["=" * 60, "Summary:"]
-        status = "✅ OK" if rr.is_ok else "❌ Error"
+        status = "✅ OK" if rr.is_ok() else "❌ Error"
         lines.append(f"  • Status: {status}")
         lines.append(f"  • State items: {len(rr.state)}")
         shared_items = len(rr.shared_state)

@@ -14,7 +14,7 @@ Usage:
 
     result = run_sync(my_program())
 
-    if result.is_err:
+    if result.is_err():
         print(result.error)  # Original exception, untouched
         if result.captured_traceback:
             print(format_traceback(result.captured_traceback))

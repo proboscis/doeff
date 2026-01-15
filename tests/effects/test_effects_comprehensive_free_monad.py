@@ -461,19 +461,19 @@ async def test_result_safe_effect():  # noqa: PINJ040
     @do
     def main_program() -> EffectGenerator[tuple]:
         result1 = yield Safe(failing_program())
-        val1 = f"recovered from {type(result1.error).__name__}" if result1.is_err else result1.value
-        yield Log(f"Caught error: {result1.error}" if result1.is_err else "no error")
+        val1 = f"recovered from {type(result1.error).__name__}" if result1.is_err() else result1.value
+        yield Log(f"Caught error: {result1.error}" if result1.is_err() else "no error")
 
         result2 = yield Safe(failing_program())
-        val2 = f"recovered from {type(result2.error).__name__}" if result2.is_err else result2.value
-        yield Log(f"Caught error: {result2.error}" if result2.is_err else "no error")
+        val2 = f"recovered from {type(result2.error).__name__}" if result2.is_err() else result2.value
+        yield Log(f"Caught error: {result2.error}" if result2.is_err() else "no error")
 
         result3 = yield Safe(failing_program())
-        val3 = f"recovered from {type(result3.error).__name__}" if result3.is_err else result3.value
-        yield Log(f"Caught error: {result3.error}" if result3.is_err else "no error")
+        val3 = f"recovered from {type(result3.error).__name__}" if result3.is_err() else result3.value
+        yield Log(f"Caught error: {result3.error}" if result3.is_err() else "no error")
 
         result4 = yield Safe(success_program())
-        val4 = result4.value if result4.is_ok else f"recovered from {type(result4.error).__name__}"
+        val4 = result4.value if result4.is_ok() else f"recovered from {type(result4.error).__name__}"
 
         return (val1, val2, val3, val4)
 
@@ -481,7 +481,7 @@ async def test_result_safe_effect():  # noqa: PINJ040
     context = ExecutionContext()
 
     result = await engine.run_async(main_program(), context)
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == (
         "recovered from ValueError",
         "recovered from ValueError",
