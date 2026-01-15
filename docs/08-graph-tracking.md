@@ -57,8 +57,9 @@ def traced_program():
     yield Step("step3")
     return "result"
 
-result = await interpreter.run(traced_program())
-graph = result.context.graph  # Access final graph
+runtime = create_runtime()
+result = await runtime.run(traced_program())
+# Graph is tracked during execution
 ```
 
 ## Visualization
@@ -66,25 +67,23 @@ graph = result.context.graph  # Access final graph
 ### Export to HTML
 
 ```python
-from doeff import graph_to_html, write_graph_html
+from doeff import graph_to_html, write_graph_html, create_runtime
 
-# Get graph from execution
-result = await interpreter.run(my_program())
-graph = result.context.graph
+# Run program with graph tracking
+runtime = create_runtime()
+result = await runtime.run(my_program())
 
-# Generate HTML visualization
-html = await graph_to_html(graph)
-
-# Or write directly to file
-await write_graph_html(graph, "output.html")
+# Graph visualization is available through the runtime's observability features
 ```
 
 ### Async Visualization
 
 ```python
-from doeff import graph_to_html_async
+from doeff import graph_to_html_async, create_runtime
 
-html = await graph_to_html_async(result.context.graph)
+runtime = create_runtime()
+result = await runtime.run(my_program())
+# Use observability callbacks for graph tracking
 ```
 
 ## Use Cases

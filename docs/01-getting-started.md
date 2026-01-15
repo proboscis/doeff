@@ -39,7 +39,7 @@ Let's write a simple program that uses state management and logging:
 
 ```python
 import asyncio
-from doeff import do, Program, Put, Get, Log, ProgramInterpreter
+from doeff import do, Program, Put, Get, Log, create_runtime
 
 @do
 def counter_program():
@@ -56,13 +56,11 @@ def counter_program():
     return final_count
 
 async def main():
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(counter_program())
+    runtime = create_runtime()
+    result = await runtime.run(counter_program())
     
     if result.is_ok:
         print(f"Result: {result.value}")
-        print(f"State: {result.context.state}")
-        print(f"Log: {result.context.log}")
     else:
         print(f"Error: {result.error}")
 
@@ -72,8 +70,6 @@ asyncio.run(main())
 Output:
 ```
 Result: 1
-State: {'counter': 1}
-Log: ['Counter initialized', 'Current count: 0', 'Final count: 1']
 ```
 
 ## Understanding the Example
@@ -86,14 +82,14 @@ Let's break down what's happening:
    - `Put("counter", value)` - Sets state
    - `Get("counter")` - Retrieves state
    - `Log(message)` - Writes to log
-4. **`ProgramInterpreter`**: Executes the program and handles all effects
-5. **`RunResult`**: Contains the final value, state, logs, and execution context
+4. **`create_runtime()`**: Creates an `EffectRuntime` to execute programs and handle effects
+5. **`RuntimeResult`**: Contains the final value and execution result
 
 ## Key Concepts
 
 ### Programs are Lazy
 
-Programs don't execute until you call `interpreter.run()`:
+Programs don't execute until you call `runtime.run()`:
 
 ```python
 @do
@@ -105,7 +101,8 @@ def my_program():
 program = my_program()
 
 # Now it executes
-result = await interpreter.run(program)
+runtime = create_runtime()
+result = await runtime.run(program)
 ```
 
 ### Programs are Reusable
@@ -124,8 +121,9 @@ prog1 = get_timestamp()
 prog2 = get_timestamp()
 
 # Each execution is independent
-result1 = await interpreter.run(prog1)
-result2 = await interpreter.run(prog2)
+runtime = create_runtime()
+result1 = await runtime.run(prog1)
+result2 = await runtime.run(prog2)
 ```
 
 ### Effects are Composable
@@ -153,28 +151,26 @@ def full_program():
 
 ## Running with Initial State
 
-You can provide initial state and environment:
+You can provide initial environment and store:
 
 ```python
-from doeff import ExecutionContext
+runtime = create_runtime()
 
-context = ExecutionContext(
+# Pass initial environment and store to runtime.run()
+result = await runtime.run(
+    my_program(),
     env={"database_url": "postgresql://localhost/mydb"},
-    state={"user_id": 123},
-    log=[],
-    graph=...,  # Graph tracking (covered later)
-    io_allowed=True
+    store={"user_id": 123}
 )
-
-result = await interpreter.run(my_program(), context=context)
 ```
 
 ## Error Handling
 
-Programs return a `Result[T]` type that can be `Ok(value)` or `Err(error)`:
+Programs return a `RuntimeResult` containing a `Result[T]` type that can be `Ok(value)` or `Err(error)`:
 
 ```python
-result = await interpreter.run(my_program())
+runtime = create_runtime()
+result = await runtime.run(my_program())
 
 if result.is_ok:
     print(f"Success: {result.value}")
@@ -270,11 +266,12 @@ Don't reuse Program objects after running them with sub-effects:
 
 ```python
 # If you need to run a program multiple times, call the function again
+runtime = create_runtime()
 prog = my_program()
-result1 = await interpreter.run(prog)
+result1 = await runtime.run(prog)
 # Don't reuse prog - create a new one
 prog2 = my_program()
-result2 = await interpreter.run(prog2)
+result2 = await runtime.run(prog2)
 ```
 
 ## Next Steps
@@ -294,7 +291,8 @@ Now that you understand the basics, explore:
 from doeff import (
     do,                    # Decorator for creating programs
     Program,               # Program type
-    ProgramInterpreter,    # Execute programs
+    create_runtime,        # Create EffectRuntime to execute programs
+    EffectRuntime,         # Runtime class (alternative to create_runtime)
     
     # State effects
     Get, Put, Modify,
@@ -322,7 +320,7 @@ from doeff import (
 ### Basic Program Template
 
 ```python
-from doeff import do, ProgramInterpreter
+from doeff import do, create_runtime, Log
 import asyncio
 
 @do
@@ -332,8 +330,8 @@ def my_program():
     return "result"
 
 async def main():
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(my_program())
+    runtime = create_runtime()
+    result = await runtime.run(my_program())
     print(result.value)
 
 if __name__ == "__main__":

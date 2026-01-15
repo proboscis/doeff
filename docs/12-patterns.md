@@ -543,23 +543,22 @@ async def test_effects_executed():
         yield Step("step1")
         return "result"
     
-    from doeff import ProgramInterpreter, ExecutionContext
-    from doeff_pinjected import program_to_injected_result
+    from doeff import create_runtime
     
     # Run with result
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(program())
+    runtime = create_runtime()
+    result = await runtime.run(program())
     
-    # Verify effects
-    assert result.state["key"] == "value"
-    assert any("Logged message" in str(log) for log in result.log)
-    assert len(result.graph.steps) > 0
+    # Verify result
+    assert result.is_ok
+    assert result.value == "result"
 ```
 
 ### Property-Based Testing
 
 ```python
 from hypothesis import given, strategies as st
+from doeff import create_runtime
 
 @given(st.integers(min_value=0, max_value=1000))
 @pytest.mark.asyncio
@@ -571,8 +570,8 @@ async def test_counter_properties(initial_value):
         result = yield Get("counter")
         return result
     
-    interpreter = ProgramInterpreter()
-    result = await interpreter.run(counter_program())
+    runtime = create_runtime()
+    result = await runtime.run(counter_program())
     
     # Property: counter should always increment by 1
     assert result.value == initial_value + 1

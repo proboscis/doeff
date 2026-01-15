@@ -19,7 +19,7 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask, ProgramInterpreter, ExecutionContext
+from doeff import do, Ask, create_runtime
 
 @do
 def connect_to_database():
@@ -29,16 +29,14 @@ def connect_to_database():
     return f"Connected to {db_url}"
 
 # Run with environment
-context = ExecutionContext(
+runtime = create_runtime()
+result = await runtime.run(
+    connect_to_database(),
     env={
         "database_url": "postgresql://localhost/mydb",
         "timeout": 30
-    },
-    state={},
-    log=[]
+    }
 )
-
-result = await interpreter.run(connect_to_database(), context=context)
 ```
 
 **Use cases:**
@@ -97,10 +95,10 @@ def application():
     return {"result1": result1, "result2": result2}
 
 # Initialize with config
-context = ExecutionContext(
-    env={"config": {"option1": "value1", "option2": "value2"}},
-    state={},
-    log=[]
+runtime = create_runtime()
+result = await runtime.run(
+    application(),
+    env={"config": {"option1": "value1", "option2": "value2"}}
 )
 ```
 
@@ -240,9 +238,9 @@ def with_logging():
     yield Log("Operation complete")
     return "done"
 
-result = await interpreter.run(with_logging())
-print(result.context.log)
-# ['Starting operation', 'Processing data', 'Count: 0', 'Operation complete']
+runtime = create_runtime()
+result = await runtime.run(with_logging(), store={"count": 0})
+# Logs are accumulated during execution
 ```
 
 **Note:** `Log` and `Tell` are aliases for the same effect.
@@ -270,12 +268,9 @@ def structured_logging():
     
     return "logged"
 
-result = await interpreter.run(structured_logging())
-# result.context.log contains dicts:
-# [
-#   {"level": "info", "message": "User logged in", ...},
-#   {"level": "warn", "message": "High memory usage", ...}
-# ]
+runtime = create_runtime()
+result = await runtime.run(structured_logging())
+# Structured logs are accumulated during execution
 ```
 
 ### Listen - Capture Sub-Program Log
@@ -302,10 +297,9 @@ def outer_operation():
     
     return listen_result.value
 
-result = await interpreter.run(outer_operation())
-print(result.context.log)
-# ['Before inner', 'Inner step 1', 'Inner step 2', 'After inner', 
-#  'Inner returned: 42', 'Inner logs: [...]']
+runtime = create_runtime()
+result = await runtime.run(outer_operation())
+# Logs are captured during execution
 ```
 
 **ListenResult structure:**
