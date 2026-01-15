@@ -83,6 +83,7 @@ from doeff.scheduled_handlers.concurrency import (
 from doeff.scheduled_handlers.time import (
     handle_delay,
     handle_wait_until,
+    handle_get_time,
 )
 
 
@@ -91,6 +92,7 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         AskEffect,
         DelayEffect,
         FutureAwaitEffect,
+        GetTimeEffect,
         IOPerformEffect,
         IOPrintEffect,
         MemoGetEffect,
@@ -133,6 +135,7 @@ def default_scheduled_handlers() -> ScheduledHandlers:
         TaskJoinEffect: handle_task_join,
         DelayEffect: handle_delay,
         WaitUntilEffect: handle_wait_until,
+        GetTimeEffect: handle_get_time,
     }
 
 
@@ -159,4 +162,5 @@ __all__ = [
     "handle_task_join",
     "handle_delay",
     "handle_wait_until",
+    "handle_get_time",
 ]
