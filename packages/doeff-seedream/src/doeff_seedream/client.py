@@ -11,12 +11,12 @@ import httpx
 
 from doeff import (
     Ask,
-    Catch,
     EffectGenerator,
     Fail,
     Get,
     Log,
     Put,
+    Safe,
     Step,
     do,
 )
@@ -138,10 +138,13 @@ def get_seedream_client() -> EffectGenerator[SeedreamClient]:
       request (for example to set ``X-Volc-Region``).
     """
 
+    @do
     def ask_optional(name: str) -> EffectGenerator[Any]:
-        return Catch(Ask(name), lambda exc: None if isinstance(exc, KeyError) else None)  # type: ignore[return-value]
+        safe_result = yield Safe(Ask(name))
+        return safe_result.value if safe_result.is_ok() else None
 
-    candidate = yield Catch(Ask("seedream_client"), lambda exc: None if isinstance(exc, KeyError) else None)
+    safe_candidate = yield Safe(Ask("seedream_client"))
+    candidate = safe_candidate.value if safe_candidate.is_ok() else None
     if isinstance(candidate, SeedreamClient):
         return candidate
 
