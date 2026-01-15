@@ -583,12 +583,19 @@ class AsyncioScheduler:
 
 @dataclass(frozen=True, kw_only=True)
 class SimDelay(EffectBase):
-    """Simulation delay effect - wait for a duration.
+    """[DEPRECATED] Use Delay from doeff.effects.time instead.
     
-    In simulation mode, this advances simulation time.
-    In realtime mode, this actually waits.
+    Simulation delay effect - wait for a duration.
     """
     seconds: float
+
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "SimDelay is deprecated. Use Delay from doeff.effects.time instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     def intercept(
         self, transform: "Callable[[Effect], Effect | Program]"
@@ -598,11 +605,19 @@ class SimDelay(EffectBase):
 
 @dataclass(frozen=True, kw_only=True)
 class SimWaitUntil(EffectBase):
-    """Simulation wait until time effect.
+    """[DEPRECATED] Use WaitUntil from doeff.effects.time instead.
     
-    Wait until a specific simulation time.
+    Simulation wait until time effect.
     """
     target_time: datetime
+
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "SimWaitUntil is deprecated. Use WaitUntil from doeff.effects.time instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     def intercept(
         self, transform: "Callable[[Effect], Effect | Program]"
@@ -612,15 +627,20 @@ class SimWaitUntil(EffectBase):
 
 @dataclass(frozen=True, kw_only=True)
 class SimSubmit(EffectBase):
-    """Submit a new program to the scheduler.
+    """[DEPRECATED] Use Spawn from doeff.effects.spawn instead.
     
-    Creates a new continuation in the same scheduler.
-    Useful for concurrent processes in simulation.
-    
-    Note: The `daemon` field is reserved for future use.
+    Submit a new program to the scheduler.
     """
     program: "Program"
     daemon: bool = False
+
+    def __post_init__(self) -> None:
+        import warnings
+        warnings.warn(
+            "SimSubmit is deprecated. Use Spawn from doeff.effects.spawn instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     def intercept(
         self, transform: "Callable[[Effect], Effect | Program]"
