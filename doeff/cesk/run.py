@@ -192,7 +192,7 @@ async def run(
 ) -> CESKResult[T]:
     import warnings
     warnings.warn(
-        "run() is deprecated. Use EffectRuntime(scheduler).run() instead.",
+        "run() is deprecated. Use AsyncioRuntime().run() from doeff.runtimes instead.",
         DeprecationWarning,
         stacklevel=2,
     )
@@ -230,7 +230,7 @@ def run_sync(
 ) -> CESKResult[T]:
     import warnings
     warnings.warn(
-        "run_sync() is deprecated. Use EffectRuntime(scheduler).run_sync() instead.",
+        "run_sync() is deprecated. Use SyncRuntime().run() from doeff.runtimes instead.",
         DeprecationWarning,
         stacklevel=2,
     )
