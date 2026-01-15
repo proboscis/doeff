@@ -42,6 +42,19 @@ def is_pure_effect(effect: EffectBase) -> bool:
         CachePutEffect,
     )
     from doeff.effects.pure import PureEffect
+    from doeff.effects.callstack import (
+        ProgramCallFrameEffect,
+        ProgramCallStackEffect,
+    )
+    from doeff.effects.graph import (
+        GraphStepEffect,
+        GraphAnnotateEffect,
+        GraphSnapshotEffect,
+    )
+    from doeff.effects.atomic import (
+        AtomicGetEffect,
+        AtomicUpdateEffect,
+    )
 
     return isinstance(
         effect,
@@ -56,6 +69,13 @@ def is_pure_effect(effect: EffectBase) -> bool:
             CachePutEffect,
             CacheDeleteEffect,
             CacheExistsEffect,
+            ProgramCallFrameEffect,
+            ProgramCallStackEffect,
+            GraphStepEffect,
+            GraphAnnotateEffect,
+            GraphSnapshotEffect,
+            AtomicGetEffect,
+            AtomicUpdateEffect,
         ),
     )
 
