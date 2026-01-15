@@ -43,25 +43,25 @@ def basic_pr(issue):
 ### Multi-Agent Workflow
 
 ```python
-from doeff import do
-from doeff_conductor import CreateWorktree, RunAgent, MergeBranches, Gather
+from doeff import do, Gather
+from doeff_conductor import CreateWorktree, RunAgent, MergeBranches
 
 @do
 def multi_agent_pr(issue):
     # Create parallel worktrees
-    impl_env, test_env = yield Gather([
+    impl_env, test_env = yield Gather(
         CreateWorktree(issue=issue, suffix="impl"),
         CreateWorktree(issue=issue, suffix="tests"),
-    ])
+    )
     
     # Run agents in parallel
-    yield Gather([
+    yield Gather(
         RunAgent(env=impl_env, prompt=issue.body),
         RunAgent(env=test_env, prompt=f"Write tests for: {issue.body}"),
-    ])
+    )
     
     # Merge branches
-    merged_env = yield MergeBranches([impl_env, test_env])
+    merged_env = yield MergeBranches(envs=(impl_env, test_env))
     
     # Review and create PR
     yield RunAgent(env=merged_env, prompt="Review and create PR")
@@ -223,6 +223,24 @@ Workflow state is stored at `~/.local/state/doeff-conductor/`:
 │   └── ISSUE-002.md
 └── index.json
 ```
+
+## Documentation
+
+- **[Examples](./examples/)** - Progressive examples from basic to advanced
+- **[API Reference](./docs/api.md)** - Complete API documentation
+- **[Tutorial](./docs/tutorial.md)** - Step-by-step getting started guide
+- **[Migration from orch](./docs/migration-from-orch.md)** - Guide for orch CLI users
+
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [01_hello_workflow.py](./examples/01_hello_workflow.py) | Minimal workflow |
+| [02_issue_lifecycle.py](./examples/02_issue_lifecycle.py) | Issue management |
+| [03_basic_pr_workflow.py](./examples/03_basic_pr_workflow.py) | Complete PR workflow |
+| [04_multi_agent.py](./examples/04_multi_agent.py) | Parallel agents |
+| [05_custom_template.py](./examples/05_custom_template.py) | Custom templates |
+| [06_api_usage.py](./examples/06_api_usage.py) | ConductorAPI usage |
 
 ## License
 

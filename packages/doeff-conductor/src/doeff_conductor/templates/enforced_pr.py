@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do
+from doeff import do, EffectGenerator
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
@@ -26,7 +26,7 @@ def enforced_pr(
     issue: Issue,
     max_retries: int = 3,
     test_command: str = "pytest",
-) -> PRHandle:
+) -> EffectGenerator[PRHandle]:
     """Enforced PR workflow: issue -> agent -> test -> fix loop -> PR.
 
     Args:

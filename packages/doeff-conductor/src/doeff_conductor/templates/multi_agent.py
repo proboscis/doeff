@@ -15,15 +15,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do
-from doeff.effects.gather import Gather
+from doeff import do, EffectGenerator, Gather
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
 
 
 @do
-def multi_agent(issue: Issue) -> PRHandle:
+def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
     """Multi-agent PR workflow: issue -> parallel agents -> merge -> PR.
 
     Args:
