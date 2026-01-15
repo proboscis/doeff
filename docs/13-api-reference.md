@@ -444,7 +444,7 @@ Wrap execution in a `Result` type for explicit error handling.
 
 ```python
 result = yield Safe(risky_operation())
-if result.is_ok:
+if result.is_ok():
     return result.value
 else:
     return "fallback"

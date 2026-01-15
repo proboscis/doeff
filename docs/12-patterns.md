@@ -41,7 +41,7 @@ def get_order_handler(order_id):
     yield Log(f"Request: GET /orders/{order_id}")
     
     result = yield Safe(order_service(order_id))
-    order = result.value if result.is_ok else {"error": str(result.error)}
+    order = result.value if result.is_ok() else {"error": str(result.error)}
     
     yield Log(f"Response: {order}")
     return order
@@ -169,9 +169,9 @@ def with_error_handling(operation, operation_name):
     yield Step(f"start_{operation_name}")
     
     safe_result = yield Safe(operation())
-    if safe_result.is_err:
+    if safe_result.is_err():
         yield handle_error(operation_name, safe_result.error)
-    result = safe_result.value if safe_result.is_ok else None
+    result = safe_result.value if safe_result.is_ok() else None
     
     yield Step(f"end_{operation_name}")
     yield Log(f"Completed: {operation_name}")
@@ -202,7 +202,7 @@ def retry_with_exponential_backoff(operation, max_attempts=5):
     for attempt in range(1, max_attempts + 1):
         safe_result = yield Safe(operation())
         
-        if safe_result.is_ok:
+        if safe_result.is_ok():
             return safe_result.value
         
         if attempt < max_attempts:
@@ -290,7 +290,7 @@ def circuit_breaker(operation, threshold=5, timeout=60):
     # Try operation
     safe_result = yield Safe(operation())
     
-    if safe_result.is_ok:
+    if safe_result.is_ok():
         # Success - reset counter
         yield AtomicUpdate("circuit_failures", lambda _: 0)
         return safe_result.value
@@ -371,7 +371,7 @@ def with_state_snapshot(operation):
     
     safe_result = yield Safe(operation())
     
-    if safe_result.is_err:
+    if safe_result.is_err():
         # Restore state and fail
         yield Put("_state", snapshot)
         yield Log("State restored from snapshot")
@@ -440,7 +440,7 @@ Cache within execution:
 def expensive_computation(key):
     # Try memo
     safe_result = yield Safe(MemoGet(key))
-    if safe_result.is_ok:
+    if safe_result.is_ok():
         return safe_result.value
     else:
         return (yield compute_and_memo(key))
@@ -645,7 +645,7 @@ def bad_error_handling():
 def good_error_handling():
     result = yield Safe(risky_operation())
     
-    if result.is_err:
+    if result.is_err():
         yield Log(f"Error occurred: {result.error}")
         yield Annotate({"error": str(result.error)})
         # Return default value or re-raise
