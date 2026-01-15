@@ -85,12 +85,12 @@ class KFrameSnapshot:
     def from_frame(cls, frame: "Frame") -> "KFrameSnapshot":
         """Create a snapshot from a CESK frame."""
         from doeff.cesk import (
-            FinallyFrame,
             GatherFrame,
             InterceptFrame,
             ListenFrame,
             LocalFrame,
             ReturnFrame,
+            SafeFrame,
         )
 
         frame_type = type(frame).__name__
@@ -117,8 +117,8 @@ class KFrameSnapshot:
                     function=function,
                 )
 
-        elif isinstance(frame, FinallyFrame):
-            description = "Cleanup handler (runs on success or error)"
+        elif isinstance(frame, SafeFrame):
+            description = "Safe error boundary (captures exceptions)"
 
         elif isinstance(frame, LocalFrame):
             description = "Environment restore point"
