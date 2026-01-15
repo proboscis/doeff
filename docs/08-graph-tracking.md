@@ -57,7 +57,7 @@ def traced_program():
     yield Step("step3")
     return "result"
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(traced_program())
 # Graph is tracked during execution
 ```
@@ -70,7 +70,7 @@ result = await runtime.run(traced_program())
 from doeff import graph_to_html, write_graph_html, create_runtime
 
 # Run program with graph tracking
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(my_program())
 
 # Graph visualization is available through the runtime's observability features
@@ -81,7 +81,7 @@ result = await runtime.run(my_program())
 ```python
 from doeff import graph_to_html_async, create_runtime
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(my_program())
 # Use observability callbacks for graph tracking
 ```

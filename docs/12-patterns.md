@@ -546,7 +546,7 @@ async def test_effects_executed():
     from doeff import create_runtime
     
     # Run with result
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     result = await runtime.run(program())
     
     # Verify result
@@ -570,7 +570,7 @@ async def test_counter_properties(initial_value):
         result = yield Get("counter")
         return result
     
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     result = await runtime.run(counter_program())
     
     # Property: counter should always increment by 1

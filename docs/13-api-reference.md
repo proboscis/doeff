@@ -927,7 +927,7 @@ Executes Programs by handling effects.
 from doeff import create_runtime, EffectRuntime
 
 # Using factory function (recommended)
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(my_program())
 
 # Or with explicit configuration

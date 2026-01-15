@@ -29,7 +29,7 @@ def connect_to_database():
     return f"Connected to {db_url}"
 
 # Run with environment
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(
     connect_to_database(),
     env={
@@ -95,7 +95,7 @@ def application():
     return {"result1": result1, "result2": result2}
 
 # Initialize with config
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(
     application(),
     env={"config": {"option1": "value1", "option2": "value2"}}
@@ -238,7 +238,7 @@ def with_logging():
     yield Log("Operation complete")
     return "done"
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(with_logging(), store={"count": 0})
 # Logs are accumulated during execution
 ```
@@ -268,7 +268,7 @@ def structured_logging():
     
     return "logged"
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(structured_logging())
 # Structured logs are accumulated during execution
 ```
@@ -297,7 +297,7 @@ def outer_operation():
     
     return listen_result.value
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(outer_operation())
 # Logs are captured during execution
 ```

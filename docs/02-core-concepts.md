@@ -42,7 +42,7 @@ def expensive_computation():
 program = expensive_computation()
 
 # Execution happens here
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(program)
 ```
 
@@ -54,7 +54,7 @@ def get_timestamp():
     return yield IO(lambda: time.time())
 
 # Unlike generators, this works:
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 prog = get_timestamp()
 result1 = await runtime.run(prog)  # 1234567890.123
 result2 = await runtime.run(prog)  # 1234567890.456
@@ -280,7 +280,7 @@ The runtime executes programs by processing effects:
 from doeff import create_runtime, EffectRuntime
 
 # Create runtime with default scheduler
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 
 # Or configure with custom scheduler/handlers
 runtime = EffectRuntime(scheduler=my_scheduler, handlers=my_handlers)
@@ -532,7 +532,7 @@ def create_program() -> Program[int]:
 
 # Runtime execution
 async def execute(prog: Program[T]) -> RuntimeResult[T]:
-    runtime = create_runtime()
+    runtime = AsyncioRuntime()
     return await runtime.run(prog)
 ```
 
