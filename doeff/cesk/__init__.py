@@ -121,7 +121,7 @@ __all__ = [
     "to_generator",
     # Step function
     "step",
-    # Main loop
+    # Run functions (deprecated - use doeff.runtimes instead)
     "_run_internal",
     "run",
     "run_sync",

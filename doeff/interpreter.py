@@ -175,12 +175,14 @@ class ProgramInterpreter:
             spawn_ray_runtime_env: Default runtime_env for Ray tasks.
 
         .. deprecated::
-            ProgramInterpreter is deprecated. Use EffectRuntime instead.
-            Example: ``runtime = create_runtime(); await runtime.run(program)``
+            ProgramInterpreter is deprecated. Use AsyncioRuntime, SyncRuntime, or
+            SimulationRuntime from doeff.runtimes instead.
+            Example: ``runtime = AsyncioRuntime(); await runtime.run(program)``
         """
         warnings.warn(
-            "ProgramInterpreter is deprecated. Use EffectRuntime instead. "
-            "Example: runtime = create_runtime(); await runtime.run(program)",
+            "ProgramInterpreter is deprecated. Use AsyncioRuntime, SyncRuntime, or "
+            "SimulationRuntime from doeff.runtimes instead. "
+            "Example: runtime = AsyncioRuntime(); await runtime.run(program)",
             DeprecationWarning,
             stacklevel=2,
         )
