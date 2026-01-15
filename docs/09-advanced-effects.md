@@ -271,7 +271,7 @@ external framework callback), ask for the special key `__interpreter__`:
 
 ```python
 interp = yield ask("__interpreter__")
-# interp is the ProgramInterpreter currently running this Program.
+# interp is the runtime currently executing this Program.
 ```
 
 This does not require adding `__interpreter__` to your environment; the
