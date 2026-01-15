@@ -2,20 +2,20 @@
 
 Handlers for AtomicGetEffect and AtomicUpdateEffect.
 Atomic state is stored in store['__atomic_state__'] as a dict.
+
+Note: Atomicity is guaranteed within a single program execution (CESK machine
+is single-threaded). For cross-program shared state, use external storage.
 """
 
 from __future__ import annotations
 
-import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from doeff.runtime import HandlerResult, Resume
 
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
     from doeff.cesk import Environment, Store
-
-_atomic_lock = threading.Lock()
 
 
 def handle_atomic_get(
@@ -25,19 +25,17 @@ def handle_atomic_get(
 ) -> HandlerResult:
     key = effect.key
     default_factory = effect.default_factory
+    atomic_state = store.get("__atomic_state__", {})
 
-    with _atomic_lock:
-        atomic_state = store.get("__atomic_state__", {})
+    if key not in atomic_state:
+        if default_factory is not None:
+            value = default_factory()
+            new_atomic_state = {**atomic_state, key: value}
+            new_store = {**store, "__atomic_state__": new_atomic_state}
+            return Resume(value, new_store)
+        return Resume(None, store)
 
-        if key not in atomic_state:
-            if default_factory is not None:
-                value = default_factory()
-                new_atomic_state = {**atomic_state, key: value}
-                new_store = {**store, "__atomic_state__": new_atomic_state}
-                return Resume(value, new_store)
-            return Resume(None, store)
-
-        return Resume(atomic_state[key], store)
+    return Resume(atomic_state[key], store)
 
 
 def handle_atomic_update(
@@ -48,23 +46,21 @@ def handle_atomic_update(
     key = effect.key
     updater = effect.updater
     default_factory = effect.default_factory
+    atomic_state = store.get("__atomic_state__", {})
 
-    with _atomic_lock:
-        atomic_state = store.get("__atomic_state__", {})
-
-        if key not in atomic_state:
-            if default_factory is not None:
-                current_value = default_factory()
-            else:
-                current_value = None
+    if key not in atomic_state:
+        if default_factory is not None:
+            current_value = default_factory()
         else:
-            current_value = atomic_state[key]
+            current_value = None
+    else:
+        current_value = atomic_state[key]
 
-        new_value = updater(current_value)
-        new_atomic_state = {**atomic_state, key: new_value}
-        new_store = {**store, "__atomic_state__": new_atomic_state}
+    new_value = updater(current_value)
+    new_atomic_state = {**atomic_state, key: new_value}
+    new_store = {**store, "__atomic_state__": new_atomic_state}
 
-        return Resume(new_value, new_store)
+    return Resume(new_value, new_store)
 
 
 __all__ = [
