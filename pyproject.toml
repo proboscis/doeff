@@ -70,6 +70,8 @@ asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "e2e: tests that exercise external integrations and may require real API keys",
+    "requires_opencode: tests that require a running OpenCode server",
+    "slow: tests that take a long time to run",
 ]
 
 [tool.ruff]
@@ -104,4 +106,5 @@ dev = [
     "pyright>=1.1.0",
     "pillow>=11.3.0",
     "beartype>=0.19.0",
+    "httpx>=0.25.0",
 ]
