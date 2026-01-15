@@ -154,10 +154,35 @@ def handle_spawn_scheduled(
     return Schedule(SpawnPayload(program=effect.program, env=env, store=child_store), store)
 
 
+def handle_gather(
+    effect: EffectBase,
+    env: Environment,
+    store: Store,
+) -> HandlerResult:
+    parent_dispatcher = store.get("__dispatcher__")
+
+    async def run_gather() -> tuple[Any, Store]:
+        E = FrozenDict(env) if not isinstance(env, FrozenDict) else env
+        tasks = []
+        for program in effect.programs:
+            store_copy = copy.deepcopy({k: v for k, v in store.items() if k != "__dispatcher__"})
+            tasks.append(_run_program_internal(program, E, store_copy, dispatcher=parent_dispatcher))
+
+        results_with_stores = await asyncio.gather(*tasks)
+        results = [r for r, _ in results_with_stores]
+        merged_store = store
+        for _, child_store in results_with_stores:
+            merged_store = _merge_store(merged_store, child_store)
+        return (results, merged_store)
+
+    return Schedule(AwaitPayload(run_gather()), store)
+
+
 __all__ = [
     "handle_future_await",
     "handle_spawn",
     "handle_spawn_scheduled",
     "handle_task_join",
+    "handle_gather",
     "_get_shared_executor",
 ]
