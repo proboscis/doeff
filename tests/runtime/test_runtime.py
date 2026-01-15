@@ -629,3 +629,127 @@ class TestSimulationEffectsIntegration:
         
         assert result.value == 3
         assert scheduler.current_time == start + timedelta(seconds=15)
+
+
+class TestAsyncioRuntime:
+    @pytest.mark.asyncio
+    async def test_run_simple_program(self):
+        from doeff.do import do
+        from doeff.effects import Put, Get
+        from doeff.runtimes import AsyncioRuntime
+
+        @do
+        def simple_program():
+            yield Put("counter", 42)
+            return (yield Get("counter"))
+
+        result = await AsyncioRuntime().run(simple_program())
+        assert result == 42
+
+    @pytest.mark.asyncio
+    async def test_run_with_env(self):
+        from doeff.do import do
+        from doeff.effects import Ask
+        from doeff.runtimes import AsyncioRuntime
+
+        @do
+        def env_program():
+            return (yield Ask("config_key"))
+
+        result = await AsyncioRuntime().run(
+            env_program(),
+            env={"config_key": "config_value"},
+        )
+        assert result == "config_value"
+
+    @pytest.mark.asyncio
+    async def test_run_result_returns_runtime_result(self):
+        from doeff.do import do
+        from doeff.runtimes import AsyncioRuntime
+
+        @do
+        def pure_program():
+            return 99
+
+        result = await AsyncioRuntime().run_result(pure_program())
+        assert result.is_ok
+        assert result.value == 99
+
+
+class TestSyncRuntime:
+    def test_run_simple_program(self):
+        from doeff.do import do
+        from doeff.effects import Put, Get
+        from doeff.runtimes import SyncRuntime
+
+        @do
+        def simple_program():
+            yield Put("counter", 42)
+            return (yield Get("counter"))
+
+        result = SyncRuntime().run(simple_program())
+        assert result == 42
+
+    def test_run_with_env(self):
+        from doeff.do import do
+        from doeff.effects import Ask
+        from doeff.runtimes import SyncRuntime
+
+        @do
+        def env_program():
+            return (yield Ask("config_key"))
+
+        result = SyncRuntime().run(
+            env_program(),
+            env={"config_key": "config_value"},
+        )
+        assert result == "config_value"
+
+    def test_run_result_returns_runtime_result(self):
+        from doeff.do import do
+        from doeff.runtimes import SyncRuntime
+
+        @do
+        def pure_program():
+            return 99
+
+        result = SyncRuntime().run_result(pure_program())
+        assert result.is_ok
+        assert result.value == 99
+
+
+class TestSimulationRuntime:
+    @pytest.mark.asyncio
+    async def test_run_with_sim_delay(self):
+        from doeff.do import do
+        from doeff.runtime import SimDelay, create_sim_delay_handler
+        from doeff.runtimes import SimulationRuntime
+
+        start = datetime(2025, 1, 1, 12, 0, 0)
+
+        @do
+        def delay_program():
+            yield SimDelay(seconds=10.0)
+            return "done"
+
+        runtime = SimulationRuntime(
+            start_time=start,
+            handlers={SimDelay: create_sim_delay_handler()},
+        )
+        result = await runtime.run(delay_program())
+
+        assert result == "done"
+        assert runtime.current_time == start + timedelta(seconds=10)
+
+    def test_run_sync(self):
+        from doeff.do import do
+        from doeff.effects import Put, Get
+        from doeff.runtimes import SimulationRuntime
+
+        @do
+        def simple_program():
+            yield Put("x", 100)
+            return (yield Get("x"))
+
+        result = SimulationRuntime().run_sync(simple_program())
+        assert result == 100
