@@ -36,7 +36,7 @@ class AgentHandler:
         if self._opencode_handler is None:
             from doeff_agentic import OpenCodeHandler
 
-            self._opencode_handler = OpenCodeHandler(workflow_id=self.workflow_id)
+            self._opencode_handler = OpenCodeHandler()
         return self._opencode_handler
 
     def handle_run_agent(self, effect: RunAgent) -> str:
@@ -68,7 +68,7 @@ class AgentHandler:
             env_type=AgenticEnvironmentType.SHARED,
             working_dir=str(effect.env.path),
         )
-        env_handle = handler.handle(env_effect)
+        env_handle = handler.handle_create_environment(env_effect)
 
         # Create session
         session_effect = AgenticCreateSession(
@@ -76,7 +76,7 @@ class AgentHandler:
             environment_id=env_handle.id,
             agent=effect.agent_type,
         )
-        session = handler.handle(session_effect)
+        session = handler.handle_create_session(session_effect)
 
         # Send the prompt and wait for completion
         msg_effect = AgenticSendMessage(
@@ -84,11 +84,11 @@ class AgentHandler:
             content=effect.prompt,
             wait=True,
         )
-        handler.handle(msg_effect)
+        handler.handle_send_message(msg_effect)
 
         # Get messages to extract output
         messages_effect = AgenticGetMessages(session_id=session.id)
-        messages = handler.handle(messages_effect)
+        messages = handler.handle_get_messages(messages_effect)
 
         # Return last assistant message content
         for msg in reversed(messages):
@@ -121,7 +121,7 @@ class AgentHandler:
             env_type=AgenticEnvironmentType.SHARED,
             working_dir=str(effect.env.path),
         )
-        env_handle = handler.handle(env_effect)
+        env_handle = handler.handle_create_environment(env_effect)
 
         # Create session
         session_effect = AgenticCreateSession(
@@ -129,7 +129,7 @@ class AgentHandler:
             environment_id=env_handle.id,
             agent=effect.agent_type,
         )
-        session = handler.handle(session_effect)
+        session = handler.handle_create_session(session_effect)
 
         # Send prompt without waiting
         msg_effect = AgenticSendMessage(
@@ -137,7 +137,7 @@ class AgentHandler:
             content=effect.prompt,
             wait=False,
         )
-        handler.handle(msg_effect)
+        handler.handle_send_message(msg_effect)
 
         # Create agent ref
         agent_ref = AgentRef(
@@ -165,7 +165,7 @@ class AgentHandler:
             content=effect.message,
             wait=effect.wait,
         )
-        handler.handle(msg_effect)
+        handler.handle_send_message(msg_effect)
 
     def handle_wait_for_status(self, effect: WaitForStatus) -> AgenticSessionStatus:
         """Wait for an agent to reach a specific status."""
@@ -185,7 +185,7 @@ class AgentHandler:
 
         while True:
             status_effect = AgenticGetSessionStatus(session_id=effect.agent_ref.id)
-            status = handler.handle(status_effect)
+            status = handler.handle_get_session_status(status_effect)
 
             if status in targets:
                 return status
@@ -215,7 +215,7 @@ class AgentHandler:
             session_id=effect.agent_ref.id,
             limit=effect.lines,
         )
-        messages = handler.handle(messages_effect)
+        messages = handler.handle_get_messages(messages_effect)
 
         # Combine message contents
         output_parts = []
