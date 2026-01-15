@@ -344,20 +344,6 @@ class ProgramBase(ABC, Generic[T]):
         return ProgramBase.pure(value)  # type: ignore[return-value]
 
     @staticmethod
-    def first_success(*programs: ProgramLike[T]) -> Program[T]:
-        if not programs:
-            raise ValueError("Program.first_success requires at least one program")
-
-        from doeff.effects import first_success_effect
-
-        def first_success_generator():
-            effect = first_success_effect(*programs)
-            value = yield effect
-            return value
-
-        return GeneratorProgram(first_success_generator)
-
-    @staticmethod
     def first_some(*programs: ProgramLike[V]) -> Program[Maybe[V]]:
         if not programs:
             raise ValueError("Program.first_some requires at least one program")

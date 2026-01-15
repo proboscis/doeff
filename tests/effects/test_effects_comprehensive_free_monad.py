@@ -15,17 +15,14 @@ from doeff import (
     Annotate,
     Ask,
     Await,
-    Dep,
     EffectGenerator,
     ExecutionContext,
-    Fail,
     Gather,
     Get,
     Listen,
     Local,
     Log,
     Modify,
-    Print,
     ProgramInterpreter,
     Put,
     Safe,
@@ -39,7 +36,6 @@ from doeff import (
     io,
     listen,
     modify,
-    print_,
     put,
     step,
     tell,
@@ -62,8 +58,8 @@ async def test_reader_ask_effect():  # noqa: PINJ040
         # Test with capitalized alias
         db_url = yield Ask("database_url")
 
-        # Test with Dep alias (for pinjected compatibility)
-        config = yield Dep("config")
+        # Test with Ask (Dep alias removed)
+        config = yield Ask("config")
 
         # Test with lowercase (backwards compatibility)
         secret = yield ask("secret")
@@ -414,12 +410,12 @@ async def test_future_parallel_effect():  # noqa: PINJ040
 
 @pytest.mark.asyncio
 async def test_result_fail_effect():  # noqa: PINJ040
-    """Test Fail effect for error signaling."""
+    """Test error signaling via raise."""
 
     @do
     def program() -> EffectGenerator[str]:
-        # Test with Effects API
-        yield Fail(ValueError("Effects API error"))
+        raise ValueError("Effects API error")
+        yield Log("never reached")
         return "should not reach"
 
     engine = ProgramInterpreter()
@@ -427,7 +423,6 @@ async def test_result_fail_effect():  # noqa: PINJ040
 
     result = await engine.run_async(program(), context)
     assert result.is_err
-    # Unwrap EffectFailure if needed
     error = result.result.error
     from doeff.types import EffectFailure
     if isinstance(error, EffectFailure):
@@ -436,15 +431,13 @@ async def test_result_fail_effect():  # noqa: PINJ040
 
     @do
     def program2() -> EffectGenerator[str]:
-        # Test with capitalized alias
-        yield Fail(RuntimeError("Capitalized error"))
+        raise RuntimeError("Capitalized error")
+        yield Log("never reached")
         return "should not reach"
 
     result2 = await engine.run_async(program2(), context)
     assert result2.is_err
-    # Unwrap EffectFailure if needed
     error2 = result2.result.error
-    from doeff.types import EffectFailure
     if isinstance(error2, EffectFailure):
         error2 = error2.cause
     assert "Capitalized error" in str(error2)
@@ -456,7 +449,8 @@ async def test_result_safe_effect():  # noqa: PINJ040
 
     @do
     def failing_program() -> EffectGenerator[str]:
-        yield Fail(ValueError("intentional failure"))
+        raise ValueError("intentional failure")
+        yield Log("never reached")
         return "should not reach"
 
     @do
@@ -467,19 +461,19 @@ async def test_result_safe_effect():  # noqa: PINJ040
     @do
     def main_program() -> EffectGenerator[tuple]:
         result1 = yield Safe(failing_program())
-        val1 = f"recovered from {type(result1.error).__name__}" if result1.is_err else result1.value
-        yield Log(f"Caught error: {result1.error}" if result1.is_err else "no error")
+        val1 = f"recovered from {type(result1.error).__name__}" if result1.is_err() else result1.value
+        yield Log(f"Caught error: {result1.error}" if result1.is_err() else "no error")
 
         result2 = yield Safe(failing_program())
-        val2 = f"recovered from {type(result2.error).__name__}" if result2.is_err else result2.value
-        yield Log(f"Caught error: {result2.error}" if result2.is_err else "no error")
+        val2 = f"recovered from {type(result2.error).__name__}" if result2.is_err() else result2.value
+        yield Log(f"Caught error: {result2.error}" if result2.is_err() else "no error")
 
         result3 = yield Safe(failing_program())
-        val3 = f"recovered from {type(result3.error).__name__}" if result3.is_err else result3.value
-        yield Log(f"Caught error: {result3.error}" if result3.is_err else "no error")
+        val3 = f"recovered from {type(result3.error).__name__}" if result3.is_err() else result3.value
+        yield Log(f"Caught error: {result3.error}" if result3.is_err() else "no error")
 
         result4 = yield Safe(success_program())
-        val4 = result4.value if result4.is_ok else f"recovered from {type(result4.error).__name__}"
+        val4 = result4.value if result4.is_ok() else f"recovered from {type(result4.error).__name__}"
 
         return (val1, val2, val3, val4)
 
@@ -487,7 +481,7 @@ async def test_result_safe_effect():  # noqa: PINJ040
     context = ExecutionContext()
 
     result = await engine.run_async(main_program(), context)
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == (
         "recovered from ValueError",
         "recovered from ValueError",
@@ -534,46 +528,18 @@ async def test_io_run_effect():  # noqa: PINJ040
 
 
 @pytest.mark.asyncio
-async def test_io_print_effect(capsys):  # noqa: PINJ040
-    """Test Print effect for console output."""
-
-    @do
-    def program() -> EffectGenerator[None]:
-        # Test with Effects API
-        yield Print("Message from Effects API")
-
-        # Test with capitalized alias
-        yield Print("Message from Print")
-
-        # Test with lowercase (backwards compatibility)
-        yield print_("Message from print_")
-
-    engine = ProgramInterpreter()
-    context = ExecutionContext(io_allowed=True)
-
-    result = await engine.run_async(program(), context)
-    assert result.is_ok
-
-    captured = capsys.readouterr()
-    assert "Message from Effects API" in captured.out
-    assert "Message from Print" in captured.out
-    assert "Message from print_" in captured.out
-
-
-@pytest.mark.asyncio
 async def test_io_not_allowed():  # noqa: PINJ040
     """Test that IO effects fail when io_allowed=False."""
 
     @do
     def program() -> EffectGenerator[None]:
-        yield Print("Should fail")
+        yield IO(lambda: print("Should fail"))
 
     engine = ProgramInterpreter()
     context = ExecutionContext(io_allowed=False)
 
     result = await engine.run_async(program(), context)
     assert result.is_err
-    # Unwrap EffectFailure if needed
     error = result.result.error
     from doeff.types import EffectFailure
     if isinstance(error, EffectFailure):
@@ -715,13 +681,14 @@ async def test_all_effects_integration():  # noqa: PINJ040
 
         # IO
         if config.get("debug"):
-            yield Print(f"Debug: counter={final_count}")
+            yield Log(f"Debug: counter={final_count}")
 
         # Error handling
         @do
         def maybe_fail() -> EffectGenerator[str]:
             if config.get("fail"):
-                yield Fail(ValueError("Intentional"))
+                raise ValueError("Intentional")
+            yield Log("no failure")
             return "ok"
 
         safe_result = yield Safe(maybe_fail())

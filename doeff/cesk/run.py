@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import warnings
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -56,23 +57,25 @@ async def _run_internal(
     store = {**store, "__dispatcher__": dispatcher}
 
     state = CESKState.initial(program, env, store)
+    step_count = 0
 
     while True:
         result = step(state, dispatcher)
+        step_count += 1
 
         if on_step is not None:
             try:
                 if isinstance(result, Done):
-                    snapshot = ExecutionSnapshot.from_state(state, "completed", 0, storage)
+                    snapshot = ExecutionSnapshot.from_state(state, "completed", step_count, storage)
                 elif isinstance(result, Failed):
-                    snapshot = ExecutionSnapshot.from_state(state, "failed", 0, storage)
+                    snapshot = ExecutionSnapshot.from_state(state, "failed", step_count, storage)
                 elif isinstance(result, Suspended):
-                    snapshot = ExecutionSnapshot.from_state(state, "paused", 0, storage)
+                    snapshot = ExecutionSnapshot.from_state(state, "paused", step_count, storage)
                 else:
-                    snapshot = ExecutionSnapshot.from_state(result, "running", 0, storage)
+                    snapshot = ExecutionSnapshot.from_state(result, "running", step_count, storage)
                 on_step(snapshot)
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.warning("on_step callback error: %s", exc)
 
         if isinstance(result, Done):
             return Ok(result.value), result.store, None

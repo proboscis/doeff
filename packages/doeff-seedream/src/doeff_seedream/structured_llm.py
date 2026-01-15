@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image
 
-from doeff import Ask, AtomicGet, AtomicUpdate, Await, Catch, EffectGenerator, Fail, Log, Retry, Step, do
+from doeff import Ask, AtomicGet, AtomicUpdate, Await, EffectGenerator, Fail, Log, Retry, Safe, Step, do
 
 from .client import SeedreamClient, get_seedream_client, track_api_call
 from .costs import CostEstimate, calculate_cost
@@ -239,8 +239,10 @@ def edit_image__seedream4(
             "pass provider-specific overrides via generation_config_overrides instead."
         )
 
+    @do
     def ask_optional(name: str):
-        return Catch(Ask(name), lambda exc: None if isinstance(exc, KeyError) else None)  # type: ignore[return-value]
+        safe_result = yield Safe(Ask(name))
+        return safe_result.value if safe_result.is_ok() else None
 
     payload, timeout = _build_payload(
         prompt=prompt,
@@ -295,8 +297,9 @@ def edit_image__seedream4(
             )
             return response
 
-        @do
-        def handle_error(exc: Exception) -> EffectGenerator[dict[str, Any]]:
+        safe_result = yield Safe(api_call())
+        if safe_result.is_err():
+            exc = safe_result.error
             yield track_api_call(
                 operation="images.generate",
                 model=model,
@@ -307,7 +310,7 @@ def edit_image__seedream4(
             )
             yield Fail(exc)
 
-        return (yield Catch(api_call(), handle_error))
+        return safe_result.value
 
     response: dict[str, Any] = yield Retry(
         make_api_call(),
