@@ -40,10 +40,8 @@ def order_service(order_id):
 def get_order_handler(order_id):
     yield Log(f"Request: GET /orders/{order_id}")
     
-    order = yield Catch(
-        order_service(order_id),
-        lambda e: {"error": str(e)}
-    )
+    result = yield Safe(order_service(order_id))
+    order = result.value if result.is_ok() else {"error": str(result.error)}
     
     yield Log(f"Response: {order}")
     return order
@@ -170,10 +168,10 @@ def with_error_handling(operation, operation_name):
     yield Log(f"Starting: {operation_name}")
     yield Step(f"start_{operation_name}")
     
-    result = yield Catch(
-        operation(),
-        lambda e: handle_error(operation_name, e)
-    )
+    safe_result = yield Safe(operation())
+    if safe_result.is_err():
+        yield handle_error(operation_name, safe_result.error)
+    result = safe_result.value if safe_result.is_ok() else None
     
     yield Step(f"end_{operation_name}")
     yield Log(f"Completed: {operation_name}")
@@ -184,7 +182,6 @@ def with_error_handling(operation, operation_name):
 def handle_error(operation_name, error):
     yield Log(f"Error in {operation_name}: {error}")
     yield Annotate({"error": str(error), "operation": operation_name})
-    yield Fail(error)
 
 # Usage
 @do
@@ -203,20 +200,17 @@ Exponential backoff for retries:
 @do
 def retry_with_exponential_backoff(operation, max_attempts=5):
     for attempt in range(1, max_attempts + 1):
-        result = yield Catch(
-            operation(),
-            lambda e: {"error": e, "attempt": attempt}
-        )
+        safe_result = yield Safe(operation())
         
-        if "error" not in result:
-            return result
+        if safe_result.is_ok():
+            return safe_result.value
         
         if attempt < max_attempts:
             delay = 2 ** attempt  # Exponential backoff
             yield Log(f"Retry {attempt} failed, waiting {delay}s")
             yield Await(asyncio.sleep(delay))
         else:
-            yield Fail(result["error"])
+            yield Fail(safe_result.error)
 
 # Usage
 @do
@@ -294,22 +288,17 @@ def circuit_breaker(operation, threshold=5, timeout=60):
             yield Put("circuit_last_failure", None)
     
     # Try operation
-    result = yield Catch(
-        operation(),
-        lambda e: handle_circuit_failure(e, now)
-    )
+    safe_result = yield Safe(operation())
     
-    if "error" not in result:
+    if safe_result.is_ok():
         # Success - reset counter
         yield AtomicUpdate("circuit_failures", lambda _: 0)
-    
-    return result
-
-@do
-def handle_circuit_failure(error, timestamp):
-    yield AtomicUpdate("circuit_failures", lambda x: x + 1)
-    yield Put("circuit_last_failure", timestamp)
-    yield Fail(error)
+        return safe_result.value
+    else:
+        # Failure - update circuit breaker state
+        yield AtomicUpdate("circuit_failures", lambda x: x + 1)
+        yield Put("circuit_last_failure", now)
+        yield Fail(safe_result.error)
 ```
 
 ## State Management Patterns
@@ -380,18 +369,15 @@ def with_state_snapshot(operation):
     state = yield Get("_state")
     snapshot = state.copy() if state else {}
     
-    result = yield Catch(
-        operation(),
-        lambda e: restore_and_fail(snapshot, e)
-    )
+    safe_result = yield Safe(operation())
     
-    return result
-
-@do
-def restore_and_fail(snapshot, error):
-    yield Put("_state", snapshot)
-    yield Log("State restored from snapshot")
-    yield Fail(error)
+    if safe_result.is_err():
+        # Restore state and fail
+        yield Put("_state", snapshot)
+        yield Log("State restored from snapshot")
+        yield Fail(safe_result.error)
+    
+    return safe_result.value
 ```
 
 ## Performance Patterns
@@ -453,11 +439,11 @@ Cache within execution:
 @do
 def expensive_computation(key):
     # Try memo
-    result = yield Recover(
-        MemoGet(key),
-        fallback=compute_and_memo(key)
-    )
-    return result
+    safe_result = yield Safe(MemoGet(key))
+    if safe_result.is_ok():
+        return safe_result.value
+    else:
+        return (yield compute_and_memo(key))
 
 @do
 def compute_and_memo(key):
@@ -649,29 +635,23 @@ def good_parameter_passing():
 ```python
 @do
 def bad_error_handling():
-    result = yield Catch(
-        risky_operation(),
-        lambda e: None  # Swallows error silently
-    )
-    return result  # Might be None unexpectedly
+    result = yield Safe(risky_operation())
+    return result.value  # Might be None unexpectedly, error is silently ignored
 ```
 
 **GOOD:**
 ```python
 @do
 def good_error_handling():
-    result = yield Catch(
-        risky_operation(),
-        lambda e: handle_error_properly(e)
-    )
-    return result
-
-@do
-def handle_error_properly(error):
-    yield Log(f"Error occurred: {error}")
-    yield Annotate({"error": str(error)})
-    # Return default value or re-raise
-    yield Fail(error)
+    result = yield Safe(risky_operation())
+    
+    if result.is_err():
+        yield Log(f"Error occurred: {result.error}")
+        yield Annotate({"error": str(result.error)})
+        # Return default value or re-raise
+        yield Fail(result.error)
+    
+    return result.value
 ```
 
 ### ❌ Deep Nesting

@@ -78,14 +78,12 @@ class CESKResult(Generic[T]):
     result: Result[T]
     captured_traceback: CapturedTraceback | None = None
 
-    @property
     def is_ok(self) -> bool:
-        """Check if result is successful."""
+        """Return True when the result is successful."""
         return isinstance(self.result, Ok)
 
-    @property
     def is_err(self) -> bool:
-        """Check if result is an error."""
+        """Return True when the result represents a failure."""
         return isinstance(self.result, Err)
 
     @property

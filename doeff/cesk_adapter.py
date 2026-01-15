@@ -34,7 +34,7 @@ class CESKRunResult(Generic[T]):
     RunResult-compatible wrapper for CESK interpreter output.
 
     Provides the same interface as RunResult for test compatibility:
-    - .is_ok / .is_err
+    - .is_ok() / .is_err()
     - .value
     - .log
     - .state
@@ -50,14 +50,12 @@ class CESKRunResult(Generic[T]):
         """The underlying Ok/Err result."""
         return self._result
 
-    @property
     def is_ok(self) -> bool:
-        """Check if the result is successful."""
+        """Return True when the result is successful."""
         return isinstance(self._result, Ok)
 
-    @property
     def is_err(self) -> bool:
-        """Check if the result is an error."""
+        """Return True when the result represents a failure."""
         return isinstance(self._result, Err)
 
     @property
