@@ -3,6 +3,7 @@
 These effects provide runtime-agnostic time control:
 - Delay: Wait for a duration
 - WaitUntil: Wait until a specific time
+- GetTime: Get current time (real or simulated)
 
 Behavior varies by runtime:
 - AsyncioRuntime/RealtimeScheduler: Real wall-clock wait
@@ -13,6 +14,7 @@ Usage:
     def my_program():
         yield Delay(seconds=5.0)  # Wait 5 seconds
         yield WaitUntil(datetime(2025, 1, 1, 12, 0, 0))  # Wait until noon
+        now = yield GetTime()  # Get current time
         return "done"
 """
 
@@ -77,6 +79,20 @@ class WaitUntilEffect(EffectBase):
     def intercept(
         self, transform: Callable[["Effect"], "Effect | Program"]
     ) -> "WaitUntilEffect":
+        return self
+
+
+@dataclass(frozen=True)
+class GetTimeEffect(EffectBase):
+    """Get current time.
+
+    In AsyncioRuntime/SyncRuntime: Returns datetime.now()
+    In SimulationRuntime: Returns simulated current time
+    """
+
+    def intercept(
+        self, transform: Callable[["Effect"], "Effect | Program"]
+    ) -> "GetTimeEffect":
         return self
 
 
@@ -153,11 +169,45 @@ def wait_until(target_time: datetime) -> "Effect":
     )
 
 
+def GetTime() -> "Effect":
+    """Get current time.
+
+    Returns:
+        An effect that, when yielded, returns the current datetime.
+        In SimulationRuntime, returns the simulated time.
+
+    Example:
+        @do
+        def my_program():
+            now = yield GetTime()
+            return f"Current time: {now}"
+    """
+    return create_effect_with_trace(
+        GetTimeEffect(),
+        skip_frames=3,
+    )
+
+
+def get_time() -> "Effect":
+    """Get current time (lowercase alias).
+
+    Returns:
+        An effect that, when yielded, returns the current datetime.
+    """
+    return create_effect_with_trace(
+        GetTimeEffect(),
+        skip_frames=3,
+    )
+
+
 __all__ = [
     "DelayEffect",
     "WaitUntilEffect",
+    "GetTimeEffect",
     "Delay",
     "delay",
     "WaitUntil",
     "wait_until",
+    "GetTime",
+    "get_time",
 ]

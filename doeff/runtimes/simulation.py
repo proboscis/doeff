@@ -104,6 +104,7 @@ class SimulationRuntime(RuntimeMixin):
         """Run program with simulated time. Raises EffectError on failure."""
         dispatcher = self._create_dispatcher()
         E, S = self._prepare_env_store(env, store, dispatcher)
+        S["__current_time__"] = self._current_time
         
         initial_state = CESKState.initial(program, E, S)
         self._submit(self._current_time, initial_state, None)
@@ -114,9 +115,8 @@ class SimulationRuntime(RuntimeMixin):
             task = heapq.heappop(self._queue)
             self._current_time = task.wake_time
             
-            # If task has a resume value, we need to resume from suspended state
-            # For initial task or tasks without resume, just step from current state
             state = task.state
+            state.S["__current_time__"] = self._current_time
             
             result = self._step_until_effect(state, dispatcher)
             
