@@ -16,7 +16,7 @@ from doeff._vendor import FrozenDict
 # E: Environment - immutable mapping (copy-on-write semantics)
 Environment: TypeAlias = FrozenDict[Any, Any]
 
-# S: Store - mutable state (dict with reserved keys: __log__, __memo__, __durable_storage__, __dispatcher__)
+# S: Store - mutable state (dict with reserved keys: __log__, __memo__, __cache_storage__, __dispatcher__)
 Store: TypeAlias = dict[str, Any]
 
 
