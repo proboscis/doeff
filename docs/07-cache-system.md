@@ -88,7 +88,7 @@ def smart_cache(key, fresh=False):
         value = yield compute_value()
     else:
         safe_result = yield Safe(CacheGet(key))
-        if safe_result.is_ok:
+        if safe_result.is_ok():
             value = safe_result.value
         else:
             value = yield compute_and_cache(key)
