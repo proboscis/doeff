@@ -1,5 +1,5 @@
 """
-Tests for durable cache effects with CESK interpreter.
+Tests for cache effects with CESK interpreter.
 
 Test IDs from issue spec:
 - T7: Workflow replay uses cached values - Expensive op not re-run
@@ -16,11 +16,11 @@ import pytest
 
 from doeff.cesk import run_sync
 from doeff.do import do
-from doeff.effects.durable_cache import (
-    cachedelete,
-    cacheexists,
-    cacheget,
-    cacheput,
+from doeff.effects.cache import (
+    CacheDelete,
+    CacheExists,
+    CacheGet,
+    CachePut,
 )
 from doeff.effects.io import perform
 from doeff.effects.pure import Pure
@@ -28,17 +28,17 @@ from doeff.storage import InMemoryStorage, SQLiteStorage
 from doeff.cesk_observability import ExecutionSnapshot
 
 
-class TestDurableCacheEffects:
-    """Tests for durable cache effects in CESK interpreter."""
+class TestCacheEffects:
+    """Tests for cache effects in CESK interpreter."""
 
     def test_cacheput_then_cacheget(self) -> None:
-        """T1: cacheput then cacheget same key returns cached value."""
+        """T1: CachePut then CacheGet same key returns cached value."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            yield cacheput("test_key", {"data": 42})
-            result = yield cacheget("test_key")
+            yield CachePut("test_key", {"data": 42})
+            result = yield CacheGet("test_key")
             return result
 
         result = run_sync(workflow(), storage=storage)
@@ -46,12 +46,12 @@ class TestDurableCacheEffects:
         assert result.value == {"data": 42}
 
     def test_cacheget_nonexistent(self) -> None:
-        """T2: cacheget non-existent key returns None."""
+        """T2: CacheGet non-existent key returns None."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            result = yield cacheget("nonexistent")
+            result = yield CacheGet("nonexistent")
             return result
 
         result = run_sync(workflow(), storage=storage)
@@ -59,14 +59,14 @@ class TestDurableCacheEffects:
         assert result.value is None
 
     def test_cacheput_overwrites(self) -> None:
-        """T3: cacheput overwrites existing value."""
+        """T3: CachePut overwrites existing value."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            yield cacheput("key", "old_value")
-            yield cacheput("key", "new_value")
-            result = yield cacheget("key")
+            yield CachePut("key", "old_value")
+            yield CachePut("key", "new_value")
+            result = yield CacheGet("key")
             return result
 
         result = run_sync(workflow(), storage=storage)
@@ -74,14 +74,14 @@ class TestDurableCacheEffects:
         assert result.value == "new_value"
 
     def test_cachedelete_existing(self) -> None:
-        """T4: cachedelete existing key returns True, key gone."""
+        """T4: CacheDelete existing key returns True, key gone."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            yield cacheput("key", "value")
-            deleted = yield cachedelete("key")
-            exists_after = yield cacheexists("key")
+            yield CachePut("key", "value")
+            deleted = yield CacheDelete("key")
+            exists_after = yield CacheExists("key")
             return {"deleted": deleted, "exists_after": exists_after}
 
         result = run_sync(workflow(), storage=storage)
@@ -90,37 +90,37 @@ class TestDurableCacheEffects:
         assert result.value["exists_after"] is False
 
     def test_cachedelete_nonexistent(self) -> None:
-        """T4: cachedelete non-existent key returns False."""
+        """T4: CacheDelete non-existent key returns False."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            return (yield cachedelete("nonexistent"))
+            return (yield CacheDelete("nonexistent"))
 
         result = run_sync(workflow(), storage=storage)
         assert result.is_ok
         assert result.value is False
 
     def test_cacheexists_existing(self) -> None:
-        """T5: cacheexists on existing key returns True."""
+        """T5: CacheExists on existing key returns True."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            yield cacheput("key", "value")
-            return (yield cacheexists("key"))
+            yield CachePut("key", "value")
+            return (yield CacheExists("key"))
 
         result = run_sync(workflow(), storage=storage)
         assert result.is_ok
         assert result.value is True
 
     def test_cacheexists_nonexistent(self) -> None:
-        """T5: cacheexists on non-existent key returns False."""
+        """T5: CacheExists on non-existent key returns False."""
         storage = InMemoryStorage()
 
         @do
         def workflow():
-            return (yield cacheexists("nonexistent"))
+            return (yield CacheExists("nonexistent"))
 
         result = run_sync(workflow(), storage=storage)
         assert result.is_ok
@@ -137,24 +137,21 @@ class TestDurableCacheEffects:
 
         @do
         def workflow():
-            # Idempotent pattern: check cache first
-            result = yield cacheget("expensive_step")
+            result = yield CacheGet("expensive_step")
             if result is None:
                 result = yield perform(expensive_operation)
-                yield cacheput("expensive_step", result)
+                yield CachePut("expensive_step", result)
             return result
 
-        # First run - should execute expensive operation
         result1 = run_sync(workflow(), storage=storage)
         assert result1.is_ok
         assert result1.value == {"computed": 42}
         assert execution_count["expensive_op"] == 1
 
-        # Second run (replay) - should use cache, not re-run
         result2 = run_sync(workflow(), storage=storage)
         assert result2.is_ok
         assert result2.value == {"computed": 42}
-        assert execution_count["expensive_op"] == 1  # Still 1!
+        assert execution_count["expensive_op"] == 1
 
     def test_sqlite_persistence(self, tmp_path: Path) -> None:
         """T6: SQLite storage persists across runs."""
@@ -163,19 +160,18 @@ class TestDurableCacheEffects:
 
         @do
         def write_workflow():
-            yield cacheput("persistent_data", {"step": 1, "result": "done"})
+            yield CachePut("persistent_data", {"step": 1, "result": "done"})
             return "written"
 
         result1 = run_sync(write_workflow(), storage=storage)
         assert result1.is_ok
         storage.close()
 
-        # New connection
         storage2 = SQLiteStorage(db_path)
 
         @do
         def read_workflow():
-            return (yield cacheget("persistent_data"))
+            return (yield CacheGet("persistent_data"))
 
         result2 = run_sync(read_workflow(), storage=storage2)
         assert result2.is_ok
@@ -187,16 +183,15 @@ class TestDurableCacheEffects:
 
         @do
         def workflow():
-            get_result = yield cacheget("key")
-            exists_result = yield cacheexists("key")
-            delete_result = yield cachedelete("key")
+            get_result = yield CacheGet("key")
+            exists_result = yield CacheExists("key")
+            delete_result = yield CacheDelete("key")
             return {
                 "get": get_result,
                 "exists": exists_result,
                 "delete": delete_result,
             }
 
-        # Run without storage parameter
         result = run_sync(workflow())
         assert result.is_ok
         assert result.value["get"] is None
@@ -278,7 +273,7 @@ class TestObservability:
 
         @do
         def workflow():
-            yield cacheput("new_key", "new_value")
+            yield CachePut("new_key", "new_value")
             return "done"
 
         result = run_sync(workflow(), storage=storage, on_step=on_step)
@@ -305,17 +300,16 @@ class TestObservability:
         @do
         def workflow():
             yield Pure(1)
-            yield cacheput("key", "value")
-            result = yield cacheget("key")
+            yield CachePut("key", "value")
+            result = yield CacheGet("key")
             return result
 
         result = run_sync(workflow(), storage=storage, on_step=on_step)
         assert result.is_ok
 
-        # Should have seen Pure and cache effects
         assert "PureEffect" in effects_seen
-        assert "DurableCachePut" in effects_seen
-        assert "DurableCacheGet" in effects_seen
+        assert "CachePutEffect" in effects_seen
+        assert "CacheGetEffect" in effects_seen
 
     def test_snapshot_status_transitions(self) -> None:
         """ExecutionSnapshot shows correct status transitions."""
