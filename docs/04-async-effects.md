@@ -491,7 +491,8 @@ def parallel_with_fallback():
 ```python
 import asyncio
 import pytest
-from doeff import do, Await, Log, create_runtime
+from doeff import do, Await, Log
+from doeff.runtimes import AsyncioRuntime
 
 @pytest.mark.asyncio
 async def test_async_program():

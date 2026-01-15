@@ -216,7 +216,7 @@ def trackable_side_effects():
 Mock IO effects in tests by providing custom handlers:
 
 ```python
-from doeff import create_runtime, EffectRuntime
+from doeff.runtimes import AsyncioRuntime
 
 # Create runtime with custom handlers for testing
 def mock_io_handler(effect, env, store):
@@ -224,7 +224,7 @@ def mock_io_handler(effect, env, store):
     return Resume("mocked_result", store)
 
 # Configure runtime with custom handlers
-runtime = EffectRuntime(handlers={"IO": mock_io_handler})
+runtime = AsyncioRuntime(handlers={"IO": mock_io_handler})
 result = await runtime.run(my_program())
 ```
 
