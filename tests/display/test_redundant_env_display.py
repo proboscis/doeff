@@ -1,17 +1,17 @@
 """Test that RunResult.display shows redundant environment settings."""
 
 from doeff import Program, ProgramInterpreter, do
-from doeff.effects import Dep, Local
+from doeff.effects import Ask
 
 
 def test_display_shows_redundant_env_settings():
     """Verify that display() identifies and shows unused environment variables."""
     from doeff.types import ExecutionContext, WGraph, WStep, WNode
 
-    # Create a program that only uses 'used_var' via Dep
+    # Create a program that only uses 'used_var' via Ask
     @do
     def my_program():
-        used = yield Dep("used_var")
+        used = yield Ask("used_var")
         return f"Got: {used}"
 
     # Provide env with both used and unused variables via initial context
@@ -61,8 +61,8 @@ def test_display_no_redundant_when_all_used():
 
     @do
     def my_program():
-        var1 = yield Dep("var1")
-        var2 = yield Dep("var2")
+        var1 = yield Ask("var1")
+        var2 = yield Ask("var2")
         return f"{var1}, {var2}"
 
     env = {
@@ -144,7 +144,7 @@ def test_display_shows_env_section_by_default():
 
     @do
     def my_program():
-        used = yield Dep("used_var")
+        used = yield Ask("used_var")
         return used
 
     env = {

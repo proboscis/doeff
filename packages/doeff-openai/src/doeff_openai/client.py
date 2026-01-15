@@ -144,19 +144,16 @@ class OpenAIClient:
 @do
 def get_openai_client() -> EffectGenerator[OpenAIClient]:
     """Get OpenAI client from environment or create new one."""
-    # Try to get from Reader environment first
-    from doeff import Catch, do
+    from doeff import Safe, do
 
     # Create a program that asks for the client
     @do
     def try_ask_client():
         return (yield Ask("openai_client"))
 
-    # Use Catch to handle KeyError
-    client = yield Catch(
-        try_ask_client(),
-        lambda e: None if isinstance(e, KeyError) else None
-    )
+    # Use Safe to handle KeyError
+    safe_result = yield Safe(try_ask_client())
+    client = safe_result.value if safe_result.is_ok() else None
     if client:
         return client
 
@@ -171,10 +168,8 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
     def try_ask_api_key():
         return (yield Ask("openai_api_key"))
 
-    api_key = yield Catch(
-        try_ask_api_key(),
-        lambda e: None if isinstance(e, KeyError) else None
-    )
+    safe_api_key = yield Safe(try_ask_api_key())
+    api_key = safe_api_key.value if safe_api_key.is_ok() else None
 
     # If not found, try State
     if not api_key:

@@ -8,7 +8,7 @@ import pytest
 
 from doeff._vendor import Err, Ok, Some, NOTHING
 from doeff.do import do
-from doeff.effects import Pure, Safe, Fail
+from doeff.effects import Pure, Safe, Log
 from doeff.program import Program
 
 
@@ -47,8 +47,9 @@ def succeeds():
 
 @do
 def fails_with_effect():
-    """A @do function that fails via Fail effect."""
-    yield Fail(RuntimeError("effect failure"))
+    """A @do function that fails by raising an exception."""
+    raise RuntimeError("effect failure")
+    yield Log("never reached")  # keeps it a generator
     return "never reached"
 
 

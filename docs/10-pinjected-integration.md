@@ -161,7 +161,7 @@ result = await resolver.provide(injected)  # 3. Dep -> resolver.provide("databas
 ### Service Layer Pattern
 
 ```python
-from doeff import do, Dep, Log, Catch
+from doeff import do, Dep, Log, Safe
 
 @do
 def user_service(user_id: int):
@@ -170,14 +170,11 @@ def user_service(user_id: int):
     logger = yield Dep("logger")
     
     # Try cache first
-    cached = yield Catch(
-        cache.get(f"user_{user_id}"),
-        lambda e: None
-    )
+    cache_result = yield Safe(cache.get(f"user_{user_id}"))
     
-    if cached:
+    if cache_result.is_ok():
         yield Log(f"Cache hit for user {user_id}")
-        return cached
+        return cache_result.value
     
     # Fetch from database
     yield Log(f"Fetching user {user_id} from database")
@@ -264,14 +261,12 @@ def auth_service():
 def api_handler(username, password):
     # Compose services
     auth = yield auth_service()
-    user = yield Catch(
-        auth(username, password),
-        lambda e: None
-    )
+    result = yield Safe(auth(username, password))
     
-    if not user:
+    if result.is_err():
         return {"error": "Authentication failed"}
     
+    user = result.value
     return {"user_id": user.id, "username": user.username}
 ```
 
@@ -359,11 +354,11 @@ async def test_error_handling():
     @do
     def error_handling_program():
         db = yield Dep("database")
-        result = yield Catch(
-            db.query(),
-            lambda e: {"error": str(e)}
-        )
-        return result
+        safe_result = yield Safe(db.query())
+        if safe_result.is_ok():
+            return safe_result.value
+        else:
+            return {"error": str(safe_result.error)}
     
     injected = program_to_injected(error_handling_program())
     result = await resolver.provide(injected)

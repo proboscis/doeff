@@ -14,7 +14,6 @@ from doeff import (
     Await,
     Effect,
     EffectGenerator,
-    Fail,
     Gather,
     Get,
     IO,
@@ -339,8 +338,7 @@ async def test_spawn_safe_handles_failure(backend: str) -> None:
 
         @do
         def worker() -> EffectGenerator[int]:
-            yield Fail(RuntimeError("boom"))
-            return 0
+            raise RuntimeError("boom")
 
         @do
         def program() -> EffectGenerator[int]:
@@ -474,8 +472,7 @@ async def test_spawn_exception_propagates(backend: str) -> None:
 
         @do
         def worker() -> EffectGenerator[int]:
-            yield Fail(ValueError("boom"))
-            return 0
+            raise ValueError("boom")
 
         @do
         def program() -> EffectGenerator[int]:
@@ -717,7 +714,7 @@ class TestEnvSerializationIssues:
 
         result = await engine.run_async(program())
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == 10  # 5 * 2 = 10
 
     @pytest.mark.asyncio
@@ -747,7 +744,7 @@ class TestEnvSerializationIssues:
 
             result = await engine.run_async(program())
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == 10
 
     @pytest.mark.asyncio
@@ -796,7 +793,7 @@ class TestEnvSerializationIssues:
 
         result = await engine.run_async(program())
 
-        assert result.is_ok, f"Expected success, got error: {result.result}"
+        assert result.is_ok(), f"Expected success, got error: {result.result}"
         assert result.value == "expected_value"
 
 

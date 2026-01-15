@@ -13,11 +13,11 @@ import httpx
 
 from doeff import (
     Ask,
-    Catch,
     EffectGenerator,
     Get,
     Log,
     Put,
+    Safe,
     Step,
     do,
 )
@@ -369,12 +369,8 @@ def get_openrouter_client() -> EffectGenerator[OpenRouterClient]:
     def _ask_client() -> EffectGenerator[OpenRouterClient]:
         return (yield Ask("openrouter_client"))
 
-    def _handle_missing(error: Exception) -> OpenRouterClient | None:  # pragma: no cover
-        if isinstance(error, KeyError):
-            return None
-        raise error
-
-    client = yield Catch(_ask_client(), _handle_missing)
+    safe_client = yield Safe(_ask_client())
+    client = safe_client.value if safe_client.is_ok() else None
     if client:
         return client
 
@@ -386,29 +382,20 @@ def get_openrouter_client() -> EffectGenerator[OpenRouterClient]:
     def _ask(key: str) -> EffectGenerator[Any]:
         return (yield Ask(key))
 
-    def _raise(exc: Exception) -> None:  # pragma: no cover - safety net
-        raise exc
-
-    api_key = yield Catch(
-        _ask("openrouter_api_key"),
-        lambda exc: None if isinstance(exc, KeyError) else (_raise(exc)),
-    )
+    safe_api_key = yield Safe(_ask("openrouter_api_key"))
+    api_key = safe_api_key.value if safe_api_key.is_ok() else None
     if not api_key:
         api_key = yield Get("openrouter_api_key")
 
-    base_url = yield Catch(
-        _ask("openrouter_base_url"),
-        lambda exc: None if isinstance(exc, KeyError) else (_raise(exc)),
-    )
+    safe_base_url = yield Safe(_ask("openrouter_base_url"))
+    base_url = safe_base_url.value if safe_base_url.is_ok() else None
     if not base_url:
         base_url = yield Get("openrouter_base_url")
     if not base_url:
         base_url = DEFAULT_BASE_URL
 
-    timeout_value = yield Catch(
-        _ask("openrouter_timeout"),
-        lambda exc: None if isinstance(exc, KeyError) else (_raise(exc)),
-    )
+    safe_timeout = yield Safe(_ask("openrouter_timeout"))
+    timeout_value = safe_timeout.value if safe_timeout.is_ok() else None
     if timeout_value is None:
         timeout_value = yield Get("openrouter_timeout")
     timeout: float | None
@@ -417,10 +404,8 @@ def get_openrouter_client() -> EffectGenerator[OpenRouterClient]:
     except (TypeError, ValueError):  # pragma: no cover - defensive
         timeout = None
 
-    default_headers = yield Catch(
-        _ask("openrouter_default_headers"),
-        lambda exc: None if isinstance(exc, KeyError) else (_raise(exc)),
-    )
+    safe_headers = yield Safe(_ask("openrouter_default_headers"))
+    default_headers = safe_headers.value if safe_headers.is_ok() else None
     if default_headers is None:
         default_headers = yield Get("openrouter_default_headers")
     if default_headers is not None and not isinstance(default_headers, Mapping):
