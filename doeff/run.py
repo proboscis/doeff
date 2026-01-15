@@ -210,6 +210,7 @@ def _run_program_from_path(
 
     context = RunContext(
         program_path=program_path,
+        program_instance=None,
         interpreter_path=interpreter if isinstance(interpreter, str) else None,
         env_paths=env_paths,
         apply_path=apply if isinstance(apply, str) else None,
