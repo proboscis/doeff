@@ -12,7 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 
-from doeff._vendor import Err, Ok, Result
+from doeff._vendor import Err, Ok, Result, FrozenDict
 from doeff.runtime import AwaitPayload, HandlerResult, Schedule
 
 if TYPE_CHECKING:
@@ -20,16 +20,11 @@ if TYPE_CHECKING:
     from doeff.cesk import Environment, Store
 
 
-# ============================================================================
-# Thread Pool Management
-# ============================================================================
-
 _shared_executor: ThreadPoolExecutor | None = None
 _shared_executor_lock = threading.Lock()
 
 
 def _get_shared_executor() -> ThreadPoolExecutor:
-    """Get or create the shared thread pool executor for 'pooled' strategy."""
     global _shared_executor
     if _shared_executor is None:
         with _shared_executor_lock:
@@ -41,13 +36,7 @@ def _get_shared_executor() -> ThreadPoolExecutor:
     return _shared_executor
 
 
-# ============================================================================
-# State Merging Helpers
-# ============================================================================
-
-
 def _merge_store(parent_store: Store, child_store: Store) -> Store:
-    """Merge child store into parent after child completion."""
     merged = {**parent_store}
 
     for key, value in child_store.items():
@@ -68,7 +57,6 @@ def _merge_store(parent_store: Store, child_store: Store) -> Store:
 
 
 def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
-    """Merge thread state: child state replaces parent (except logs append)."""
     merged = {}
 
     for key, value in child_store.items():
@@ -96,9 +84,18 @@ def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
     return merged
 
 
-# ============================================================================
-# Effect Handlers
-# ============================================================================
+async def _run_program_internal(program, env, store, dispatcher=None):
+    """Internal helper to run a program and return (Result, Store)."""
+    from doeff.runtimes import AsyncioRuntime
+    
+    E = FrozenDict(env) if not isinstance(env, FrozenDict) else env
+    
+    runtime = AsyncioRuntime()
+    if dispatcher is not None:
+        store = {**store, "__dispatcher__": dispatcher}
+    
+    runtime_result = await runtime.run_safe(program, E, store)
+    return runtime_result.result, runtime_result.final_store or store
 
 
 def handle_future_await(
@@ -128,8 +125,7 @@ def handle_spawn(
     final_store_holder: dict[str, Any] = {"store": None}
 
     async def run_and_capture_store():
-        from doeff.cesk import _run_internal
-        result, final_store, _ = await _run_internal(
+        result, final_store = await _run_program_internal(
             effect.program, child_env, child_store, dispatcher=parent_dispatcher
         )
         final_store_holder["store"] = final_store
@@ -162,19 +158,18 @@ def handle_thread(
     strategy = effect.strategy
 
     async def do_async() -> tuple[Any, Store]:
-        from doeff.cesk import _run_internal
+        from doeff.runtimes import SyncRuntime
+        
         loop = asyncio.get_running_loop()
 
         def run_in_thread() -> tuple[Result, Store]:
-            thread_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(thread_loop)
-            try:
-                result, final_store, _ = thread_loop.run_until_complete(
-                    _run_internal(effect.program, child_env, child_store, dispatcher=parent_dispatcher)
-                )
-                return result, final_store
-            finally:
-                thread_loop.close()
+            runtime = SyncRuntime()
+            E = FrozenDict(child_env) if not isinstance(child_env, FrozenDict) else child_env
+            child_store_with_dispatcher = {**child_store}
+            if parent_dispatcher is not None:
+                child_store_with_dispatcher["__dispatcher__"] = parent_dispatcher
+            result = runtime.run_safe(effect.program, E, child_store_with_dispatcher)
+            return result.result, result.final_store or child_store_with_dispatcher
 
         if strategy == "pooled":
             executor = _get_shared_executor()

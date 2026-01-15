@@ -6,7 +6,7 @@ Each handler is responsible for interpreting specific effects.
 
 .. deprecated::
     This module is deprecated along with ProgramInterpreter.
-    Use EffectRuntime with scheduled_handlers instead.
+    Use AsyncioRuntime, SyncRuntime, or SimulationRuntime from doeff.runtimes instead.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from __future__ import annotations
 import warnings as _warnings
 
 _warnings.warn(
-    "doeff.handlers is deprecated. Use EffectRuntime with scheduled_handlers instead. "
-    "See doeff.scheduled_handlers for the new handler implementations.",
+    "doeff.handlers is deprecated. Use AsyncioRuntime, SyncRuntime, or SimulationRuntime "
+    "from doeff.runtimes instead. See doeff.scheduled_handlers for handler implementations.",
     DeprecationWarning,
     stacklevel=2,
 )

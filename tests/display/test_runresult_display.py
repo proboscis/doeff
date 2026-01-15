@@ -151,7 +151,7 @@ async def test_display_trace_includes_user_frames() -> None:
     verbose_output = result.display(verbose=True)
     assert "helper_outer" in verbose_output
     assert "helper_middle" in verbose_output
-    assert "tests/test_runresult_display.py" in verbose_output
+    assert "tests/display/test_runresult_display.py" in verbose_output
 
 
 @pytest.mark.asyncio

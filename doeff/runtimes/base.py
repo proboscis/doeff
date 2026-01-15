@@ -15,7 +15,6 @@ from doeff.runtime import (
     Resume,
     Schedule,
     SchedulePayload,
-    Suspend,
 )
 from doeff.scheduled_handlers import default_scheduled_handlers
 
@@ -44,6 +43,8 @@ class EffectError(Exception):
             self.__cause__ = cause
         self.cause = cause
         self.effect_traceback = effect_traceback
+        self.final_store: "Store | None" = None
+        self.final_env: "Environment | None" = None
     
     def format_full(self) -> str:
         """Format full error with effect traceback."""
@@ -61,6 +62,8 @@ class RuntimeResult(Generic[T]):
     
     result: Result[T]
     effect_traceback: Any = None
+    final_store: "Store | None" = None
+    final_env: "Environment | None" = None
     
     @property
     def is_ok(self) -> bool:
@@ -139,7 +142,7 @@ class RuntimeMixin:
                 match handler_result:
                     case Resume(value=v, store=s):
                         current = result.resume(v, s)
-                    case Schedule() | Suspend():
+                    case Schedule():
                         return (result, current)
                     case _:
                         raise InterpreterInvariantError(
@@ -173,12 +176,9 @@ class RuntimeMixin:
         match handler_result:
             case Schedule(payload=p, store=s):
                 return (p, s)
-            case Suspend(awaitable=aw, store=s):
-                from doeff.runtime import AwaitPayload
-                return (AwaitPayload(aw), s)
             case _:
                 raise InterpreterInvariantError(
-                    f"Expected Schedule/Suspend, got {handler_result}"
+                    f"Expected Schedule, got {handler_result}"
                 )
 
 

@@ -60,38 +60,52 @@ class SyncRuntime(RuntimeMixin):
             case _:
                 raise TypeError(f"Unknown payload: {type(payload)}")
     
-    def run(
+    def _run_internal(
         self,
         program: "Program[T]",
         env: "Environment | dict | None" = None,
         store: "Store | None" = None,
-    ) -> T:
+    ) -> tuple[T, "Store", "Environment", Any]:
         dispatcher = self._create_dispatcher()
         E, S = self._prepare_env_store(env, store, dispatcher)
         
         state = CESKState.initial(program, E, S)
+        final_E = E
         
         while True:
             result = self._step_until_effect(state, dispatcher)
             
             match result:
-                case Done(value=v):
-                    return v
+                case Done(value=v, store=s):
+                    return (v, s, final_E, None)
                 
-                case Failed(exception=exc, captured_traceback=tb):
-                    raise EffectError(str(exc), exc, tb)
+                case Failed(exception=exc, captured_traceback=tb, store=s):
+                    err = EffectError(str(exc), exc, tb)
+                    err.final_store = s
+                    err.final_env = final_E
+                    raise err
                 
                 case (Suspended() as suspended, CESKState() as last_state):
                     payload, new_store = self._get_payload_from_suspended(
                         suspended, last_state, dispatcher
                     )
                     k = self._make_continuation(suspended, last_state, new_store)
+                    final_E = last_state.E
                     
                     try:
                         value, result_store = self._execute_payload(payload, new_store)
                         state = k.resume(value, result_store)
                     except Exception as ex:
                         state = k.resume_error(ex, new_store)
+
+    def run(
+        self,
+        program: "Program[T]",
+        env: "Environment | dict | None" = None,
+        store: "Store | None" = None,
+    ) -> T:
+        value, _, _, _ = self._run_internal(program, env, store)
+        return value
     
     def run_safe(
         self,
@@ -100,11 +114,13 @@ class SyncRuntime(RuntimeMixin):
         store: "Store | None" = None,
     ) -> RuntimeResult[T]:
         try:
-            value = self.run(program, env, store)
-            return RuntimeResult(Ok(value))
+            value, final_store, final_env, tb = self._run_internal(program, env, store)
+            return RuntimeResult(Ok(value), tb, final_store, final_env)
         except EffectError as e:
             cause = e.cause if isinstance(e.cause, Exception) else e
-            return RuntimeResult(Err(cause), e.effect_traceback)
+            return RuntimeResult(
+                Err(cause), e.effect_traceback, e.final_store, e.final_env
+            )
         except Exception as e:
             return RuntimeResult(Err(e))
 
