@@ -13,10 +13,10 @@ from doeff import (
     Gather,
     Program,
     CESKInterpreter,
+    Safe,
     annotate,
     ask,
     await_,
-    catch,
     do,
     fail,
     get,
@@ -62,10 +62,9 @@ def complex_program(name: str) -> Generator[Effect, Any, dict]:
     # Graph
     yield step(data, meta={"user": name})
 
-    # Error handling
-    safe_result = yield catch(
-        risky_operation(), lambda e: safe_recovery(e)
-    )
+    # Error handling using Safe
+    safe_result = yield Safe(risky_operation())
+    safe_result = safe_result.value if safe_result.is_ok() else (yield safe_recovery(safe_result.error))
 
     # Parallel async using Gather with Programs
     @do
@@ -232,32 +231,19 @@ async def test_composition():
 
     @do
     def composed_program(n: int) -> Generator[Effect, Any, int]:
-        """Compose multiple @do programs."""
-        # Run program_a
-        def a_error_handler(e):
-            @do
-            def handle() -> Generator[Effect, Any, int]:
-                yield tell(f"A failed: {e}")
-                return 0
-            return handle()
+        a_safe = yield Safe(program_a(n))
+        if a_safe.is_err():
+            yield tell(f"A failed: {a_safe.error}")
+            a_result = 0
+        else:
+            a_result = a_safe.value
 
-        a_result = yield catch(
-            program_a(n),
-            a_error_handler,
-        )
-
-        # Run program_b with result from a
-        def b_error_handler(e):
-            @do
-            def handle() -> Generator[Effect, Any, int]:
-                yield tell(f"B failed: {e}")
-                return 0
-            return handle()
-
-        b_result = yield catch(
-            program_b(a_result),
-            b_error_handler,
-        )
+        b_safe = yield Safe(program_b(a_result))
+        if b_safe.is_err():
+            yield tell(f"B failed: {b_safe.error}")
+            b_result = 0
+        else:
+            b_result = b_safe.value
 
         return b_result
 

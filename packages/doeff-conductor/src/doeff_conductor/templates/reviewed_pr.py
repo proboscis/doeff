@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do
+from doeff import do, EffectGenerator
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 def reviewed_pr(
     issue: Issue,
     max_reviews: int = 2,
-) -> PRHandle:
+) -> EffectGenerator[PRHandle]:
     """Reviewed PR workflow: issue -> agent -> review -> PR.
 
     Args:

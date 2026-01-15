@@ -37,47 +37,6 @@ class ResultFailEffect(EffectBase):
 
 
 @dataclass(frozen=True)
-class ResultCatchEffect(EffectBase):
-    """Runs the sub-program and yields either its value or the handler's recovery."""
-
-    sub_program: ProgramLike
-    handler: Callable[[Exception], Any | ProgramLike]
-
-    def __post_init__(self) -> None:
-        ensure_program_like(self.sub_program, name="sub_program")
-        ensure_callable(self.handler, name="handler")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "ResultCatchEffect":
-        sub_program = intercept_value(self.sub_program, transform)
-        handler = intercept_value(self.handler, transform)
-        if sub_program is self.sub_program and handler is self.handler:
-            return self
-        return replace(self, sub_program=sub_program, handler=handler)
-
-
-@dataclass(frozen=True)
-class ResultRecoverEffect(EffectBase):
-    """Executes the sub-program and falls back to the provided value or program."""
-
-    sub_program: ProgramLike
-    fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike]
-
-    def __post_init__(self) -> None:
-        ensure_program_like(self.sub_program, name="sub_program")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "ResultRecoverEffect":
-        sub_program = intercept_value(self.sub_program, transform)
-        fallback = intercept_value(self.fallback, transform)
-        if sub_program is self.sub_program and fallback is self.fallback:
-            return self
-        return replace(self, sub_program=sub_program, fallback=fallback)
-
-
-@dataclass(frozen=True)
 class ResultFinallyEffect(EffectBase):
     """Runs a sub-program and always executes the finalizer afterwards."""
 
@@ -184,24 +143,6 @@ def fail(exc: Exception) -> ResultFailEffect:
     return create_effect_with_trace(ResultFailEffect(exception=exc))
 
 
-def catch(
-    sub_program: ProgramLike,
-    handler: Callable[[Exception], Any | ProgramLike],
-) -> ResultCatchEffect:
-    return create_effect_with_trace(
-        ResultCatchEffect(sub_program=sub_program, handler=handler)
-    )
-
-
-def recover(
-    sub_program: ProgramLike,
-    fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike],
-) -> ResultRecoverEffect:
-    return create_effect_with_trace(
-        ResultRecoverEffect(sub_program=sub_program, fallback=fallback)
-    )
-
-
 def finally_(
     sub_program: ProgramLike,
     finalizer: ProgramLike | Callable[[], Any | ProgramLike],
@@ -245,24 +186,6 @@ def first_success_effect(*programs: ProgramLike) -> ResultFirstSuccessEffect:
 
 def Fail(exc: Exception) -> Effect:
     return create_effect_with_trace(ResultFailEffect(exception=exc), skip_frames=3)
-
-
-def Catch(
-    sub_program: ProgramLike,
-    handler: Callable[[Exception], Any | ProgramLike],
-) -> Effect:
-    return create_effect_with_trace(
-        ResultCatchEffect(sub_program=sub_program, handler=handler), skip_frames=3
-    )
-
-
-def Recover(
-    sub_program: ProgramLike,
-    fallback: Any | ProgramLike | Callable[[Exception], Any | ProgramLike],
-) -> Effect:
-    return create_effect_with_trace(
-        ResultRecoverEffect(sub_program=sub_program, fallback=fallback), skip_frames=3
-    )
 
 
 def Finally(
@@ -314,24 +237,18 @@ def FirstSuccess(*programs: ProgramLike) -> Effect:
 
 __all__ = [
     "ResultFailEffect",
-    "ResultCatchEffect",
-    "ResultRecoverEffect",
     "ResultFinallyEffect",
     "ResultRetryEffect",
     "ResultSafeEffect",
     "ResultUnwrapEffect",
     "ResultFirstSuccessEffect",
     "fail",
-    "catch",
-    "recover",
     "finally_",
     "retry",
     "safe",
     "unwrap_result",
     "first_success_effect",
     "Fail",
-    "Catch",
-    "Recover",
     "Finally",
     "Retry",
     "Safe",

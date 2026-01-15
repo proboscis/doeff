@@ -8,7 +8,6 @@ from doeff._vendor import NOTHING, Err, FrozenDict, Ok, Some
 from doeff._types_internal import EffectBase, ListenResult
 from doeff.cesk.types import Store
 from doeff.cesk.frames import (
-    CatchFrame,
     FinallyFrame,
     GatherFrame,
     InterceptFrame,
@@ -56,7 +55,6 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
             GatherEffect,
             InterceptEffect,
             LocalEffect,
-            ResultCatchEffect,
             ResultFailEffect,
             ResultFinallyEffect,
             ResultSafeEffect,
@@ -65,14 +63,6 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
 
         if isinstance(effect, ResultFailEffect):
             return CESKState(C=Error(effect.exception), E=E, S=S, K=K)
-
-        if isinstance(effect, ResultCatchEffect):
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[CatchFrame(effect.handler, E)] + K,
-            )
 
         if isinstance(effect, ResultFinallyEffect):
             cleanup = effect.finalizer
@@ -289,9 +279,6 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
                 captured = capture_traceback_safe(K_rest, ex, pre_captured=pre_captured)
                 return CESKState(C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
 
-        if isinstance(frame, CatchFrame):
-            return CESKState(C=Value(C.v), E=frame.saved_env, S=S, K=K_rest)
-
         if isinstance(frame, FinallyFrame):
             cleanup_program = make_cleanup_then_return(frame.cleanup_program, C.v)
             return CESKState(C=ProgramControl(cleanup_program), E=frame.saved_env, S=S, K=K_rest)
@@ -375,23 +362,6 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
                     S=S,
                     K=K_rest,
                 )
-
-        if isinstance(frame, CatchFrame):
-            from doeff.cesk_traceback import capture_traceback_safe
-
-            try:
-                recovery_result = frame.handler(C.ex)
-                from doeff.program import Program, ProgramBase
-                from doeff.types import EffectBase
-
-                if isinstance(recovery_result, (ProgramBase, EffectBase)):
-                    recovery_program = recovery_result
-                else:
-                    recovery_program = Program.pure(recovery_result)
-                return CESKState(C=ProgramControl(recovery_program), E=frame.saved_env, S=S, K=K_rest)
-            except Exception as handler_ex:
-                captured = capture_traceback_safe(K_rest, handler_ex)
-                return CESKState(C=Error(handler_ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, FinallyFrame):
             cleanup_program = make_cleanup_then_raise(frame.cleanup_program, C.ex)

@@ -12,7 +12,6 @@ from doeff.effects import (
     # Capitalized aliases
     Ask,
     Await,
-    Catch,
     Dep,
     Fail,
     Safe,
@@ -33,7 +32,6 @@ from doeff.effects import (
     # Lowercase compatibility
     ask,
     await_,
-    catch,
     safe,
     fail,
     get,
@@ -82,7 +80,6 @@ __all__ = [
     "Await",
     "Fail",
     "Safe",
-    "Catch",
     "IO",
     "Print",
     "Snapshot",
@@ -103,7 +100,6 @@ __all__ = [
     "await_",
     "fail",
     "safe",
-    "catch",
     "io",
     "print_",
     "memo_get",

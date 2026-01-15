@@ -26,7 +26,7 @@ from doeff import (
     Program,
     Put,
     ProgramInterpreter,
-    Recover,
+    Safe,
     Spawn,
     Task,
     do,
@@ -337,7 +337,7 @@ async def test_spawn_worker_gather_programs(backend: str) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", _backend_params())
-async def test_spawn_recover_handles_failure(backend: str) -> None:
+async def test_spawn_safe_handles_failure(backend: str) -> None:
     with _ray_context(backend):
         engine = _build_engine(backend)
 
@@ -349,7 +349,8 @@ async def test_spawn_recover_handles_failure(backend: str) -> None:
         @do
         def program() -> EffectGenerator[int]:
             task = yield Spawn(worker(), preferred_backend=backend, **_ray_task_options(backend))
-            return (yield Recover(task.join(), fallback=42))
+            result = yield Safe(task.join())
+            return result.value if result.is_ok() else 42
 
         result = await engine.run_async(program())
 

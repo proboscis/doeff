@@ -125,7 +125,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import run_sync
+            from doeff import SyncRuntime
 
             # Build kwargs
             kwargs = params or {}
@@ -181,7 +181,8 @@ class ConductorAPI:
                 MergePR: lambda e: git_handler.handle_merge_pr(e),
             }
 
-            result = run_sync(program, handlers=handlers)
+            runtime = SyncRuntime(handlers=handlers)
+            result = runtime.run(program)
 
             # Update workflow status
             handle = WorkflowHandle(
