@@ -54,10 +54,8 @@ from doeff.effects import (
     LocalEffect,
     MemoGetEffect,
     MemoPutEffect,
-    ResultCatchEffect,
     ResultFailEffect,
     ResultFinallyEffect,
-    ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
     SpawnEffect,
@@ -1101,47 +1099,6 @@ class ResultEffectHandler:
         """Handle result.fail effect."""
         raise effect.exception
 
-    async def handle_catch(
-        self, effect: ResultCatchEffect, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle result.catch effect."""
-        # Import here to avoid circular import
-        from doeff.types import EffectFailure
-
-        sub_program = effect.sub_program
-
-        def _unwrap_error(error: Any) -> Any:
-            if isinstance(error, EffectFailure):
-                return error.cause
-            return error
-
-        async def _run_handler(handler_error: Any) -> Any:
-            from doeff.types import Program as ProgramType
-
-            handler_result = effect.handler(handler_error)
-
-            if isinstance(handler_result, ProgramType):
-                handler_run = await engine.run_async(handler_result, ctx)
-                if isinstance(handler_run.result, Err):
-                    raise handler_run.result.error
-                return handler_run.value
-
-            return handler_result
-
-        try:
-            pragmatic_result = await engine.run_async(sub_program, ctx)
-        except BaseException as exc:  # Handle direct exceptions from the sub-program
-            if isinstance(exc, SystemExit):
-                raise
-            actual_error = _unwrap_error(exc)
-            return await _run_handler(actual_error)
-
-        if isinstance(pragmatic_result.result, Err):
-            error = _unwrap_error(pragmatic_result.result.error)
-            return await _run_handler(error)
-
-        return pragmatic_result.value
-
     async def handle_finally(
         self,
         effect: ResultFinallyEffect,
@@ -1260,114 +1217,6 @@ class ResultEffectHandler:
         raise TypeError(
             f"ResultUnwrapEffect expected Result, got {type(result)!r}"
         )
-
-    async def handle_recover(
-        self, effect: ResultRecoverEffect, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle result.recover effect - try program, use fallback on error."""
-        pragmatic_result = await engine.run_async(effect.sub_program, ctx)
-
-        if isinstance(pragmatic_result.result, Err):
-            error = self._unwrap_effect_failure(pragmatic_result.result.error)
-            fallback = await self._resolve_fallback(effect.fallback, error, ctx, engine)
-            return await self._execute_fallback(fallback, ctx, engine)
-
-        return pragmatic_result.value
-
-    def _unwrap_effect_failure(self, error: Any) -> Any:
-        """Unwrap EffectFailure to get the underlying cause."""
-        from doeff.types import EffectFailure
-        return error.cause if isinstance(error, EffectFailure) else error
-
-    async def _resolve_fallback(
-        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Resolve fallback based on its type (error handler, thunk, or value)."""
-        if not callable(fallback) or isinstance(fallback, Program):
-            return fallback
-
-        from doeff.kleisli import KleisliProgram
-        if isinstance(fallback, KleisliProgram):
-            return await self._handle_kleisli_fallback(fallback, error, ctx, engine)
-
-        return await self._handle_regular_callable(fallback, error, ctx, engine)
-
-    async def _handle_kleisli_fallback(
-        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle KleisliProgram fallback - check signature to determine if error handler or thunk."""
-        import inspect
-
-        # Check the signature of the underlying function to determine if it accepts arguments
-        try:
-            sig = inspect.signature(fallback)
-            params = [p for p in sig.parameters.values()
-                     if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)]
-
-            # If it has required parameters, it's an error handler
-            if params and params[0].default is inspect.Parameter.empty:
-                handler_result = fallback(error)
-            else:
-                # No required params, it's a thunk
-                handler_result = fallback()
-        except (ValueError, TypeError):
-            # Can't inspect, try with error first, fallback to thunk on error
-            try:
-                handler_result = fallback(error)
-            except TypeError as e:
-                if "positional argument" in str(e):
-                    handler_result = fallback()
-                else:
-                    raise
-
-        from doeff.types import Program as ProgramType
-        if not isinstance(handler_result, ProgramType):
-            return handler_result
-
-        try_result = await engine.run_async(handler_result, ctx)
-
-        if isinstance(try_result.result, Err):
-            raise self._unwrap_effect_failure(try_result.result.error)
-
-        return try_result.value
-
-    async def _handle_regular_callable(
-        self, fallback: Any, error: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Handle regular callable fallback based on signature."""
-        import inspect
-        try:
-            sig = inspect.signature(fallback)
-            if len(sig.parameters) > 0:
-                # Error handler - call with exception
-                return await self._execute_error_handler(fallback(error), ctx, engine)
-            # Thunk - call with no args
-            return fallback()
-        except (ValueError, TypeError):
-            # Can't inspect signature, treat as thunk
-            return fallback()
-
-    async def _execute_error_handler(
-        self, handler_result: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Execute error handler result if it's a Program."""
-        from doeff.program import KleisliProgramCall
-
-        if isinstance(handler_result, (Program, KleisliProgramCall, EffectBase)):
-            result = await engine.run_async(handler_result, ctx)
-            return result.value
-        return handler_result
-
-    async def _execute_fallback(
-        self, fallback: Any, ctx: ExecutionContext, engine: ProgramInterpreter
-    ) -> Any:
-        """Execute the resolved fallback value."""
-        from doeff.program import KleisliProgramCall
-
-        if isinstance(fallback, (Program, KleisliProgramCall, EffectBase)):
-            result = await engine.run_async(fallback, ctx)
-            return result.value
-        return fallback
 
     async def handle_retry(
         self, effect: ResultRetryEffect, ctx: ExecutionContext, engine: ProgramInterpreter

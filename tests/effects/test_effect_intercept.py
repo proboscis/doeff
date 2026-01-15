@@ -25,11 +25,9 @@ from doeff.effects.io import IOPerformEffect, IOPrintEffect
 from doeff.effects.memo import MemoGetEffect, MemoPutEffect
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import (
-    ResultCatchEffect,
     ResultFailEffect,
     ResultFinallyEffect,
     ResultFirstSuccessEffect,
-    ResultRecoverEffect,
     ResultRetryEffect,
     ResultSafeEffect,
     ResultUnwrapEffect,
@@ -163,38 +161,6 @@ async def test_graph_capture_effect_intercept_rewrites_program() -> None:
 
     assert result is not base
     assert (await writer_message(result.program)).endswith(SUFFIX)
-
-
-@pytest.mark.asyncio
-async def test_result_catch_effect_intercept_rewrites_sub_program_and_handler() -> None:
-    base = ResultCatchEffect(
-        sub_program=writer_program("sub"),
-        handler=lambda _exc: writer_program("handler"),
-    )
-
-    result = base.intercept(tagging_transform)
-
-    assert result is not base
-    assert (await writer_message(result.sub_program)).endswith(SUFFIX)
-
-    handled = result.handler(Exception("boom"))
-    assert isinstance(handled, Program)
-    assert (await writer_message(handled)).endswith(SUFFIX)
-
-
-@pytest.mark.asyncio
-async def test_result_recover_effect_intercept_rewrites_sub_program_and_fallback_program() -> None:
-    base = ResultRecoverEffect(
-        sub_program=writer_program("sub"),
-        fallback=writer_program("fallback"),
-    )
-
-    result = base.intercept(tagging_transform)
-
-    assert result is not base
-    assert (await writer_message(result.sub_program)).endswith(SUFFIX)
-    assert isinstance(result.fallback, Program)
-    assert (await writer_message(result.fallback)).endswith(SUFFIX)
 
 
 @pytest.mark.asyncio
