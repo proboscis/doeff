@@ -13,10 +13,8 @@ Run:
 """
 
 from pathlib import Path
-from typing import Any, Callable
 
 from doeff import do, EffectGenerator, SyncRuntime
-from doeff.runtime import Resume
 from doeff_conductor import (
     CreateWorktree,
     DeleteWorktree,
@@ -24,19 +22,8 @@ from doeff_conductor import (
     WorktreeHandler,
     GitHandler,
     WorktreeEnv,
+    make_scheduled_handler,
 )
-
-
-def sync_handler(fn: Callable[[Any], Any]) -> Callable:
-    """Wrap a simple handler function to match SyncRuntime's expected signature.
-    
-    SyncRuntime handlers must accept (effect, env, store) and return Resume(value, store).
-    This helper wraps a function that just takes the effect and returns the value.
-    """
-    def handler(effect: Any, env: Any, store: Any):
-        result = fn(effect)
-        return Resume(result, store)
-    return handler
 
 
 @do
@@ -73,9 +60,9 @@ def main():
     git_handler = GitHandler()
     
     handlers = {
-        CreateWorktree: sync_handler(worktree_handler.handle_create_worktree),
-        DeleteWorktree: sync_handler(worktree_handler.handle_delete_worktree),
-        Commit: sync_handler(git_handler.handle_commit),
+        CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
+        DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
+        Commit: make_scheduled_handler(git_handler.handle_commit),
     }
     
     # Run the workflow
