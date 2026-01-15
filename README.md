@@ -98,18 +98,15 @@ def with_logging():
     return result
 ```
 
-### Result (Fail, Catch)
+### Result (Fail, Safe)
 ```python
 @do
 def with_error_handling():
-    try:
-        result = yield risky_operation()
-    except Exception as e:
-        result = yield Catch(
-            risky_operation(),
-            lambda exc: f"Failed: {exc}"
-        )
-    return result
+    safe_result = yield Safe(risky_operation())
+    if safe_result.is_ok():
+        return safe_result.value
+    else:
+        return f"Failed: {safe_result.error}"
 ```
 
 ### Future (Await, Parallel)

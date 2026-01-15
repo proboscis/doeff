@@ -21,7 +21,6 @@ import pytest
 
 from doeff import (
     Ask,
-    Catch,
     EffectGenerator,
     Fail,
     Finally,
@@ -32,7 +31,6 @@ from doeff import (
     Log,
     Program,
     Put,
-    Recover,
     Retry,
     Safe,
     do,
