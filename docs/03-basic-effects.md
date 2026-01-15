@@ -538,5 +538,5 @@ def well_logged_operation():
 ## Next Steps
 
 - **[Async Effects](04-async-effects.md)** - Future, Await, Parallel for async operations
-- **[Error Handling](05-error-handling.md)** - Fail, Catch, Retry for robust programs
+- **[Error Handling](05-error-handling.md)** - Fail, Safe, Retry for robust programs
 - **[Patterns](12-patterns.md)** - Common patterns combining multiple effects

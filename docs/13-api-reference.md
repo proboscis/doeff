@@ -408,28 +408,6 @@ yield Fail(ValueError("Invalid input"))
 
 ---
 
-### Catch(program, handler)
-
-Catch errors from program.
-
-```python
-result = yield Catch(
-    risky_operation(),
-    lambda e: f"Error: {e}"
-)
-```
-
-**Parameters:**
-
-- **`program: Program[T]`** - Program that may fail
-- **`handler: Callable[[Exception], T]`** - Error handler
-
-**Returns:** Result of program or handler result
-
-**See:** [Error Handling](05-error-handling.md#catch)
-
----
-
 ### Retry(program, max_attempts, delay_ms=0, delay_strategy=None)
 
 Retry failed program.
@@ -460,44 +438,25 @@ result = yield Retry(
 
 ---
 
-### Recover(program, fallback)
+### Safe(program)
 
-Provide fallback on error.
+Wrap execution in a `Result` type for explicit error handling.
 
 ```python
-result = yield Recover(
-    risky_operation(),
-    fallback=default_value()
-)
+result = yield Safe(risky_operation())
+if result.is_ok:
+    return result.value
+else:
+    return "fallback"
 ```
 
 **Parameters:**
 
 - **`program: Program[T]`** - Program that may fail
-- **`fallback: Program[T]`** - Fallback program
 
-**Returns:** Result of program or fallback
+**Returns:** `Result[T]` - Ok(value) on success, Err(error) on failure
 
-**See:** [Error Handling](05-error-handling.md#recover)
-
----
-
-### Safe(program, default)
-
-Return default value on error.
-
-```python
-result = yield Safe(risky_operation(), default=None)
-```
-
-**Parameters:**
-
-- **`program: Program[T]`** - Program that may fail
-- **`default: T`** - Default value
-
-**Returns:** Result of program or default value
-
-**See:** [Error Handling](05-error-handling.md#safe)
+**See:** [Error Handling](05-error-handling.md#safe-effect)
 
 ---
 
@@ -1088,7 +1047,7 @@ await write_graph_html(result.graph, "output.html")
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate |
 | **Writer** | Log, Tell, Listen, StructuredLog |
 | **Async** | Await, Parallel |
-| **Error** | Fail, Catch, Retry, Recover, Safe, Finally, FirstSuccess |
+| **Error** | Fail, Retry, Safe, Finally, FirstSuccess |
 | **IO** | IO, Print |
 | **Cache** | CacheGet, CachePut |
 | **Graph** | Step, Annotate, Snapshot, CaptureGraph |
@@ -1109,7 +1068,7 @@ from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen
 from doeff import Await, Parallel
 
 # Error Handling
-from doeff import Fail, Catch, Retry, Recover, Safe, Finally, FirstSuccess
+from doeff import Fail, Retry, Safe, Finally, FirstSuccess
 
 # IO
 from doeff import IO, Print
