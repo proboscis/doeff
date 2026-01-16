@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from doeff.cesk.frames import ContinueValue, ContinueError
-
-if TYPE_CHECKING:
-    from doeff._types_internal import EffectBase
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
-    from doeff.cesk.frames import FrameResult
+from doeff.cesk.frames import ContinueValue, ContinueError, FrameResult
+from doeff.cesk.state import TaskState
+from doeff.cesk.types import Store
+from doeff.effects.io import IOPerformEffect
+from doeff.effects.cache import (
+    CacheGetEffect,
+    CachePutEffect,
+    CacheExistsEffect,
+    CacheDeleteEffect,
+)
 
 
 def handle_io(
-    effect: EffectBase,
+    effect: IOPerformEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -39,12 +42,12 @@ def _get_cache_storage(store: Store) -> dict[str, Any]:
     return store.get("__cache_storage__", {})
 
 
-def _put_cache_storage(store: Store, cache: dict[str, Any]) -> Store:
+def _set_cache_storage(store: Store, cache: dict[str, Any]) -> Store:
     return {**store, "__cache_storage__": cache}
 
 
 def handle_cache_get(
-    effect: EffectBase,
+    effect: CacheGetEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -66,13 +69,13 @@ def handle_cache_get(
 
 
 def handle_cache_put(
-    effect: EffectBase,
+    effect: CachePutEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
     cache = _get_cache_storage(store)
     new_cache = {**cache, effect.key: effect.value}
-    new_store = _put_cache_storage(store, new_cache)
+    new_store = _set_cache_storage(store, new_cache)
     return ContinueValue(
         value=None,
         env=task_state.env,
@@ -82,7 +85,7 @@ def handle_cache_put(
 
 
 def handle_cache_exists(
-    effect: EffectBase,
+    effect: CacheExistsEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -97,13 +100,13 @@ def handle_cache_exists(
 
 
 def handle_cache_delete(
-    effect: EffectBase,
+    effect: CacheDeleteEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
     cache = _get_cache_storage(store)
     new_cache = {k: v for k, v in cache.items() if k != effect.key}
-    new_store = _put_cache_storage(store, new_cache)
+    new_store = _set_cache_storage(store, new_cache)
     return ContinueValue(
         value=None,
         env=task_state.env,

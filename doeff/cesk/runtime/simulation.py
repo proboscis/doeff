@@ -50,6 +50,7 @@ class SimulationRuntime(BaseRuntime):
     def _step_until_done_simulation(self, state: CESKState) -> Any:
         from doeff.cesk.dispatcher import ScheduledEffectDispatcher
         from doeff.cesk.result import Suspended
+        from doeff.cesk.frames import ContinueValue, ContinueError
         from doeff.runtime import Resume, Schedule, DelayPayload, WaitUntilPayload
         from doeff.scheduled_handlers import default_scheduled_handlers
         
@@ -62,13 +63,38 @@ class SimulationRuntime(BaseRuntime):
                 return result.value
             
             if isinstance(result, Failed):
-                raise result.exception
+                exc = result.exception
+                if result.captured_traceback is not None:
+                    exc.__cesk_traceback__ = result.captured_traceback
+                raise exc
             
             if isinstance(result, CESKState):
                 state = result
                 continue
             
             if isinstance(result, Suspended):
+                main_task = state.tasks[state.main_task]
+                effect_type = type(result.effect)
+                handler = self._handlers.get(effect_type)
+                
+                if handler is not None:
+                    try:
+                        frame_result = handler(result.effect, main_task, state.store)
+                    except Exception as ex:
+                        state = result.resume_error(ex)
+                        continue
+                    
+                    if isinstance(frame_result, ContinueValue):
+                        new_store = frame_result.store
+                        if isinstance(result.effect, (DelayPayload.__class__.__bases__[0] if hasattr(DelayPayload, '__class__') else type(None))):
+                            pass
+                        state = result.resume(frame_result.value, new_store)
+                    elif isinstance(frame_result, ContinueError):
+                        state = result.resume_error(frame_result.error)
+                    else:
+                        state = result.resume_error(RuntimeError(f"Unexpected FrameResult: {type(frame_result)}"))
+                    continue
+                
                 handler_result = dispatcher.dispatch(result.effect, state.E, state.S)
                 
                 if isinstance(handler_result, Resume):

@@ -1,23 +1,17 @@
-"""Core effect handlers for the unified CESK architecture.
-
-Handlers: handle_pure, handle_ask, handle_get, handle_put, handle_modify
-"""
+"""Core effect handlers for the unified CESK architecture."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from doeff.cesk.frames import ContinueValue
-
-if TYPE_CHECKING:
-    from doeff._types_internal import EffectBase
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
-    from doeff.cesk.frames import FrameResult
+from doeff.cesk.frames import ContinueValue, FrameResult
+from doeff.cesk.state import TaskState
+from doeff.cesk.types import Store
+from doeff.effects.pure import PureEffect
+from doeff.effects.reader import AskEffect
+from doeff.effects.state import StateGetEffect, StatePutEffect, StateModifyEffect
 
 
 def handle_pure(
-    effect: EffectBase,
+    effect: PureEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -30,7 +24,7 @@ def handle_pure(
 
 
 def handle_ask(
-    effect: EffectBase,
+    effect: AskEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -46,8 +40,8 @@ def handle_ask(
     )
 
 
-def handle_get(
-    effect: EffectBase,
+def handle_state_get(
+    effect: StateGetEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -60,8 +54,8 @@ def handle_get(
     )
 
 
-def handle_put(
-    effect: EffectBase,
+def handle_state_put(
+    effect: StatePutEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -74,8 +68,8 @@ def handle_put(
     )
 
 
-def handle_modify(
-    effect: EffectBase,
+def handle_state_modify(
+    effect: StateModifyEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -93,7 +87,7 @@ def handle_modify(
 __all__ = [
     "handle_pure",
     "handle_ask",
-    "handle_get",
-    "handle_put",
-    "handle_modify",
+    "handle_state_get",
+    "handle_state_put",
+    "handle_state_modify",
 ]
