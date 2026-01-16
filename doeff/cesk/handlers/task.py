@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from doeff.cesk.frames import ContinueProgram, ContinueValue, GatherFrame, RaceFrame
-from doeff.cesk.types import TaskId
-
-if TYPE_CHECKING:
-    from doeff._types_internal import EffectBase
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
-    from doeff.cesk.frames import FrameResult
+from doeff.cesk.frames import ContinueProgram, ContinueValue, GatherFrame, RaceFrame, FrameResult
+from doeff.cesk.state import TaskState
+from doeff.cesk.types import TaskId, Store
+from doeff.effects.gather import GatherEffect
 
 
 def handle_gather(
-    effect: EffectBase,
+    effect: GatherEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -37,7 +31,7 @@ def handle_gather(
 
 
 def handle_race(
-    effect: EffectBase,
+    effect: GatherEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:

@@ -5,20 +5,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff._vendor import FrozenDict, Ok, Err
-from doeff.cesk.state import (
-    CESKState,
-    TaskState,
-    Done as TaskDone,
-    Value,
-    Error,
-    EffectControl,
-    ProgramControl,
-    Ready,
-)
-from doeff.cesk.result import Done, Failed
+from doeff._vendor import FrozenDict
+from doeff.cesk.state import CESKState, TaskState, Ready
+from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
+from doeff.cesk.frames import ContinueValue, ContinueError
 
 if TYPE_CHECKING:
     from doeff.program import Program
@@ -55,6 +47,67 @@ class BaseRuntime(ABC):
         final_store: Store = store if store is not None else {}
         return CESKState.initial(program, frozen_env, final_store)
 
+    def _dispatch_effect_via_handler(
+        self,
+        effect: Any,
+        task_state: TaskState,
+        store: dict[str, Any],
+    ) -> ContinueValue | ContinueError:
+        handler = self._handlers.get(type(effect))
+        
+        if handler is None:
+            return self._dispatch_effect_via_scheduled(effect, task_state, store)
+        
+        try:
+            frame_result = handler(effect, task_state, store)
+        except Exception as ex:
+            return ContinueError(error=ex, env=task_state.env, store=store, k=task_state.kontinuation)
+        
+        if isinstance(frame_result, (ContinueValue, ContinueError)):
+            return frame_result
+        
+        return ContinueError(
+            error=RuntimeError(f"Handler returned unexpected type: {type(frame_result)}"),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
+        )
+
+    def _dispatch_effect_via_scheduled(
+        self,
+        effect: Any,
+        task_state: TaskState,
+        store: dict[str, Any],
+    ) -> ContinueValue | ContinueError:
+        from doeff.cesk.dispatcher import ScheduledEffectDispatcher
+        from doeff.scheduled_handlers import default_scheduled_handlers
+        from doeff.runtime import Resume, Schedule
+        
+        dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
+        handler_result = dispatcher.dispatch(effect, task_state.env, store)
+        
+        if isinstance(handler_result, Resume):
+            return ContinueValue(
+                value=handler_result.value,
+                env=task_state.env,
+                store=handler_result.store,
+                k=task_state.kontinuation,
+            )
+        elif isinstance(handler_result, Schedule):
+            return ContinueValue(
+                value=None,
+                env=task_state.env,
+                store=handler_result.store,
+                k=task_state.kontinuation,
+            )
+        
+        return ContinueError(
+            error=RuntimeError(f"Unknown scheduled handler result: {type(handler_result)}"),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
+        )
+
     def _step_until_done(self, state: CESKState) -> Any:
         from doeff.cesk.dispatcher import ScheduledEffectDispatcher
         from doeff.scheduled_handlers import default_scheduled_handlers
@@ -68,20 +121,25 @@ class BaseRuntime(ABC):
                 return result.value
             
             if isinstance(result, Failed):
-                raise result.exception
+                exc = result.exception
+                if result.captured_traceback is not None:
+                    exc.__cesk_traceback__ = result.captured_traceback
+                raise exc
             
             if isinstance(result, CESKState):
                 state = result
                 continue
             
-            from doeff.cesk.result import Suspended
             if isinstance(result, Suspended):
-                handler_result = dispatcher.dispatch(result.effect, state.E, state.S)
-                from doeff.runtime import Resume, Schedule
-                if isinstance(handler_result, Resume):
-                    state = result.resume(handler_result.value, handler_result.store)
-                elif isinstance(handler_result, Schedule):
-                    state = self._handle_schedule(result, handler_result, state)
+                main_task = state.tasks[state.main_task]
+                dispatch_result = self._dispatch_effect_via_handler(
+                    result.effect, main_task, state.store
+                )
+                
+                if isinstance(dispatch_result, ContinueError):
+                    state = result.resume_error(dispatch_result.error)
+                else:
+                    state = result.resume(dispatch_result.value, dispatch_result.store)
                 continue
             
             raise RuntimeError(f"Unexpected step result: {type(result)}")

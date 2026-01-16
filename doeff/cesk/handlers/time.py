@@ -3,19 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING
 
-from doeff.cesk.frames import ContinueValue
-
-if TYPE_CHECKING:
-    from doeff._types_internal import EffectBase
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
-    from doeff.cesk.frames import FrameResult
+from doeff.cesk.frames import ContinueValue, FrameResult
+from doeff.cesk.state import TaskState
+from doeff.cesk.types import Store
+from doeff.effects.time import DelayEffect, GetTimeEffect
 
 
 def handle_delay(
-    effect: EffectBase,
+    effect: DelayEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -28,7 +24,7 @@ def handle_delay(
 
 
 def handle_get_time(
-    effect: EffectBase,
+    effect: GetTimeEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:

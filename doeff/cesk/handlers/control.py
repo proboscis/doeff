@@ -2,27 +2,26 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 from doeff._vendor import FrozenDict
 from doeff.cesk.frames import (
     ContinueProgram,
     ContinueValue,
+    FrameResult,
     InterceptFrame,
     ListenFrame,
     LocalFrame,
     SafeFrame,
 )
-
-if TYPE_CHECKING:
-    from doeff._types_internal import EffectBase
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
-    from doeff.cesk.frames import FrameResult
+from doeff.cesk.state import TaskState
+from doeff.cesk.types import Store
+from doeff.effects.intercept import InterceptEffect
+from doeff.effects.reader import LocalEffect
+from doeff.effects.result import ResultSafeEffect
+from doeff.effects.writer import WriterListenEffect, WriterTellEffect
 
 
 def handle_local(
-    effect: EffectBase,
+    effect: LocalEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -36,7 +35,7 @@ def handle_local(
 
 
 def handle_safe(
-    effect: EffectBase,
+    effect: ResultSafeEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -49,7 +48,7 @@ def handle_safe(
 
 
 def handle_listen(
-    effect: EffectBase,
+    effect: WriterListenEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -63,7 +62,7 @@ def handle_listen(
 
 
 def handle_intercept(
-    effect: EffectBase,
+    effect: InterceptEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
@@ -76,16 +75,13 @@ def handle_intercept(
 
 
 def handle_tell(
-    effect: EffectBase,
+    effect: WriterTellEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
     current_log = store.get("__log__", [])
-    messages = effect.messages
-    if isinstance(messages, (list, tuple)):
-        new_log = list(current_log) + list(messages)
-    else:
-        new_log = list(current_log) + [messages]
+    message = effect.message
+    new_log = list(current_log) + [message]
     new_store = {**store, "__log__": new_log}
     return ContinueValue(
         value=None,
