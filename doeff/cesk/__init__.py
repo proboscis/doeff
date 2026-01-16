@@ -4,10 +4,29 @@ CESK Machine package for the doeff effect interpreter.
 This package implements a CESK machine (Control, Environment, Store, Kontinuation)
 as described in Felleisen & Friedman (1986) and Van Horn & Might (2010).
 
-For full documentation, see the original ISSUE-CORE-422.md specification.
+The unified multi-task architecture supports:
+- Multiple concurrent tasks with shared Store
+- TaskId, FutureId, SpawnId for coordination
+- TaskStatus (Ready, Blocked, Requesting, Done) for task state
+- Condition types for blocking conditions
+- Request types for runtime operations
+
+For full documentation, see SPEC-CORE-001.
 """
 
-from doeff.cesk.types import Environment, Store
+from doeff.cesk.types import (
+    Environment,
+    Store,
+    # New unified types
+    TaskId,
+    FutureId,
+    SpawnId,
+    TaskHandle,
+    FutureHandle,
+    SpawnHandle,
+    empty_environment,
+    empty_store,
+)
 from doeff.cesk.frames import (
     Frame,
     GatherFrame,
@@ -17,14 +36,55 @@ from doeff.cesk.frames import (
     LocalFrame,
     ReturnFrame,
     SafeFrame,
+    RaceFrame,
+    # Frame result types
+    FrameResult,
+    ContinueValue,
+    ContinueError,
+    ContinueProgram,
+    ContinueGenerator,
 )
 from doeff.cesk.state import (
     CESKState,
+    TaskState,
     Control,
     EffectControl,
     Error,
     ProgramControl,
     Value,
+    # Task status types
+    TaskStatus,
+    Ready,
+    Blocked,
+    Requesting,
+    Done as TaskDone,
+    # Condition types
+    Condition,
+    TimeCondition,
+    FutureCondition,
+    TaskCondition,
+    SpawnCondition,
+    # Request types
+    Request,
+    CreateTask,
+    CreateFuture,
+    ResolveFuture,
+    PerformIO,
+    AwaitExternal,
+    CreateSpawn,
+)
+from doeff.cesk.kontinuation import (
+    push_frame,
+    pop_frame,
+    unwind_value,
+    unwind_error,
+    find_frame,
+    has_frame,
+    find_safe_frame_index,
+    has_safe_frame,
+    get_intercept_transforms,
+    continuation_depth,
+    split_at_safe,
 )
 from doeff.cesk.result import (
     CESKResult,
@@ -49,7 +109,7 @@ from doeff.cesk.helpers import (
     shutdown_shared_executor,
     to_generator,
 )
-from doeff.cesk.step import step
+from doeff.cesk.step import step, step_task, step_cesk_task
 from doeff.cesk.dispatcher import (
     HandlerRegistryError,
     InterpreterInvariantError,
@@ -67,12 +127,41 @@ __all__ = [
     # Types
     "Environment",
     "Store",
+    # New unified types
+    "TaskId",
+    "FutureId",
+    "SpawnId",
+    "TaskHandle",
+    "FutureHandle",
+    "SpawnHandle",
+    "empty_environment",
+    "empty_store",
     # Control
     "Control",
     "Value",
     "Error",
     "EffectControl",
     "ProgramControl",
+    # Task status types
+    "TaskStatus",
+    "Ready",
+    "Blocked",
+    "Requesting",
+    "TaskDone",
+    # Condition types
+    "Condition",
+    "TimeCondition",
+    "FutureCondition",
+    "TaskCondition",
+    "SpawnCondition",
+    # Request types
+    "Request",
+    "CreateTask",
+    "CreateFuture",
+    "ResolveFuture",
+    "PerformIO",
+    "AwaitExternal",
+    "CreateSpawn",
     # Frames
     "Frame",
     "ReturnFrame",
@@ -81,9 +170,29 @@ __all__ = [
     "ListenFrame",
     "GatherFrame",
     "SafeFrame",
+    "RaceFrame",
     "Kontinuation",
+    # Frame results
+    "FrameResult",
+    "ContinueValue",
+    "ContinueError",
+    "ContinueProgram",
+    "ContinueGenerator",
+    # Kontinuation helpers
+    "push_frame",
+    "pop_frame",
+    "unwind_value",
+    "unwind_error",
+    "find_frame",
+    "has_frame",
+    "find_safe_frame_index",
+    "has_safe_frame",
+    "get_intercept_transforms",
+    "continuation_depth",
+    "split_at_safe",
     # State
     "CESKState",
+    "TaskState",
     # Step results
     "StepResult",
     "Done",
@@ -115,8 +224,10 @@ __all__ = [
     "shutdown_shared_executor",
     # Generator conversion
     "to_generator",
-    # Step function
+    # Step functions
     "step",
+    "step_task",
+    "step_cesk_task",
     # Run functions (deprecated - use doeff.runtimes instead)
     "_run_internal",
     "run",
