@@ -43,7 +43,7 @@ class SyncRuntime(BaseRuntime):
                     raise RuntimeError("Deadlock detected: tasks waiting but none ready")
                 break
             
-            task_id = self._ready_queue.pop(0)
+            task_id = self._ready_queue.popleft()
             task = self._state.tasks.get(task_id)
             if not task:
                 continue

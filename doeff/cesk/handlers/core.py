@@ -72,7 +72,9 @@ def handle_tell(effect: Any, k: Kontinuation, env: Environment, store: Store) ->
     log = store.get("__log__", [])
     # Access __dict__ directly to avoid ProgramBase.__getattr__ infinite recursion
     effect_dict = object.__getattribute__(effect, "__dict__")
-    messages = effect_dict.get("messages") or [effect_dict["message"]]
+    messages = effect_dict.get("messages")
+    if messages is None:
+        messages = [effect_dict["message"]]
     new_log = log + list(messages)
     new_store = {**store, "__log__": new_log}
     return TaskState(
