@@ -35,7 +35,7 @@ class PerformAction:
     action: Action
 
 
-Handler = Callable[[EffectBase, HandlerContext], HandlerResult]
+Handler = Callable[[Any, HandlerContext], HandlerResult]
 
 
 class HandlerRegistry:

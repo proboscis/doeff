@@ -114,13 +114,15 @@ def step(state: CESKState) -> StepResult:
     
     if isinstance(control, ProgramControl):
         from doeff.program import ProgramBase
+        from typing import Iterator, Any as typing_Any
         
         program = control.program
         try:
-            if hasattr(program, '__iter__'):
+            gen: Iterator[typing_Any]
+            if hasattr(program, 'to_generator'):
+                gen = program.to_generator()  # type: ignore[assignment]
+            elif hasattr(program, '__iter__'):
                 gen = iter(program)
-            elif isinstance(program, ProgramBase):
-                gen = program.__iter__()
             else:
                 gen = iter([])
             
@@ -244,6 +246,48 @@ def step(state: CESKState) -> StepResult:
             )
             new_state = state.with_task(active_task.task_id, new_task)
             return step(new_state)
+        
+        elif isinstance(frame_result, Continue):
+            from doeff.program import ProgramBase
+            
+            try:
+                gen = frame.generator  # type: ignore[attr-defined]
+                result = gen.throw(error)  # type: ignore[union-attr]
+                if isinstance(result, EffectBase):
+                    new_control = EffectControl(result)
+                elif isinstance(result, ProgramBase):
+                    new_control = ProgramControl(result)
+                else:
+                    raise TypeError(f"Generator yielded unexpected type: {type(result).__name__}")
+                new_task = TaskState(
+                    task_id=active_task.task_id,
+                    control=new_control,
+                    environment=active_task.environment,
+                    kontinuation=kontinuation,
+                    status=TaskStatus.RUNNING,
+                )
+                new_state = state.with_task(active_task.task_id, new_task)
+                return step(new_state)
+            except StopIteration as e:
+                new_task = TaskState(
+                    task_id=active_task.task_id,
+                    control=Value(e.value if hasattr(e, 'value') else None),
+                    environment=active_task.environment,
+                    kontinuation=rest_kontinuation,
+                    status=TaskStatus.RUNNING,
+                )
+                new_state = state.with_task(active_task.task_id, new_task)
+                return step(new_state)
+            except Exception as ex:
+                new_task = TaskState(
+                    task_id=active_task.task_id,
+                    control=Error(ex),
+                    environment=active_task.environment,
+                    kontinuation=rest_kontinuation,
+                    status=TaskStatus.RUNNING,
+                )
+                new_state = state.with_task(active_task.task_id, new_task)
+                return step(new_state)
     
     return Failed(RuntimeError(f"Unhandled state: control={type(control).__name__}, K len={len(kontinuation)}"), state.store)
 
