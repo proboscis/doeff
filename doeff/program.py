@@ -427,6 +427,10 @@ class GeneratorProgram(ProgramBase[T]):
     def to_generator(self) -> Generator[Effect | Program, Any, T]:
         return self.factory()
 
+    def __iter__(self) -> Generator[Effect | Program, Any, T]:
+        """Enable ``yield from generator_program`` syntax."""
+        return self.to_generator()
+
 
 @runtime_checkable
 class ProgramProtocol(Protocol[T]):
@@ -552,6 +556,14 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
                     return stop_exc.value
 
         return generator()
+
+    def __iter__(self) -> Generator[Effect | Program, Any, T]:
+        """Enable ``yield from kleisli_call`` syntax.
+
+        Returns the same generator as to_generator(), preventing Python's
+        fallback to __getitem__ which would wrap the program in a .map() operation.
+        """
+        return self.to_generator()
 
     @classmethod
     def create_from_kleisli(
