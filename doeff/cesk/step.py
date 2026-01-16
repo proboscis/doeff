@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable
 
-from doeff._vendor import FrozenDict, Ok, Err
+from doeff._vendor import Ok, Err
 from doeff._types_internal import EffectBase
 from doeff.cesk.types import Environment, Store
 from doeff.cesk.frames import (
@@ -91,70 +91,6 @@ def step(task: TaskState, handlers: dict[type, Handler]) -> TaskState:
 
     if isinstance(control, EffectControl):
         effect = control.effect
-        from doeff.effects import (
-            GatherEffect,
-            InterceptEffect,
-            LocalEffect,
-            ResultSafeEffect,
-            WriterListenEffect,
-        )
-
-        if isinstance(effect, LocalEffect):
-            new_env = env | FrozenDict(effect.env_update)
-            return TaskState(
-                control=ProgramControl(effect.sub_program),
-                env=new_env,
-                store=store,
-                kontinuation=[LocalFrame(env)] + k,
-                status=ReadyStatus(None),
-            )
-
-        if isinstance(effect, InterceptEffect):
-            return TaskState(
-                control=ProgramControl(effect.program),
-                env=env,
-                store=store,
-                kontinuation=[InterceptFrame(effect.transforms)] + k,
-                status=ReadyStatus(None),
-            )
-
-        if isinstance(effect, WriterListenEffect):
-            log_start = len(store.get("__log__", []))
-            return TaskState(
-                control=ProgramControl(effect.sub_program),
-                env=env,
-                store=store,
-                kontinuation=[ListenFrame(log_start)] + k,
-                status=ReadyStatus(None),
-            )
-
-        if isinstance(effect, GatherEffect):
-            programs = list(effect.programs)
-            if not programs:
-                return TaskState(
-                    control=ValueControl([]),
-                    env=env,
-                    store=store,
-                    kontinuation=k,
-                    status=ReadyStatus(None),
-                )
-            first, *rest = programs
-            return TaskState(
-                control=ProgramControl(first),
-                env=env,
-                store=store,
-                kontinuation=[GatherFrame(rest, [], env)] + k,
-                status=ReadyStatus(None),
-            )
-
-        if isinstance(effect, ResultSafeEffect):
-            return TaskState(
-                control=ProgramControl(effect.sub_program),
-                env=env,
-                store=store,
-                kontinuation=[SafeFrame(env)] + k,
-                status=ReadyStatus(None),
-            )
 
         for frame in k:
             if isinstance(frame, InterceptFrame) and frame.transforms:
