@@ -614,6 +614,15 @@ class EffectBase(ProgramBase):
         result = yield self
         return result
 
+    def __iter__(self) -> Generator[Effect | Program, Any, Any]:
+        """Enable ``yield from effect`` syntax.
+
+        Returns the same generator as to_generator(), which yields self
+        and returns the value sent back. This prevents Python's fallback
+        to __getitem__ which would wrap the effect in a .map() operation.
+        """
+        return self.to_generator()
+
 
 @dataclass(frozen=True, kw_only=True)
 class NullEffect(EffectBase):
