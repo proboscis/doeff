@@ -1,13 +1,14 @@
-"""The CESK machine step function."""
+"""The unified CESK machine step function."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
-from doeff._vendor import NOTHING, Err, FrozenDict, Ok, Some
-from doeff._types_internal import EffectBase, ListenResult
-from doeff.cesk.types import Store
+from doeff._vendor import FrozenDict, Ok, Err
+from doeff._types_internal import EffectBase
+from doeff.cesk.types import Environment, Store
 from doeff.cesk.frames import (
+    Frame,
     GatherFrame,
     InterceptFrame,
     Kontinuation,
@@ -16,36 +17,72 @@ from doeff.cesk.frames import (
     ReturnFrame,
     SafeFrame,
 )
-from doeff.cesk.state import CESKState, EffectControl, Error, ProgramControl, Value
-from doeff.cesk.result import Done, Failed, StepResult, Suspended
-from doeff.cesk.dispatcher import InterpreterInvariantError, ScheduledEffectDispatcher, UnhandledEffectError
-from doeff.cesk.classification import (
-    has_intercept_frame,
-    is_control_flow_effect,
-    is_effectful,
-    is_pure_effect,
+from doeff.cesk.state import (
+    CESKState,
+    EffectControl,
+    ErrorControl,
+    ProgramControl,
+    ReadyStatus,
+    RequestingStatus,
+    TaskState,
+    ValueControl,
+    DoneStatus,
 )
-from doeff.cesk.helpers import (
-    apply_intercept_chain,
-    to_generator,
-)
-from doeff.utils import BoundedLog
 
 if TYPE_CHECKING:
     from doeff.program import Program
+    from doeff.types import Effect
 
 
-def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) -> StepResult:
-    C, E, S, K = state.C, state.E, state.S, state.K
+Handler = Callable[[EffectBase, Kontinuation, Environment, Store], TaskState]
 
-    if isinstance(C, Value) and not K:
-        return Done(C.v, S)
 
-    if isinstance(C, Error) and not K:
-        return Failed(C.ex, S, captured_traceback=C.captured_traceback)
+class StepError(Exception):
+    pass
 
-    if isinstance(C, EffectControl):
-        effect = C.effect
+
+class UnhandledEffectError(StepError):
+    pass
+
+
+class InterpreterInvariantError(StepError):
+    pass
+
+
+def to_generator(program: Program):
+    from doeff.program import GeneratorProgram, KleisliProgramCall, ProgramBase
+    
+    if isinstance(program, GeneratorProgram):
+        return program.to_generator()
+    if isinstance(program, KleisliProgramCall):
+        return program.to_generator()
+    if hasattr(program, "to_generator"):
+        return program.to_generator()
+    if isinstance(program, ProgramBase):
+        def single_yield():
+            yield program
+            return None
+        return single_yield()
+    raise InterpreterInvariantError(f"Cannot convert {type(program).__name__} to generator")
+
+
+def step(task: TaskState, handlers: dict[type, Handler]) -> TaskState:
+    control = task.control
+    env = task.env
+    store = task.store
+    k = task.kontinuation
+
+    if isinstance(control, ValueControl) and not k:
+        return task.with_status(DoneStatus(Ok(control.v)))
+
+    if isinstance(control, ErrorControl) and not k:
+        ex = control.ex
+        if isinstance(ex, Exception):
+            return task.with_status(DoneStatus(Err(ex)))
+        raise ex
+
+    if isinstance(control, EffectControl):
+        effect = control.effect
         from doeff.effects import (
             GatherEffect,
             InterceptEffect,
@@ -55,130 +92,73 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
         )
 
         if isinstance(effect, LocalEffect):
-            new_env = E | FrozenDict(effect.env_update)
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=new_env,
-                S=S,
-                K=[LocalFrame(E)] + K,
+            new_env = env | FrozenDict(effect.env_update)
+            return TaskState(
+                control=ProgramControl(effect.sub_program),
+                env=new_env,
+                store=store,
+                kontinuation=[LocalFrame(env)] + k,
+                status=ReadyStatus(None),
             )
 
         if isinstance(effect, InterceptEffect):
-            return CESKState(
-                C=ProgramControl(effect.program),
-                E=E,
-                S=S,
-                K=[InterceptFrame(effect.transforms)] + K,
+            return TaskState(
+                control=ProgramControl(effect.program),
+                env=env,
+                store=store,
+                kontinuation=[InterceptFrame(effect.transforms)] + k,
+                status=ReadyStatus(None),
             )
 
         if isinstance(effect, WriterListenEffect):
-            log_start = len(S.get("__log__", []))
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[ListenFrame(log_start)] + K,
+            log_start = len(store.get("__log__", []))
+            return TaskState(
+                control=ProgramControl(effect.sub_program),
+                env=env,
+                store=store,
+                kontinuation=[ListenFrame(log_start)] + k,
+                status=ReadyStatus(None),
             )
 
         if isinstance(effect, GatherEffect):
             programs = list(effect.programs)
             if not programs:
-                return CESKState(C=Value([]), E=E, S=S, K=K)
+                return TaskState(
+                    control=ValueControl([]),
+                    env=env,
+                    store=store,
+                    kontinuation=k,
+                    status=ReadyStatus(None),
+                )
             first, *rest = programs
-            return CESKState(
-                C=ProgramControl(first),
-                E=E,
-                S=S,
-                K=[GatherFrame(rest, [], E)] + K,
+            return TaskState(
+                control=ProgramControl(first),
+                env=env,
+                store=store,
+                kontinuation=[GatherFrame(rest, [], env)] + k,
+                status=ReadyStatus(None),
             )
 
         if isinstance(effect, ResultSafeEffect):
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[SafeFrame(E)] + K,
+            return TaskState(
+                control=ProgramControl(effect.sub_program),
+                env=env,
+                store=store,
+                kontinuation=[SafeFrame(env)] + k,
+                status=ReadyStatus(None),
             )
 
-        if not is_control_flow_effect(effect) and has_intercept_frame(K):
-            from doeff.cesk_traceback import capture_traceback_safe
+        handler = handlers.get(type(effect))
+        if handler:
+            return handler(effect, k, env, store)
 
-            try:
-                transformed = apply_intercept_chain(K, effect)
-            except Exception as ex:
-                captured = capture_traceback_safe(K, ex)
-                return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
+        raise UnhandledEffectError(f"No handler for {type(effect).__name__}")
 
-            from doeff.program import ProgramBase
-            from doeff.types import EffectBase
-
-            if isinstance(transformed, EffectBase):
-                if is_control_flow_effect(transformed):
-                    return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
-
-                has_handler = dispatcher.has_handler(transformed) if dispatcher else (is_pure_effect(transformed) or is_effectful(transformed))
-
-                if has_handler:
-                    return Suspended(
-                        effect=transformed,
-                        resume=lambda v, new_store, E=E, K=K: CESKState(
-                            C=Value(v), E=E, S=new_store, K=K
-                        ),
-                        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                            C=Error(ex), E=E, S=S, K=K
-                        ),
-                    )
-
-                unhandled_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
-                captured = capture_traceback_safe(K, unhandled_ex)
-                return CESKState(
-                    C=Error(unhandled_ex, captured_traceback=captured),
-                    E=E,
-                    S=S,
-                    K=K,
-                )
-
-            if isinstance(transformed, ProgramBase):
-                return CESKState(C=ProgramControl(transformed), E=E, S=S, K=K)
-
-            unknown_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
-            captured = capture_traceback_safe(K, unknown_ex)
-            return CESKState(
-                C=Error(unknown_ex, captured_traceback=captured),
-                E=E,
-                S=S,
-                K=K,
-            )
-
-        has_handler = dispatcher.has_handler(effect) if dispatcher else (is_pure_effect(effect) or is_effectful(effect))
-
-        if has_handler:
-            return Suspended(
-                effect=effect,
-                resume=lambda v, new_store, E=E, K=K: CESKState(
-                    C=Value(v), E=E, S=new_store, K=K
-                ),
-                resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                    C=Error(ex), E=E, S=S, K=K
-                ),
-            )
-
-        from doeff.cesk_traceback import capture_traceback_safe
-
-        unhandled_ex = UnhandledEffectError(f"No handler for {type(effect).__name__}")
-        captured = capture_traceback_safe(K, unhandled_ex)
-        return CESKState(
-            C=Error(unhandled_ex, captured_traceback=captured),
-            E=E,
-            S=S,
-            K=K,
-        )
-
-    if isinstance(C, ProgramControl):
-        program = C.program
+    if isinstance(control, ProgramControl):
+        program = control.program
         from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
         from doeff.program import KleisliProgramCall, ProgramBase
-        from doeff.types import EffectBase
+        from doeff.types import EffectBase as EffectBaseType
 
         pre_captured = None
         try:
@@ -187,177 +167,286 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
             pre_captured = pre_capture_generator(gen, is_resumed=False, program_call=program_call)
             item = next(gen)
 
-            if isinstance(item, EffectBase):
-                control = EffectControl(item)
+            if isinstance(item, EffectBaseType):
+                new_control = EffectControl(item)
             elif isinstance(item, ProgramBase):
-                control = ProgramControl(item)
+                new_control = ProgramControl(item)
             else:
-                return CESKState(
-                    C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
-                    E=E,
-                    S=S,
-                    K=K,
+                raise InterpreterInvariantError(
+                    f"Program yielded unexpected type: {type(item).__name__}. "
+                    "Programs must yield Effect or Program instances only."
                 )
 
-            return CESKState(
-                C=control,
-                E=E,
-                S=S,
-                K=[ReturnFrame(gen, E, program_call=program_call)] + K,
+            return TaskState(
+                control=new_control,
+                env=env,
+                store=store,
+                kontinuation=[ReturnFrame(gen, env, program_call=program_call)] + k,
+                status=ReadyStatus(None),
             )
         except StopIteration as e:
-            return CESKState(C=Value(e.value), E=E, S=S, K=K)
+            return TaskState(
+                control=ValueControl(e.value),
+                env=env,
+                store=store,
+                kontinuation=k,
+                status=ReadyStatus(None),
+            )
         except Exception as ex:
-            captured = capture_traceback_safe(K, ex, pre_captured=pre_captured)
-            return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
+            captured = capture_traceback_safe(k, ex, pre_captured=pre_captured)
+            return TaskState(
+                control=ErrorControl(ex, captured_traceback=captured),
+                env=env,
+                store=store,
+                kontinuation=k,
+                status=ReadyStatus(None),
+            )
 
-    if isinstance(C, Value) and K:
-        frame = K[0]
-        K_rest = K[1:]
+    if isinstance(control, ValueControl) and k:
+        frame = k[0]
+        k_rest = k[1:]
 
         if isinstance(frame, ReturnFrame):
             from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
             from doeff.program import ProgramBase
-            from doeff.types import EffectBase
+            from doeff.types import EffectBase as EffectBaseType
 
             pre_captured = pre_capture_generator(
                 frame.generator, is_resumed=True, program_call=frame.program_call
             )
 
             try:
-                item = frame.generator.send(C.v)
+                item = frame.generator.send(control.v)
 
-                if isinstance(item, EffectBase):
-                    control = EffectControl(item)
+                if isinstance(item, EffectBaseType):
+                    new_control = EffectControl(item)
                 elif isinstance(item, ProgramBase):
-                    control = ProgramControl(item)
+                    new_control = ProgramControl(item)
                 else:
-                    return CESKState(
-                        C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
-                        E=frame.saved_env,
-                        S=S,
-                        K=K_rest,
+                    raise InterpreterInvariantError(
+                        f"Program yielded unexpected type: {type(item).__name__}. "
+                        "Programs must yield Effect or Program instances only."
                     )
 
-                return CESKState(
-                    C=control,
-                    E=frame.saved_env,
-                    S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
+                return TaskState(
+                    control=new_control,
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + k_rest,
+                    status=ReadyStatus(None),
                 )
             except StopIteration as e:
-                return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
+                return TaskState(
+                    control=ValueControl(e.value),
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=k_rest,
+                    status=ReadyStatus(None),
+                )
             except Exception as ex:
-                captured = capture_traceback_safe(K_rest, ex, pre_captured=pre_captured)
-                return CESKState(C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
+                captured = capture_traceback_safe(k_rest, ex, pre_captured=pre_captured)
+                return TaskState(
+                    control=ErrorControl(ex, captured_traceback=captured),
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=k_rest,
+                    status=ReadyStatus(None),
+                )
 
         if isinstance(frame, LocalFrame):
-            return CESKState(C=Value(C.v), E=frame.restore_env, S=S, K=K_rest)
+            return TaskState(
+                control=ValueControl(control.v),
+                env=frame.restore_env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, InterceptFrame):
-            return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
+            return TaskState(
+                control=ValueControl(control.v),
+                env=env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, ListenFrame):
-            current_log = S.get("__log__", [])
+            from doeff._types_internal import ListenResult
+            from doeff.utils import BoundedLog
+            
+            current_log = store.get("__log__", [])
             captured = current_log[frame.log_start_index:]
-            listen_result = ListenResult(value=C.v, log=BoundedLog(captured))
-            return CESKState(C=Value(listen_result), E=E, S=S, K=K_rest)
+            listen_result = ListenResult(value=control.v, log=BoundedLog(captured))
+            return TaskState(
+                control=ValueControl(listen_result),
+                env=env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, GatherFrame):
             if not frame.remaining_programs:
-                final_results = frame.collected_results + [C.v]
-                return CESKState(C=Value(final_results), E=frame.saved_env, S=S, K=K_rest)
+                final_results = frame.collected_results + [control.v]
+                return TaskState(
+                    control=ValueControl(final_results),
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=k_rest,
+                    status=ReadyStatus(None),
+                )
 
             next_prog, *rest = frame.remaining_programs
-            return CESKState(
-                C=ProgramControl(next_prog),
-                E=frame.saved_env,
-                S=S,
-                K=[GatherFrame(rest, frame.collected_results + [C.v], frame.saved_env)] + K_rest,
+            return TaskState(
+                control=ProgramControl(next_prog),
+                env=frame.saved_env,
+                store=store,
+                kontinuation=[GatherFrame(rest, frame.collected_results + [control.v], frame.saved_env)] + k_rest,
+                status=ReadyStatus(None),
             )
 
         if isinstance(frame, SafeFrame):
-            return CESKState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
+            return TaskState(
+                control=ValueControl(Ok(control.v)),
+                env=frame.saved_env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
-    if isinstance(C, Error) and K:
-        frame = K[0]
-        K_rest = K[1:]
+    if isinstance(control, ErrorControl) and k:
+        frame = k[0]
+        k_rest = k[1:]
 
         if isinstance(frame, ReturnFrame):
             from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
             from doeff.program import ProgramBase
-            from doeff.types import EffectBase
+            from doeff.types import EffectBase as EffectBaseType
 
             pre_captured = pre_capture_generator(
                 frame.generator, is_resumed=True, program_call=frame.program_call
             )
 
             try:
-                item = frame.generator.throw(C.ex)
+                item = frame.generator.throw(control.ex)
 
-                if isinstance(item, EffectBase):
-                    control = EffectControl(item)
+                if isinstance(item, EffectBaseType):
+                    new_control = EffectControl(item)
                 elif isinstance(item, ProgramBase):
-                    control = ProgramControl(item)
+                    new_control = ProgramControl(item)
                 else:
-                    return CESKState(
-                        C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
-                        E=frame.saved_env,
-                        S=S,
-                        K=K_rest,
+                    raise InterpreterInvariantError(
+                        f"Program yielded unexpected type: {type(item).__name__}. "
+                        "Programs must yield Effect or Program instances only."
                     )
 
-                return CESKState(
-                    C=control,
-                    E=frame.saved_env,
-                    S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
+                return TaskState(
+                    control=new_control,
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + k_rest,
+                    status=ReadyStatus(None),
                 )
             except StopIteration as e:
-                return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
+                return TaskState(
+                    control=ValueControl(e.value),
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=k_rest,
+                    status=ReadyStatus(None),
+                )
             except Exception as propagated:
-                if propagated is C.ex:
-                    return CESKState(
-                        C=Error(propagated, captured_traceback=C.captured_traceback),
-                        E=frame.saved_env,
-                        S=S,
-                        K=K_rest,
+                if propagated is control.ex:
+                    return TaskState(
+                        control=ErrorControl(propagated, captured_traceback=control.captured_traceback),
+                        env=frame.saved_env,
+                        store=store,
+                        kontinuation=k_rest,
+                        status=ReadyStatus(None),
                     )
-                captured = capture_traceback_safe(K_rest, propagated, pre_captured=pre_captured)
-                return CESKState(
-                    C=Error(propagated, captured_traceback=captured),
-                    E=frame.saved_env,
-                    S=S,
-                    K=K_rest,
+                captured = capture_traceback_safe(k_rest, propagated, pre_captured=pre_captured)
+                return TaskState(
+                    control=ErrorControl(propagated, captured_traceback=captured),
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=k_rest,
+                    status=ReadyStatus(None),
                 )
 
         if isinstance(frame, LocalFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.restore_env, S=S, K=K_rest)
+            return TaskState(
+                control=ErrorControl(control.ex, captured_traceback=control.captured_traceback),
+                env=frame.restore_env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, InterceptFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
+            return TaskState(
+                control=ErrorControl(control.ex, captured_traceback=control.captured_traceback),
+                env=env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, ListenFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
+            return TaskState(
+                control=ErrorControl(control.ex, captured_traceback=control.captured_traceback),
+                env=env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, GatherFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.saved_env, S=S, K=K_rest)
+            return TaskState(
+                control=ErrorControl(control.ex, captured_traceback=control.captured_traceback),
+                env=frame.saved_env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
 
         if isinstance(frame, SafeFrame):
+            from doeff._vendor import NOTHING, Some
             from doeff.cesk_traceback import capture_traceback_safe
 
-            if C.captured_traceback is not None:
-                captured_maybe = Some(C.captured_traceback)
-            else:
-                captured = capture_traceback_safe(K_rest, C.ex)
-                captured_maybe = Some(captured) if captured else NOTHING
-            err_result = Err(C.ex, captured_traceback=captured_maybe)
-            return CESKState(C=Value(err_result), E=frame.saved_env, S=S, K=K_rest)
+            ex = control.ex
+            if not isinstance(ex, Exception):
+                return TaskState(
+                    control=ErrorControl(ex, captured_traceback=control.captured_traceback),
+                    env=frame.saved_env,
+                    store=store,
+                    kontinuation=k_rest,
+                    status=ReadyStatus(None),
+                )
 
-    head_desc = type(K[0]).__name__ if K else "empty"
-    raise InterpreterInvariantError(f"Unhandled state: C={type(C).__name__}, K head={head_desc}")
+            if control.captured_traceback is not None:
+                captured_maybe = Some(control.captured_traceback)
+            else:
+                captured = capture_traceback_safe(k_rest, ex)
+                captured_maybe = Some(captured) if captured else NOTHING
+            err_result = Err(ex, captured_traceback=captured_maybe)
+            return TaskState(
+                control=ValueControl(err_result),
+                env=frame.saved_env,
+                store=store,
+                kontinuation=k_rest,
+                status=ReadyStatus(None),
+            )
+
+    head_desc = type(k[0]).__name__ if k else "empty"
+    raise InterpreterInvariantError(f"Unhandled state: control={type(control).__name__}, K head={head_desc}")
 
 
 __all__ = [
     "step",
+    "Handler",
+    "StepError",
+    "UnhandledEffectError",
+    "InterpreterInvariantError",
+    "to_generator",
 ]
