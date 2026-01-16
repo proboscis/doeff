@@ -156,6 +156,13 @@ def step(task: TaskState, handlers: dict[type, Handler]) -> TaskState:
                 status=ReadyStatus(None),
             )
 
+        for frame in k:
+            if isinstance(frame, InterceptFrame) and frame.transforms:
+                raise NotImplementedError(
+                    f"Intercept effect transforms not yet implemented. "
+                    f"Effect {type(effect).__name__} yielded inside Intercept scope."
+                )
+
         handler = handlers.get(type(effect))
         if handler:
             return handler(effect, k, env, store)
