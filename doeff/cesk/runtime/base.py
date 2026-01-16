@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 from doeff._vendor import Err, Ok
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.state import (
+    AwaitExternalRequest,
     BlockedStatus,
     CESKState,
     Condition,
@@ -104,9 +105,17 @@ class BaseRuntime(ABC):
     def _handle_request(self, task_id: TaskId, task: TaskState, request: Any) -> None:
         match request:
             case CreateTaskRequest(program):
+                from doeff.effects.spawn import Task
+                
                 child_id, self._state = self._state.create_task(program, task.env, task.store)
                 self._ready_queue.append(child_id)
-                resumed = task.resume_with(TaskHandle(child_id))
+                task_obj = Task(
+                    backend="thread",
+                    _handle=TaskHandle(child_id),
+                    _env_snapshot=dict(task.env),
+                    _state_snapshot=dict(task.store),
+                )
+                resumed = task.resume_with(task_obj)
                 self._state = self._state.with_task(task_id, resumed)
                 self._ready_queue.append(task_id)
             
@@ -138,6 +147,12 @@ class BaseRuntime(ABC):
                 resumed = task.resume_with(SpawnId(spawn_id))
                 self._state = self._state.with_task(task_id, resumed)
                 self._ready_queue.append(task_id)
+            
+            case AwaitExternalRequest(awaitable):
+                raise RuntimeError(
+                    f"Await effect not supported in {type(self).__name__}. "
+                    "Use AsyncioRuntime for async/await operations."
+                )
             
             case _:
                 self._handle_custom_request(task_id, task, request)
