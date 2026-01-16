@@ -1,4 +1,8 @@
-"""The CESK machine step function."""
+"""The CESK machine step function for unified multi-task architecture.
+
+This module provides both the legacy single-task step() function and the new
+multi-task step_task() function for the unified CESK architecture.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from doeff._vendor import NOTHING, Err, FrozenDict, Ok, Some
 from doeff._types_internal import EffectBase, ListenResult
-from doeff.cesk.types import Store
+from doeff.cesk.types import Store, TaskId
 from doeff.cesk.frames import (
     GatherFrame,
     InterceptFrame,
@@ -16,7 +20,18 @@ from doeff.cesk.frames import (
     ReturnFrame,
     SafeFrame,
 )
-from doeff.cesk.state import CESKState, EffectControl, Error, ProgramControl, Value
+from doeff.cesk.state import (
+    CESKState,
+    TaskState,
+    EffectControl,
+    Error,
+    ProgramControl,
+    Value,
+    Ready,
+    Blocked,
+    Requesting,
+    Done as TaskDoneStatus,
+)
 from doeff.cesk.result import Done, Failed, StepResult, Suspended
 from doeff.cesk.dispatcher import InterpreterInvariantError, ScheduledEffectDispatcher, UnhandledEffectError
 from doeff.cesk.classification import (
@@ -358,6 +373,116 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
     raise InterpreterInvariantError(f"Unhandled state: C={type(C).__name__}, K head={head_desc}")
 
 
+def step_task(
+    task_state: TaskState,
+    store: Store,
+    dispatcher: ScheduledEffectDispatcher | None = None,
+) -> StepResult:
+    """Step a single TaskState (new multi-task interface).
+
+    This function provides the same stepping logic as step() but works with
+    the TaskState class instead of the legacy CESKState.
+
+    Args:
+        task_state: The per-task state (C, E, K, status)
+        store: The shared mutable store
+        dispatcher: Optional effect dispatcher
+
+    Returns:
+        StepResult indicating outcome (Done, Failed, Suspended, or CESKState)
+    """
+    # Check that task is Ready
+    if not isinstance(task_state.status, Ready):
+        raise InterpreterInvariantError(
+            f"Cannot step task with status {type(task_state.status).__name__}"
+        )
+
+    # Create a legacy CESKState for compatibility
+    main_task = TaskId.new()
+    legacy_state = CESKState(
+        tasks={main_task: task_state},
+        store=store,
+        main_task=main_task,
+    )
+
+    # Use the existing step function
+    result = step(legacy_state, dispatcher)
+
+    return result
+
+
+def step_cesk_task(
+    cesk_state: CESKState,
+    task_id: TaskId,
+    dispatcher: ScheduledEffectDispatcher | None = None,
+) -> tuple[CESKState, StepResult]:
+    """Step a specific task within a multi-task CESKState.
+
+    Args:
+        cesk_state: The multi-task CESK state
+        task_id: The task to step
+        dispatcher: Optional effect dispatcher
+
+    Returns:
+        Tuple of (updated CESKState, StepResult)
+    """
+    task_state = cesk_state.get_task(task_id)
+    if task_state is None:
+        raise ValueError(f"Task {task_id} not found")
+
+    # Check that task is Ready
+    if not isinstance(task_state.status, Ready):
+        raise InterpreterInvariantError(
+            f"Cannot step task with status {type(task_state.status).__name__}"
+        )
+
+    # Create a temporary CESKState with just this task as main
+    temp_state = CESKState(
+        tasks={task_id: task_state},
+        store=cesk_state.store,
+        main_task=task_id,
+        futures=cesk_state.futures,
+        spawn_results=cesk_state.spawn_results,
+    )
+
+    result = step(temp_state, dispatcher)
+
+    # Update the original CESKState based on the result
+    if isinstance(result, Done):
+        done_task = task_state.with_status(TaskDoneStatus.ok(result.value))
+        new_cesk = cesk_state.with_task(task_id, done_task)
+        return new_cesk, result
+
+    if isinstance(result, Failed):
+        failed_task = task_state.with_status(TaskDoneStatus.err(result.exception))
+        new_cesk = cesk_state.with_task(task_id, failed_task)
+        return new_cesk, result
+
+    if isinstance(result, Suspended):
+        # Task remains in its current state, waiting for handler
+        return cesk_state, result
+
+    if isinstance(result, CESKState):
+        # Step returned a new state - extract the updated task
+        updated_task = result.get_task(task_id)
+        if updated_task is None:
+            # This shouldn't happen, but handle it gracefully
+            return cesk_state, result
+
+        new_cesk = CESKState(
+            tasks={**cesk_state.tasks, task_id: updated_task},
+            store=result.store,  # Use updated store
+            main_task=cesk_state.main_task,
+            futures=cesk_state.futures,
+            spawn_results=cesk_state.spawn_results,
+        )
+        return new_cesk, result
+
+    raise InterpreterInvariantError(f"Unknown step result type: {type(result)}")
+
+
 __all__ = [
     "step",
+    "step_task",
+    "step_cesk_task",
 ]
