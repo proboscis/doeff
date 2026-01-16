@@ -30,12 +30,32 @@ from doeff.cesk.events import (
     AllTasksComplete,
     EffectSuspended,
     Event,
+    ExternalAwait,
+    IORequested,
     Stepped,
     TaskBlocked,
     TaskCompleted,
     TaskFailed,
+    TasksCreated,
+    TimeWait,
 )
-from doeff.cesk.actions import Action, Resume, RunProgram
+from doeff.cesk.actions import (
+    Action,
+    AppendLog,
+    AwaitExternal,
+    BlockForFuture,
+    BlockForTasks,
+    CancelTasks,
+    CreateTask,
+    CreateTasks,
+    Delay,
+    ModifyStore,
+    PerformIO,
+    Resume,
+    ResumeError,
+    RunProgram,
+    WaitUntil,
+)
 
 if TYPE_CHECKING:
     from doeff.program import Program
@@ -210,10 +230,279 @@ def _apply_intercept_transforms(
     for frame in kontinuation:
         if isinstance(frame, InterceptFrame):
             for transform in frame.transforms:
-                result = transform(effect)
-                if result is not None:
-                    return result
+                try:
+                    result = transform(effect)
+                    if result is not None:
+                        return result
+                except Exception:
+                    pass
     return effect
+
+
+def _lookup_handler(
+    effect_type: type,
+    handlers: dict[type, Handler],
+) -> Handler | None:
+    if effect_type in handlers:
+        return handlers[effect_type]
+    for base in effect_type.__mro__[1:]:
+        if base in handlers:
+            return handlers[base]
+    return None
+
+
+def _process_action(
+    action: Action,
+    task: TaskState,
+    state: CESKState,
+    effect: EffectBase,
+) -> Event | tuple[TaskState, CESKState]:
+    from doeff.cesk.frames import LocalFrame, SafeFrame, ListenFrame
+    from doeff.cesk.unified_state import (
+        WaitingForFuture,
+        WaitingForTime,
+        WaitingForIO,
+        WaitingForAll,
+        WaitingForAny,
+    )
+    from doeff.effects import (
+        GatherEffect,
+        InterceptEffect,
+        LocalEffect,
+        ResultSafeEffect,
+        WriterListenEffect,
+    )
+    from datetime import datetime
+    
+    task_id = task.task_id
+    
+    if isinstance(action, Resume):
+        new_store = action.store if action.store is not None else state.store
+        new_task = task.with_control(Value(action.value))
+        new_state = state.with_store(new_store).update_task(new_task)
+        return new_task, new_state
+    
+    if isinstance(action, ResumeError):
+        new_store = action.store if action.store is not None else state.store
+        new_task = task.with_control(Error(action.error))
+        new_state = state.with_store(new_store).update_task(new_task)
+        return new_task, new_state
+    
+    if isinstance(action, RunProgram):
+        sub_program = action.program
+        new_env = action.env if action.env is not None else task.env
+        
+        if isinstance(effect, ResultSafeEffect):
+            frame = SafeFrame(task.env)
+            new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(frame)
+        elif isinstance(effect, LocalEffect):
+            frame = LocalFrame(task.env)
+            new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(frame)
+        elif isinstance(effect, GatherEffect):
+            programs = list(effect.programs)
+            if len(programs) > 1:
+                gather_frame = GatherFrame(programs[1:], [], task.env)
+                new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(gather_frame)
+            else:
+                new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env)
+        elif isinstance(effect, InterceptEffect):
+            intercept_frame = InterceptFrame(tuple(effect.transforms))
+            new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(intercept_frame)
+        elif isinstance(effect, WriterListenEffect):
+            log_start = len(state.store.get("__log__", []))
+            listen_frame = ListenFrame(log_start)
+            new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(listen_frame)
+        else:
+            new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env)
+        
+        new_state = state.update_task(new_task)
+        return new_task, new_state
+    
+    if isinstance(action, CreateTask):
+        new_task_id = state.id_gen.next_task_id()
+        child_env = action.env if action.env is not None else task.env
+        child_task = TaskState.initial(
+            action.program,
+            env=child_env,
+            task_id=new_task_id,
+            parent_id=action.parent_id or task_id,
+            spawn_id=action.spawn_id,
+        )
+        new_state = state.add_task(child_task)
+        new_task = task.with_control(Value(new_task_id))
+        new_state = new_state.update_task(new_task)
+        return TasksCreated(
+            parent_id=task_id,
+            child_ids=(new_task_id,),
+            state=new_state,
+        )
+    
+    if isinstance(action, CreateTasks):
+        child_ids: list[TaskId] = []
+        new_state = state
+        for i, program in enumerate(action.programs):
+            new_task_id = new_state.id_gen.next_task_id()
+            child_env = (action.envs[i] if action.envs and i < len(action.envs) else None) or task.env
+            child_task = TaskState.initial(
+                program,
+                env=child_env,
+                task_id=new_task_id,
+                parent_id=task_id,
+            )
+            new_state = new_state.add_task(child_task)
+            child_ids.append(new_task_id)
+        new_task = task.with_control(Value(tuple(child_ids)))
+        new_state = new_state.update_task(new_task)
+        return TasksCreated(
+            parent_id=task_id,
+            child_ids=tuple(child_ids),
+            state=new_state,
+        )
+    
+    if isinstance(action, PerformIO):
+        blocked_task = TaskState(
+            task_id=task_id,
+            control=task.control,
+            env=task.env,
+            kontinuation=task.kontinuation,
+            status=TaskStatus.BLOCKED,
+            condition=WaitingForIO(action.io_id),
+            parent_id=task.parent_id,
+            spawn_id=task.spawn_id,
+        )
+        new_state = state.update_task(blocked_task)
+        return IORequested(
+            task_id=task_id,
+            io_callable=action.io_callable,
+            io_id=action.io_id,
+            state=new_state,
+        )
+    
+    if isinstance(action, AwaitExternal):
+        blocked_task = TaskState(
+            task_id=task_id,
+            control=task.control,
+            env=task.env,
+            kontinuation=task.kontinuation,
+            status=TaskStatus.BLOCKED,
+            condition=WaitingForFuture(action.future_id),
+            parent_id=task.parent_id,
+            spawn_id=task.spawn_id,
+        )
+        new_state = state.update_task(blocked_task)
+        return ExternalAwait(
+            task_id=task_id,
+            awaitable=action.awaitable,
+            future_id=action.future_id,
+            state=new_state,
+        )
+    
+    if isinstance(action, Delay):
+        current_time = state.current_time or datetime.now()
+        target_time = current_time + action.duration
+        blocked_task = TaskState(
+            task_id=task_id,
+            control=task.control,
+            env=task.env,
+            kontinuation=task.kontinuation,
+            status=TaskStatus.BLOCKED,
+            condition=WaitingForTime(target_time),
+            parent_id=task.parent_id,
+            spawn_id=task.spawn_id,
+        )
+        new_state = state.update_task(blocked_task)
+        return TimeWait(
+            task_id=task_id,
+            target=target_time,
+            state=new_state,
+        )
+    
+    if isinstance(action, WaitUntil):
+        blocked_task = TaskState(
+            task_id=task_id,
+            control=task.control,
+            env=task.env,
+            kontinuation=task.kontinuation,
+            status=TaskStatus.BLOCKED,
+            condition=WaitingForTime(action.target),
+            parent_id=task.parent_id,
+            spawn_id=task.spawn_id,
+        )
+        new_state = state.update_task(blocked_task)
+        return TimeWait(
+            task_id=task_id,
+            target=action.target,
+            state=new_state,
+        )
+    
+    if isinstance(action, BlockForFuture):
+        blocked_task = TaskState(
+            task_id=task_id,
+            control=task.control,
+            env=task.env,
+            kontinuation=task.kontinuation,
+            status=TaskStatus.BLOCKED,
+            condition=WaitingForFuture(action.future_id),
+            parent_id=task.parent_id,
+            spawn_id=task.spawn_id,
+        )
+        new_state = state.update_task(blocked_task)
+        return blocked_task, new_state
+    
+    if isinstance(action, BlockForTasks):
+        if action.wait_all:
+            condition = WaitingForAll(action.task_ids)
+        else:
+            condition = WaitingForAny(action.task_ids)
+        blocked_task = TaskState(
+            task_id=task_id,
+            control=task.control,
+            env=task.env,
+            kontinuation=task.kontinuation,
+            status=TaskStatus.BLOCKED,
+            condition=condition,
+            parent_id=task.parent_id,
+            spawn_id=task.spawn_id,
+        )
+        new_state = state.update_task(blocked_task)
+        return blocked_task, new_state
+    
+    if isinstance(action, CancelTasks):
+        new_state = state
+        for cancel_id in action.task_ids:
+            cancel_task = new_state.get_task(cancel_id)
+            if cancel_task and cancel_task.status == TaskStatus.RUNNING:
+                cancelled = TaskState(
+                    task_id=cancel_id,
+                    control=Error(RuntimeError("Task cancelled")),
+                    env=cancel_task.env,
+                    kontinuation=[],
+                    status=TaskStatus.FAILED,
+                    condition=None,
+                    parent_id=cancel_task.parent_id,
+                    spawn_id=cancel_task.spawn_id,
+                )
+                new_state = new_state.update_task(cancelled)
+        return task, new_state
+    
+    if isinstance(action, ModifyStore):
+        new_store = dict(state.store)
+        new_store[action.key] = action.value
+        new_state = state.with_store(new_store)
+        return task, new_state
+    
+    if isinstance(action, AppendLog):
+        new_store = dict(state.store)
+        log = list(new_store.get("__log__", []))
+        if isinstance(action.message, list):
+            log.extend(action.message)
+        else:
+            log.append(action.message)
+        new_store["__log__"] = log
+        new_state = state.with_store(new_store)
+        return task, new_state
+    
+    raise InterpreterInvariantError(f"Unknown action type: {type(action)}")
 
 
 def unified_step(
@@ -264,8 +553,8 @@ def unified_step(
                     new_state = state.update_task(new_task)
                     return Stepped(state=new_state)
         
-        if handlers and type(effect) in handlers:
-            handler = handlers[type(effect)]
+        handler = _lookup_handler(type(effect), handlers) if handlers else None
+        if handler is not None:
             ctx = HandlerContext(
                 env=task.env,
                 store=state.store,
@@ -274,31 +563,12 @@ def unified_step(
             )
             actions = handler(effect, ctx)
             
-            if actions and isinstance(actions[0], Resume):
-                resume = actions[0]
-                new_store = resume.store if resume.store is not None else state.store
-                new_task = task.with_control(Value(resume.value))
-                new_state = state.with_store(new_store).update_task(new_task)
-                return Stepped(state=new_state)
-            
-            if actions and isinstance(actions[0], RunProgram):
-                run_action = actions[0]
-                sub_program = run_action.program
-                new_env = run_action.env if run_action.env is not None else task.env
-                
-                from doeff.cesk.frames import LocalFrame, SafeFrame
-                from doeff.effects import LocalEffect, ResultSafeEffect
-                
-                if isinstance(effect, ResultSafeEffect):
-                    frame = SafeFrame(task.env)
-                    new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(frame)
-                elif isinstance(effect, LocalEffect):
-                    frame = LocalFrame(task.env)
-                    new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env).push_frame(frame)
-                else:
-                    new_task = task.with_control(ProgramControl(sub_program)).with_env(new_env)
-                
-                new_state = state.update_task(new_task)
+            if actions:
+                result = _process_action(actions[0], task, state, effect)
+                if isinstance(result, Event):
+                    return result
+                new_task, new_state = result
+                new_state = new_state.update_task(new_task)
                 return Stepped(state=new_state)
         
         return EffectSuspended(
