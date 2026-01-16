@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections import defaultdict, deque
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
@@ -50,7 +50,7 @@ class BaseRuntime(ABC):
     def __init__(self, handlers: dict[type, Handler] | None = None):
         self._handlers = handlers or default_handlers()
         self._state: CESKState = CESKState()
-        self._ready_queue: list[TaskId] = []
+        self._ready_queue: deque[TaskId] = deque()
         self._waiting: dict[Condition, list[TaskId]] = defaultdict(list)
         self._current_time: datetime = datetime.now()
     
@@ -76,7 +76,7 @@ class BaseRuntime(ABC):
         store_dict["__current_time__"] = self._current_time
         
         self._state, main_task_id = CESKState.initial(program, env_frozen, store_dict)
-        self._ready_queue = [main_task_id]
+        self._ready_queue = deque([main_task_id])
         self._waiting = defaultdict(list)
         
         return main_task_id

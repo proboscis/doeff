@@ -49,6 +49,14 @@ class InterpreterInvariantError(StepError):
     pass
 
 
+def _has_real_method(obj: object, name: str) -> bool:
+    """Check if obj has a real method, not one synthesized by ProgramBase.__getattr__."""
+    for cls in type(obj).__mro__:
+        if name in cls.__dict__:
+            return True
+    return False
+
+
 def to_generator(program: Program):
     from doeff.program import GeneratorProgram, KleisliProgramCall, ProgramBase
     
@@ -56,7 +64,7 @@ def to_generator(program: Program):
         return program.to_generator()
     if isinstance(program, KleisliProgramCall):
         return program.to_generator()
-    if hasattr(program, "to_generator"):
+    if _has_real_method(program, "to_generator"):
         return program.to_generator()
     if isinstance(program, ProgramBase):
         def single_yield():
