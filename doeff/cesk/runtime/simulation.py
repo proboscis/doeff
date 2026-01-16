@@ -140,6 +140,18 @@ class UnifiedSimulationRuntime:
                     f"Unhandled effect: {type(effect).__name__}"
                 )
             
+            if isinstance(event, TimeWait):
+                if event.target > self._current_time:
+                    self._current_time = event.target
+                task = event.state.get_task(event.task_id)
+                if task is not None:
+                    from doeff.cesk.state import Value
+                    new_task = task.with_control(Value(None)).with_status(TaskStatus.RUNNING)
+                    state = event.state.update_task(new_task).with_time(self._current_time)
+                else:
+                    state = event.state.with_time(self._current_time)
+                continue
+            
             if isinstance(event, TaskBlocked):
                 state = self._advance_blocked_tasks(event.state)
                 if state is None:
