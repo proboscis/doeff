@@ -31,8 +31,14 @@ def handle_task(effect: Any, k: Kontinuation, env: Environment, store: Store) ->
 
 def handle_join(effect: Any, k: Kontinuation, env: Environment, store: Store) -> TaskState:
     from doeff.cesk.state import BlockedStatus, TaskCondition
+    from doeff.cesk.types import TaskHandle
     
-    task_id = effect.task_id
+    task = effect.task
+    handle = task._handle
+    if isinstance(handle, TaskHandle):
+        task_id = handle.task_id
+    else:
+        task_id = handle
     return TaskState(
         control=ValueControl(None),
         env=env,
@@ -63,16 +69,9 @@ def handle_gather(effect: Any, k: Kontinuation, env: Environment, store: Store) 
 
 
 def handle_race(effect: Any, k: Kontinuation, env: Environment, store: Store) -> TaskState:
-    programs = list(effect.programs)
-    if not programs:
-        raise ValueError("race requires at least one program")
-    
-    return TaskState(
-        control=ValueControl(None),
-        env=env,
-        store=store,
-        kontinuation=k,
-        status=RequestingStatus(CreateTaskRequest(programs[0])),
+    raise NotImplementedError(
+        "Race effect not yet implemented. "
+        "Proper race semantics require spawning all programs and returning the first to complete."
     )
 
 
