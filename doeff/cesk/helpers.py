@@ -99,12 +99,7 @@ def to_generator(program: Program) -> Generator[Any, Any, Any]:
 
 
 def shutdown_shared_executor(wait: bool = True) -> None:
-    import doeff.scheduled_handlers.concurrency as concurrency_module
-    if concurrency_module._shared_executor is not None:
-        with concurrency_module._shared_executor_lock:
-            if concurrency_module._shared_executor is not None:
-                concurrency_module._shared_executor.shutdown(wait=wait)
-                concurrency_module._shared_executor = None
+    pass
 
 
 __all__ = [
