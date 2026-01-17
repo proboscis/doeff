@@ -5,7 +5,10 @@ from datetime import datetime, timedelta
 
 from doeff.program import Program
 from doeff import do
-from doeff.effects import Ask, Get, Put, Modify, Pure, IO, Delay, GetTime
+from doeff.effects import (
+    Ask, Get, Put, Modify, Pure, IO, Delay, GetTime, WaitUntil,
+    Local, Tell, Log, Listen, Safe, Gather, intercept_program_effect,
+)
 
 
 class TestSyncRuntime:
@@ -574,3 +577,233 @@ class TestHandlerIntegration:
         
         result = runtime.run(program(), env={"test": "original"})
         assert result == "sim:test"
+
+
+class TestControlHandlers:
+    def test_local_effect(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def inner():
+            value = yield Ask("key")
+            return value
+        
+        @do
+        def program():
+            outer_value = yield Ask("key")
+            local_value = yield Local({"key": "local_value"}, inner())
+            after_value = yield Ask("key")
+            return (outer_value, local_value, after_value)
+        
+        result = runtime.run(program(), env={"key": "outer_value"})
+        assert result == ("outer_value", "local_value", "outer_value")
+
+    def test_tell_effect(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def program():
+            yield Tell("message1")
+            yield Log("message2")
+            yield Put("result", 42)
+            return (yield Get("result"))
+        
+        result = runtime.run(program())
+        assert result == 42
+
+    def test_listen_effect(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def inner():
+            yield Tell("log1")
+            yield Tell("log2")
+            return "inner_result"
+        
+        @do
+        def program():
+            listen_result = yield Listen(inner())  # type: ignore[arg-type]
+            return listen_result
+        
+        result = runtime.run(program())
+        assert result.value == "inner_result"
+        assert list(result.log) == ["log1", "log2"]
+
+    def test_safe_effect_success(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def inner():
+            return 42
+        
+        @do
+        def program():
+            result = yield Safe(inner())  # type: ignore[arg-type]
+            return result
+        
+        result = runtime.run(program())
+        assert result.is_ok()
+        assert result.unwrap() == 42
+
+    def test_safe_effect_failure(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def inner():
+            raise ValueError("test error")
+        
+        @do
+        def program():
+            result = yield Safe(inner())  # type: ignore[arg-type]
+            return result
+        
+        result = runtime.run(program())
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+
+    def test_intercept_effect(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        from doeff.effects import AskEffect
+        from doeff.effects.pure import PureEffect
+        from doeff.effects.base import create_effect_with_trace
+        
+        runtime = SyncRuntime()
+        
+        def transform_ask(effect):
+            if isinstance(effect, AskEffect):
+                return create_effect_with_trace(PureEffect(value=f"intercepted:{effect.key}"))
+            return effect
+        
+        @do
+        def inner():
+            value = yield Ask("key")
+            return value
+        
+        @do
+        def program():
+            result = yield intercept_program_effect(inner(), (transform_ask,))
+            return result
+        
+        result = runtime.run(program(), env={"key": "original"})
+        assert result == "intercepted:key"
+
+
+class TestGatherHandlers:
+    def test_gather_empty(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def program():
+            results = yield Gather()
+            return results
+        
+        result = runtime.run(program())
+        assert result == []
+
+    def test_gather_single(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def prog1():
+            return 1
+        
+        @do
+        def program():
+            results = yield Gather(prog1())  # type: ignore[arg-type]
+            return results
+        
+        result = runtime.run(program())
+        assert result == [1]
+
+    def test_gather_multiple(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def prog1():
+            return 1
+        
+        @do
+        def prog2():
+            return 2
+        
+        @do
+        def prog3():
+            return 3
+        
+        @do
+        def program():
+            results = yield Gather(prog1(), prog2(), prog3())  # type: ignore[arg-type]
+            return results
+        
+        result = runtime.run(program())
+        assert result == [1, 2, 3]
+
+
+class TestWaitUntilHandler:
+    def test_wait_until_sync_runtime(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def program():
+            target = datetime.now() + timedelta(milliseconds=10)
+            yield WaitUntil(target)
+            return "done"
+        
+        result = runtime.run(program())
+        assert result == "done"
+
+    def test_wait_until_past_time(self) -> None:
+        from doeff.cesk.runtime import SyncRuntime
+        
+        runtime = SyncRuntime()
+        
+        @do
+        def program():
+            target = datetime.now() - timedelta(seconds=10)
+            yield WaitUntil(target)
+            return "done"
+        
+        result = runtime.run(program())
+        assert result == "done"
+
+    def test_wait_until_simulation_runtime(self) -> None:
+        from doeff.cesk.runtime import SimulationRuntime
+        
+        start_time = datetime(2025, 1, 1, 12, 0, 0)
+        target_time = datetime(2025, 1, 1, 13, 0, 0)
+        runtime = SimulationRuntime(start_time=start_time)
+        
+        @do
+        def program():
+            yield WaitUntil(target_time)
+            now = yield GetTime()
+            return now
+        
+        result = runtime.run(program())
+        assert result == target_time
+        assert runtime.current_time == target_time
+
+    def test_wait_until_handler_registered(self) -> None:
+        from doeff.cesk.handlers import default_handlers
+        from doeff.effects.time import WaitUntilEffect
+        
+        handlers = default_handlers()
+        assert WaitUntilEffect in handlers
