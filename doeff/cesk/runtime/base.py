@@ -1,5 +1,3 @@
-"""BaseRuntime abstract class for the unified CESK architecture."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -11,6 +9,7 @@ from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.frames import ContinueValue, ContinueError
+from doeff.cesk.errors import UnhandledEffectError
 
 if TYPE_CHECKING:
     from doeff.program import Program
@@ -47,7 +46,7 @@ class BaseRuntime(ABC):
         final_store: Store = store if store is not None else {}
         return CESKState.initial(program, frozen_env, final_store)
 
-    def _dispatch_effect_via_handler(
+    def _dispatch_effect(
         self,
         effect: Any,
         task_state: TaskState,
@@ -56,7 +55,12 @@ class BaseRuntime(ABC):
         handler = self._handlers.get(type(effect))
         
         if handler is None:
-            return self._dispatch_effect_via_scheduled(effect, task_state, store)
+            return ContinueError(
+                error=UnhandledEffectError(f"No handler for {type(effect).__name__}"),
+                env=task_state.env,
+                store=store,
+                k=task_state.kontinuation,
+            )
         
         try:
             frame_result = handler(effect, task_state, store)
@@ -73,49 +77,9 @@ class BaseRuntime(ABC):
             k=task_state.kontinuation,
         )
 
-    def _dispatch_effect_via_scheduled(
-        self,
-        effect: Any,
-        task_state: TaskState,
-        store: dict[str, Any],
-    ) -> ContinueValue | ContinueError:
-        from doeff.cesk.dispatcher import ScheduledEffectDispatcher
-        from doeff.scheduled_handlers import default_scheduled_handlers
-        from doeff.runtime import Resume, Schedule
-        
-        dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
-        handler_result = dispatcher.dispatch(effect, task_state.env, store)
-        
-        if isinstance(handler_result, Resume):
-            return ContinueValue(
-                value=handler_result.value,
-                env=task_state.env,
-                store=handler_result.store,
-                k=task_state.kontinuation,
-            )
-        elif isinstance(handler_result, Schedule):
-            return ContinueValue(
-                value=None,
-                env=task_state.env,
-                store=handler_result.store,
-                k=task_state.kontinuation,
-            )
-        
-        return ContinueError(
-            error=RuntimeError(f"Unknown scheduled handler result: {type(handler_result)}"),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
-        )
-
     def _step_until_done(self, state: CESKState) -> Any:
-        from doeff.cesk.dispatcher import ScheduledEffectDispatcher
-        from doeff.scheduled_handlers import default_scheduled_handlers
-        
-        dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
-        
         while True:
-            result = step(state, dispatcher)
+            result = step(state, self._handlers)
             
             if isinstance(result, Done):
                 return result.value
@@ -123,7 +87,7 @@ class BaseRuntime(ABC):
             if isinstance(result, Failed):
                 exc = result.exception
                 if result.captured_traceback is not None:
-                    exc.__cesk_traceback__ = result.captured_traceback
+                    exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
                 raise exc
             
             if isinstance(result, CESKState):
@@ -132,7 +96,7 @@ class BaseRuntime(ABC):
             
             if isinstance(result, Suspended):
                 main_task = state.tasks[state.main_task]
-                dispatch_result = self._dispatch_effect_via_handler(
+                dispatch_result = self._dispatch_effect(
                     result.effect, main_task, state.store
                 )
                 
@@ -143,14 +107,6 @@ class BaseRuntime(ABC):
                 continue
             
             raise RuntimeError(f"Unexpected step result: {type(result)}")
-
-    def _handle_schedule(
-        self,
-        suspended: Any,
-        schedule_result: Any,
-        state: CESKState,
-    ) -> CESKState:
-        return suspended.resume(None, schedule_result.store)
 
 
 __all__ = [

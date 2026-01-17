@@ -39,19 +39,8 @@ TransformLike = str | Callable[[Program[Any]], Program[Any]]
 
 @dataclass
 class ProgramRunResult:
-    """Result of running a program via run_program().
-
-    Attributes:
-        value: The final value returned by the program.
-        run_result: The full RunResult object with context and result.
-        interpreter_path: The resolved interpreter path used (or description).
-        env_sources: Description of environment sources used.
-        applied_kleisli: Description of the Kleisli applied (if any).
-        applied_transforms: Description of transforms applied (if any).
-    """
-
     value: Any
-    run_result: RunResult[Any]
+    run_result: RunResult[Any] | None
     interpreter_path: str
     env_sources: list[str]
     applied_kleisli: str | None
@@ -79,7 +68,7 @@ def run_program(
     Args:
         program: Either a fully-qualified path to a Program (e.g., "myapp.program")
                  or a Program instance directly.
-        interpreter: Optional interpreter - can be a string path, ProgramInterpreter,
+        interpreter: Optional interpreter - can be a string path, SyncRuntime,
                      or callable. If not specified, auto-discovery will be used.
         envs: Optional list of environments. Each item can be:
               - A string path (e.g., "myapp.env")
@@ -223,17 +212,9 @@ def _run_program_from_path(
     command = _QuietRunCommand(context) if quiet else RunCommand(context)
     resolved_context, execution = command.execute()
 
-    run_result = execution.run_result
-    if run_result is None:
-        from doeff.interpreter import ProgramInterpreter
-
-        temp_interpreter = ProgramInterpreter()
-        temp_result = temp_interpreter.run(Program.pure(execution.final_value))
-        run_result = temp_result
-
     return ProgramRunResult(
         value=execution.final_value,
-        run_result=run_result,
+        run_result=execution.run_result,
         interpreter_path=resolved_context.interpreter_path,
         env_sources=resolved_context.env_paths,
         applied_kleisli=resolved_context.apply_path,
@@ -253,36 +234,30 @@ def _run_program_instance(
     quiet: bool,
     load_default_env: bool,
 ) -> ProgramRunResult:
-    """Run a Program instance directly with environment and transform support."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk.runtime import SyncRuntime
     from doeff.__main__ import SymbolResolver
     from doeff.effects import Local
 
     resolver = SymbolResolver()
     env_sources: list[str] = []
 
-    # Resolve interpreter
     interpreter_obj, interpreter_path = _resolve_interpreter(interpreter, resolver)
 
-    # Apply kleisli if specified
     applied_kleisli: str | None = None
     if apply is not None:
         program, applied_kleisli = _apply_kleisli(program, apply, resolver)
 
-    # Apply transforms if specified
     applied_transforms: list[str] = []
     if transform:
         program, applied_transforms = _apply_transforms(program, transform, resolver)
 
-    # Apply environments (including default env from ~/.doeff.py)
     program, env_sources = _apply_envs(program, envs or [], resolver, load_default_env, quiet)
 
-    # Run the program
-    run_result = _execute_program(program, interpreter_obj)
+    final_value = _execute_program(program, interpreter_obj)
 
     return ProgramRunResult(
-        value=run_result.value if not run_result.is_err() else None,
-        run_result=run_result,
+        value=final_value,
+        run_result=None,
         interpreter_path=interpreter_path,
         env_sources=env_sources,
         applied_kleisli=applied_kleisli,
@@ -294,23 +269,22 @@ def _resolve_interpreter(
     interpreter: InterpreterLike,
     resolver: Any,
 ) -> tuple[Any, str]:
-    """Resolve interpreter to an object and its description."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk.runtime import SyncRuntime
 
     if interpreter is None:
-        return ProgramInterpreter(), "<default ProgramInterpreter>"
+        return SyncRuntime(), "<default SyncRuntime>"
 
     if isinstance(interpreter, str):
         return resolver.resolve(interpreter), interpreter
 
-    if isinstance(interpreter, ProgramInterpreter):
-        return interpreter, "<ProgramInterpreter instance>"
+    if isinstance(interpreter, SyncRuntime):
+        return interpreter, "<SyncRuntime instance>"
 
     if callable(interpreter):
         func_name = getattr(interpreter, "__name__", str(interpreter))
         return interpreter, f"<callable: {func_name}>"
 
-    raise TypeError(f"interpreter must be str, ProgramInterpreter, or callable, got {type(interpreter)}")
+    raise TypeError(f"interpreter must be str, SyncRuntime, or callable, got {type(interpreter)}")
 
 
 def _apply_kleisli(
@@ -377,53 +351,39 @@ def _apply_envs(
     load_default_env: bool,
     quiet: bool,
 ) -> tuple[Program[Any], list[str]]:
-    """Apply environments to the program, including default env from ~/.doeff.py."""
-    from doeff import ProgramInterpreter
+    from doeff.cesk.runtime import SyncRuntime
     from doeff.__main__ import RunServices
     from doeff.effects import Local
 
     env_sources: list[str] = []
     merged_env: dict[str, Any] = {}
+    temp_runtime = SyncRuntime()
 
-    # Load default env from ~/.doeff.py first (same as CLI behavior)
     if load_default_env:
         default_env_path = _load_default_env(quiet)
         if default_env_path:
             services = RunServices()
             env_program = services.merger.merge_envs([default_env_path])
-            temp_interpreter = ProgramInterpreter()
-            env_result = temp_interpreter.run(env_program)
-            if env_result.is_err():
-                raise env_result.result.error
-            merged_env.update(env_result.value)
+            env_value = temp_runtime.run(env_program)
+            merged_env.update(env_value)
             env_sources.append("~/.doeff.py:__default_env__")
 
-    # Then apply user-specified envs
     for env in envs:
         if isinstance(env, str):
-            # String path - use merger for proper loading
             services = RunServices()
             env_program = services.merger.merge_envs([env])
-            temp_interpreter = ProgramInterpreter()
-            env_result = temp_interpreter.run(env_program)
-            if env_result.is_err():
-                raise env_result.result.error
-            merged_env.update(env_result.value)
+            env_value = temp_runtime.run(env_program)
+            merged_env.update(env_value)
             env_sources.append(env)
 
         elif isinstance(env, Program):
-            # Program[dict] - run it to get the dict
-            temp_interpreter = ProgramInterpreter()
-            env_result = temp_interpreter.run(env)
-            if env_result.is_err():
-                raise env_result.result.error
-            if not isinstance(env_result.value, dict):
-                raise TypeError(f"Environment Program must yield dict, got {type(env_result.value)}")
-            merged_env.update(env_result.value)
+            env_value = temp_runtime.run(env)
+            if not isinstance(env_value, dict):
+                raise TypeError(f"Environment Program must yield dict, got {type(env_value)}")
+            merged_env.update(env_value)
             env_sources.append("<Program[dict]>")
 
         elif isinstance(env, Mapping):
-            # Direct dict/mapping
             merged_env.update(env)
             env_sources.append("<dict>")
 
@@ -431,7 +391,6 @@ def _apply_envs(
             raise TypeError(f"env must be str, Program[dict], or dict, got {type(env)}")
 
     if merged_env:
-        # Wrap program with Local effect
         program = Local(merged_env, program)  # type: ignore[assignment]
 
     return program, env_sources
@@ -487,23 +446,19 @@ def _load_default_env(quiet: bool) -> str | None:
 def _execute_program(
     program: Program[Any],
     interpreter_obj: Any,
-) -> RunResult[Any]:
-    """Execute the program with the given interpreter."""
-    from doeff import ProgramInterpreter
+) -> Any:
+    from doeff.cesk.runtime import SyncRuntime
     from doeff.__main__ import _call_interpreter, _finalize_result
 
-    if isinstance(interpreter_obj, ProgramInterpreter):
+    if isinstance(interpreter_obj, SyncRuntime):
         return interpreter_obj.run(program)
 
     if callable(interpreter_obj):
         result = _call_interpreter(interpreter_obj, program)
         final_value, run_result = _finalize_result(result)
-        if run_result is None:
-            temp_interpreter = ProgramInterpreter()
-            return temp_interpreter.run(Program.pure(final_value))
-        return run_result
+        return final_value
 
-    raise TypeError(f"interpreter must be callable or ProgramInterpreter, got {type(interpreter_obj)}")
+    raise TypeError(f"interpreter must be callable or SyncRuntime, got {type(interpreter_obj)}")
 
 
 class _QuietRunCommand:
