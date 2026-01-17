@@ -110,18 +110,11 @@ from doeff.cesk.helpers import (
     to_generator,
 )
 from doeff.cesk.step import step, step_task, step_cesk_task
-from doeff.cesk.dispatcher import (
+from doeff.cesk.errors import (
     HandlerRegistryError,
     InterpreterInvariantError,
-    ScheduledEffectDispatcher,
     UnhandledEffectError,
 )
-from doeff.cesk.run import (
-    _run_internal,
-    run,
-    run_sync,
-)
-from doeff.scheduled_handlers import default_scheduled_handlers
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.runtime import BaseRuntime, SyncRuntime, SimulationRuntime
 
@@ -213,9 +206,6 @@ __all__ = [
     "UnhandledEffectError",
     "InterpreterInvariantError",
     "HandlerRegistryError",
-    # Dispatcher
-    "ScheduledEffectDispatcher",
-    "default_scheduled_handlers",
     # Transform
     "apply_transforms",
     "apply_intercept_chain",
@@ -230,11 +220,7 @@ __all__ = [
     "step",
     "step_task",
     "step_cesk_task",
-    # Run functions (deprecated - use doeff.runtimes instead)
-    "_run_internal",
-    "run",
-    "run_sync",
-    # New handlers
+    # Handlers
     "Handler",
     "default_handlers",
     # New runtimes

@@ -1,5 +1,3 @@
-"""SimulationRuntime with deterministic time control."""
-
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -8,9 +6,12 @@ from typing import TYPE_CHECKING, Any
 from doeff._vendor import FrozenDict
 from doeff.cesk.runtime.base import BaseRuntime
 from doeff.cesk.state import CESKState
-from doeff.cesk.result import Done, Failed
+from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler
+from doeff.cesk.frames import ContinueValue, ContinueError
+from doeff.cesk.errors import UnhandledEffectError
+from doeff.effects.time import DelayEffect, WaitUntilEffect
 
 if TYPE_CHECKING:
     from doeff.program import Program
@@ -48,16 +49,8 @@ class SimulationRuntime(BaseRuntime):
         return self._step_until_done_simulation(state)
 
     def _step_until_done_simulation(self, state: CESKState) -> Any:
-        from doeff.cesk.dispatcher import ScheduledEffectDispatcher
-        from doeff.cesk.result import Suspended
-        from doeff.cesk.frames import ContinueValue, ContinueError
-        from doeff.runtime import Resume, Schedule, DelayPayload, WaitUntilPayload
-        from doeff.scheduled_handlers import default_scheduled_handlers
-        
-        dispatcher = ScheduledEffectDispatcher(builtin_handlers=default_scheduled_handlers())
-        
         while True:
-            result = step(state, dispatcher)
+            result = step(state, self._handlers)
             
             if isinstance(result, Done):
                 return result.value
@@ -65,7 +58,7 @@ class SimulationRuntime(BaseRuntime):
             if isinstance(result, Failed):
                 exc = result.exception
                 if result.captured_traceback is not None:
-                    exc.__cesk_traceback__ = result.captured_traceback
+                    exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
                 raise exc
             
             if isinstance(result, CESKState):
@@ -74,46 +67,43 @@ class SimulationRuntime(BaseRuntime):
             
             if isinstance(result, Suspended):
                 main_task = state.tasks[state.main_task]
-                effect_type = type(result.effect)
-                handler = self._handlers.get(effect_type)
+                effect = result.effect
+                effect_type = type(effect)
                 
+                if isinstance(effect, DelayEffect):
+                    self._current_time = self._current_time + timedelta(seconds=effect.seconds)
+                    new_store = {**state.store, "__current_time__": self._current_time}
+                    state = result.resume(None, new_store)
+                    continue
+                    
+                if isinstance(effect, WaitUntilEffect):
+                    if effect.target_time > self._current_time:
+                        self._current_time = effect.target_time
+                    new_store = {**state.store, "__current_time__": self._current_time}
+                    state = result.resume(None, new_store)
+                    continue
+                
+                handler = self._handlers.get(effect_type)
                 if handler is not None:
                     try:
-                        frame_result = handler(result.effect, main_task, state.store)
+                        frame_result = handler(effect, main_task, state.store)
                     except Exception as ex:
                         state = result.resume_error(ex)
                         continue
                     
                     if isinstance(frame_result, ContinueValue):
-                        new_store = frame_result.store
-                        if isinstance(result.effect, (DelayPayload.__class__.__bases__[0] if hasattr(DelayPayload, '__class__') else type(None))):
-                            pass
-                        state = result.resume(frame_result.value, new_store)
+                        state = result.resume(frame_result.value, frame_result.store)
                     elif isinstance(frame_result, ContinueError):
                         state = result.resume_error(frame_result.error)
                     else:
-                        state = result.resume_error(RuntimeError(f"Unexpected FrameResult: {type(frame_result)}"))
+                        state = result.resume_error(
+                            RuntimeError(f"Unexpected FrameResult: {type(frame_result)}")
+                        )
                     continue
                 
-                handler_result = dispatcher.dispatch(result.effect, state.E, state.S)
-                
-                if isinstance(handler_result, Resume):
-                    state = result.resume(handler_result.value, handler_result.store)
-                elif isinstance(handler_result, Schedule):
-                    payload = handler_result.payload
-                    new_store = handler_result.store
-                    
-                    if isinstance(payload, DelayPayload):
-                        self._current_time = self._current_time + payload.duration
-                        new_store = {**new_store, "__current_time__": self._current_time}
-                        state = result.resume(None, new_store)
-                    elif isinstance(payload, WaitUntilPayload):
-                        if payload.target > self._current_time:
-                            self._current_time = payload.target
-                        new_store = {**new_store, "__current_time__": self._current_time}
-                        state = result.resume(None, new_store)
-                    else:
-                        state = result.resume(None, new_store)
+                state = result.resume_error(
+                    UnhandledEffectError(f"No handler for {effect_type.__name__}")
+                )
                 continue
             
             raise RuntimeError(f"Unexpected step result: {type(result)}")

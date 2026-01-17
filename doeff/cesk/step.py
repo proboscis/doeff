@@ -33,7 +33,7 @@ from doeff.cesk.state import (
     Done as TaskDoneStatus,
 )
 from doeff.cesk.result import Done, Failed, StepResult, Suspended
-from doeff.cesk.dispatcher import InterpreterInvariantError, ScheduledEffectDispatcher, UnhandledEffectError
+from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
 from doeff.cesk.classification import (
     has_intercept_frame,
     is_control_flow_effect,
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from doeff.program import Program
 
 
-def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) -> StepResult:
+def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResult:
     C, E, S, K = state.C, state.E, state.S, state.K
 
     if isinstance(C, Value) and not K:
@@ -131,7 +131,7 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
                 if is_control_flow_effect(transformed):
                     return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
 
-                has_handler = dispatcher.has_handler(transformed) if dispatcher else (is_pure_effect(transformed) or is_effectful(transformed))
+                has_handler = (handlers is not None and type(transformed) in handlers) or is_pure_effect(transformed) or is_effectful(transformed)
 
                 if has_handler:
                     return Suspended(
@@ -165,7 +165,7 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
                 K=K,
             )
 
-        has_handler = dispatcher.has_handler(effect) if dispatcher else (is_pure_effect(effect) or is_effectful(effect))
+        has_handler = (handlers is not None and type(effect) in handlers) or is_pure_effect(effect) or is_effectful(effect)
 
         if has_handler:
             return Suspended(
@@ -376,28 +376,13 @@ def step(state: CESKState, dispatcher: ScheduledEffectDispatcher | None = None) 
 def step_task(
     task_state: TaskState,
     store: Store,
-    dispatcher: ScheduledEffectDispatcher | None = None,
+    handlers: dict[type, Any] | None = None,
 ) -> StepResult:
-    """Step a single TaskState (new multi-task interface).
-
-    This function provides the same stepping logic as step() but works with
-    the TaskState class instead of the legacy CESKState.
-
-    Args:
-        task_state: The per-task state (C, E, K, status)
-        store: The shared mutable store
-        dispatcher: Optional effect dispatcher
-
-    Returns:
-        StepResult indicating outcome (Done, Failed, Suspended, or CESKState)
-    """
-    # Check that task is Ready
     if not isinstance(task_state.status, Ready):
         raise InterpreterInvariantError(
             f"Cannot step task with status {type(task_state.status).__name__}"
         )
 
-    # Create a legacy CESKState for compatibility
     main_task = TaskId.new()
     legacy_state = CESKState(
         tasks={main_task: task_state},
@@ -405,8 +390,7 @@ def step_task(
         main_task=main_task,
     )
 
-    # Use the existing step function
-    result = step(legacy_state, dispatcher)
+    result = step(legacy_state, handlers)
 
     return result
 
@@ -414,29 +398,17 @@ def step_task(
 def step_cesk_task(
     cesk_state: CESKState,
     task_id: TaskId,
-    dispatcher: ScheduledEffectDispatcher | None = None,
+    handlers: dict[type, Any] | None = None,
 ) -> tuple[CESKState, StepResult]:
-    """Step a specific task within a multi-task CESKState.
-
-    Args:
-        cesk_state: The multi-task CESK state
-        task_id: The task to step
-        dispatcher: Optional effect dispatcher
-
-    Returns:
-        Tuple of (updated CESKState, StepResult)
-    """
     task_state = cesk_state.get_task(task_id)
     if task_state is None:
         raise ValueError(f"Task {task_id} not found")
 
-    # Check that task is Ready
     if not isinstance(task_state.status, Ready):
         raise InterpreterInvariantError(
             f"Cannot step task with status {type(task_state.status).__name__}"
         )
 
-    # Create a temporary CESKState with just this task as main
     temp_state = CESKState(
         tasks={task_id: task_state},
         store=cesk_state.store,
@@ -445,7 +417,7 @@ def step_cesk_task(
         spawn_results=cesk_state.spawn_results,
     )
 
-    result = step(temp_state, dispatcher)
+    result = step(temp_state, handlers)
 
     # Update the original CESKState based on the result
     if isinstance(result, Done):
