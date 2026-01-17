@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 from doeff.cesk.frames import ContinueValue, FrameResult
@@ -15,6 +16,7 @@ def handle_delay(
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
+    time.sleep(effect.seconds)
     return ContinueValue(
         value=None,
         env=task_state.env,

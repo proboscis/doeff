@@ -14,7 +14,6 @@ Handler: TypeAlias = Callable[..., Any]
 
 
 def default_handlers() -> dict[type, Handler]:
-    """Return default handler registry for all built-in effects."""
     from doeff.effects.cache import (
         CacheDeleteEffect,
         CacheExistsEffect,
@@ -28,6 +27,7 @@ def default_handlers() -> dict[type, Handler]:
     from doeff.effects.reader import AskEffect, LocalEffect
     from doeff.effects.result import ResultSafeEffect
     from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
+    from doeff.effects.time import DelayEffect, GetTimeEffect
     from doeff.effects.writer import WriterListenEffect, WriterTellEffect
     
     from doeff.cesk.handlers.control import (
@@ -52,6 +52,7 @@ def default_handlers() -> dict[type, Handler]:
         handle_io,
     )
     from doeff.cesk.handlers.task import handle_gather
+    from doeff.cesk.handlers.time import handle_delay, handle_get_time
     
     return {
         PureEffect: handle_pure,
@@ -70,6 +71,8 @@ def default_handlers() -> dict[type, Handler]:
         CachePutEffect: handle_cache_put,
         CacheExistsEffect: handle_cache_exists,
         CacheDeleteEffect: handle_cache_delete,
+        DelayEffect: handle_delay,
+        GetTimeEffect: handle_get_time,
     }
 
 
