@@ -4,7 +4,7 @@ from typing import Protocol
 
 import pytest
 
-from doeff import Local, ProgramInterpreter, ask, do
+from doeff import Local, ask, do
 from doeff.types import EffectGenerator
 
 
@@ -17,13 +17,12 @@ def _impl() -> str:
 
 
 @pytest.mark.asyncio
-async def test_reader_accepts_hashable_class_keys() -> None:
+async def test_reader_accepts_hashable_class_keys(interpreter) -> None:
     @do
     def program() -> EffectGenerator[str]:
         func: SomeFunc = yield ask(SomeFunc)
         return func()
 
-    interpreter = ProgramInterpreter()
     result = await interpreter.run_async(Local({SomeFunc: _impl}, program()))
 
     assert result.is_ok
