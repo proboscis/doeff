@@ -11,7 +11,9 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from doeff import Program, ProgramInterpreter, RunResult
+from doeff import Program, RunResult
+from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.errors import UnhandledEffectError
 from doeff.analysis import EffectCallTree
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.kleisli import KleisliProgram
@@ -108,19 +110,13 @@ class ProgramBuilder:
         from doeff.effects import Local
 
         merged_env_program = self._merger.merge_envs(env_sources)
-        temp_interpreter = ProgramInterpreter()
-        env_result = temp_interpreter.run(merged_env_program)
-        if env_result.is_err():
-            diagnostic = env_result.display(verbose=report_verbose).strip()
-            if not diagnostic:
-                diagnostic = env_result.formatted_error.strip()
-            if not diagnostic:
-                diagnostic = repr(env_result.result.error)
+        temp_runtime = SyncRuntime()
+        try:
+            merged_env_dict = temp_runtime.run(merged_env_program)
+        except Exception as exc:
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
-            print(diagnostic, file=sys.stderr)
-            raise env_result.result.error
-
-        merged_env_dict = env_result.value
+            print(repr(exc), file=sys.stderr)
+            raise
         local_effect = Local(merged_env_dict, program)
         return local_effect
 
@@ -224,14 +220,14 @@ class RunCommand:
     ) -> tuple[RunResult[Any] | None, Any]:
         with profile("Load and run interpreter", indent=1):
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
-            if isinstance(interpreter_obj, ProgramInterpreter):
-                run_result = interpreter_obj.run(program)
-                final_value = _unwrap_run_result(run_result)
-                return run_result, final_value
+            
+            if isinstance(interpreter_obj, SyncRuntime):
+                final_value = interpreter_obj.run(program)
+                return None, final_value
 
             if not callable(interpreter_obj):
                 raise TypeError(
-                    "--interpreter must resolve to a callable or ProgramInterpreter instance"
+                    "--interpreter must resolve to a callable or SyncRuntime instance"
                 )
 
             result = _call_interpreter(interpreter_obj, program)
@@ -445,9 +441,9 @@ def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
     from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
-        interpreter = ProgramInterpreter()
-        run_result = interpreter.run(value)
-        return _unwrap_run_result(run_result), run_result
+        runtime = SyncRuntime()
+        final_value = runtime.run(value)
+        return final_value, None
     if isinstance(value, RunResult):
         return _unwrap_run_result(value), value
     return value, None
@@ -517,7 +513,7 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
         "interpreter": interpreter_obj,
         "RunResult": RunResult,
         "Program": Program,
-        "ProgramInterpreter": ProgramInterpreter,
+        "SyncRuntime": SyncRuntime,
     }
 
     # Add any additional useful imports
@@ -726,15 +722,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Available variables in script:\n"
             "  - program: The executed Program (with envs/transforms applied)\n"
             "  - value: The final execution result\n"
-            "  - interpreter: The interpreter used (ProgramInterpreter or function)\n"
-            "  - Program, ProgramInterpreter, RunResult: Type classes\n"
+            "  - interpreter: The interpreter used (SyncRuntime or function)\n"
+            "  - Program, SyncRuntime, RunResult: Type classes\n"
             "  - sys, json: Standard library modules\n\n"
             "Example:\n"
             "  doeff run --program myapp.program - <<'PY'\n"
             "  print(f'Result: {value}')\n"
-            "  if isinstance(interpreter, ProgramInterpreter):\n"
+            "  if isinstance(interpreter, SyncRuntime):\n"
             "      result = interpreter.run(program)\n"
-            "      print(f'Re-run: {result.value}')\n"
+            "      print(f'Re-run: {result}')\n"
             "  PY"
         ),
     )

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from doeff import Program, ProgramInterpreter, do
+from doeff import Program, do
 from doeff.effects import Ask
+from doeff.cesk.runtime import SyncRuntime
 
 sample_program: Program[int] = Program.pure(5)
 
@@ -17,9 +18,8 @@ def add_three(program: Program[int]) -> Program[int]:
 
 
 def sync_interpreter(program: Program[int]) -> int:
-    interpreter = ProgramInterpreter()
-    result = interpreter.run(program)
-    return result.value
+    runtime = SyncRuntime()
+    return runtime.run(program)
 
 
 @do
@@ -29,8 +29,8 @@ def ask_program() -> Program[int]:
 
 
 def runresult_interpreter(program: Program[int]):
-    interpreter = ProgramInterpreter()
-    return interpreter.run(program)
+    runtime = SyncRuntime()
+    return runtime.run(program)
 
 
 sample_env: Program[dict] = Program.pure({"value": 5})
