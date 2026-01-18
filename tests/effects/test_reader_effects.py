@@ -14,6 +14,7 @@ Reference: gh#174
 import pytest
 
 from doeff import do, Program
+from doeff.cesk.errors import MissingEnvKeyError
 from doeff.cesk.runtime.async_ import AsyncRuntime
 from doeff.effects import (
     Ask,
@@ -35,8 +36,8 @@ class TestAskMissingKey:
     """Tests for Ask behavior when key is missing from environment."""
 
     @pytest.mark.asyncio
-    async def test_ask_missing_key_raises_key_error(self) -> None:
-        """Ask raises KeyError when key is not in environment."""
+    async def test_ask_missing_key_raises_missing_env_key_error(self) -> None:
+        """Ask raises MissingEnvKeyError when key is not in environment."""
         runtime = AsyncRuntime()
 
         @do
@@ -44,14 +45,15 @@ class TestAskMissingKey:
             value = yield Ask("missing_key")
             return value
 
-        with pytest.raises(KeyError) as excinfo:
+        with pytest.raises(MissingEnvKeyError) as excinfo:
             await runtime.run(program(), env={})
 
+        assert excinfo.value.key == "missing_key"
         assert "missing_key" in str(excinfo.value)
 
     @pytest.mark.asyncio
-    async def test_ask_missing_key_error_message(self) -> None:
-        """Ask KeyError message includes the missing key."""
+    async def test_ask_missing_key_error_has_helpful_message(self) -> None:
+        """MissingEnvKeyError includes helpful hints for the user."""
         runtime = AsyncRuntime()
 
         @do
@@ -59,7 +61,24 @@ class TestAskMissingKey:
             value = yield Ask("config.database.host")
             return value
 
-        with pytest.raises(KeyError, match="config.database.host"):
+        with pytest.raises(MissingEnvKeyError) as excinfo:
+            await runtime.run(program(), env={})
+
+        error_message = str(excinfo.value)
+        assert "config.database.host" in error_message
+        assert "Hint:" in error_message
+
+    @pytest.mark.asyncio
+    async def test_missing_env_key_error_is_key_error(self) -> None:
+        """MissingEnvKeyError is a KeyError subclass for backwards compatibility."""
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            value = yield Ask("missing")
+            return value
+
+        with pytest.raises(KeyError):
             await runtime.run(program(), env={})
 
     @pytest.mark.asyncio
@@ -165,12 +184,12 @@ class TestLocalAskComposition:
         @do
         def program():
             yield Local({"new_key": "value"}, inner_program())
-            # This should raise KeyError
             value = yield Ask("new_key")
             return value
 
-        with pytest.raises(KeyError, match="new_key"):
+        with pytest.raises(MissingEnvKeyError) as excinfo:
             await runtime.run(program(), env={})
+        assert excinfo.value.key == "new_key"
 
     @pytest.mark.asyncio
     async def test_local_preserves_unrelated_keys(self) -> None:

@@ -30,21 +30,29 @@ Runs a sub-program against an updated environment and yields its value.
 
 ### 1. Ask on Missing Key
 
-**Behavior:** Raises `KeyError` when the requested key is not present in the environment.
+**Behavior:** Raises `MissingEnvKeyError` when the requested key is not present in the environment.
 
 ```python
+from doeff import MissingEnvKeyError
+
 @do
 def program():
-    value = yield Ask("missing_key")  # Raises KeyError
+    value = yield Ask("missing_key")  # Raises MissingEnvKeyError
     return value
 
-# KeyError: "Missing environment key: 'missing_key'"
+# MissingEnvKeyError: Environment key not found: 'missing_key'
+# Hint: Provide this key via `env={'missing_key': value}` or wrap with `Local({'missing_key': value}, ...)`
 ```
+
+**Error Attributes:**
+- `key`: The environment key that was not found
+- Inherits from `KeyError` for backwards compatibility
 
 **Rationale:** 
 - Explicit is better than implicit - missing keys indicate configuration errors
-- No silent `None` returns that could hide bugs
-- Consistent with Python's dict access semantics
+- Dedicated error type provides helpful hints for debugging
+- Error message explains how to fix the issue
+- `KeyError` subclass maintains backwards compatibility with existing `except KeyError:` handlers
 
 **Alternative Considered:** Supporting `Ask(key, default=None)` was considered but rejected to maintain simplicity and encourage explicit environment setup.
 
@@ -176,10 +184,12 @@ class LocalFrame:
 ### Ask Handler
 
 ```python
+from doeff.cesk.errors import MissingEnvKeyError
+
 def handle_ask(effect: AskEffect, task_state: TaskState, store: Store) -> FrameResult:
     key = effect.key
     if key not in task_state.env:
-        raise KeyError(f"Missing environment key: {key!r}")
+        raise MissingEnvKeyError(key)
     value = task_state.env[key]
     return ContinueValue(value=value, env=task_state.env, store=store, k=task_state.kontinuation)
 ```
