@@ -210,7 +210,7 @@ Safe wraps the entire Gather. If any child fails, the error is captured as `Err(
 
 ### Gather + Intercept
 
-**Behavior: Parent's intercept DOES apply to children**
+**Behavior: Parent's intercept does NOT apply to Gather children**
 
 ```python
 @do
@@ -234,14 +234,31 @@ def example():
         gather_programs(),
         (transform,)
     )
-    # Children's Ask effects ARE intercepted
-    # result == ["intercepted", "intercepted"]
+    # Children's Ask effects are NOT intercepted
+    # result == ["actual_value", "actual_value"]  (from env)
 ```
 
-**Rationale**: Intercept applies to the entire program tree rooted at the intercepted program. Since Gather children are part of that program tree, they receive the same intercept transformations. This provides consistent behavior - when you intercept a program, all effects within it (including nested Gather) are intercepted.
+**Rationale**: AsyncRuntime spawns Gather children as fresh tasks with independent continuations. The `InterceptFrame` is part of the parent's continuation stack, not copied to child task states. This means intercept transformations only apply to effects yielded directly in the intercepted scope, not to effects yielded by spawned child tasks.
 
-**Implementation note**: This works because `GatherEffect.intercept()` recursively transforms its child programs when the effect passes through an `InterceptFrame`. The transformation happens at the effect level, not by copying continuation frames to child tasks.
+**Workaround**: If you need intercept to apply to child programs, apply it explicitly inside each child:
 
+```python
+@do
+def child_with_intercept():
+    @do
+    def inner():
+        value = yield Ask("key")
+        return value
+    
+    result = yield intercept_program_effect(inner(), (transform,))
+    return result
+
+results = yield Gather(child_with_intercept(), child_with_intercept())
+```
+
+**Note**: This behavior is a consequence of AsyncRuntime's implementation using independent task states for parallelism. The SyncRuntime's sequential GatherFrame may have different behavior.
+
+### Nested Gather
 ### Nested Gather
 
 **Behavior: Full parallelism at all levels**
@@ -410,7 +427,7 @@ class Task(Generic[T]):
 | Gather + Put | Shared store; all changes visible | Tested |
 | Gather + Listen | All logs captured from all children | Tested |
 | Gather + Safe | First error wrapped in Err | Tested |
-| Gather + Intercept | Parent intercept DOES apply to children | Tested |
+| Gather + Intercept | Parent intercept does NOT apply to children | Tested |
 | Nested Gather | Full parallelism at leaf level | Tested |
 
 ---
