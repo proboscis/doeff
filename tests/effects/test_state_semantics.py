@@ -1,0 +1,346 @@
+"""Tests for State effects semantics.
+
+These tests verify the behavior documented in SPEC-EFF-002-state.md.
+"""
+
+import pytest
+
+from doeff import Get, Modify, Put, Safe, do
+from doeff.program import Program
+
+
+class TestGetSemantics:
+    """Tests for Get effect behavior."""
+
+    @pytest.mark.asyncio
+    async def test_get_returns_stored_value(self, interpreter) -> None:
+        """Get returns the value stored for a key."""
+
+        @do
+        def program() -> Program[int]:
+            yield Put("key", 42)
+            value = yield Get("key")
+            return value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 42
+
+    @pytest.mark.asyncio
+    async def test_get_missing_key_raises_keyerror(self, interpreter) -> None:
+        """Get raises KeyError for missing keys (consistent with Ask).
+
+        See SPEC-EFF-002-state.md D1.
+        """
+
+        @do
+        def program() -> Program[None]:
+            value = yield Get("nonexistent")
+            return value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_err()
+        assert isinstance(result.error, KeyError)
+
+    @pytest.mark.asyncio
+    async def test_get_missing_key_with_safe(self, interpreter) -> None:
+        """Use Safe to handle potentially missing keys."""
+
+        @do
+        def program() -> Program[int]:
+            result = yield Safe(Get("missing"))
+            if result.is_err():
+                return 0
+            return result.value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 0
+
+
+class TestPutSemantics:
+    """Tests for Put effect behavior."""
+
+    @pytest.mark.asyncio
+    async def test_put_stores_value(self, interpreter) -> None:
+        """Put stores a value that can be retrieved with Get."""
+
+        @do
+        def program() -> Program[str]:
+            yield Put("greeting", "hello")
+            value = yield Get("greeting")
+            return value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == "hello"
+
+    @pytest.mark.asyncio
+    async def test_put_overwrites_existing(self, interpreter) -> None:
+        """Put overwrites any existing value for the key."""
+
+        @do
+        def program() -> Program[int]:
+            yield Put("x", 1)
+            yield Put("x", 2)
+            value = yield Get("x")
+            return value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 2
+
+    @pytest.mark.asyncio
+    async def test_put_returns_none(self, interpreter) -> None:
+        """Put returns None."""
+
+        @do
+        def program() -> Program[None]:
+            put_result = yield Put("key", "value")
+            return put_result
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value is None
+
+
+class TestModifySemantics:
+    """Tests for Modify effect behavior."""
+
+    @pytest.mark.asyncio
+    async def test_modify_transforms_value(self, interpreter) -> None:
+        """Modify applies a function to transform the value."""
+
+        @do
+        def program() -> Program[int]:
+            yield Put("counter", 10)
+            new_value = yield Modify("counter", lambda x: x + 5)
+            return new_value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 15
+
+    @pytest.mark.asyncio
+    async def test_modify_returns_new_value(self, interpreter) -> None:
+        """Modify returns the transformed value."""
+
+        @do
+        def program() -> Program[int]:
+            yield Put("x", 5)
+            returned = yield Modify("x", lambda x: x * 2)
+            stored = yield Get("x")
+            return (returned, stored)
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        returned, stored = result.value
+        assert returned == 10
+        assert stored == 10
+
+    @pytest.mark.asyncio
+    async def test_modify_missing_key_receives_none(self, interpreter) -> None:
+        """Modify receives None for missing keys."""
+
+        @do
+        def program() -> Program[int]:
+            new_value = yield Modify("missing", lambda x: 42 if x is None else x)
+            return new_value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == 42
+
+    @pytest.mark.asyncio
+    async def test_modify_atomic_on_error(self, interpreter) -> None:
+        """Modify is atomic: if func raises, store is unchanged.
+
+        See SPEC-EFF-002-state.md Composition Rules: Modify atomicity.
+        """
+
+        @do
+        def program() -> Program[int]:
+            yield Put("value", 100)
+
+            def failing_transform(x: int) -> int:
+                raise ValueError("transform failed")
+
+            # Wrap in Safe to catch the error
+            error_result = yield Safe(Modify("value", failing_transform))
+
+            # Verify the store wasn't changed
+            final_value = yield Get("value")
+            return final_value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        # Value should be unchanged because the transform raised
+        assert result.value == 100
+
+
+class TestPutGetComposition:
+    """Tests for Put + Get composition rules."""
+
+    @pytest.mark.asyncio
+    async def test_put_get_immediate_visibility(self, interpreter) -> None:
+        """Put changes are immediately visible to subsequent Get.
+
+        See SPEC-EFF-002-state.md Composition Rules: Put + Get.
+        """
+
+        @do
+        def program() -> Program[tuple[int, int, int]]:
+            yield Put("x", 1)
+            first = yield Get("x")
+            yield Put("x", 2)
+            second = yield Get("x")
+            yield Put("x", 3)
+            third = yield Get("x")
+            return (first, second, third)
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        assert result.value == (1, 2, 3)
+
+
+class TestSafeStateComposition:
+    """Tests for Safe + State composition rules."""
+
+    @pytest.mark.asyncio
+    async def test_safe_preserves_state_changes(self, interpreter) -> None:
+        """State changes persist even when Safe catches an error.
+
+        See SPEC-EFF-002-state.md Composition Rules: Safe + Put.
+        """
+
+        @do
+        def risky_operation() -> Program[None]:
+            yield Put("modified", True)
+            raise ValueError("error after state change")
+
+        @do
+        def program() -> Program[bool]:
+            yield Put("modified", False)
+            _ = yield Safe(risky_operation())
+            # Even though risky_operation raised, the Put should have persisted
+            final_value = yield Get("modified")
+            return final_value
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        # State change persisted through the error
+        assert result.value is True
+
+    @pytest.mark.asyncio
+    async def test_safe_state_no_rollback(self, interpreter) -> None:
+        """Multiple state changes persist even when Safe catches error.
+
+        This confirms there is NO transaction rollback semantics.
+        """
+
+        @do
+        def multi_step_operation() -> Program[None]:
+            yield Put("step1", "completed")
+            yield Put("step2", "completed")
+            yield Put("step3", "started")
+            raise RuntimeError("failed at step3")
+
+        @do
+        def program() -> Program[tuple[str, str, str]]:
+            yield Put("step1", "pending")
+            yield Put("step2", "pending")
+            yield Put("step3", "pending")
+
+            _ = yield Safe(multi_step_operation())
+
+            s1 = yield Get("step1")
+            s2 = yield Get("step2")
+            s3 = yield Get("step3")
+            return (s1, s2, s3)
+
+        result = await interpreter.run_async(program())
+
+        assert result.is_ok
+        # All state changes before the error persisted
+        assert result.value == ("completed", "completed", "started")
+
+
+class TestGatherStateComposition:
+    """Tests for Gather + State composition rules.
+
+    Note: These tests use AsyncRuntime directly for true parallel behavior.
+    """
+
+    @pytest.mark.asyncio
+    async def test_gather_shared_store_semantics(self) -> None:
+        """All Gather branches share the same store.
+
+        See SPEC-EFF-002-state.md Composition Rules: Gather + Put.
+        """
+        from doeff import Gather
+        from doeff.cesk.runtime.async_ import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def increment() -> Program[int]:
+            current = yield Get("counter")
+            yield Put("counter", current + 1)
+            return current
+
+        @do
+        def program() -> Program[tuple[list[int], int]]:
+            yield Put("counter", 0)
+            results = yield Gather(increment(), increment(), increment())
+            final = yield Get("counter")
+            return (results, final)
+
+        results, final = await runtime.run(program())
+
+        # With shared store, final value should be 3 (0+1+1+1)
+        assert final == 3
+        # Results show the values each branch saw before incrementing
+        assert sorted(results) == [0, 1, 2]
+
+    @pytest.mark.asyncio
+    async def test_gather_state_visible_across_branches(self) -> None:
+        """State changes in one Gather branch are visible to others."""
+        from doeff import Delay, Gather
+        from doeff.cesk.runtime.async_ import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def writer() -> Program[str]:
+            yield Put("message", "written by branch 1")
+            return "writer done"
+
+        @do
+        def reader() -> Program[str]:
+            yield Delay(seconds=0.01)
+            message = yield Get("message")
+            return message
+
+        @do
+        def program() -> Program[tuple[list[str], str]]:
+            yield Put("message", "initial")
+            results = yield Gather(writer(), reader())
+            final = yield Get("message")
+            return (results, final)
+
+        results, final = await runtime.run(program())
+
+        assert final == "written by branch 1"
+        assert "written by branch 1" in results

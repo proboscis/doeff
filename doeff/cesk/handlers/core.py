@@ -46,7 +46,10 @@ def handle_state_get(
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
-    value = store.get(effect.key)
+    key = effect.key
+    if key not in store:
+        raise KeyError(f"Missing state key: {key!r}")
+    value = store[key]
     return ContinueValue(
         value=value,
         env=task_state.env,
