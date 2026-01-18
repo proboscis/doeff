@@ -307,7 +307,7 @@ class TestGatherStateComposition:
             final = yield Get("counter")
             return (results, final)
 
-        results, final = await runtime.run(program())
+        results, final = await runtime.run_and_unwrap(program())
 
         # With shared store, final value should be 3 (0+1+1+1)
         assert final == 3
@@ -340,7 +340,7 @@ class TestGatherStateComposition:
             final = yield Get("message")
             return (results, final)
 
-        results, final = await runtime.run(program())
+        results, final = await runtime.run_and_unwrap(program())
 
         assert final == "written by branch 1"
         assert "written by branch 1" in results
