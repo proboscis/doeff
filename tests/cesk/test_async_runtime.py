@@ -401,6 +401,48 @@ class TestAsyncRuntimeAsyncEffects:
 
         assert before <= result <= after
 
+    @pytest.mark.asyncio
+    async def test_async_wait_until(self) -> None:
+        """Test WaitUntil effect waits until target time."""
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.effects import WaitUntil
+        from datetime import timedelta
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            start = yield GetTime()
+            target = start + timedelta(milliseconds=100)
+            yield WaitUntil(target)
+            end = yield GetTime()
+            return (start, end)
+
+        start_time, end_time = await runtime.run(program())
+        elapsed = (end_time - start_time).total_seconds()
+        assert elapsed >= 0.09
+
+    @pytest.mark.asyncio
+    async def test_async_wait_until_past(self) -> None:
+        """Test WaitUntil with past time returns immediately."""
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.effects import WaitUntil
+        from datetime import timedelta
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            start = yield GetTime()
+            past_time = start - timedelta(seconds=10)
+            yield WaitUntil(past_time)
+            end = yield GetTime()
+            return (start, end)
+
+        start_time, end_time = await runtime.run(program())
+        elapsed = (end_time - start_time).total_seconds()
+        assert elapsed < 0.1
+
 
 # ============================================================================
 # Phase 3: IO & Cache Effects Tests
