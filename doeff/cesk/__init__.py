@@ -117,6 +117,17 @@ from doeff.cesk.errors import (
 )
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.runtime import BaseRuntime, SyncRuntime, SimulationRuntime, AsyncRuntime
+from doeff.cesk.runtime_result import (
+    RuntimeResult,
+    RuntimeResultImpl,
+    KStackTrace,
+    KFrame,
+    EffectStackTrace,
+    EffectCallNode,
+    PythonStackTrace,
+    PythonFrame,
+    SourceLocation,
+)
 
 __all__ = [
     # Types
@@ -228,4 +239,14 @@ __all__ = [
     "SyncRuntime",
     "SimulationRuntime",
     "AsyncRuntime",
+    # RuntimeResult (SPEC-CESK-002)
+    "RuntimeResult",
+    "RuntimeResultImpl",
+    "KStackTrace",
+    "KFrame",
+    "EffectStackTrace",
+    "EffectCallNode",
+    "PythonStackTrace",
+    "PythonFrame",
+    "SourceLocation",
 ]
