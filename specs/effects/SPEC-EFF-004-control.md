@@ -6,6 +6,120 @@
 
 This specification defines the semantics for Control effects in doeff: `Pure`, `Safe`, and `Intercept`. These are foundational effects that control program execution flow, error handling, and effect transformation.
 
+---
+
+## Core Design: Effect IS Program
+
+In doeff, **Effect is a subtype of Program**. This is a deliberate design choice that enables uniform composition:
+
+```python
+@do
+def example():
+    x = yield Ask("key")      # Effect IS-A Program
+    y = yield some_kleisli()  # KleisliProgramCall IS-A Program
+    return x + y
+```
+
+**Implications:**
+
+1. **Uniform `yield`**: Both effects and programs are yielded the same way
+2. **Unified `intercept`**: There is ONE `intercept` method on `ProgramBase`, inherited by all effects
+3. **Composable**: Effects can be mapped, flat_mapped, and intercepted like any program
+
+```python
+# All of these work uniformly:
+Ask("key").map(str.upper)
+Ask("key").intercept(transform)
+some_kleisli().intercept(transform)
+Gather(p1, p2).intercept(transform)
+```
+
+**`intercept` is syntactic sugar:**
+
+```python
+program.intercept(transform)
+# is sugar for:
+Intercept(program, transform)
+```
+
+**InterceptFrame is THE unified mechanism:**
+
+```
+Intercept(program, transform)
+  → handler pushes InterceptFrame(transform) onto K
+  → executes program
+  → ANY effect yielded passes through InterceptFrame
+  → transform is applied (first non-None wins)
+```
+
+All interception flows through InterceptFrame. There is no separate "structural" or "compile-time" interception path.
+
+---
+
+## Intercept Semantics (Detailed)
+
+### Transform Function Contract
+
+```python
+def transform(effect: Effect) -> Effect | Program | None:
+    ...
+```
+
+| Return Value | Behavior |
+|--------------|----------|
+| `None` | Passthrough - try next transform, or use original effect |
+| `Effect` | Substitute - use this effect instead (NOT re-transformed) |
+| `Program` | Replace - execute this program instead of the effect |
+
+### Key Semantic Rules
+
+**1. No re-transformation of returned Effects:**
+```python
+def transform(e):
+    if isinstance(e, AskEffect):
+        return Ask("other_key")  # Returns new AskEffect
+    return None
+
+# Ask("other_key") is NOT passed through transform again
+# This prevents infinite loops
+```
+
+**2. Interception always propagates to children:**
+```python
+Gather(child1, child2).intercept(f)
+Safe(inner_program).intercept(f)
+Spawn(background_task).intercept(f)
+
+# In ALL cases, f sees effects from children/inner/background
+# There is no "shallow" interception
+```
+
+**3. Spawn/background tasks inherit InterceptFrame:**
+```python
+@do
+def program():
+    yield Spawn(background_task())  # background_task sees InterceptFrame
+    return "done"
+
+program.intercept(f)  # f intercepts effects from background_task too
+```
+
+**4. Parallel ordering is undefined:**
+```python
+Gather(task_a, task_b).intercept(f)
+# If task_a and task_b yield effects concurrently,
+# the order f sees them is NOT guaranteed
+```
+
+**5. First non-None wins in chained intercepts:**
+```python
+program.intercept(f).intercept(g)
+# Transforms accumulate as (f, g)
+# For each effect: try f first, if None try g, if None use original
+```
+
+---
+
 ## Effect Definitions
 
 ### 1. Pure Effect
@@ -127,14 +241,6 @@ class InterceptEffect(EffectBase):
     transforms: tuple[Callable[[Effect], Effect | Program | None], ...]
 ```
 
-**Semantics:**
-- `program.intercept(transform)` applies `transform` to all effects yielded by `program`
-- Transform receives each effect and can:
-  - Return the same effect (passthrough)
-  - Return a different effect (substitution)
-  - Return a Program (effect replacement with computation)
-  - Return `None` (passthrough to next transform)
-
 **Handler Behavior:**
 ```python
 def handle_intercept(effect: InterceptEffect, task_state, store) -> FrameResult:
@@ -146,59 +252,13 @@ def handle_intercept(effect: InterceptEffect, task_state, store) -> FrameResult:
     )
 ```
 
-**Transform Application Order:**
-
-When `p.intercept(f).intercept(g)`:
-- Transforms are accumulated: `(f, g)`
-- Applied in **left-to-right order**: `f` first, then `g`
-- **First non-None wins**: If `f(effect)` returns non-None, `g` is not called
-
-```python
-def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | Program:
-    current = effect
-    for frame in K:
-        if isinstance(frame, InterceptFrame):
-            for transform in frame.transforms:
-                result = transform(current)
-                if result is not None:
-                    current = result
-                    break  # First non-None wins within frame
-    return current
-```
-
-**Composition Rules:**
-
-1. **Chained Intercepts:**
-   ```python
-   p.intercept(f).intercept(g)
-   # Equivalent to: apply g, then f (outer first, then inner)
-   # But within each intercept, transforms are applied left-to-right
-   ```
-
-2. **Intercept + Gather Scope:**
-   - `Gather(...).intercept(f)` intercepts effects **inside** gathered programs
-   - This is because InterceptFrame is pushed onto the continuation stack before Gather executes
-   - The `GatherEffect` itself is NOT intercepted (it's consumed by the handler directly)
-   - Note: Each child program executes with the InterceptFrame in its continuation
-
-3. **Transform Returns Program:**
-   - When transform returns a Program, that Program is executed instead of the effect
-   - The original effect is not executed
-   - Example: `Ask("key") -> Program.pure("intercepted_value")`
-
 **Key Properties:**
 
-1. **Values Pass Through:**
-   - Values (successful results) pass through InterceptFrame unchanged
-   - Only effects are transformed
+1. **Values pass through:** Results pass through InterceptFrame unchanged
+2. **Errors pass through:** Exceptions propagate, not transformed
+3. **Transform exceptions propagate:** If transform throws, execution fails
 
-2. **Errors Pass Through:**
-   - Errors pass through InterceptFrame unchanged
-   - Intercept does not catch or transform exceptions
-
-3. **Transform Exceptions:**
-   - If a transform function throws, the exception propagates normally
-   - The program execution fails with the transform's exception
+See **Intercept Semantics (Detailed)** section above for full rules.
 
 ---
 
@@ -261,63 +321,133 @@ def test_nested_safe():
 
 ### Intercept + Intercept
 
-**Rule:** Transforms accumulate; first non-None wins within each frame.
+**Rule:** Transforms accumulate; first non-None wins.
 
 ```python
-@do
-def test_intercept_composition():
-    def f(e):
-        if isinstance(e, AskEffect):
-            return Program.pure("from_f")
-        return None  # Passthrough
-    
-    def g(e):
-        if isinstance(e, AskEffect):
-            return Program.pure("from_g")
-        return None  # Passthrough
-    
-    # p.intercept(f).intercept(g)
-    # f is checked first, g only if f returns None
-    result = yield inner_program().intercept(f).intercept(g)
-    # Result: "from_f" (f wins because it's first)
+program.intercept(f).intercept(g)
+# Transforms: (f, g)
+# For each effect: try f, if None try g, if None use original
 ```
 
-**Application Order:**
-1. When multiple intercepts are chained, they form a stack of InterceptFrames
-2. Effects bubble up through frames in K (continuation stack order)
-3. Within each frame, transforms are tried in order until one returns non-None
+### Intercept + Gather/Safe/Spawn
 
-### Intercept + Gather
-
-**Rule:** Intercept on Gather **DOES** transform children's effects.
+**Rule:** Interception ALWAYS propagates to children.
 
 ```python
-@do
-def test_intercept_gather_scope():
-    def intercept_ask(e):
-        if isinstance(e, AskEffect):
-            return Program.pure("intercepted")
-        return None
-    
-    @do
-    def child():
-        return (yield Ask("key"))
-    
-    # This DOES intercept Ask inside children
-    result = yield Gather(child(), child()).intercept(intercept_ask)
-    # result: ["intercepted", "intercepted"] - children ARE intercepted
+Gather(child1, child2).intercept(f)
+# f sees effects from child1 AND child2
+
+Safe(inner).intercept(f)
+# f sees effects from inner
+
+Spawn(background).intercept(f)
+# f sees effects from background task
 ```
 
-**Semantics:**
-- InterceptFrame is pushed onto the continuation stack before Gather executes
-- When Gather runs children, they inherit the continuation stack including InterceptFrame
-- The `GatherEffect` itself is NOT intercepted (handler consumes it directly)
-- Effects from children bubble up through the InterceptFrame
+**Note:** The container effect (GatherEffect, SafeEffect, etc.) itself is consumed by its handler. InterceptFrame sees effects *from within* the container.
 
-**Rationale:**
-- Continuation stack is inherited by child executions in the current architecture
-- This provides a way to wrap all effects in a computation subtree
-- For isolation, use a separate runtime or explicit scoping constructs
+---
+
+## Extensibility: Custom Frames
+
+Users can define custom control effects with custom Frames **without modifying the runtime**.
+
+### The Frame Protocol
+
+```python
+@runtime_checkable
+class Frame(Protocol):
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        """Handle value passing through this frame."""
+        ...
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        """Handle error passing through this frame."""
+        ...
+```
+
+### FrameResult Options
+
+| Type | When to use |
+|------|-------------|
+| `ContinueValue(value, env, store, k)` | Pass transformed value to next frame |
+| `ContinueError(error, env, store, k)` | Pass error to next frame |
+| `ContinueProgram(program, env, store, k)` | Execute a new program |
+| `ContinueGenerator(gen, send, throw, env, store, k)` | Resume a generator |
+
+### Example: Custom Timeout Effect
+
+```python
+from dataclasses import dataclass
+from doeff.cesk.frames import FrameResult, ContinueProgram, ContinueValue, ContinueError
+
+# 1. Define the Effect
+@dataclass(frozen=True)
+class TimeoutEffect(EffectBase):
+    program: Program
+    timeout_seconds: float
+
+# 2. Define the Frame
+@dataclass
+class TimeoutFrame:
+    deadline: datetime
+    saved_env: Environment
+    
+    def on_value(self, value, env, store, k_rest) -> FrameResult:
+        # Success - just pass through
+        return ContinueValue(value, self.saved_env, store, k_rest)
+    
+    def on_error(self, error, env, store, k_rest) -> FrameResult:
+        # Check if we timed out
+        if datetime.now() > self.deadline:
+            return ContinueError(TimeoutError("Operation timed out"), self.saved_env, store, k_rest)
+        return ContinueError(error, self.saved_env, store, k_rest)
+
+# 3. Define the Handler
+def handle_timeout(effect: TimeoutEffect, task_state, store) -> FrameResult:
+    deadline = datetime.now() + timedelta(seconds=effect.timeout_seconds)
+    return ContinueProgram(
+        program=effect.program,
+        env=task_state.env,
+        store=store,
+        k=[TimeoutFrame(deadline, task_state.env)] + task_state.kontinuation,
+    )
+
+# 4. Register with Runtime
+runtime = AsyncRuntime(handlers={
+    **default_handlers(),
+    TimeoutEffect: handle_timeout,
+})
+
+# 5. Use it
+@do
+def my_program():
+    result = yield TimeoutEffect(slow_operation(), timeout_seconds=5.0)
+    return result
+```
+
+### Extension Points Summary
+
+| Extension | How |
+|-----------|-----|
+| New Effect type | Subclass `EffectBase` |
+| New Frame type | Implement `Frame` protocol (`on_value`, `on_error`) |
+| New Handler | Function returning `FrameResult`, push Frame onto K |
+| Register | Pass `handlers={..., MyEffect: my_handler}` to Runtime |
+
+This allows implementing custom control flow (transactions, timeouts, retries, resource management) without modifying doeff internals.
 
 ---
 
@@ -351,7 +481,7 @@ return {
 
 ---
 
-## Open Questions (Resolved)
+## Design Decisions (Resolved)
 
 ### 1. Safe rollback semantics
 - **Decision:** NO rollback - state/logs persist on error
@@ -361,14 +491,27 @@ return {
 - **Decision:** `p.intercept(f).intercept(g)` - `f` applies first (first non-None wins)
 - **Implementation:** Transforms accumulate in tuple, applied in order
 
-### 3. Intercept + Gather scope
-- **Decision:** `Gather(...).intercept(f)` DOES intercept children's effects
-- **Rationale:** InterceptFrame is on the continuation stack inherited by children
-- **Note:** The `GatherEffect` itself is NOT intercepted (consumed by handler directly)
+### 3. Intercept + Gather/Safe/Spawn scope
+- **Decision:** Interception ALWAYS propagates to children
+- **Mechanism:** Unified via InterceptFrame - all child effects pass through parent's InterceptFrame
+- **No shallow option:** There is no way to intercept "only this level"
+- **Implementation:** Runtime must propagate InterceptFrame to child tasks
 
-### 4. Intercept can return Program
-- **Decision:** When transform returns Program, it replaces the original effect
-- **Semantics:** The returned Program is executed, original effect is NOT executed
+### 4. Transform returns Effect
+- **Decision:** Returned Effect is NOT re-transformed
+- **Rationale:** Prevents infinite loops where transform triggers itself
+
+### 5. Transform returns Program
+- **Decision:** Returned Program replaces the original effect
+- **Semantics:** The Program is executed, original effect is NOT executed
+
+### 6. Spawn/background task inheritance
+- **Decision:** Background tasks inherit InterceptFrame from parent
+- **Rationale:** Consistent behavior - intercept wraps ALL effects in its scope
+
+### 7. Parallel ordering
+- **Decision:** Order of interception in parallel contexts is UNDEFINED
+- **Rationale:** Guaranteeing order would require synchronization overhead
 
 ---
 
