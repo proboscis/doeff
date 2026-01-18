@@ -133,7 +133,7 @@ class TestAsyncRuntimeCoreEffects:
 
     @pytest.mark.asyncio
     async def test_async_get_missing_key(self) -> None:
-        """Test Get returns None for missing key."""
+        """Test Get raises KeyError for missing key."""
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
@@ -143,8 +143,8 @@ class TestAsyncRuntimeCoreEffects:
             value = yield Get("missing")
             return value
 
-        result = await runtime.run(program(), store={})
-        assert result is None
+        with pytest.raises(KeyError):
+            await runtime.run(program(), store={})
 
     @pytest.mark.asyncio
     async def test_async_put(self) -> None:

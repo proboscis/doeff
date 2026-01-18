@@ -28,10 +28,9 @@ class TestGetSemantics:
         assert result.value == 42
 
     @pytest.mark.asyncio
-    async def test_get_missing_key_returns_none(self, interpreter) -> None:
-        """Get returns None for missing keys (not KeyError).
+    async def test_get_missing_key_raises_keyerror(self, interpreter) -> None:
+        """Get raises KeyError for missing keys (consistent with Ask).
 
-        This is deliberately different from Ask which raises KeyError.
         See SPEC-EFF-002-state.md D1.
         """
 
@@ -42,8 +41,24 @@ class TestGetSemantics:
 
         result = await interpreter.run_async(program())
 
+        assert result.is_err()
+        assert isinstance(result.error, KeyError)
+
+    @pytest.mark.asyncio
+    async def test_get_missing_key_with_safe(self, interpreter) -> None:
+        """Use Safe to handle potentially missing keys."""
+
+        @do
+        def program() -> Program[int]:
+            result = yield Safe(Get("missing"))
+            if result.is_err():
+                return 0
+            return result.value
+
+        result = await interpreter.run_async(program())
+
         assert result.is_ok
-        assert result.value is None
+        assert result.value == 0
 
 
 class TestPutSemantics:
@@ -282,7 +297,7 @@ class TestGatherStateComposition:
         @do
         def increment() -> Program[int]:
             current = yield Get("counter")
-            yield Put("counter", (current or 0) + 1)
+            yield Put("counter", current + 1)
             return current
 
         @do
@@ -314,20 +329,18 @@ class TestGatherStateComposition:
 
         @do
         def reader() -> Program[str]:
-            # Small delay to let writer complete first
             yield Delay(seconds=0.01)
             message = yield Get("message")
-            return message or "no message"
+            return message
 
         @do
         def program() -> Program[tuple[list[str], str]]:
+            yield Put("message", "initial")
             results = yield Gather(writer(), reader())
             final = yield Get("message")
             return (results, final)
 
         results, final = await runtime.run(program())
 
-        # Final store should have the written message
         assert final == "written by branch 1"
-        # Reader should have seen the message (due to delay)
         assert "written by branch 1" in results
