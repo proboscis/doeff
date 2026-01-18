@@ -170,13 +170,9 @@ class AsyncRuntime(BaseRuntime):
                             new_single = suspended.resume(value, state.store)
                             state = self._merge_task(state, tid, new_single)
                         except Exception as ex:
-                            if tid == main_task_id:
-                                await self._cancel_all(pending_async)
-                                raise
-                            task_errors[tid] = ex
-                            state = self._check_gather_complete(
-                                state, tid, gather_waiters, task_results, task_errors
-                            )
+                            error_state = suspended.resume_error(ex)
+                            error_state = self._fix_store_rollback(error_state, state.store)
+                            state = self._merge_task(state, tid, error_state)
                         break
                 continue
 
@@ -220,6 +216,15 @@ class AsyncRuntime(BaseRuntime):
             main_task=state.main_task,
             futures=state.futures,
             spawn_results=state.spawn_results,
+        )
+
+    def _fix_store_rollback(self, error_state: CESKState, current_store: Store) -> CESKState:
+        return CESKState(
+            tasks={error_state.main_task: error_state.tasks[error_state.main_task]},
+            store=current_store,
+            main_task=error_state.main_task,
+            futures=error_state.futures,
+            spawn_results=error_state.spawn_results,
         )
 
     def _update_store(self, state: CESKState, store: Store) -> CESKState:
@@ -267,8 +272,9 @@ class AsyncRuntime(BaseRuntime):
 
             if completed_id in task_errors:
                 del gather_waiters[parent_id]
-                new_single = suspended.resume_error(task_errors[completed_id])
-                return self._merge_task(state, parent_id, new_single)
+                error_state = suspended.resume_error(task_errors[completed_id])
+                error_state = self._fix_store_rollback(error_state, state.store)
+                return self._merge_task(state, parent_id, error_state)
 
             all_done = all(cid in task_results or cid in task_errors for cid in child_ids)
             if all_done:
