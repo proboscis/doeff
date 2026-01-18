@@ -99,10 +99,38 @@ runtime = SimulationRuntime(start_time=start)
 
 ### AsyncRuntime
 
-- **Delay**: Uses `asyncio.sleep(seconds)` (non-blocking to other coroutines)
-- **GetTime**: Returns `datetime.now()`
-- **WaitUntil**: Uses `asyncio.sleep()` with calculated duration until target
-  - If `target_time` is in the past, returns immediately
+The `AsyncRuntime` intercepts time effects and handles them using asyncio primitives, enabling non-blocking concurrent execution.
+
+- **Delay**: Uses `asyncio.sleep(seconds)`
+  - Non-blocking: Other coroutines can run during the wait
+  - The effect is dispatched as an async task; the runtime waits for completion
+  - Returns `None` when completed
+
+- **GetTime**: Returns `datetime.now()` (falls through to default handler)
+  - Note: Does not track time via store like `SimulationRuntime`
+
+- **WaitUntil**: Calculates duration and uses `asyncio.sleep(delay_seconds)`
+  - Compares `target_time` against `datetime.now()` at effect execution time
+  - If `target_time > now`: sleeps for `(target_time - now).total_seconds()`
+  - If `target_time <= now`: returns immediately without sleeping
+  - Returns `None` when completed
+
+**Implementation Detail**: AsyncRuntime registers placeholder handlers for `DelayEffect` and `WaitUntilEffect` that return `None` immediately. The actual async handling happens in the scheduler loop, which intercepts these effects before dispatching to handlers:
+
+```python
+# In AsyncRuntime._run_scheduler():
+if isinstance(effect, DelayEffect):
+    coro = self._do_delay(effect.seconds, state.store)
+    pending_async[task_id] = (asyncio.create_task(coro), result)
+    continue
+
+if isinstance(effect, WaitUntilEffect):
+    coro = self._do_wait_until(effect.target_time, state.store)
+    pending_async[task_id] = (asyncio.create_task(coro), result)
+    continue
+```
+
+**Concurrency**: Multiple `Delay` or `WaitUntil` effects from different tasks (via `Gather`) can run concurrently. Each becomes an independent `asyncio.Task`.
 
 ## Timezone Handling
 
@@ -190,9 +218,33 @@ if isinstance(effect, DelayEffect):
 
 This ensures time advancement is instant in simulation mode.
 
+### AsyncRuntime Override
+
+`AsyncRuntime` also intercepts time effects but handles them asynchronously:
+
+```python
+async def _do_delay(self, seconds: float, store: Store) -> tuple[Any, Store]:
+    await asyncio.sleep(seconds)
+    return (None, store)
+
+async def _do_wait_until(self, target_time: datetime, store: Store) -> tuple[Any, Store]:
+    now = datetime.now()
+    if target_time > now:
+        delay_seconds = (target_time - now).total_seconds()
+        await asyncio.sleep(delay_seconds)
+    return (None, store)
+```
+
+Key differences from SyncRuntime:
+- Uses `asyncio.sleep()` instead of `time.sleep()`
+- Effects are scheduled as async tasks, allowing concurrency
+- Does not update `__current_time__` in store (uses real wall-clock time)
+
 ## Testing
 
-Tests for time effects are located in `tests/cesk/test_new_runtime.py`:
+### Sync/Simulation Runtime Tests
+
+Tests in `tests/cesk/test_new_runtime.py`:
 
 ```python
 class TestWaitUntilHandler:
@@ -202,9 +254,29 @@ class TestWaitUntilHandler:
     def test_wait_until_handler_registered(self): ...
 ```
 
+### AsyncRuntime Tests
+
+Tests in `tests/cesk/test_async_runtime.py`:
+
+```python
+class TestAsyncRuntimeTimeEffects:
+    async def test_async_delay(self): ...
+    async def test_async_get_time(self): ...
+    async def test_async_wait_until(self): ...
+    async def test_async_wait_until_past(self): ...
+```
+
+These tests verify:
+- `Delay` actually waits the specified duration
+- `GetTime` returns a time between test start and end
+- `WaitUntil` waits until the target time is reached
+- `WaitUntil` returns immediately for past times
+
 ## References
 
 - `doeff/effects/time.py` - Effect definitions
-- `doeff/cesk/handlers/time.py` - Handler implementations
+- `doeff/cesk/handlers/time.py` - Handler implementations (Sync)
+- `doeff/cesk/runtime/async_.py` - AsyncRuntime with async time handling
 - `doeff/cesk/runtime/simulation.py` - SimulationRuntime with time control
-- `tests/cesk/test_new_runtime.py` - Test suite
+- `tests/cesk/test_new_runtime.py` - Sync/Simulation test suite
+- `tests/cesk/test_async_runtime.py` - AsyncRuntime test suite
