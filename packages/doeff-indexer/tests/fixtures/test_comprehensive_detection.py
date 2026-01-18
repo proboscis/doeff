@@ -63,14 +63,14 @@ def wrong_transform(program: Program[int]) -> int:  # doeff: transform
 @do
 def fetch_by_id(user_id: str) -> User:  # doeff: kleisli
     """✅ KleisliProgram[str, User] via @do"""
-    yield Log(f"Fetching {user_id}")
+    yield Tell(f"Fetching {user_id}")
     return User(user_id)
 
 # CORRECT: @do with Any parameter
 @do
 def process_any(data: Any) -> Result:  # doeff: kleisli
     """✅ KleisliProgram[Any, Result] - matches ALL type filters"""
-    yield Log("Processing")
+    yield Tell("Processing")
     return Result(data)
 
 # CORRECT: Manually marked Kleisli
@@ -109,13 +109,13 @@ def kleisli_optional(value: Optional[str]) -> int:  # doeff: kleisli
 @do
 def kleisli_with_default(name: str, retries: int = 1) -> int:  # doeff: kleisli
     """Additional optional parameters should be allowed"""
-    yield Log(f"Retry {name}")
+    yield Tell(f"Retry {name}")
     return len(name) + retries
 
 @do
 def kleisli_multi_required(primary: str, secondary: int) -> int:  # doeff: kleisli
     """Multiple required parameters should disqualify Program[T] filters"""
-    yield Log("Multiple args")
+    yield Tell("Multiple args")
     return len(primary) + secondary
 
 @do
@@ -124,7 +124,7 @@ def kp_aggregate_segmentations(
     extractors: Iterable[tuple[int, Extractor]],
 ) -> EffectGenerator[Mask1]:  # doeff: kleisli
     """Aggregate multiple segmentations into a multi-class mask using parallel execution."""
-    yield Log("Starting aggregation of segmentations")
+    yield Tell("Starting aggregation of segmentations")
     extractor_items = list(extractors)
     return Mask1(len(extractor_items))
 
@@ -184,7 +184,7 @@ class Controller:
     @do
     def fetch_data(self, key: str) -> Data:
         """Class method Kleisli"""
-        yield Log(f"Fetching {key}")
+        yield Tell(f"Fetching {key}")
         return Data(key)
 
 # ===========================================================================

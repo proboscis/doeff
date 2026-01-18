@@ -658,9 +658,10 @@ def build_parser() -> argparse.ArgumentParser:
             "  doeff run -c 'from doeff import Program; Program.pure(42)'\n\n"
             "  # Inline code with top-level yield (heredoc)\n"
             "  doeff run -c - <<'EOF'\n"
-            "  from doeff import Ask, Log\n"
+            "    from doeff import Ask, Tell
+\n"
             "  config = yield Ask('config')\n"
-            "  yield Log(f'Got config: {config}')\n"
+            "  yield Tell(f'Got config: {config}')\n"
             "  config\n"
             "  EOF"
         ),

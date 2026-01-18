@@ -39,11 +39,11 @@ def create_embedding(
     """
     # Log the request
     input_count = len(input) if isinstance(input, list) else 1
-    yield Log(f"OpenAI embedding request: model={model}, inputs={input_count}")
+    yield Tell(f"OpenAI embedding request: model={model}, inputs={input_count}")
 
     # Count input tokens
     input_tokens = count_embedding_tokens(input, model)
-    yield Log(f"Estimated input tokens: {input_tokens}")
+    yield Tell(f"Estimated input tokens: {input_tokens}")
 
     # Build request data
     request_data = {
@@ -87,7 +87,7 @@ def create_embedding(
             )
 
             # Log embedding details
-            yield Log(f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}")
+            yield Tell(f"Created {len(response.data)} embeddings, dimensions={len(response.data[0].embedding) if response.data else 0}")
 
             return response
 
@@ -124,7 +124,7 @@ def create_embedding_async(
     """
     # Log the request
     input_count = len(input) if isinstance(input, list) else 1
-    yield Log(f"OpenAI async embedding request: model={model}, inputs={input_count}")
+    yield Tell(f"OpenAI async embedding request: model={model}, inputs={input_count}")
 
     # Build request data
     request_data = {
@@ -191,7 +191,7 @@ def batch_embeddings(
     
     Uses Gather effect to process batches in parallel while tracking each batch.
     """
-    yield Log(f"Batch embedding: {len(texts)} texts in batches of {batch_size}")
+    yield Tell(f"Batch embedding: {len(texts)} texts in batches of {batch_size}")
 
     # Split into batches
     batches = []
@@ -199,7 +199,7 @@ def batch_embeddings(
         batch = texts[i:i + batch_size]
         batches.append(batch)
 
-    yield Log(f"Processing {len(batches)} batches")
+    yield Tell(f"Processing {len(batches)} batches")
 
     # Process batches in parallel using Gather
     batch_responses = yield Gather([
@@ -213,7 +213,7 @@ def batch_embeddings(
         for data in response.data:
             all_embeddings.append(data.embedding)
 
-    yield Log(f"Completed batch embedding: {len(all_embeddings)} embeddings created")
+    yield Tell(f"Completed batch embedding: {len(all_embeddings)} embeddings created")
 
     return all_embeddings
 
@@ -248,7 +248,7 @@ def cosine_similarity(
     
     Uses Gather to get both embeddings in parallel.
     """
-    yield Log(f"Calculating cosine similarity using {model}")
+    yield Tell(f"Calculating cosine similarity using {model}")
 
     # Get embeddings in parallel
     embeddings = yield Gather([
@@ -268,7 +268,7 @@ def cosine_similarity(
     else:
         similarity = dot_product / (norm1 * norm2)
 
-    yield Log(f"Cosine similarity: {similarity:.4f}")
+    yield Tell(f"Cosine similarity: {similarity:.4f}")
 
     # Add to graph for tracking
     yield Step(
@@ -295,7 +295,7 @@ def semantic_search(
     
     Returns top-k most similar documents with their indices and scores.
     """
-    yield Log(f"Semantic search: query over {len(documents)} documents")
+    yield Tell(f"Semantic search: query over {len(documents)} documents")
 
     # Get query embedding
     query_embedding = yield get_single_embedding(query, model)
@@ -322,7 +322,7 @@ def semantic_search(
     similarities.sort(key=lambda x: x[1], reverse=True)
     results = similarities[:top_k]
 
-    yield Log(f"Search complete: top {len(results)} results, best similarity={results[0][1]:.4f}" if results else "No results")
+    yield Tell(f"Search complete: top {len(results)} results, best similarity={results[0][1]:.4f}" if results else "No results")
 
     # Track in graph
     yield Step(

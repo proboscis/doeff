@@ -4,27 +4,20 @@
 
 ## Summary
 
-This spec defines the semantics for Writer effects: `Tell`, `Log`, and `Listen`. Writer effects provide a way to accumulate log messages during program execution and optionally capture them via `Listen`.
+This spec defines the semantics for Writer effects: `Tell` and `Listen`. Writer effects provide a way to accumulate log messages during program execution and optionally capture them via `Listen`.
 
 ## Effect Definitions
 
-### Tell / Log
+### Tell
 
-`Tell` and `Log` are **functionally identical** - both append a message to the shared log.
+`Tell` appends a message to the shared writer log.
 
 ```python
 def Tell(message: object) -> Effect:
     """Append message to the writer log. Returns None."""
-
-def Log(message: object) -> Effect:
-    """Alias for Tell. Append message to the writer log. Returns None."""
 ```
 
-**Semantic distinction (by convention):**
-- `Log` - intended for string log messages (debugging, tracing)
-- `Tell` - intended for structured data accumulation
-
-Both accept any Python object and store it unchanged.
+`Tell` accepts any Python object and stores it unchanged.
 
 ### Listen
 
@@ -65,14 +58,14 @@ When `Listen(sub_program)` is executed:
 
 ## Composition Rules
 
-### Listen + Log
+### Listen + Tell
 
 Logs produced within a Listen scope are captured in the result.
 
 ```python
 @do
 def program():
-    result = yield Listen(inner())  # inner() does Log("x"), Log("y")
+    result = yield Listen(inner())  # inner() does Tell("x"), Tell("y")
     # result.log contains ["x", "y"]
     # result.value contains inner's return value
 ```
@@ -88,7 +81,7 @@ Logs produced within a Local scope (inside Listen) are captured normally.
 def program():
     result = yield Listen(
         Local({"key": "value"}, 
-              inner()  # inner() does Log("x")
+              inner()  # inner() does Tell("x")
         )
     )
     # result.log contains ["x"]
@@ -103,7 +96,7 @@ Logs are preserved even when Safe catches an error. The logs accumulated before 
 ```python
 @do
 def inner():
-    yield Log("before_error")
+    yield Tell("before_error")
     raise ValueError("error")
 
 @do
@@ -129,8 +122,8 @@ When Gather executes multiple programs:
 ```python
 @do
 def task(name):
-    yield Log(f"{name}_start")
-    yield Log(f"{name}_end")
+    yield Tell(f"{name}_start")
+    yield Tell(f"{name}_end")
     return name
 
 @do
@@ -152,16 +145,16 @@ Nested Listen scopes work independently. Inner Listen captures only inner logs i
 ```python
 @do
 def inner():
-    yield Log("inner1")
-    yield Log("inner2")
+    yield Tell("inner1")
+    yield Tell("inner2")
     return "inner_result"
 
 @do
 def middle():
-    yield Log("middle1")
+    yield Tell("middle1")
     inner_listen = yield Listen(inner())
     # inner_listen.log = ["inner1", "inner2"]
-    yield Log("middle2")
+    yield Tell("middle2")
     return inner_listen
 
 @do
@@ -194,12 +187,12 @@ This is intentional - parallel execution means parallel logging. If deterministi
 
 **Resolution:** Outer Listen sees all logs including inner. Inner Listen captures only its local scope. Logs are never removed from store.
 
-### 4. Log vs Tell
+### 4. Log removed in favor of Tell
 
-**Resolution:** Identical implementation. Both create `WriterTellEffect`. The distinction is purely semantic/conventional:
-- `Log` - logging messages (strings)
-- `Tell` - structured data
-- `StructuredLog` / `slog` - convenience for `Log({**kwargs})`
+**Resolution:** `Log` has been removed. Use `Tell` for all writer effect needs.
+
+- `Tell` - append any object to the log
+- `StructuredLog` / `slog` - convenience for `Tell({**kwargs})`
 
 ## Additional Effects
 
@@ -220,14 +213,13 @@ def slog(**entries: object) -> WriterTellEffect:
 
 | Composition | Tested | File |
 |-------------|--------|------|
-| Listen + Log | Yes | `tests/cesk/test_writer_semantics.py` |
+| Listen + Tell | Yes | `tests/cesk/test_writer_semantics.py` |
 | Listen + Local | Yes | `tests/cesk/test_writer_semantics.py` |
 | Listen + Safe (success) | Yes | `tests/cesk/test_writer_semantics.py` |
 | Listen + Safe (error) | Yes | `tests/cesk/test_writer_semantics.py` |
 | Listen + Gather (sync) | Yes | `tests/cesk/test_writer_semantics.py` |
 | Listen + Gather (async) | Yes | `tests/cesk/test_writer_semantics.py` |
 | Listen + Listen (nested) | Yes | `tests/cesk/test_writer_semantics.py` |
-| Log vs Tell equivalence | Yes | `tests/cesk/test_writer_semantics.py` |
 
 ## References
 
