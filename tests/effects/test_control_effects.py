@@ -21,10 +21,10 @@ from doeff.effects import (
     Gather,
     Get,
     Local,
-    Log,
     Pure,
     Put,
     Safe,
+    Tell,
 )
 from doeff.effects.reader import AskEffect
 
@@ -390,7 +390,7 @@ class TestInterceptComposition:
 
         @do
         def replacement_program():
-            yield Log("replacement executed")
+            yield Tell("replacement executed")
             return "from_replacement"
 
         def transform(e):
