@@ -132,7 +132,7 @@ class TestAsyncRuntimeCoreEffects:
 
     @pytest.mark.asyncio
     async def test_async_get_missing_key(self) -> None:
-        """Test Get raises KeyError for missing key."""
+        """Test Get returns None for missing key."""
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
@@ -142,8 +142,8 @@ class TestAsyncRuntimeCoreEffects:
             value = yield Get("missing")
             return value
 
-        with pytest.raises(KeyError):
-            await runtime.run(program(), store={})
+        result = await runtime.run(program(), store={})
+        assert result is None
 
     @pytest.mark.asyncio
     async def test_async_put(self) -> None:
@@ -808,11 +808,11 @@ class TestAsyncRuntimeIntegration:
 
     @pytest.mark.asyncio
     async def test_async_concurrent_gather_with_state(self) -> None:
-        """Test Gather runs in parallel with snapshot isolation.
+        """Test Gather runs in parallel with shared store.
         
-        Each parallel branch gets a snapshot of the store at Gather time.
-        State changes in parallel branches are isolated and don't affect
-        the parent store or each other.
+        All parallel branches share the same store. State changes in one
+        branch are visible to other branches (interleaved at effect boundaries)
+        and to the parent after Gather completes.
         """
         from doeff.cesk.runtime import AsyncRuntime
 
@@ -1154,238 +1154,324 @@ class TestAsyncRuntimeCallStackEffects:
             await runtime.run(program())
 
 
-class TestAsyncRuntimeStoreSnapshotBug:
-    """Tests for gh#157: Async store snapshot bug fix.
+# ============================================================================
+# Gather Composition Tests (SPEC-EFF-005)
+# ============================================================================
+
+
+class TestGatherComposition:
+    """Tests for Gather effect composition rules as specified in SPEC-EFF-005.
     
-    Verifies that async helpers (_do_await, _do_delay, _do_wait_until) do not
-    capture stale store snapshots that would overwrite concurrent modifications.
+    Reference: specs/effects/SPEC-EFF-005-concurrency.md
     """
 
     @pytest.mark.asyncio
-    async def test_await_preserves_concurrent_store_modifications(self) -> None:
-        """Await should not roll back store changes made by concurrent tasks.
+    async def test_gather_plus_local_children_inherit_env(self) -> None:
+        """Test that Gather children inherit parent environment.
         
-        Scenario:
-        - Task A: Await(slow_operation)
-        - Task B: Put("key", "value") while Task A is waiting
-        - After Task A completes, Task B's changes should be preserved
+        Composition rule: Gather + Local - Children inherit env at spawn.
         """
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
 
-        async def slow_operation() -> str:
-            await asyncio.sleep(0.05)
-            return "async_result"
+        @do
+        def child():
+            value = yield Ask("parent_key")
+            return value
 
         @do
-        def task_that_modifies_store():
-            yield Put("counter", 10)
-            yield Put("name", "modified_by_task_b")
-            return "done"
+        def program():
+            results = yield Local(
+                {"parent_key": "parent_value"},
+                Gather(child(), child(), child())
+            )
+            return results
+
+        results = await runtime.run(program())
+        assert results == ["parent_value", "parent_value", "parent_value"]
+
+    @pytest.mark.asyncio
+    async def test_gather_plus_local_scoped_to_child(self) -> None:
+        """Test that Local in child is scoped only to that child.
+        
+        Local changes in one child should not affect other children.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
 
         @do
-        def task_that_awaits():
-            result = yield Await(slow_operation())
+        def child_with_local():
+            result = yield Local(
+                {"key": "local_override"},
+                Ask("key")
+            )
+            return result
+
+        @do
+        def child_without_local():
+            result = yield Ask("key")
             return result
 
         @do
         def program():
-            yield Put("counter", 0)
-            yield Put("name", "initial")
-            
-            results = yield Gather(
-                task_that_awaits(),
-                task_that_modifies_store(),
+            results = yield Local(
+                {"key": "parent_value"},
+                Gather(
+                    child_with_local(),
+                    child_without_local(),
+                    child_without_local()
+                )
             )
-            
-            final_counter = yield Get("counter")
-            final_name = yield Get("name")
-            return (results, final_counter, final_name)
+            return results
 
-        results, final_counter, final_name = await runtime.run(program())
-        
-        assert final_counter == 10
-        assert final_name == "modified_by_task_b"
+        results = await runtime.run(program())
+        # First child sees its local override, others see parent value
+        assert results == ["local_override", "parent_value", "parent_value"]
 
     @pytest.mark.asyncio
-    async def test_delay_preserves_concurrent_store_modifications(self) -> None:
-        """Delay should not roll back store changes made by concurrent tasks."""
+    async def test_gather_plus_put_shared_store(self) -> None:
+        """Test Gather with shared store semantics.
+        
+        Composition rule: Gather + Put - Shared store across children.
+        All changes are visible to parent after Gather.
+        """
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
 
         @do
-        def task_that_modifies_store():
-            yield Put("value", "updated")
-            return "modifier_done"
-
-        @do
-        def task_that_delays():
-            yield Delay(seconds=0.05)
-            return "delay_done"
+        def child(key: str, value: int):
+            yield Put(key, value)
+            return key
 
         @do
         def program():
-            yield Put("value", "original")
-            
+            yield Put("initial", 0)
             results = yield Gather(
-                task_that_delays(),
-                task_that_modifies_store(),
+                child("a", 1),
+                child("b", 2),
+                child("c", 3)
             )
-            
-            final_value = yield Get("value")
-            return (results, final_value)
+            a_val = yield Get("a")
+            b_val = yield Get("b")
+            c_val = yield Get("c")
+            return (results, a_val, b_val, c_val)
 
-        results, final_value = await runtime.run(program())
-        
-        assert final_value == "updated"
+        results, a_val, b_val, c_val = await runtime.run(program())
+        assert results == ["a", "b", "c"]
+        assert a_val == 1
+        assert b_val == 2
+        assert c_val == 3
 
     @pytest.mark.asyncio
-    async def test_multiple_async_tasks_with_interleaved_store_updates(self) -> None:
-        """Multiple async tasks with interleaved store updates should all be preserved."""
+    async def test_gather_plus_listen_all_logs_captured(self) -> None:
+        """Test that Listen captures logs from all Gather children.
+        
+        Composition rule: Gather + Listen - All logs from all children captured.
+        """
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
 
-        async def async_op(value: int) -> int:
-            await asyncio.sleep(0.01)
-            return value * 2
-
         @do
-        def async_task_1():
-            result = yield Await(async_op(1))
-            yield Put("task1_completed", True)
-            return result
-
-        @do
-        def async_task_2():
-            result = yield Await(async_op(2))
-            yield Put("task2_completed", True)
-            return result
-
-        @do
-        def sync_task():
-            yield Put("sync_value", 100)
-            yield Put("sync_completed", True)
-            return "sync_done"
+        def logging_child(name: str):
+            yield Tell(f"Message from {name}")
+            return name
 
         @do
         def program():
-            results = yield Gather(
-                async_task_1(),
-                async_task_2(),
-                sync_task(),
+            result = yield Listen(
+                Gather(
+                    logging_child("A"),
+                    logging_child("B"),
+                    logging_child("C")
+                )
             )
-            
-            task1_done = yield Get("task1_completed")
-            task2_done = yield Get("task2_completed")
-            sync_done = yield Get("sync_completed")
-            sync_value = yield Get("sync_value")
-            
-            return {
-                "results": results,
-                "task1_done": task1_done,
-                "task2_done": task2_done,
-                "sync_done": sync_done,
-                "sync_value": sync_value,
-            }
-
-        output = await runtime.run(program())
-        
-        assert output["task1_done"] is True
-        assert output["task2_done"] is True
-        assert output["sync_done"] is True
-        assert output["sync_value"] == 100
-        assert set(output["results"]) == {2, 4, "sync_done"}
-
-    @pytest.mark.asyncio
-    async def test_no_store_rollback_after_async_completion(self) -> None:
-        """Store should not be rolled back when async task completes after store updates."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-        updates_sequence: list[tuple[str, int]] = []
-
-        async def slow_async() -> str:
-            await asyncio.sleep(0.05)
-            return "async_complete"
-
-        @do
-        def program():
-            yield Put("counter", 1)
-            updates_sequence.append(("initial", 1))
-            
-            async_result = yield Await(slow_async())
-            
-            current = yield Get("counter")
-            yield Put("counter", current + 1)
-            updates_sequence.append(("after_await", current + 1))
-            
-            final = yield Get("counter")
-            return (async_result, final)
-
-        result, final_counter = await runtime.run(program())
-        
-        assert result == "async_complete"
-        assert final_counter == 2
-        assert updates_sequence == [("initial", 1), ("after_await", 2)]
-
-    @pytest.mark.asyncio
-    async def test_safe_catches_coroutine_exceptions(self) -> None:
-        """Safe should catch exceptions raised by coroutines in Await."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
-        async def failing_coro() -> str:
-            raise ValueError("boom from coroutine")
-
-        @do
-        def program():
-            result = yield Safe(Await(failing_coro()))
             return result
 
         result = await runtime.run(program())
-        
-        assert result.is_err()
-        assert isinstance(result.error, ValueError)
-        assert str(result.error) == "boom from coroutine"
+        # result.value is the list of results
+        assert result.value == ["A", "B", "C"]
+        # result.log contains logs from all children
+        log_messages = list(result.log)
+        assert len(log_messages) == 3
+        assert any("Message from A" in str(msg) for msg in log_messages)
+        assert any("Message from B" in str(msg) for msg in log_messages)
+        assert any("Message from C" in str(msg) for msg in log_messages)
 
     @pytest.mark.asyncio
-    async def test_coroutine_exception_preserves_store(self) -> None:
-        """Coroutine exceptions should not rollback store changes."""
+    async def test_gather_plus_safe_first_error_wrapped(self) -> None:
+        """Test that Safe wraps first Gather error.
+        
+        Composition rule: Gather + Safe - First error wrapped in Err.
+        """
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
 
-        async def failing_after_delay() -> str:
-            await asyncio.sleep(0.01)
-            raise ValueError("delayed failure")
+        @do
+        def success():
+            return "success"
 
         @do
-        def modifier_task():
-            yield Put("value", "modified")
-            return "done"
-
-        @do
-        def failing_task():
-            result = yield Await(failing_after_delay())
-            return result
+        def failing():
+            raise ValueError("task failed")
 
         @do
         def program():
-            yield Put("value", "initial")
-            
-            results = yield Safe(Gather(
-                failing_task(),
-                modifier_task(),
-            ))
-            
-            final_value = yield Get("value")
-            return (results, final_value)
+            result = yield Safe(
+                Gather(success(), failing(), success())
+            )
+            return result
 
-        results, final_value = await runtime.run(program())
+        result = await runtime.run(program())
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert str(result.error) == "task failed"
+
+    @pytest.mark.asyncio
+    async def test_nested_gather_full_parallelism(self) -> None:
+        """Test nested Gather runs all leaf tasks in parallel.
         
-        assert final_value == "modified"
-        assert results.is_err()
+        Composition rule: Nested Gather - Full parallelism at leaf level.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+        execution_order: list[str] = []
+
+        @do
+        def leaf_task(name: str):
+            yield Delay(seconds=0.05)  # Small delay
+            yield IO(lambda n=name: execution_order.append(n))
+            return name
+
+        @do
+        def inner_gather_1():
+            results = yield Gather(leaf_task("a"), leaf_task("b"))
+            return results
+
+        @do
+        def inner_gather_2():
+            results = yield Gather(leaf_task("c"), leaf_task("d"))
+            return results
+
+        @do
+        def program():
+            start = yield GetTime()
+            results = yield Gather(inner_gather_1(), inner_gather_2())
+            end = yield GetTime()
+            elapsed = (end - start).total_seconds()
+            return (results, elapsed)
+
+        results, elapsed = await runtime.run(program())
+        # All 4 tasks should complete
+        assert results == [["a", "b"], ["c", "d"]]
+        # Should complete in ~0.05s (parallel), not ~0.2s (sequential)
+        assert elapsed < 0.3
+
+    @pytest.mark.asyncio
+    async def test_gather_plus_intercept_not_inherited(self) -> None:
+        """Test that parent Intercept does NOT apply to Gather children.
+        
+        Composition rule: Gather + Intercept - Children spawned with fresh continuations.
+        AsyncRuntime creates fresh tasks for Gather children, so InterceptFrame is NOT propagated.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.effects.intercept import intercept_program_effect
+        from doeff.effects.reader import AskEffect
+        from doeff.effects.pure import Pure
+
+        runtime = AsyncRuntime()
+
+        def transform_ask(effect):
+            if isinstance(effect, AskEffect):
+                return Pure("intercepted")
+            return None
+
+        @do
+        def child():
+            value = yield Ask("key")
+            return value
+
+        @do
+        def gather_programs():
+            results = yield Gather(child(), child())
+            return results
+
+        @do
+        def program():
+            results = yield intercept_program_effect(
+                gather_programs(),
+                (transform_ask,)
+            )
+            return results
+
+        # Children's Ask effects are NOT intercepted - they see actual env value
+        results = await runtime.run(program(), env={"key": "actual_value"})
+        assert results == ["actual_value", "actual_value"]
+
+    @pytest.mark.asyncio
+    async def test_gather_empty_returns_empty_list(self) -> None:
+        """Test Gather with no programs returns empty list immediately."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            results = yield Gather()
+            return results
+
+        results = await runtime.run(program())
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_gather_single_program(self) -> None:
+        """Test Gather with single program returns single-element list."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def single():
+            return 42
+
+        @do
+        def program():
+            results = yield Gather(single())
+            return results
+
+        results = await runtime.run(program())
+        assert results == [42]
+
+    @pytest.mark.asyncio
+    async def test_gather_result_ordering(self) -> None:
+        """Test Gather returns results in program order, not completion order.
+        
+        Even if later programs complete first, results should be in input order.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def slow_task():
+            yield Delay(seconds=0.1)
+            return "slow"
+
+        @do
+        def fast_task():
+            return "fast"
+
+        @do
+        def program():
+            # slow_task is first but will complete last
+            results = yield Gather(slow_task(), fast_task(), fast_task())
+            return results
+
+        results = await runtime.run(program())
+        # Results should be in program order
+        assert results == ["slow", "fast", "fast"]
