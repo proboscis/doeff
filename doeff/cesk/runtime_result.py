@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_check
 from doeff._vendor import Err, Ok, Result
 
 if TYPE_CHECKING:
-    from doeff.cesk_traceback import CapturedTraceback
+    from doeff.cesk_traceback import (
+        CapturedTraceback,
+        EffectFrame as CTEffectFrame,
+        PythonFrame as CTPythonFrame,
+    )
 
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
@@ -105,6 +109,35 @@ class EffectStackTrace:
         child_prefix = prefix + ("   " if is_last else "│  ")
         for i, child in enumerate(node.children):
             self._format_node(child, lines, child_prefix, i == len(node.children) - 1)
+
+    def get_effect_path(self) -> str:
+        """Get linear effect path string: main() -> fetch() -> Ask('key')."""
+        if self.root is None:
+            return "<not captured>"
+        
+        path_parts: list[str] = []
+        self._collect_path(self.root, path_parts)
+        return " -> ".join(path_parts) if path_parts else "<empty>"
+    
+    def _collect_path(self, node: EffectCallNode, path: list[str]) -> None:
+        """Collect path to deepest error or leaf."""
+        display = node.name
+        if node.args_repr:
+            display = f"{node.name}({node.args_repr})"
+        path.append(display)
+        
+        # Find error child or last child
+        error_child = None
+        for child in node.children:
+            if child.is_error_site:
+                error_child = child
+                break
+        
+        if error_child:
+            self._collect_path(error_child, path)
+        elif node.children:
+            # No error child, go to last child (deepest path)
+            self._collect_path(node.children[-1], path)
 
 
 @dataclass(frozen=True)
@@ -205,6 +238,81 @@ class RuntimeResult(Protocol[T_co]):
 
 
 # ============================================
+# Conversion Helpers
+# ============================================
+
+def _convert_python_frames(ct_frames: tuple["CTPythonFrame", ...]) -> tuple[PythonFrame, ...]:
+    """Convert CapturedTraceback PythonFrames to RuntimeResult PythonFrames."""
+    result = []
+    for f in ct_frames:
+        result.append(PythonFrame(
+            filename=f.location.filename,
+            line=f.location.lineno,
+            function=f.location.function,
+            code_context=f.location.code,
+        ))
+    return tuple(result)
+
+
+def _convert_effect_frames_to_tree(
+    ct_frames: tuple["CTEffectFrame", ...],
+    error_function: str | None = None,
+) -> EffectStackTrace:
+    """Convert CapturedTraceback EffectFrames to EffectStackTrace tree.
+    
+    Creates a linear chain from effect frames (outermost to innermost).
+    """
+    if not ct_frames:
+        return EffectStackTrace(root=None)
+    
+    # Build from innermost to outermost (reverse order)
+    # ct_frames is in outermost→innermost order, we reverse to build bottom-up
+    reversed_frames = list(reversed(ct_frames))
+    
+    current_node: EffectCallNode | None = None
+    for i, ef in enumerate(reversed_frames):
+        is_innermost = i == 0
+        is_error = bool(is_innermost and error_function and ef.location.function == error_function)
+        
+        node = EffectCallNode(
+            name=ef.location.function,
+            is_effect=is_innermost,  # Innermost is typically the effect
+            args_repr="",
+            count=1,
+            children=(current_node,) if current_node else (),
+            source_location=SourceLocation(
+                filename=ef.location.filename,
+                line=ef.location.lineno,
+                function=ef.location.function,
+                code_context=ef.location.code,
+            ),
+            is_error_site=is_error,
+        )
+        current_node = node
+    
+    return EffectStackTrace(root=current_node)
+
+
+def build_stacks_from_captured_traceback(
+    captured_tb: "CapturedTraceback | None",
+) -> tuple[PythonStackTrace, EffectStackTrace]:
+    """Build PythonStackTrace and EffectStackTrace from CapturedTraceback."""
+    if captured_tb is None:
+        return PythonStackTrace(frames=()), EffectStackTrace(root=None)
+    
+    python_stack = PythonStackTrace(frames=_convert_python_frames(captured_tb.python_frames))
+    
+    # Get error function name from innermost effect frame
+    error_func = None
+    if captured_tb.effect_frames:
+        error_func = captured_tb.effect_frames[-1].location.function
+    
+    effect_stack = _convert_effect_frames_to_tree(captured_tb.effect_frames, error_func)
+    
+    return python_stack, effect_stack
+
+
+# ============================================
 # Concrete Implementation
 # ============================================
 
@@ -294,6 +402,10 @@ class RuntimeResultImpl(Generic[T]):
                     lines.append(f'  File "{frame.filename}", line {frame.line}, in {frame.function}')
                     if frame.code_context:
                         lines.append(f"    {frame.code_context.strip()}")
+
+            # Effect path (REQUIRED by spec)
+            lines.append("")
+            lines.append(f"Effect path: {self._effect_stack.get_effect_path()}")
 
         # K stack summary
         if self._k_stack.frames:
@@ -434,4 +546,5 @@ __all__ = [
     "RuntimeResultImpl",
     # Helpers
     "build_k_stack_trace",
+    "build_stacks_from_captured_traceback",
 ]

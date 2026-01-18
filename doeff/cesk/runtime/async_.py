@@ -25,6 +25,7 @@ from doeff.cesk.runtime_result import (
     EffectStackTrace,
     PythonStackTrace,
     build_k_stack_trace,
+    build_stacks_from_captured_traceback,
 )
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
@@ -105,13 +106,13 @@ class AsyncRuntime(BaseRuntime):
 
         try:
             final_value, final_state = await self._run_scheduler(state)
-            return self._build_success_result(final_value, final_state, initial_env)
+            return self._build_success_result(final_value, final_state)
         except asyncio.CancelledError:
             # Let cancellation propagate - this is external control, not a program error
             raise
         except Exception as exc:
             # Program errors get wrapped in RuntimeResult
-            return self._build_error_result(exc, state, initial_env)
+            return self._build_error_result(exc, state)
 
     async def run_and_unwrap(
         self,
@@ -142,7 +143,6 @@ class AsyncRuntime(BaseRuntime):
         self,
         value: T,
         state: CESKState,
-        initial_env: dict[str, Any],
     ) -> RuntimeResultImpl[T]:
         """Build RuntimeResult for successful execution."""
         # Extract state (excluding internal keys)
@@ -157,20 +157,22 @@ class AsyncRuntime(BaseRuntime):
         # Extract graph if captured
         final_graph = state.store.get("__graph__")
 
-        # Build K stack from main task
+        # Get main task for env and k_stack
         main_task = state.tasks.get(state.main_task)
         k_stack = KStackTrace(frames=())
+        final_env: dict[Any, Any] = {}
         if main_task:
             k_stack = build_k_stack_trace(main_task.kontinuation)
+            final_env = dict(main_task.env)
 
         return RuntimeResultImpl(
             _result=Ok(value),
             _state=final_state,
             _log=final_log,
-            _env=initial_env,
+            _env=final_env,
             _k_stack=k_stack,
-            _effect_stack=EffectStackTrace(),  # TODO: Build from observations
-            _python_stack=PythonStackTrace(frames=()),  # TODO: Capture during execution
+            _effect_stack=EffectStackTrace(),  # Success path: no error tree needed
+            _python_stack=PythonStackTrace(frames=()),  # Success path: no error stack needed
             _graph=final_graph,
         )
 
@@ -178,7 +180,6 @@ class AsyncRuntime(BaseRuntime):
         self,
         exc: Exception,
         state: CESKState,
-        initial_env: dict[str, Any],
     ) -> RuntimeResultImpl[Any]:
         """Build RuntimeResult for failed execution."""
         # Extract state (excluding internal keys)
@@ -190,24 +191,30 @@ class AsyncRuntime(BaseRuntime):
         # Extract log
         final_log = list(state.store.get("__log__", []))
 
-        # Build K stack from main task
+        # Extract graph if captured (DON'T lose it on error!)
+        final_graph = state.store.get("__graph__")
+
+        # Get main task for env and k_stack
         main_task = state.tasks.get(state.main_task)
         k_stack = KStackTrace(frames=())
+        final_env: dict[Any, Any] = {}
         if main_task:
             k_stack = build_k_stack_trace(main_task.kontinuation)
+            final_env = dict(main_task.env)
 
-        # Get captured traceback if available
+        # Get captured traceback if available and convert to stack traces
         captured_tb = getattr(exc, "__cesk_traceback__", None)
+        python_stack, effect_stack = build_stacks_from_captured_traceback(captured_tb)
 
         return RuntimeResultImpl(
             _result=Err(exc),
             _state=final_state,
             _log=final_log,
-            _env=initial_env,
+            _env=final_env,
             _k_stack=k_stack,
-            _effect_stack=EffectStackTrace(),
-            _python_stack=PythonStackTrace(frames=()),
-            _graph=None,
+            _effect_stack=effect_stack,
+            _python_stack=python_stack,
+            _graph=final_graph,
             _captured_traceback=captured_tb,
         )
 
