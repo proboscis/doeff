@@ -9,31 +9,34 @@ State effects provide mutable key-value storage within a program execution.
 
 ## Effect Definitions
 
-### Get(key: str) -> T | None
+### Get(key: str) -> T
 
 Retrieves the value associated with `key` from the store.
 
 **Behavior:**
 - Returns the stored value if the key exists
-- Returns `None` if the key does not exist
-- Does NOT raise KeyError (deliberately different from `Ask`)
+- Raises `KeyError` if the key does not exist (consistent with `Ask`)
 
-**Rationale for None-return semantics:**
-State represents mutable runtime data that may or may not have been initialized.
-Returning `None` for missing keys allows programs to use presence-checking patterns:
+**Rationale for KeyError semantics:**
+1. **Consistency with Ask** - Both `Get` and `Ask` are lookup operations; having
+   consistent error behavior reduces cognitive load
+2. **None is valid data** - If `Get` returned `None` for missing keys, you couldn't
+   distinguish between "key not found" and "key exists with value None"
+3. **Fail-fast** - Explicit errors catch bugs earlier than silent None propagation
+4. **Type safety** - `Get[T]` returns `T`, not `T | None`, avoiding unnecessary
+   None-handling when you know the key exists
+
+**Handling missing keys:**
+Use `Safe` to handle potentially missing keys:
 
 ```python
 @do
 def counter():
-    current = yield Get("counter")
-    if current is None:
-        current = 0
+    result = yield Safe(Get("counter"))
+    current = result.value_or(0)  # Default to 0 if missing
     yield Put("counter", current + 1)
     return current + 1
 ```
-
-This differs from `Ask` (Reader effect) which raises `KeyError` because environment
-keys are expected to be provided at program initialization and represent configuration.
 
 ### Put(key: str, value: T) -> None
 
@@ -49,11 +52,21 @@ Stores `value` under `key` in the store.
 Atomically reads, transforms, and stores a value.
 
 **Behavior:**
-- Reads current value (or `None` if missing)
+- Reads current value, or `None` if key is missing (does NOT raise KeyError)
 - Applies `func` to get new value
-- Stores new value
+- Stores new value under the key
 - Returns new value
 - If `func` raises an exception, store is unchanged (atomic)
+
+**Note:** Unlike `Get`, `Modify` does NOT raise `KeyError` for missing keys.
+This enables atomic initialization patterns:
+
+```python
+@do
+def increment():
+    # Atomically initialize to 0 if missing, then increment
+    return (yield Modify("counter", lambda x: (x or 0) + 1))
+```
 
 ## Composition Rules
 
@@ -106,13 +119,13 @@ branch are visible to other branches and the parent.
 ```python
 @do
 def increment():
-    current = yield Get("counter")
-    yield Put("counter", (current or 0) + 1)
+    current = yield Get("counter")  # Key must exist
+    yield Put("counter", current + 1)
     return current
 
 @do
 def test_gather_shared_store():
-    yield Put("counter", 0)
+    yield Put("counter", 0)  # Initialize before Gather
     results = yield Gather(increment(), increment(), increment())
     final = yield Get("counter")
     return (results, final)  # Returns ([0, 1, 2], 3)
@@ -151,20 +164,22 @@ def test_modify_atomicity():
 
 ## Design Decisions
 
-### D1: Get Returns None vs Raising KeyError
+### D1: Get Raises KeyError for Missing Keys
 
-**Decision:** Get returns `None` for missing keys.
+**Decision:** Get raises `KeyError` for missing keys (consistent with `Ask`).
 
 **Considered alternatives:**
-1. Raise `KeyError` (like `Ask`)
+1. Return `None` for missing keys
 2. Return `Option[T]`
 3. Require default value parameter
 
 **Rationale:**
-- State is typically initialized incrementally during execution
-- `None` return allows idiomatic Python patterns (`value or default`)
-- Explicit missing-key handling aligns with `dict.get()` semantics
-- Different from `Ask` which expects pre-configured environment
+- **Consistency**: Both `Get` and `Ask` are lookups; same error behavior is intuitive
+- **None ambiguity**: Returning None cannot distinguish "not found" from "found None"
+- **Fail-fast**: Explicit errors catch bugs earlier than silent None propagation
+- **Type safety**: `Get[T]` returns `T`, not `T | None`
+
+**Handling missing keys:** Use `Safe(Get(...))` or `Modify` for initialization patterns.
 
 ### D2: No Transaction Rollback on Error
 
@@ -206,7 +221,8 @@ All composition rules are verified by tests in `tests/effects/test_state_semanti
 | Safe + Put | `test_safe_preserves_state_changes` |
 | Gather + Put | `test_gather_shared_store_semantics` |
 | Modify atomicity | `test_modify_atomic_on_error` |
-| Get missing key | `test_get_missing_key_returns_none` |
+| Modify missing key | `test_modify_missing_key_receives_none` |
+| Get missing key | `test_get_missing_key_raises_keyerror` |
 
 ## References
 
