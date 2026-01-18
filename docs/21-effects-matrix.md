@@ -93,6 +93,10 @@ This document provides a comprehensive overview of all effects defined in doeff,
 | `SimulationRuntime` | `cesk/runtime/simulation.py` | Active | Simulated time (instant advancement) |
 | `AsyncioRuntime` | - | Not Ported | Was in old `runtimes/`, not available in CESK |
 
+### Time Effect Handling Note
+
+`SimulationRuntime` intercepts `DelayEffect` and `WaitUntilEffect` directly in its step loop rather than using the registered handlers. This is intentional: simulation time advancement requires updating `runtime.current_time` which handlers cannot access. The registered handlers in `time.py` are used by `SyncRuntime` for real wall-clock waiting.
+
 ## Handler Registration
 
 All supported handlers are registered via `default_handlers()` in `doeff/cesk/handlers/__init__.py`:
