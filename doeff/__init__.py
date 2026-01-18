@@ -134,6 +134,7 @@ from doeff.cesk.runtime import (
     SimulationRuntime,
     AsyncRuntime,
 )
+from doeff.cesk.errors import MissingEnvKeyError
 
 __version__ = "0.1.7"
 
@@ -241,4 +242,5 @@ __all__ = [
     "SyncRuntime",
     "SimulationRuntime",
     "AsyncRuntime",
+    "MissingEnvKeyError",
 ]
