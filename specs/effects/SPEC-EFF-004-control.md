@@ -54,6 +54,10 @@ Intercept(program, transform)
 
 All interception flows through InterceptFrame. There is no separate "structural" or "compile-time" interception path.
 
+**Runtime requirement for child propagation:**
+
+For interception to reach children (Gather branches, Spawn tasks, etc.), runtimes MUST propagate InterceptFrame(s) to child execution contexts. This is a runtime implementation requirement, not automatic.
+
 ---
 
 ## Intercept Semantics (Detailed)
@@ -74,17 +78,36 @@ def transform(effect: Effect) -> Effect | Program | None:
 ### Key Semantic Rules
 
 **1. No re-transformation of returned Effects:**
+
+When a transform returns a substitute Effect, that Effect is used directly without re-entering the same transform chain. This prevents infinite loops.
+
 ```python
 def transform(e):
     if isinstance(e, AskEffect):
         return Ask("other_key")  # Returns new AskEffect
     return None
 
-# Ask("other_key") is NOT passed through transform again
-# This prevents infinite loops
+# Ask("other_key") is NOT passed through this transform chain again
+# It goes directly to the handler (or outer InterceptFrames in K)
 ```
 
-**2. Interception always propagates to children:**
+**Precise scope:** The returned Effect skips remaining transforms in this InterceptFrame. It may still pass through outer InterceptFrames higher in K.
+
+**2. Replacement Programs ARE intercepted:**
+
+When a transform returns a Program, that Program executes under the current intercept scope. Effects yielded by the replacement Program WILL pass through the InterceptFrame.
+
+```python
+def transform(e):
+    if isinstance(e, AskEffect):
+        return some_program()  # Replacement Program
+    return None
+
+# some_program() executes, its yielded effects ARE intercepted
+# Can cause infinite loops if some_program yields Ask - user responsibility
+```
+
+**3. Interception always propagates to children:**
 ```python
 Gather(child1, child2).intercept(f)
 Safe(inner_program).intercept(f)
@@ -94,7 +117,7 @@ Spawn(background_task).intercept(f)
 # There is no "shallow" interception
 ```
 
-**3. Spawn/background tasks inherit InterceptFrame:**
+**4. Spawn/background tasks inherit InterceptFrame:**
 ```python
 @do
 def program():
@@ -104,14 +127,14 @@ def program():
 program.intercept(f)  # f intercepts effects from background_task too
 ```
 
-**4. Parallel ordering is undefined:**
+**5. Parallel ordering is undefined:**
 ```python
 Gather(task_a, task_b).intercept(f)
 # If task_a and task_b yield effects concurrently,
 # the order f sees them is NOT guaranteed
 ```
 
-**5. First non-None wins in chained intercepts:**
+**6. First non-None wins in chained intercepts:**
 ```python
 program.intercept(f).intercept(g)
 # Transforms accumulate as (f, g)
@@ -446,6 +469,8 @@ def my_program():
 | New Frame type | Implement `Frame` protocol (`on_value`, `on_error`) |
 | New Handler | Function returning `FrameResult`, push Frame onto K |
 | Register | Pass `handlers={..., MyEffect: my_handler}` to Runtime |
+
+**Runtime guarantee:** The runtime dispatches ALL continuation frames through the `Frame` protocol (`on_value`/`on_error`), not just built-in frames. This makes custom Frames first-class citizens.
 
 This allows implementing custom control flow (transactions, timeouts, retries, resource management) without modifying doeff internals.
 
