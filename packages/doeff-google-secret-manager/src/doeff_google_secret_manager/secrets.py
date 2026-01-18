@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Await, EffectGenerator, Fail, Log, Step, do
+from doeff import Await, EffectGenerator, Fail, Tell, Step, do
 
 from .client import SecretManagerClient, get_secret_manager_client
 
@@ -47,13 +47,13 @@ def access_secret(
     client: SecretManagerClient = yield get_secret_manager_client()
     resolved_project = project or client.project
     if not resolved_project:
-        yield Log(
+        yield Tell(
             "Secret Manager project missing. Provide 'secret_manager_project' or pass project=..."
         )
         yield Fail(ValueError("Secret Manager project is required to access secrets"))
 
     secret_name = f"projects/{resolved_project}/secrets/{secret_id}/versions/{version}"
-    yield Log(
+    yield Tell(
         f"Accessing Secret Manager secret secret_id={secret_id}, version={version}, project={resolved_project}"
     )
 
