@@ -35,8 +35,7 @@ pip install doeff-pinjected
 ## Quick Start
 
 ```python
-from doeff import do, Program, Put, Get, Log
-from doeff.runtimes import AsyncioRuntime
+from doeff import do, Program, Put, Get, Log, AsyncRuntime
 
 @do
 def counter_program() -> Program[int]:
@@ -46,24 +45,72 @@ def counter_program() -> Program[int]:
     yield Put("counter", count + 1)
     return count + 1
 
-# Run the program
 import asyncio
 
 async def main():
-    runtime = AsyncioRuntime()
+    runtime = AsyncRuntime()
     result = await runtime.run(counter_program())
     print(f"Result: {result}")  # 1
 
 asyncio.run(main())
 ```
 
+## Runtimes
+
+doeff provides three runtime implementations for executing programs:
+
+| Runtime | Use Case |
+|---------|----------|
+| `AsyncRuntime` | Production async code with native coroutine support |
+| `SyncRuntime` | Synchronous execution (blocking) |
+| `SimulationRuntime` | Testing with controlled time |
+
+### AsyncRuntime (Recommended)
+
+The `AsyncRuntime` is the recommended runtime for production code. It supports:
+- All core effects (Ask, Get, Put, Modify, Tell, Listen, Safe)
+- Async-specific effects (Await, Delay, GetTime, Gather)
+- Native Python coroutine integration
+
+```python
+from doeff import do, AsyncRuntime, Await, Delay
+
+@do
+async def async_program():
+    result = yield Await(some_async_function())
+    yield Delay(seconds=1.0)
+    return result
+
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(async_program())
+```
+
+### SyncRuntime
+
+For synchronous code or scripts where async is not needed:
+
+```python
+from doeff import do, SyncRuntime, Get, Put
+
+@do
+def sync_program():
+    yield Put("counter", 0)
+    value = yield Get("counter")
+    return value + 1
+
+runtime = SyncRuntime()
+result = runtime.run(sync_program())
+
+```
+
 ## Migration from ProgramInterpreter
 
 `ProgramInterpreter` is deprecated in favor of the new runtime system. Here's how to migrate:
 
-| ProgramInterpreter (deprecated) | AsyncioRuntime (new) |
+| ProgramInterpreter (deprecated) | AsyncRuntime (new) |
 |--------------------------------|---------------------|
-| `engine = ProgramInterpreter()` | `runtime = AsyncioRuntime()` |
+| `engine = ProgramInterpreter()` | `runtime = AsyncRuntime()` |
 | `engine.run(program)` | `runtime.run(program)` (async) |
 | `await engine.run_async(program)` | `await runtime.run(program)` |
 | `result.context.state` | Direct value return |
