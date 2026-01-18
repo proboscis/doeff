@@ -17,10 +17,15 @@ def handle_delay(
     store: Store,
 ) -> FrameResult:
     time.sleep(effect.seconds)
+    
+    new_store = store
+    if "__current_time__" in store:
+        new_store = {**store, "__current_time__": datetime.now()}
+    
     return ContinueValue(
         value=None,
         env=task_state.env,
-        store=store,
+        store=new_store,
         k=task_state.kontinuation,
     )
 
@@ -46,6 +51,7 @@ def handle_wait_until(
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
+    has_store_time = "__current_time__" in store
     current_time = store.get("__current_time__")
     if current_time is None:
         current_time = datetime.now()
@@ -54,10 +60,14 @@ def handle_wait_until(
         wait_seconds = (effect.target_time - current_time).total_seconds()
         time.sleep(wait_seconds)
     
+    new_store = store
+    if has_store_time:
+        new_store = {**store, "__current_time__": datetime.now()}
+    
     return ContinueValue(
         value=None,
         env=task_state.env,
-        store=store,
+        store=new_store,
         k=task_state.kontinuation,
     )
 

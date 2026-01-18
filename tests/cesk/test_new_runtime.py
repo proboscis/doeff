@@ -384,13 +384,17 @@ class TestIOHandlers:
 
 
 class TestTimeHandlers:
-    def test_handle_delay(self) -> None:
+    def test_handle_delay(self, monkeypatch) -> None:
         from doeff.cesk.handlers.time import handle_delay
         from doeff.cesk.state import TaskState
         from doeff.cesk.frames import ContinueValue
         from doeff.effects.time import DelayEffect
+        import doeff.cesk.handlers.time as time_module
         
-        effect = DelayEffect(seconds=10.0)
+        sleep_calls = []
+        monkeypatch.setattr(time_module.time, "sleep", lambda s: sleep_calls.append(s))
+        
+        effect = DelayEffect(seconds=5.0)
         task_state = TaskState.initial(Program.pure(0))
         store = {}
         
@@ -398,6 +402,27 @@ class TestTimeHandlers:
         
         assert isinstance(result, ContinueValue)
         assert result.value is None
+        assert sleep_calls == [5.0]
+    
+    def test_handle_delay_updates_store_time(self, monkeypatch) -> None:
+        from doeff.cesk.handlers.time import handle_delay
+        from doeff.cesk.state import TaskState
+        from doeff.cesk.frames import ContinueValue
+        from doeff.effects.time import DelayEffect
+        import doeff.cesk.handlers.time as time_module
+        
+        monkeypatch.setattr(time_module.time, "sleep", lambda s: None)
+        
+        effect = DelayEffect(seconds=1.0)
+        task_state = TaskState.initial(Program.pure(0))
+        initial_time = datetime(2025, 1, 1, 12, 0, 0)
+        store = {"__current_time__": initial_time}
+        
+        result = handle_delay(effect, task_state, store)
+        
+        assert isinstance(result, ContinueValue)
+        assert "__current_time__" in result.store
+        assert result.store["__current_time__"] != initial_time
 
     def test_handle_get_time_from_store(self) -> None:
         from doeff.cesk.handlers.time import handle_get_time
