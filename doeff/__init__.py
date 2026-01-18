@@ -133,6 +133,7 @@ from doeff.run import run_program, ProgramRunResult
 from doeff.cesk.runtime import (
     SyncRuntime,
     SimulationRuntime,
+    AsyncRuntime,
 )
 
 __version__ = "0.1.7"
@@ -240,4 +241,5 @@ __all__ = [
     "ProgramRunResult",
     "SyncRuntime",
     "SimulationRuntime",
+    "AsyncRuntime",
 ]
