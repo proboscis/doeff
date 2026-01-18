@@ -131,7 +131,7 @@ class Result(Generic[T_co]):
 
             @do
             def process(x: int) -> EffectGenerator[str]:
-                yield Log(f"Processing {x}")
+                yield Tell(f"Processing {x}")
                 return str(x * 2)
 
             result: Result[int] = Ok(21)
@@ -160,7 +160,7 @@ class Result(Generic[T_co]):
 
             @do
             def handle_error(e: Exception) -> EffectGenerator[int]:
-                yield Log(f"Error: {e}")
+                yield Tell(f"Error: {e}")
                 return 0
 
             result: Result[int] = Err(ValueError("oops"))

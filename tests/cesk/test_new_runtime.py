@@ -7,7 +7,7 @@ from doeff.program import Program
 from doeff import do
 from doeff.effects import (
     Ask, Get, Put, Modify, Pure, IO, Delay, GetTime, WaitUntil,
-    Local, Tell, Log, Listen, Safe, Gather, intercept_program_effect,
+    Local, Tell, Listen, Safe, Gather, intercept_program_effect,
 )
 
 
@@ -633,7 +633,7 @@ class TestControlHandlers:
         @do
         def program():
             yield Tell("message1")
-            yield Log("message2")
+            yield Tell("message2")
             yield Put("result", 42)
             return (yield Get("result"))
         

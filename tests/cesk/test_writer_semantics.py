@@ -1,16 +1,15 @@
 """Tests for Writer effect semantics (SPEC-EFF-003-writer).
 
 This module tests the composition rules and semantics for Writer effects:
-- Tell / Log - append messages to the writer log
+- Tell - append messages to the writer log
 - Listen - capture logs from a sub-program
 
 Tested compositions:
-- Listen + Log
+- Listen + Tell
 - Listen + Local
 - Listen + Safe (success and error)
 - Listen + Gather (sync and async)
 - Listen + Listen (nested)
-- Log vs Tell equivalence
 
 Reference: specs/effects/SPEC-EFF-003-writer.md
 Related issue: gh#176
@@ -25,7 +24,6 @@ from doeff.effects import (
     Get,
     Listen,
     Local,
-    Log,
     Put,
     Safe,
     Tell,
@@ -44,8 +42,8 @@ class TestWriterBasics:
 
         @do
         def program():
-            yield Log("message1")
-            yield Log("message2")
+            yield Tell("message1")
+            yield Tell("message2")
             return "done"
 
         result = runtime.run(program())
@@ -74,7 +72,7 @@ class TestWriterBasics:
 
         @do
         def program_with_log():
-            yield Log("test")
+            yield Tell("test")
             result = yield Listen(Program.pure("inner"))
             return result
 
@@ -142,7 +140,7 @@ class TestListenPlusLog:
 
         @do
         def inner():
-            yield Log("captured")
+            yield Tell("captured")
             return "result"
 
         @do
@@ -162,9 +160,9 @@ class TestListenPlusLog:
 
         @do
         def inner():
-            yield Log("first")
-            yield Log("second")
-            yield Log("third")
+            yield Tell("first")
+            yield Tell("second")
+            yield Tell("third")
             return 42
 
         @do
@@ -184,14 +182,14 @@ class TestListenPlusLog:
 
         @do
         def inner():
-            yield Log("inner")
+            yield Tell("inner")
             return "inner_result"
 
         @do
         def program():
-            yield Log("before")
+            yield Tell("before")
             result = yield Listen(inner())
-            yield Log("after")
+            yield Tell("after")
             return result
 
         result = runtime.run(program())
@@ -212,7 +210,7 @@ class TestListenPlusLocal:
         @do
         def inner():
             key = yield Ask("key")
-            yield Log(f"key is {key}")
+            yield Tell(f"key is {key}")
             return key
 
         @do
@@ -232,7 +230,7 @@ class TestListenPlusLocal:
 
         @do
         def inner():
-            yield Log("inside_local")
+            yield Tell("inside_local")
             return "done"
 
         @do
@@ -255,7 +253,7 @@ class TestListenPlusSafe:
 
         @do
         def inner():
-            yield Log("processing")
+            yield Tell("processing")
             return 42
 
         @do
@@ -276,8 +274,8 @@ class TestListenPlusSafe:
 
         @do
         def inner():
-            yield Log("before_error")
-            yield Log("also_logged")
+            yield Tell("before_error")
+            yield Tell("also_logged")
             raise ValueError("test error")
 
         @do
@@ -300,7 +298,7 @@ class TestListenPlusSafe:
 
         @do
         def inner():
-            yield Log("logged_before_fail")
+            yield Tell("logged_before_fail")
             raise RuntimeError("oops")
 
         @do
@@ -325,8 +323,8 @@ class TestListenPlusGather:
 
         @do
         def task(name: str):
-            yield Log(f"{name}_start")
-            yield Log(f"{name}_end")
+            yield Tell(f"{name}_start")
+            yield Tell(f"{name}_end")
             return name
 
         @do
@@ -352,7 +350,7 @@ class TestListenPlusGather:
 
         @do
         def task(name: str):
-            yield Log(f"{name}_log")
+            yield Tell(f"{name}_log")
             return name
 
         @do
@@ -392,15 +390,15 @@ class TestNestedListen:
 
         @do
         def inner():
-            yield Log("inner1")
-            yield Log("inner2")
+            yield Tell("inner1")
+            yield Tell("inner2")
             return "inner_result"
 
         @do
         def middle():
-            yield Log("middle_before")
+            yield Tell("middle_before")
             inner_result = yield Listen(inner())
-            yield Log("middle_after")
+            yield Tell("middle_after")
             return inner_result
 
         @do
@@ -425,21 +423,21 @@ class TestNestedListen:
 
         @do
         def level3():
-            yield Log("L3")
+            yield Tell("L3")
             return "level3"
 
         @do
         def level2():
-            yield Log("L2_before")
+            yield Tell("L2_before")
             l3 = yield Listen(level3())
-            yield Log("L2_after")
+            yield Tell("L2_after")
             return l3
 
         @do
         def level1():
-            yield Log("L1_before")
+            yield Tell("L1_before")
             l2 = yield Listen(level2())
-            yield Log("L1_after")
+            yield Tell("L1_after")
             return l2
 
         @do
@@ -469,13 +467,13 @@ class TestNestedListen:
 
         @do
         def task_a():
-            yield Log("A1")
-            yield Log("A2")
+            yield Tell("A1")
+            yield Tell("A2")
             return "A"
 
         @do
         def task_b():
-            yield Log("B1")
+            yield Tell("B1")
             return "B"
 
         @do
@@ -506,9 +504,9 @@ class TestWriterWithState:
         @do
         def inner():
             yield Put("counter", 0)
-            yield Log("initialized")
+            yield Tell("initialized")
             yield Put("counter", 1)
-            yield Log("incremented")
+            yield Tell("incremented")
             value = yield Get("counter")
             return value
 
@@ -530,7 +528,7 @@ class TestWriterWithState:
         @do
         def inner():
             yield Put("key", "inner_value")
-            yield Log("set_key")
+            yield Tell("set_key")
             return "done"
 
         @do
@@ -555,7 +553,7 @@ class TestListenResultStructure:
 
         @do
         def inner():
-            yield Log("test")
+            yield Tell("test")
             return {"data": 123}
 
         @do
@@ -577,9 +575,9 @@ class TestListenResultStructure:
 
         @do
         def inner():
-            yield Log(1)
-            yield Log(2)
-            yield Log(3)
+            yield Tell(1)
+            yield Tell(2)
+            yield Tell(3)
             return "done"
 
         @do
@@ -605,7 +603,7 @@ class TestAsyncWriterSemantics:
 
         @do
         def inner():
-            yield Log("async_log")
+            yield Tell("async_log")
             return "async_result"
 
         @do
@@ -626,7 +624,7 @@ class TestAsyncWriterSemantics:
 
         @do
         def inner():
-            yield Log("before_fail")
+            yield Tell("before_fail")
             raise ValueError("async_error")
 
         @do
@@ -647,14 +645,14 @@ class TestAsyncWriterSemantics:
 
         @do
         def inner():
-            yield Log("inner")
+            yield Tell("inner")
             return 42
 
         @do
         def outer():
-            yield Log("outer_start")
+            yield Tell("outer_start")
             result = yield Listen(inner())
-            yield Log("outer_end")
+            yield Tell("outer_end")
             return result
 
         @do

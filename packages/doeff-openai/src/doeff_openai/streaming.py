@@ -41,7 +41,7 @@ def process_stream(
     Returns:
         Tuple of (full_content, token_usage, total_cost)
     """
-    yield Log(f"Starting stream processing for model={model}")
+    yield Tell(f"Starting stream processing for model={model}")
 
     # Initialize tracking
     full_content = ""
@@ -84,7 +84,7 @@ def process_stream(
 
     # Log progress every 10 chunks
     if total_chunks > 0 and total_chunks % 10 == 0:
-        yield Log(f"Processed {total_chunks} chunks, content_length={len(full_content)}")
+        yield Tell(f"Processed {total_chunks} chunks, content_length={len(full_content)}")
 
     # Calculate final metrics
     end_time = time.time()
@@ -137,7 +137,7 @@ def process_stream(
         default_factory=lambda: 0.0,
     )
 
-    yield Log(
+    yield Tell(
         f"Stream complete: chunks={total_chunks}, tokens={token_usage.total_tokens}, "
         f"cost=${cost_info.total_cost:.6f}, latency={latency_ms:.0f}ms"
     )
@@ -178,7 +178,7 @@ def stream_to_chunks(
 
     chunks = yield Await(collect())
 
-    yield Log(f"Collected {len(chunks)} stream chunks")
+    yield Tell(f"Collected {len(chunks)} stream chunks")
 
     return chunks
 
@@ -193,7 +193,7 @@ def stream_with_accumulator(
     
     Useful for UIs that want to show both the new chunk and the full text so far.
     """
-    yield Log(f"Creating accumulator stream for model={model}")
+    yield Tell(f"Creating accumulator stream for model={model}")
 
     async def accumulate():
         accumulated = ""
@@ -223,7 +223,7 @@ def stream_with_metadata(
     - cost: Estimated cost so far
     - chunk_index: The chunk number
     """
-    yield Log(f"Creating metadata stream for model={model}")
+    yield Tell(f"Creating metadata stream for model={model}")
 
     # Get input tokens from state
     input_tokens = yield Get(f"stream_input_tokens_{model}")
@@ -277,7 +277,7 @@ def buffered_stream(
     
     Yields concatenated content from multiple chunks to reduce UI updates.
     """
-    yield Log(f"Creating buffered stream: buffer_size={buffer_size}, buffer_time_ms={buffer_time_ms}ms")
+    yield Tell(f"Creating buffered stream: buffer_size={buffer_size}, buffer_time_ms={buffer_time_ms}ms")
 
 
     async def buffered():

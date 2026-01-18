@@ -269,7 +269,7 @@ def track_api_call(
     )
 
     if error:
-        yield Log(
+        yield Tell(
             f"OpenRouter API error: operation={operation}, model={model}, error={error}, latency={latency_ms:.2f}ms"
         )
     else:
@@ -282,7 +282,7 @@ def track_api_call(
             log_msg += f", cost={cost_info.total_cost:.6f} {cost_info.currency}"
         if provider:
             log_msg += f", provider={provider}"
-        yield Log(log_msg)
+        yield Tell(log_msg)
 
     graph_metadata = metadata.to_graph_metadata()
     request_summary = {
@@ -439,7 +439,7 @@ def get_model_cost(model: str) -> EffectGenerator[float]:
 def reset_cost_tracking() -> EffectGenerator[None]:
     """Reset tracked OpenRouter costs."""
     yield Put("total_openrouter_cost", 0.0)
-    yield Log("Reset OpenRouter cost tracking")
+    yield Tell("Reset OpenRouter cost tracking")
     return None
 
 
