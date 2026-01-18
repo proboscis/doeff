@@ -210,7 +210,9 @@ Safe wraps the entire Gather. If any child fails, the error is captured as `Err(
 
 ### Gather + Intercept
 
-**Behavior: Parent's intercept does NOT apply to Gather children**
+**Behavior: Intercept DOES apply to Gather children via structural rewriting**
+
+When `program.intercept(transform)` is called, the transform is applied recursively to nested Programs within effect payloads, including Gather children. This happens at program construction time (structural rewriting), not at runtime.
 
 ```python
 @do
@@ -225,40 +227,30 @@ def example():
         value = yield Ask("key")
         return value
     
-    @do
-    def gather_programs():
-        results = yield Gather(child(), child())
-        return results
-    
-    result = yield intercept_program_effect(
-        gather_programs(),
-        (transform,)
-    )
-    # Children's Ask effects are NOT intercepted
-    # result == ["actual_value", "actual_value"]  (from env)
+    # Intercept applies to children via structural rewriting
+    result = yield Gather(child(), child()).intercept(transform)
+    # Children's Ask effects ARE intercepted
+    # result == ["intercepted", "intercepted"]
 ```
 
-**Rationale**: AsyncRuntime spawns Gather children as fresh tasks with independent continuations. The `InterceptFrame` is part of the parent's continuation stack, not copied to child task states. This means intercept transformations only apply to effects yielded directly in the intercepted scope, not to effects yielded by spawned child tasks.
+**Mechanism**: The `.intercept(transform)` method on `ProgramBase` recursively rewrites nested Programs in effect payloads. For `GatherEffect`, this means each child program has the transform applied before execution.
 
-**Workaround**: If you need intercept to apply to child programs, apply it explicitly inside each child:
+**Note on GatherEffect itself**: The `GatherEffect` is consumed directly by the runtime handler and is NOT passed through the InterceptFrame. Only effects yielded *within* the children are intercepted.
 
 ```python
-@do
-def child_with_intercept():
-    @do
-    def inner():
-        value = yield Ask("key")
-        return value
-    
-    result = yield intercept_program_effect(inner(), (transform,))
-    return result
+intercepted_effects = []
 
-results = yield Gather(child_with_intercept(), child_with_intercept())
+def track(e):
+    intercepted_effects.append(type(e).__name__)
+    return None  # Passthrough
+
+result = yield Gather(child(), child()).intercept(track)
+# intercepted_effects contains "AskEffect" (from children)
+# intercepted_effects does NOT contain "GatherEffect"
 ```
 
-**Note**: This behavior is a consequence of AsyncRuntime's implementation using independent task states for parallelism. The SyncRuntime's sequential GatherFrame may have different behavior.
+**See also**: SPEC-EFF-004 (Intercept Semantics), SPEC-EFF-100 (Law 6: Intercept Transformation Law)
 
-### Nested Gather
 ### Nested Gather
 
 **Behavior: Full parallelism at all levels**
@@ -427,7 +419,7 @@ class Task(Generic[T]):
 | Gather + Put | Shared store; all changes visible | Tested |
 | Gather + Listen | All logs captured from all children | Tested |
 | Gather + Safe | First error wrapped in Err | Tested |
-| Gather + Intercept | Parent intercept does NOT apply to children | Tested |
+| Gather + Intercept | Intercept applies to children via structural rewriting | Tested |
 | Nested Gather | Full parallelism at leaf level | Tested |
 
 ---

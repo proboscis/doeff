@@ -20,10 +20,10 @@ from doeff.effects import (
     GetTime,
     Listen,
     Local,
-    Log,
     Modify,
     Put,
     Safe,
+    Tell,
 )
 from doeff.effects.reader import AskEffect
 
@@ -169,8 +169,8 @@ class TestListenCaptureLaw:
 
         @do
         def inner_program():
-            yield Log("inner_log_1")
-            yield Log("inner_log_2")
+            yield Tell("inner_log_1")
+            yield Tell("inner_log_2")
             return "inner_result"
 
         @do
@@ -192,17 +192,17 @@ class TestListenCaptureLaw:
 
         @do
         def task1():
-            yield Log("task1_log")
+            yield Tell("task1_log")
             return 1
 
         @do
         def task2():
-            yield Log("task2_log")
+            yield Tell("task2_log")
             return 2
 
         @do
         def task3():
-            yield Log("task3_log")
+            yield Tell("task3_log")
             return 3
 
         @do
@@ -225,14 +225,14 @@ class TestListenCaptureLaw:
 
         @do
         def inner_program():
-            yield Log("inner_only")
+            yield Tell("inner_only")
             return "inner_result"
 
         @do
         def program():
-            yield Log("outer_before")
+            yield Tell("outer_before")
             inner_listen = yield Listen(inner_program())
-            yield Log("outer_after")
+            yield Tell("outer_after")
             outer_listen = yield Listen(Program.pure("outer_result"))
             return (inner_listen, outer_listen)
 
@@ -257,8 +257,8 @@ class TestListenCaptureLaw:
 
         @do
         def failing_with_logs():
-            yield Log("log_before_fail")
-            yield Log("another_log")
+            yield Tell("log_before_fail")
+            yield Tell("another_log")
             raise ValueError("intentional failure")
 
         @do
@@ -288,7 +288,7 @@ class TestSafeNonRollbackLaw:
         @do
         def modify_then_fail():
             yield Put("counter", 10)
-            yield Log("before_fail")
+            yield Tell("before_fail")
             raise ValueError("intentional error")
 
         @do
@@ -578,7 +578,7 @@ class TestEffectCombinationIntegration:
 
         @do
         def leaf_task(n: int):
-            yield Log(f"leaf_{n}")
+            yield Tell(f"leaf_{n}")
             return n
 
         @do
@@ -616,7 +616,7 @@ class TestEffectCombinationIntegration:
         @do
         def inner_task():
             config = yield Ask("config")
-            yield Log(f"config={config}")
+            yield Tell(f"config={config}")
             yield Put("processed", True)
             if config == "fail":
                 raise ValueError("config was fail")
