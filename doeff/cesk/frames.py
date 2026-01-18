@@ -463,6 +463,43 @@ class RaceFrame:
         )
 
 
+@dataclass(frozen=True)
+class GraphCaptureFrame:
+    """Capture graph nodes produced by sub-computation."""
+
+    graph_start_index: int
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        current_graph = store.get("__graph__", [])
+        captured = current_graph[self.graph_start_index:]
+        return ContinueValue(
+            value=(value, captured),
+            env=env,
+            store=store,
+            k=k_rest,
+        )
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        return ContinueError(
+            error=error,
+            env=env,
+            store=store,
+            k=k_rest,
+        )
+
+
 # ============================================
 # Kontinuation Type
 # ============================================
@@ -477,6 +514,7 @@ Kontinuation: TypeAlias = list[
     | GatherFrame
     | SafeFrame
     | RaceFrame
+    | GraphCaptureFrame
 ]
 
 
@@ -497,6 +535,7 @@ __all__ = [
     "GatherFrame",
     "SafeFrame",
     "RaceFrame",
+    "GraphCaptureFrame",
     # Kontinuation
     "Kontinuation",
 ]

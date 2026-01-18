@@ -14,6 +14,7 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
         ResultSafeEffect,
         WriterListenEffect,
     )
+    from doeff.effects.graph import GraphCaptureEffect
 
     return isinstance(
         effect,
@@ -23,6 +24,7 @@ def is_control_flow_effect(effect: EffectBase) -> bool:
             InterceptEffect,
             WriterListenEffect,
             GatherEffect,
+            GraphCaptureEffect,
         ),
     )
 
