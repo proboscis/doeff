@@ -13,6 +13,7 @@ from doeff._types_internal import EffectBase, ListenResult
 from doeff.cesk.types import Store, TaskId
 from doeff.cesk.frames import (
     GatherFrame,
+    GraphCaptureFrame,
     InterceptFrame,
     Kontinuation,
     ListenFrame,
@@ -36,7 +37,6 @@ from doeff.cesk.result import Done, Failed, StepResult, Suspended
 from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
 from doeff.cesk.classification import (
     has_intercept_frame,
-    is_control_flow_effect,
     is_effectful,
     is_pure_effect,
 )
@@ -50,6 +50,18 @@ if TYPE_CHECKING:
     from doeff.program import Program
 
 
+def _make_suspended(effect: Any, E: Any, S: Any, K: Any) -> Suspended:
+    return Suspended(
+        effect=effect,
+        resume=lambda v, new_store, E=E, K=K: CESKState(
+            C=Value(v), E=E, S=new_store, K=K
+        ),
+        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
+            C=Error(ex), E=E, S=S, K=K
+        ),
+    )
+
+
 def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResult:
     C, E, S, K = state.C, state.E, state.S, state.K
 
@@ -61,61 +73,8 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
     if isinstance(C, EffectControl):
         effect = C.effect
-        from doeff.effects import (
-            GatherEffect,
-            InterceptEffect,
-            LocalEffect,
-            ResultSafeEffect,
-            WriterListenEffect,
-        )
 
-        if isinstance(effect, LocalEffect):
-            new_env = E | FrozenDict(effect.env_update)
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=new_env,
-                S=S,
-                K=[LocalFrame(E)] + K,
-            )
-
-        if isinstance(effect, InterceptEffect):
-            return CESKState(
-                C=ProgramControl(effect.program),
-                E=E,
-                S=S,
-                K=[InterceptFrame(effect.transforms)] + K,
-            )
-
-        if isinstance(effect, WriterListenEffect):
-            log_start = len(S.get("__log__", []))
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[ListenFrame(log_start)] + K,
-            )
-
-        if isinstance(effect, GatherEffect):
-            programs = list(effect.programs)
-            if not programs:
-                return CESKState(C=Value([]), E=E, S=S, K=K)
-            first, *rest = programs
-            return CESKState(
-                C=ProgramControl(first),
-                E=E,
-                S=S,
-                K=[GatherFrame(rest, [], E)] + K,
-            )
-
-        if isinstance(effect, ResultSafeEffect):
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[SafeFrame(E)] + K,
-            )
-
-        if not is_control_flow_effect(effect) and has_intercept_frame(K):
+        if has_intercept_frame(K):
             from doeff.cesk_traceback import capture_traceback_safe
 
             try:
@@ -128,21 +87,10 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             from doeff.types import EffectBase
 
             if isinstance(transformed, EffectBase):
-                if is_control_flow_effect(transformed):
-                    return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
-
                 has_handler = (handlers is not None and type(transformed) in handlers) or is_pure_effect(transformed) or is_effectful(transformed)
 
                 if has_handler:
-                    return Suspended(
-                        effect=transformed,
-                        resume=lambda v, new_store, E=E, K=K: CESKState(
-                            C=Value(v), E=E, S=new_store, K=K
-                        ),
-                        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                            C=Error(ex), E=E, S=S, K=K
-                        ),
-                    )
+                    return _make_suspended(transformed, E, S, K)
 
                 unhandled_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
                 captured = capture_traceback_safe(K, unhandled_ex)
@@ -168,15 +116,7 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
         has_handler = (handlers is not None and type(effect) in handlers) or is_pure_effect(effect) or is_effectful(effect)
 
         if has_handler:
-            return Suspended(
-                effect=effect,
-                resume=lambda v, new_store, E=E, K=K: CESKState(
-                    C=Value(v), E=E, S=new_store, K=K
-                ),
-                resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                    C=Error(ex), E=E, S=S, K=K
-                ),
-            )
+            return _make_suspended(effect, E, S, K)
 
         from doeff.cesk_traceback import capture_traceback_safe
 
@@ -278,6 +218,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             listen_result = ListenResult(value=C.v, log=BoundedLog(captured))
             return CESKState(C=Value(listen_result), E=E, S=S, K=K_rest)
 
+        if isinstance(frame, GraphCaptureFrame):
+            current_graph = S.get("__graph__", [])
+            captured_graph = current_graph[frame.graph_start_index:]
+            return CESKState(C=Value((C.v, captured_graph)), E=E, S=S, K=K_rest)
+
         if isinstance(frame, GatherFrame):
             if not frame.remaining_programs:
                 final_results = frame.collected_results + [C.v]
@@ -357,6 +302,9 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
         if isinstance(frame, GatherFrame):
             return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.saved_env, S=S, K=K_rest)
+
+        if isinstance(frame, GraphCaptureFrame):
+            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
 
         if isinstance(frame, SafeFrame):
             from doeff.cesk_traceback import capture_traceback_safe
