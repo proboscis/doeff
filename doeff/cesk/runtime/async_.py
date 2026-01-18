@@ -1,9 +1,16 @@
+"""AsyncRuntime - Reference implementation for the doeff effect system.
+
+This runtime implements parallel Gather execution via asyncio and serves as
+the canonical reference for runtime behavior per SPEC-CESK-001.
+"""
+
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from doeff._vendor import Err, Ok
 from doeff.cesk.runtime.base import BaseRuntime
 from doeff.cesk.state import CESKState, TaskState, ProgramControl, Done as TaskDoneStatus
 from doeff.cesk.result import Done, Failed, Suspended
@@ -11,6 +18,14 @@ from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram, FrameResult
 from doeff.cesk.types import Store, TaskId
+from doeff.cesk.runtime_result import (
+    RuntimeResult,
+    RuntimeResultImpl,
+    KStackTrace,
+    EffectStackTrace,
+    PythonStackTrace,
+    build_k_stack_trace,
+)
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
 from doeff.effects.time import DelayEffect, WaitUntilEffect
@@ -18,8 +33,11 @@ from doeff.effects.time import DelayEffect, WaitUntilEffect
 if TYPE_CHECKING:
     from doeff.program import Program
 
+T = TypeVar("T")
+
 
 def _placeholder_handler(effect: Any, task_state: TaskState, store: Store) -> ContinueValue:
+    """Placeholder handler for effects that are intercepted by the runtime."""
     return ContinueValue(
         value=None,
         env=task_state.env,
@@ -29,9 +47,31 @@ def _placeholder_handler(effect: Any, task_state: TaskState, store: Store) -> Co
 
 
 class AsyncRuntime(BaseRuntime):
+    """Asynchronous runtime with parallel Gather support.
+
+    This is the reference implementation for the doeff effect system.
+    It implements:
+    - All core effects (Ask, Get, Put, Modify, Tell, Listen)
+    - Control flow effects (Local, Safe, Intercept)
+    - Parallel Gather execution via asyncio
+    - Async time effects (Delay, WaitUntil)
+    - External awaitable integration (Await)
+
+    Per SPEC-CESK-001, this runtime:
+    - Uses step.py for pure state transitions
+    - Dispatches effects to handlers
+    - Intercepts Gather, Await, Delay, WaitUntil for async handling
+    """
 
     def __init__(self, handlers: dict[type, Handler] | None = None):
+        """Initialize AsyncRuntime with optional custom handlers.
+
+        Args:
+            handlers: Optional dict mapping effect types to custom handlers.
+                     These override the default handlers.
+        """
         base_handlers = default_handlers()
+        # Register placeholders for effects we intercept
         base_handlers[DelayEffect] = _placeholder_handler
         base_handlers[WaitUntilEffect] = _placeholder_handler
         base_handlers[FutureAwaitEffect] = _placeholder_handler
@@ -45,14 +85,141 @@ class AsyncRuntime(BaseRuntime):
 
     async def run(
         self,
-        program: Program,
+        program: Program[T],
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
-    ) -> Any:
-        state = self._create_initial_state(program, env, store)
-        return await self._run_scheduler(state)
+    ) -> RuntimeResult[T]:
+        """Execute a program and return RuntimeResult.
 
-    async def _run_scheduler(self, state: CESKState) -> Any:
+        Args:
+            program: The program to execute
+            env: Optional initial environment (reader context)
+            store: Optional initial store (mutable state)
+
+        Returns:
+            RuntimeResult containing the outcome and debugging context
+        """
+        initial_env = dict(env) if env else {}
+        initial_store = dict(store) if store else {}
+        state = self._create_initial_state(program, env, store)
+
+        try:
+            final_value, final_state = await self._run_scheduler(state)
+            return self._build_success_result(final_value, final_state, initial_env)
+        except asyncio.CancelledError:
+            # Let cancellation propagate - this is external control, not a program error
+            raise
+        except Exception as exc:
+            # Program errors get wrapped in RuntimeResult
+            return self._build_error_result(exc, state, initial_env)
+
+    async def run_and_unwrap(
+        self,
+        program: Program[T],
+        env: dict[str, Any] | None = None,
+        store: dict[str, Any] | None = None,
+    ) -> T:
+        """Execute a program and return just the value (raises on error).
+
+        This is a convenience method for when you don't need the full
+        RuntimeResult context. Equivalent to `(await run(...)).value`.
+
+        Args:
+            program: The program to execute
+            env: Optional initial environment
+            store: Optional initial store
+
+        Returns:
+            The program's return value
+
+        Raises:
+            Any exception raised during program execution
+        """
+        result = await self.run(program, env, store)
+        return result.value
+
+    def _build_success_result(
+        self,
+        value: T,
+        state: CESKState,
+        initial_env: dict[str, Any],
+    ) -> RuntimeResultImpl[T]:
+        """Build RuntimeResult for successful execution."""
+        # Extract state (excluding internal keys)
+        final_state = {
+            k: v for k, v in state.store.items()
+            if not k.startswith("__")
+        }
+
+        # Extract log
+        final_log = list(state.store.get("__log__", []))
+
+        # Extract graph if captured
+        final_graph = state.store.get("__graph__")
+
+        # Build K stack from main task
+        main_task = state.tasks.get(state.main_task)
+        k_stack = KStackTrace(frames=())
+        if main_task:
+            k_stack = build_k_stack_trace(main_task.kontinuation)
+
+        return RuntimeResultImpl(
+            _result=Ok(value),
+            _state=final_state,
+            _log=final_log,
+            _env=initial_env,
+            _k_stack=k_stack,
+            _effect_stack=EffectStackTrace(),  # TODO: Build from observations
+            _python_stack=PythonStackTrace(frames=()),  # TODO: Capture during execution
+            _graph=final_graph,
+        )
+
+    def _build_error_result(
+        self,
+        exc: Exception,
+        state: CESKState,
+        initial_env: dict[str, Any],
+    ) -> RuntimeResultImpl[Any]:
+        """Build RuntimeResult for failed execution."""
+        # Extract state (excluding internal keys)
+        final_state = {
+            k: v for k, v in state.store.items()
+            if not k.startswith("__")
+        }
+
+        # Extract log
+        final_log = list(state.store.get("__log__", []))
+
+        # Build K stack from main task
+        main_task = state.tasks.get(state.main_task)
+        k_stack = KStackTrace(frames=())
+        if main_task:
+            k_stack = build_k_stack_trace(main_task.kontinuation)
+
+        # Get captured traceback if available
+        captured_tb = getattr(exc, "__cesk_traceback__", None)
+
+        return RuntimeResultImpl(
+            _result=Err(exc),
+            _state=final_state,
+            _log=final_log,
+            _env=initial_env,
+            _k_stack=k_stack,
+            _effect_stack=EffectStackTrace(),
+            _python_stack=PythonStackTrace(frames=()),
+            _graph=None,
+            _captured_traceback=captured_tb,
+        )
+
+    async def _run_scheduler(self, state: CESKState) -> tuple[Any, CESKState]:
+        """Run the scheduler loop until completion.
+
+        Returns:
+            Tuple of (final_value, final_state)
+
+        Raises:
+            Any exception from the main task
+        """
         pending_async: dict[TaskId, tuple[asyncio.Task[Any], Suspended]] = {}
         task_results: dict[TaskId, Any] = {}
         task_errors: dict[TaskId, BaseException] = {}
@@ -75,8 +242,8 @@ class AsyncRuntime(BaseRuntime):
                     state = self._update_store(state, result.store)
                     if task_id == main_task_id:
                         await self._cancel_all(pending_async)
-                        return result.value
-                    # Mark child task as Done so it's not picked up again
+                        return (result.value, state)
+                    # Mark child task as Done
                     done_task = state.tasks[task_id].with_status(TaskDoneStatus.ok(result.value))
                     state = state.with_task(task_id, done_task)
                     task_results[task_id] = result.value
@@ -93,8 +260,7 @@ class AsyncRuntime(BaseRuntime):
                         if result.captured_traceback is not None:
                             exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
                         raise exc
-                    # Mark child task as Failed so it's not picked up again
-                    from doeff._vendor import Err
+                    # Mark child task as Failed
                     failed_task = state.tasks[task_id].with_status(
                         TaskDoneStatus(Err(result.exception))  # type: ignore[arg-type]
                     )
@@ -113,12 +279,14 @@ class AsyncRuntime(BaseRuntime):
                     effect = result.effect
                     effect_type = type(effect)
 
+                    # User handlers take priority
                     if effect_type in self._user_handlers:
                         task_state = state.tasks[task_id]
                         dispatch_result = self._dispatch_effect(effect, task_state, state.store)
                         state = self._apply_dispatch_result(state, task_id, result, dispatch_result)
                         continue
 
+                    # Runtime intercepts Gather for parallel execution
                     if isinstance(effect, GatherEffect):
                         programs = effect.programs
                         if not programs:
@@ -130,33 +298,39 @@ class AsyncRuntime(BaseRuntime):
                         current_env = state.tasks[task_id].env
                         for prog in programs:
                             child_id = TaskId.new()
-                            child_task = TaskState.initial(prog, dict(current_env))
+                            from doeff.program import Program
+                            child_task = TaskState.initial(prog, dict(current_env))  # type: ignore[arg-type]
                             state = state.add_task(child_id, child_task)
                             child_ids.append(child_id)
 
                         gather_waiters[task_id] = (child_ids, result)
                         continue
 
+                    # Runtime intercepts Await for asyncio integration
                     if isinstance(effect, FutureAwaitEffect):
                         coro = self._do_await(effect.awaitable)
                         pending_async[task_id] = (asyncio.create_task(coro), result)
                         continue
 
+                    # Runtime intercepts Delay for async sleep
                     if isinstance(effect, DelayEffect):
                         coro = self._do_delay(effect.seconds)
                         pending_async[task_id] = (asyncio.create_task(coro), result)
                         continue
 
+                    # Runtime intercepts WaitUntil for async sleep until
                     if isinstance(effect, WaitUntilEffect):
                         coro = self._do_wait_until(effect.target_time)
                         pending_async[task_id] = (asyncio.create_task(coro), result)
                         continue
 
+                    # Default: dispatch to handler
                     task_state = state.tasks[task_id]
                     dispatch_result = self._dispatch_effect(effect, task_state, state.store)
                     state = self._apply_dispatch_result(state, task_id, result, dispatch_result)
                     continue
 
+            # No ready tasks - wait for async operations
             if pending_async:
                 tasks_only = [t for t, _ in pending_async.values()]
                 done, _ = await asyncio.wait(tasks_only, return_when=asyncio.FIRST_COMPLETED)
@@ -176,28 +350,33 @@ class AsyncRuntime(BaseRuntime):
                         break
                 continue
 
+            # Check if main task completed
             if not ready_task_ids and not pending_async:
                 if state.is_main_task_done():
                     main_result = state.get_main_result()
                     if main_result is not None:
                         if main_result.is_ok():
-                            return main_result.ok()
+                            return (main_result.ok(), state)
                         raise main_result.err()  # type: ignore[misc]
                 await asyncio.sleep(0)
 
     async def _do_await(self, awaitable: Any) -> Any:
+        """Await an external coroutine."""
         return await awaitable
 
     async def _do_delay(self, seconds: float) -> None:
+        """Sleep for the specified duration."""
         await asyncio.sleep(seconds)
 
     async def _do_wait_until(self, target_time: datetime) -> None:
+        """Sleep until the target time."""
         now = datetime.now()
         if target_time > now:
             delay_seconds = (target_time - now).total_seconds()
             await asyncio.sleep(delay_seconds)
 
     def _make_single_task_state(self, state: CESKState, task_id: TaskId) -> CESKState:
+        """Create a single-task CESKState for stepping."""
         task = state.tasks[task_id]
         return CESKState(
             tasks={task_id: task},
@@ -208,6 +387,7 @@ class AsyncRuntime(BaseRuntime):
         )
 
     def _merge_task(self, state: CESKState, task_id: TaskId, stepped: CESKState) -> CESKState:
+        """Merge stepped task state back into multi-task state."""
         new_tasks = dict(state.tasks)
         new_tasks[task_id] = stepped.tasks[stepped.main_task]
         return CESKState(
@@ -219,6 +399,7 @@ class AsyncRuntime(BaseRuntime):
         )
 
     def _fix_store_rollback(self, error_state: CESKState, current_store: Store) -> CESKState:
+        """Fix store in error state to use current store (no rollback)."""
         return CESKState(
             tasks={error_state.main_task: error_state.tasks[error_state.main_task]},
             store=current_store,
@@ -228,6 +409,7 @@ class AsyncRuntime(BaseRuntime):
         )
 
     def _update_store(self, state: CESKState, store: Store) -> CESKState:
+        """Update store in state."""
         return CESKState(
             tasks=state.tasks,
             store=store,
@@ -243,6 +425,7 @@ class AsyncRuntime(BaseRuntime):
         suspended: Suspended,
         dispatch_result: FrameResult,
     ) -> CESKState:
+        """Apply handler dispatch result to state."""
         if isinstance(dispatch_result, ContinueError):
             new_single = suspended.resume_error(dispatch_result.error)
             return self._merge_task(state, task_id, new_single)
@@ -266,16 +449,19 @@ class AsyncRuntime(BaseRuntime):
         task_results: dict[TaskId, Any],
         task_errors: dict[TaskId, BaseException],
     ) -> CESKState:
+        """Check if any Gather is complete after a child finishes."""
         for parent_id, (child_ids, suspended) in list(gather_waiters.items()):
             if completed_id not in child_ids:
                 continue
 
+            # If child failed, fail the Gather immediately (fail-fast)
             if completed_id in task_errors:
                 del gather_waiters[parent_id]
                 error_state = suspended.resume_error(task_errors[completed_id])
                 error_state = self._fix_store_rollback(error_state, state.store)
                 return self._merge_task(state, parent_id, error_state)
 
+            # Check if all children are done
             all_done = all(cid in task_results or cid in task_errors for cid in child_ids)
             if all_done:
                 del gather_waiters[parent_id]
@@ -289,6 +475,7 @@ class AsyncRuntime(BaseRuntime):
         self,
         pending: dict[TaskId, tuple[asyncio.Task[Any], Suspended]],
     ) -> None:
+        """Cancel all pending async tasks."""
         for atask, _ in pending.values():
             atask.cancel()
         if pending:

@@ -53,7 +53,7 @@ class TestLocalRestorationLaw:
             outer_after = yield Ask("key")
             return (outer_before, inner_result, outer_after)
 
-        result = await runtime.run(program(), env={"key": "outer_value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "outer_value"})
         outer_before, inner_result, outer_after = result
 
         assert outer_before == "outer_value"
@@ -77,7 +77,7 @@ class TestLocalRestorationLaw:
             outer_after = yield Ask("key")
             return (outer_before, result.is_err(), outer_after)
 
-        result = await runtime.run(program(), env={"key": "outer_value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "outer_value"})
         outer_before, had_error, outer_after = result
 
         assert outer_before == "outer_value"
@@ -107,7 +107,7 @@ class TestLocalRestorationLaw:
             after = yield Ask("key")
             return (before, inner, after)
 
-        result = await runtime.run(level1(), env={"key": "level1"})
+        result = await runtime.run_and_unwrap(level1(), env={"key": "level1"})
 
         l1_before, l2_result, l1_after = result
         l2_before, l3_result, l2_after = l2_result
@@ -147,7 +147,7 @@ class TestLocalNonStateScopingLaw:
             list_val = yield Get("list_key")
             return (counter, list_val)
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         counter, list_val = result
 
         assert counter == 42
@@ -178,7 +178,7 @@ class TestListenCaptureLaw:
             listen_result = yield Listen(Local({"key": "val"}, inner_program()))
             return listen_result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
 
         assert result.value == "inner_result"
         assert len(result.log) == 2
@@ -210,7 +210,7 @@ class TestListenCaptureLaw:
             listen_result = yield Listen(Gather(task1(), task2(), task3()))
             return listen_result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
 
         assert result.value == [1, 2, 3]
         assert len(result.log) == 3
@@ -241,7 +241,7 @@ class TestListenCaptureLaw:
             result = yield Listen(program())
             return result
 
-        result = await runtime.run(wrapper())
+        result = await runtime.run_and_unwrap(wrapper())
 
         inner_listen, outer_listen = result.value
 
@@ -266,7 +266,7 @@ class TestListenCaptureLaw:
             result = yield Safe(Listen(failing_with_logs()))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
 
         assert result.is_err()
         assert isinstance(result.error, ValueError)
@@ -298,7 +298,7 @@ class TestSafeNonRollbackLaw:
             counter = yield Get("counter")
             return (result.is_err(), counter)
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         had_error, counter = result
 
         assert had_error is True
@@ -323,7 +323,7 @@ class TestSafeNonRollbackLaw:
             outer_result = yield Safe(middle_program())
             return outer_result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
 
         assert result.is_ok()
         middle_status, inner_had_error = result.value
@@ -356,7 +356,7 @@ class TestSafeEnvironmentRestorationLaw:
             outer_after = yield Ask("key")
             return (outer_before, result.is_err(), outer_after)
 
-        result = await runtime.run(program(), env={"key": "outer"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "outer"})
         outer_before, had_error, outer_after = result
 
         assert outer_before == "outer"
@@ -399,7 +399,7 @@ class TestInterceptTransformationLaw:
             results = yield Gather(child1(), child2()).intercept(counting_transform)
             return results
 
-        result = await runtime.run(program(), env={"key": "value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "value"})
 
         assert result == ["child1:value", "child2:value"]
         assert transform_count[0] == 2
@@ -437,7 +437,7 @@ class TestGatherEnvironmentInheritanceLaw:
             )
             return (outer_result, inner_results)
 
-        result = await runtime.run(program(), env={"key": "outer_value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "outer_value"})
         outer_result, inner_results = result
 
         assert outer_result == "outer_value"
@@ -508,7 +508,7 @@ class TestGatherStoreSharingLaw:
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
 
-        results, elapsed = await runtime.run(program())
+        results, elapsed = await runtime.run_and_unwrap(program())
 
         assert results == [1, 2, 3]
         assert elapsed < 0.2
@@ -557,7 +557,7 @@ class TestGatherErrorPropagationLaw:
             ))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
 
         assert result.is_err()
         assert isinstance(result.error, ValueError)
@@ -596,7 +596,7 @@ class TestEffectCombinationIntegration:
             listen_result = yield Listen(Gather(branch_a(), branch_b()))
             return listen_result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
 
         assert len(result.value) == 2
         branch_a_result, branch_b_result = result.value
@@ -638,7 +638,7 @@ class TestEffectCombinationIntegration:
 
             return (result, outer_config, processed)
 
-        result = await runtime.run(program(), env={"config": "outer"})
+        result = await runtime.run_and_unwrap(program(), env={"config": "outer"})
         safe_result, outer_config, processed = result
 
         assert safe_result.is_ok()

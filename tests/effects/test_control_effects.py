@@ -49,7 +49,7 @@ class TestPureEffect:
             result = yield Pure(42)
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 42
 
     @pytest.mark.asyncio
@@ -65,7 +65,7 @@ class TestPureEffect:
             yield Pure("ignored")
             return (yield Get("counter"))
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 10
 
     @pytest.mark.asyncio
@@ -85,7 +85,7 @@ class TestPureEffect:
             result = yield pure_effect.intercept(transform)
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         # Pure(42) should return 42, not be transformed
         assert result == 42
 
@@ -117,7 +117,7 @@ class TestSafeLocalComposition:
             after = yield Ask("key")
             return (original, result.is_err(), after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         original, is_err, after = result
         
         assert original == "original"
@@ -143,7 +143,7 @@ class TestSafeLocalComposition:
             after = yield Ask("key")
             return (original, result.value, after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         original, inner_result, after = result
         
         assert original == "original"
@@ -174,7 +174,7 @@ class TestSafePutComposition:
             counter = yield Get("counter")
             return (result.is_err(), counter)
 
-        is_err, counter = await runtime.run(program())
+        is_err, counter = await runtime.run_and_unwrap(program())
         
         assert is_err is True
         assert counter == 1  # State persisted despite error
@@ -201,7 +201,7 @@ class TestSafePutComposition:
             c = yield Get("c")
             return (result.is_err(), a, b, c)
 
-        is_err, a, b, c = await runtime.run(program())
+        is_err, a, b, c = await runtime.run_and_unwrap(program())
         
         assert is_err is True
         assert (a, b, c) == (1, 2, 3)  # All state changes persisted
@@ -226,7 +226,7 @@ class TestNestedSafe:
             result = yield Safe(Safe(failing_program()))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         
         # Outer Safe sees successful completion (Err value from inner)
         assert result.is_ok()
@@ -251,7 +251,7 @@ class TestNestedSafe:
             result = yield Safe(Safe(Safe(failing_program())))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         
         # Level 1 (outermost): Ok
         assert result.is_ok()
@@ -278,7 +278,7 @@ class TestNestedSafe:
             result = yield Safe(Safe(success_program()))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         
         # Both levels see success
         assert result.is_ok()
@@ -322,7 +322,7 @@ class TestInterceptComposition:
             result = yield inner_program().intercept(transform_f).intercept(transform_g)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "from_f"  # f wins because it's checked first
 
     @pytest.mark.asyncio
@@ -353,7 +353,7 @@ class TestInterceptComposition:
             result = yield inner_program().intercept(transform_f).intercept(transform_g)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "from_g"  # g wins because f returns None
 
     @pytest.mark.asyncio
@@ -378,7 +378,7 @@ class TestInterceptComposition:
             result = yield inner_program().intercept(transform_f).intercept(transform_g)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "original"  # Original effect executed
 
     @pytest.mark.asyncio
@@ -407,7 +407,7 @@ class TestInterceptComposition:
             result = yield inner_program().intercept(transform)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "from_replacement"
 
 
@@ -436,7 +436,7 @@ class TestInterceptGatherScope:
             result = yield Gather(child(), child()).intercept(track_intercept)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         
         assert result == ["original", "original"]
         # Children's AskEffects ARE intercepted (InterceptFrame is on continuation stack)
@@ -465,7 +465,7 @@ class TestInterceptGatherScope:
             result = yield Gather(child(), child()).intercept(intercept_ask)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         # Children's effects are intercepted
         assert result == ["intercepted", "intercepted"]
 
@@ -493,7 +493,7 @@ class TestInterceptGatherScope:
             result = yield Gather(child(), child()).intercept(track_gather)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == ["original", "original"]
         # GatherEffect was NOT intercepted
         assert len(gather_intercepted) == 0
@@ -527,7 +527,7 @@ class TestInterceptErrorHandling:
             return result
 
         with pytest.raises(RuntimeError, match="transform error"):
-            await runtime.run(program(), env={"key": "original"})
+            await runtime.run_and_unwrap(program(), env={"key": "original"})
 
     @pytest.mark.asyncio
     async def test_intercept_does_not_catch_errors(self) -> None:
@@ -550,7 +550,7 @@ class TestInterceptErrorHandling:
             return result
 
         with pytest.raises(ValueError, match="program error"):
-            await runtime.run(program(), env={"key": "original"})
+            await runtime.run_and_unwrap(program(), env={"key": "original"})
 
     @pytest.mark.asyncio
     async def test_safe_with_intercept(self) -> None:
@@ -572,7 +572,7 @@ class TestInterceptErrorHandling:
             result = yield Safe(failing_program().intercept(passthrough))
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result.is_err()
         assert isinstance(result.error, ValueError)
 
@@ -616,7 +616,7 @@ class TestCombinedComposition:
             outer_key = yield Ask("key")
             return (result, stored, outer_key)
 
-        result, stored, outer_key = await runtime.run(
+        result, stored, outer_key = await runtime.run_and_unwrap(
             program(), 
             env={"key": "original"}
         )
@@ -648,7 +648,7 @@ class TestCombinedComposition:
             )
             return results
 
-        results = await runtime.run(program())
+        results = await runtime.run_and_unwrap(program())
         
         assert len(results) == 3
         assert results[0].is_ok()
