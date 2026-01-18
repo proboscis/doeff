@@ -60,7 +60,7 @@ class TestAsyncRuntimeCoreEffects:
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
-        result = await runtime.run(Program.pure(42))
+        result = await runtime.run_and_unwrap(Program.pure(42))
         assert result == 42
 
     @pytest.mark.asyncio
@@ -75,7 +75,7 @@ class TestAsyncRuntimeCoreEffects:
             value = yield Ask("config_key")
             return value
 
-        result = await runtime.run(program(), env={"config_key": "config_value"})
+        result = await runtime.run_and_unwrap(program(), env={"config_key": "config_value"})
         assert result == "config_value"
 
     @pytest.mark.asyncio
@@ -91,7 +91,7 @@ class TestAsyncRuntimeCoreEffects:
             return value
 
         with pytest.raises(KeyError, match="missing_key"):
-            await runtime.run(program(), env={})
+            await runtime.run_and_unwrap(program(), env={})
 
     @pytest.mark.asyncio
     async def test_async_local(self) -> None:
@@ -112,7 +112,7 @@ class TestAsyncRuntimeCoreEffects:
             after = yield Ask("key")
             return (outer, inner, after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == ("original", "overridden", "original")
 
     @pytest.mark.asyncio
@@ -127,12 +127,12 @@ class TestAsyncRuntimeCoreEffects:
             value = yield Get("counter")
             return value
 
-        result = await runtime.run(program(), store={"counter": 100})
+        result = await runtime.run_and_unwrap(program(), store={"counter": 100})
         assert result == 100
 
     @pytest.mark.asyncio
     async def test_async_get_missing_key(self) -> None:
-        """Test Get returns None for missing key."""
+        """Test Get raises KeyError for missing key (per SPEC-EFF-002)."""
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
@@ -142,8 +142,8 @@ class TestAsyncRuntimeCoreEffects:
             value = yield Get("missing")
             return value
 
-        result = await runtime.run(program(), store={})
-        assert result is None
+        with pytest.raises(KeyError):
+            await runtime.run_and_unwrap(program(), store={})
 
     @pytest.mark.asyncio
     async def test_async_put(self) -> None:
@@ -158,7 +158,7 @@ class TestAsyncRuntimeCoreEffects:
             value = yield Get("counter")
             return value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 42
 
     @pytest.mark.asyncio
@@ -174,7 +174,7 @@ class TestAsyncRuntimeCoreEffects:
             new_value = yield Modify("counter", lambda x: x + 5)
             return new_value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 15
 
     @pytest.mark.asyncio
@@ -190,7 +190,7 @@ class TestAsyncRuntimeCoreEffects:
             yield Tell("message2")
             return "done"
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "done"
 
     @pytest.mark.asyncio
@@ -211,7 +211,7 @@ class TestAsyncRuntimeCoreEffects:
             listen_result = yield Listen(inner_program())
             return listen_result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.value == "inner_result"
         assert len(result.log) == 2
         assert "inner_log_1" in result.log
@@ -234,7 +234,7 @@ class TestAsyncRuntimeCoreEffects:
             result = yield Safe(inner_program())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.is_ok()
         assert result.value == 42
 
@@ -254,7 +254,7 @@ class TestAsyncRuntimeCoreEffects:
             result = yield Safe(failing_program())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert str(result.error) == "test error"
@@ -284,7 +284,7 @@ class TestAsyncRuntimeAsyncEffects:
             result = yield Await(async_operation())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "async_result"
 
     @pytest.mark.asyncio
@@ -305,7 +305,7 @@ class TestAsyncRuntimeAsyncEffects:
             c = yield Await(async_add(b))
             return c
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 3
 
     @pytest.mark.asyncio
@@ -327,7 +327,7 @@ class TestAsyncRuntimeAsyncEffects:
             results = yield Gather(task(1), task(2), task(3))
             return results
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == [2, 4, 6]
         assert len(execution_order) == 3
 
@@ -343,7 +343,7 @@ class TestAsyncRuntimeAsyncEffects:
             results = yield Gather()
             return results
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == []
 
     @pytest.mark.asyncio
@@ -366,7 +366,7 @@ class TestAsyncRuntimeAsyncEffects:
             results = yield Safe(Gather(success_task(), failing_task()))
             return results
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.is_err()
         assert isinstance(result.error, ValueError)
 
@@ -384,7 +384,7 @@ class TestAsyncRuntimeAsyncEffects:
             end = yield GetTime()
             return (start, end)
 
-        start_time, end_time = await runtime.run(program())
+        start_time, end_time = await runtime.run_and_unwrap(program())
         elapsed = (end_time - start_time).total_seconds()
         assert elapsed >= 0.09  # Allow small timing variance
 
@@ -401,7 +401,7 @@ class TestAsyncRuntimeAsyncEffects:
             return now
 
         before = datetime.now()
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         after = datetime.now()
 
         assert before <= result <= after
@@ -423,7 +423,7 @@ class TestAsyncRuntimeAsyncEffects:
             end = yield GetTime()
             return (start, end)
 
-        start_time, end_time = await runtime.run(program())
+        start_time, end_time = await runtime.run_and_unwrap(program())
         elapsed = (end_time - start_time).total_seconds()
         assert elapsed >= 0.09
 
@@ -444,7 +444,7 @@ class TestAsyncRuntimeAsyncEffects:
             end = yield GetTime()
             return (start, end)
 
-        start_time, end_time = await runtime.run(program())
+        start_time, end_time = await runtime.run_and_unwrap(program())
         elapsed = (end_time - start_time).total_seconds()
         assert elapsed < 0.1
 
@@ -472,7 +472,7 @@ class TestAsyncRuntimeIOCacheEffects:
             result = yield IO(sync_operation)
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "sync_result"
 
     @pytest.mark.asyncio
@@ -491,7 +491,7 @@ class TestAsyncRuntimeIOCacheEffects:
             result = yield Await(async_operation())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "async_io_result"
 
     @pytest.mark.asyncio
@@ -510,7 +510,7 @@ class TestAsyncRuntimeIOCacheEffects:
             return result
 
         with pytest.raises(RuntimeError, match="io failed"):
-            await runtime.run(program())
+            await runtime.run_and_unwrap(program())
 
     @pytest.mark.asyncio
     async def test_async_cache_put_and_get(self) -> None:
@@ -525,7 +525,7 @@ class TestAsyncRuntimeIOCacheEffects:
             value = yield CacheGet("test_key")
             return value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "test_value"
 
     @pytest.mark.asyncio
@@ -541,7 +541,7 @@ class TestAsyncRuntimeIOCacheEffects:
             return value
 
         with pytest.raises(KeyError, match="missing_key"):
-            await runtime.run(program())
+            await runtime.run_and_unwrap(program())
 
     @pytest.mark.asyncio
     async def test_async_cache_delete(self) -> None:
@@ -557,7 +557,7 @@ class TestAsyncRuntimeIOCacheEffects:
             result = yield Safe(CacheGet("key"))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.is_err()
         assert isinstance(result.error, KeyError)
 
@@ -577,7 +577,7 @@ class TestAsyncRuntimeIOCacheEffects:
             exists_deleted = yield CacheExists("key")
             return (exists_before, exists_after, exists_deleted)
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == (False, True, False)
 
 
@@ -614,7 +614,7 @@ class TestAsyncRuntimeControlFlow:
             final_level = yield Get("level")
             return f"level1 -> {result} (final: {final_level})"
 
-        result = await runtime.run(level1())
+        result = await runtime.run_and_unwrap(level1())
         assert "level1 -> level2 -> level3_result" in result
         assert "final: 3" in result
 
@@ -635,7 +635,7 @@ class TestAsyncRuntimeControlFlow:
             return result
 
         with pytest.raises(ValueError, match="inner error"):
-            await runtime.run(outer())
+            await runtime.run_and_unwrap(outer())
 
     @pytest.mark.asyncio
     async def test_async_exception_caught_by_safe(self) -> None:
@@ -655,7 +655,7 @@ class TestAsyncRuntimeControlFlow:
                 return f"caught: {result.error}"
             return result.value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert "caught: caught error" in result
 
     @pytest.mark.asyncio
@@ -679,7 +679,7 @@ class TestAsyncRuntimeControlFlow:
                 return result2.value if result2.is_ok() else "all failed"
             return result1.value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "success"
 
     @pytest.mark.asyncio
@@ -705,7 +705,7 @@ class TestAsyncRuntimeControlFlow:
             result = yield inner_program().intercept(transform)
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "intercepted_value"
 
 
@@ -737,7 +737,7 @@ class TestAsyncRuntimeIntegration:
             final = yield Get("counter")
             return final * config
 
-        result = await runtime.run(program(), env={"multiplier": 2})
+        result = await runtime.run_and_unwrap(program(), env={"multiplier": 2})
         assert result == 20
 
     @pytest.mark.asyncio
@@ -800,7 +800,7 @@ class TestAsyncRuntimeIntegration:
             final = yield Get("value")
             return final
 
-        result = await runtime.run(
+        result = await runtime.run_and_unwrap(
             complex_program(),
             env={"base": 5},
         )
@@ -831,7 +831,7 @@ class TestAsyncRuntimeIntegration:
             final = yield Get("counter")
             return (results, final)
 
-        results, final = await runtime.run(program())
+        results, final = await runtime.run_and_unwrap(program())
         # With shared store, each task sees and modifies the same counter
         # Final value should be 3 (0+1+1+1)
         assert final == 3
@@ -862,7 +862,7 @@ class TestAsyncRuntimeIntegration:
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
 
-        results, elapsed = await runtime.run(program())
+        results, elapsed = await runtime.run_and_unwrap(program())
         assert sorted(results) == [1, 2, 3]
         assert elapsed < 0.5
 
@@ -881,7 +881,7 @@ class TestAsyncRuntimeIntegration:
             result = yield Await(coro())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 42
 
 
@@ -918,7 +918,7 @@ class TestAsyncRuntimeCustomHandlers:
             return result
 
         runtime = AsyncRuntime(handlers=custom_handlers)
-        result = await runtime.run(program(), env={"key": "value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "value"})
         assert result == "custom:key"
 
     @pytest.mark.asyncio
@@ -949,9 +949,9 @@ class TestAsyncRuntimeCustomHandlers:
             yield Pure(None)
             return "done"
 
-        await runtime.run(program())
-        await runtime.run(program())
-        await runtime.run(program())
+        await runtime.run_and_unwrap(program())
+        await runtime.run_and_unwrap(program())
+        await runtime.run_and_unwrap(program())
 
         assert run_counter[0] == 3
 
@@ -977,7 +977,7 @@ class TestAsyncRuntimeAtomicEffects:
             value = yield AtomicGet("counter")
             return value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 42
 
     @pytest.mark.asyncio
@@ -992,7 +992,7 @@ class TestAsyncRuntimeAtomicEffects:
             value = yield AtomicGet("missing", default_factory=lambda: 100)
             return value
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 100
 
     @pytest.mark.asyncio
@@ -1008,7 +1008,7 @@ class TestAsyncRuntimeAtomicEffects:
             new_val = yield AtomicUpdate("counter", lambda x: x + 5)
             return new_val
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 15
 
     @pytest.mark.asyncio
@@ -1023,7 +1023,7 @@ class TestAsyncRuntimeAtomicEffects:
             new_val = yield AtomicUpdate("missing", lambda x: x + 1, default_factory=lambda: 0)
             return new_val
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == 1
 
 
@@ -1047,7 +1047,7 @@ class TestAsyncRuntimeGraphEffects:
             val = yield Step("node1", {"type": "start"})
             return val
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == "node1"
 
     @pytest.mark.asyncio
@@ -1064,7 +1064,7 @@ class TestAsyncRuntimeGraphEffects:
             snapshot = yield Snapshot()
             return snapshot
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert len(result) == 2
         assert result[0]["value"] == "node1"
         assert result[1]["value"] == "node2"
@@ -1083,7 +1083,7 @@ class TestAsyncRuntimeGraphEffects:
             snapshot = yield Snapshot()
             return snapshot
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert len(result) == 1
         assert result[0]["meta"]["type"] == "start"
         assert result[0]["meta"]["status"] == "completed"
@@ -1106,7 +1106,7 @@ class TestAsyncRuntimeGraphEffects:
             value, captured_graph = yield CaptureGraph(inner())
             return (value, len(captured_graph))
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == ("done", 2)
 
 
@@ -1135,7 +1135,7 @@ class TestAsyncRuntimeCallStackEffects:
             result = yield inner()
             return result
 
-        result = await runtime.run(outer())
+        result = await runtime.run_and_unwrap(outer())
         assert isinstance(result, tuple)
 
     @pytest.mark.asyncio
@@ -1151,7 +1151,7 @@ class TestAsyncRuntimeCallStackEffects:
             return frame
 
         with pytest.raises(IndexError):
-            await runtime.run(program())
+            await runtime.run_and_unwrap(program())
 
 
 # ============================================================================
@@ -1188,7 +1188,7 @@ class TestGatherComposition:
             )
             return results
 
-        results = await runtime.run(program())
+        results = await runtime.run_and_unwrap(program())
         assert results == ["parent_value", "parent_value", "parent_value"]
 
     @pytest.mark.asyncio
@@ -1226,7 +1226,7 @@ class TestGatherComposition:
             )
             return results
 
-        results = await runtime.run(program())
+        results = await runtime.run_and_unwrap(program())
         # First child sees its local override, others see parent value
         assert results == ["local_override", "parent_value", "parent_value"]
 
@@ -1259,7 +1259,7 @@ class TestGatherComposition:
             c_val = yield Get("c")
             return (results, a_val, b_val, c_val)
 
-        results, a_val, b_val, c_val = await runtime.run(program())
+        results, a_val, b_val, c_val = await runtime.run_and_unwrap(program())
         assert results == ["a", "b", "c"]
         assert a_val == 1
         assert b_val == 2
@@ -1291,7 +1291,7 @@ class TestGatherComposition:
             )
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         # result.value is the list of results
         assert result.value == ["A", "B", "C"]
         # result.log contains logs from all children
@@ -1326,7 +1326,7 @@ class TestGatherComposition:
             )
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert str(result.error) == "task failed"
@@ -1366,7 +1366,7 @@ class TestGatherComposition:
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
 
-        results, elapsed = await runtime.run(program())
+        results, elapsed = await runtime.run_and_unwrap(program())
         # All 4 tasks should complete
         assert results == [["a", "b"], ["c", "d"]]
         # Should complete in ~0.05s (parallel), not ~0.2s (sequential)
@@ -1410,7 +1410,7 @@ class TestGatherComposition:
             return results
 
         # Children's Ask effects are NOT intercepted - they see actual env value
-        results = await runtime.run(program(), env={"key": "actual_value"})
+        results = await runtime.run_and_unwrap(program(), env={"key": "actual_value"})
         assert results == ["actual_value", "actual_value"]
 
     @pytest.mark.asyncio
@@ -1425,7 +1425,7 @@ class TestGatherComposition:
             results = yield Gather()
             return results
 
-        results = await runtime.run(program())
+        results = await runtime.run_and_unwrap(program())
         assert results == []
 
     @pytest.mark.asyncio
@@ -1444,7 +1444,7 @@ class TestGatherComposition:
             results = yield Gather(single())
             return results
 
-        results = await runtime.run(program())
+        results = await runtime.run_and_unwrap(program())
         assert results == [42]
 
     @pytest.mark.asyncio
@@ -1472,6 +1472,140 @@ class TestGatherComposition:
             results = yield Gather(slow_task(), fast_task(), fast_task())
             return results
 
-        results = await runtime.run(program())
+        results = await runtime.run_and_unwrap(program())
         # Results should be in program order
         assert results == ["slow", "fast", "fast"]
+
+
+class TestRuntimeResult:
+    """Tests for RuntimeResult protocol per SPEC-CESK-002."""
+
+    @pytest.mark.asyncio
+    async def test_run_returns_runtime_result(self) -> None:
+        """Test that run() returns RuntimeResult object."""
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.cesk.runtime_result import RuntimeResult
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            return (yield Pure(42))
+
+        result = await runtime.run(program())
+        assert isinstance(result, RuntimeResult)
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_value_on_success(self) -> None:
+        """Test RuntimeResult.value property on success."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            return (yield Pure("hello"))
+
+        result = await runtime.run(program())
+        assert result.is_ok()
+        assert not result.is_err()
+        assert result.value == "hello"
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_value_on_error(self) -> None:
+        """Test RuntimeResult.value property raises on error."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            raise ValueError("test error")
+            return (yield Pure(42))
+
+        result = await runtime.run(program())
+        assert result.is_err()
+        assert not result.is_ok()
+        with pytest.raises(ValueError, match="test error"):
+            _ = result.value
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_state(self) -> None:
+        """Test RuntimeResult includes final state."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            yield Put("counter", 42)
+            yield Put("name", "test")
+            return "done"
+
+        result = await runtime.run(program())
+        assert result.state == {"counter": 42, "name": "test"}
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_log(self) -> None:
+        """Test RuntimeResult includes accumulated logs."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            yield Tell("first message")
+            yield Tell("second message")
+            return "done"
+
+        result = await runtime.run(program())
+        assert result.log == ["first message", "second message"]
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_env(self) -> None:
+        """Test RuntimeResult includes initial env."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            value = yield Ask("key")
+            return value
+
+        result = await runtime.run(program(), env={"key": "value"})
+        assert result.env == {"key": "value"}
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_format_success(self) -> None:
+        """Test RuntimeResult.format() on success."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            return (yield Pure(42))
+
+        result = await runtime.run(program())
+        formatted = result.format()
+        assert "Ok(42)" in formatted
+
+    @pytest.mark.asyncio
+    async def test_runtime_result_format_verbose(self) -> None:
+        """Test RuntimeResult.format(verbose=True)."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program():
+            yield Put("x", 1)
+            yield Tell("log message")
+            return "done"
+
+        result = await runtime.run(program())
+        formatted = result.format(verbose=True)
+        assert "RUNTIME RESULT" in formatted
+        assert "STATE & LOG" in formatted
+        assert "log message" in formatted

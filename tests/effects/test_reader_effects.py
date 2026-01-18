@@ -46,7 +46,7 @@ class TestAskMissingKey:
             return value
 
         with pytest.raises(MissingEnvKeyError) as excinfo:
-            await runtime.run(program(), env={})
+            await runtime.run_and_unwrap(program(), env={})
 
         assert excinfo.value.key == "missing_key"
         assert "missing_key" in str(excinfo.value)
@@ -62,7 +62,7 @@ class TestAskMissingKey:
             return value
 
         with pytest.raises(MissingEnvKeyError) as excinfo:
-            await runtime.run(program(), env={})
+            await runtime.run_and_unwrap(program(), env={})
 
         error_message = str(excinfo.value)
         assert "config.database.host" in error_message
@@ -79,7 +79,7 @@ class TestAskMissingKey:
             return value
 
         with pytest.raises(KeyError):
-            await runtime.run(program(), env={})
+            await runtime.run_and_unwrap(program(), env={})
 
     @pytest.mark.asyncio
     async def test_ask_existing_key_succeeds(self) -> None:
@@ -91,7 +91,7 @@ class TestAskMissingKey:
             value = yield Ask("key")
             return value
 
-        result = await runtime.run(program(), env={"key": "value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "value"})
         assert result == "value"
 
     @pytest.mark.asyncio
@@ -104,7 +104,7 @@ class TestAskMissingKey:
             value = yield Ask("nullable_key")
             return value
 
-        result = await runtime.run(program(), env={"nullable_key": None})
+        result = await runtime.run_and_unwrap(program(), env={"nullable_key": None})
         assert result is None
 
 
@@ -131,7 +131,7 @@ class TestLocalAskComposition:
             inner_value = yield Local({"key": "overridden"}, inner_program())
             return inner_value
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "overridden"
 
     @pytest.mark.asyncio
@@ -151,7 +151,7 @@ class TestLocalAskComposition:
             after = yield Ask("key")
             return (before, inner, after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == ("original", "overridden", "original")
 
     @pytest.mark.asyncio
@@ -169,7 +169,7 @@ class TestLocalAskComposition:
             inner_value = yield Local({"new_key": "new_value"}, inner_program())
             return inner_value
 
-        result = await runtime.run(program(), env={"other_key": "other"})
+        result = await runtime.run_and_unwrap(program(), env={"other_key": "other"})
         assert result == "new_value"
 
     @pytest.mark.asyncio
@@ -188,7 +188,7 @@ class TestLocalAskComposition:
             return value
 
         with pytest.raises(MissingEnvKeyError) as excinfo:
-            await runtime.run(program(), env={})
+            await runtime.run_and_unwrap(program(), env={})
         assert excinfo.value.key == "new_key"
 
     @pytest.mark.asyncio
@@ -207,7 +207,7 @@ class TestLocalAskComposition:
             result = yield Local({"key1": "overridden"}, inner_program())
             return result
 
-        result = await runtime.run(program(), env={"key1": "original1", "key2": "original2"})
+        result = await runtime.run_and_unwrap(program(), env={"key1": "original1", "key2": "original2"})
         assert result == ("overridden", "original2")
 
 
@@ -239,7 +239,7 @@ class TestLocalLocalComposition:
             result = yield Local({"key": "outer"}, middle())
             return result
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "inner"
 
     @pytest.mark.asyncio
@@ -265,7 +265,7 @@ class TestLocalLocalComposition:
             after_outer = yield Ask("key")
             return (before_outer, outer_result, after_outer)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         before_outer, (before_inner, inner, after_inner), after_outer = result
 
         assert before_outer == "original"
@@ -295,7 +295,7 @@ class TestLocalLocalComposition:
             result = yield Local({"key1": "outer1"}, middle())
             return result
 
-        result = await runtime.run(program(), env={"key1": "orig1", "key2": "orig2"})
+        result = await runtime.run_and_unwrap(program(), env={"key1": "orig1", "key2": "orig2"})
         assert result == ("outer1", "inner2")
 
 
@@ -324,7 +324,7 @@ class TestLocalSafeComposition:
             after = yield Ask("key")
             return (before, safe_result.value if safe_result.is_ok() else None, after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == ("original", "in_local", "original")
 
     @pytest.mark.asyncio
@@ -345,7 +345,7 @@ class TestLocalSafeComposition:
             is_error = safe_result.is_err()
             return (before, is_error, after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == ("original", True, "original")
 
     @pytest.mark.asyncio
@@ -367,7 +367,7 @@ class TestLocalSafeComposition:
             after = yield Ask("key")
             return (before, result, after)
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         before, (safe_result, inner_value), after = result
         assert before == "original"
         assert safe_result.is_ok() and safe_result.value == 42
@@ -400,7 +400,7 @@ class TestLocalStateInteraction:
             after = yield Get("counter")
             return (before, after)
 
-        result = await runtime.run(program(), store={"counter": 0})
+        result = await runtime.run_and_unwrap(program(), store={"counter": 0})
         assert result == (0, 42)
 
     @pytest.mark.asyncio
@@ -420,7 +420,7 @@ class TestLocalStateInteraction:
             after = yield Get("counter")
             return (inner_result, after)
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result == (15, 15)
 
     @pytest.mark.asyncio
@@ -444,7 +444,7 @@ class TestLocalStateInteraction:
             after_state = yield Get("state_key")
             return (before_env, result, after_env, after_state)
 
-        result = await runtime.run(program(), env={"env_key": "original_env"})
+        result = await runtime.run_and_unwrap(program(), env={"env_key": "original_env"})
         before_env, (inner_env, inner_state), after_env, after_state = result
 
         # Env is scoped by Local
@@ -480,7 +480,7 @@ class TestLocalGatherComposition:
             results = yield Gather(child(), child(), child())
             return results
 
-        result = await runtime.run(program(), env={"shared_key": "shared_value"})
+        result = await runtime.run_and_unwrap(program(), env={"shared_key": "shared_value"})
         assert result == ["shared_value", "shared_value", "shared_value"]
 
     @pytest.mark.asyncio
@@ -503,7 +503,7 @@ class TestLocalGatherComposition:
             results = yield Local({"key": "from_local"}, gather_children())
             return results
 
-        result = await runtime.run(program(), env={"key": "original"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == ["from_local", "from_local"]
 
     @pytest.mark.asyncio
@@ -535,7 +535,7 @@ class TestLocalGatherComposition:
             )
             return results
 
-        result = await runtime.run(program(), env={"key": "parent_value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "parent_value"})
 
         # Child with Local sees its override
         assert result[0] == "local_child:child_override"
@@ -563,7 +563,7 @@ class TestLocalGatherComposition:
             after = yield Ask("key")
             return (before, results, after)
 
-        result = await runtime.run(program(), env={"key": "parent_value"})
+        result = await runtime.run_and_unwrap(program(), env={"key": "parent_value"})
         before, children_results, after = result
 
         assert before == "parent_value"
@@ -596,7 +596,7 @@ class TestLocalGatherComposition:
             final = yield Get("counter")
             return (sorted(results), final)
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         sorted_results, final = result
 
         # All children contribute to the shared counter
