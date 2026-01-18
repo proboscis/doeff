@@ -53,7 +53,7 @@ class AsyncRuntime(BaseRuntime):
         return await self._run_scheduler(state)
 
     async def _run_scheduler(self, state: CESKState) -> Any:
-        pending_async: dict[TaskId, tuple[asyncio.Task[tuple[Any, Store]], Suspended]] = {}
+        pending_async: dict[TaskId, tuple[asyncio.Task[Any], Suspended]] = {}
         task_results: dict[TaskId, Any] = {}
         task_errors: dict[TaskId, BaseException] = {}
         gather_waiters: dict[TaskId, tuple[list[TaskId], Suspended]] = {}
@@ -138,17 +138,17 @@ class AsyncRuntime(BaseRuntime):
                         continue
 
                     if isinstance(effect, FutureAwaitEffect):
-                        coro = self._do_await(effect.awaitable, state.store)
+                        coro = self._do_await(effect.awaitable)
                         pending_async[task_id] = (asyncio.create_task(coro), result)
                         continue
 
                     if isinstance(effect, DelayEffect):
-                        coro = self._do_delay(effect.seconds, state.store)
+                        coro = self._do_delay(effect.seconds)
                         pending_async[task_id] = (asyncio.create_task(coro), result)
                         continue
 
                     if isinstance(effect, WaitUntilEffect):
-                        coro = self._do_wait_until(effect.target_time, state.store)
+                        coro = self._do_wait_until(effect.target_time)
                         pending_async[task_id] = (asyncio.create_task(coro), result)
                         continue
 
@@ -166,18 +166,13 @@ class AsyncRuntime(BaseRuntime):
                     if atask in done:
                         del pending_async[tid]
                         try:
-                            value, new_store = atask.result()
-                            state = self._update_store(state, new_store)
-                            new_single = suspended.resume(value, new_store)
+                            value = atask.result()
+                            new_single = suspended.resume(value, state.store)
                             state = self._merge_task(state, tid, new_single)
                         except Exception as ex:
-                            if tid == main_task_id:
-                                await self._cancel_all(pending_async)
-                                raise
-                            task_errors[tid] = ex
-                            state = self._check_gather_complete(
-                                state, tid, gather_waiters, task_results, task_errors
-                            )
+                            error_state = suspended.resume_error(ex)
+                            error_state = self._fix_store_rollback(error_state, state.store)
+                            state = self._merge_task(state, tid, error_state)
                         break
                 continue
 
@@ -190,20 +185,17 @@ class AsyncRuntime(BaseRuntime):
                         raise main_result.err()  # type: ignore[misc]
                 await asyncio.sleep(0)
 
-    async def _do_await(self, awaitable: Any, store: Store) -> tuple[Any, Store]:
-        value = await awaitable
-        return (value, store)
+    async def _do_await(self, awaitable: Any) -> Any:
+        return await awaitable
 
-    async def _do_delay(self, seconds: float, store: Store) -> tuple[Any, Store]:
+    async def _do_delay(self, seconds: float) -> None:
         await asyncio.sleep(seconds)
-        return (None, store)
 
-    async def _do_wait_until(self, target_time: datetime, store: Store) -> tuple[Any, Store]:
+    async def _do_wait_until(self, target_time: datetime) -> None:
         now = datetime.now()
         if target_time > now:
             delay_seconds = (target_time - now).total_seconds()
             await asyncio.sleep(delay_seconds)
-        return (None, store)
 
     def _make_single_task_state(self, state: CESKState, task_id: TaskId) -> CESKState:
         task = state.tasks[task_id]
@@ -224,6 +216,15 @@ class AsyncRuntime(BaseRuntime):
             main_task=state.main_task,
             futures=state.futures,
             spawn_results=state.spawn_results,
+        )
+
+    def _fix_store_rollback(self, error_state: CESKState, current_store: Store) -> CESKState:
+        return CESKState(
+            tasks={error_state.main_task: error_state.tasks[error_state.main_task]},
+            store=current_store,
+            main_task=error_state.main_task,
+            futures=error_state.futures,
+            spawn_results=error_state.spawn_results,
         )
 
     def _update_store(self, state: CESKState, store: Store) -> CESKState:
@@ -271,8 +272,9 @@ class AsyncRuntime(BaseRuntime):
 
             if completed_id in task_errors:
                 del gather_waiters[parent_id]
-                new_single = suspended.resume_error(task_errors[completed_id])
-                return self._merge_task(state, parent_id, new_single)
+                error_state = suspended.resume_error(task_errors[completed_id])
+                error_state = self._fix_store_rollback(error_state, state.store)
+                return self._merge_task(state, parent_id, error_state)
 
             all_done = all(cid in task_results or cid in task_errors for cid in child_ids)
             if all_done:
@@ -285,7 +287,7 @@ class AsyncRuntime(BaseRuntime):
 
     async def _cancel_all(
         self,
-        pending: dict[TaskId, tuple[asyncio.Task[tuple[Any, Store]], Suspended]],
+        pending: dict[TaskId, tuple[asyncio.Task[Any], Suspended]],
     ) -> None:
         for atask, _ in pending.values():
             atask.cancel()
