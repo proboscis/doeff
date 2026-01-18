@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from doeff.cesk.runtime.base import BaseRuntime
-from doeff.cesk.state import CESKState, TaskState, ProgramControl
+from doeff.cesk.state import CESKState, TaskState, ProgramControl, Done as TaskDoneStatus
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
@@ -63,7 +63,7 @@ class AsyncRuntime(BaseRuntime):
         while True:
             ready_task_ids = [
                 tid for tid in state.get_ready_tasks()
-                if tid not in pending_async
+                if tid not in pending_async and tid not in gather_waiters
             ]
 
             if ready_task_ids:
@@ -76,6 +76,9 @@ class AsyncRuntime(BaseRuntime):
                     if task_id == main_task_id:
                         await self._cancel_all(pending_async)
                         return result.value
+                    # Mark child task as Done so it's not picked up again
+                    done_task = state.tasks[task_id].with_status(TaskDoneStatus.ok(result.value))
+                    state = state.with_task(task_id, done_task)
                     task_results[task_id] = result.value
                     state = self._check_gather_complete(
                         state, task_id, gather_waiters, task_results, task_errors
@@ -90,6 +93,12 @@ class AsyncRuntime(BaseRuntime):
                         if result.captured_traceback is not None:
                             exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
                         raise exc
+                    # Mark child task as Failed so it's not picked up again
+                    from doeff._vendor import Err
+                    failed_task = state.tasks[task_id].with_status(
+                        TaskDoneStatus(Err(result.exception))  # type: ignore[arg-type]
+                    )
+                    state = state.with_task(task_id, failed_task)
                     task_errors[task_id] = result.exception
                     state = self._check_gather_complete(
                         state, task_id, gather_waiters, task_results, task_errors
