@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from doeff.cesk.errors import MissingEnvKeyError
 from doeff.cesk.frames import ContinueValue, FrameResult
 from doeff.cesk.state import TaskState
 from doeff.cesk.types import Store
@@ -30,7 +31,7 @@ def handle_ask(
 ) -> FrameResult:
     key = effect.key
     if key not in task_state.env:
-        raise KeyError(f"Missing environment key: {key!r}")
+        raise MissingEnvKeyError(key)
     value = task_state.env[key]
     return ContinueValue(
         value=value,
