@@ -43,9 +43,9 @@ def example():
 
 ### Store Semantics
 
-**Current behavior: Shared store**
+**Current behavior: Single shared store with interleaved access**
 
-All parallel branches share the same store. Changes made in one branch are visible to other branches and to the parent after Gather completes.
+All parallel branches share the same store. The store is a single shared mutable structure - there is no "merge" step. Tasks interleave at effect boundaries.
 
 ```python
 @do
@@ -61,10 +61,27 @@ def example():
     results = yield Gather(increment(), increment(), increment())
     final = yield Get("counter")
     # final == 3 (all increments accumulated)
-    # results is [0, 1, 2] (each saw previous state)
+    # results order depends on scheduler interleaving
 ```
 
-**Rationale**: Shared store enables coordination between parallel tasks and accumulation of side effects (logs, state updates).
+**Important**: `Get`/`Put` sequences are NOT atomic. For read-modify-write operations under concurrency, use `AtomicUpdate`:
+
+```python
+@do
+def safe_increment():
+    # SAFE: atomic read-modify-write
+    result = yield AtomicUpdate("counter", lambda x: x + 1)
+    return result
+
+# NOT SAFE: lost updates possible
+@do
+def unsafe_increment():
+    current = yield Get("counter")  # Other task might read same value
+    yield Put("counter", current + 1)  # Overwrites other task's increment
+    return current
+```
+
+**Rationale**: Shared store enables coordination between parallel tasks and accumulation of side effects (logs, state updates). Use `AtomicUpdate` for coordination.
 
 **Known issue**: [gh#157](https://github.com/CyberAgentAILab/doeff/issues/157) may affect async store snapshot behavior.
 
@@ -72,7 +89,7 @@ def example():
 
 ### Error Handling
 
-**Current behavior: First error fails Gather**
+**Current behavior: First error fails Gather (fail-fast)**
 
 When any parallel program raises an exception, the Gather effect immediately fails with that exception. The exception propagates to the parent context.
 
@@ -95,13 +112,15 @@ def example():
 
 **Semantics**:
 1. All programs start executing in parallel
-2. First exception encountered aborts the Gather
-3. Other programs may or may not have completed
-4. The failing program's exception is propagated
+2. First exception encountered aborts the Gather from the parent's perspective
+3. **Orphan children behavior**: Other children may continue running after the parent resumes with error. They may continue to mutate the shared store and append to logs. This is a consequence of the cooperative scheduler - there is no preemptive cancellation.
+4. The failing program's exception is propagated to the parent
+
+**Warning**: Because orphan children can continue modifying shared store/log, error recovery code should be aware that the store may be in an intermediate state.
 
 **Open question**: Should other children be cancelled when one fails?
-- Current: No explicit cancellation, but no further results are collected
-- Recommendation: No cancellation for consistency (cancellation is complex to implement correctly)
+- Current: No explicit cancellation. Other children run until they yield, and are not stepped further after parent resumes.
+- Recommendation: No preemptive cancellation for simplicity. If explicit cleanup is needed, use `Safe` around individual children.
 
 **Open question**: Which error if multiple fail "simultaneously"?
 - Current: First error detected by the scheduler wins
@@ -221,6 +240,8 @@ def example():
 
 **Rationale**: Intercept applies to the entire program tree rooted at the intercepted program. Since Gather children are part of that program tree, they receive the same intercept transformations. This provides consistent behavior - when you intercept a program, all effects within it (including nested Gather) are intercepted.
 
+**Implementation note**: This works because `GatherEffect.intercept()` recursively transforms its child programs when the effect passes through an `InterceptFrame`. The transformation happens at the effect level, not by copying continuation frames to child tasks.
+
 ### Nested Gather
 
 **Behavior: Full parallelism at all levels**
@@ -246,6 +267,8 @@ def inner_gather_2():
 ```
 
 All leaf tasks (`task_a`, `task_b`, `task_c`, `task_d`) run in parallel. The nesting structure defines how results are grouped, not how parallelism is limited.
+
+**Note on parallelism**: "Parallel" means tasks can interleave at effect boundaries. This is cooperative concurrency, not CPU-parallel execution. Tasks only yield control when they yield effects (like `Await`, `Delay`, `Get`, `Put`). Pure computation runs to completion before other tasks get scheduled.
 
 ---
 
@@ -276,8 +299,8 @@ def example():
 ### Runtime Behavior
 
 - **AsyncRuntime**: Uses `asyncio.create_task` to schedule the awaitable
-- **SyncRuntime**: Not supported (will fail)
-- **SimulationRuntime**: May simulate await with controlled time
+- **SyncRuntime**: Not supported (will raise unhandled effect error)
+- **SimulationRuntime**: Not currently supported. Only `DelayEffect` and `WaitUntilEffect` have simulation support; `Await` has no simulation handler.
 
 ---
 

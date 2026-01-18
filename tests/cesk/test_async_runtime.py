@@ -808,11 +808,11 @@ class TestAsyncRuntimeIntegration:
 
     @pytest.mark.asyncio
     async def test_async_concurrent_gather_with_state(self) -> None:
-        """Test Gather runs in parallel with snapshot isolation.
+        """Test Gather runs in parallel with shared store.
         
-        Each parallel branch gets a snapshot of the store at Gather time.
-        State changes in parallel branches are isolated and don't affect
-        the parent store or each other.
+        All parallel branches share the same store. State changes in one
+        branch are visible to other branches (interleaved at effect boundaries)
+        and to the parent after Gather completes.
         """
         from doeff.cesk.runtime import AsyncRuntime
 
