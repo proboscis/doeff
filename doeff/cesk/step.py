@@ -37,7 +37,6 @@ from doeff.cesk.result import Done, Failed, StepResult, Suspended
 from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
 from doeff.cesk.classification import (
     has_intercept_frame,
-    is_control_flow_effect,
     is_effectful,
     is_pure_effect,
 )
@@ -62,71 +61,8 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
     if isinstance(C, EffectControl):
         effect = C.effect
-        from doeff.effects import (
-            GatherEffect,
-            InterceptEffect,
-            LocalEffect,
-            ResultSafeEffect,
-            WriterListenEffect,
-        )
-        from doeff.effects.graph import GraphCaptureEffect
 
-        if isinstance(effect, LocalEffect):
-            new_env = E | FrozenDict(effect.env_update)
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=new_env,
-                S=S,
-                K=[LocalFrame(E)] + K,
-            )
-
-        if isinstance(effect, InterceptEffect):
-            return CESKState(
-                C=ProgramControl(effect.program),
-                E=E,
-                S=S,
-                K=[InterceptFrame(effect.transforms)] + K,
-            )
-
-        if isinstance(effect, WriterListenEffect):
-            log_start = len(S.get("__log__", []))
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[ListenFrame(log_start)] + K,
-            )
-
-        if isinstance(effect, GatherEffect):
-            programs = list(effect.programs)
-            if not programs:
-                return CESKState(C=Value([]), E=E, S=S, K=K)
-            first, *rest = programs
-            return CESKState(
-                C=ProgramControl(first),
-                E=E,
-                S=S,
-                K=[GatherFrame(rest, [], E)] + K,
-            )
-
-        if isinstance(effect, ResultSafeEffect):
-            return CESKState(
-                C=ProgramControl(effect.sub_program),
-                E=E,
-                S=S,
-                K=[SafeFrame(E)] + K,
-            )
-
-        if isinstance(effect, GraphCaptureEffect):
-            graph_start = len(S.get("__graph__", []))
-            return CESKState(
-                C=ProgramControl(effect.program),
-                E=E,
-                S=S,
-                K=[GraphCaptureFrame(graph_start)] + K,
-            )
-
-        if not is_control_flow_effect(effect) and has_intercept_frame(K):
+        if has_intercept_frame(K):
             from doeff.cesk_traceback import capture_traceback_safe
 
             try:
@@ -139,9 +75,6 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             from doeff.types import EffectBase
 
             if isinstance(transformed, EffectBase):
-                if is_control_flow_effect(transformed):
-                    return CESKState(C=EffectControl(transformed), E=E, S=S, K=K)
-
                 has_handler = (handlers is not None and type(transformed) in handlers) or is_pure_effect(transformed) or is_effectful(transformed)
 
                 if has_handler:
