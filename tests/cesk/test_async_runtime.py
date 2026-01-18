@@ -1153,3 +1153,240 @@ class TestAsyncRuntimeCallStackEffects:
 
         with pytest.raises(IndexError):
             await runtime.run(program())
+
+
+class TestAsyncRuntimeStoreSnapshotBug:
+    """Tests for gh#157: Async store snapshot bug fix.
+    
+    Verifies that async helpers (_do_await, _do_delay, _do_wait_until) do not
+    capture stale store snapshots that would overwrite concurrent modifications.
+    """
+
+    @pytest.mark.asyncio
+    async def test_await_preserves_concurrent_store_modifications(self) -> None:
+        """Await should not roll back store changes made by concurrent tasks.
+        
+        Scenario:
+        - Task A: Await(slow_operation)
+        - Task B: Put("key", "value") while Task A is waiting
+        - After Task A completes, Task B's changes should be preserved
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def slow_operation() -> str:
+            await asyncio.sleep(0.05)
+            return "async_result"
+
+        @do
+        def task_that_modifies_store():
+            yield Put("counter", 10)
+            yield Put("name", "modified_by_task_b")
+            return "done"
+
+        @do
+        def task_that_awaits():
+            result = yield Await(slow_operation())
+            return result
+
+        @do
+        def program():
+            yield Put("counter", 0)
+            yield Put("name", "initial")
+            
+            results = yield Gather(
+                task_that_awaits(),
+                task_that_modifies_store(),
+            )
+            
+            final_counter = yield Get("counter")
+            final_name = yield Get("name")
+            return (results, final_counter, final_name)
+
+        results, final_counter, final_name = await runtime.run(program())
+        
+        assert final_counter == 10
+        assert final_name == "modified_by_task_b"
+
+    @pytest.mark.asyncio
+    async def test_delay_preserves_concurrent_store_modifications(self) -> None:
+        """Delay should not roll back store changes made by concurrent tasks."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def task_that_modifies_store():
+            yield Put("value", "updated")
+            return "modifier_done"
+
+        @do
+        def task_that_delays():
+            yield Delay(seconds=0.05)
+            return "delay_done"
+
+        @do
+        def program():
+            yield Put("value", "original")
+            
+            results = yield Gather(
+                task_that_delays(),
+                task_that_modifies_store(),
+            )
+            
+            final_value = yield Get("value")
+            return (results, final_value)
+
+        results, final_value = await runtime.run(program())
+        
+        assert final_value == "updated"
+
+    @pytest.mark.asyncio
+    async def test_multiple_async_tasks_with_interleaved_store_updates(self) -> None:
+        """Multiple async tasks with interleaved store updates should all be preserved."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def async_op(value: int) -> int:
+            await asyncio.sleep(0.01)
+            return value * 2
+
+        @do
+        def async_task_1():
+            result = yield Await(async_op(1))
+            yield Put("task1_completed", True)
+            return result
+
+        @do
+        def async_task_2():
+            result = yield Await(async_op(2))
+            yield Put("task2_completed", True)
+            return result
+
+        @do
+        def sync_task():
+            yield Put("sync_value", 100)
+            yield Put("sync_completed", True)
+            return "sync_done"
+
+        @do
+        def program():
+            results = yield Gather(
+                async_task_1(),
+                async_task_2(),
+                sync_task(),
+            )
+            
+            task1_done = yield Get("task1_completed")
+            task2_done = yield Get("task2_completed")
+            sync_done = yield Get("sync_completed")
+            sync_value = yield Get("sync_value")
+            
+            return {
+                "results": results,
+                "task1_done": task1_done,
+                "task2_done": task2_done,
+                "sync_done": sync_done,
+                "sync_value": sync_value,
+            }
+
+        output = await runtime.run(program())
+        
+        assert output["task1_done"] is True
+        assert output["task2_done"] is True
+        assert output["sync_done"] is True
+        assert output["sync_value"] == 100
+        assert set(output["results"]) == {2, 4, "sync_done"}
+
+    @pytest.mark.asyncio
+    async def test_no_store_rollback_after_async_completion(self) -> None:
+        """Store should not be rolled back when async task completes after store updates."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+        updates_sequence: list[tuple[str, int]] = []
+
+        async def slow_async() -> str:
+            await asyncio.sleep(0.05)
+            return "async_complete"
+
+        @do
+        def program():
+            yield Put("counter", 1)
+            updates_sequence.append(("initial", 1))
+            
+            async_result = yield Await(slow_async())
+            
+            current = yield Get("counter")
+            yield Put("counter", current + 1)
+            updates_sequence.append(("after_await", current + 1))
+            
+            final = yield Get("counter")
+            return (async_result, final)
+
+        result, final_counter = await runtime.run(program())
+        
+        assert result == "async_complete"
+        assert final_counter == 2
+        assert updates_sequence == [("initial", 1), ("after_await", 2)]
+
+    @pytest.mark.asyncio
+    async def test_safe_catches_coroutine_exceptions(self) -> None:
+        """Safe should catch exceptions raised by coroutines in Await."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def failing_coro() -> str:
+            raise ValueError("boom from coroutine")
+
+        @do
+        def program():
+            result = yield Safe(Await(failing_coro()))
+            return result
+
+        result = await runtime.run(program())
+        
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert str(result.error) == "boom from coroutine"
+
+    @pytest.mark.asyncio
+    async def test_coroutine_exception_preserves_store(self) -> None:
+        """Coroutine exceptions should not rollback store changes."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def failing_after_delay() -> str:
+            await asyncio.sleep(0.01)
+            raise ValueError("delayed failure")
+
+        @do
+        def modifier_task():
+            yield Put("value", "modified")
+            return "done"
+
+        @do
+        def failing_task():
+            result = yield Await(failing_after_delay())
+            return result
+
+        @do
+        def program():
+            yield Put("value", "initial")
+            
+            results = yield Safe(Gather(
+                failing_task(),
+                modifier_task(),
+            ))
+            
+            final_value = yield Get("value")
+            return (results, final_value)
+
+        results, final_value = await runtime.run(program())
+        
+        assert final_value == "modified"
+        assert results.is_err()
