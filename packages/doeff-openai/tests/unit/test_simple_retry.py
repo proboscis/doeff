@@ -43,7 +43,7 @@ async def test_simple_success():
         yield Ask("openai_client")
 
         # Log to see what's happening
-        yield Log("Starting API call")
+        yield Tell("Starting API call")
 
         result = yield structured_llm__openai(
             text="Test prompt",
@@ -52,7 +52,7 @@ async def test_simple_success():
             max_retries=1,  # Just one attempt
         )
 
-        yield Log(f"Got result: {result}")
+        yield Tell(f"Got result: {result}")
         return result
 
     engine = ProgramInterpreter()
