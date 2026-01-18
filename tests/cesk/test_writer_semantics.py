@@ -358,7 +358,7 @@ class TestListenPlusGather:
             result = yield Listen(Gather(task("X"), task("Y")))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert sorted(result.value) == ["X", "Y"]
         # All logs captured (order may be interleaved)
         assert sorted(result.log) == ["X_log", "Y_log"]
@@ -611,7 +611,7 @@ class TestAsyncWriterSemantics:
             result = yield Listen(inner())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.value == "async_result"
         assert list(result.log) == ["async_log"]
 
@@ -632,7 +632,7 @@ class TestAsyncWriterSemantics:
             result = yield Listen(Safe(inner()))
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert result.value.is_err()
         assert list(result.log) == ["before_fail"]
 
@@ -660,7 +660,7 @@ class TestAsyncWriterSemantics:
             result = yield Listen(outer())
             return result
 
-        result = await runtime.run(program())
+        result = await runtime.run_and_unwrap(program())
         assert list(result.log) == ["outer_start", "inner", "outer_end"]
         assert result.value.value == 42
         assert list(result.value.log) == ["inner"]
