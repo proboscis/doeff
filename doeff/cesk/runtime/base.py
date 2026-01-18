@@ -8,7 +8,7 @@ from doeff.cesk.state import CESKState, TaskState, Ready
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.frames import ContinueValue, ContinueError
+from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram, FrameResult
 from doeff.cesk.errors import UnhandledEffectError
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ class BaseRuntime(ABC):
         effect: Any,
         task_state: TaskState,
         store: dict[str, Any],
-    ) -> ContinueValue | ContinueError:
+    ) -> FrameResult:
         handler = self._handlers.get(type(effect))
         
         if handler is None:
@@ -67,7 +67,7 @@ class BaseRuntime(ABC):
         except Exception as ex:
             return ContinueError(error=ex, env=task_state.env, store=store, k=task_state.kontinuation)
         
-        if isinstance(frame_result, (ContinueValue, ContinueError)):
+        if isinstance(frame_result, (ContinueValue, ContinueError, ContinueProgram)):
             return frame_result
         
         return ContinueError(
@@ -78,6 +78,8 @@ class BaseRuntime(ABC):
         )
 
     def _step_until_done(self, state: CESKState) -> Any:
+        from doeff.cesk.state import ProgramControl
+        
         while True:
             result = step(state, self._handlers)
             
@@ -102,8 +104,17 @@ class BaseRuntime(ABC):
                 
                 if isinstance(dispatch_result, ContinueError):
                     state = result.resume_error(dispatch_result.error)
-                else:
+                elif isinstance(dispatch_result, ContinueProgram):
+                    state = CESKState(
+                        C=ProgramControl(dispatch_result.program),
+                        E=dispatch_result.env,
+                        S=dispatch_result.store,
+                        K=dispatch_result.k,
+                    )
+                elif isinstance(dispatch_result, ContinueValue):
                     state = result.resume(dispatch_result.value, dispatch_result.store)
+                else:
+                    raise RuntimeError(f"Unexpected dispatch result: {type(dispatch_result)}")
                 continue
             
             raise RuntimeError(f"Unexpected step result: {type(result)}")

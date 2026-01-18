@@ -9,7 +9,7 @@ from doeff.cesk.state import CESKState, TaskState
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.frames import ContinueValue, ContinueError
+from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram
 from doeff.cesk.types import Store, TaskId
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
@@ -109,9 +109,17 @@ class AsyncRuntime(BaseRuntime):
                         dispatch_result = self._dispatch_effect(effect, task_state, state.store)
                         if isinstance(dispatch_result, ContinueError):
                             new_single = result.resume_error(dispatch_result.error)
-                        else:
+                        elif isinstance(dispatch_result, ContinueProgram):
+                            from doeff.cesk.state import ProgramControl
+                            state = self._merge_task(state, task_id, CESKState(
+                                C=ProgramControl(dispatch_result.program),
+                                E=dispatch_result.env,
+                                S=dispatch_result.store,
+                                K=dispatch_result.k,
+                            ))
+                        elif isinstance(dispatch_result, ContinueValue):
                             new_single = result.resume(dispatch_result.value, dispatch_result.store)
-                        state = self._merge_task(state, task_id, new_single)
+                            state = self._merge_task(state, task_id, new_single)
                         continue
 
                     if isinstance(effect, GatherEffect):
@@ -151,9 +159,18 @@ class AsyncRuntime(BaseRuntime):
                     dispatch_result = self._dispatch_effect(effect, task_state, state.store)
                     if isinstance(dispatch_result, ContinueError):
                         new_single = result.resume_error(dispatch_result.error)
-                    else:
+                        state = self._merge_task(state, task_id, new_single)
+                    elif isinstance(dispatch_result, ContinueProgram):
+                        from doeff.cesk.state import ProgramControl
+                        state = self._merge_task(state, task_id, CESKState(
+                            C=ProgramControl(dispatch_result.program),
+                            E=dispatch_result.env,
+                            S=dispatch_result.store,
+                            K=dispatch_result.k,
+                        ))
+                    elif isinstance(dispatch_result, ContinueValue):
                         new_single = result.resume(dispatch_result.value, dispatch_result.store)
-                    state = self._merge_task(state, task_id, new_single)
+                        state = self._merge_task(state, task_id, new_single)
                     continue
 
             if pending_async:
