@@ -55,11 +55,11 @@ def chat_completion(
     - Errors
     """
     # Log the request
-    yield Log(f"OpenAI chat request: model={model}, messages={len(messages)}, stream={stream}")
+    yield Tell(f"OpenAI chat request: model={model}, messages={len(messages)}, stream={stream}")
 
     # Count input tokens
     input_tokens = count_message_tokens(messages, model)
-    yield Log(f"Estimated input tokens: {input_tokens}")
+    yield Tell(f"Estimated input tokens: {input_tokens}")
 
     # Build request data
     request_data = {
@@ -120,7 +120,7 @@ def chat_completion(
                 stream_response = yield Await(create_stream())
 
                 # Log streaming start
-                yield Log("Started streaming chat completion")
+                yield Tell("Started streaming chat completion")
 
                 # Track the streaming request (no immediate response data)
                 metadata = yield track_api_call(
@@ -152,7 +152,7 @@ def chat_completion(
                 if response.choices:
                     finish_reason = response.choices[0].finish_reason
                     content = response.choices[0].message.content
-                    yield Log(f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}")
+                    yield Tell(f"Chat completion finished: reason={finish_reason}, content_length={len(content) if content else 0}")
 
                 return response
 
@@ -195,7 +195,7 @@ def chat_completion_async(
     This version uses the async client for better performance in async contexts.
     """
     # Log the request
-    yield Log(f"OpenAI async chat request: model={model}, messages={len(messages)}")
+    yield Tell(f"OpenAI async chat request: model={model}, messages={len(messages)}")
 
     # Build request data
     request_data = {
@@ -264,7 +264,7 @@ def process_stream_chunks(
     full_content = ""
     total_chunks = 0
 
-    yield Log(f"Processing streaming chunks for model={model}")
+    yield Tell(f"Processing streaming chunks for model={model}")
 
     # Process chunks
     async def collect_chunks():
@@ -323,7 +323,7 @@ def process_stream_chunks(
             }
         )
 
-        yield Log(f"Stream complete: chunks={total_chunks}, tokens={output_tokens}, cost=${cost_info.total_cost:.6f}")
+        yield Tell(f"Stream complete: chunks={total_chunks}, tokens={output_tokens}, cost=${cost_info.total_cost:.6f}")
 
     return chunks
 

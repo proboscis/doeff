@@ -72,7 +72,7 @@ def mixed_effects_program() -> Generator[Any, Any, dict]:
     yield Modify("counter", lambda x: x + 10)
 
     # Writer
-    yield Log("Processing...")
+    yield Tell("Processing...")
 
     # Graph
     yield Step("initialized", {"stage": "start"})
@@ -309,7 +309,7 @@ async def test_program_to_injected_result(mock_resolver):  # noqa: PINJ040
     @do
     def result_program() -> Generator[Effect | Program, Any, int]:
         yield Put("test_key", "test_value")
-        yield Log("test log entry")
+        yield Tell("test log entry")
         yield Step("computation", {"meta": "data"})
         yield Annotate({"status": "complete"})
         return 42
@@ -353,7 +353,7 @@ async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
 
     @do
     def failing_program() -> Generator[Effect | Program, Any, int]:
-        yield Log("Before error")
+        yield Tell("Before error")
         raise ValueError("Test error")
 
     injected = program_to_injected_result(failing_program())
@@ -384,7 +384,7 @@ async def test_safe_effect_through_bridge(mock_resolver):  # noqa: PINJ040
 
     @do
     def risky_program(should_fail: bool) -> Generator[Effect | Program, Any, str]:
-        yield Log(f"Risky: should_fail={should_fail}")
+        yield Tell(f"Risky: should_fail={should_fail}")
         if should_fail:
             raise ValueError("Intentional failure")
         return "success"
@@ -447,8 +447,8 @@ async def test_listen_effect_through_bridge(mock_resolver):  # noqa: PINJ040
 
     @do
     def logging_program() -> Generator[Effect | Program, Any, int]:
-        yield Log("First log")
-        yield Log("Second log")
+        yield Tell("First log")
+        yield Tell("Second log")
         yield Put("listen_state", "set")
         return 42
 
@@ -487,7 +487,7 @@ async def test_yielding_programs_through_bridge(mock_resolver):  # noqa: PINJ040
 
     @do
     def sub_program(x: int) -> Generator[Effect | Program, Any, int]:
-        yield Log(f"Sub-program: x={x}")
+        yield Tell(f"Sub-program: x={x}")
         return x * 2
 
     @do
@@ -524,7 +524,7 @@ async def test_all_effects_comprehensive(mock_resolver):  # noqa: PINJ040
         test_value = yield Ask("test_value")
 
         # Writer effect
-        yield Log("Processing...")
+        yield Tell("Processing...")
 
         # Graph effects
         yield Step("step1", {"stage": "init"})
@@ -556,7 +556,7 @@ async def test_all_effects_comprehensive(mock_resolver):  # noqa: PINJ040
         # Listen effect
         @do
         def logged_prog() -> Generator[Effect | Program, Any, int]:
-            yield Log("inner log")
+            yield Tell("inner log")
             return 99
 
         listen_result = yield Listen(logged_prog())
@@ -599,18 +599,18 @@ async def test_nested_program_yields(mock_resolver):  # noqa: PINJ040
 
     @do
     def level3() -> Generator[Effect | Program, Any, int]:
-        yield Log("Level 3")
+        yield Tell("Level 3")
         return 10
 
     @do
     def level2() -> Generator[Effect | Program, Any, int]:
-        yield Log("Level 2")
+        yield Tell("Level 2")
         value = yield level3()
         return value * 2
 
     @do
     def level1() -> Generator[Effect | Program, Any, int]:
-        yield Log("Level 1")
+        yield Tell("Level 1")
         value = yield level2()
         return value * 2
 

@@ -60,10 +60,10 @@ def chat_completion(
 ) -> EffectGenerator[dict[str, Any]]:
     """Invoke OpenRouter chat completions with retries and observability."""
     if stream:
-        yield Log("Streaming mode for OpenRouter is not implemented yet")
+        yield Tell("Streaming mode for OpenRouter is not implemented yet")
         yield Fail(NotImplementedError("Streaming responses are not supported"))
 
-    yield Log(
+    yield Tell(
         f"OpenRouter chat request: model={model}, messages={len(messages)}, include_reasoning={include_reasoning}"
     )
 
@@ -133,9 +133,9 @@ def chat_completion(
         if safe_result.is_err():
             exc = safe_result.error
             if isinstance(exc, OpenRouterResponseError):
-                yield Log(f"OpenRouter responded with an error payload: {exc}")
+                yield Tell(f"OpenRouter responded with an error payload: {exc}")
                 yield Fail(exc)
-            yield Log(
+            yield Tell(
                 f"OpenRouter request raised {exc.__class__.__name__}: {exc}"
             )
             yield track_api_call(

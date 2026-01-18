@@ -216,7 +216,7 @@ def build_messages(
     Returns:
         List of message dictionaries for the API call
     """
-    yield Log(f"Building messages with {len(images) if images else 0} images")
+    yield Tell(f"Building messages with {len(images) if images else 0} images")
 
     messages = []
 
@@ -226,7 +226,7 @@ def build_messages(
     # Add images if provided
     if images:
         for i, img in enumerate(images):
-            yield Log(f"Converting image {i+1}/{len(images)} to base64")
+            yield Tell(f"Converting image {i+1}/{len(images)} to base64")
             img_base64 = convert_pil_to_base64(img)
             content.append(
                 {
@@ -277,7 +277,7 @@ def build_api_parameters(
     Returns:
         Dictionary of API parameters ready for OpenAI API call
     """
-    yield Log(f"Building API parameters for model={model}")
+    yield Tell(f"Building API parameters for model={model}")
 
     # Build the API call parameters
     api_params = {
@@ -298,7 +298,7 @@ def build_api_parameters(
     ):
         # These models only support default temperature (1.0)
         if temperature != 1.0:
-            yield Log(f"{model} only supports temperature=1.0, ignoring temperature={temperature}")
+            yield Tell(f"{model} only supports temperature=1.0, ignoring temperature={temperature}")
     else:
         # Other models support custom temperature
         api_params["temperature"] = temperature
@@ -309,13 +309,13 @@ def build_api_parameters(
         # Ensure sufficient tokens for reasoning + output
         token_value = max(max_tokens, 500)  # Minimum 500 for these models
         api_params["max_completion_tokens"] = token_value
-        yield Log(f"Using max_completion_tokens={token_value} for model {model}")
+        yield Tell(f"Using max_completion_tokens={token_value} for model {model}")
 
         # Add GPT-5 thinking mode parameters
         if reasoning_effort:
             valid_efforts = ["minimal", "low", "medium", "high"]
             if reasoning_effort not in valid_efforts:
-                yield Log(f"Invalid reasoning_effort '{reasoning_effort}'. Valid options: {valid_efforts}")
+                yield Tell(f"Invalid reasoning_effort '{reasoning_effort}'. Valid options: {valid_efforts}")
             else:
                 api_params["reasoning_effort"] = reasoning_effort
                 effort_descriptions = {
@@ -324,38 +324,38 @@ def build_api_parameters(
                     "medium": "Balanced reasoning for most cases.",
                     "high": "Deep reasoning for complex problems.",
                 }
-                yield Log(f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions[reasoning_effort]}")
+                yield Tell(f"Using reasoning_effort='{reasoning_effort}': {effort_descriptions[reasoning_effort]}")
 
         if verbosity:
             valid_verbosity = ["low", "medium", "high"]
             if verbosity not in valid_verbosity:
-                yield Log(f"Invalid verbosity '{verbosity}'. Valid options: {valid_verbosity}")
+                yield Tell(f"Invalid verbosity '{verbosity}'. Valid options: {valid_verbosity}")
             else:
                 api_params["verbosity"] = verbosity
-                yield Log(f"Using verbosity='{verbosity}' for output detail control")
+                yield Tell(f"Using verbosity='{verbosity}' for output detail control")
     else:
         # Other models use max_tokens
         api_params["max_tokens"] = max_tokens
-        yield Log(f"Using max_tokens={max_tokens} for model {model}")
+        yield Tell(f"Using max_tokens={max_tokens} for model {model}")
 
         # Warn if GPT-5 specific parameters are used with non-GPT-5 models
         if reasoning_effort:
-            yield Log(f"reasoning_effort parameter is only supported for GPT-5 models, ignoring for {model}")
+            yield Tell(f"reasoning_effort parameter is only supported for GPT-5 models, ignoring for {model}")
         if verbosity:
-            yield Log(f"verbosity parameter is only supported for GPT-5 models, ignoring for {model}")
+            yield Tell(f"verbosity parameter is only supported for GPT-5 models, ignoring for {model}")
 
     # Add service_tier if provided
     if service_tier is not None:
         valid_service_tiers = ["auto", "default", "flex", "priority"]
         if service_tier not in valid_service_tiers:
-            yield Log(f"Invalid service_tier '{service_tier}'. Valid options: {valid_service_tiers}")
+            yield Tell(f"Invalid service_tier '{service_tier}'. Valid options: {valid_service_tiers}")
         else:
             api_params["service_tier"] = service_tier
-            yield Log(f"Using service_tier='{service_tier}' for request prioritization")
+            yield Tell(f"Using service_tier='{service_tier}' for request prioritization")
 
     # Handle structured output if requested
     if response_format is not None and issubclass(response_format, BaseModel):
-        yield Log(f"Using structured output with {response_format.__name__}")
+        yield Tell(f"Using structured output with {response_format.__name__}")
 
         # Get the JSON schema
         schema = response_format.model_json_schema()
@@ -416,7 +416,7 @@ def process_structured_response(
 
     @do
     def parse_json():
-        yield Log(f"Parsing JSON response for {response_format.__name__}")
+        yield Tell(f"Parsing JSON response for {response_format.__name__}")
 
         if isinstance(parse_source, str):
             parsed_json = json.loads(parse_source)
@@ -428,15 +428,15 @@ def process_structured_response(
         else:
             result_model = response_format(**parsed_json)
 
-        yield Log(f"Successfully parsed response as {response_format.__name__}")
+        yield Tell(f"Successfully parsed response as {response_format.__name__}")
         return result_model
 
     # Execute with Safe to handle errors
     safe_result = yield Safe(parse_json())
     if safe_result.is_err():
         e = safe_result.error
-        yield Log(f"Failed to parse structured response: {e}")
-        yield Log(f"Raw content: {raw_content_for_log}")
+        yield Tell(f"Failed to parse structured response: {e}")
+        yield Tell(f"Raw content: {raw_content_for_log}")
         yield Fail(e)
     return safe_result.value
 
@@ -459,7 +459,7 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
     text = " ".join(part.strip() for part in text_parts if part).strip()
 
     log_preview = _stringify_for_log(text, limit=100)
-    yield Log(f"Received response: {log_preview}")
+    yield Tell(f"Received response: {log_preview}")
 
     return text
 
@@ -534,7 +534,7 @@ def structured_llm__openai(
         - Retry: Handles transient failures
         - Safe: Handles parsing errors
     """
-    yield Log(f"structured_llm__openai called with model={model}, response_format={response_format}")
+    yield Tell(f"structured_llm__openai called with model={model}, response_format={response_format}")
 
     # Track in graph
     yield Step(
@@ -566,7 +566,7 @@ def structured_llm__openai(
     def make_api_call():
         # Track start time for this specific attempt
         attempt_start_time = time.time()
-        yield Log(f"Making OpenAI API call with model={model}")
+        yield Tell(f"Making OpenAI API call with model={model}")
 
         # Use Safe to handle errors and track them
         @do
@@ -609,8 +609,8 @@ def structured_llm__openai(
     if is_gpt5_model(model) and hasattr(response.usage, "completion_tokens_details"):
         details = response.usage.completion_tokens_details
         if hasattr(details, "reasoning_tokens"):
-            yield Log(f"GPT-5 reasoning tokens used: {details.reasoning_tokens}")
-            yield Log(f"GPT-5 output tokens: {details.output_tokens if hasattr(details, 'output_tokens') else 'N/A'}")
+            yield Tell(f"GPT-5 reasoning tokens used: {details.reasoning_tokens}")
+            yield Tell(f"GPT-5 output tokens: {details.output_tokens if hasattr(details, 'output_tokens') else 'N/A'}")
 
     # Phase 6: Process response based on format
     if response_format is not None and issubclass(response_format, BaseModel):

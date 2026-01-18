@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Ask, EffectGenerator, Fail, Get, Log, Put, Safe, do
+from doeff import Ask, EffectGenerator, Fail, Get, Tell, Put, Safe, do
 
 DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/cloud-platform",
@@ -99,7 +99,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
     if client_options is None:
         client_options = yield Get("secret_manager_client_options")
     if client_options is not None and not isinstance(client_options, dict):
-        yield Log("secret_manager_client_options must be a dict; ignoring provided value")
+        yield Tell("secret_manager_client_options must be a dict; ignoring provided value")
         client_options = None
 
     extra_kwargs = yield ask_optional("secret_manager_client_kwargs")
@@ -113,7 +113,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
             from google.auth import default as google_auth_default
             from google.auth.exceptions import DefaultCredentialsError
         except ModuleNotFoundError as exc:
-            yield Log(
+            yield Tell(
                 "google-auth is not installed; install google-auth or provide secret_manager_credentials"
             )
             yield Fail(exc)
@@ -121,13 +121,13 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
         try:
             adc_credentials, adc_project = google_auth_default(scopes=DEFAULT_SECRET_MANAGER_SCOPES)
         except DefaultCredentialsError as exc:
-            yield Log(
+            yield Tell(
                 "Failed to load Google Application Default Credentials for Secret Manager. "
                 "Run 'gcloud auth application-default login' or supply secret_manager_credentials."
             )
             yield Fail(exc)
 
-        yield Log("Using Google Application Default Credentials for Secret Manager")
+        yield Tell("Using Google Application Default Credentials for Secret Manager")
 
         if credentials is None:
             credentials = adc_credentials
@@ -135,7 +135,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
             project = adc_project
 
     if not project:
-        yield Log(
+        yield Tell(
             "Secret Manager project could not be determined. "
             "Set 'secret_manager_project' or configure ADC with a default project."
         )

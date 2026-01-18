@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image
 
-from doeff import Ask, AtomicGet, AtomicUpdate, Await, EffectGenerator, Fail, Log, Retry, Safe, Step, do
+from doeff import Ask, AtomicGet, AtomicUpdate, Await, EffectGenerator, Fail, Tell, Retry, Safe, Step, do
 
 from .client import SeedreamClient, get_seedream_client, track_api_call
 from .costs import CostEstimate, calculate_cost
@@ -234,7 +234,7 @@ def edit_image__seedream4(
     """
 
     if system_instruction or safety_settings or tools or tool_config or response_modalities:
-        yield Log(
+        yield Tell(
             "Seedream image generation ignores system/tool configuration parameters; "
             "pass provider-specific overrides via generation_config_overrides instead."
         )
@@ -260,7 +260,7 @@ def edit_image__seedream4(
 
     response_format = str(payload.get("response_format", DEFAULT_RESPONSE_FORMAT))
 
-    yield Log(
+    yield Tell(
         "Preparing Seedream image request using model=%s with %d reference image(s)" % (
             model,
             len(images) if images else 0,
@@ -405,7 +405,7 @@ def edit_image__seedream4(
             default_factory=list,
         )
 
-        yield Log(
+        yield Tell(
             "Seedream estimated cost $%.4f for %d image(s) (%s); cumulative total $%.4f"
             % (
                 cost_estimate.total_cost,

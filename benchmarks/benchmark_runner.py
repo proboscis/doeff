@@ -13,7 +13,7 @@ import time
 from typing import Iterable
 
 from doeff import ExecutionContext, ProgramInterpreter, do
-from doeff.effects import Ask, Log, Put
+from doeff.effects import Ask, Tell, Put
 
 
 @do
@@ -21,7 +21,7 @@ def _stateful_workload(iterations: int) -> int:
     value = yield Ask("seed")
     total = value
     for index in range(iterations):
-        yield Log(f"iteration:{index}")
+        yield Tell(f"iteration:{index}")
         yield Put("counter", index)
         total += index
     return total

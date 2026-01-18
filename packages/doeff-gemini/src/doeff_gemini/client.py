@@ -261,7 +261,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
             from google.auth import default as google_auth_default
             from google.auth.exceptions import DefaultCredentialsError
         except ModuleNotFoundError as exc:  # pragma: no cover - configuration issue
-            yield Log(
+            yield Tell(
                 "google-auth is not installed; install google-auth or set GEMINI API key"
             )
             yield Fail(exc)
@@ -269,16 +269,16 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
         try:
             adc_credentials, adc_project = google_auth_default()
         except DefaultCredentialsError as exc:
-            yield Log(
+            yield Tell(
                 "Failed to load Google Application Default Credentials. "
                 "Run 'gcloud auth application-default login' or provide a GEMINI API key."
             )
             yield Fail(exc)
 
-        yield Log("Using Google Application Default Credentials for Gemini client")
+        yield Tell("Using Google Application Default Credentials for Gemini client")
 
         if adc_project is None and project is None:
-            yield Log(
+            yield Tell(
                 "Google credentials found but project ID missing. Set 'gemini_project' or configure gcloud."
             )
             yield Fail(ValueError("Google project ID could not be determined."))
@@ -292,7 +292,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
     else:
         if vertexai is None:
             vertexai = False
-        yield Log("Using Gemini API key authentication")
+        yield Tell("Using Gemini API key authentication")
 
     if location is None:
         location = DEFAULT_LOCATION if vertexai else None
@@ -513,7 +513,7 @@ def track_api_call(
             log_line += f", cost=${cost_info.total_cost:.6f}"
         yield slog(msg=log_line)
 
-    yield Log(
+    yield Tell(
         GeminiAPIPayloadLog(
             operation=operation,
             model=model,

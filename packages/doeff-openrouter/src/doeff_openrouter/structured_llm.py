@@ -104,24 +104,24 @@ def build_messages(
     """Construct OpenRouter chat messages for the request."""
     messages: list[dict[str, Any]] = []
     if system_prompt:
-        yield Log("Adding system prompt to OpenRouter request")
+        yield Tell("Adding system prompt to OpenRouter request")
         messages.append({"role": "system", "content": system_prompt})
 
     parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
     if images:
-        yield Log(f"Embedding {len(images)} image(s) into request")
+        yield Tell(f"Embedding {len(images)} image(s) into request")
         for idx, image in enumerate(images):
             try:
                 data_url = convert_pil_to_base64(image)
             except Exception as exc:  # pragma: no cover - defensive
-                yield Log(f"Failed to encode image {idx + 1}: {exc}")
+                yield Tell(f"Failed to encode image {idx + 1}: {exc}")
                 raise exc
             parts.append({"type": "image_url", "image_url": {"url": data_url}})
 
     messages.append({"role": "user", "content": parts})
 
     if extra_messages:
-        yield Log(f"Appending {len(extra_messages)} extra message(s) to conversation")
+        yield Tell(f"Appending {len(extra_messages)} extra message(s) to conversation")
         messages.extend(extra_messages)
 
     return messages
@@ -236,20 +236,20 @@ def process_structured_response(
     try:
         choice = _first_choice(response)
     except RuntimeError as exc:
-        yield Log("OpenRouter response did not contain choices")
+        yield Tell("OpenRouter response did not contain choices")
         raise exc
 
     try:
         message = _message_from_choice(choice)
     except RuntimeError as exc:
-        yield Log(str(exc))
+        yield Tell(str(exc))
         raise
 
     candidate_payload: Any
     preview_source = ""
     parsed = message.get("parsed")
     if parsed not in (None, {}):
-        yield Log("Ignoring unexpected OpenRouter parsed payload; using content field instead")
+        yield Tell("Ignoring unexpected OpenRouter parsed payload; using content field instead")
     content = message.get("content")
     if not isinstance(content, str):
         raise RuntimeError("OpenRouter structured responses must provide string message content")
@@ -262,14 +262,14 @@ def process_structured_response(
     try:
         candidate_payload = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        yield Log(f"JSON decoding failed: {exc}. Payload preview: {preview_source}")
+        yield Tell(f"JSON decoding failed: {exc}. Payload preview: {preview_source}")
         raise StructuredOutputParsingError("OpenRouter response did not contain valid JSON content") from exc
 
     try:
         result = _validate_with_model(response_format, candidate_payload)
     except ValidationError as exc:
-        yield Log(f"Structured response validation failed: {exc}")
-        yield Log(f"Payload preview: {preview_source}")
+        yield Tell(f"Structured response validation failed: {exc}")
+        yield Tell(f"Payload preview: {preview_source}")
         raise exc
 
     return result
@@ -293,7 +293,7 @@ def structured_llm(
     **kwargs: Any,
 ) -> EffectGenerator[Any]:
     """High-level helper that produces structured results with OpenRouter."""
-    yield Log(f"Preparing structured request for model={model}")
+    yield Tell(f"Preparing structured request for model={model}")
     messages = yield build_messages(
         text,
         system_prompt=system_prompt,
@@ -307,7 +307,7 @@ def structured_llm(
     )
     if expects_structure:
         response_format_payload = build_response_format_payload(response_format)
-        yield Log("Attached JSON schema payload for structured output")
+        yield Tell("Attached JSON schema payload for structured output")
 
     response = yield chat_completion(
         messages=messages,

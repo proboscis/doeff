@@ -6,12 +6,12 @@ over theoretical purity. Uses generators for do-notation and supports comprehens
 effects including Reader, State, Writer, Future, Result, and IO.
 
 Example:
-    >>> from doeff import do, Program, Put, Get, Log
+    >>> from doeff import do, Program, Put, Get, Tell
     >>>
     >>> @do
     >>> def example_program():
     ...     yield Put("counter", 0)
-    ...     yield Log("Starting computation")
+    ...     yield Tell("Starting computation")
     ...     count = yield Get("counter")
     ...     return count + 1
 """
@@ -55,7 +55,6 @@ from doeff.effects import (
     Modify,
     AtomicGet,
     AtomicUpdate,
-    Log,
     StructuredLog,
     Tell,
     Listen,
