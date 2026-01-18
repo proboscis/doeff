@@ -1331,3 +1331,62 @@ class TestAsyncRuntimeStoreSnapshotBug:
         assert result == "async_complete"
         assert final_counter == 2
         assert updates_sequence == [("initial", 1), ("after_await", 2)]
+
+    @pytest.mark.asyncio
+    async def test_safe_catches_coroutine_exceptions(self) -> None:
+        """Safe should catch exceptions raised by coroutines in Await."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def failing_coro() -> str:
+            raise ValueError("boom from coroutine")
+
+        @do
+        def program():
+            result = yield Safe(Await(failing_coro()))
+            return result
+
+        result = await runtime.run(program())
+        
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert str(result.error) == "boom from coroutine"
+
+    @pytest.mark.asyncio
+    async def test_coroutine_exception_preserves_store(self) -> None:
+        """Coroutine exceptions should not rollback store changes."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def failing_after_delay() -> str:
+            await asyncio.sleep(0.01)
+            raise ValueError("delayed failure")
+
+        @do
+        def modifier_task():
+            yield Put("value", "modified")
+            return "done"
+
+        @do
+        def failing_task():
+            result = yield Await(failing_after_delay())
+            return result
+
+        @do
+        def program():
+            yield Put("value", "initial")
+            
+            results = yield Safe(Gather(
+                failing_task(),
+                modifier_task(),
+            ))
+            
+            final_value = yield Get("value")
+            return (results, final_value)
+
+        results, final_value = await runtime.run(program())
+        
+        assert final_value == "modified"
+        assert results.is_err()
