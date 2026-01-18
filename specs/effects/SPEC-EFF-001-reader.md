@@ -16,6 +16,31 @@
 yield Ask("missing")  # Raises MissingEnvKeyError (subclass of KeyError)
 ```
 
+### Lazy Program Evaluation
+If env value is a `Program`, Ask evaluates it and caches the result:
+
+```python
+@do
+def expensive():
+    yield Delay(1.0)
+    return 42
+
+env = {"service": expensive()}
+
+val1 = yield Ask("service")  # Evaluates expensive(), caches result
+val2 = yield Ask("service")  # Returns cached 42 (no re-evaluation)
+```
+
+| Aspect | Behavior |
+|--------|----------|
+| Scope | Per `runtime.run()` invocation |
+| Key | Same as Ask key (any hashable) |
+| Invalidation | Local override with different Program object |
+| Concurrency | Protected - simultaneous Ask waits, doesn't re-execute |
+| Errors | Program failure = entire `run()` fails |
+
+**Implementation:** #190 (AsyncRuntime), #191 (SyncRuntime), #192 (SimulationRuntime)
+
 ## Composition Rules
 
 | Composition | Behavior |
