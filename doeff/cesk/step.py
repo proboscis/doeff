@@ -13,6 +13,7 @@ from doeff._types_internal import EffectBase, ListenResult
 from doeff.cesk.types import Store, TaskId
 from doeff.cesk.frames import (
     GatherFrame,
+    GraphCaptureFrame,
     InterceptFrame,
     Kontinuation,
     ListenFrame,
@@ -68,6 +69,7 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             ResultSafeEffect,
             WriterListenEffect,
         )
+        from doeff.effects.graph import GraphCaptureEffect
 
         if isinstance(effect, LocalEffect):
             new_env = E | FrozenDict(effect.env_update)
@@ -113,6 +115,15 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 E=E,
                 S=S,
                 K=[SafeFrame(E)] + K,
+            )
+
+        if isinstance(effect, GraphCaptureEffect):
+            graph_start = len(S.get("__graph__", []))
+            return CESKState(
+                C=ProgramControl(effect.program),
+                E=E,
+                S=S,
+                K=[GraphCaptureFrame(graph_start)] + K,
             )
 
         if not is_control_flow_effect(effect) and has_intercept_frame(K):
@@ -278,6 +289,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             listen_result = ListenResult(value=C.v, log=BoundedLog(captured))
             return CESKState(C=Value(listen_result), E=E, S=S, K=K_rest)
 
+        if isinstance(frame, GraphCaptureFrame):
+            current_graph = S.get("__graph__", [])
+            captured_graph = current_graph[frame.graph_start_index:]
+            return CESKState(C=Value((C.v, captured_graph)), E=E, S=S, K=K_rest)
+
         if isinstance(frame, GatherFrame):
             if not frame.remaining_programs:
                 final_results = frame.collected_results + [C.v]
@@ -357,6 +373,9 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
         if isinstance(frame, GatherFrame):
             return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.saved_env, S=S, K=K_rest)
+
+        if isinstance(frame, GraphCaptureFrame):
+            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
 
         if isinstance(frame, SafeFrame):
             from doeff.cesk_traceback import capture_traceback_safe
