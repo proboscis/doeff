@@ -35,7 +35,7 @@ def default_handlers() -> dict[type, Handler]:
     from doeff.effects.reader import AskEffect, LocalEffect
     from doeff.effects.result import ResultSafeEffect
     from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
-    from doeff.effects.time import DelayEffect, GetTimeEffect
+    from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
     from doeff.effects.writer import WriterListenEffect, WriterTellEffect
 
     from doeff.cesk.handlers.atomic import handle_atomic_get, handle_atomic_update
@@ -71,7 +71,7 @@ def default_handlers() -> dict[type, Handler]:
         handle_io,
     )
     from doeff.cesk.handlers.task import handle_gather
-    from doeff.cesk.handlers.time import handle_delay, handle_get_time
+    from doeff.cesk.handlers.time import handle_delay, handle_get_time, handle_wait_until
 
     return {
         PureEffect: handle_pure,
@@ -92,6 +92,7 @@ def default_handlers() -> dict[type, Handler]:
         CacheDeleteEffect: handle_cache_delete,
         DelayEffect: handle_delay,
         GetTimeEffect: handle_get_time,
+        WaitUntilEffect: handle_wait_until,
         AtomicGetEffect: handle_atomic_get,
         AtomicUpdateEffect: handle_atomic_update,
         GraphStepEffect: handle_graph_step,
