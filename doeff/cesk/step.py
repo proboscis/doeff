@@ -50,6 +50,18 @@ if TYPE_CHECKING:
     from doeff.program import Program
 
 
+def _make_suspended(effect: Any, E: Any, S: Any, K: Any) -> Suspended:
+    return Suspended(
+        effect=effect,
+        resume=lambda v, new_store, E=E, K=K: CESKState(
+            C=Value(v), E=E, S=new_store, K=K
+        ),
+        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
+            C=Error(ex), E=E, S=S, K=K
+        ),
+    )
+
+
 def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResult:
     C, E, S, K = state.C, state.E, state.S, state.K
 
@@ -78,15 +90,7 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 has_handler = (handlers is not None and type(transformed) in handlers) or is_pure_effect(transformed) or is_effectful(transformed)
 
                 if has_handler:
-                    return Suspended(
-                        effect=transformed,
-                        resume=lambda v, new_store, E=E, K=K: CESKState(
-                            C=Value(v), E=E, S=new_store, K=K
-                        ),
-                        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                            C=Error(ex), E=E, S=S, K=K
-                        ),
-                    )
+                    return _make_suspended(transformed, E, S, K)
 
                 unhandled_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
                 captured = capture_traceback_safe(K, unhandled_ex)
@@ -112,15 +116,7 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
         has_handler = (handlers is not None and type(effect) in handlers) or is_pure_effect(effect) or is_effectful(effect)
 
         if has_handler:
-            return Suspended(
-                effect=effect,
-                resume=lambda v, new_store, E=E, K=K: CESKState(
-                    C=Value(v), E=E, S=new_store, K=K
-                ),
-                resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-                    C=Error(ex), E=E, S=S, K=K
-                ),
-            )
+            return _make_suspended(effect, E, S, K)
 
         from doeff.cesk_traceback import capture_traceback_safe
 

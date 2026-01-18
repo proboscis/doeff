@@ -5,11 +5,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from doeff.cesk.runtime.base import BaseRuntime
-from doeff.cesk.state import CESKState, TaskState
+from doeff.cesk.state import CESKState, TaskState, ProgramControl
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram
+from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram, FrameResult
 from doeff.cesk.types import Store, TaskId
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
@@ -107,19 +107,7 @@ class AsyncRuntime(BaseRuntime):
                     if effect_type in self._user_handlers:
                         task_state = state.tasks[task_id]
                         dispatch_result = self._dispatch_effect(effect, task_state, state.store)
-                        if isinstance(dispatch_result, ContinueError):
-                            new_single = result.resume_error(dispatch_result.error)
-                        elif isinstance(dispatch_result, ContinueProgram):
-                            from doeff.cesk.state import ProgramControl
-                            state = self._merge_task(state, task_id, CESKState(
-                                C=ProgramControl(dispatch_result.program),
-                                E=dispatch_result.env,
-                                S=dispatch_result.store,
-                                K=dispatch_result.k,
-                            ))
-                        elif isinstance(dispatch_result, ContinueValue):
-                            new_single = result.resume(dispatch_result.value, dispatch_result.store)
-                            state = self._merge_task(state, task_id, new_single)
+                        state = self._apply_dispatch_result(state, task_id, result, dispatch_result)
                         continue
 
                     if isinstance(effect, GatherEffect):
@@ -157,20 +145,7 @@ class AsyncRuntime(BaseRuntime):
 
                     task_state = state.tasks[task_id]
                     dispatch_result = self._dispatch_effect(effect, task_state, state.store)
-                    if isinstance(dispatch_result, ContinueError):
-                        new_single = result.resume_error(dispatch_result.error)
-                        state = self._merge_task(state, task_id, new_single)
-                    elif isinstance(dispatch_result, ContinueProgram):
-                        from doeff.cesk.state import ProgramControl
-                        state = self._merge_task(state, task_id, CESKState(
-                            C=ProgramControl(dispatch_result.program),
-                            E=dispatch_result.env,
-                            S=dispatch_result.store,
-                            K=dispatch_result.k,
-                        ))
-                    elif isinstance(dispatch_result, ContinueValue):
-                        new_single = result.resume(dispatch_result.value, dispatch_result.store)
-                        state = self._merge_task(state, task_id, new_single)
+                    state = self._apply_dispatch_result(state, task_id, result, dispatch_result)
                     continue
 
             if pending_async:
@@ -250,6 +225,28 @@ class AsyncRuntime(BaseRuntime):
             futures=state.futures,
             spawn_results=state.spawn_results,
         )
+
+    def _apply_dispatch_result(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        suspended: Suspended,
+        dispatch_result: FrameResult,
+    ) -> CESKState:
+        if isinstance(dispatch_result, ContinueError):
+            new_single = suspended.resume_error(dispatch_result.error)
+            return self._merge_task(state, task_id, new_single)
+        if isinstance(dispatch_result, ContinueProgram):
+            return self._merge_task(state, task_id, CESKState(
+                C=ProgramControl(dispatch_result.program),
+                E=dispatch_result.env,
+                S=dispatch_result.store,
+                K=dispatch_result.k,
+            ))
+        if isinstance(dispatch_result, ContinueValue):
+            new_single = suspended.resume(dispatch_result.value, dispatch_result.store)
+            return self._merge_task(state, task_id, new_single)
+        raise RuntimeError(f"Unexpected dispatch result type: {type(dispatch_result)}")
 
     def _check_gather_complete(
         self,
