@@ -16,7 +16,7 @@ from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
 from doeff.effects.result import Safe
-from doeff.effects.writer import Log, slog
+from doeff.effects.writer import Tell, slog
 from doeff.types import EffectCreationContext, EffectGenerator
 
 
@@ -155,7 +155,7 @@ def cache(
         >>> @cache(ttl=60, lifecycle="session")
         ... @do
         ... def expensive_computation(x: int) -> EffectGenerator[int]:
-        ...     yield Log(f"Computing result for {x}")
+        ...     yield Tell(f"Computing result for {x}")
         ...     return x * 2
         >>> await ProgramInterpreter().run(expensive_computation(5))
         

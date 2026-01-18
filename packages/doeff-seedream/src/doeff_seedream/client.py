@@ -165,7 +165,7 @@ def get_seedream_client() -> EffectGenerator[SeedreamClient]:
         default_headers = yield Get("seedream_default_headers")
 
     if default_headers is not None and not isinstance(default_headers, Mapping):
-        yield Log("Ignoring seedream_default_headers because it is not a mapping")
+        yield Tell("Ignoring seedream_default_headers because it is not a mapping")
         default_headers = None
 
     client = SeedreamClient(
@@ -236,7 +236,7 @@ def track_api_call(
     if error:
         meta["error"] = repr(error)
 
-    yield Log(
+    yield Tell(
         "Seedream %s %s in %.0f ms" % (
             operation,
             "failed" if error else "succeeded",

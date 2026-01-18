@@ -33,7 +33,6 @@ from doeff.effects import (
     IO,
     Listen,
     Local,
-    Log,
     Modify,
     Pure,
     Put,
@@ -187,7 +186,7 @@ class TestAsyncRuntimeCoreEffects:
 
         @do
         def program():
-            yield Log("message1")
+            yield Tell("message1")
             yield Tell("message2")
             return "done"
 
@@ -203,8 +202,8 @@ class TestAsyncRuntimeCoreEffects:
 
         @do
         def inner_program():
-            yield Log("inner_log_1")
-            yield Log("inner_log_2")
+            yield Tell("inner_log_1")
+            yield Tell("inner_log_2")
             return "inner_result"
 
         @do
@@ -797,7 +796,7 @@ class TestAsyncRuntimeIntegration:
             yield Put("value", base)
             doubled = yield Await(async_multiply(base))
             yield Modify("value", lambda x: x + doubled)
-            yield Log(f"Computed: {doubled}")
+            yield Tell(f"Computed: {doubled}")
             final = yield Get("value")
             return final
 

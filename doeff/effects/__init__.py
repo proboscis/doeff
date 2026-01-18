@@ -85,7 +85,6 @@ from .time import (
 )
 from .writer import (
     Listen,
-    Log,
     StructuredLog,
     Tell,
     WriterListenEffect,
@@ -142,7 +141,6 @@ __all__ = [
     "Listen",
     "Local",
     "LocalEffect",
-    "Log",
     "Modify",
     "Pure",
     "PureEffect",

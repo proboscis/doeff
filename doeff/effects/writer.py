@@ -56,10 +56,6 @@ def Listen(sub_program: ProgramLike) -> Effect:
     return create_effect_with_trace(WriterListenEffect(sub_program=sub_program), skip_frames=3)
 
 
-def Log(message: object) -> Effect:
-    return create_effect_with_trace(WriterTellEffect(message=message), skip_frames=3)
-
-
 def slog(**entries: object) -> WriterTellEffect:
     payload = dict(entries)
     return create_effect_with_trace(WriterTellEffect(message=payload))
@@ -77,7 +73,6 @@ __all__ = [
     "listen",
     "Tell",
     "Listen",
-    "Log",
     "slog",
     "StructuredLog",
 ]

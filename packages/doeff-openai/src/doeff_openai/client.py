@@ -255,14 +255,14 @@ def track_api_call(
 
     # Log the API call
     if error:
-        yield Log(f"OpenAI API error: operation={operation}, model={model}, error={error!s}, latency={latency_ms:.2f}ms")
+        yield Tell(f"OpenAI API error: operation={operation}, model={model}, error={error!s}, latency={latency_ms:.2f}ms")
     else:
         log_msg = f"OpenAI API call: operation={operation}, model={model}, latency={latency_ms:.2f}ms"
         if token_usage:
             log_msg += f", tokens={token_usage.total_tokens}"
         if cost_info:
             log_msg += f", cost=${cost_info.total_cost:.6f}"
-        yield Log(log_msg)
+        yield Tell(log_msg)
 
     # Create Graph step with full metadata
     graph_metadata = metadata.to_graph_metadata()
@@ -383,5 +383,5 @@ def get_model_cost(model: str) -> EffectGenerator[float]:
 def reset_cost_tracking() -> EffectGenerator[None]:
     """Reset all cost tracking state."""
     yield Put("total_openai_cost", 0.0)
-    yield Log("Reset OpenAI cost tracking")
+    yield Tell("Reset OpenAI cost tracking")
     return None

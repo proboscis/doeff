@@ -1,0 +1,666 @@
+"""Tests for Writer effect semantics (SPEC-EFF-003-writer).
+
+This module tests the composition rules and semantics for Writer effects:
+- Tell - append messages to the writer log
+- Listen - capture logs from a sub-program
+
+Tested compositions:
+- Listen + Tell
+- Listen + Local
+- Listen + Safe (success and error)
+- Listen + Gather (sync and async)
+- Listen + Listen (nested)
+
+Reference: specs/effects/SPEC-EFF-003-writer.md
+Related issue: gh#176
+"""
+
+import pytest
+
+from doeff import do, Program
+from doeff.effects import (
+    Ask,
+    Gather,
+    Get,
+    Listen,
+    Local,
+    Put,
+    Safe,
+    Tell,
+)
+from doeff.effects.writer import StructuredLog, slog
+
+
+class TestWriterBasics:
+    """Basic Writer effect tests."""
+
+    def test_log_appends_to_store(self) -> None:
+        """Log effect appends message to __log__ in store."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            yield Tell("message1")
+            yield Tell("message2")
+            return "done"
+
+        result = runtime.run(program())
+        assert result == "done"
+
+    def test_tell_appends_to_store(self) -> None:
+        """Tell effect appends message to __log__ in store."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            yield Tell("message1")
+            yield Tell({"key": "value"})
+            return "done"
+
+        result = runtime.run(program())
+        assert result == "done"
+
+    def test_log_and_tell_are_equivalent(self) -> None:
+        """Log and Tell produce identical effects."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def program_with_log():
+            yield Tell("test")
+            result = yield Listen(Program.pure("inner"))
+            return result
+
+        @do
+        def program_with_tell():
+            yield Tell("test")
+            result = yield Listen(Program.pure("inner"))
+            return result
+
+        # Verify both behave identically
+        result1 = runtime.run(program_with_log())
+        result2 = runtime.run(program_with_tell())
+
+        assert result1.value == result2.value
+
+    def test_structured_log(self) -> None:
+        """StructuredLog creates dictionary log entry."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield StructuredLog(action="test", value=42)
+            return "done"
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert result.value == "done"
+        assert len(result.log) == 1
+        assert result.log[0] == {"action": "test", "value": 42}
+
+    def test_slog_alias(self) -> None:
+        """slog is an alias for StructuredLog."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield slog(action="test", count=5)
+            return "done"
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert result.log[0] == {"action": "test", "count": 5}
+
+
+class TestListenPlusLog:
+    """Test Listen + Log composition."""
+
+    def test_listen_captures_single_log(self) -> None:
+        """Listen captures a single log message."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("captured")
+            return "result"
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert result.value == "result"
+        assert list(result.log) == ["captured"]
+
+    def test_listen_captures_multiple_logs(self) -> None:
+        """Listen captures multiple log messages in order."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("first")
+            yield Tell("second")
+            yield Tell("third")
+            return 42
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert result.value == 42
+        assert list(result.log) == ["first", "second", "third"]
+
+    def test_listen_captures_only_sub_program_logs(self) -> None:
+        """Listen only captures logs from its sub-program, not outer logs."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("inner")
+            return "inner_result"
+
+        @do
+        def program():
+            yield Tell("before")
+            result = yield Listen(inner())
+            yield Tell("after")
+            return result
+
+        result = runtime.run(program())
+        assert result.value == "inner_result"
+        # Listen only captures "inner", not "before" or "after"
+        assert list(result.log) == ["inner"]
+
+
+class TestListenPlusLocal:
+    """Test Listen + Local composition."""
+
+    def test_listen_captures_logs_within_local(self) -> None:
+        """Logs within Local scope are captured by Listen."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            key = yield Ask("key")
+            yield Tell(f"key is {key}")
+            return key
+
+        @do
+        def program():
+            result = yield Listen(Local({"key": "local_value"}, inner()))
+            return result
+
+        result = runtime.run(program())
+        assert result.value == "local_value"
+        assert list(result.log) == ["key is local_value"]
+
+    def test_listen_around_local_captures_all(self) -> None:
+        """Listen wrapping Local captures all logs from within."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("inside_local")
+            return "done"
+
+        @do
+        def program():
+            result = yield Listen(Local({"x": 1}, inner()))
+            return result
+
+        result = runtime.run(program())
+        assert list(result.log) == ["inside_local"]
+
+
+class TestListenPlusSafe:
+    """Test Listen + Safe composition."""
+
+    def test_listen_plus_safe_success(self) -> None:
+        """Listen + Safe captures logs on successful execution."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("processing")
+            return 42
+
+        @do
+        def program():
+            result = yield Listen(Safe(inner()))
+            return result
+
+        result = runtime.run(program())
+        assert result.value.is_ok()
+        assert result.value.unwrap() == 42
+        assert list(result.log) == ["processing"]
+
+    def test_listen_plus_safe_error_preserves_logs(self) -> None:
+        """Listen + Safe preserves logs even when Safe catches an error."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("before_error")
+            yield Tell("also_logged")
+            raise ValueError("test error")
+
+        @do
+        def program():
+            result = yield Listen(Safe(inner()))
+            return result
+
+        result = runtime.run(program())
+        # The value is an Err result
+        assert result.value.is_err()
+        assert isinstance(result.value.error, ValueError)
+        # But logs are preserved!
+        assert list(result.log) == ["before_error", "also_logged"]
+
+    def test_safe_plus_listen(self) -> None:
+        """Safe wrapping Listen also preserves logs on error."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("logged_before_fail")
+            raise RuntimeError("oops")
+
+        @do
+        def program():
+            # Safe around Listen
+            safe_result = yield Safe(Listen(inner()))
+            return safe_result
+
+        result = runtime.run(program())
+        # Safe catches the error
+        assert result.is_err()
+
+
+class TestListenPlusGather:
+    """Test Listen + Gather composition."""
+
+    def test_listen_gather_sync_sequential_logs(self) -> None:
+        """In SyncRuntime, Gather produces sequential logs."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def task(name: str):
+            yield Tell(f"{name}_start")
+            yield Tell(f"{name}_end")
+            return name
+
+        @do
+        def program():
+            result = yield Listen(Gather(task("A"), task("B"), task("C")))
+            return result
+
+        result = runtime.run(program())
+        assert result.value == ["A", "B", "C"]
+        # In sync runtime, logs are sequential
+        assert list(result.log) == [
+            "A_start", "A_end",
+            "B_start", "B_end",
+            "C_start", "C_end",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_listen_gather_async_logs_captured(self) -> None:
+        """In AsyncRuntime, Gather captures all logs (order may vary)."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def task(name: str):
+            yield Tell(f"{name}_log")
+            return name
+
+        @do
+        def program():
+            result = yield Listen(Gather(task("X"), task("Y")))
+            return result
+
+        result = await runtime.run(program())
+        assert sorted(result.value) == ["X", "Y"]
+        # All logs captured (order may be interleaved)
+        assert sorted(result.log) == ["X_log", "Y_log"]
+
+    def test_listen_empty_gather(self) -> None:
+        """Listen with empty Gather produces empty log."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            result = yield Listen(Gather())
+            return result
+
+        result = runtime.run(program())
+        assert result.value == []
+        assert list(result.log) == []
+
+
+class TestNestedListen:
+    """Test nested Listen (Listen + Listen) composition."""
+
+    def test_nested_listen_inner_captures_inner_logs(self) -> None:
+        """Inner Listen captures only its scope logs."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("inner1")
+            yield Tell("inner2")
+            return "inner_result"
+
+        @do
+        def middle():
+            yield Tell("middle_before")
+            inner_result = yield Listen(inner())
+            yield Tell("middle_after")
+            return inner_result
+
+        @do
+        def program():
+            result = yield Listen(middle())
+            return result
+
+        result = runtime.run(program())
+        # Outer listen captures all logs in its scope
+        assert list(result.log) == ["middle_before", "inner1", "inner2", "middle_after"]
+        # Result value is the inner ListenResult
+        inner_listen_result = result.value
+        assert inner_listen_result.value == "inner_result"
+        # Inner ListenResult only contains inner logs
+        assert list(inner_listen_result.log) == ["inner1", "inner2"]
+
+    def test_triple_nested_listen(self) -> None:
+        """Three levels of nested Listen work correctly."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def level3():
+            yield Tell("L3")
+            return "level3"
+
+        @do
+        def level2():
+            yield Tell("L2_before")
+            l3 = yield Listen(level3())
+            yield Tell("L2_after")
+            return l3
+
+        @do
+        def level1():
+            yield Tell("L1_before")
+            l2 = yield Listen(level2())
+            yield Tell("L1_after")
+            return l2
+
+        @do
+        def program():
+            result = yield Listen(level1())
+            return result
+
+        result = runtime.run(program())
+
+        # Outermost captures all
+        assert list(result.log) == ["L1_before", "L2_before", "L3", "L2_after", "L1_after"]
+
+        # Level 1 result
+        l1_result = result.value
+        assert list(l1_result.log) == ["L2_before", "L3", "L2_after"]
+
+        # Level 2 result (nested in Level 1)
+        l2_result = l1_result.value
+        assert list(l2_result.log) == ["L3"]
+        assert l2_result.value == "level3"
+
+    def test_sibling_listens(self) -> None:
+        """Two sibling Listen calls capture their respective logs."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def task_a():
+            yield Tell("A1")
+            yield Tell("A2")
+            return "A"
+
+        @do
+        def task_b():
+            yield Tell("B1")
+            return "B"
+
+        @do
+        def program():
+            result_a = yield Listen(task_a())
+            result_b = yield Listen(task_b())
+            return (result_a, result_b)
+
+        result = runtime.run(program())
+        result_a, result_b = result
+
+        assert result_a.value == "A"
+        assert list(result_a.log) == ["A1", "A2"]
+
+        assert result_b.value == "B"
+        assert list(result_b.log) == ["B1"]
+
+
+class TestWriterWithState:
+    """Test Writer effects interacting with State effects."""
+
+    def test_listen_with_state_changes(self) -> None:
+        """Listen captures logs while state is being modified."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Put("counter", 0)
+            yield Tell("initialized")
+            yield Put("counter", 1)
+            yield Tell("incremented")
+            value = yield Get("counter")
+            return value
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert result.value == 1
+        assert list(result.log) == ["initialized", "incremented"]
+
+    def test_state_persists_across_listen(self) -> None:
+        """State changes within Listen persist after Listen completes."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Put("key", "inner_value")
+            yield Tell("set_key")
+            return "done"
+
+        @do
+        def program():
+            yield Put("key", "initial")
+            _ = yield Listen(inner())
+            final = yield Get("key")
+            return final
+
+        result = runtime.run(program())
+        assert result == "inner_value"
+
+
+class TestListenResultStructure:
+    """Test the structure of ListenResult."""
+
+    def test_listen_result_has_value_and_log(self) -> None:
+        """ListenResult contains value and log attributes."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("test")
+            return {"data": 123}
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert hasattr(result, "value")
+        assert hasattr(result, "log")
+        assert result.value == {"data": 123}
+        assert "test" in result.log
+
+    def test_listen_result_log_is_iterable(self) -> None:
+        """ListenResult.log can be iterated and converted to list."""
+        from doeff.cesk.runtime import SyncRuntime
+
+        runtime = SyncRuntime()
+
+        @do
+        def inner():
+            yield Tell(1)
+            yield Tell(2)
+            yield Tell(3)
+            return "done"
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = runtime.run(program())
+        assert list(result.log) == [1, 2, 3]
+        # Can iterate multiple times
+        assert [x for x in result.log] == [1, 2, 3]
+
+
+class TestAsyncWriterSemantics:
+    """Test Writer semantics in AsyncRuntime."""
+
+    @pytest.mark.asyncio
+    async def test_async_listen_basic(self) -> None:
+        """Basic Listen works in AsyncRuntime."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("async_log")
+            return "async_result"
+
+        @do
+        def program():
+            result = yield Listen(inner())
+            return result
+
+        result = await runtime.run(program())
+        assert result.value == "async_result"
+        assert list(result.log) == ["async_log"]
+
+    @pytest.mark.asyncio
+    async def test_async_listen_plus_safe(self) -> None:
+        """Listen + Safe works in AsyncRuntime."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("before_fail")
+            raise ValueError("async_error")
+
+        @do
+        def program():
+            result = yield Listen(Safe(inner()))
+            return result
+
+        result = await runtime.run(program())
+        assert result.value.is_err()
+        assert list(result.log) == ["before_fail"]
+
+    @pytest.mark.asyncio
+    async def test_async_nested_listen(self) -> None:
+        """Nested Listen works in AsyncRuntime."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def inner():
+            yield Tell("inner")
+            return 42
+
+        @do
+        def outer():
+            yield Tell("outer_start")
+            result = yield Listen(inner())
+            yield Tell("outer_end")
+            return result
+
+        @do
+        def program():
+            result = yield Listen(outer())
+            return result
+
+        result = await runtime.run(program())
+        assert list(result.log) == ["outer_start", "inner", "outer_end"]
+        assert result.value.value == 42
+        assert list(result.value.log) == ["inner"]

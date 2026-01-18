@@ -210,11 +210,11 @@ def build_contents(
     from google.genai import types
 
     image_count = len(images) if images else 0
-    yield Log(f"Building Gemini prompt with {image_count} image(s)")
+    yield Tell(f"Building Gemini prompt with {image_count} image(s)")
     parts: list[Any] = []
     if images:
         for idx, image in enumerate(images):
-            yield Log(f"Embedding image {idx + 1}/{image_count}")
+            yield Tell(f"Embedding image {idx + 1}/{image_count}")
             parts.append(_image_to_part(image))
     parts.append(types.Part.from_text(text=text))
     contents = [types.Content(role="user", parts=parts)]
@@ -271,10 +271,10 @@ def build_generation_config(
     try:
         config = types.GenerateContentConfig(**config_data)
     except ValidationError as exc:
-        yield Log(f"Invalid Gemini generation configuration: {exc}")
+        yield Tell(f"Invalid Gemini generation configuration: {exc}")
         raise
 
-    yield Log(
+    yield Tell(
         "Generation config prepared: "
         + ", ".join(f"{key}={value}" for key, value in config_data.items() if value is not None)
     )
@@ -300,7 +300,7 @@ def process_structured_response(
 
         if candidate is not None:
             if isinstance(candidate, response_format):
-                yield Log("Gemini provided pre-parsed structured output")
+                yield Tell("Gemini provided pre-parsed structured output")
                 return candidate
             if isinstance(candidate, BaseModel):
                 payload = candidate.model_dump()
@@ -312,7 +312,7 @@ def process_structured_response(
                 payload = candidate
 
         preview = _stringify_for_log(payload, limit=200)
-        yield Log(f"Parsing structured payload from parsed field: {preview}")
+        yield Tell(f"Parsing structured payload from parsed field: {preview}")
     else:
         payload = _extract_json_payload_from_response(response)
 
@@ -324,7 +324,7 @@ def process_structured_response(
                 except json.JSONDecodeError:
                     preview = _stringify_for_log(stripped, limit=200)
                     raw_content_for_error = stripped
-                    yield Log("Gemini json payload could not be decoded")
+                    yield Tell("Gemini json payload could not be decoded")
                     raise GeminiStructuredOutputError(
                         format_name=format_name,
                         raw_content=stripped,
@@ -338,15 +338,15 @@ def process_structured_response(
         if payload is None:
             raw_text = _extract_text_from_response(response)
             preview = _stringify_for_log(raw_text, limit=200)
-            yield Log(f"Parsing Gemini structured response fall back to text: {preview}")
+            yield Tell(f"Parsing Gemini structured response fall back to text: {preview}")
             stripped = raw_text.strip()
             raw_content_for_error = raw_text
             if stripped and stripped[0] in "[{":
                 try:
                     payload = json.loads(stripped)
                 except json.JSONDecodeError:
-                    yield Log("Gemini response text was not valid JSON")
-                    yield Log(f"Raw content: {preview}")
+                    yield Tell("Gemini response text was not valid JSON")
+                    yield Tell(f"Raw content: {preview}")
                     raise GeminiStructuredOutputError(
                         format_name=format_name,
                         raw_content=raw_text,
@@ -355,7 +355,7 @@ def process_structured_response(
                         ),
                     )
             else:
-                yield Log("Gemini response did not include JSON payload")
+                yield Tell("Gemini response did not include JSON payload")
                 raise GeminiStructuredOutputError(
                     format_name=format_name,
                     raw_content=raw_text,
@@ -371,8 +371,8 @@ def process_structured_response(
             result = response_format(**payload)
     except ValidationError as exc:
         preview = _stringify_for_log(payload, limit=200)
-        yield Log(f"Structured response validation error: {exc}")
-        yield Log(f"Raw content: {preview}")
+        yield Tell(f"Structured response validation error: {exc}")
+        yield Tell(f"Raw content: {preview}")
         raise
     return result
 
@@ -382,7 +382,7 @@ def process_unstructured_response(response: Any) -> EffectGenerator[str]:
     """Return the best-effort textual output from the Gemini response."""
     text = _extract_text_from_response(response)
     preview = _stringify_for_log(text, limit=200)
-    yield Log(f"Received Gemini response: {preview}")
+    yield Tell(f"Received Gemini response: {preview}")
     return text
 
 
@@ -401,7 +401,7 @@ def _gemini_json_fix(
 ) -> EffectGenerator[Any]:
     """Default Gemini-backed JSON repair routine."""
 
-    yield Log("Attempting Gemini structured output repair with second call")
+    yield Tell("Attempting Gemini structured output repair with second call")
 
     client = yield get_gemini_client()
     async_client = client.async_client
@@ -568,9 +568,9 @@ def repair_structured_response(
     sllm_for_json_fix = safe_sllm.value if safe_sllm.is_ok() else fallback_sllm
 
     if sllm_for_json_fix is fallback_sllm:
-        yield Log("sllm_for_json_fix not provided. Falling back to default Gemini repair")
+        yield Tell("sllm_for_json_fix not provided. Falling back to default Gemini repair")
     else:
-        yield Log("Using environment-provided sllm_for_json_fix for structured repair")
+        yield Tell("Using environment-provided sllm_for_json_fix for structured repair")
 
     fixed_value = yield sllm_for_json_fix(malformed_content, response_format=response_format)
 
@@ -593,7 +593,7 @@ def repair_structured_response(
             payload = json.loads(fixed_text)
         except json.JSONDecodeError as exc:  # pragma: no cover - defensive logging
             preview = _stringify_for_log(fixed_text, limit=200)
-            yield Log(f"sllm_for_json_fix returned non-JSON payload: {preview}")
+            yield Tell(f"sllm_for_json_fix returned non-JSON payload: {preview}")
             raise ValueError("sllm_for_json_fix returned invalid JSON") from exc
 
     if payload is None:
@@ -606,8 +606,8 @@ def repair_structured_response(
             result = response_format(**payload)
     except ValidationError as exc:
         preview = _stringify_for_log(payload, limit=200)
-        yield Log(f"Structured response validation error after repair: {exc}")
-        yield Log(f"Raw content: {preview}")
+        yield Tell(f"Structured response validation error after repair: {exc}")
+        yield Tell(f"Raw content: {preview}")
         raise
 
     return result
@@ -669,12 +669,12 @@ def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEdi
             mime_type = mime or "image/png"
 
     if image_bytes is None or mime_type is None:
-        yield Log("Gemini response did not include edited image data")
+        yield Tell("Gemini response did not include edited image data")
         yield Fail(ValueError("Gemini response missing edited image"))
 
     combined_text = "\n".join(text_fragments) if text_fragments else None
     text_preview = _stringify_for_log(combined_text, limit=200)
-    yield Log(f"Gemini image edit text preview: {text_preview}")
+    yield Tell(f"Gemini image edit text preview: {text_preview}")
 
     return GeminiImageEditResult(
         image_bytes=image_bytes,
@@ -702,7 +702,7 @@ def structured_llm__gemini(
     max_retries: int = 3,
 ) -> EffectGenerator[Any]:
     """High level helper mirroring ``structured_llm__openai`` for Gemini models."""
-    yield Log(f"Preparing Gemini structured call using model={model}")
+    yield Tell(f"Preparing Gemini structured call using model={model}")
 
     client = yield get_gemini_client()
     async_client = client.async_client
@@ -883,7 +883,7 @@ def edit_image__gemini(
 ) -> EffectGenerator[GeminiImageEditResult]:
     """Generate or edit an image using Gemini multimodal models."""
 
-    yield Log(
+    yield Tell(
         "Preparing Gemini image edit call using model="
         f"{model} with {len(images) if images else 0} input image(s)"
     )
