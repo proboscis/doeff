@@ -116,7 +116,7 @@ from doeff.cesk.errors import (
     UnhandledEffectError,
 )
 from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.runtime import BaseRuntime, SyncRuntime, SimulationRuntime
+from doeff.cesk.runtime import BaseRuntime, SyncRuntime, SimulationRuntime, AsyncRuntime
 
 __all__ = [
     # Types
@@ -227,4 +227,5 @@ __all__ = [
     "BaseRuntime",
     "SyncRuntime",
     "SimulationRuntime",
+    "AsyncRuntime",
 ]
