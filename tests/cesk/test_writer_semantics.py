@@ -47,7 +47,7 @@ class TestWriterBasics:
             return "done"
 
         result = runtime.run(program())
-        assert result == "done"
+        assert result.value == "done"
 
     def test_tell_appends_to_store(self) -> None:
         """Tell effect appends message to __log__ in store."""
@@ -62,7 +62,7 @@ class TestWriterBasics:
             return "done"
 
         result = runtime.run(program())
-        assert result == "done"
+        assert result.value == "done"
 
     def test_log_and_tell_are_equivalent(self) -> None:
         """Log and Tell produce identical effects."""
@@ -86,7 +86,7 @@ class TestWriterBasics:
         result1 = runtime.run(program_with_log())
         result2 = runtime.run(program_with_tell())
 
-        assert result1.value == result2.value
+        assert result1.value.value == result2.value.value
 
     def test_structured_log(self) -> None:
         """StructuredLog creates dictionary log entry."""
@@ -105,9 +105,10 @@ class TestWriterBasics:
             return result
 
         result = runtime.run(program())
-        assert result.value == "done"
-        assert len(result.log) == 1
-        assert result.log[0] == {"action": "test", "value": 42}
+        listen_result = result.value
+        assert listen_result.value == "done"
+        assert len(listen_result.log) == 1
+        assert listen_result.log[0] == {"action": "test", "value": 42}
 
     def test_slog_alias(self) -> None:
         """slog is an alias for StructuredLog."""
@@ -126,7 +127,8 @@ class TestWriterBasics:
             return result
 
         result = runtime.run(program())
-        assert result.log[0] == {"action": "test", "count": 5}
+        listen_result = result.value
+        assert listen_result.log[0] == {"action": "test", "count": 5}
 
 
 class TestListenPlusLog:
@@ -149,8 +151,9 @@ class TestListenPlusLog:
             return result
 
         result = runtime.run(program())
-        assert result.value == "result"
-        assert list(result.log) == ["captured"]
+        listen_result = result.value
+        assert listen_result.value == "result"
+        assert list(listen_result.log) == ["captured"]
 
     def test_listen_captures_multiple_logs(self) -> None:
         """Listen captures multiple log messages in order."""
@@ -171,8 +174,9 @@ class TestListenPlusLog:
             return result
 
         result = runtime.run(program())
-        assert result.value == 42
-        assert list(result.log) == ["first", "second", "third"]
+        listen_result = result.value
+        assert listen_result.value == 42
+        assert list(listen_result.log) == ["first", "second", "third"]
 
     def test_listen_captures_only_sub_program_logs(self) -> None:
         """Listen only captures logs from its sub-program, not outer logs."""
@@ -193,9 +197,10 @@ class TestListenPlusLog:
             return result
 
         result = runtime.run(program())
-        assert result.value == "inner_result"
+        listen_result = result.value
+        assert listen_result.value == "inner_result"
         # Listen only captures "inner", not "before" or "after"
-        assert list(result.log) == ["inner"]
+        assert list(listen_result.log) == ["inner"]
 
 
 class TestListenPlusLocal:
@@ -219,8 +224,9 @@ class TestListenPlusLocal:
             return result
 
         result = runtime.run(program())
-        assert result.value == "local_value"
-        assert list(result.log) == ["key is local_value"]
+        listen_result = result.value
+        assert listen_result.value == "local_value"
+        assert list(listen_result.log) == ["key is local_value"]
 
     def test_listen_around_local_captures_all(self) -> None:
         """Listen wrapping Local captures all logs from within."""
@@ -239,7 +245,8 @@ class TestListenPlusLocal:
             return result
 
         result = runtime.run(program())
-        assert list(result.log) == ["inside_local"]
+        listen_result = result.value
+        assert list(listen_result.log) == ["inside_local"]
 
 
 class TestListenPlusSafe:
@@ -262,9 +269,10 @@ class TestListenPlusSafe:
             return result
 
         result = runtime.run(program())
-        assert result.value.is_ok()
-        assert result.value.unwrap() == 42
-        assert list(result.log) == ["processing"]
+        listen_result = result.value
+        assert listen_result.value.is_ok()
+        assert listen_result.value.unwrap() == 42
+        assert list(listen_result.log) == ["processing"]
 
     def test_listen_plus_safe_error_preserves_logs(self) -> None:
         """Listen + Safe preserves logs even when Safe catches an error."""
@@ -284,11 +292,12 @@ class TestListenPlusSafe:
             return result
 
         result = runtime.run(program())
+        listen_result = result.value
         # The value is an Err result
-        assert result.value.is_err()
-        assert isinstance(result.value.error, ValueError)
+        assert listen_result.value.is_err()
+        assert isinstance(listen_result.value.error, ValueError)
         # But logs are preserved!
-        assert list(result.log) == ["before_error", "also_logged"]
+        assert list(listen_result.log) == ["before_error", "also_logged"]
 
     def test_safe_plus_listen(self) -> None:
         """Safe wrapping Listen also preserves logs on error."""
@@ -308,8 +317,9 @@ class TestListenPlusSafe:
             return safe_result
 
         result = runtime.run(program())
+        safe_result = result.value
         # Safe catches the error
-        assert result.is_err()
+        assert safe_result.is_err()
 
 
 class TestListenPlusGather:
@@ -333,9 +343,10 @@ class TestListenPlusGather:
             return result
 
         result = runtime.run(program())
-        assert result.value == ["A", "B", "C"]
+        listen_result = result.value
+        assert listen_result.value == ["A", "B", "C"]
         # In sync runtime, logs are sequential
-        assert list(result.log) == [
+        assert list(listen_result.log) == [
             "A_start", "A_end",
             "B_start", "B_end",
             "C_start", "C_end",
@@ -375,8 +386,9 @@ class TestListenPlusGather:
             return result
 
         result = runtime.run(program())
-        assert result.value == []
-        assert list(result.log) == []
+        listen_result = result.value
+        assert listen_result.value == []
+        assert list(listen_result.log) == []
 
 
 class TestNestedListen:
@@ -407,10 +419,11 @@ class TestNestedListen:
             return result
 
         result = runtime.run(program())
+        outer_listen = result.value
         # Outer listen captures all logs in its scope
-        assert list(result.log) == ["middle_before", "inner1", "inner2", "middle_after"]
+        assert list(outer_listen.log) == ["middle_before", "inner1", "inner2", "middle_after"]
         # Result value is the inner ListenResult
-        inner_listen_result = result.value
+        inner_listen_result = outer_listen.value
         assert inner_listen_result.value == "inner_result"
         # Inner ListenResult only contains inner logs
         assert list(inner_listen_result.log) == ["inner1", "inner2"]
@@ -446,12 +459,13 @@ class TestNestedListen:
             return result
 
         result = runtime.run(program())
+        outer_listen = result.value
 
         # Outermost captures all
-        assert list(result.log) == ["L1_before", "L2_before", "L3", "L2_after", "L1_after"]
+        assert list(outer_listen.log) == ["L1_before", "L2_before", "L3", "L2_after", "L1_after"]
 
         # Level 1 result
-        l1_result = result.value
+        l1_result = outer_listen.value
         assert list(l1_result.log) == ["L2_before", "L3", "L2_after"]
 
         # Level 2 result (nested in Level 1)
@@ -483,7 +497,7 @@ class TestNestedListen:
             return (result_a, result_b)
 
         result = runtime.run(program())
-        result_a, result_b = result
+        result_a, result_b = result.value
 
         assert result_a.value == "A"
         assert list(result_a.log) == ["A1", "A2"]
@@ -516,8 +530,9 @@ class TestWriterWithState:
             return result
 
         result = runtime.run(program())
-        assert result.value == 1
-        assert list(result.log) == ["initialized", "incremented"]
+        listen_result = result.value
+        assert listen_result.value == 1
+        assert list(listen_result.log) == ["initialized", "incremented"]
 
     def test_state_persists_across_listen(self) -> None:
         """State changes within Listen persist after Listen completes."""
@@ -539,7 +554,7 @@ class TestWriterWithState:
             return final
 
         result = runtime.run(program())
-        assert result == "inner_value"
+        assert result.value == "inner_value"
 
 
 class TestListenResultStructure:
@@ -562,10 +577,11 @@ class TestListenResultStructure:
             return result
 
         result = runtime.run(program())
-        assert hasattr(result, "value")
-        assert hasattr(result, "log")
-        assert result.value == {"data": 123}
-        assert "test" in result.log
+        listen_result = result.value
+        assert hasattr(listen_result, "value")
+        assert hasattr(listen_result, "log")
+        assert listen_result.value == {"data": 123}
+        assert "test" in listen_result.log
 
     def test_listen_result_log_is_iterable(self) -> None:
         """ListenResult.log can be iterated and converted to list."""
@@ -586,9 +602,10 @@ class TestListenResultStructure:
             return result
 
         result = runtime.run(program())
-        assert list(result.log) == [1, 2, 3]
+        listen_result = result.value
+        assert list(listen_result.log) == [1, 2, 3]
         # Can iterate multiple times
-        assert [x for x in result.log] == [1, 2, 3]
+        assert [x for x in listen_result.log] == [1, 2, 3]
 
 
 class TestAsyncWriterSemantics:
