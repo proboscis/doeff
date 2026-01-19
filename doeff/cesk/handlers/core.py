@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from doeff.cesk.errors import MissingEnvKeyError
-from doeff.cesk.frames import ContinueValue, FrameResult
+from doeff.cesk.frames import AskLazyFrame, ContinueProgram, ContinueValue, FrameResult
 from doeff.cesk.state import TaskState
 from doeff.cesk.types import Store
 from doeff.effects.pure import PureEffect
 from doeff.effects.reader import AskEffect
-from doeff.effects.state import StateGetEffect, StatePutEffect, StateModifyEffect
+from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
 
 
 def handle_pure(
@@ -29,10 +29,37 @@ def handle_ask(
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
+    from doeff.program import ProgramBase
+
     key = effect.key
     if key not in task_state.env:
         raise MissingEnvKeyError(key)
     value = task_state.env[key]
+
+    # Check if value is a Program (lazy evaluation per SPEC-EFF-001)
+    if isinstance(value, ProgramBase):
+        program_id = id(value)
+        cache_key = (key, program_id)
+        cache = store.get("__ask_lazy_cache__", {})
+
+        # Check if result is already cached
+        if cache_key in cache:
+            cached_value = cache[cache_key]
+            return ContinueValue(
+                value=cached_value,
+                env=task_state.env,
+                store=store,
+                k=task_state.kontinuation,
+            )
+
+        # Not cached - evaluate the program and cache result via AskLazyFrame
+        return ContinueProgram(
+            program=value,
+            env=task_state.env,
+            store=store,
+            k=[AskLazyFrame(ask_key=key, program_id=program_id)] + task_state.kontinuation,
+        )
+
     return ContinueValue(
         value=value,
         env=task_state.env,
@@ -89,9 +116,9 @@ def handle_state_modify(
 
 
 __all__ = [
-    "handle_pure",
     "handle_ask",
+    "handle_pure",
     "handle_state_get",
-    "handle_state_put",
     "handle_state_modify",
+    "handle_state_put",
 ]
