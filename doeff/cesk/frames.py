@@ -10,9 +10,8 @@ Each frame type represents a computation context that:
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
 from doeff.cesk.types import Environment, Store, TaskId
@@ -20,12 +19,12 @@ from doeff.cesk.types import Environment, Store, TaskId
 if TYPE_CHECKING:
     from doeff.program import KleisliProgramCall, Program
     from doeff.types import Effect
-    from doeff.cesk.state import TaskState, Control
 
 
 # ============================================
 # Frame Protocol
 # ============================================
+
 
 @runtime_checkable
 class Frame(Protocol):
@@ -80,9 +79,11 @@ class Frame(Protocol):
 # Frame Result Types
 # ============================================
 
+
 @dataclass(frozen=True)
 class ContinueValue:
     """Continue execution with a value."""
+
     value: Any
     env: Environment
     store: Store
@@ -92,6 +93,7 @@ class ContinueValue:
 @dataclass(frozen=True)
 class ContinueError:
     """Continue execution with an error."""
+
     error: BaseException
     env: Environment
     store: Store
@@ -102,6 +104,7 @@ class ContinueError:
 @dataclass(frozen=True)
 class ContinueProgram:
     """Continue execution with a new program."""
+
     program: Program
     env: Environment
     store: Store
@@ -111,6 +114,7 @@ class ContinueProgram:
 @dataclass(frozen=True)
 class ContinueGenerator:
     """Continue execution by sending to a generator."""
+
     generator: Generator[Any, Any, Any]
     send_value: Any | None
     throw_error: BaseException | None
@@ -126,6 +130,7 @@ FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | Conti
 # ============================================
 # Concrete Frame Types
 # ============================================
+
 
 @dataclass
 class ReturnFrame:
@@ -280,7 +285,7 @@ class ListenFrame:
         from doeff.utils import BoundedLog
 
         current_log = store.get("__log__", [])
-        captured = current_log[self.log_start_index:]
+        captured = current_log[self.log_start_index :]
         listen_result = ListenResult(value=value, log=BoundedLog(captured))
 
         return ContinueValue(
@@ -403,8 +408,8 @@ class SafeFrame:
         k_rest: Kontinuation,
     ) -> FrameResult:
         """Convert error to Err result instead of propagating."""
-        from doeff._vendor import Err, NOTHING, Some
         from doeff._types_internal import capture_traceback, get_captured_traceback
+        from doeff._vendor import NOTHING, Err, Some
 
         # Capture traceback if not already captured
         captured = get_captured_traceback(error)
@@ -477,7 +482,7 @@ class GraphCaptureFrame:
         k_rest: Kontinuation,
     ) -> FrameResult:
         current_graph = store.get("__graph__", [])
-        captured = current_graph[self.graph_start_index:]
+        captured = current_graph[self.graph_start_index :]
         return ContinueValue(
             value=(value, captured),
             env=env,
@@ -492,6 +497,60 @@ class GraphCaptureFrame:
         store: Store,
         k_rest: Kontinuation,
     ) -> FrameResult:
+        return ContinueError(
+            error=error,
+            env=env,
+            store=store,
+            k=k_rest,
+        )
+
+
+@dataclass(frozen=True)
+class AskLazyFrame:
+    """Cache the result of lazy Ask evaluation for a Program value.
+
+    When Ask encounters a Program in the environment, this frame is pushed
+    before evaluating the program. When the program completes, the result
+    is cached in the store for subsequent Ask calls with the same key.
+
+    Per SPEC-EFF-001-reader.md:
+    - Scope: Per runtime.run() invocation (stored in Store)
+    - Key: Cache key is (ask_key, program_id) to handle invalidation
+    - Invalidation: Local override with different Program object
+    - Errors: Program failure = entire run() fails
+    """
+
+    ask_key: Any  # The original Ask key
+    program_id: int  # id() of the Program for cache invalidation tracking
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        """Cache the computed value and continue with it."""
+        cache = store.get("__ask_lazy_cache__", {})
+        cache_key = (self.ask_key, self.program_id)
+        new_cache = {**cache, cache_key: value}
+        new_store = {**store, "__ask_lazy_cache__": new_cache}
+
+        return ContinueValue(
+            value=value,
+            env=env,
+            store=new_store,
+            k=k_rest,
+        )
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        """Errors propagate up - per spec, Program failure = entire run() fails."""
         return ContinueError(
             error=error,
             env=env,
@@ -515,6 +574,7 @@ Kontinuation: TypeAlias = list[
     | SafeFrame
     | RaceFrame
     | GraphCaptureFrame
+    | AskLazyFrame
 ]
 
 
@@ -536,6 +596,7 @@ __all__ = [
     "SafeFrame",
     "RaceFrame",
     "GraphCaptureFrame",
+    "AskLazyFrame",
     # Kontinuation
     "Kontinuation",
 ]
