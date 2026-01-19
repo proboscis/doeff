@@ -1,23 +1,22 @@
 # 20. Runtime Variants
 
-The `doeff.runtimes` module provides three distinct runtime implementations optimized for different execution contexts. Choose the right runtime based on your application's needs—real async I/O, synchronous execution, or simulated time for testing.
+The `doeff.cesk.runtime` module provides three distinct runtime implementations optimized for different execution contexts. Choose the right runtime based on your application's needs—real async I/O, synchronous execution, or simulated time for testing.
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Runtime Types](#runtime-types)
-  - [AsyncioRuntime](#asyncioruntime)
+  - [AsyncRuntime](#asyncruntime)
   - [SyncRuntime](#syncruntime)
   - [SimulationRuntime](#simulationruntime)
 - [Choosing a Runtime](#choosing-a-runtime)
 - [Usage Examples](#usage-examples)
   - [Basic Usage](#basic-usage)
-  - [Error Handling with run_safe()](#error-handling-with-run_safe)
+  - [RuntimeResult and Error Handling](#runtimeresult-and-error-handling)
   - [Custom Handlers](#custom-handlers)
 - [Simulation Features](#simulation-features)
   - [Time Advancement](#time-advancement)
   - [Mocking Awaitables](#mocking-awaitables)
-  - [Spawning Concurrent Tasks](#spawning-concurrent-tasks)
 - [Migration Guide](#migration-guide)
 
 ---
@@ -28,26 +27,26 @@ Each runtime implementation determines **how** effects are executed:
 
 | Runtime | Execution Model | Use Case |
 |---------|-----------------|----------|
-| `AsyncioRuntime` | Real async I/O with `asyncio` | Production applications, HTTP/DB operations |
+| `AsyncRuntime` | Real async I/O with `asyncio` | Production applications, HTTP/DB operations |
 | `SyncRuntime` | Pure synchronous, no event loop | CLI tools, scripts, simple utilities |
 | `SimulationRuntime` | Simulated time (instant) | Testing, backtesting, deterministic replay |
 
-All runtimes share a common interface:
-- `run(program, env, store)` - Execute program, raise `EffectError` on failure
-- `run_safe(program, env, store)` - Execute program, return `RuntimeResult` instead of raising
+All runtimes share a common interface and return `RuntimeResult`:
+- `run(program, env, store)` - Execute program, return `RuntimeResult[T]`
+- `run_and_unwrap(program, env, store)` - Execute and return raw value (raises on error)
 
 ---
 
 ## Runtime Types
 
-### AsyncioRuntime
+### AsyncRuntime
 
-The primary runtime for production applications. Executes effects using real async I/O operations through Python's `asyncio` event loop.
+The **primary runtime** for production applications. Executes effects using real async I/O operations through Python's `asyncio` event loop.
 
 ```python
-from doeff import do, Program
-from doeff.effects import Delay, Await
-from doeff.runtimes import AsyncioRuntime
+from doeff import do, Program, Delay, Await
+from doeff.cesk.runtime import AsyncRuntime
+import asyncio
 
 @do
 def fetch_data() -> Program[dict]:
@@ -56,9 +55,15 @@ def fetch_data() -> Program[dict]:
     return response.json()
 
 async def main():
-    runtime = AsyncioRuntime()
+    runtime = AsyncRuntime()
     result = await runtime.run(fetch_data())
-    print(result)
+    
+    if result.is_ok():
+        print(result.value)
+    else:
+        print(f"Error: {result.error}")
+
+asyncio.run(main())
 ```
 
 **Supported Effects:**
@@ -67,17 +72,21 @@ async def main():
 |--------|----------|
 | `Delay(seconds)` | Real `asyncio.sleep()` |
 | `WaitUntil(datetime)` | Sleep until wall-clock time |
+| `GetTime()` | Returns `datetime.now()` |
 | `Await(coroutine)` | Await the coroutine |
-| `Spawn(program)` | Create background `asyncio.Task` |
+| `Gather(*programs)` | Run Programs in parallel |
+| `Spawn(program)` | Create background task with snapshot semantics |
+| `task.join()` | Wait for spawned task |
+| `task.cancel()` | Request task cancellation |
+| `task.is_done()` | Check task completion |
 
 ### SyncRuntime
 
 A synchronous runtime for programs that don't require async I/O. Ideal for CLI tools, scripts, and testing pure logic.
 
 ```python
-from doeff import do, Program
-from doeff.effects import Get, Put
-from doeff.runtimes import SyncRuntime
+from doeff import do, Program, Get, Put
+from doeff.cesk.runtime import SyncRuntime
 
 @do
 def counter() -> Program[int]:
@@ -87,17 +96,19 @@ def counter() -> Program[int]:
 
 runtime = SyncRuntime()
 result = runtime.run(counter(), store={"counter": 0})
-print(result)  # 1
+
+if result.is_ok():
+    print(result.value)  # 1
 ```
 
 **Limitations:**
 
-`SyncRuntime` raises `AsyncEffectInSyncRuntimeError` for async-only effects:
-- `Await` - Use `AsyncioRuntime` instead
-- `WaitUntil` - Use `AsyncioRuntime` instead
-- `Spawn` - Use `AsyncioRuntime` instead
+`SyncRuntime` does not support async-only effects:
+- `Await` - Use `AsyncRuntime` instead
+- `Spawn` - Use `AsyncRuntime` instead
 
 `Delay` uses `time.sleep()` in SyncRuntime (blocks the thread).
+`Gather` runs sequentially (same semantics, different performance).
 
 ### SimulationRuntime
 
@@ -105,9 +116,8 @@ A discrete event simulation runtime where time advances instantly. Perfect for t
 
 ```python
 from datetime import datetime, timedelta
-from doeff import do, Program
-from doeff.effects import Delay
-from doeff.runtimes import SimulationRuntime
+from doeff import do, Program, Delay
+from doeff.cesk.runtime import SimulationRuntime
 
 @do
 def hourly_check() -> Program[str]:
@@ -117,13 +127,15 @@ def hourly_check() -> Program[str]:
 
 runtime = SimulationRuntime(start_time=datetime(2024, 1, 1, 9, 0))
 result = runtime.run(hourly_check())
-print(result)  # "Two hours passed"
-print(runtime.current_time)  # datetime(2024, 1, 1, 11, 0) - 2 hours advanced
+
+if result.is_ok():
+    print(result.value)  # "Two hours passed"
+    print(runtime.current_time)  # datetime(2024, 1, 1, 11, 0) - 2 hours advanced
 ```
 
 **Key Features:**
 - Time advances only when the simulation processes `Delay` or `WaitUntil` effects
-- Spawned tasks run concurrently within the simulation
+- `Gather` runs sequentially within the simulation
 - Awaitables can be mocked to return predetermined results
 
 ---
@@ -132,9 +144,10 @@ print(runtime.current_time)  # datetime(2024, 1, 1, 11, 0) - 2 hours advanced
 
 | If you need... | Use |
 |----------------|-----|
-| Real HTTP/DB/file I/O | `AsyncioRuntime` |
-| Real wall-clock delays | `AsyncioRuntime` |
-| Background tasks (`asyncio.Task`) | `AsyncioRuntime` |
+| Real HTTP/DB/file I/O | `AsyncRuntime` |
+| Real wall-clock delays | `AsyncRuntime` |
+| Background tasks (`Spawn`) | `AsyncRuntime` |
+| Parallel execution (`Gather`) | `AsyncRuntime` |
 | Simple sync execution (no async) | `SyncRuntime` |
 | CLI tools / scripts | `SyncRuntime` |
 | Unit tests (fast, deterministic) | `SimulationRuntime` |
@@ -143,13 +156,15 @@ print(runtime.current_time)  # datetime(2024, 1, 1, 11, 0) - 2 hours advanced
 
 ### Feature Comparison
 
-| Feature | AsyncioRuntime | SyncRuntime | SimulationRuntime |
+| Feature | AsyncRuntime | SyncRuntime | SimulationRuntime |
 |---------|----------------|-------------|-------------------|
 | `run()` method | `async` | sync | sync |
 | `Delay` effect | Real sleep | Real sleep (blocking) | Instant (time advances) |
-| `WaitUntil` effect | Real wait | Error | Instant (time advances) |
-| `Await` effect | Real await | Error | Mocked result |
-| `Spawn` effect | `asyncio.Task` | Error | Simulated concurrent task |
+| `WaitUntil` effect | Real wait | Real wait (blocking) | Instant (time advances) |
+| `GetTime` effect | `datetime.now()` | `datetime.now()` | Simulated time |
+| `Await` effect | Real await | Not supported | Mocked result |
+| `Gather` effect | Parallel | Sequential | Sequential |
+| `Spawn` effect | Background task | Not supported | Not supported |
 | Time control | No | No | Yes (`current_time`) |
 | Deterministic | No | Yes | Yes |
 
@@ -159,12 +174,11 @@ print(runtime.current_time)  # datetime(2024, 1, 1, 11, 0) - 2 hours advanced
 
 ### Basic Usage
 
-**AsyncioRuntime (async context):**
+**AsyncRuntime (async context):**
 ```python
 import asyncio
-from doeff import do, Program
-from doeff.effects import Ask
-from doeff.runtimes import AsyncioRuntime
+from doeff import do, Program, Ask
+from doeff.cesk.runtime import AsyncRuntime
 
 @do
 def greet() -> Program[str]:
@@ -172,18 +186,19 @@ def greet() -> Program[str]:
     return f"Hello, {name}!"
 
 async def main():
-    runtime = AsyncioRuntime()
+    runtime = AsyncRuntime()
     result = await runtime.run(greet(), env={"name": "World"})
-    print(result)  # "Hello, World!"
+    
+    if result.is_ok():
+        print(result.value)  # "Hello, World!"
 
 asyncio.run(main())
 ```
 
 **SyncRuntime (sync context):**
 ```python
-from doeff import do, Program
-from doeff.effects import Ask
-from doeff.runtimes import SyncRuntime
+from doeff import do, Program, Ask
+from doeff.cesk.runtime import SyncRuntime
 
 @do
 def greet() -> Program[str]:
@@ -192,15 +207,16 @@ def greet() -> Program[str]:
 
 runtime = SyncRuntime()
 result = runtime.run(greet(), env={"name": "World"})
-print(result)  # "Hello, World!"
+
+if result.is_ok():
+    print(result.value)  # "Hello, World!"
 ```
 
 **SimulationRuntime (testing):**
 ```python
 from datetime import datetime
-from doeff import do, Program
-from doeff.effects import Delay
-from doeff.runtimes import SimulationRuntime
+from doeff import do, Program, Delay
+from doeff.cesk.runtime import SimulationRuntime
 
 @do
 def delayed_response() -> Program[str]:
@@ -209,17 +225,19 @@ def delayed_response() -> Program[str]:
 
 runtime = SimulationRuntime(start_time=datetime(2024, 1, 1))
 result = runtime.run(delayed_response())
-assert result == "Ready!"
+
+assert result.is_ok()
+assert result.value == "Ready!"
 assert runtime.current_time == datetime(2024, 1, 1, 0, 1)  # 1 minute advanced
 ```
 
-### Error Handling with run_safe()
+### RuntimeResult and Error Handling
 
-All runtimes provide `run_safe()` which returns a `RuntimeResult` instead of raising exceptions:
+All runtimes return `RuntimeResult[T]` which wraps the computation outcome with full debugging context:
 
 ```python
 from doeff import do, Program
-from doeff.runtimes import SyncRuntime, RuntimeResult
+from doeff.cesk.runtime import SyncRuntime
 
 @do
 def risky_operation() -> Program[int]:
@@ -227,26 +245,41 @@ def risky_operation() -> Program[int]:
     return 42  # Never reached
 
 runtime = SyncRuntime()
-result: RuntimeResult[int] = runtime.run_safe(risky_operation())
+result = runtime.run(risky_operation())
 
-if result.is_ok:
-    print(f"Success: {result.unwrap()}")
+# Check result - NOTE: is_ok() and is_err() are METHODS, not properties!
+if result.is_ok():
+    print(f"Success: {result.value}")
 else:
-    print(f"Error: {result.unwrap_err()}")
-    if result.effect_traceback:
-        print(f"Traceback:\n{result.effect_traceback}")
+    print(f"Error: {result.error}")
+    
+    # Access debugging information
+    print(result.format())  # Condensed output
+    print(result.format(verbose=True))  # Full debugging output
+    
+    # Individual stack traces
+    print(result.python_stack.format())   # Python source locations
+    print(result.effect_stack.format())   # Effect call tree
+    print(result.k_stack.format())        # Continuation stack
 ```
 
 **RuntimeResult API:**
 
 | Property/Method | Description |
 |-----------------|-------------|
-| `is_ok` | `True` if execution succeeded |
-| `is_err` | `True` if execution failed |
-| `unwrap()` | Get value or raise if error |
-| `unwrap_err()` | Get error or raise if ok |
-| `display()` | Human-readable result string |
-| `effect_traceback` | Effect-level traceback (if error) |
+| `result` | `Result[T]`: Raw `Ok(value)` or `Err(error)` |
+| `value` | `T`: Unwrap Ok value (raises if Err) |
+| `error` | `BaseException`: Get error (raises if Ok) |
+| `is_ok()` | `bool`: True if execution succeeded (METHOD!) |
+| `is_err()` | `bool`: True if execution failed (METHOD!) |
+| `state` | `dict`: Final state from Put/Modify effects |
+| `log` | `list`: Accumulated Tell/Log messages |
+| `env` | `dict`: Final environment |
+| `k_stack` | `KStackTrace`: Continuation stack at termination |
+| `effect_stack` | `EffectStackTrace`: Effect call tree |
+| `python_stack` | `PythonStackTrace`: Python source locations |
+| `format()` | `str`: Human-readable condensed output |
+| `format(verbose=True)` | `str`: Full debugging output |
 
 ### Custom Handlers
 
@@ -255,18 +288,25 @@ Extend runtime behavior by providing custom effect handlers:
 ```python
 from dataclasses import dataclass
 from doeff import do, Program
-from doeff.types import EffectBase
-from doeff.runtime import Resume
-from doeff.runtimes import SyncRuntime
+from doeff._types_internal import EffectBase
+from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.handlers import default_handlers
+from doeff.cesk.frames import ContinueValue
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(frozen=True)
 class CustomLog(EffectBase):
     message: str
 
-def handle_custom_log(effect, env, store, k, scheduler):
+def handle_custom_log(effect, task_state, store):
+    """Custom handler for CustomLog effect."""
     if isinstance(effect, CustomLog):
         print(f"[LOG] {effect.message}")
-        return Resume(None, store)
+        return ContinueValue(
+            value=None,
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
+        )
     return None
 
 @do
@@ -275,8 +315,11 @@ def program_with_logging() -> Program[str]:
     yield CustomLog(message="Processing...")
     return "Done"
 
-custom_handlers = {CustomLog: handle_custom_log}
-runtime = SyncRuntime(handlers=custom_handlers)
+# Add custom handler to defaults
+handlers = default_handlers()
+handlers[CustomLog] = handle_custom_log
+
+runtime = SyncRuntime(handlers=handlers)
 result = runtime.run(program_with_logging())
 ```
 
@@ -290,23 +333,28 @@ result = runtime.run(program_with_logging())
 
 ```python
 from datetime import datetime, timedelta
-from doeff import do, Program
-from doeff.effects import Delay, WaitUntil
-from doeff.runtimes import SimulationRuntime
+from doeff import do, Program, Delay, WaitUntil, GetTime
+from doeff.cesk.runtime import SimulationRuntime
 
 @do
 def time_travel() -> Program[datetime]:
+    start = yield GetTime()
     yield Delay(seconds=3600)  # +1 hour
     yield Delay(seconds=1800)  # +30 minutes
+    
     target = datetime(2024, 1, 1, 12, 0)
     yield WaitUntil(target)    # Jump to noon
-    return target
+    
+    end = yield GetTime()
+    return end
 
 start = datetime(2024, 1, 1, 9, 0)
 runtime = SimulationRuntime(start_time=start)
 result = runtime.run(time_travel())
 
-print(runtime.current_time)  # datetime(2024, 1, 1, 12, 0)
+if result.is_ok():
+    print(result.value)  # datetime(2024, 1, 1, 12, 0)
+    print(runtime.current_time)  # datetime(2024, 1, 1, 12, 0)
 ```
 
 ### Mocking Awaitables
@@ -314,10 +362,8 @@ print(runtime.current_time)  # datetime(2024, 1, 1, 12, 0)
 Mock async operations to return predetermined results:
 
 ```python
-import aiohttp
-from doeff import do, Program
-from doeff.effects import Await
-from doeff.runtimes import SimulationRuntime
+from doeff import do, Program, Await
+from doeff.cesk.runtime import SimulationRuntime
 
 @do
 def fetch_user() -> Program[dict]:
@@ -326,142 +372,108 @@ def fetch_user() -> Program[dict]:
 
 # Mock the coroutine type to return test data
 runtime = SimulationRuntime()
-runtime.mock(aiohttp.ClientResponse, {"id": 123, "name": "Test User"})
+runtime.mock(type(session.get("/api/user/123")), {"id": 123, "name": "Test User"})
 
 result = runtime.run(fetch_user())
-print(result)  # {"id": 123, "name": "Test User"}
-```
-
-### Spawning Concurrent Tasks
-
-`Spawn` creates simulated concurrent tasks that run within the same simulation:
-
-```python
-from doeff import do, Program
-from doeff.effects import Delay, Spawn
-from doeff.runtimes import SimulationRuntime
-
-@do
-def background_job() -> Program[None]:
-    yield Delay(seconds=10)
-    print("Background job done")
-
-@do
-def main_job() -> Program[str]:
-    yield Spawn(background_job())  # Start background task
-    yield Delay(seconds=5)
-    return "Main done first"
-
-runtime = SimulationRuntime()
-result = runtime.run(main_job())
-# Both tasks complete within simulation
+if result.is_ok():
+    print(result.value)  # {"id": 123, "name": "Test User"}
 ```
 
 ---
 
 ## Migration Guide
 
-### From EffectRuntime to New Runtimes
+### From AsyncioRuntime to AsyncRuntime
 
-The legacy `EffectRuntime` and `create_runtime()` API has been replaced by explicit runtime classes.
+The runtime class has been renamed and moved:
 
 **Before (deprecated):**
 ```python
-from doeff import create_runtime
+from doeff.runtimes import AsyncioRuntime
 
-runtime = create_runtime()
+runtime = AsyncioRuntime()
 result = await runtime.run(program)
-# or
-result = runtime.run_sync(program)
 ```
 
 **After:**
 ```python
-from doeff.runtimes import AsyncioRuntime, SyncRuntime
+from doeff.cesk.runtime import AsyncRuntime
 
-# For async execution
-runtime = AsyncioRuntime()
+runtime = AsyncRuntime()
 result = await runtime.run(program)
 
-# For sync execution
-runtime = SyncRuntime()
-result = runtime.run(program)
+# Result is now RuntimeResult, not raw value
+if result.is_ok():
+    value = result.value
 ```
 
-### From run()/run_sync() to runtime.run()
+### From run_safe() to run()
 
-**Before:**
+`run_safe()` no longer exists. All runtimes now return `RuntimeResult` from `run()`:
+
+**Before (deprecated):**
 ```python
-from doeff.cesk import run, run_sync
+# run() raised on error
+result = runtime.run(program)
 
-# Async
-result = await run(program)
-
-# Sync
-result = run_sync(program)
+# run_safe() returned RuntimeResult
+result = runtime.run_safe(program)
+if result.is_ok:  # was a property
+    value = result.unwrap()
 ```
 
 **After:**
 ```python
-from doeff.runtimes import AsyncioRuntime, SyncRuntime
-
-# Async
-runtime = AsyncioRuntime()
-result = await runtime.run(program)
-
-# Sync
-runtime = SyncRuntime()
+# run() always returns RuntimeResult
 result = runtime.run(program)
-```
 
-### Handler Migration
-
-Effect handlers now use the unified `ScheduledEffectHandler` signature:
-
-```python
-from doeff.runtime import Resume, Suspend, Schedule
-
-def my_handler(effect, env, store, k, scheduler):
-    # For immediate resume (pure effects):
-    return Resume(value, store)
-    
-    # For async operations:
-    return Suspend(awaitable, store)
-    
-    # For scheduler-managed effects (simulation):
-    return Schedule(payload, store)
+# NOTE: is_ok() is a METHOD now!
+if result.is_ok():
+    value = result.value  # .value, not .unwrap()
 ```
 
 ### API Changes Summary
 
 | Old API | New API |
 |---------|---------|
-| `create_runtime()` | `AsyncioRuntime()` or `SyncRuntime()` |
-| `runtime.run_sync(program)` | `SyncRuntime().run(program)` |
-| `await runtime.run(program)` | `await AsyncioRuntime().run(program)` |
-| `run(program, scheduler=...)` | Use `SimulationRuntime` |
-| `EffectRuntime` class | `AsyncioRuntime`, `SyncRuntime`, `SimulationRuntime` |
+| `from doeff.runtimes import AsyncioRuntime` | `from doeff.cesk.runtime import AsyncRuntime` |
+| `from doeff.runtimes import SyncRuntime` | `from doeff.cesk.runtime import SyncRuntime` |
+| `from doeff.runtimes import SimulationRuntime` | `from doeff.cesk.runtime import SimulationRuntime` |
+| `runtime.run(program)` → raises on error | `runtime.run(program)` → returns `RuntimeResult` |
+| `runtime.run_safe(program)` | Removed, use `runtime.run(program)` |
+| `result.is_ok` (property) | `result.is_ok()` (method) |
+| `result.is_err` (property) | `result.is_err()` (method) |
+| `result.unwrap()` | `result.value` |
+| `result.unwrap_err()` | `result.error` |
+| `result.effect_traceback` | `result.effect_stack`, `result.python_stack`, `result.k_stack` |
+
+### Handler Signature Changes
+
+Effect handlers now use a simpler signature:
+
+**Before:**
+```python
+def my_handler(effect, env, store, k, scheduler):
+    return Resume(value, store)
+```
+
+**After:**
+```python
+from doeff.cesk.frames import ContinueValue
+
+def my_handler(effect, task_state, store):
+    return ContinueValue(
+        value=value,
+        env=task_state.env,
+        store=store,
+        k=task_state.kontinuation,
+    )
+```
 
 ---
 
-<details>
-<summary><h2>Legacy: Scheduler-Based Architecture (Archived)</h2></summary>
+## See Also
 
-> **Note**: This section documents the previous scheduler-based architecture for reference. New code should use the runtime classes described above.
-
-The previous architecture used pluggable schedulers (`FIFOScheduler`, `PriorityScheduler`, `SimulationScheduler`, `RealtimeScheduler`) with the `Scheduler` protocol:
-
-```python
-class Scheduler(Protocol):
-    def submit(self, k: Continuation, hint: Any = None) -> None: ...
-    def next(self) -> Continuation | None: ...
-```
-
-And handlers used `HandlerResult` types:
-- `Resume(value, store)` - Resume immediately
-- `Suspend(awaitable, store)` - Await async operation
-- `Scheduled(store)` - Task submitted to scheduler
-
-This architecture is still available in `doeff.runtime` for advanced use cases but the recommended approach is to use the typed runtime classes.
-
-</details>
+- [Effects Matrix](21-effects-matrix.md) - Complete effect support reference
+- [Error Handling](05-error-handling.md) - RuntimeResult and Safe effect
+- [Async Effects](04-async-effects.md) - Gather, Spawn, Time effects

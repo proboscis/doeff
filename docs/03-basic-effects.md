@@ -19,8 +19,8 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask
-from doeff.runtimes import AsyncioRuntime
+from doeff import do, Ask, Log
+from doeff.cesk.runtime import AsyncRuntime
 
 @do
 def connect_to_database():
@@ -30,14 +30,20 @@ def connect_to_database():
     return f"Connected to {db_url}"
 
 # Run with environment
-runtime = AsyncioRuntime()
-result = await runtime.run(
-    connect_to_database(),
-    env={
-        "database_url": "postgresql://localhost/mydb",
-        "timeout": 30
-    }
-)
+import asyncio
+
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(
+        connect_to_database(),
+        env={
+            "database_url": "postgresql://localhost/mydb",
+            "timeout": 30
+        }
+    )
+    print(result.value)  # "Connected to postgresql://localhost/mydb"
+
+asyncio.run(main())
 ```
 
 **Use cases:**
@@ -45,6 +51,47 @@ result = await runtime.run(
 - API keys and secrets
 - Feature flags
 - Application settings
+
+### Ask with Default Values
+
+`Ask(key, default=value)` returns a default if the key is missing:
+
+```python
+@do
+def with_default():
+    # Returns 30 if "timeout" is not in environment
+    timeout = yield Ask("timeout", default=30)
+    return timeout
+```
+
+### Ask with Lazy Program Evaluation
+
+When you pass a `Program` as the default value to `Ask`, it is evaluated lazily **only if the key is missing**. The result is cached for subsequent accesses:
+
+```python
+@do
+def expensive_computation():
+    yield Log("Computing expensive default...")
+    yield Delay(1.0)  # Simulate expensive work
+    return {"setting": "computed_value"}
+
+@do
+def with_lazy_default():
+    # expensive_computation() only runs if "config" is missing from env
+    # If it runs, the result is cached for any subsequent Ask("config")
+    config = yield Ask("config", default=expensive_computation())
+    return config
+
+# With env={"config": "provided"} -> expensive_computation never runs
+# With env={} -> expensive_computation runs once, result is cached
+```
+
+This is useful for:
+- Expensive default computations that should only run when needed
+- Deferred initialization of complex configurations
+- Lazy loading of resources
+
+See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ### Local - Temporary Environment Override
 
@@ -96,11 +143,17 @@ def application():
     return {"result1": result1, "result2": result2}
 
 # Initialize with config
-runtime = AsyncioRuntime()
-result = await runtime.run(
-    application(),
-    env={"config": {"option1": "value1", "option2": "value2"}}
-)
+import asyncio
+
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(
+        application(),
+        env={"config": {"option1": "value1", "option2": "value2"}}
+    )
+    print(result.value)
+
+asyncio.run(main())
 ```
 
 ## State Effects
@@ -239,9 +292,14 @@ def with_logging():
     yield Log("Operation complete")
     return "done"
 
-runtime = AsyncioRuntime()
-result = await runtime.run(with_logging(), store={"count": 0})
-# Logs are accumulated during execution
+import asyncio
+
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(with_logging(), store={"count": 0})
+    # Logs are accumulated during execution
+
+asyncio.run(main())
 ```
 
 **Note:** `Log` and `Tell` are aliases for the same effect.
@@ -269,14 +327,19 @@ def structured_logging():
     
     return "logged"
 
-runtime = AsyncioRuntime()
-result = await runtime.run(structured_logging())
-# Structured logs are accumulated during execution
+import asyncio
+
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(structured_logging())
+    # Structured logs are accumulated during execution
+
+asyncio.run(main())
 ```
 
 ### Listen - Capture Sub-Program Log
 
-`Listen(sub_program)` runs a sub-program and captures its log output:
+`Listen(sub_program)` runs a sub-program and captures its log output. Per [SPEC-EFF-003](../specs/effects/SPEC-EFF-003-writer.md), logs from the inner program are **propagated to the outer scope** in addition to being captured:
 
 ```python
 @do
@@ -289,7 +352,7 @@ def inner_operation():
 def outer_operation():
     yield Log("Before inner")
     
-    # Capture inner logs
+    # Capture inner logs (they're also propagated to outer)
     listen_result = yield Listen(inner_operation())
     
     yield Log("After inner")
@@ -298,9 +361,14 @@ def outer_operation():
     
     return listen_result.value
 
-runtime = AsyncioRuntime()
-result = await runtime.run(outer_operation())
-# Logs are captured during execution
+import asyncio
+
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(outer_operation())
+    # All logs (outer AND inner) are accumulated
+
+asyncio.run(main())
 ```
 
 **ListenResult structure:**
@@ -527,6 +595,7 @@ def well_logged_operation():
 | Effect | Purpose | Example |
 |--------|---------|---------|
 | `Ask(key)` | Read environment | Config, settings |
+| `Ask(key, default=prog)` | Read with lazy default | Deferred initialization |
 | `Local(env, prog)` | Scoped environment | Testing, overrides |
 | `Get(key)` | Read state | Counters, flags |
 | `Put(key, val)` | Write state | Initialize, update |
@@ -537,6 +606,6 @@ def well_logged_operation():
 
 ## Next Steps
 
-- **[Async Effects](04-async-effects.md)** - Future, Await, Parallel for async operations
+- **[Async Effects](04-async-effects.md)** - Gather, Spawn, Time effects for async operations
 - **[Error Handling](05-error-handling.md)** - Safe effect for robust programs
 - **[Patterns](12-patterns.md)** - Common patterns combining multiple effects
