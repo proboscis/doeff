@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff.cesk.runtime.base import BaseRuntime
+from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
 from doeff.cesk.handlers import Handler
 
@@ -43,10 +43,15 @@ class SyncRuntime(BaseRuntime):
         state = self._create_initial_state(program, env, store)
         
         try:
-            value, final_state = self._step_until_done(state)
-            return self._build_success_result(value, final_state)
-        except Exception as exc:
-            return self._build_error_result(exc, state)
+            value, final_state, final_store = self._step_until_done(state)
+            return self._build_success_result(value, final_state, final_store)
+        except ExecutionError as err:
+            # Use the state at failure point, not initial state
+            return self._build_error_result(
+                err.exception, 
+                err.final_state,
+                captured_traceback=err.captured_traceback,
+            )
 
     def run_and_unwrap(
         self,

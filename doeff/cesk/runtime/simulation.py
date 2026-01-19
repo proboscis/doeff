@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import FrozenDict
-from doeff.cesk.runtime.base import BaseRuntime
+from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.state import CESKState
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
@@ -70,10 +70,15 @@ class SimulationRuntime(BaseRuntime):
         state = self._create_initial_state(program, env, initial_store)
         
         try:
-            value, final_state = self._step_until_done_simulation(state)
-            return self._build_success_result(value, final_state)
-        except Exception as exc:
-            return self._build_error_result(exc, state)
+            value, final_state, final_store = self._step_until_done_simulation(state)
+            return self._build_success_result(value, final_state, final_store)
+        except ExecutionError as err:
+            # Use the state at failure point, not initial state
+            return self._build_error_result(
+                err.exception,
+                err.final_state,
+                captured_traceback=err.captured_traceback,
+            )
 
     def run_and_unwrap(
         self,
@@ -100,19 +105,31 @@ class SimulationRuntime(BaseRuntime):
         result = self.run(program, env, store)
         return result.value
 
-    def _step_until_done_simulation(self, state: CESKState) -> tuple[Any, CESKState]:
-        """Step execution until completion with simulated time handling."""
+    def _step_until_done_simulation(self, state: CESKState) -> tuple[Any, CESKState, dict[str, Any]]:
+        """Step execution until completion with simulated time handling.
+        
+        Returns:
+            Tuple of (value, final_state, final_store) on success
+            
+        Raises:
+            ExecutionError: On failure, containing the exception and final state
+        """
         while True:
             result = step(state, self._handlers)
             
             if isinstance(result, Done):
-                return (result.value, state)
+                return (result.value, state, result.store)
             
             if isinstance(result, Failed):
                 exc = result.exception
-                if result.captured_traceback is not None:
-                    exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
-                raise exc
+                captured_tb = result.captured_traceback
+                if captured_tb is not None:
+                    exc.__cesk_traceback__ = captured_tb  # type: ignore[attr-defined]
+                raise ExecutionError(
+                    exception=exc,
+                    final_state=state,
+                    captured_traceback=captured_tb,
+                )
             
             if isinstance(result, CESKState):
                 state = result
