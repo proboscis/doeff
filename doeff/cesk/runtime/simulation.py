@@ -1,23 +1,35 @@
+"""Simulation runtime with controllable time for testing time-based effects."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import FrozenDict
-from doeff.cesk.runtime.base import BaseRuntime
+from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.state import CESKState
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler
 from doeff.cesk.frames import ContinueValue, ContinueError
 from doeff.cesk.errors import UnhandledEffectError
+from doeff.cesk.runtime_result import RuntimeResult
 from doeff.effects.time import DelayEffect, WaitUntilEffect
 
 if TYPE_CHECKING:
     from doeff.program import Program
 
+T = TypeVar("T")
+
 
 class SimulationRuntime(BaseRuntime):
+    """Runtime with controllable time for testing time-based effects.
+    
+    This runtime advances simulated time instantly when Delay/WaitUntil
+    effects are encountered, making it suitable for testing time-dependent
+    code without actual waiting.
+    """
+
     def __init__(
         self,
         handlers: dict[type, Handler] | None = None,
@@ -38,28 +50,93 @@ class SimulationRuntime(BaseRuntime):
 
     def run(
         self,
-        program: Program,
+        program: Program[T],
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
-    ) -> Any:
+    ) -> RuntimeResult[T]:
+        """Execute a program and return RuntimeResult.
+
+        Args:
+            program: The program to execute
+            env: Optional initial environment (reader context)
+            store: Optional initial store (mutable state)
+
+        Returns:
+            RuntimeResult containing the outcome and debugging context
+            
+        Raises:
+            KeyboardInterrupt, SystemExit: These are re-raised, not wrapped,
+                as they represent external control signals, not program errors.
+        """
         initial_store = store if store is not None else {}
         initial_store = {**initial_store, "__current_time__": self._current_time}
         
         state = self._create_initial_state(program, env, initial_store)
-        return self._step_until_done_simulation(state)
+        
+        try:
+            value, final_state, final_store = self._step_until_done_simulation(state)
+            return self._build_success_result(value, final_state, final_store)
+        except ExecutionError as err:
+            # Re-raise control signals - they shouldn't be wrapped in RuntimeResult
+            if isinstance(err.exception, (KeyboardInterrupt, SystemExit)):
+                raise err.exception from None
+            # Use the state at failure point, not initial state
+            return self._build_error_result(
+                err.exception,
+                err.final_state,
+                captured_traceback=err.captured_traceback,
+            )
 
-    def _step_until_done_simulation(self, state: CESKState) -> Any:
+    def run_and_unwrap(
+        self,
+        program: Program[T],
+        env: dict[str, Any] | None = None,
+        store: dict[str, Any] | None = None,
+    ) -> T:
+        """Execute a program and return just the value (raises on error).
+
+        This is a convenience method for when you don't need the full
+        RuntimeResult context. Equivalent to `run(...).value`.
+
+        Args:
+            program: The program to execute
+            env: Optional initial environment
+            store: Optional initial store
+
+        Returns:
+            The program's return value
+
+        Raises:
+            Any exception raised during program execution
+        """
+        result = self.run(program, env, store)
+        return result.value
+
+    def _step_until_done_simulation(self, state: CESKState) -> tuple[Any, CESKState, dict[str, Any]]:
+        """Step execution until completion with simulated time handling.
+        
+        Returns:
+            Tuple of (value, final_state, final_store) on success
+            
+        Raises:
+            ExecutionError: On failure, containing the exception and final state
+        """
         while True:
             result = step(state, self._handlers)
             
             if isinstance(result, Done):
-                return result.value
+                return (result.value, state, result.store)
             
             if isinstance(result, Failed):
                 exc = result.exception
-                if result.captured_traceback is not None:
-                    exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
-                raise exc
+                captured_tb = result.captured_traceback
+                if captured_tb is not None:
+                    exc.__cesk_traceback__ = captured_tb  # type: ignore[attr-defined]
+                raise ExecutionError(
+                    exception=exc,
+                    final_state=state,
+                    captured_traceback=captured_tb,
+                )
             
             if isinstance(result, CESKState):
                 state = result
