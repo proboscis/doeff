@@ -224,6 +224,11 @@ class RuntimeResult(Protocol[T_co]):
         """Unwrap Ok value or raise the Err error."""
         ...
 
+    @property
+    def error(self) -> BaseException:
+        """Get the error if result is Err, else raise ValueError."""
+        ...
+
     def is_ok(self) -> bool:
         """True if result is Ok."""
         ...
@@ -369,6 +374,13 @@ class RuntimeResultImpl(Generic[T]):
             return self._result.ok()  # type: ignore[return-value]
         else:
             raise self._result.err()  # type: ignore[misc]
+
+    @property
+    def error(self) -> BaseException:
+        """Get the error if result is Err, else raise ValueError."""
+        if isinstance(self._result, Err):
+            return self._result.error
+        raise ValueError("Result is Ok, no error")
 
     def is_ok(self) -> bool:
         return isinstance(self._result, Ok)
