@@ -41,6 +41,10 @@ class ExecutionError(Exception):
     final_state: CESKState
     captured_traceback: Any = None  # CapturedTraceback | None
 
+    def __str__(self) -> str:
+        exc_type = type(self.exception).__name__
+        return f"{exc_type}: {self.exception}"
+
 
 class BaseRuntime(ABC):
     """Abstract base class for CESK runtimes.
