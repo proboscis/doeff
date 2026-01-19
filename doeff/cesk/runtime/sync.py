@@ -39,6 +39,10 @@ class SyncRuntime(BaseRuntime):
 
         Returns:
             RuntimeResult containing the outcome and debugging context
+            
+        Raises:
+            KeyboardInterrupt, SystemExit: These are re-raised, not wrapped,
+                as they represent external control signals, not program errors.
         """
         state = self._create_initial_state(program, env, store)
         
@@ -46,6 +50,9 @@ class SyncRuntime(BaseRuntime):
             value, final_state, final_store = self._step_until_done(state)
             return self._build_success_result(value, final_state, final_store)
         except ExecutionError as err:
+            # Re-raise control signals - they shouldn't be wrapped in RuntimeResult
+            if isinstance(err.exception, (KeyboardInterrupt, SystemExit)):
+                raise err.exception from None
             # Use the state at failure point, not initial state
             return self._build_error_result(
                 err.exception, 
