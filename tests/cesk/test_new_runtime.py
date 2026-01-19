@@ -17,7 +17,7 @@ class TestSyncRuntime:
         
         runtime = SyncRuntime()
         result = runtime.run(Program.pure(42))
-        assert result == 42
+        assert result.value == 42
 
     def test_ask_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -30,7 +30,7 @@ class TestSyncRuntime:
             return value
         
         result = runtime.run(program(), env={"key": "value"})
-        assert result == "value"
+        assert result.value == "value"
 
     def test_ask_missing_key_raises(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -43,7 +43,7 @@ class TestSyncRuntime:
             return value
         
         with pytest.raises(KeyError, match="missing_key"):
-            runtime.run(program(), env={})
+            runtime.run(program(), env={}).value
 
     def test_get_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -56,7 +56,7 @@ class TestSyncRuntime:
             return value
         
         result = runtime.run(program(), store={"counter": 10})
-        assert result == 10
+        assert result.value == 10
 
     def test_put_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -70,7 +70,7 @@ class TestSyncRuntime:
             return value
         
         result = runtime.run(program())
-        assert result == 42
+        assert result.value == 42
 
     def test_modify_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -84,7 +84,7 @@ class TestSyncRuntime:
             return new_value
         
         result = runtime.run(program())
-        assert result == 15
+        assert result.value == 15
 
     def test_program_with_pure_returns_result(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -97,7 +97,7 @@ class TestSyncRuntime:
             return "done"
         
         result = runtime.run(program())
-        assert result == "done"
+        assert result.value == "done"
 
     def test_chained_effects(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -115,7 +115,7 @@ class TestSyncRuntime:
             program(),
             env={"config": {"initial": 21}},
         )
-        assert result == 42
+        assert result.value == 42
 
 
 class TestSimulationRuntime:
@@ -124,7 +124,7 @@ class TestSimulationRuntime:
         
         runtime = SimulationRuntime()
         result = runtime.run(Program.pure(42))
-        assert result == 42
+        assert result.value == 42
 
     def test_initial_time(self) -> None:
         from doeff.cesk.runtime import SimulationRuntime
@@ -146,7 +146,7 @@ class TestSimulationRuntime:
             return now
         
         result = runtime.run(program())
-        assert result == start_time
+        assert result.value == start_time
 
     def test_delay_advances_time(self) -> None:
         from doeff.cesk.runtime import SimulationRuntime
@@ -162,7 +162,7 @@ class TestSimulationRuntime:
         
         result = runtime.run(program())
         expected_time = start_time + timedelta(seconds=60)
-        assert result == expected_time
+        assert result.value == expected_time
         assert runtime.current_time == expected_time
 
     def test_advance_time_method(self) -> None:
@@ -479,12 +479,12 @@ class TestHandlerIntegration:
             return result
         
         default_result = SyncRuntime().run(program(), env={"key": "value"})
-        assert default_result == "value"
+        assert default_result.value == "value"
         
         custom_handlers = default_handlers()
         custom_handlers[AskEffect] = custom_ask_handler
         custom_result = SyncRuntime(handlers=custom_handlers).run(program(), env={"key": "value"})
-        assert custom_result == "intercepted:key"
+        assert custom_result.value == "intercepted:key"
 
     def test_custom_get_handler_overrides_default(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -508,12 +508,12 @@ class TestHandlerIntegration:
             return result
         
         default_result = SyncRuntime().run(program())
-        assert default_result == 42
+        assert default_result.value == 42
         
         custom_handlers = default_handlers()
         custom_handlers[StateGetEffect] = custom_get_handler
         custom_result = SyncRuntime(handlers=custom_handlers).run(program())
-        assert custom_result == "wrapped:42"
+        assert custom_result.value == "wrapped:42"
 
     def test_custom_io_handler_overrides_default(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -542,7 +542,7 @@ class TestHandlerIntegration:
         custom_handlers[IOPerformEffect] = counting_io_handler
         result = SyncRuntime(handlers=custom_handlers).run(program())
         
-        assert result == 100
+        assert result.value == 100
         assert call_count[0] == 1
 
     def test_handlers_shared_across_runs(self) -> None:
@@ -601,7 +601,7 @@ class TestHandlerIntegration:
         runtime = SimulationRuntime(handlers=custom_handlers)
         
         result = runtime.run(program(), env={"test": "original"})
-        assert result == "sim:test"
+        assert result.value == "sim:test"
 
 
 class TestControlHandlers:
@@ -623,7 +623,7 @@ class TestControlHandlers:
             return (outer_value, local_value, after_value)
         
         result = runtime.run(program(), env={"key": "outer_value"})
-        assert result == ("outer_value", "local_value", "outer_value")
+        assert result.value == ("outer_value", "local_value", "outer_value")
 
     def test_tell_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -638,7 +638,7 @@ class TestControlHandlers:
             return (yield Get("result"))
         
         result = runtime.run(program())
-        assert result == 42
+        assert result.value == 42
 
     def test_listen_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -657,8 +657,9 @@ class TestControlHandlers:
             return listen_result
         
         result = runtime.run(program())
-        assert result.value == "inner_result"
-        assert list(result.log) == ["log1", "log2"]
+        listen_result = result.value  # The Listen effect returns a ListenResult
+        assert listen_result.value == "inner_result"
+        assert list(listen_result.log) == ["log1", "log2"]
 
     def test_safe_effect_success(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -675,8 +676,9 @@ class TestControlHandlers:
             return result
         
         result = runtime.run(program())
-        assert result.is_ok()
-        assert result.unwrap() == 42
+        safe_result = result.value  # The Safe effect returns a Result
+        assert safe_result.is_ok()
+        assert safe_result.unwrap() == 42
 
     def test_safe_effect_failure(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -693,8 +695,9 @@ class TestControlHandlers:
             return result
         
         result = runtime.run(program())
-        assert result.is_err()
-        assert isinstance(result.error, ValueError)
+        safe_result = result.value  # The Safe effect returns a Result
+        assert safe_result.is_err()
+        assert isinstance(safe_result.error, ValueError)
 
     def test_intercept_effect(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -720,7 +723,7 @@ class TestControlHandlers:
             return result
         
         result = runtime.run(program(), env={"key": "original"})
-        assert result == "intercepted:key"
+        assert result.value == "intercepted:key"
 
 
 class TestGatherHandlers:
@@ -735,7 +738,7 @@ class TestGatherHandlers:
             return results
         
         result = runtime.run(program())
-        assert result == []
+        assert result.value == []
 
     def test_gather_single(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -752,7 +755,7 @@ class TestGatherHandlers:
             return results
         
         result = runtime.run(program())
-        assert result == [1]
+        assert result.value == [1]
 
     def test_gather_multiple(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -777,7 +780,7 @@ class TestGatherHandlers:
             return results
         
         result = runtime.run(program())
-        assert result == [1, 2, 3]
+        assert result.value == [1, 2, 3]
 
 
 class TestWaitUntilHandler:
@@ -793,7 +796,7 @@ class TestWaitUntilHandler:
             return "done"
         
         result = runtime.run(program())
-        assert result == "done"
+        assert result.value == "done"
 
     def test_wait_until_past_time(self) -> None:
         from doeff.cesk.runtime import SyncRuntime
@@ -807,7 +810,7 @@ class TestWaitUntilHandler:
             return "done"
         
         result = runtime.run(program())
-        assert result == "done"
+        assert result.value == "done"
 
     def test_wait_until_simulation_runtime(self) -> None:
         from doeff.cesk.runtime import SimulationRuntime
@@ -823,7 +826,7 @@ class TestWaitUntilHandler:
             return now
         
         result = runtime.run(program())
-        assert result == target_time
+        assert result.value == target_time
         assert runtime.current_time == target_time
 
     def test_wait_until_handler_registered(self) -> None:

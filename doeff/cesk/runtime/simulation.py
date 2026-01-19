@@ -1,7 +1,9 @@
+"""Simulation runtime with controllable time for testing time-based effects."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.runtime.base import BaseRuntime
@@ -11,13 +13,23 @@ from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler
 from doeff.cesk.frames import ContinueValue, ContinueError
 from doeff.cesk.errors import UnhandledEffectError
+from doeff.cesk.runtime_result import RuntimeResult
 from doeff.effects.time import DelayEffect, WaitUntilEffect
 
 if TYPE_CHECKING:
     from doeff.program import Program
 
+T = TypeVar("T")
+
 
 class SimulationRuntime(BaseRuntime):
+    """Runtime with controllable time for testing time-based effects.
+    
+    This runtime advances simulated time instantly when Delay/WaitUntil
+    effects are encountered, making it suitable for testing time-dependent
+    code without actual waiting.
+    """
+
     def __init__(
         self,
         handlers: dict[type, Handler] | None = None,
@@ -38,22 +50,63 @@ class SimulationRuntime(BaseRuntime):
 
     def run(
         self,
-        program: Program,
+        program: Program[T],
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
-    ) -> Any:
+    ) -> RuntimeResult[T]:
+        """Execute a program and return RuntimeResult.
+
+        Args:
+            program: The program to execute
+            env: Optional initial environment (reader context)
+            store: Optional initial store (mutable state)
+
+        Returns:
+            RuntimeResult containing the outcome and debugging context
+        """
         initial_store = store if store is not None else {}
         initial_store = {**initial_store, "__current_time__": self._current_time}
         
         state = self._create_initial_state(program, env, initial_store)
-        return self._step_until_done_simulation(state)
+        
+        try:
+            value, final_state = self._step_until_done_simulation(state)
+            return self._build_success_result(value, final_state)
+        except Exception as exc:
+            return self._build_error_result(exc, state)
 
-    def _step_until_done_simulation(self, state: CESKState) -> Any:
+    def run_and_unwrap(
+        self,
+        program: Program[T],
+        env: dict[str, Any] | None = None,
+        store: dict[str, Any] | None = None,
+    ) -> T:
+        """Execute a program and return just the value (raises on error).
+
+        This is a convenience method for when you don't need the full
+        RuntimeResult context. Equivalent to `run(...).value`.
+
+        Args:
+            program: The program to execute
+            env: Optional initial environment
+            store: Optional initial store
+
+        Returns:
+            The program's return value
+
+        Raises:
+            Any exception raised during program execution
+        """
+        result = self.run(program, env, store)
+        return result.value
+
+    def _step_until_done_simulation(self, state: CESKState) -> tuple[Any, CESKState]:
+        """Step execution until completion with simulated time handling."""
         while True:
             result = step(state, self._handlers)
             
             if isinstance(result, Done):
-                return result.value
+                return (result.value, state)
             
             if isinstance(result, Failed):
                 exc = result.exception
