@@ -8,57 +8,53 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from doeff._vendor import NOTHING, Err, FrozenDict, Ok, Some
-from doeff._types_internal import EffectBase, ListenResult
-from doeff.cesk.types import Store, TaskId
-from doeff.cesk.frames import (
-    GatherFrame,
-    GraphCaptureFrame,
-    InterceptFrame,
-    Kontinuation,
-    ListenFrame,
-    LocalFrame,
-    ReturnFrame,
-    SafeFrame,
-)
-from doeff.cesk.state import (
-    CESKState,
-    TaskState,
-    EffectControl,
-    Error,
-    ProgramControl,
-    Value,
-    Ready,
-    Blocked,
-    Requesting,
-    Done as TaskDoneStatus,
-)
-from doeff.cesk.result import Done, Failed, StepResult, Suspended
-from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
+from doeff._types_internal import ListenResult
+from doeff._vendor import NOTHING, Err, Ok, Some
 from doeff.cesk.classification import (
     has_intercept_frame,
     is_effectful,
     is_pure_effect,
 )
+from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
+from doeff.cesk.frames import (
+    AskLazyFrame,
+    GatherFrame,
+    GraphCaptureFrame,
+    InterceptFrame,
+    ListenFrame,
+    LocalFrame,
+    ReturnFrame,
+    SafeFrame,
+)
 from doeff.cesk.helpers import (
     apply_intercept_chain,
     to_generator,
 )
+from doeff.cesk.result import Done, Failed, StepResult, Suspended
+from doeff.cesk.state import (
+    CESKState,
+    EffectControl,
+    Error,
+    ProgramControl,
+    Ready,
+    TaskState,
+    Value,
+)
+from doeff.cesk.state import (
+    Done as TaskDoneStatus,
+)
+from doeff.cesk.types import Store, TaskId
 from doeff.utils import BoundedLog
 
 if TYPE_CHECKING:
-    from doeff.program import Program
+    pass
 
 
 def _make_suspended(effect: Any, E: Any, S: Any, K: Any) -> Suspended:
     return Suspended(
         effect=effect,
-        resume=lambda v, new_store, E=E, K=K: CESKState(
-            C=Value(v), E=E, S=new_store, K=K
-        ),
-        resume_error=lambda ex, E=E, S=S, K=K: CESKState(
-            C=Error(ex), E=E, S=S, K=K
-        ),
+        resume=lambda v, new_store, E=E, K=K: CESKState(C=Value(v), E=E, S=new_store, K=K),
+        resume_error=lambda ex, E=E, S=S, K=K: CESKState(C=Error(ex), E=E, S=S, K=K),
     )
 
 
@@ -87,7 +83,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             from doeff.types import EffectBase
 
             if isinstance(transformed, EffectBase):
-                has_handler = (handlers is not None and type(transformed) in handlers) or is_pure_effect(transformed) or is_effectful(transformed)
+                has_handler = (
+                    (handlers is not None and type(transformed) in handlers)
+                    or is_pure_effect(transformed)
+                    or is_effectful(transformed)
+                )
 
                 if has_handler:
                     return _make_suspended(transformed, E, S, K)
@@ -113,7 +113,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 K=K,
             )
 
-        has_handler = (handlers is not None and type(effect) in handlers) or is_pure_effect(effect) or is_effectful(effect)
+        has_handler = (
+            (handlers is not None and type(effect) in handlers)
+            or is_pure_effect(effect)
+            or is_effectful(effect)
+        )
 
         if has_handler:
             return _make_suspended(effect, E, S, K)
@@ -148,7 +152,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 control = ProgramControl(item)
             else:
                 return CESKState(
-                    C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
+                    C=Error(
+                        InterpreterInvariantError(
+                            f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only."
+                        )
+                    ),
                     E=E,
                     S=S,
                     K=K,
@@ -188,7 +196,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                     control = ProgramControl(item)
                 else:
                     return CESKState(
-                        C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
+                        C=Error(
+                            InterpreterInvariantError(
+                                f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only."
+                            )
+                        ),
                         E=frame.saved_env,
                         S=S,
                         K=K_rest,
@@ -198,13 +210,20 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
+                    K=[
+                        ReturnFrame(
+                            frame.generator, frame.saved_env, program_call=frame.program_call
+                        )
+                    ]
+                    + K_rest,
                 )
             except StopIteration as e:
                 return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
             except Exception as ex:
                 captured = capture_traceback_safe(K_rest, ex, pre_captured=pre_captured)
-                return CESKState(C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest)
+                return CESKState(
+                    C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest
+                )
 
         if isinstance(frame, LocalFrame):
             return CESKState(C=Value(C.v), E=frame.restore_env, S=S, K=K_rest)
@@ -214,13 +233,13 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
         if isinstance(frame, ListenFrame):
             current_log = S.get("__log__", [])
-            captured = current_log[frame.log_start_index:]
+            captured = current_log[frame.log_start_index :]
             listen_result = ListenResult(value=C.v, log=BoundedLog(captured))
             return CESKState(C=Value(listen_result), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GraphCaptureFrame):
             current_graph = S.get("__graph__", [])
-            captured_graph = current_graph[frame.graph_start_index:]
+            captured_graph = current_graph[frame.graph_start_index :]
             return CESKState(C=Value((C.v, captured_graph)), E=E, S=S, K=K_rest)
 
         if isinstance(frame, GatherFrame):
@@ -238,6 +257,13 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
         if isinstance(frame, SafeFrame):
             return CESKState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
+
+        if isinstance(frame, AskLazyFrame):
+            # Cache the lazy Ask result: store (program_object, value) keyed by ask_key
+            cache = S.get("__ask_lazy_cache__", {})
+            new_cache = {**cache, frame.ask_key: (frame.program, C.v)}
+            new_S = {**S, "__ask_lazy_cache__": new_cache}
+            return CESKState(C=Value(C.v), E=E, S=new_S, K=K_rest)
 
     if isinstance(C, Error) and K:
         frame = K[0]
@@ -261,7 +287,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                     control = ProgramControl(item)
                 else:
                     return CESKState(
-                        C=Error(InterpreterInvariantError(f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only.")),
+                        C=Error(
+                            InterpreterInvariantError(
+                                f"Program yielded unexpected type: {type(item).__name__}. Programs must yield Effect or Program instances only."
+                            )
+                        ),
                         E=frame.saved_env,
                         S=S,
                         K=K_rest,
@@ -271,7 +301,12 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
+                    K=[
+                        ReturnFrame(
+                            frame.generator, frame.saved_env, program_call=frame.program_call
+                        )
+                    ]
+                    + K_rest,
                 )
             except StopIteration as e:
                 return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
@@ -292,19 +327,35 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 )
 
         if isinstance(frame, LocalFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.restore_env, S=S, K=K_rest)
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback),
+                E=frame.restore_env,
+                S=S,
+                K=K_rest,
+            )
 
         if isinstance(frame, InterceptFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest
+            )
 
         if isinstance(frame, ListenFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest
+            )
 
         if isinstance(frame, GatherFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=frame.saved_env, S=S, K=K_rest)
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback),
+                E=frame.saved_env,
+                S=S,
+                K=K_rest,
+            )
 
         if isinstance(frame, GraphCaptureFrame):
-            return CESKState(C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest)
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest
+            )
 
         if isinstance(frame, SafeFrame):
             from doeff.cesk_traceback import capture_traceback_safe
@@ -316,6 +367,19 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 captured_maybe = Some(captured) if captured else NOTHING
             err_result = Err(C.ex, captured_traceback=captured_maybe)
             return CESKState(C=Value(err_result), E=frame.saved_env, S=S, K=K_rest)
+
+        if isinstance(frame, AskLazyFrame):
+            # Errors propagate up - per spec, Program failure = entire run() fails
+            # Clear in-progress marker so future attempts can retry after Safe/Local
+            cache = S.get("__ask_lazy_cache__", {})
+            if frame.ask_key in cache:
+                new_cache = {k: v for k, v in cache.items() if k != frame.ask_key}
+                new_S = {**S, "__ask_lazy_cache__": new_cache}
+            else:
+                new_S = S
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=new_S, K=K_rest
+            )
 
     head_desc = type(K[0]).__name__ if K else "empty"
     raise InterpreterInvariantError(f"Unhandled state: C={type(C).__name__}, K head={head_desc}")
@@ -403,6 +467,6 @@ def step_cesk_task(
 
 __all__ = [
     "step",
-    "step_task",
     "step_cesk_task",
+    "step_task",
 ]
