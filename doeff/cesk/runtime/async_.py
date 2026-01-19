@@ -18,15 +18,7 @@ from doeff.cesk.step import step
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram, FrameResult
 from doeff.cesk.types import Store, TaskId
-from doeff.cesk.runtime_result import (
-    RuntimeResult,
-    RuntimeResultImpl,
-    KStackTrace,
-    EffectStackTrace,
-    PythonStackTrace,
-    build_k_stack_trace,
-    build_stacks_from_captured_traceback,
-)
+from doeff.cesk.runtime_result import RuntimeResult
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
 from doeff.effects.time import DelayEffect, WaitUntilEffect
@@ -138,85 +130,6 @@ class AsyncRuntime(BaseRuntime):
         """
         result = await self.run(program, env, store)
         return result.value
-
-    def _build_success_result(
-        self,
-        value: T,
-        state: CESKState,
-    ) -> RuntimeResultImpl[T]:
-        """Build RuntimeResult for successful execution."""
-        # Extract state (excluding internal keys)
-        final_state = {
-            k: v for k, v in state.store.items()
-            if not k.startswith("__")
-        }
-
-        # Extract log
-        final_log = list(state.store.get("__log__", []))
-
-        # Extract graph if captured
-        final_graph = state.store.get("__graph__")
-
-        # Get main task for env and k_stack
-        main_task = state.tasks.get(state.main_task)
-        k_stack = KStackTrace(frames=())
-        final_env: dict[Any, Any] = {}
-        if main_task:
-            k_stack = build_k_stack_trace(main_task.kontinuation)
-            final_env = dict(main_task.env)
-
-        return RuntimeResultImpl(
-            _result=Ok(value),
-            _state=final_state,
-            _log=final_log,
-            _env=final_env,
-            _k_stack=k_stack,
-            _effect_stack=EffectStackTrace(),  # Success path: no error tree needed
-            _python_stack=PythonStackTrace(frames=()),  # Success path: no error stack needed
-            _graph=final_graph,
-        )
-
-    def _build_error_result(
-        self,
-        exc: Exception,
-        state: CESKState,
-    ) -> RuntimeResultImpl[Any]:
-        """Build RuntimeResult for failed execution."""
-        # Extract state (excluding internal keys)
-        final_state = {
-            k: v for k, v in state.store.items()
-            if not k.startswith("__")
-        }
-
-        # Extract log
-        final_log = list(state.store.get("__log__", []))
-
-        # Extract graph if captured (DON'T lose it on error!)
-        final_graph = state.store.get("__graph__")
-
-        # Get main task for env and k_stack
-        main_task = state.tasks.get(state.main_task)
-        k_stack = KStackTrace(frames=())
-        final_env: dict[Any, Any] = {}
-        if main_task:
-            k_stack = build_k_stack_trace(main_task.kontinuation)
-            final_env = dict(main_task.env)
-
-        # Get captured traceback if available and convert to stack traces
-        captured_tb = getattr(exc, "__cesk_traceback__", None)
-        python_stack, effect_stack = build_stacks_from_captured_traceback(captured_tb)
-
-        return RuntimeResultImpl(
-            _result=Err(exc),
-            _state=final_state,
-            _log=final_log,
-            _env=final_env,
-            _k_stack=k_stack,
-            _effect_stack=effect_stack,
-            _python_stack=python_stack,
-            _graph=final_graph,
-            _captured_traceback=captured_tb,
-        )
 
     async def _run_scheduler(self, state: CESKState) -> tuple[Any, CESKState]:
         """Run the scheduler loop until completion.
