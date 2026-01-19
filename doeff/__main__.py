@@ -112,7 +112,7 @@ class ProgramBuilder:
         merged_env_program = self._merger.merge_envs(env_sources)
         temp_runtime = SyncRuntime()
         try:
-            merged_env_dict = temp_runtime.run(merged_env_program)
+            merged_env_dict = temp_runtime.run(merged_env_program).value
         except Exception as exc:
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
             print(repr(exc), file=sys.stderr)
@@ -222,8 +222,8 @@ class RunCommand:
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
             
             if isinstance(interpreter_obj, SyncRuntime):
-                final_value = interpreter_obj.run(program)
-                return None, final_value
+                result = interpreter_obj.run(program)
+                return None, result.value
 
             if not callable(interpreter_obj):
                 raise TypeError(
@@ -439,11 +439,14 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
 
 def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
     from doeff.program import Program as ProgramType
+    from doeff.cesk.runtime_result import RuntimeResult
 
     if isinstance(value, ProgramType):
         runtime = SyncRuntime()
-        final_value = runtime.run(value)
-        return final_value, None
+        result = runtime.run(value)
+        return result.value, None
+    if isinstance(value, RuntimeResult):
+        return value.value, None
     if isinstance(value, RunResult):
         return _unwrap_run_result(value), value
     return value, None
