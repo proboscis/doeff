@@ -519,12 +519,20 @@ class AskLazyFrame:
     - Invalidation: Local override with different Program object
     - Errors: Program failure = entire run() fails
 
-    The cache structure is: store["__ask_lazy_cache__"][key] = (program, value)
+    Cache structure: store["__ask_lazy_cache__"][key] = (program, value)
     where program is the actual Program object (for identity comparison).
+
+    Design trade-off: Key-only caching means after Local override exits,
+    the original program's cached result is lost and must be re-evaluated.
+    This prevents unbounded cache growth from repeated Local overrides.
+
+    Concurrency note: Safe under current scheduler implementation which
+    steps one task at a time. The _ASK_IN_PROGRESS marker is set before
+    ContinueProgram returns, so no race condition with sequential dispatch.
     """
 
-    ask_key: Any  # The original Ask key
-    program: Any  # The Program object itself (for identity-based cache validation)
+    ask_key: Any  # The original Ask key (any hashable)
+    program: Program  # The Program object itself (for identity-based cache validation)
 
     def on_value(
         self,

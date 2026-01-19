@@ -42,6 +42,21 @@ def handle_ask(
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
+    """Handle Ask effect with lazy Program evaluation.
+
+    If the environment value is a Program, evaluates it lazily and caches
+    the result for subsequent Ask calls with the same key.
+
+    Cache semantics:
+    - Key: Same as Ask key (any hashable)
+    - Value: (program_object, cached_value) tuple
+    - Invalidation: Identity comparison (cached_program is value)
+    - Scope: Per runtime.run() invocation (stored in Store)
+
+    Concurrency: Safe under sequential effect dispatch (current scheduler).
+    The _ASK_IN_PROGRESS marker prevents re-evaluation but assumes only one
+    task executes handle_ask at a time.
+    """
     from doeff.program import ProgramBase
 
     key = effect.key
