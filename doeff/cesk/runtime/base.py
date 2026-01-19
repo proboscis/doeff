@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import FrozenDict, Ok, Err
@@ -27,6 +28,18 @@ if TYPE_CHECKING:
     from doeff.cesk.types import Environment, Store
 
 T = TypeVar("T")
+
+
+@dataclass
+class ExecutionError(Exception):
+    """Exception that carries both the error and the final state at failure.
+    
+    This allows runtimes to build accurate RuntimeResult with the state
+    at the point of failure, not the initial state.
+    """
+    exception: BaseException
+    final_state: CESKState
+    captured_traceback: Any = None  # CapturedTraceback | None
 
 
 class BaseRuntime(ABC):
@@ -90,19 +103,29 @@ class BaseRuntime(ABC):
         self,
         value: T,
         state: CESKState,
+        final_store: dict[str, Any] | None = None,
     ) -> RuntimeResultImpl[T]:
-        """Build RuntimeResult for successful execution."""
+        """Build RuntimeResult for successful execution.
+        
+        Args:
+            value: The final computed value
+            state: The final CESKState
+            final_store: Optional override for the store (e.g., from Done.store)
+        """
+        # Use final_store if provided (from Done.store), else state.store
+        store = final_store if final_store is not None else state.store
+        
         # Extract state (excluding internal keys)
         final_state = {
-            k: v for k, v in state.store.items()
+            k: v for k, v in store.items()
             if not k.startswith("__")
         }
 
         # Extract log
-        final_log = list(state.store.get("__log__", []))
+        final_log = list(store.get("__log__", []))
 
         # Extract graph if captured
-        final_graph = state.store.get("__graph__")
+        final_graph = store.get("__graph__")
 
         # Get main task for env and k_stack
         main_task = state.tasks.get(state.main_task)
@@ -118,28 +141,40 @@ class BaseRuntime(ABC):
             _log=final_log,
             _env=final_env,
             _k_stack=k_stack,
-            _effect_stack=EffectStackTrace(),  # Success path: no error tree needed
-            _python_stack=PythonStackTrace(frames=()),  # Success path: no error stack needed
+            _effect_stack=EffectStackTrace(),  # Success path: traces not captured
+            _python_stack=PythonStackTrace(frames=()),  # Success path: traces not captured
             _graph=final_graph,
         )
 
     def _build_error_result(
         self,
-        exc: Exception,
+        exc: BaseException,
         state: CESKState,
+        final_store: dict[str, Any] | None = None,
+        captured_traceback: Any = None,
     ) -> RuntimeResultImpl[Any]:
-        """Build RuntimeResult for failed execution."""
+        """Build RuntimeResult for failed execution.
+        
+        Args:
+            exc: The exception that caused the failure
+            state: The CESKState at the point of failure
+            final_store: Optional override for the store (e.g., from Failed.store)
+            captured_traceback: Optional pre-captured traceback
+        """
+        # Use final_store if provided (from Failed.store), else state.store
+        store = final_store if final_store is not None else state.store
+        
         # Extract state (excluding internal keys)
         final_state = {
-            k: v for k, v in state.store.items()
+            k: v for k, v in store.items()
             if not k.startswith("__")
         }
 
         # Extract log
-        final_log = list(state.store.get("__log__", []))
+        final_log = list(store.get("__log__", []))
 
         # Extract graph if captured (DON'T lose it on error!)
-        final_graph = state.store.get("__graph__")
+        final_graph = store.get("__graph__")
 
         # Get main task for env and k_stack
         main_task = state.tasks.get(state.main_task)
@@ -149,12 +184,13 @@ class BaseRuntime(ABC):
             k_stack = build_k_stack_trace(main_task.kontinuation)
             final_env = dict(main_task.env)
 
-        # Get captured traceback if available and convert to stack traces
-        captured_tb = getattr(exc, "__cesk_traceback__", None)
-        python_stack, effect_stack = build_stacks_from_captured_traceback(captured_tb)
+        # Get captured traceback - prefer explicit param, then check exception attr
+        if captured_traceback is None:
+            captured_traceback = getattr(exc, "__cesk_traceback__", None)
+        python_stack, effect_stack = build_stacks_from_captured_traceback(captured_traceback)
 
         return RuntimeResultImpl(
-            _result=Err(exc),
+            _result=Err(exc),  # type: ignore[arg-type]  # BaseException to Exception
             _state=final_state,
             _log=final_log,
             _env=final_env,
@@ -162,24 +198,36 @@ class BaseRuntime(ABC):
             _effect_stack=effect_stack,
             _python_stack=python_stack,
             _graph=final_graph,
-            _captured_traceback=captured_tb,
+            _captured_traceback=captured_traceback,
         )
 
-    def _step_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
-        """Step execution until completion, returning (value, final_state)."""
+    def _step_until_done(self, state: CESKState) -> tuple[Any, CESKState, dict[str, Any]]:
+        """Step execution until completion.
+        
+        Returns:
+            Tuple of (value, final_state, final_store) on success
+            
+        Raises:
+            ExecutionError: On failure, containing the exception and final state
+        """
         from doeff.cesk.state import ProgramControl
 
         while True:
             result = step(state, self._handlers)
 
             if isinstance(result, Done):
-                return (result.value, state)
+                return (result.value, state, result.store)
 
             if isinstance(result, Failed):
                 exc = result.exception
-                if result.captured_traceback is not None:
-                    exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
-                raise exc
+                captured_tb = result.captured_traceback
+                if captured_tb is not None:
+                    exc.__cesk_traceback__ = captured_tb  # type: ignore[attr-defined]
+                raise ExecutionError(
+                    exception=exc,
+                    final_state=state,
+                    captured_traceback=captured_tb,
+                )
 
             if isinstance(result, CESKState):
                 state = result
@@ -211,4 +259,5 @@ class BaseRuntime(ABC):
 
 __all__ = [
     "BaseRuntime",
+    "ExecutionError",
 ]
