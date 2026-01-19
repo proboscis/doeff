@@ -1,42 +1,12 @@
-from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 import pytest
 
 from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.runtime_result import RuntimeResult
 from doeff.program import Program
 
 T = TypeVar("T")
-
-
-@dataclass
-class TestRunResult(Generic[T]):
-    """Minimal result wrapper for test compatibility.
-    
-    Provides the `.value`/`.is_ok`/`.error` interface that tests expect,
-    while the actual runtime just returns raw values or raises.
-    """
-    _value: T | None
-    _error: BaseException | None
-    
-    @property
-    def value(self) -> T:
-        if self._error is not None:
-            raise self._error
-        return self._value  # type: ignore
-    
-    @property
-    def is_ok(self) -> bool:
-        return self._error is None
-    
-    @property
-    def error(self) -> BaseException:
-        if self._error is None:
-            raise ValueError("Result is Ok, no error")
-        return self._error
-    
-    def is_err(self) -> bool:
-        return self._error is not None
 
 
 class Interpreter(Protocol):
@@ -45,10 +15,15 @@ class Interpreter(Protocol):
         program: Program[T],
         env: dict[Any, Any] | None = None,
         store: dict[str, Any] | None = None,
-    ) -> TestRunResult[T]: ...
+    ) -> RuntimeResult[T]: ...
 
 
 class RuntimeAdapter:
+    """Adapter for using SyncRuntime with the test interpreter protocol.
+    
+    Now that SyncRuntime returns RuntimeResult directly, this adapter
+    simply delegates to the runtime.
+    """
     interpreter_type = "cesk"
 
     def __init__(self) -> None:
@@ -59,24 +34,17 @@ class RuntimeAdapter:
         program: Program[T],
         env: dict[Any, Any] | None = None,
         store: dict[str, Any] | None = None,
-    ) -> TestRunResult[T]:
-        try:
-            value = self._runtime.run(program, env=env, store=store)
-            return TestRunResult(_value=value, _error=None)
-        except Exception as e:
-            return TestRunResult(_value=None, _error=e)
+    ) -> RuntimeResult[T]:
+        return self._runtime.run(program, env=env, store=store)
 
     async def run_async(
         self,
         program: Program[T],
         env: dict[Any, Any] | None = None,
         state: dict[str, Any] | None = None,
-    ) -> TestRunResult[T]:
-        try:
-            value = self._runtime.run(program, env=env, store=state)
-            return TestRunResult(_value=value, _error=None)
-        except Exception as e:
-            return TestRunResult(_value=None, _error=e)
+    ) -> RuntimeResult[T]:
+        # SyncRuntime.run() is synchronous, but we can still return its result
+        return self._runtime.run(program, env=env, store=state)
 
 
 @pytest.fixture
