@@ -1,6 +1,6 @@
 # SPEC-EFF-005: Concurrency Effects
 
-## Status: Draft
+## Status: Implemented
 
 ## Summary
 
@@ -12,8 +12,8 @@ This specification defines the semantics for concurrency effects in doeff: `Gath
 |--------|---------|--------|
 | `Gather` | Execute multiple programs in parallel, collect results | Implemented |
 | `Await` | Await an external coroutine/future | Implemented |
-| `Spawn` | Spawn a background task, return Task handle | Defined, not implemented |
-| `Task.join()` | Wait for spawned task to complete | Defined, not implemented |
+| `Spawn` | Spawn a background task, return Task handle | Implemented |
+| `Task.join()` | Wait for spawned task to complete | Implemented |
 
 ---
 
@@ -313,7 +313,7 @@ def example():
 
 ---
 
-## Spawn Effect (NOT IMPLEMENTED)
+## Spawn Effect
 
 ### Proposed Definition
 
@@ -338,11 +338,36 @@ def example():
     result = yield task.join()  # Wait for completion
 ```
 
-### Open Questions
+
+### Implementation Notes
+
+Spawn is implemented in `doeff/cesk/runtime/async_.py` with the following design decisions:
+
+1. **Store semantics**: Snapshot at spawn time (isolated)
+   - Child task gets a copy of the store at spawn time
+   - Child's modifications don't affect parent
+   - Parent's later modifications don't affect child
+
+2. **Error handling**: Exceptions stored until join
+   - Spawned task errors don't immediately fail parent
+   - Exception is stored in Task handle
+   - Re-raised when join() is called
+
+3. **Cancellation**: Follows asyncio conventions
+   - `cancel()` is synchronous, requests cancellation
+   - `cancel()` returns True if cancellation requested, False if task already done
+   - `join()` on cancelled task raises `TaskCancelledError`
+
+4. **Additional methods**:
+   - `is_done()`: Non-blocking check if task completed (success, error, or cancelled)
+
+See: `tests/cesk/test_spawn.py` for comprehensive test coverage.
+
+### Design Decisions (Implemented)
 
 #### 1. Store semantics for Spawn
 
-**Option A: Snapshot at spawn time**
+**DECIDED: Snapshot at spawn time**
 - Child gets a copy of the store when spawned
 - Changes in child do not affect parent
 - Changes in parent do not affect child after spawn
@@ -351,11 +376,11 @@ def example():
 - Requires synchronization for thread/process backends
 - More complex but enables coordination
 
-**Recommendation**: Snapshot semantics for simplicity and safety.
+**Result**: Implemented with snapshot semantics.
 
 #### 2. Error handling for background tasks
 
-**Option A: Exception stored in Task, raised on join**
+**DECIDED: Exception stored in Task, raised on join**
 ```python
 task = yield Spawn(failing_program())
 # No error yet
@@ -365,7 +390,7 @@ result = yield Safe(task.join())  # Error captured here
 **Option B: Exception propagates to spawner immediately**
 - Harder to implement, breaks "fire and forget" pattern
 
-**Recommendation**: Option A - exceptions stored until join.
+**Result**: Implemented with exceptions stored until join.
 
 #### 3. Cancellation semantics
 
@@ -380,7 +405,7 @@ yield task.cancel()  # How should this work?
 - What happens if task is already completed?
 - Should cancelled tasks raise `CancelledError` on join?
 
-**Recommendation**: Follow asyncio conventions:
+**DECIDED: Follow asyncio conventions:**
 - `cancel()` is synchronous, requests cancellation
 - Task may take time to actually cancel
 - `join()` on cancelled task raises `CancelledError`
