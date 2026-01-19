@@ -9,14 +9,15 @@ from doeff.cesk.types import Store
 from doeff.cesk.frames import InterceptFrame, Kontinuation
 
 if TYPE_CHECKING:
-    from doeff.program import Program
+    from doeff.program import ProgramBase
     from doeff.types import Effect
+    from doeff.effects._program_types import ProgramLike
 
 
 def apply_transforms(
-    transforms: tuple[Callable[[Effect], Effect | Program | None], ...],
+    transforms: tuple[Callable[[Effect], Effect | ProgramBase | None], ...],
     effect: Effect,
-) -> Effect | Program:
+) -> Effect | ProgramBase:
     for transform in transforms:
         result = transform(effect)
         if result is not None:
@@ -24,14 +25,26 @@ def apply_transforms(
     return effect
 
 
-def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | Program:
-    current = effect
+def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | ProgramBase:
+    """Apply intercept transforms from continuation frames to an effect.
+    
+    Once any transform returns a ProgramBase (not an Effect), we stop applying
+    further transforms and return immediately - you're no longer transforming
+    an effect, you're resuming execution with a new program.
+    """
+    from doeff._types_internal import EffectBase
+    
+    current: Effect | ProgramBase = effect
     for frame in K:
         if isinstance(frame, InterceptFrame):
             for transform in frame.transforms:
-                result = transform(current)
+                result = transform(current)  # type: ignore[arg-type]
                 if result is not None:
                     current = result
+                    # If result is a ProgramBase but NOT an Effect, stop processing
+                    # intercept frames entirely - we're resuming with a program
+                    if not isinstance(result, EffectBase):
+                        return current
                     break
     return current
 
@@ -84,7 +97,7 @@ def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
     return merged
 
 
-def to_generator(program: Program) -> Generator[Any, Any, Any]:
+def to_generator(program: ProgramLike) -> Generator[Any, Any, Any]:
     from doeff.program import KleisliProgramCall, ProgramBase
 
     if isinstance(program, KleisliProgramCall):

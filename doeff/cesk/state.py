@@ -34,9 +34,10 @@ from doeff.cesk.types import (
 
 if TYPE_CHECKING:
     from doeff.cesk_traceback import CapturedTraceback
-    from doeff.program import Program
+    from doeff.program import ProgramBase
     from doeff.cesk.frames import Kontinuation
     from doeff.effects.spawn import SpawnBackend
+    from doeff.effects._program_types import ProgramLike
 
 
 # ============================================
@@ -69,7 +70,7 @@ class EffectControl:
 class ProgramControl:
     """Control state: need to execute a program."""
 
-    program: Program
+    program: ProgramLike
 
 
 Control: TypeAlias = Value | Error | EffectControl | ProgramControl
@@ -118,7 +119,7 @@ Condition: TypeAlias = TimeCondition | FutureCondition | TaskCondition | SpawnCo
 class CreateTask:
     """Request to create a new task from a program."""
 
-    program: Program
+    program: ProgramLike
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,7 @@ class AwaitExternal:
 class CreateSpawn:
     """Request to spawn a program on an external backend."""
 
-    program: Program
+    program: ProgramLike
     backend: SpawnBackend
 
 
@@ -240,7 +241,7 @@ class TaskState:
     @classmethod
     def initial(
         cls,
-        program: Program,
+        program: ProgramLike,
         env: Environment | dict[Any, Any] | None = None,
     ) -> TaskState:
         """Create initial state for a program."""
@@ -404,7 +405,7 @@ class CESKState:
     @classmethod
     def initial(
         cls,
-        program: Program,
+        program: ProgramLike,
         env: Environment | dict[Any, Any] | None = None,
         store: Store | None = None,
     ) -> CESKState:
