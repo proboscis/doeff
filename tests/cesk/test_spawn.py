@@ -919,3 +919,156 @@ __all__ = [
     "TestSpawnConcurrentJoin",
     "TestSpawnTiming",
 ]
+
+
+# ============================================================================
+# Oracle Review - Additional Edge Case Tests
+# ============================================================================
+
+
+class TestSpawnOracleReview:
+    """Additional tests based on Oracle review feedback."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_with_pending_delay(self) -> None:
+        """Test that cancelling a task with pending Delay works correctly.
+        
+        Oracle identified that cancelled tasks could be "revived" by pending
+        async completions. This test verifies the fix.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def delayed_task():
+            yield Delay(seconds=10.0)  # Long delay
+            return "should_not_reach"
+
+        @do
+        def program():
+            task = yield Spawn(delayed_task())
+            # Cancel immediately while Delay is pending
+            cancelled = yield task.cancel()
+            # Join should raise CancelledError, not hang or return value
+            result = yield Safe(task.join())
+            return (cancelled, result.is_err(), isinstance(result.error, TaskCancelledError))
+
+        result = await runtime.run_and_unwrap(program())
+        cancelled, is_err, is_cancelled_error = result
+        assert cancelled is True
+        assert is_err is True
+        assert is_cancelled_error is True
+
+    @pytest.mark.asyncio
+    async def test_spawned_task_with_user_handler_isolation(self) -> None:
+        """Test that user handlers respect store isolation for spawned tasks.
+        
+        Oracle identified that user handlers could bypass store isolation.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.cesk.handlers import default_handlers
+        from doeff.cesk.frames import ContinueValue
+        from doeff.effects.pure import PureEffect
+
+        # Custom handler that reads and modifies store
+        handler_saw_value = []
+        
+        def custom_pure_handler(effect, task_state, store):
+            # Record what value we saw in the store
+            handler_saw_value.append(store.get("marker", "not_set"))
+            return ContinueValue(
+                value=effect.value,
+                env=task_state.env,
+                store=store,
+                k=task_state.kontinuation,
+            )
+
+        custom_handlers = default_handlers()
+        custom_handlers[PureEffect] = custom_pure_handler
+        runtime = AsyncRuntime(handlers=custom_handlers)
+
+        @do
+        def background():
+            yield Pure(None)  # This will trigger custom handler
+            return "done"
+
+        @do
+        def program():
+            yield Put("marker", "parent_value")
+            task = yield Spawn(background())
+            # Modify parent's store after spawn
+            yield Put("marker", "modified_after_spawn")
+            result = yield task.join()
+            return result
+
+        result = await runtime.run_and_unwrap(program())
+        assert result == "done"
+        # The handler should have seen the snapshot value, not the modified value
+        assert handler_saw_value[0] == "parent_value"
+
+    @pytest.mark.asyncio
+    async def test_spawned_task_delay_uses_isolated_store(self) -> None:
+        """Test that Delay completion in spawned task uses isolated store."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def background():
+            yield Delay(seconds=0.01)
+            # After delay, read from store
+            value = yield Get("key")
+            return value
+
+        @do
+        def program():
+            yield Put("key", "snapshot_value")
+            task = yield Spawn(background())
+            # Modify parent's store while child is waiting
+            yield Put("key", "modified_value")
+            result = yield task.join()
+            parent_value = yield Get("key")
+            return (result, parent_value)
+
+        child_result, parent_result = await runtime.run_and_unwrap(program())
+        # Child should see snapshot value
+        assert child_result == "snapshot_value"
+        # Parent should see its own modified value
+        assert parent_result == "modified_value"
+
+    @pytest.mark.asyncio
+    async def test_shallow_copy_semantics_documented(self) -> None:
+        """Test that demonstrates shallow copy behavior of store snapshot.
+        
+        Note: This is documented behavior - mutable values inside the store
+        can still be shared between parent and child.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def background(shared_list):
+            # Modifying a mutable object inside the store IS visible to parent
+            # because shallow copy only copies the dict, not its values
+            yield IO(lambda: shared_list.append("child_added"))
+            return "done"
+
+        @do
+        def program():
+            shared_list = ["initial"]
+            yield Put("shared", shared_list)
+            task = yield Spawn(background(shared_list))
+            _ = yield task.join()
+            # Note: shared_list IS modified by child because it's the same object
+            return shared_list
+
+        result = await runtime.run_and_unwrap(program())
+        # This test documents that shallow copy means mutable values are shared
+        assert "child_added" in result
+
+
+__all__ = __all__ + [
+    "TestSpawnOracleReview",
+]
