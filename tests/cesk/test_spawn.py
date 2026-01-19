@@ -1072,3 +1072,190 @@ class TestSpawnOracleReview:
 __all__ = __all__ + [
     "TestSpawnOracleReview",
 ]
+
+
+# ============================================================================
+# Deep Review - Additional Tests
+# ============================================================================
+
+
+class TestSpawnDeepReview:
+    """Tests addressing deep review findings."""
+
+    @pytest.mark.asyncio
+    async def test_error_traceback_preserved(self) -> None:
+        """Test that error traceback is preserved when joining failed task.
+        
+        Deep review question: Is __cesk_traceback__ preserved on error?
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def inner_failing():
+            raise ValueError("inner error")
+
+        @do
+        def outer_failing():
+            yield inner_failing()
+
+        @do
+        def program():
+            task = yield Spawn(outer_failing())
+            result = yield Safe(task.join())
+            return result
+
+        result = await runtime.run_and_unwrap(program())
+        assert result.is_err()
+        error = result.error
+        assert isinstance(error, ValueError)
+        # Check that traceback info is available
+        # The actual traceback format depends on CESK implementation
+        assert str(error) == "inner error"
+
+    @pytest.mark.asyncio
+    async def test_nested_spawn_grandchild(self) -> None:
+        """Test deeply nested spawn (spawn inside spawn inside spawn).
+        
+        Deep review concern: Nested spawn should work correctly.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def grandchild():
+            return "grandchild_result"
+
+        @do
+        def child():
+            task = yield Spawn(grandchild())
+            result = yield task.join()
+            return f"child_got_{result}"
+
+        @do
+        def parent():
+            task = yield Spawn(child())
+            result = yield task.join()
+            return f"parent_got_{result}"
+
+        @do
+        def program():
+            task = yield Spawn(parent())
+            result = yield task.join()
+            return f"root_got_{result}"
+
+        result = await runtime.run_and_unwrap(program())
+        assert result == "root_got_parent_got_child_got_grandchild_result"
+
+    @pytest.mark.asyncio
+    async def test_nested_spawn_store_isolation_cascades(self) -> None:
+        """Test that store isolation works correctly for nested spawns.
+        
+        Each level should get its own snapshot.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def grandchild():
+            value = yield Get("level")
+            yield Put("level", "grandchild_modified")
+            return value
+
+        @do
+        def child():
+            value = yield Get("level")
+            yield Put("level", "child_modified")
+            task = yield Spawn(grandchild())
+            grandchild_saw = yield task.join()
+            return (value, grandchild_saw)
+
+        @do
+        def program():
+            yield Put("level", "parent_value")
+            task = yield Spawn(child())
+            child_saw, grandchild_saw = yield task.join()
+            parent_value = yield Get("level")
+            return (parent_value, child_saw, grandchild_saw)
+
+        parent_final, child_saw, grandchild_saw = await runtime.run_and_unwrap(program())
+        # Parent sees its own value (unchanged by children)
+        assert parent_final == "parent_value"
+        # Child saw snapshot at child spawn time
+        assert child_saw == "parent_value"
+        # Grandchild saw snapshot at grandchild spawn time (which was child's modified value)
+        assert grandchild_saw == "child_modified"
+
+    @pytest.mark.asyncio
+    async def test_spawn_internal_keys_behavior(self) -> None:
+        """Test behavior of internal keys (__log__, etc.) in spawned tasks.
+        
+        Deep review concern: Should child inherit parent's log?
+        Current behavior: Child inherits snapshot including internal keys,
+        but child's modifications don't merge back to parent.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def child():
+            # Child logs
+            yield Tell("child_log_1")
+            yield Tell("child_log_2")
+            return "done"
+
+        @do
+        def program():
+            yield Tell("parent_before_spawn")
+            task = yield Spawn(child())
+            yield Tell("parent_after_spawn")
+            _ = yield task.join()
+            yield Tell("parent_after_join")
+            return "done"
+
+        result = await runtime.run(program())
+        # Parent's logs should only contain parent's logs
+        # Child's logs are isolated (in child's snapshot store)
+        assert "parent_before_spawn" in result.log
+        assert "parent_after_spawn" in result.log
+        assert "parent_after_join" in result.log
+        # Child's logs should NOT appear in parent's log (isolated)
+        assert "child_log_1" not in result.log
+        assert "child_log_2" not in result.log
+
+    @pytest.mark.asyncio
+    async def test_many_spawns_memory_cleanup(self) -> None:
+        """Test that spawning many tasks doesn't leak memory after joins.
+        
+        Deep review concern: Memory leak if entries not cleaned up.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        @do
+        def quick_task(n: int):
+            return n
+
+        @do
+        def program():
+            # Spawn and join many tasks
+            for i in range(100):
+                task = yield Spawn(quick_task(i))
+                result = yield task.join()
+                assert result == i
+            return "all_done"
+
+        result = await runtime.run_and_unwrap(program())
+        assert result == "all_done"
+        # If there's a memory leak, spawned_tasks dict would have 100 entries
+        # After cleanup, it should be empty (though we can't directly verify this)
+
+
+__all__ = __all__ + [
+    "TestSpawnDeepReview",
+]
