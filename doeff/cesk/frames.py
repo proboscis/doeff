@@ -10,9 +10,8 @@ Each frame type represents a computation context that:
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
 from doeff.cesk.types import Environment, Store, TaskId
@@ -27,6 +26,7 @@ if TYPE_CHECKING:
 # ============================================
 # Frame Protocol
 # ============================================
+
 
 @runtime_checkable
 class Frame(Protocol):
@@ -81,9 +81,11 @@ class Frame(Protocol):
 # Frame Result Types
 # ============================================
 
+
 @dataclass(frozen=True)
 class ContinueValue:
     """Continue execution with a value."""
+
     value: Any
     env: Environment
     store: Store
@@ -93,6 +95,7 @@ class ContinueValue:
 @dataclass(frozen=True)
 class ContinueError:
     """Continue execution with an error."""
+
     error: BaseException
     env: Environment
     store: Store
@@ -103,6 +106,7 @@ class ContinueError:
 @dataclass(frozen=True)
 class ContinueProgram:
     """Continue execution with a new program."""
+
     program: ProgramLike
     env: Environment
     store: Store
@@ -112,6 +116,7 @@ class ContinueProgram:
 @dataclass(frozen=True)
 class ContinueGenerator:
     """Continue execution by sending to a generator."""
+
     generator: Generator[Any, Any, Any]
     send_value: Any | None
     throw_error: BaseException | None
@@ -127,6 +132,7 @@ FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | Conti
 # ============================================
 # Concrete Frame Types
 # ============================================
+
 
 @dataclass
 class ReturnFrame:
@@ -281,7 +287,7 @@ class ListenFrame:
         from doeff.utils import BoundedLog
 
         current_log = store.get("__log__", [])
-        captured = current_log[self.log_start_index:]
+        captured = current_log[self.log_start_index :]
         listen_result = ListenResult(value=value, log=BoundedLog(captured))
 
         return ContinueValue(
@@ -404,8 +410,8 @@ class SafeFrame:
         k_rest: Kontinuation,
     ) -> FrameResult:
         """Convert error to Err result instead of propagating."""
-        from doeff._vendor import Err, NOTHING, Some
         from doeff._types_internal import capture_traceback, get_captured_traceback
+        from doeff._vendor import NOTHING, Err, Some
 
         # Capture traceback if not already captured
         captured = get_captured_traceback(error)
@@ -478,7 +484,7 @@ class GraphCaptureFrame:
         k_rest: Kontinuation,
     ) -> FrameResult:
         current_graph = store.get("__graph__", [])
-        captured = current_graph[self.graph_start_index:]
+        captured = current_graph[self.graph_start_index :]
         return ContinueValue(
             value=(value, captured),
             env=env,
@@ -501,6 +507,83 @@ class GraphCaptureFrame:
         )
 
 
+@dataclass(frozen=True)
+class AskLazyFrame:
+    """Cache the result of lazy Ask evaluation for a Program value.
+
+    When Ask encounters a Program in the environment, this frame is pushed
+    before evaluating the program. When the program completes, the result
+    is cached in the store for subsequent Ask calls with the same key.
+
+    Per SPEC-EFF-001-reader.md:
+    - Scope: Per runtime.run() invocation (stored in Store)
+    - Key: Same as Ask key (any hashable)
+    - Invalidation: Local override with different Program object
+    - Errors: Program failure = entire run() fails
+
+    Cache structure: store["__ask_lazy_cache__"][key] = (program, value)
+    where program is the actual Program object (for identity comparison).
+
+    Design trade-off: Key-only caching means after Local override exits,
+    the original program's cached result is lost and must be re-evaluated.
+    This prevents unbounded cache growth from repeated Local overrides.
+
+    Concurrency note: Safe under current scheduler implementation which
+    steps one task at a time. The _ASK_IN_PROGRESS marker is set before
+    ContinueProgram returns, so no race condition with sequential dispatch.
+    """
+
+    ask_key: Any  # The original Ask key (any hashable)
+    program: ProgramBase  # The Program object itself (for identity-based cache validation)
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        """Cache the computed value and continue with it."""
+        cache = store.get("__ask_lazy_cache__", {})
+        # Store (program_object, cached_value) tuple keyed by ask_key only
+        new_cache = {**cache, self.ask_key: (self.program, value)}
+        new_store = {**store, "__ask_lazy_cache__": new_cache}
+
+        return ContinueValue(
+            value=value,
+            env=env,
+            store=new_store,
+            k=k_rest,
+        )
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        """Errors propagate up - per spec, Program failure = entire run() fails.
+
+        Note: We clear the in-progress marker on error so the key can be retried
+        (e.g., after a Safe boundary or Local override with different program).
+        """
+        cache = store.get("__ask_lazy_cache__", {})
+        # Remove the in-progress entry so future attempts can retry
+        if self.ask_key in cache:
+            new_cache = {k: v for k, v in cache.items() if k != self.ask_key}
+            new_store = {**store, "__ask_lazy_cache__": new_cache}
+        else:
+            new_store = store
+
+        return ContinueError(
+            error=error,
+            env=env,
+            store=new_store,
+            k=k_rest,
+        )
+
+
 # ============================================
 # Kontinuation Type
 # ============================================
@@ -516,6 +599,7 @@ Kontinuation: TypeAlias = list[
     | SafeFrame
     | RaceFrame
     | GraphCaptureFrame
+    | AskLazyFrame
 ]
 
 
@@ -537,6 +621,7 @@ __all__ = [
     "SafeFrame",
     "RaceFrame",
     "GraphCaptureFrame",
+    "AskLazyFrame",
     # Kontinuation
     "Kontinuation",
 ]
