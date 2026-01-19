@@ -115,6 +115,12 @@ class BaseRuntime(ABC):
             value: The final computed value
             state: The final CESKState
             final_store: Optional override for the store (e.g., from Done.store)
+            
+        Note:
+            Stack traces (effect_stack, python_stack) are only populated on error.
+            On success, these are empty/None. This is intentional - trace capture
+            is error-driven to avoid performance overhead on the happy path.
+            The k_stack is populated from the final continuation state.
         """
         # Use final_store if provided (from Done.store), else state.store
         store = final_store if final_store is not None else state.store
