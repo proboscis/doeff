@@ -34,6 +34,12 @@ def default_handlers() -> dict[type, Handler]:
     from doeff.effects.pure import PureEffect
     from doeff.effects.reader import AskEffect, LocalEffect
     from doeff.effects.result import ResultSafeEffect
+    from doeff.effects.spawn import (
+        SpawnEffect,
+        TaskJoinEffect,
+        TaskCancelEffect,
+        TaskIsDoneEffect,
+    )
     from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
     from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
     from doeff.effects.writer import WriterListenEffect, WriterTellEffect
@@ -70,6 +76,12 @@ def default_handlers() -> dict[type, Handler]:
         handle_cache_put,
         handle_io,
     )
+    from doeff.cesk.handlers.spawn import (
+        handle_spawn,
+        handle_task_join,
+        handle_task_cancel,
+        handle_task_is_done,
+    )
     from doeff.cesk.handlers.task import handle_gather
     from doeff.cesk.handlers.time import handle_delay, handle_get_time, handle_wait_until
 
@@ -101,6 +113,11 @@ def default_handlers() -> dict[type, Handler]:
         GraphCaptureEffect: handle_graph_capture,
         ProgramCallFrameEffect: handle_program_call_frame,
         ProgramCallStackEffect: handle_program_call_stack,
+        # Spawn effects (handled by runtime, but registered for completeness)
+        SpawnEffect: handle_spawn,
+        TaskJoinEffect: handle_task_join,
+        TaskCancelEffect: handle_task_cancel,
+        TaskIsDoneEffect: handle_task_is_done,
     }
 
 
