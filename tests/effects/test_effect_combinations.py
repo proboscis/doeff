@@ -481,7 +481,7 @@ class TestGatherStoreSharingLaw:
             final = yield Get("counter")
             return (results, final)
 
-        results, final = runtime.run(program())
+        results, final = runtime.run(program()).value
 
         assert results == [0, 1, 2]
         assert final == 3

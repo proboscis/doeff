@@ -17,8 +17,10 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 from doeff.cesk.types import Environment, Store, TaskId
 
 if TYPE_CHECKING:
-    from doeff.program import KleisliProgramCall, Program
+    from doeff.program import KleisliProgramCall, ProgramBase
     from doeff.types import Effect
+    from doeff.cesk.state import TaskState, Control
+    from doeff.effects._program_types import ProgramLike
 
 
 # ============================================
@@ -105,7 +107,7 @@ class ContinueError:
 class ContinueProgram:
     """Continue execution with a new program."""
 
-    program: Program
+    program: ProgramLike
     env: Environment
     store: Store
     k: Kontinuation
@@ -230,7 +232,7 @@ class InterceptFrame:
     pass through it, allowing effect interception and modification.
     """
 
-    transforms: tuple[Callable[[Effect], Effect | Program | None], ...]
+    transforms: tuple[Callable[[Effect], Effect | ProgramBase | None], ...]
 
     def on_value(
         self,
@@ -319,7 +321,7 @@ class GatherFrame:
     collecting their results into a list.
     """
 
-    remaining_programs: list[Program]
+    remaining_programs: list[ProgramLike]
     collected_results: list[Any]
     saved_env: Environment
 
@@ -532,7 +534,7 @@ class AskLazyFrame:
     """
 
     ask_key: Any  # The original Ask key (any hashable)
-    program: Program  # The Program object itself (for identity-based cache validation)
+    program: ProgramBase  # The Program object itself (for identity-based cache validation)
 
     def on_value(
         self,
