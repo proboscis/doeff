@@ -259,10 +259,9 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             return CESKState(C=Value(Ok(C.v)), E=frame.saved_env, S=S, K=K_rest)
 
         if isinstance(frame, AskLazyFrame):
-            # Cache the lazy Ask result and continue with the value
+            # Cache the lazy Ask result: store (program_object, value) keyed by ask_key
             cache = S.get("__ask_lazy_cache__", {})
-            cache_key = (frame.ask_key, frame.program_id)
-            new_cache = {**cache, cache_key: C.v}
+            new_cache = {**cache, frame.ask_key: (frame.program, C.v)}
             new_S = {**S, "__ask_lazy_cache__": new_cache}
             return CESKState(C=Value(C.v), E=E, S=new_S, K=K_rest)
 
@@ -371,8 +370,15 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
 
         if isinstance(frame, AskLazyFrame):
             # Errors propagate up - per spec, Program failure = entire run() fails
+            # Clear in-progress marker so future attempts can retry after Safe/Local
+            cache = S.get("__ask_lazy_cache__", {})
+            if frame.ask_key in cache:
+                new_cache = {k: v for k, v in cache.items() if k != frame.ask_key}
+                new_S = {**S, "__ask_lazy_cache__": new_cache}
+            else:
+                new_S = S
             return CESKState(
-                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest
+                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=new_S, K=K_rest
             )
 
     head_desc = type(K[0]).__name__ if K else "empty"

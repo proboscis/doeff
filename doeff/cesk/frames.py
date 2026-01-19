@@ -515,13 +515,16 @@ class AskLazyFrame:
 
     Per SPEC-EFF-001-reader.md:
     - Scope: Per runtime.run() invocation (stored in Store)
-    - Key: Cache key is (ask_key, program_id) to handle invalidation
+    - Key: Same as Ask key (any hashable)
     - Invalidation: Local override with different Program object
     - Errors: Program failure = entire run() fails
+
+    The cache structure is: store["__ask_lazy_cache__"][key] = (program, value)
+    where program is the actual Program object (for identity comparison).
     """
 
     ask_key: Any  # The original Ask key
-    program_id: int  # id() of the Program for cache invalidation tracking
+    program: Any  # The Program object itself (for identity-based cache validation)
 
     def on_value(
         self,
@@ -532,8 +535,8 @@ class AskLazyFrame:
     ) -> FrameResult:
         """Cache the computed value and continue with it."""
         cache = store.get("__ask_lazy_cache__", {})
-        cache_key = (self.ask_key, self.program_id)
-        new_cache = {**cache, cache_key: value}
+        # Store (program_object, cached_value) tuple keyed by ask_key only
+        new_cache = {**cache, self.ask_key: (self.program, value)}
         new_store = {**store, "__ask_lazy_cache__": new_cache}
 
         return ContinueValue(
@@ -550,11 +553,23 @@ class AskLazyFrame:
         store: Store,
         k_rest: Kontinuation,
     ) -> FrameResult:
-        """Errors propagate up - per spec, Program failure = entire run() fails."""
+        """Errors propagate up - per spec, Program failure = entire run() fails.
+
+        Note: We clear the in-progress marker on error so the key can be retried
+        (e.g., after a Safe boundary or Local override with different program).
+        """
+        cache = store.get("__ask_lazy_cache__", {})
+        # Remove the in-progress entry so future attempts can retry
+        if self.ask_key in cache:
+            new_cache = {k: v for k, v in cache.items() if k != self.ask_key}
+            new_store = {**store, "__ask_lazy_cache__": new_cache}
+        else:
+            new_store = store
+
         return ContinueError(
             error=error,
             env=env,
-            store=store,
+            store=new_store,
             k=k_rest,
         )
 

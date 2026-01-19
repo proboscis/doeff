@@ -185,8 +185,11 @@ class TestLocalOverrideInvalidation:
         result = await runtime.run_and_unwrap(program(), env={"service": original_program})
 
         assert result == (100, 200, 100)
-        # Both programs should have been evaluated
-        assert evaluation_count[0] == 2
+        # With key-only cache, 3 evaluations occur:
+        # 1. original_program for val1
+        # 2. override_program for val2 (overwrites cache)
+        # 3. original_program for val3 (cache miss after Local exit)
+        assert evaluation_count[0] == 3
 
     @pytest.mark.asyncio
     async def test_local_with_same_program_uses_cache(self) -> None:
@@ -460,3 +463,62 @@ class TestEdgeCases:
 
         result = await runtime.run_and_unwrap(program(), env=env)
         assert result == ("string", "int", "tuple")
+
+
+# ============================================================================
+# Circular Dependency Tests
+# ============================================================================
+
+
+class TestCircularDependency:
+    """Tests for circular Ask dependency detection."""
+
+    @pytest.mark.asyncio
+    async def test_direct_circular_ask_raises_error(self) -> None:
+        """Direct circular dependency (A asks A) is detected and raises error."""
+        from doeff.cesk.handlers.core import CircularAskError
+
+        runtime = AsyncRuntime()
+
+        @do
+        def circular_program():
+            # This program asks for itself
+            return (yield Ask("self"))
+
+        env = {"self": circular_program()}
+
+        @do
+        def program():
+            return (yield Ask("self"))
+
+        with pytest.raises(CircularAskError) as excinfo:
+            await runtime.run_and_unwrap(program(), env=env)
+
+        assert excinfo.value.key == "self"
+
+    @pytest.mark.asyncio
+    async def test_indirect_circular_ask_raises_error(self) -> None:
+        """Indirect circular dependency (A asks B, B asks A) is detected."""
+        from doeff.cesk.handlers.core import CircularAskError
+
+        runtime = AsyncRuntime()
+
+        @do
+        def program_a():
+            return (yield Ask("b"))
+
+        @do
+        def program_b():
+            return (yield Ask("a"))
+
+        env = {"a": program_a(), "b": program_b()}
+
+        @do
+        def program():
+            return (yield Ask("a"))
+
+        with pytest.raises(CircularAskError) as excinfo:
+            await runtime.run_and_unwrap(program(), env=env)
+
+        # Either "a" or "b" will be the detected cycle point
+        assert excinfo.value.key in ("a", "b")
