@@ -629,8 +629,13 @@ class AsyncRuntime(BaseRuntime):
         current_task = state.tasks[task_id]
         env_snapshot = dict(current_task.env)
         
-        # Snapshot the store (excluding internal keys for the child, but keep them for isolation)
-        store_snapshot = {k: v for k, v in state.store.items()}
+        # Snapshot the store - if spawning from a spawned task, use its isolated store
+        if task_id in task_id_to_handle:
+            parent_handle_id = task_id_to_handle[task_id]
+            parent_info = spawned_tasks[parent_handle_id]
+            store_snapshot = {k: v for k, v in parent_info.store_snapshot.items()}
+        else:
+            store_snapshot = {k: v for k, v in state.store.items()}
         
         # Create child task with the snapshot (isolated store not used, but env is)
         child_id = TaskId.new()
@@ -690,8 +695,9 @@ class AsyncRuntime(BaseRuntime):
                 error_state = suspended.resume_error(TaskCancelledError())
                 return self._merge_task(state, task_id, error_state)
             elif spawned_info.error is not None:
-                # Task failed with an exception
-                error_state = suspended.resume_error(spawned_info.error)
+                # Task failed with an exception - preserve traceback if available
+                error = spawned_info.error
+                error_state = suspended.resume_error(error)
                 return self._merge_task(state, task_id, error_state)
             else:
                 # Task completed successfully
@@ -800,12 +806,19 @@ class AsyncRuntime(BaseRuntime):
                 error_state = self._fix_store_rollback(error_state, state.store)
                 state = self._merge_task(state, waiter_task_id, error_state)
             elif spawned_info.error is not None:
-                error_state = suspended.resume_error(spawned_info.error)
+                # Preserve traceback on error
+                error = spawned_info.error
+                error_state = suspended.resume_error(error)
                 error_state = self._fix_store_rollback(error_state, state.store)
                 state = self._merge_task(state, waiter_task_id, error_state)
             else:
                 new_single = suspended.resume(spawned_info.result, state.store)
                 state = self._merge_task(state, waiter_task_id, new_single)
+        
+        # Note: We don't clean up spawned_tasks here because:
+        # 1. Multiple joins on the same task should return the same result
+        # 2. The tracking dicts are scoped to a single run() call anyway
+        # 3. Memory is freed when run() completes
         
         return state
 
