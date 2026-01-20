@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from doeff import Program, RunResult
-from doeff.cesk.runtime import SyncRuntime
-from doeff.cesk.errors import UnhandledEffectError
 from doeff.analysis import EffectCallTree
+from doeff.cesk.runtime import SyncRuntime
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
+from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
 from doeff.types import capture_traceback
 
@@ -220,7 +220,7 @@ class RunCommand:
     ) -> tuple[RunResult[Any] | None, Any]:
         with profile("Load and run interpreter", indent=1):
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
-            
+
             if isinstance(interpreter_obj, SyncRuntime):
                 result = interpreter_obj.run(program)
                 return None, result.value
@@ -438,8 +438,8 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
 
 
 def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
-    from doeff.program import Program as ProgramType
     from doeff.cesk.runtime_result import RuntimeResult
+    from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
         runtime = SyncRuntime()
@@ -591,6 +591,10 @@ def handle_run_code(args: argparse.Namespace) -> int:
         print("Error: No code provided", file=sys.stderr)
         return 1
 
+
+    # Create runbox record before execution (if runbox CLI is available)
+    skip_runbox = getattr(args, "no_runbox", False)
+    maybe_create_runbox_record(skip_runbox=skip_runbox)
     program: Program[Any] = execute_doeff_code(code, filename="<doeff-code>")
 
     context = RunContext(
@@ -620,6 +624,10 @@ def handle_run(args: argparse.Namespace) -> int:
         print("Error: --program is required when not using -c", file=sys.stderr)
         return 1
 
+
+    # Create runbox record before execution (if runbox CLI is available)
+    skip_runbox = getattr(args, "no_runbox", False)
+    maybe_create_runbox_record(skip_runbox=skip_runbox)
     context = RunContext(
         program_path=args.program,
         program_instance=None,
@@ -715,6 +723,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--report-verbose",
         action="store_true",
         help="Use verbose mode when printing the RunResult report.",
+    )
+    run_parser.add_argument(
+        "--no-runbox",
+        action="store_true",
+        help="Skip automatic runbox record capture (only affects runs when runbox CLI is installed).",
     )
     run_parser.add_argument(
         "script",
