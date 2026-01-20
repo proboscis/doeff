@@ -13,8 +13,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from doeff import do
-from doeff.cesk import run_sync
+from doeff import do, SyncRuntime
 from doeff.effects import Pure
 from doeff_flow import run_workflow, trace_observer
 from doeff_flow.cli import cli
@@ -322,7 +321,7 @@ class TestE2ETraceObserverComposability:
                 return f"got-{config}"
 
             with trace_observer("env-test", trace_dir) as on_step:
-                result = run_sync(
+                result = SyncRuntime().run(
                     workflow_with_env(),
                     env={"config": "test-value"},
                     on_step=on_step,
@@ -352,7 +351,7 @@ class TestE2ETraceObserverComposability:
                 return final
 
             with trace_observer("state-test", trace_dir) as on_step:
-                result = run_sync(stateful_workflow(), on_step=on_step)
+                result = SyncRuntime().run(stateful_workflow(), on_step=on_step)
 
             assert result.is_ok
             assert result.value == 3

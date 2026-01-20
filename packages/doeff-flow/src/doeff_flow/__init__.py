@@ -18,12 +18,12 @@ Quick Start:
         workflow_id="wf-001",
     )
 
-    # Option B: Composable with existing run_sync
-    from doeff.cesk import run_sync
+    # Option B: Composable with SyncRuntime
+    from doeff import SyncRuntime
     from doeff_flow import trace_observer
 
     with trace_observer("wf-001") as on_step:
-        result = run_sync(my_workflow(), on_step=on_step)
+        result = SyncRuntime().run(my_workflow(), on_step=on_step)
 
 CLI Usage:
     # Watch all workflows
@@ -53,9 +53,8 @@ from doeff_flow.trace import (
 )
 
 if TYPE_CHECKING:
-    from doeff.cesk import CESKResult, Environment, Store
+    from doeff.cesk.runtime_result import RuntimeResult
     from doeff.program import Program
-    from doeff.storage import DurableStorage
 
 T = TypeVar("T")
 
@@ -65,13 +64,12 @@ def run_workflow(
     workflow_id: str,
     trace_dir: Path | str | None = None,
     *,
-    env: "Environment | dict[Any, Any] | None" = None,
-    store: "Store | None" = None,
-    storage: "DurableStorage | None" = None,
-) -> "CESKResult[T]":
+    env: dict[Any, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> "RuntimeResult[T]":
     """Run a workflow with live trace observability.
 
-    Convenience wrapper that combines run_sync with trace_observer.
+    Convenience wrapper that combines SyncRuntime with trace_observer.
     The trace is written to {trace_dir}/{workflow_id}/trace.jsonl.
 
     Args:
@@ -82,10 +80,9 @@ def run_workflow(
             If None, uses XDG-compliant default (~/.local/state/doeff-flow).
         env: Initial environment (optional).
         store: Initial store (optional).
-        storage: Optional durable storage backend for cache effects.
 
     Returns:
-        CESKResult containing the execution result.
+        RuntimeResult containing the execution result.
 
     Example:
         from doeff import do
@@ -105,7 +102,7 @@ def run_workflow(
         )
         print(result.value)  # 30
     """
-    from doeff.cesk import run_sync
+    from doeff import SyncRuntime
 
     if trace_dir is None:
         trace_dir = get_default_trace_dir()
@@ -113,11 +110,10 @@ def run_workflow(
         trace_dir = Path(trace_dir)
 
     with trace_observer(workflow_id, trace_dir) as on_step:
-        return run_sync(
+        return SyncRuntime().run(
             program,
             env=env,
             store=store,
-            storage=storage,
             on_step=on_step,
         )
 

@@ -11,11 +11,11 @@ Public API:
     - trace_observer: Context manager for creating an on_step callback
 
 Example usage:
-    from doeff.cesk import run_sync
+    from doeff import SyncRuntime
     from doeff_flow.trace import trace_observer
 
     with trace_observer("wf-001", Path(".doeff-flow")) as on_step:
-        result = run_sync(my_workflow(), on_step=on_step)
+        result = SyncRuntime().run(my_workflow(), on_step=on_step)
 """
 
 from __future__ import annotations
@@ -205,15 +205,15 @@ def trace_observer(
             If None, uses XDG-compliant default (~/.local/state/doeff-flow).
 
     Yields:
-        A callback function suitable for passing to run_sync(on_step=...).
+        A callback function suitable for passing to SyncRuntime().run(on_step=...).
 
     Example:
-        from doeff.cesk import run_sync
+        from doeff import SyncRuntime
         from doeff_flow.trace import trace_observer
 
         # Uses default XDG directory
         with trace_observer("wf-001") as on_step:
-            result = run_sync(my_workflow(), on_step=on_step)
+            result = SyncRuntime().run(my_workflow(), on_step=on_step)
     """
     workflow_id = _validate_workflow_id(workflow_id)
     if trace_dir is None:
