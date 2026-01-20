@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
 from doeff._vendor import FrozenDict, Ok, Err
 from doeff.cesk.state import CESKState, TaskState, Ready
@@ -24,10 +24,14 @@ from doeff.cesk.runtime_result import (
 )
 
 if TYPE_CHECKING:
+    from doeff.cesk_observability import ExecutionSnapshot
     from doeff.program import Program
     from doeff.cesk.types import Environment, Store
 
 T = TypeVar("T")
+
+# Type alias for on_step callback
+OnStepCallback = Callable[["ExecutionSnapshot"], None]
 
 
 @dataclass
@@ -211,8 +215,17 @@ class BaseRuntime(ABC):
             _captured_traceback=captured_traceback,
         )
 
-    def _step_until_done(self, state: CESKState) -> tuple[Any, CESKState, dict[str, Any]]:
+    def _step_until_done(
+        self,
+        state: CESKState,
+        on_step: OnStepCallback | None = None,
+    ) -> tuple[Any, CESKState, dict[str, Any]]:
         """Step execution until completion.
+        
+        Args:
+            state: Initial CESK state
+            on_step: Optional callback invoked after each interpreter step.
+                Receives an ExecutionSnapshot with the current state.
         
         Returns:
             Tuple of (value, final_state, final_store) on success
@@ -221,11 +234,21 @@ class BaseRuntime(ABC):
             ExecutionError: On failure, containing the exception and final state
         """
         from doeff.cesk.state import ProgramControl
+        from doeff.cesk_observability import ExecutionSnapshot
+
+        step_count = 0
 
         while True:
             result = step(state, self._handlers)
+            step_count += 1
 
             if isinstance(result, Done):
+                # Emit final "completed" snapshot
+                if on_step is not None:
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "completed", step_count
+                    )
+                    on_step(snapshot)
                 return (result.value, state, result.store)
 
             if isinstance(result, Failed):
@@ -233,6 +256,12 @@ class BaseRuntime(ABC):
                 captured_tb = result.captured_traceback
                 if captured_tb is not None:
                     exc.__cesk_traceback__ = captured_tb  # type: ignore[attr-defined]
+                # Emit final "failed" snapshot
+                if on_step is not None:
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "failed", step_count
+                    )
+                    on_step(snapshot)
                 raise ExecutionError(
                     exception=exc,
                     final_state=state,
@@ -241,6 +270,12 @@ class BaseRuntime(ABC):
 
             if isinstance(result, CESKState):
                 state = result
+                # Emit "running" snapshot after state update
+                if on_step is not None:
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "running", step_count
+                    )
+                    on_step(snapshot)
                 continue
 
             if isinstance(result, Suspended):
@@ -262,6 +297,13 @@ class BaseRuntime(ABC):
                     state = result.resume(dispatch_result.value, dispatch_result.store)
                 else:
                     raise RuntimeError(f"Unexpected dispatch result: {type(dispatch_result)}")
+                
+                # Emit "running" snapshot after effect dispatch
+                if on_step is not None:
+                    snapshot = ExecutionSnapshot.from_state(
+                        state, "running", step_count
+                    )
+                    on_step(snapshot)
                 continue
 
             raise RuntimeError(f"Unexpected step result: {type(result)}")
@@ -270,4 +312,5 @@ class BaseRuntime(ABC):
 __all__ = [
     "BaseRuntime",
     "ExecutionError",
+    "OnStepCallback",
 ]

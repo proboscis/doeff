@@ -8,8 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from doeff import do
-from doeff.cesk import run_sync
+from doeff import do, SyncRuntime
 from doeff.effects import Pure
 from doeff_flow import run_workflow
 from doeff_flow.trace import (
@@ -170,7 +169,7 @@ class TestTraceObserver:
                 return (yield Pure(42))
 
             with trace_observer("test-wf", trace_dir) as on_step:
-                run_sync(simple_workflow(), on_step=on_step)
+                SyncRuntime().run(simple_workflow(), on_step=on_step)
 
             trace_file = trace_dir / "test-wf" / "trace.jsonl"
             assert trace_file.exists()
@@ -188,7 +187,7 @@ class TestTraceObserver:
                 return a + b + c
 
             with trace_observer("test-wf", trace_dir) as on_step:
-                result = run_sync(multi_step_workflow(), on_step=on_step)
+                result = SyncRuntime().run(multi_step_workflow(), on_step=on_step)
 
             assert result.value == 60
 
@@ -216,7 +215,7 @@ class TestTraceObserver:
                 return (yield Pure(42))
 
             with trace_observer("test-wf", trace_dir) as on_step:
-                run_sync(simple_workflow(), on_step=on_step)
+                SyncRuntime().run(simple_workflow(), on_step=on_step)
 
             trace_file = trace_dir / "test-wf" / "trace.jsonl"
             lines = trace_file.read_text().strip().split("\n")
@@ -234,7 +233,7 @@ class TestTraceObserver:
                 return (yield Pure(42))
 
             with trace_observer("test-wf", trace_dir) as on_step:
-                run_sync(simple_workflow(), on_step=on_step)
+                SyncRuntime().run(simple_workflow(), on_step=on_step)
 
             trace_file = trace_dir / "test-wf" / "trace.jsonl"
             lines = trace_file.read_text().strip().split("\n")
@@ -262,7 +261,7 @@ class TestTraceObserver:
                 return (yield Pure(42))
 
             with trace_observer("test-wf", tmp_dir) as on_step:  # String instead of Path
-                result = run_sync(simple_workflow(), on_step=on_step)
+                result = SyncRuntime().run(simple_workflow(), on_step=on_step)
 
             assert result.value == 42
             trace_file = Path(tmp_dir) / "test-wf" / "trace.jsonl"

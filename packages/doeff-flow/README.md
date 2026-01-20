@@ -29,7 +29,7 @@ uv add doeff-flow
 
 ### Step 1: Create a Workflow
 
-```python
+```uv run python
 # my_workflow.py
 from doeff import do
 from doeff.effects import Pure
@@ -76,7 +76,7 @@ if __name__ == "__main__":
 
 **Terminal 1** - Run the workflow:
 ```bash
-python my_workflow.py
+uv run python my_workflow.py
 ```
 
 **Terminal 2** - Watch live execution:
@@ -131,7 +131,7 @@ uv run python examples/02_data_pipeline.py
 
 ### Option A: `run_workflow` (Simple)
 
-```python
+```uv run python
 from doeff_flow import run_workflow
 
 result = run_workflow(
@@ -143,28 +143,16 @@ result = run_workflow(
 
 ### Option B: `trace_observer` (Composable)
 
-```python
-from doeff.cesk import run_sync
+```uv run python
+from doeff import SyncRuntime
 from doeff_flow import trace_observer
 
 with trace_observer("wf-001", ".doeff-flow") as on_step:
-    result = run_sync(
+    result = SyncRuntime().run(
         my_workflow(),
         env={"config": "value"},  # Custom environment
         on_step=on_step,
     )
-```
-
-### With Durable Storage
-
-```python
-from doeff.storage import SQLiteStorage
-
-result = run_workflow(
-    my_workflow(),
-    workflow_id="durable-wf",
-    storage=SQLiteStorage(".doeff-cache.db"),
-)
 ```
 
 ## CLI Reference
@@ -245,7 +233,7 @@ human-readable status messages. These are captured in traces and displayed promi
 
 ### Basic Usage
 
-```python
+```uv run python
 from doeff import do
 from doeff.effects.writer import slog
 from doeff_flow import run_workflow
@@ -294,7 +282,7 @@ See `examples/07_workflow_status.py` for a complete example.
 ## Best Practices
 
 1. **Use descriptive workflow IDs** with timestamps for uniqueness:
-   ```python
+   ```uv run python
    from datetime import datetime
    workflow_id = f"pipeline-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
    ```
@@ -309,10 +297,7 @@ See `examples/07_workflow_status.py` for a complete example.
    doeff-flow watch my-wf --exit-on-complete
    ```
 
-4. **Clean up old traces periodically**:
-   ```bash
-   find .doeff-flow -mtime +7 -delete
-   ```
+4. **Clean up old traces periodically** using your preferred cleanup method.
 
 ## API Reference
 

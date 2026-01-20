@@ -18,7 +18,7 @@ You can override with --trace-dir or DOEFF_FLOW_TRACE_DIR env var.
 
 from time import sleep
 
-from doeff import do
+from doeff import do, SyncRuntime
 
 # Import from doeff_flow
 from doeff_flow import run_workflow, trace_observer
@@ -86,20 +86,18 @@ def example_run_workflow():
 
 
 # =============================================================================
-# Example 2: Using trace_observer with run_sync
+# Example 2: Using trace_observer with SyncRuntime
 # =============================================================================
 
 
 def example_trace_observer():
     """Run workflow with trace_observer context manager."""
-    from doeff.cesk import run_sync
-
     print("=== Example 2: Using trace_observer ===")
     print("Run 'doeff-flow watch example-wf-002' in another terminal\n")
 
     # Uses XDG default trace directory
     with trace_observer("example-wf-002") as on_step:
-        result = run_sync(main_workflow(), on_step=on_step)
+        result = SyncRuntime().run(main_workflow(), on_step=on_step)
 
     print(f"\nResult: {result.value}")
     print()

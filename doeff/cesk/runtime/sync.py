@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
+from doeff.cesk.runtime.base import BaseRuntime, ExecutionError, OnStepCallback
 from doeff.cesk.runtime_result import RuntimeResult
 from doeff.cesk.handlers import Handler
 
@@ -29,6 +29,7 @@ class SyncRuntime(BaseRuntime):
         program: Program[T],
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
+        on_step: OnStepCallback | None = None,
     ) -> RuntimeResult[T]:
         """Execute a program and return RuntimeResult.
 
@@ -36,6 +37,9 @@ class SyncRuntime(BaseRuntime):
             program: The program to execute
             env: Optional initial environment (reader context)
             store: Optional initial store (mutable state)
+            on_step: Optional callback invoked after each interpreter step.
+                Receives an ExecutionSnapshot with the current state.
+                Useful for debugging, logging, and live trace observability.
 
         Returns:
             RuntimeResult containing the outcome and debugging context
@@ -47,7 +51,7 @@ class SyncRuntime(BaseRuntime):
         state = self._create_initial_state(program, env, store)
         
         try:
-            value, final_state, final_store = self._step_until_done(state)
+            value, final_state, final_store = self._step_until_done(state, on_step)
             return self._build_success_result(value, final_state, final_store)
         except ExecutionError as err:
             # Re-raise control signals - they shouldn't be wrapped in RuntimeResult
