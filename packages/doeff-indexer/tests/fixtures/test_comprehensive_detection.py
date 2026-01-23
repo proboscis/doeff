@@ -2,6 +2,8 @@
 Comprehensive test suite for doeff type detection.
 Each section tests specific detection rules.
 """
+from __future__ import annotations
+
 from typing import Any, Iterable, Optional, TypeVar, Generic
 from doeff import Program, KleisliProgram, do, Effect
 
