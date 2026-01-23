@@ -11,7 +11,7 @@ from typing import Any
 
 from PIL import Image
 
-from doeff import Ask, AtomicGet, AtomicUpdate, Await, EffectGenerator, Fail, Tell, Retry, Safe, Step, do
+from doeff import Ask, AtomicGet, AtomicUpdate, Await, Delay, EffectGenerator, Tell, Safe, Step, do
 
 from .client import SeedreamClient, get_seedream_client, track_api_call
 from .costs import CostEstimate, calculate_cost
@@ -308,20 +308,26 @@ def edit_image__seedream4(
                 start_time=attempt_start,
                 error=exc,
             )
-            yield Fail(exc)
+            raise exc
 
         return safe_result.value
 
-    response: dict[str, Any] = yield Retry(
-        make_api_call(),
-        max_attempts=max_retries,
-        delay_ms=1000,
-    )
+    # Manual retry logic (replacing Retry effect)
+    response: dict[str, Any] | None = None
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        safe_attempt = yield Safe(make_api_call())
+        if safe_attempt.is_ok():
+            response = safe_attempt.value
+            break
+        last_error = safe_attempt.error
+        if attempt < max_retries - 1:
+            yield Delay(seconds=1.0)
+    
+    if response is None:
+        raise last_error if last_error else RuntimeError("All retry attempts failed")
 
-    try:
-        images_decoded = _decode_images(response, expected_format=response_format)
-    except ValueError as exc:
-        yield Fail(exc)
+    images_decoded = _decode_images(response, expected_format=response_format)
 
     result = SeedreamImageEditResult(
         images=images_decoded,

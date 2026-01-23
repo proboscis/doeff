@@ -1,22 +1,26 @@
 """
 Handler utilities for doeff-conductor.
 
-Provides adapter functions to wrap simple handlers into ScheduledEffectHandler
-functions compatible with the doeff CESK runtime.
+Provides adapter functions to wrap simple handlers into CESK effect handlers
+compatible with the doeff CESK runtime.
 
-Handler signature: (effect, env, store) -> HandlerResult
+Handler signature: (effect, task_state, store) -> FrameResult
+
+Migration from old API:
+- Resume(value, store) -> ContinueValue(value, env, store, k)
+- Schedule(AwaitPayload(coro), store) -> Blocking handlers now run synchronously
+  (use Gather at workflow level for parallelism)
 """
 
 from __future__ import annotations
 
-import asyncio
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
-from doeff.runtime import AwaitPayload, Resume, Schedule
+from doeff.cesk.frames import ContinueValue, ContinueError, FrameResult
 
 if TYPE_CHECKING:
-    from doeff.cesk import Environment, Store
-    from doeff.runtime import HandlerResult
+    from doeff.cesk.state import TaskState
+    from doeff.cesk.types import Store
     from doeff.types import EffectBase
 
     from .agent_handler import AgentHandler
@@ -30,113 +34,128 @@ R = TypeVar("R")
 # Type for handlers that return just value (store unchanged)
 SimpleHandler = Callable[[Any], Any]
 # Type for handlers that return (value, new_store)
-StoreAwareHandler = Callable[[Any, "Environment", "Store"], tuple[Any, "Store"]]
+StoreAwareHandler = Callable[[Any, dict[str, Any], "Store"], tuple[Any, "Store"]]
 
 
-def make_scheduled_handler(
+def make_cesk_handler(
     handler: SimpleHandler,
-) -> Callable[..., "HandlerResult"]:
-    """Wrap a simple sync handler for fast, in-memory operations.
+) -> Callable[..., "FrameResult"]:
+    """Wrap a simple sync handler for the CESK runtime.
 
     USE FOR: Fast, deterministic operations that complete instantly.
-    DO NOT USE FOR: File I/O, subprocess, network - use make_blocking_scheduled_handler.
 
-    The handler runs synchronously and returns Resume immediately.
-    This blocks the event loop, so only use for truly instant operations.
+    The handler runs synchronously and returns ContinueValue immediately.
+    For blocking operations (file I/O, subprocess), this WILL block the
+    event loop. Use Gather at the workflow level for parallelism.
+
+    Args:
+        handler: Function that takes an effect and returns a value.
+
+    Returns:
+        CESK-compatible handler function.
     """
 
-    def scheduled_handler(
+    def cesk_handler(
         effect: "EffectBase",
-        env: "Environment",
+        task_state: "TaskState",
         store: "Store",
-    ) -> "HandlerResult":
-        result = handler(effect)
-        return Resume(result, store)
+    ) -> "FrameResult":
+        try:
+            result = handler(effect)
+            return ContinueValue(
+                value=result,
+                env=task_state.env,
+                store=store,
+                k=task_state.kontinuation,
+            )
+        except Exception as ex:
+            return ContinueError(
+                error=ex,
+                env=task_state.env,
+                store=store,
+                k=task_state.kontinuation,
+            )
 
-    return scheduled_handler
+    return cesk_handler
 
 
-def make_scheduled_handler_with_store(
+def make_cesk_handler_with_store(
     handler: StoreAwareHandler,
-) -> Callable[..., "HandlerResult"]:
-    """Wrap a store-aware sync handler that can update store.
+) -> Callable[..., "FrameResult"]:
+    """Wrap a store-aware sync handler for the CESK runtime.
 
-    USE FOR: Fast operations that need to track state in store.
+    USE FOR: Operations that need to track state in store.
 
     Handler receives (effect, env, store) and returns (value, new_store).
+
+    Args:
+        handler: Function that takes (effect, env, store) and returns (value, new_store).
+
+    Returns:
+        CESK-compatible handler function.
     """
 
-    def scheduled_handler(
+    def cesk_handler(
         effect: "EffectBase",
-        env: "Environment",
+        task_state: "TaskState",
         store: "Store",
-    ) -> "HandlerResult":
-        value, new_store = handler(effect, env, store)
-        return Resume(value, new_store)
+    ) -> "FrameResult":
+        try:
+            value, new_store = handler(effect, dict(task_state.env), store)
+            return ContinueValue(
+                value=value,
+                env=task_state.env,
+                store=new_store,
+                k=task_state.kontinuation,
+            )
+        except Exception as ex:
+            return ContinueError(
+                error=ex,
+                env=task_state.env,
+                store=store,
+                k=task_state.kontinuation,
+            )
 
-    return scheduled_handler
+    return cesk_handler
+
+
+# Backwards compatibility aliases
+# Note: In the new CESK architecture, all handlers run synchronously.
+# For parallelism, use Gather at the workflow level.
+make_scheduled_handler = make_cesk_handler
+make_scheduled_handler_with_store = make_cesk_handler_with_store
+make_blocking_scheduled_handler = make_cesk_handler
+make_blocking_scheduled_handler_with_store = make_cesk_handler_with_store
 
 
 def make_async_scheduled_handler(
-    handler: Callable[[Any], Awaitable[Any]],
-) -> Callable[..., "HandlerResult"]:
-    """Wrap an async handler for native async I/O.
+    handler: Callable[[Any], Any],
+) -> Callable[..., "FrameResult"]:
+    """Wrap an async handler for the CESK runtime.
 
-    USE FOR: Operations using async libraries (aiohttp, asyncpg, etc.)
+    DEPRECATED: In the new CESK architecture, async operations should be
+    expressed as effects (e.g., Await, Delay) rather than handler-level async.
+    This function is provided for backwards compatibility and runs the handler
+    synchronously.
+
+    For native async operations:
+    1. Have your handler return a value
+    2. Use Await effect in your program to handle async work
+
+    Args:
+        handler: Function that takes an effect and returns a value.
+
+    Returns:
+        CESK-compatible handler function.
     """
-
-    def scheduled_handler(
-        effect: "EffectBase",
-        env: "Environment",
-        store: "Store",
-    ) -> "HandlerResult":
-        return Schedule(AwaitPayload(handler(effect)), store)
-
-    return scheduled_handler
-
-
-def make_blocking_scheduled_handler(
-    handler: SimpleHandler,
-) -> Callable[..., "HandlerResult"]:
-    """Wrap a blocking handler to run in a thread pool.
-
-    USE FOR: Anything that can block - subprocess, file I/O, sync network calls.
-    This enables true parallelism with Gather.
-    """
-
-    def scheduled_handler(
-        effect: "EffectBase",
-        env: "Environment",
-        store: "Store",
-    ) -> "HandlerResult":
-        async def run_in_thread():
-            return await asyncio.to_thread(handler, effect)
-
-        return Schedule(AwaitPayload(run_in_thread()), store)
-
-    return scheduled_handler
-
-
-def make_blocking_scheduled_handler_with_store(
-    handler: Callable[[Any, "Environment", "Store"], tuple[Any, "Store"]],
-) -> Callable[..., "HandlerResult"]:
-    """Wrap a store-aware blocking handler to run in a thread pool.
-
-    USE FOR: Blocking operations that need to track state.
-    Handler receives (effect, env, store) and returns (value, new_store).
-    """
-
-    def scheduled_handler(
-        effect: "EffectBase",
-        env: "Environment",
-        store: "Store",
-    ) -> "HandlerResult":
-        async def run_in_thread():
-            return await asyncio.to_thread(handler, effect, env, store)
-
-        return Schedule(AwaitPayload(run_in_thread()), store)
-
-    return scheduled_handler
+    import warnings
+    warnings.warn(
+        "make_async_scheduled_handler is deprecated. "
+        "In the CESK architecture, use Await effects for async operations.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return make_cesk_handler(handler)
 
 
 def default_scheduled_handlers(
@@ -144,12 +163,12 @@ def default_scheduled_handlers(
     issue_handler: "IssueHandler | None" = None,
     agent_handler: "AgentHandler | None" = None,
     git_handler: "GitHandler | None" = None,
-) -> dict[type, Callable[..., "HandlerResult"]]:
+) -> dict[type, Callable[..., "FrameResult"]]:
     """Build a complete handler map for all conductor effects.
 
-    Creates scheduled handlers with appropriate wrapping:
-    - Blocking for I/O-bound operations (git, file system, agent)
-    - Sync for fast in-memory operations (issue queries)
+    Creates CESK-compatible handlers for all conductor effects.
+    Note: In the current CESK architecture, all handlers run synchronously.
+    Use Gather at the workflow level for parallelism.
 
     Args:
         worktree_handler: Custom WorktreeHandler, or None to create default
@@ -158,12 +177,12 @@ def default_scheduled_handlers(
         git_handler: Custom GitHandler, or None to create default
 
     Returns:
-        Dict mapping effect types to scheduled handlers
+        Dict mapping effect types to CESK handlers
 
     Example:
         handlers = default_scheduled_handlers()
-        interpreter = ProgramInterpreter(scheduled_handlers=handlers)
-        result = await interpreter.run(workflow_program())
+        runtime = AsyncRuntime(handlers=handlers)
+        result = await runtime.run(workflow_program())
     """
     from .agent_handler import AgentHandler
     from .git_handler import GitHandler
@@ -216,10 +235,15 @@ def default_scheduled_handlers(
 
 
 __all__ = [
+    # New CESK-compatible handlers
+    "make_cesk_handler",
+    "make_cesk_handler_with_store",
+    # Backwards compatibility aliases
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
-    "make_async_scheduled_handler",
+    "make_async_scheduled_handler",  # Deprecated
     "make_blocking_scheduled_handler",
     "make_blocking_scheduled_handler_with_store",
+    # Default handler factory
     "default_scheduled_handlers",
 ]
