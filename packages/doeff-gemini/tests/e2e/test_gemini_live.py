@@ -14,7 +14,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
+from doeff import AsyncRuntime, EffectGenerator, do
 
 from doeff_gemini import edit_image__gemini, structured_llm__gemini
 
@@ -68,12 +68,11 @@ async def test_edit_image__nanobanana_pro_live() -> None:
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env=env)
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env=env)
 
-    if not result.is_ok:
-        log_summary = "\n".join(str(entry) for entry in result.context.log)
+    if not result.is_ok():
+        log_summary = "\n".join(str(entry) for entry in result.log)
         if "permission" in log_summary.lower():
             pytest.skip("NanoBanana Pro not enabled for current credentials")
         if "Reauthentication is needed" in log_summary:
@@ -109,12 +108,11 @@ async def test_edit_image__gemini_live() -> None:
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env=env)
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env=env)
 
-    if not result.is_ok:
-        log_summary = "\n".join(str(entry) for entry in result.context.log)
+    if not result.is_ok():
+        log_summary = "\n".join(str(entry) for entry in result.log)
         if "Reauthentication is needed" in log_summary:
             pytest.skip(
                 "ADC credentials require reauthentication; run 'gcloud auth application-default login'."
@@ -154,12 +152,11 @@ async def test_structured_llm__gemini_live_with_pydantic() -> None:
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env=env)
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env=env)
 
-    if not result.is_ok:
-        log_summary = "\n".join(str(entry) for entry in result.context.log)
+    if not result.is_ok():
+        log_summary = "\n".join(str(entry) for entry in result.log)
         if "Internal error encountered" in log_summary:
             pytest.skip("Gemini API returned 500 Internal error during structured test")
         if "SAFETY" in log_summary.upper():

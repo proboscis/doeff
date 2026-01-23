@@ -35,7 +35,7 @@ if "pydantic" not in sys.modules:
     pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
     sys.modules["pydantic"] = pydantic_stub
 
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
+from doeff import AsyncRuntime, EffectGenerator, do
 from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
@@ -104,12 +104,11 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
             )
         )
 
-    engine = ProgramInterpreter()
-    ctx = ExecutionContext(env={"gemini_client": mock_client})
-    result = await engine.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env={"gemini_client": mock_client})
 
-    assert result.is_err
-    error = result.result.error
+    assert result.is_err()
+    error = result.error
     while hasattr(error, "cause") and getattr(error, "cause") is not None:
         error = error.cause
     assert isinstance(error, RuntimeError)
@@ -173,12 +172,11 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
             )
         )
 
-    engine = ProgramInterpreter()
-    ctx = ExecutionContext(env={"gemini_client": mock_client})
-    result = await engine.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env={"gemini_client": mock_client})
 
-    assert result.is_err
-    error = result.result.error
+    assert result.is_err()
+    error = result.error
     while hasattr(error, "cause") and getattr(error, "cause") is not None:
         error = error.cause
     assert isinstance(error, RuntimeError)
