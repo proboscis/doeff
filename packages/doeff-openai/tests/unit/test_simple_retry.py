@@ -8,10 +8,9 @@ from doeff_openai.client import OpenAIClient
 
 from doeff import (
     Ask,
+    AsyncRuntime,
     EffectGenerator,
-    ExecutionContext,
-    Log,
-    ProgramInterpreter,
+    Tell,
     do,
 )
 
@@ -55,11 +54,10 @@ async def test_simple_success():
         yield Tell(f"Got result: {result}")
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openai_client": mock_client})
+    runtime = AsyncRuntime()
 
     # Run the test
-    result = await engine.run_async(test_flow(), context)
+    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
     # Print all logs to debug
     print("\n=== LOGS ===")
@@ -75,11 +73,11 @@ async def test_simple_success():
             print(f"  Call {i}: error={call.get('error')}, tokens={call.get('tokens')}")
 
     # Check result
-    if result.is_err:
+    if result.is_err():
         print("\n=== ERROR ===")
-        print(result.result.error)
+        print(result.error)
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "Test response"
 
 
