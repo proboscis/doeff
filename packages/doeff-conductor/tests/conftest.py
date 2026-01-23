@@ -14,12 +14,45 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator
+from typing import TYPE_CHECKING, Any, Callable, Generator
 
 import pytest
 
 if TYPE_CHECKING:
+    from doeff.cesk.runtime_result import RuntimeResult
+    from doeff.program import Program
     from doeff_conductor.types import Issue
+
+
+# =============================================================================
+# CESK API Compatibility Layer
+# =============================================================================
+
+
+def run_sync(
+    program: "Program[Any]",
+    scheduled_handlers: dict[type, Callable[..., Any]] | None = None,
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> "RuntimeResult[Any]":
+    """Compatibility wrapper for the old run_sync API.
+
+    This function provides backwards compatibility with the old doeff.cesk.run_sync()
+    function that was removed in favor of the new SyncRuntime class.
+
+    Args:
+        program: The program to execute
+        scheduled_handlers: Dict mapping effect types to handlers (new CESK signature)
+        env: Optional initial environment
+        store: Optional initial store
+
+    Returns:
+        RuntimeResult containing the execution outcome
+    """
+    from doeff.cesk.runtime import SyncRuntime
+
+    runtime = SyncRuntime(handlers=scheduled_handlers)
+    return runtime.run(program, env=env, store=store)
 
 
 # =============================================================================
@@ -279,4 +312,6 @@ __all__ = [
     "is_git_available",
     # Helper functions
     "init_test_repo",
+    # CESK API compatibility
+    "run_sync",
 ]
