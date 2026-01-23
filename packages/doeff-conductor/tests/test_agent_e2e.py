@@ -270,7 +270,7 @@ class TestConductorWorkflowWithMockAgentic:
     ):
         """Test a basic workflow: issue -> agent -> changes."""
         from doeff import do
-        from doeff.cesk import run_sync
+        from doeff_conductor.handlers import run_sync
         from doeff_conductor import (
             CreateWorktree,
             DeleteWorktree,
@@ -348,7 +348,7 @@ class TestConductorWorkflowWithMockAgentic:
     ):
         """Test that output from agent 1 feeds into agent 2."""
         from doeff import do
-        from doeff.cesk import run_sync
+        from doeff_conductor.handlers import run_sync
         from doeff_conductor import (
             CreateWorktree,
             DeleteWorktree,
@@ -414,7 +414,7 @@ class TestConductorWorkflowWithMockAgentic:
     ):
         """Test that parallel agents don't leak state between sessions."""
         from doeff import do
-        from doeff.cesk import run_sync
+        from doeff_conductor.handlers import run_sync
         from doeff_conductor import (
             CreateWorktree,
             DeleteWorktree,
@@ -638,7 +638,7 @@ class TestRealAgentE2E:
     def test_agent_creates_file(self, test_repo: Path, worktree_base: Path, real_agent_handler):
         """Test that agent actually creates a file in worktree."""
         from doeff import do
-        from doeff.cesk import run_sync
+        from doeff_conductor.handlers import run_sync
         from doeff_conductor import (
             CreateWorktree,
             DeleteWorktree,
@@ -689,7 +689,7 @@ class TestRealAgentE2E:
     def test_spawn_and_capture_output(self, test_repo: Path, worktree_base: Path, real_agent_handler):
         """Test spawning a background agent and capturing its output."""
         from doeff import do
-        from doeff.cesk import run_sync
+        from doeff_conductor.handlers import run_sync
         from doeff_conductor import (
             CreateWorktree,
             DeleteWorktree,
