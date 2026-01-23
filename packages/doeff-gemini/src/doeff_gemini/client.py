@@ -14,13 +14,12 @@ from doeff import (
     AtomicUpdate,
     EffectGenerator,
     Err,
-    Fail,
     Get,
-    Log,
     Ok,
     Put,
     Safe,
     Step,
+    Tell,
     do,
     slog,
 )
@@ -264,7 +263,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
             yield Tell(
                 "google-auth is not installed; install google-auth or set GEMINI API key"
             )
-            yield Fail(exc)
+            raise exc
 
         try:
             adc_credentials, adc_project = google_auth_default()
@@ -273,7 +272,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
                 "Failed to load Google Application Default Credentials. "
                 "Run 'gcloud auth application-default login' or provide a GEMINI API key."
             )
-            yield Fail(exc)
+            raise exc
 
         yield Tell("Using Google Application Default Credentials for Gemini client")
 
@@ -281,7 +280,7 @@ def get_gemini_client() -> EffectGenerator[GeminiClient]:
             yield Tell(
                 "Google credentials found but project ID missing. Set 'gemini_project' or configure gcloud."
             )
-            yield Fail(ValueError("Google project ID could not be determined."))
+            raise ValueError("Google project ID could not be determined.")
 
         if credentials is None:
             credentials = adc_credentials
@@ -407,25 +406,21 @@ def track_api_call(
         calculator, call_result: GeminiCallResult
     ) -> EffectGenerator[GeminiCostEstimate]:
         if calculator is None:
-            yield Fail(ValueError("gemini_cost_calculator is missing"))
+            raise ValueError("gemini_cost_calculator is missing")
 
         if not callable(calculator):
-            yield Fail(
-                TypeError(
-                    "gemini_cost_calculator must be a KleisliProgram[GeminiCallResult, GeminiCostEstimate]"
-                )
+            raise TypeError(
+                "gemini_cost_calculator must be a KleisliProgram[GeminiCallResult, GeminiCostEstimate]"
             )
 
         estimate = yield calculator(call_result)
 
         if estimate is None:
-            yield Fail(ValueError("gemini_cost_calculator returned None"))
+            raise ValueError("gemini_cost_calculator returned None")
 
         if not isinstance(estimate, GeminiCostEstimate):
-            yield Fail(
-                TypeError(
-                    "gemini_cost_calculator must return GeminiCostEstimate"
-                )
+            raise TypeError(
+                "gemini_cost_calculator must return GeminiCostEstimate"
             )
 
         return estimate
@@ -485,7 +480,7 @@ def track_api_call(
                 "or ensure gemini_cost_calculator__default can handle this model. "
                 f"Errors: {calculator_errors}"
             )
-            yield Fail(RuntimeError(message))
+            raise RuntimeError(message)
         else:
             cost_info = estimate.cost_info
 
