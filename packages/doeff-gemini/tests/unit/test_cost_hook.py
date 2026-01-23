@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from doeff import EffectGenerator, ExecutionContext, Fail, Local, ProgramInterpreter, do
+from doeff import AsyncRuntime, EffectGenerator, Local, do
 from doeff_gemini import (
     CostInfo,
     GeminiCallResult,
@@ -53,12 +53,11 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    ctx = ExecutionContext()
-    result = await engine.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
-    total_cost = ctx.state.get("gemini_total_cost")
+    assert result.is_ok()
+    total_cost = result.state.get("gemini_total_cost")
     assert total_cost is not None and total_cost > 0
 
 
@@ -84,12 +83,11 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    ctx = ExecutionContext()
-    result = await engine.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
-    total_cost = ctx.state.get("gemini_total_cost")
+    assert result.is_ok()
+    total_cost = result.state.get("gemini_total_cost")
     assert total_cost is not None
     # 1M text input tokens at $2 / 1M
     assert total_cost == pytest.approx(2.0)
@@ -121,12 +119,11 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    ctx = ExecutionContext()
-    result = await engine.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
-    total_cost = ctx.state.get("gemini_total_cost")
+    assert result.is_ok()
+    total_cost = result.state.get("gemini_total_cost")
     assert total_cost is not None
     # Expected: 27 tokens at $2 + 1391 tokens at $120 => ~0.167 USD
     assert total_cost == pytest.approx(0.167, rel=1e-2)
@@ -170,12 +167,11 @@ async def test_custom_cost_calculator_overrides_default() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    ctx = ExecutionContext()
-    result = await engine.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
-    assert ctx.state.get("gemini_total_cost") == pytest.approx(1.23)
+    assert result.is_ok()
+    assert result.state.get("gemini_total_cost") == pytest.approx(1.23)
 
 
 @pytest.mark.asyncio
@@ -188,7 +184,8 @@ async def test_cost_calculation_failure_raises() -> None:
     @do
     def failing_calculator(call_result: GeminiCallResult) -> EffectGenerator[GeminiCostEstimate]:
         _ = call_result
-        yield Fail(ValueError("boom"))
+        raise ValueError("boom")
+        yield  # type: ignore[misc]  # unreachable but needed for generator
 
     @do
     def flow():
@@ -208,7 +205,7 @@ async def test_cost_calculation_failure_raises() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_err
+    assert result.is_err()
