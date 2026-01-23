@@ -11,7 +11,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import ExecutionContext, ProgramInterpreter, do
+from doeff import AsyncRuntime, do
 
 from doeff_seedream import SeedreamClient, edit_image__seedream4
 
@@ -45,21 +45,21 @@ def _program():
 
 @pytest.mark.asyncio
 async def test_edit_image_seedream4_decodes_payload():
-    engine = ProgramInterpreter()
-    context = ExecutionContext(
+    runtime = AsyncRuntime()
+    run_result = await runtime.run(
+        _program(),
         env={
             "seedream_client": DummySeedreamClient(api_key="test-key"),
             "seedream_cost_per_image_usd": 0.05,
-        }
+        },
     )
-    run_result = await engine.run_async(_program(), context=context)
-    assert run_result.is_ok
+    assert run_result.is_ok()
     value = run_result.value
     assert value.image_bytes == b"dummy-image-bytes"
     assert value.images[0].size == "64x64"
-    shared_state = run_result.shared_state
-    assert shared_state["seedream_total_cost_usd"] == pytest.approx(0.05)
-    assert shared_state["seedream_cost_dummy-model"] == pytest.approx(0.05)
-    calls = shared_state["seedream_api_calls"]
+    state = run_result.state
+    assert state["seedream_total_cost_usd"] == pytest.approx(0.05)
+    assert state["seedream_cost_dummy-model"] == pytest.approx(0.05)
+    calls = state["seedream_api_calls"]
     assert calls and calls[-1]["total_cost"] == pytest.approx(0.05)
     assert any("estimated cost" in str(entry) for entry in run_result.log)

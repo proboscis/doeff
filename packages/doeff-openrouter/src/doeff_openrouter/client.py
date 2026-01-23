@@ -15,10 +15,10 @@ from doeff import (
     Ask,
     EffectGenerator,
     Get,
-    Log,
     Put,
     Safe,
     Step,
+    Tell,
     do,
 )
 

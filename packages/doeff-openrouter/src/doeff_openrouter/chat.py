@@ -8,11 +8,10 @@ from typing import Any
 
 from doeff import (
     Await,
+    Delay,
     EffectGenerator,
-    Fail,
-    Log,
-    Retry,
     Safe,
+    Tell,
     do,
 )
 
@@ -61,7 +60,7 @@ def chat_completion(
     """Invoke OpenRouter chat completions with retries and observability."""
     if stream:
         yield Tell("Streaming mode for OpenRouter is not implemented yet")
-        yield Fail(NotImplementedError("Streaming responses are not supported"))
+        raise NotImplementedError("Streaming responses are not supported")
 
     yield Tell(
         f"OpenRouter chat request: model={model}, messages={len(messages)}, include_reasoning={include_reasoning}"
@@ -91,8 +90,12 @@ def chat_completion(
 
     client = yield get_openrouter_client()
 
-    @do
-    def make_api_call() -> EffectGenerator[dict[str, Any]]:
+    # Retry transient network errors up to three times by default
+    max_attempts = 3
+    delay_seconds = 1.0
+    last_exception: BaseException | None = None
+
+    for attempt in range(max_attempts):
         start_time = time.time()
 
         @do
@@ -116,7 +119,7 @@ def chat_completion(
                     stream=False,
                     error=error,
                 )
-                yield Fail(error)
+                raise error
             yield track_api_call(
                 operation="chat.completion",
                 model=model,
@@ -130,31 +133,36 @@ def chat_completion(
             return response_data
 
         safe_result = yield Safe(perform())
-        if safe_result.is_err():
-            exc = safe_result.error
-            if isinstance(exc, OpenRouterResponseError):
-                yield Tell(f"OpenRouter responded with an error payload: {exc}")
-                yield Fail(exc)
-            yield Tell(
-                f"OpenRouter request raised {exc.__class__.__name__}: {exc}"
-            )
-            yield track_api_call(
-                operation="chat.completion",
-                model=model,
-                request_payload=request_data,
-                response_data=None,
-                response_headers=None,
-                start_time=start_time,
-                stream=False,
-                error=exc,
-            )
-            yield Fail(exc)
+        if safe_result.is_ok():
+            return safe_result.value
 
-        return safe_result.value
+        exc = safe_result.error
+        last_exception = exc
 
-    # Retry transient network errors up to three times by default
-    response = yield Retry(make_api_call(), max_attempts=3, delay_ms=1000)
-    return response
+        if isinstance(exc, OpenRouterResponseError):
+            yield Tell(f"OpenRouter responded with an error payload: {exc}")
+            raise exc
+
+        yield Tell(f"OpenRouter request raised {exc.__class__.__name__}: {exc}")
+        yield track_api_call(
+            operation="chat.completion",
+            model=model,
+            request_payload=request_data,
+            response_data=None,
+            response_headers=None,
+            start_time=start_time,
+            stream=False,
+            error=exc,
+        )
+
+        if attempt < max_attempts - 1:
+            yield Tell(f"Retrying in {delay_seconds}s (attempt {attempt + 2}/{max_attempts})")
+            yield Delay(delay_seconds)
+
+    # All retries exhausted
+    if last_exception is not None:
+        raise last_exception
+    raise RuntimeError("All retry attempts failed")
 
 
 __all__ = ["OpenRouterResponseError", "chat_completion"]
