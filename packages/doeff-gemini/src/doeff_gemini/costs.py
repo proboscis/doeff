@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from doeff import Fail, Tell, do
+from doeff import Tell, do
 
 from .types import CostInfo, GeminiCallResult, GeminiCostEstimate
 
@@ -94,7 +94,7 @@ def gemini_cost_calculator__default(
     usage = call_result.payload.get("usage") if isinstance(call_result.payload, dict) else None
     if not usage:
         yield Tell("Gemini cost calculation failed: usage metadata missing")
-        yield Fail(ValueError("Gemini usage metadata missing for cost calculation"))
+        raise ValueError("Gemini usage metadata missing for cost calculation")
 
     cost_info = calculate_cost(call_result.model_name, usage)
     return GeminiCostEstimate(cost_info=cost_info, raw_usage=usage)

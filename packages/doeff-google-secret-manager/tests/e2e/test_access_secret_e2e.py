@@ -13,7 +13,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import ProgramInterpreter, do
+from doeff import SyncRuntime, do
 from doeff_google_secret_manager import access_secret
 
 ENV_ENABLE = "SECRET_MANAGER_RUN_E2E"
@@ -47,8 +47,8 @@ def test_access_secret_real_secret():
             )
         )
 
-    interpreter = ProgramInterpreter()
-    result = interpreter.run(flow())
+    runtime = SyncRuntime()
+    result = runtime.run(flow())
 
     assert result.is_ok, result.result
     assert isinstance(result.value, str)
