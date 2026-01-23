@@ -20,8 +20,8 @@ from doeff_openai import (
 )
 
 from doeff import (
+    AsyncRuntime,
     EffectGenerator,
-    ProgramInterpreter,
     do,
 )
 
@@ -89,11 +89,11 @@ async def test_unstructured_response():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
-    print(result.display())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
+    print(result.format())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, str)
     # The answer should contain "4" or "four"
     assert "4" in result.value.lower() or "four" in result.value.lower()
@@ -118,10 +118,10 @@ async def test_structured_response_math():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, MathAnswer)
     assert result.value.answer == 42
     assert len(result.value.reasoning) > 0
@@ -164,10 +164,10 @@ def fibonacci(n):
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, CodeAnalysis)
     assert result.value.language.lower() == "python"
     assert "fibonacci" in result.value.purpose.lower()
@@ -196,10 +196,10 @@ async def test_with_image():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, ImageDescription)
 
     # Should identify the colors
@@ -237,12 +237,12 @@ async def test_error_handling_invalid_json():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
     # This might succeed or fail depending on the model's response
     # But it should handle errors gracefully
-    if result.is_err:
+    if result.is_err():
         # Check that error was logged
         assert any("Failed to parse" in str(log) for log in result.log)
     else:
@@ -266,11 +266,11 @@ async def test_retry_on_failure():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
     # Should still succeed despite token limit
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, str)
     assert len(result.value) > 0
 
@@ -288,10 +288,10 @@ async def test_gpt4o_convenience_function():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, MathAnswer)
     assert result.value.answer == 100
 
@@ -309,10 +309,10 @@ async def test_gpt5_with_reasoning():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    if result.is_ok:
+    if result.is_ok():
         assert isinstance(result.value, str)
         assert "7" in result.value
         # Check for reasoning tokens in logs
@@ -337,10 +337,10 @@ async def test_service_tier_parameter():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
     # Check that service tier was set
     assert any("service_tier" in str(log) for log in result.log)
 
@@ -358,10 +358,10 @@ async def test_cost_tracking():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
 
     # Check state for cost tracking
     assert "openai_api_calls" in result.state
@@ -396,10 +396,10 @@ async def test_multiple_images():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
     # Should mention seeing two images
     assert "two" in result.value.lower() or "2" in result.value
     # Check logs show processing multiple images
@@ -420,18 +420,17 @@ async def test_graph_tracking():
         )
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_program())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_program())
 
-    assert result.is_ok
+    assert result.is_ok()
 
-    # Check that graph steps were created
-    assert result.graph is not None
-    assert len(result.graph.steps) > 0
+    # Check that API calls were tracked in state (new runtime doesn't expose graph steps directly)
+    api_calls = result.state.get("openai_api_calls", [])
+    assert len(api_calls) > 0
 
-    # Should have steps for LLM call
-    steps_meta = [step.meta for step in result.graph.steps if step.meta]
-    assert any(meta.get("type") == "llm_call" for meta in steps_meta)
+    # Should have tracked the LLM call
+    assert any(call.get("operation") == "structured_llm" for call in api_calls)
 
 
 if __name__ == "__main__":
