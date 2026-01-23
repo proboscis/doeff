@@ -13,7 +13,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do  # noqa: E402
+from doeff import EffectGenerator, AsyncRuntime, do  # noqa: E402
 from doeff_google_secret_manager import access_secret  # noqa: E402
 
 
@@ -74,14 +74,14 @@ async def test_access_secret_text(monkeypatch: pytest.MonkeyPatch, stub_google_s
     def flow() -> EffectGenerator[str]:
         return (yield access_secret("db-password"))
 
-    interpreter = ProgramInterpreter()
-    ctx = ExecutionContext(
+    runtime = AsyncRuntime()
+    result = await runtime.run(
+        flow(),
         env={
             "secret_manager_project": "my-project",
             "secret_manager_credentials": object(),
         }
     )
-    result = await interpreter.run_async(flow(), ctx)
 
     assert result.is_ok
     assert result.value == "top-secret"
@@ -98,9 +98,11 @@ async def test_access_secret_bytes(stub_google_secret_manager: list[dict[str, An
     def flow() -> EffectGenerator[bytes]:
         return (yield access_secret("binary-secret", decode=False, project="other-project"))
 
-    interpreter = ProgramInterpreter()
-    ctx = ExecutionContext(env={"secret_manager_credentials": object(), "secret_manager_project": "ignored"})
-    result = await interpreter.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(
+        flow(),
+        env={"secret_manager_credentials": object(), "secret_manager_project": "ignored"}
+    )
 
     assert result.is_ok
     assert isinstance(result.value, bytes)
@@ -118,9 +120,8 @@ async def test_access_secret_uses_adc_when_project_missing(stub_google_secret_ma
     def flow() -> EffectGenerator[str]:
         return (yield access_secret("needs-project"))
 
-    interpreter = ProgramInterpreter()
-    ctx = ExecutionContext()
-    result = await interpreter.run_async(flow(), ctx)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
     assert result.is_ok
     assert stub_google_secret_manager[-1] == {
