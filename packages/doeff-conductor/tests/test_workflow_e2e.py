@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from doeff import do
-from doeff.cesk import run_sync
+from doeff_conductor.handlers import run_sync
 from doeff_conductor import (
     CreateWorktree,
     DeleteWorktree,

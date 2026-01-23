@@ -13,7 +13,7 @@ Helpers for invoking ByteDance's Seedream 4.0 image generation API from the [doe
 ```python
 import asyncio
 
-from doeff import ExecutionContext, ProgramInterpreter, do
+from doeff import AsyncRuntime, do
 from doeff_seedream import edit_image__seedream4
 
 @do
@@ -24,10 +24,12 @@ def main():
     image = result.images[0].to_pil_image()
     image.save("seedream.png")
 
-engine = ProgramInterpreter()
-context = ExecutionContext(env={"seedream_api_key": "YOUR_ARK_KEY"})
-run_result = asyncio.run(engine.run(main(), context=context))
-run_result.value  # SeedreamImageEditResult
+async def run():
+    runtime = AsyncRuntime()
+    run_result = await runtime.run(main(), env={"seedream_api_key": "YOUR_ARK_KEY"})
+    return run_result.value  # SeedreamImageEditResult
+
+asyncio.run(run())
 ```
 
 Set `seedream_api_key` in the Reader environment (or provide a pre-configured `SeedreamClient` via `seedream_client`).

@@ -27,7 +27,7 @@ from typing import Any
 import pytest
 
 from doeff import do
-from doeff.cesk import run_sync
+from doeff_conductor.handlers import run_sync
 from doeff_agentic import (
     AgenticCreateEnvironment,
     AgenticCreateSession,
