@@ -12,12 +12,11 @@ import httpx
 from doeff import (
     Ask,
     EffectGenerator,
-    Fail,
     Get,
-    Log,
     Put,
     Safe,
     Step,
+    Tell,
     do,
 )
 
