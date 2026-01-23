@@ -7,11 +7,11 @@ from openai.types import CreateEmbeddingResponse
 
 from doeff import (
     Await,
+    Delay,
     EffectGenerator,
     Gather,
-    Log,
-    Retry,
     Step,
+    Tell,
     do,
 )
 from doeff_openai.client import get_openai_client, track_api_call
@@ -62,7 +62,7 @@ def create_embedding(
     # Get OpenAI client
     client = yield get_openai_client()
 
-    from doeff import Fail, Safe
+    from doeff import Safe
 
     # Define the main operation with retry support
     @do
@@ -105,11 +105,25 @@ def create_embedding(
                 error=e,
             )
             # Re-raise to trigger retry
-            yield Fail(e)
+            raise e
         return safe_result.value
 
-    # Use Retry effect for transient failures (3 attempts by default)
-    result = yield Retry(make_api_call(), max_attempts=3, delay_ms=1000)
+    # Retry logic for transient failures (3 attempts by default)
+    max_attempts = 3
+    delay_seconds = 1.0
+    last_error = None
+    for attempt in range(max_attempts):
+        safe_result = yield Safe(make_api_call())
+        if safe_result.is_ok():
+            result = safe_result.value
+            break
+        last_error = safe_result.error
+        if attempt < max_attempts - 1:
+            yield Tell(f"Embedding API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s...")
+            yield Delay(seconds=delay_seconds)
+    else:
+        assert last_error is not None, "Should have an error if all retries failed"
+        raise last_error
     return result
 
 
@@ -139,7 +153,7 @@ def create_embedding_async(
     # Track start time
     start_time = time.time()
 
-    from doeff import Fail, Safe, do
+    from doeff import Safe
 
     # Define the main operation as a sub-program
     @do
@@ -175,7 +189,7 @@ def create_embedding_async(
             start_time=start_time,
             error=e,
         )
-        yield Fail(e)
+        raise e
     return safe_result.value
 
 

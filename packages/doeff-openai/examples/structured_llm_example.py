@@ -20,8 +20,8 @@ from doeff import (
     do,
     EffectGenerator,
     Ask,
-    Log,
     Safe,
+    Tell,
 )
 
 from doeff_openai import (

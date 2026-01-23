@@ -15,9 +15,9 @@ from doeff import (
     AtomicUpdate,
     EffectGenerator,
     Get,
-    Log,
     Put,
     Step,
+    Tell,
     do,
 )
 from doeff_openai.costs import calculate_cost
