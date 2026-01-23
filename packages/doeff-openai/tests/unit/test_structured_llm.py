@@ -22,9 +22,8 @@ from pydantic import BaseModel
 
 from doeff import (
     Ask,
+    AsyncRuntime,
     EffectGenerator,
-    ExecutionContext,
-    ProgramInterpreter,
     do,
 )
 
@@ -125,10 +124,10 @@ async def test_build_messages_text_only():
         messages = yield build_messages("Hello, world!")
         return messages
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert len(result.value) == 1
     assert result.value[0]["role"] == "user"
     assert result.value[0]["content"] == "Hello, world!"
@@ -161,11 +160,11 @@ async def test_build_api_parameters_gpt4():
         )
         return params
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
-    print(result.display())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
+    print(result.format())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value["model"] == "gpt-4o"
     assert result.value["messages"] == [{"role": "user", "content": "test"}]
     assert result.value["temperature"] == 0.5
@@ -192,10 +191,10 @@ async def test_build_api_parameters_gpt5():
         )
         return params
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value["model"] == "gpt-5"
     assert result.value["max_completion_tokens"] == 1000
     assert "max_tokens" not in result.value
@@ -224,11 +223,11 @@ async def test_build_api_parameters_structured():
         )
         return params
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
-    print(result.display())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
+    print(result.format())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert "response_format" in result.value
     assert result.value["response_format"]["type"] == "json_schema"
     assert result.value["response_format"]["json_schema"]["name"] == "SimpleResponse"
@@ -253,10 +252,10 @@ async def test_process_structured_response_success():
         result = yield process_structured_response(mock_response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)
     assert result.value.answer == "42"
     assert result.value.confidence == 0.95
@@ -283,10 +282,10 @@ async def test_process_structured_response_list_payload():
         result = yield process_structured_response(mock_response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value.answer == "42"
     assert result.value.confidence == 0.99
 
@@ -310,10 +309,10 @@ async def test_process_unstructured_response_with_parts():
         result = yield process_unstructured_response(mock_response)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "Hello world"
 
 
@@ -331,11 +330,11 @@ async def test_process_structured_response_invalid_json():
         result = yield process_structured_response(mock_response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
-    print(result.display())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
+    print(result.format())
 
-    assert result.is_err
+    assert result.is_err()
     assert "Expecting value" in str(result.result.error)
 
 
@@ -353,10 +352,10 @@ async def test_process_unstructured_response():
         result = yield process_unstructured_response(mock_response)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(test_flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "This is a test response."
 
 
@@ -392,11 +391,10 @@ async def test_structured_llm_text_only():
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openai_client": mock_client})
-    result = await engine.run_async(test_flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "Test response"
 
     # Check API was called
@@ -405,7 +403,7 @@ async def test_structured_llm_text_only():
     assert call_args["model"] == "gpt-4o"
     assert call_args["max_tokens"] == 100
 
-    api_calls = result.context.state.get("openai_api_calls")
+    api_calls = result.state.get("openai_api_calls")
     assert api_calls is not None
     call_record = api_calls[0]
     assert call_record["prompt_text"] == "What is 2+2?"
@@ -448,11 +446,10 @@ async def test_structured_llm_with_pydantic():
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openai_client": mock_client})
-    result = await engine.run_async(test_flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)
     assert result.value.answer == "4"
     assert result.value.confidence == 1.0
@@ -499,11 +496,10 @@ async def test_gpt5_structured_convenience():
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openai_client": mock_client})
-    result = await engine.run_async(test_flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "GPT-5 response"
 
     # Check API was called with GPT-5 parameters
@@ -535,8 +531,6 @@ async def test_structured_llm_integration():
         )
         return result
 
-    from doeff import run_with_env
-
     # Get API key from environment in a compliant way
     @do
     def get_api_key() -> EffectGenerator[str]:
@@ -544,18 +538,15 @@ async def test_structured_llm_integration():
         return api_key
 
     # First check if API key is available
-    engine = ProgramInterpreter()
-    key_result = await engine.run_async(get_api_key(), ExecutionContext(env={}))
+    runtime = AsyncRuntime()
+    key_result = await runtime.run(get_api_key(), env={})
 
-    if not key_result.is_ok or not key_result.value:
+    if not key_result.is_ok() or not key_result.value:
         pytest.skip("OPENAI_API_KEY not set")
 
-    result = await run_with_env(
-        test_flow(),
-        env={"openai_api_key": key_result.value}
-    )
+    result = await runtime.run(test_flow(), env={"openai_api_key": key_result.value})
 
-    assert result.is_ok
+    assert result.is_ok()
     assert isinstance(result.value, SimpleResponse)
     assert "4" in result.value.answer.lower()
     assert result.value.confidence > 0.9
