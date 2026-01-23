@@ -15,10 +15,10 @@ gcloud auth application-default login
 ```
 
 ```python
-from doeff import do, run_with_env
+import asyncio
 from pydantic import BaseModel
 
-from doeff import ExecutionContext, ProgramInterpreter
+from doeff import AsyncRuntime, do
 from doeff_gemini import structured_llm__gemini
 
 
@@ -39,10 +39,13 @@ def fetch_weather() -> WeatherResponse:
     )
 
 
-engine = ProgramInterpreter()
-ctx = ExecutionContext(env={"gemini_api_key": "your-api-key"})
-run_result = engine.run(fetch_weather(), ctx)
-print(run_result.value)
+async def main():
+    runtime = AsyncRuntime()
+    result = await runtime.run(fetch_weather(), env={"gemini_api_key": "your-api-key"})
+    print(result.value)
+
+
+asyncio.run(main())
 ```
 
 When no API key is supplied the integration automatically falls back to
@@ -55,15 +58,14 @@ local development.
 Use the official model ID `gemini-3-pro-image-preview` for Nano Banana Pro. Example:
 
 ```python
-engine = ProgramInterpreter()
-ctx = ExecutionContext(env={"gemini_api_key": "your-api-key"})
-result = engine.run(
+runtime = AsyncRuntime()
+result = await runtime.run(
     edit_image__gemini(
         prompt="Add a small yellow banana icon in the center",
         model="gemini-3-pro-image-preview",
         images=[...],
     ),
-    ctx,
+    env={"gemini_api_key": "your-api-key"},
 )
 ```
 
