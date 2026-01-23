@@ -15,12 +15,11 @@ from pydantic import BaseModel
 
 from doeff import (
     Await,
+    Delay,
     EffectGenerator,
-    Fail,
-    Log,
-    Retry,
     Safe,
     Step,
+    Tell,
     do,
 )
 from doeff_openai.client import (
@@ -412,7 +411,7 @@ def process_structured_response(
     raw_content_for_log = _stringify_for_log(parse_source)
 
     # Parse the JSON response
-    from doeff import Fail, Safe, do
+    from doeff import Safe
 
     @do
     def parse_json():
@@ -437,7 +436,7 @@ def process_structured_response(
         e = safe_result.error
         yield Tell(f"Failed to parse structured response: {e}")
         yield Tell(f"Raw content: {raw_content_for_log}")
-        yield Fail(e)
+        raise e
     return safe_result.value
 
 
@@ -599,11 +598,24 @@ def structured_llm__openai(
                 error=error,
             )
             # Re-raise to trigger retry
-            yield Fail(error)
+            raise error
         return safe_result.value
 
-    # Use Retry effect for transient failures
-    response = yield Retry(make_api_call(), max_attempts=max_retries, delay_ms=1000)
+    # Retry logic for transient failures
+    delay_seconds = 1.0
+    last_error = None
+    for attempt in range(max_retries):
+        safe_result = yield Safe(make_api_call())
+        if safe_result.is_ok():
+            response = safe_result.value
+            break
+        last_error = safe_result.error
+        if attempt < max_retries - 1:
+            yield Tell(f"OpenAI API call failed (attempt {attempt + 1}/{max_retries}), retrying in {delay_seconds}s...")
+            yield Delay(seconds=delay_seconds)
+    else:
+        assert last_error is not None, "Should have an error if all retries failed"
+        raise last_error
 
     # Log token usage details for GPT-5 models
     if is_gpt5_model(model) and hasattr(response.usage, "completion_tokens_details"):
