@@ -39,7 +39,7 @@ from doeff_gemini.types import APICallMetadata
 genai_types = google_genai.types
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, ExecutionContext, Gather, ProgramInterpreter, do
+from doeff import AsyncRuntime, EffectGenerator, Gather, do
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
 
@@ -108,10 +108,10 @@ async def test_build_contents_text_only() -> None:
         contents = yield build_contents("Hello Gemini")
         return contents
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     contents = result.value
     assert len(contents) == 1
     content = contents[0]
@@ -143,10 +143,10 @@ async def test_build_generation_config_basic() -> None:
         )
         return config
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     config = result.value
     assert config.temperature == 0.4
     assert config.max_output_tokens == 512
@@ -182,10 +182,10 @@ async def test_build_generation_config_with_modalities() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     config = result.value
     assert config.response_modalities == ["TEXT", "IMAGE"]
 
@@ -205,10 +205,10 @@ async def test_process_structured_response_from_text() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     parsed = result.value
     assert isinstance(parsed, SimpleResponse)
     assert parsed.answer == "42"
@@ -228,10 +228,10 @@ async def test_process_structured_response_from_parsed() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value is parsed_response
 
 
@@ -252,10 +252,10 @@ async def test_process_structured_response_nested_model_from_parsed() -> None:
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value is parsed_response
     assert len(result.value.assessments) == 2
 
@@ -281,10 +281,10 @@ async def test_process_structured_response_from_json_part() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert isinstance(payload, SimpleResponse)
     assert payload.answer == "42"
@@ -312,10 +312,10 @@ async def test_process_structured_response_from_json_part_string_payload() -> No
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert payload.answer == "84"
     assert math.isclose(payload.confidence, 0.55)
@@ -342,10 +342,10 @@ async def test_process_structured_response_from_json_part_with_model() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert payload.answer == "128"
     assert math.isclose(payload.confidence, 0.33)
@@ -376,10 +376,10 @@ async def test_process_structured_response_nested_model_from_json_part() -> None
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert isinstance(payload, SymbolAssessmentsV2)
     assert payload.assessments[0].symbol == "AAPL"
@@ -410,10 +410,10 @@ async def test_process_structured_response_from_outputs_structure() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert payload.answer == "11"
     assert math.isclose(payload.confidence, 0.61)
@@ -430,10 +430,10 @@ async def test_process_structured_response_without_json_payload() -> None:
         result = yield process_structured_response(response, SimpleResponse)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_err
+    assert result.is_err()
     error = result.result.error
     assert isinstance(error, GeminiStructuredOutputError)
     assert error.format_name.endswith("SimpleResponse")
@@ -451,10 +451,10 @@ async def test_process_unstructured_response() -> None:
         result = yield process_unstructured_response(response)
         return result
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "A concise answer"
 
 
@@ -511,10 +511,10 @@ async def test_repair_structured_response_uses_default_when_missing(monkeypatch)
             )
         )
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value.answer == "fixed"
     assert calls and calls[0]["model"] == "gemini-default"
 
@@ -555,11 +555,10 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"sllm_for_json_fix": custom_fix})
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env={"sllm_for_json_fix": custom_fix})
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert payload.answer == "repaired"
     assert math.isclose(payload.confidence, 0.99)
@@ -596,11 +595,10 @@ async def test_structured_llm_text_only() -> None:
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"gemini_client": mock_client})
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env={"gemini_client": mock_client})
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "Test response"
 
     async_models.generate_content.assert_called_once()
@@ -610,7 +608,7 @@ async def test_structured_llm_text_only() -> None:
     assert config.max_output_tokens == 128
     assert config.temperature == 0.2
 
-    api_calls = result.context.state.get("gemini_api_calls")
+    api_calls = result.state.get("gemini_api_calls")
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "Hello Gemini"
     assert api_calls[0]["prompt_images"] == []
@@ -642,11 +640,10 @@ async def test_structured_llm_with_pydantic() -> None:
         )
         return result
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"gemini_client": mock_client})
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env={"gemini_client": mock_client})
 
-    assert result.is_ok
+    assert result.is_ok()
     value = result.value
     assert isinstance(value, SimpleResponse)
     assert value.answer == "4"
@@ -700,10 +697,10 @@ async def test_process_image_edit_response_success(tmp_path: Path) -> None:
     def flow() -> EffectGenerator[GeminiImageEditResult]:
         return (yield process_image_edit_response(response))
 
-    engine = ProgramInterpreter()
-    result = await engine.run_async(flow())
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow())
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert payload.image_bytes == image_bytes
     assert payload.mime_type == "image/png"
@@ -770,11 +767,10 @@ async def test_edit_image__gemini_success() -> None:
             )
         )
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"gemini_client": client})
-    result = await engine.run_async(flow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(flow(), env={"gemini_client": client})
 
-    assert result.is_ok
+    assert result.is_ok()
     payload = result.value
     assert payload.image_bytes == edited_bytes
     assert payload.mime_type == "image/png"
@@ -785,7 +781,7 @@ async def test_edit_image__gemini_success() -> None:
     config = call_kwargs["config"]
     assert config.response_modalities == ["TEXT", "IMAGE"]
 
-    api_calls = result.context.state.get("gemini_api_calls")
+    api_calls = result.state.get("gemini_api_calls")
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "Enhance the colors"
     assert api_calls[0]["prompt_images"][0]["mime_type"].startswith("image/")
@@ -829,12 +825,11 @@ async def test_track_api_call_accumulates_under_gather() -> None:
     def run_parallel() -> EffectGenerator[list[APICallMetadata]]:
         return (yield Gather(*(invoke(call) for call in call_defs)))
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext()
-    result = await engine.run_async(run_parallel(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(run_parallel())
 
-    assert result.is_ok
-    state = result.context.state
+    assert result.is_ok()
+    state = result.state
     api_calls = state.get("gemini_api_calls")
     assert api_calls is not None
     assert sorted(entry["request_id"] for entry in api_calls) == [
