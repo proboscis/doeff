@@ -153,7 +153,9 @@ class PartiallyAppliedKleisliProgram(KleisliProgram[P, T]):
 def _safe_signature(target: Any) -> inspect.Signature | None:
     try:
         return inspect.signature(target)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, NameError):
+        # NameError: Python 3.14+ raises when forward reference annotations
+        # cannot be resolved (e.g., class defined later in file)
         return None
 
 
