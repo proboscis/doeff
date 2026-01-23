@@ -20,11 +20,10 @@ from doeff_openai import (
 
 from doeff import (
     Ask,
+    AsyncRuntime,
     EffectGenerator,
-    ExecutionContext,
     Gather,
     Get,
-    ProgramInterpreter,
     Put,
     Tell,
     do,
@@ -117,37 +116,29 @@ async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_respo
     mock_openai_client.async_client.chat.completions.create.return_value = mock_chat_response
 
     # Run with mock client in environment
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openai_client": mock_openai_client})
-
-    result = await engine.run_async(test_workflow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_workflow(), env={"openai_client": mock_openai_client})
 
     # Verify success
-    assert result.is_ok
+    assert result.is_ok()
 
     # Check response
     assert result.value["response"] == mock_chat_response
 
     # Check logs were created
-    logs = context.log
+    logs = result.log
     assert any("OpenAI chat request" in str(log) for log in logs)
     assert any("Chat completion finished" in str(log) for log in logs)
 
-    # Check graph steps were created
-    assert len(context.graph.steps) > 0
+    # Check that API call was tracked in state
+    api_calls = result.state.get("openai_api_calls", [])
+    assert len(api_calls) > 0
 
-    # Find API call steps
-    api_steps = [
-        step for step in context.graph.steps
-        if step.meta.get("type") == "openai_api_call"
-    ]
-    assert len(api_steps) > 0
-
-    # Check metadata
-    for step in api_steps:
-        assert "model" in step.meta
-        assert "operation" in step.meta
-        assert step.meta["operation"] == "chat.completion"
+    # Check metadata in tracked API calls
+    for call in api_calls:
+        assert "model" in call
+        assert "operation" in call
+        assert call["operation"] == "chat.completion"
 
 
 @pytest.mark.asyncio
@@ -177,26 +168,22 @@ async def test_embedding_with_tracking(mock_openai_client, mock_embedding_respon
     mock_openai_client.async_client.embeddings.create.return_value = mock_embedding_response
 
     # Run
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openai_client": mock_openai_client})
-
-    result = await engine.run_async(test_workflow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_workflow(), env={"openai_client": mock_openai_client})
 
     # Verify
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value["response"] == mock_embedding_response
     assert result.value["embedding"] == [0.1, 0.2, 0.3, 0.4, 0.5]
 
     # Check logs
-    logs = context.log
+    logs = result.log
     assert any("OpenAI embedding request" in str(log) for log in logs)
 
-    # Check graph
-    embedding_steps = [
-        step for step in context.graph.steps
-        if step.meta.get("operation") == "embedding"
-    ]
-    assert len(embedding_steps) > 0
+    # Check that API calls were tracked in state
+    api_calls = result.state.get("openai_api_calls", [])
+    embedding_calls = [call for call in api_calls if call.get("operation") == "embedding"]
+    assert len(embedding_calls) > 0
 
 
 @pytest.mark.asyncio
@@ -250,14 +237,11 @@ async def test_cost_tracking():
         }
 
     # Run
-    engine = ProgramInterpreter()
-    context = ExecutionContext()
-
-    result = await engine.run_async(test_workflow(), context)
-    print(result.display())
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_workflow())
 
     # Verify
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value["total"] == result.value["expected_total"]
     assert result.value["gpt35"] > 0
     assert result.value["gpt4"] > 0
@@ -295,18 +279,16 @@ async def test_parallel_operations_with_gather():
         return results
 
     # Run
-    engine = ProgramInterpreter()
-    context = ExecutionContext()
-
-    result = await engine.run_async(test_workflow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_workflow())
 
     # Verify
-    assert result.is_ok
+    assert result.is_ok()
     assert len(result.value) == 3
     assert result.value == ["Response 0", "Response 1", "Response 2"]
 
     # Check logs show parallel execution
-    assert len(context.log) == 3
+    assert len(result.log) == 3
 
 
 def test_token_counting():
@@ -413,13 +395,11 @@ async def test_semantic_search_workflow():
         return top_results
 
     # Run
-    engine = ProgramInterpreter()
-    context = ExecutionContext()
-
-    result = await engine.run_async(test_workflow(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(test_workflow())
 
     # Verify
-    assert result.is_ok
+    assert result.is_ok()
     assert len(result.value) == 2
     # First result should have highest similarity
     assert result.value[0][1] >= result.value[1][1]
@@ -478,12 +458,11 @@ async def test_track_api_call_accumulates_under_gather():
     def run_parallel() -> EffectGenerator[list[Any]]:
         return (yield Gather(*(invoke(call) for call in call_defs)))
     
-    engine = ProgramInterpreter()
-    context = ExecutionContext()
-    result = await engine.run_async(run_parallel(), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(run_parallel())
     
-    assert result.is_ok
-    state = result.context.state
+    assert result.is_ok()
+    state = result.state
     
     # Verify all API calls were tracked
     api_calls = state.get("openai_api_calls")
