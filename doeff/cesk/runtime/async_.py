@@ -154,8 +154,8 @@ class AsyncRuntime(BaseRuntime):
             # Let cancellation propagate - this is external control, not a program error
             raise
         except Exception as exc:
-            # Program errors get wrapped in RuntimeResult
-            return self._build_error_result(exc, state)
+            final_store = getattr(exc, "__cesk_store__", None)
+            return self._build_error_result(exc, state, final_store=final_store)
 
     async def run_and_unwrap(
         self,
@@ -281,6 +281,8 @@ class AsyncRuntime(BaseRuntime):
                         exc = result.exception
                         if result.captured_traceback is not None:
                             exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
+                        # Attach final store so error result can capture logs
+                        exc.__cesk_store__ = result.store  # type: ignore[attr-defined]
                         raise exc
                     # Mark child task as Failed
                     failed_task = state.tasks[task_id].with_status(
