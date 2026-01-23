@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Await, EffectGenerator, Fail, Tell, Step, do
+from doeff import Await, EffectGenerator, Tell, Step, do
 
 from .client import SecretManagerClient, get_secret_manager_client
 
@@ -50,7 +50,7 @@ def access_secret(
         yield Tell(
             "Secret Manager project missing. Provide 'secret_manager_project' or pass project=..."
         )
-        yield Fail(ValueError("Secret Manager project is required to access secrets"))
+        raise ValueError("Secret Manager project is required to access secrets")
 
     secret_name = f"projects/{resolved_project}/secrets/{secret_id}/versions/{version}"
     yield Tell(
@@ -62,14 +62,14 @@ def access_secret(
     )
     payload = getattr(response, "payload", None)
     if payload is None or getattr(payload, "data", None) is None:
-        yield Fail(ValueError("Secret Manager response is missing payload data"))
+        raise ValueError("Secret Manager response is missing payload data")
 
     raw_data = _ensure_bytes(payload.data)
     if decode:
         try:
             secret_value: str | bytes = raw_data.decode(encoding)
         except Exception as exc:
-            yield Fail(exc)
+            raise exc
     else:
         secret_value = raw_data
 
