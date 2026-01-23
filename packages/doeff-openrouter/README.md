@@ -18,7 +18,7 @@ pip install doeff-openrouter
 ## Quick Example
 
 ```python
-from doeff import do, ProgramInterpreter, ExecutionContext
+from doeff import do, SyncRuntime
 from doeff_openrouter import chat_completion, structured_llm
 from pydantic import BaseModel
 
@@ -40,9 +40,8 @@ def workflow():
     )
     return result
 
-ctx = ExecutionContext(env={"openrouter_api_key": "sk-or-v1..."})
-engine = ProgramInterpreter()
-result = await engine.run(workflow(), ctx)
+runtime = SyncRuntime()
+result = runtime.run(workflow(), env={"openrouter_api_key": "sk-or-v1..."})
 print(result.value)
 ```
 
