@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
+from doeff import EffectGenerator, SyncRuntime, do
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.structured_llm import (
     build_messages,
@@ -41,18 +41,18 @@ def api_key() -> str:
 
 
 @pytest.fixture(scope="module")
-def engine() -> ProgramInterpreter:
-    return ProgramInterpreter()
+def runtime() -> SyncRuntime:
+    return SyncRuntime()
 
 
-def _make_context(api_key: str) -> ExecutionContext:
-    return ExecutionContext(env={"openrouter_api_key": api_key})
+def _make_env(api_key: str) -> dict[str, str]:
+    return {"openrouter_api_key": api_key}
 
 
 @pytest.mark.parametrize("model, expects_success", STRUCTURED_MODELS)
-def test_chat_completion_and_structured_response_live(model: str, expects_success: bool, api_key: str, engine: ProgramInterpreter):
+def test_chat_completion_and_structured_response_live(model: str, expects_success: bool, api_key: str, runtime: SyncRuntime):
     """Ensure the real OpenRouter API returns the documented structure for supported providers."""
-    context = _make_context(api_key)
+    env = _make_env(api_key)
 
     @do
     def flow() -> EffectGenerator[Any]:
@@ -69,9 +69,9 @@ def test_chat_completion_and_structured_response_live(model: str, expects_succes
         )
         return raw_response
 
-    raw_result = engine.run(flow(), context)
+    raw_result = runtime.run(flow(), env=env)
 
-    assert raw_result.is_ok, f"OpenRouter call failed: {raw_result.result.error}"
+    assert raw_result.is_ok(), f"OpenRouter call failed: {raw_result.error}"
     raw = raw_result.value
 
     assert isinstance(raw, dict)
@@ -87,15 +87,15 @@ def test_chat_completion_and_structured_response_live(model: str, expects_succes
     def parse_flow() -> EffectGenerator[Any]:
         return (yield process_structured_response(raw, EchoPayload))
 
-    parse_result = engine.run(parse_flow(), raw_result.context)
+    parse_result = runtime.run(parse_flow(), env=env, store=raw_result.state)
 
     if expects_success:
-        assert parse_result.is_ok, f"Structured parsing failed: {parse_result.result.error}"
+        assert parse_result.is_ok(), f"Structured parsing failed: {parse_result.error}"
         structured = parse_result.value
         assert isinstance(structured, EchoPayload)
         assert structured.keyword.lower() == "doeff-openrouter"
         assert structured.number == 17
     else:
-        assert parse_result.is_err, "Expected structured parsing to fail for unsupported model"
-        error = parse_result.result.error
+        assert parse_result.is_err(), "Expected structured parsing to fail for unsupported model"
+        error = parse_result.error
         assert isinstance(error, (StructuredOutputParsingError, RuntimeError))
