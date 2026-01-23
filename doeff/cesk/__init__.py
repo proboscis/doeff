@@ -129,6 +129,140 @@ from doeff.cesk.runtime_result import (
     SourceLocation,
 )
 
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
+
+if TYPE_CHECKING:
+    from doeff.program import Program
+    from doeff.storage import DurableStorage
+    from doeff.cesk_observability import ExecutionSnapshot, OnStepCallback
+
+_T = TypeVar("_T")
+
+
+def run_sync(
+    program: "Program[_T]",
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+    storage: "DurableStorage | None" = None,
+    on_step: "OnStepCallback | None" = None,
+) -> CESKResult[_T]:
+    """Execute a program synchronously with optional observability.
+
+    This function provides a synchronous execution model with support for
+    step-by-step observation via the on_step callback. It wraps SyncRuntime
+    with additional observability hooks.
+
+    Args:
+        program: The program to execute.
+        env: Optional initial environment (reader context).
+        store: Optional initial store (mutable state).
+        storage: Optional durable storage backend for observability.
+        on_step: Optional callback invoked at each interpreter step.
+            Receives an ExecutionSnapshot with current execution state.
+
+    Returns:
+        CESKResult containing the execution result.
+
+    Example:
+        from doeff import do
+        from doeff.cesk import run_sync
+        from doeff.effects import Pure
+
+        @do
+        def my_workflow():
+            x = yield Pure(10)
+            return x * 2
+
+        # Simple execution
+        result = run_sync(my_workflow())
+        print(result.value)  # 20
+
+        # With observability
+        def log_step(snapshot):
+            print(f"Step {snapshot.step_count}: {snapshot.status}")
+
+        result = run_sync(my_workflow(), on_step=log_step)
+    """
+    from doeff._vendor import FrozenDict, Ok, Err
+    from doeff.cesk.runtime import SyncRuntime
+    from doeff.cesk.runtime.base import ExecutionError
+    from doeff.cesk.state import CESKState, ProgramControl
+    from doeff.cesk.result import Done, Failed, Suspended
+    from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram
+
+    runtime = SyncRuntime()
+
+    # Create initial state
+    frozen_env = FrozenDict(env) if env else FrozenDict()
+    final_store: dict[str, Any] = store if store is not None else {}
+    state = CESKState.initial(program, frozen_env, final_store)
+
+    step_count = 0
+
+    # Helper to create and emit snapshot
+    def emit_snapshot(status: str) -> None:
+        if on_step is None:
+            return
+        from doeff.cesk_observability import ExecutionSnapshot
+
+        snapshot = ExecutionSnapshot.from_state(
+            state, status, step_count, storage  # type: ignore[arg-type]
+        )
+        on_step(snapshot)
+
+    try:
+        while True:
+            step_count += 1
+            emit_snapshot("running")
+
+            result = step(state, runtime._handlers)
+
+            if isinstance(result, Done):
+                state = CESKState(C=Value(result.value), E=state.E, S=result.store, K=[])
+                emit_snapshot("completed")
+                return CESKResult(Ok(result.value))
+
+            if isinstance(result, Failed):
+                exc = result.exception if isinstance(result.exception, Exception) else Exception(str(result.exception))
+                state = CESKState(C=Error(result.exception), E=state.E, S=result.store, K=[])
+                emit_snapshot("failed")
+                return CESKResult(Err(exc), result.captured_traceback)
+
+            if isinstance(result, CESKState):
+                state = result
+                continue
+
+            if isinstance(result, Suspended):
+                main_task = state.tasks[state.main_task]
+                dispatch_result = runtime._dispatch_effect(
+                    result.effect, main_task, state.store
+                )
+
+                if isinstance(dispatch_result, ContinueError):
+                    state = result.resume_error(dispatch_result.error)
+                elif isinstance(dispatch_result, ContinueProgram):
+                    state = CESKState(
+                        C=ProgramControl(dispatch_result.program),
+                        E=dispatch_result.env,
+                        S=dispatch_result.store,
+                        K=dispatch_result.k,
+                    )
+                elif isinstance(dispatch_result, ContinueValue):
+                    state = result.resume(dispatch_result.value, dispatch_result.store)
+                else:
+                    raise RuntimeError(f"Unexpected dispatch result: {type(dispatch_result)}")
+                continue
+
+            raise RuntimeError(f"Unexpected step result: {type(result)}")
+
+    except ExecutionError as err:
+        if isinstance(err.exception, (KeyboardInterrupt, SystemExit)):
+            raise err.exception from None
+        emit_snapshot("failed")
+        exc = err.exception if isinstance(err.exception, Exception) else Exception(str(err.exception))
+        return CESKResult(Err(exc), err.captured_traceback)
+
+
 __all__ = [
     # Types
     "Environment",
@@ -249,4 +383,5 @@ __all__ = [
     "PythonStackTrace",
     "PythonFrame",
     "SourceLocation",
+    "run_sync",
 ]
