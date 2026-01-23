@@ -12,8 +12,7 @@ from pydantic import BaseModel, ValidationError
 
 from doeff import (
     EffectGenerator,
-    Fail,
-    Log,
+    Tell,
     do,
 )
 

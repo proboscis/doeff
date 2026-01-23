@@ -26,7 +26,9 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+# Build as a pure Rust binary, not a Python extension
+bindings = "bin"
+strip = true
 
 
 

@@ -13,15 +13,15 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from pydantic import BaseModel, ValidationError
 
+import asyncio
+
 from doeff import (
     Ask,
     Await,
     EffectGenerator,
-    Fail,
-    Log,
-    Retry,
     Safe,
     Step,
+    Tell,
     do,
     slog,
 )
@@ -75,6 +75,27 @@ def _gemini_random_backoff(attempt: int, error: Exception | None) -> float:
         max(_RANDOM_BACKOFF_MIN_DELAY_SECONDS, upper),
     )
     return random.uniform(_RANDOM_BACKOFF_MIN_DELAY_SECONDS, upper)
+
+
+@do
+def _retry_with_backoff(
+    program_factory: Callable[[], EffectGenerator[Any]],
+    max_attempts: int,
+    delay_strategy: Callable[[int, Exception | None], float],
+) -> EffectGenerator[Any]:
+    """Manual retry implementation using Safe effect."""
+    last_error: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        safe_result = yield Safe(program_factory())
+        if safe_result.is_ok():
+            return safe_result.value
+        last_error = safe_result.error
+        if attempt < max_attempts:
+            delay = delay_strategy(attempt, last_error)
+            yield Await(asyncio.sleep(delay))
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Retry exhausted without error")  # Should never happen
 
 
 def _make_gemini_json_fix_sllm(
@@ -670,7 +691,7 @@ def process_image_edit_response(response: Any) -> EffectGenerator[GeminiImageEdi
 
     if image_bytes is None or mime_type is None:
         yield Tell("Gemini response did not include edited image data")
-        yield Fail(ValueError("Gemini response missing edited image"))
+        raise ValueError("Gemini response missing edited image")
 
     combined_text = "\n".join(text_fragments) if text_fragments else None
     text_preview = _stringify_for_log(combined_text, limit=200)
@@ -805,8 +826,8 @@ def structured_llm__gemini(
         return safe_result.value
 
     safe_retry_result = yield Safe(
-        Retry(
-            make_api_call(),
+        _retry_with_backoff(
+            make_api_call,
             max_attempts=max_retries,
             delay_strategy=_gemini_random_backoff,
         )
@@ -998,13 +1019,13 @@ def edit_image__gemini(
                 error=exc,
                 api_payload=api_payload,
             )
-            yield Fail(exc)
+            raise exc
 
         return safe_result.value
 
     safe_retry_result = yield Safe(
-        Retry(
-            make_api_call(),
+        _retry_with_backoff(
+            make_api_call,
             max_attempts=max_retries,
             delay_strategy=_gemini_random_backoff,
         )
