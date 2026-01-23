@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Ask, EffectGenerator, Fail, Get, Tell, Put, Safe, do
+from doeff import Ask, EffectGenerator, Get, Tell, Put, Safe, do
 
 DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/cloud-platform",
@@ -78,33 +78,43 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
         safe_result = yield Safe(ask(name))
         return safe_result.value if safe_result.is_ok() else None
 
+    @do
+    def get_state(name: str):
+        return (yield Get(name))
+
+    @do
+    def get_optional(name: str) -> EffectGenerator[Any]:
+        """Get state value, returning None if key doesn't exist."""
+        safe_result = yield Safe(get_state(name))
+        return safe_result.value if safe_result.is_ok() else None
+
     safe_existing_client = yield Safe(ask("secret_manager_client"))
     existing_client = safe_existing_client.value if safe_existing_client.is_ok() else None
     if existing_client:
         return existing_client
 
-    existing_client = yield Get("secret_manager_client")
+    existing_client = yield get_optional("secret_manager_client")
     if existing_client:
         return existing_client
 
     project = yield ask_optional("secret_manager_project")
     if project is None:
-        project = yield Get("secret_manager_project")
+        project = yield get_optional("secret_manager_project")
 
     credentials = yield ask_optional("secret_manager_credentials")
     if credentials is None:
-        credentials = yield Get("secret_manager_credentials")
+        credentials = yield get_optional("secret_manager_credentials")
 
     client_options = yield ask_optional("secret_manager_client_options")
     if client_options is None:
-        client_options = yield Get("secret_manager_client_options")
+        client_options = yield get_optional("secret_manager_client_options")
     if client_options is not None and not isinstance(client_options, dict):
         yield Tell("secret_manager_client_options must be a dict; ignoring provided value")
         client_options = None
 
     extra_kwargs = yield ask_optional("secret_manager_client_kwargs")
     if extra_kwargs is None:
-        extra_kwargs = yield Get("secret_manager_client_kwargs")
+        extra_kwargs = yield get_optional("secret_manager_client_kwargs")
     if not isinstance(extra_kwargs, dict):
         extra_kwargs = {}
 
@@ -116,7 +126,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
             yield Tell(
                 "google-auth is not installed; install google-auth or provide secret_manager_credentials"
             )
-            yield Fail(exc)
+            raise exc
 
         try:
             adc_credentials, adc_project = google_auth_default(scopes=DEFAULT_SECRET_MANAGER_SCOPES)
@@ -125,7 +135,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
                 "Failed to load Google Application Default Credentials for Secret Manager. "
                 "Run 'gcloud auth application-default login' or supply secret_manager_credentials."
             )
-            yield Fail(exc)
+            raise exc
 
         yield Tell("Using Google Application Default Credentials for Secret Manager")
 
@@ -139,7 +149,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
             "Secret Manager project could not be determined. "
             "Set 'secret_manager_project' or configure ADC with a default project."
         )
-        yield Fail(ValueError("Secret Manager project is required"))
+        raise ValueError("Secret Manager project is required")
 
     client_instance = SecretManagerClient(
         project=project,
