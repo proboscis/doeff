@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, ExecutionContext, ProgramInterpreter, do
+from doeff import AsyncRuntime, EffectGenerator, SyncRuntime, do
 from doeff_openrouter.chat import chat_completion
 
 structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
@@ -29,8 +29,8 @@ class DemoModel(BaseModel):
 
 
 def run_program(program):
-    engine = ProgramInterpreter()
-    return engine.run(program)
+    runtime = SyncRuntime()
+    return runtime.run(program)
 
 
 def test_build_messages_text_only():
@@ -41,7 +41,7 @@ def test_build_messages_text_only():
         return (yield build_messages("hello"))
 
     result = run_program(flow())
-    assert result.is_ok
+    assert result.is_ok()
     messages = result.value
     assert len(messages) == 1
     assert messages[0]["role"] == "user"
@@ -106,7 +106,7 @@ def test_process_structured_response_requires_string_content_even_with_parsed():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_ok
+    assert result.is_ok()
     parsed = result.value
     assert isinstance(parsed, DemoModel)
     assert parsed.name == "demo"
@@ -130,8 +130,8 @@ def test_process_structured_response_errors_when_content_missing():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_err
-    error = result.result.error
+    assert result.is_err()
+    error = result.error
     assert isinstance(error, RuntimeError)
     assert "content" in str(error).lower()
 
@@ -154,7 +154,7 @@ def test_process_structured_response_parses_json_string_content():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_ok
+    assert result.is_ok()
     parsed = result.value
     assert isinstance(parsed, DemoModel)
     assert parsed.name == "fallback"
@@ -179,7 +179,7 @@ def test_process_structured_response_parses_code_fence_content():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_ok
+    assert result.is_ok()
     parsed = result.value
     assert isinstance(parsed, DemoModel)
     assert parsed.name == "textual"
@@ -203,8 +203,8 @@ def test_process_structured_response_errors_when_content_not_json():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_err
-    error = result.result.error
+    assert result.is_err()
+    error = result.error
     assert isinstance(error, StructuredOutputParsingError)
 
 
@@ -217,8 +217,8 @@ def test_process_structured_response_errors_when_choices_missing():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_err
-    error = result.result.error
+    assert result.is_err()
+    error = result.error
     assert isinstance(error, RuntimeError)
     assert "choices" in str(error).lower()
 
@@ -240,8 +240,8 @@ def test_process_structured_response_errors_when_content_not_string():
         return (yield process_structured_response(response, DemoModel))
 
     result = run_program(flow())
-    assert result.is_err
-    error = result.result.error
+    assert result.is_err()
+    error = result.error
     assert isinstance(error, RuntimeError)
     assert "content" in str(error).lower()
 
@@ -274,7 +274,7 @@ def test_structured_llm_happy_path(monkeypatch):
         ))
 
     result = run_program(flow())
-    assert result.is_ok
+    assert result.is_ok()
     model = result.value
     assert isinstance(model, DemoModel)
     assert model.value == 7
@@ -305,11 +305,12 @@ def test_structured_llm_without_schema(monkeypatch):
         return (yield structured_llm("plain", model="openrouter/demo"))
 
     result = run_program(flow())
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "plain text"
 
 
-def test_chat_completion_tracks_prompt_state():
+@pytest.mark.asyncio
+async def test_chat_completion_tracks_prompt_state():
     """chat_completion should record prompt content in state."""
 
     messages = [{"role": "user", "content": [{"type": "text", "text": "hello router"}]}]
@@ -331,14 +332,17 @@ def test_chat_completion_tracks_prompt_state():
             assert request_data["messages"] == messages
             return response_data, {}
 
-    engine = ProgramInterpreter()
-    context = ExecutionContext(env={"openrouter_client": FakeClient()})
-    result = engine.run(chat_completion(messages=messages, model="demo-model"), context)
+    runtime = AsyncRuntime()
+    result = await runtime.run(
+        chat_completion(messages=messages, model="demo-model"),
+        env={"openrouter_client": FakeClient()},
+        store={"openrouter_api_calls": []},
+    )
 
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == response_data
 
-    api_calls = result.context.state.get("openrouter_api_calls")
+    api_calls = result.state.get("openrouter_api_calls")
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "hello router"
     assert api_calls[0]["prompt_images"] == []
