@@ -32,6 +32,7 @@ from .callstack import (
 )
 from .future import Await, FutureAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
+from .race import Race, RaceEffect, race
 from .graph import (
     Annotate,
     CaptureGraph,
@@ -148,6 +149,8 @@ __all__ = [
     "Pure",
     "PureEffect",
     "Put",
+    "Race",
+    "RaceEffect",
     "ResultSafeEffect",
     "Safe",
     "Snapshot",
@@ -191,6 +194,7 @@ __all__ = [
     "local",
     "perform",
     "put",
+    "race",
     "run",
     "safe",
     "slog",

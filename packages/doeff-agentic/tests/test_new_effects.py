@@ -12,8 +12,6 @@ from doeff_agentic.effects import (
     AgenticDeleteEnvironment,
     AgenticDeleteSession,
     AgenticForkSession,
-    # Parallel effects
-    AgenticGather,
     AgenticGetEnvironment,
     AgenticGetMessages,
     AgenticGetSession,
@@ -22,7 +20,6 @@ from doeff_agentic.effects import (
     AgenticGetWorkflow,
     # Event effects
     AgenticNextEvent,
-    AgenticRace,
     # Message effects
     AgenticSendMessage,
     AgenticSupportsCapability,
@@ -228,33 +225,6 @@ class TestEventEffects:
         """Test waiting for next event with timeout."""
         effect = AgenticNextEvent(session_id="sess_abc", timeout=30.0)
         assert effect.timeout == 30.0
-
-
-class TestParallelEffects:
-    """Tests for parallel execution effects."""
-
-    def test_gather(self):
-        """Test gathering multiple sessions."""
-        effect = AgenticGather(
-            session_names=("reviewer", "fixer", "tester"),
-            timeout=300.0,
-        )
-        assert effect.session_names == ("reviewer", "fixer", "tester")
-        assert effect.timeout == 300.0
-
-    def test_gather_no_timeout(self):
-        """Test gather without timeout."""
-        effect = AgenticGather(session_names=("a", "b"))
-        assert effect.timeout is None
-
-    def test_race(self):
-        """Test racing multiple sessions."""
-        effect = AgenticRace(
-            session_names=("fast", "slow"),
-            timeout=60.0,
-        )
-        assert effect.session_names == ("fast", "slow")
-        assert effect.timeout == 60.0
 
 
 class TestStatusEffects:
