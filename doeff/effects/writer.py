@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from ._program_types import ProgramLike
 from ._validators import ensure_program_like
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
@@ -15,11 +14,6 @@ class WriterTellEffect(EffectBase):
     """Appends the message to the writer log without producing a value."""
 
     message: object
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> WriterTellEffect:
-        return self
 
 
 @dataclass(frozen=True)
@@ -30,14 +24,6 @@ class WriterListenEffect(EffectBase):
 
     def __post_init__(self) -> None:
         ensure_program_like(self.sub_program, name="sub_program")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> WriterListenEffect:
-        sub_program = intercept_value(self.sub_program, transform)
-        if sub_program is self.sub_program:
-            return self
-        return replace(self, sub_program=sub_program)
 
 
 def tell(message: object) -> WriterTellEffect:

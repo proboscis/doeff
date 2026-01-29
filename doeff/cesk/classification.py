@@ -67,7 +67,7 @@ def is_effectful(effect: EffectBase) -> bool:
         FutureAwaitEffect,
         IOPerformEffect,
         SpawnEffect,
-        TaskJoinEffect,
+        WaitEffect,
     )
 
     return isinstance(
@@ -76,7 +76,7 @@ def is_effectful(effect: EffectBase) -> bool:
             IOPerformEffect,
             FutureAwaitEffect,
             SpawnEffect,
-            TaskJoinEffect,
+            WaitEffect,
         ),
     )
 

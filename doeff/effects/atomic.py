@@ -21,11 +21,6 @@ class AtomicGetEffect(EffectBase):
         ensure_str(self.key, name="key")
         ensure_optional_callable(self.default_factory, name="default_factory")
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> AtomicGetEffect:
-        return self
-
 
 @dataclass(frozen=True)
 class AtomicUpdateEffect(EffectBase):
@@ -39,11 +34,6 @@ class AtomicUpdateEffect(EffectBase):
         ensure_str(self.key, name="key")
         ensure_callable(self.updater, name="updater")
         ensure_optional_callable(self.default_factory, name="default_factory")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> AtomicUpdateEffect:
-        return self
 
 
 def atomic_get(key: str, *, default_factory: Callable[[], Any] | None = None) -> AtomicGetEffect:

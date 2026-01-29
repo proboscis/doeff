@@ -17,9 +17,6 @@ class ProgramCallFrameEffect(EffectBase):
     def __post_init__(self) -> None:
         ensure_non_negative_int(self.depth, name="depth")
 
-    def intercept(self, transform):  # type: ignore[override]
-        return self
-
 
 def ProgramCallFrame(depth: int = 0) -> ProgramCallFrameEffect:
     """Create an effect that yields the ``CallFrame`` at the requested depth.
@@ -36,9 +33,6 @@ def ProgramCallFrame(depth: int = 0) -> ProgramCallFrameEffect:
 @dataclass(frozen=True)
 class ProgramCallStackEffect(EffectBase):
     """Return a snapshot of the entire program call stack."""
-
-    def intercept(self, transform):  # type: ignore[override]
-        return self
 
 
 def ProgramCallStack() -> ProgramCallStackEffect:

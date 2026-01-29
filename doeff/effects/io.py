@@ -19,11 +19,6 @@ class IOPerformEffect(EffectBase):
     def __post_init__(self) -> None:
         ensure_callable(self.action, name="action")
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> IOPerformEffect:
-        return self
-
 
 def perform(action: Callable[[], Any]) -> IOPerformEffect:
     return create_effect_with_trace(IOPerformEffect(action=action))

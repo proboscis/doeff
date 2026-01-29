@@ -32,7 +32,8 @@ from .callstack import (
 )
 from .future import Await, FutureAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
-from .race import Race, RaceEffect, race
+from .race import Race, RaceEffect, RaceResult, race
+from .wait import Wait, WaitEffect, wait
 from .graph import (
     Annotate,
     CaptureGraph,
@@ -45,8 +46,16 @@ from .graph import (
     graph,
 )
 from .graph import capture as capture_graph
-from .intercept import InterceptEffect, intercept_program_effect
+from .intercept import Intercept, InterceptEffect, intercept_program_effect
 from .io import IO, IOPerformEffect, perform, run
+from .promise import (
+    CompletePromise,
+    CompletePromiseEffect,
+    CreatePromise,
+    CreatePromiseEffect,
+    FailPromise,
+    FailPromiseEffect,
+)
 from .pure import Pure, PureEffect
 from .reader import Ask, AskEffect, Local, LocalEffect, ask, local
 from .result import (
@@ -55,6 +64,8 @@ from .result import (
     safe,
 )
 from .spawn import (
+    Future,
+    Promise,
     Spawn,
     SpawnBackend,
     SpawnEffect,
@@ -62,7 +73,6 @@ from .spawn import (
     TaskCancelEffect,
     TaskCancelledError,
     TaskIsDoneEffect,
-    TaskJoinEffect,
     spawn,
 )
 from .state import (
@@ -124,8 +134,15 @@ __all__ = [
     "CachePut",
     "CachePutEffect",
     "CaptureGraph",
+    "CompletePromise",
+    "CompletePromiseEffect",
+    "CreatePromise",
+    "CreatePromiseEffect",
     "Delay",
     "DelayEffect",
+    "FailPromise",
+    "FailPromiseEffect",
+    "Future",
     "FutureAwaitEffect",
     "Gather",
     "GatherEffect",
@@ -137,6 +154,7 @@ __all__ = [
     "GraphSnapshotEffect",
     "GraphStepEffect",
     "IOPerformEffect",
+    "Intercept",
     "InterceptEffect",
     "Listen",
     "Local",
@@ -151,6 +169,7 @@ __all__ = [
     "Put",
     "Race",
     "RaceEffect",
+    "RaceResult",
     "ResultSafeEffect",
     "Safe",
     "Snapshot",
@@ -166,8 +185,9 @@ __all__ = [
     "TaskCancelEffect",
     "TaskCancelledError",
     "TaskIsDoneEffect",
-    "TaskJoinEffect",
     "Tell",
+    "Wait",
+    "WaitEffect",
     "WaitUntil",
     "WaitUntilEffect",
     "WriterListenEffect",
@@ -202,5 +222,6 @@ __all__ = [
     "spawn",
     "step",
     "tell",
+    "wait",
     "wait_until",
 ]

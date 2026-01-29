@@ -24,6 +24,7 @@ from doeff.effects import (
     Modify,
     Put,
     Safe,
+    Spawn,
 )
 
 # ============================================================================
@@ -476,7 +477,10 @@ class TestLocalGatherComposition:
 
         @do
         def program():
-            results = yield Gather(child(), child(), child())
+            t1 = yield Spawn(child())
+            t2 = yield Spawn(child())
+            t3 = yield Spawn(child())
+            results = yield Gather(t1, t2, t3)
             return results
 
         result = await runtime.run_and_unwrap(program(), env={"shared_key": "shared_value"})
@@ -494,8 +498,9 @@ class TestLocalGatherComposition:
 
         @do
         def gather_children():
-            results = yield Gather(child(), child())
-            return results
+            t1 = yield Spawn(child())
+            t2 = yield Spawn(child())
+            return (yield Gather(t1, t2))
 
         @do
         def program():
@@ -527,18 +532,15 @@ class TestLocalGatherComposition:
 
         @do
         def program():
-            results = yield Gather(
-                child_with_local(),
-                child_normal(),
-                child_normal(),
-            )
+            t1 = yield Spawn(child_with_local())
+            t2 = yield Spawn(child_normal())
+            t3 = yield Spawn(child_normal())
+            results = yield Gather(t1, t2, t3)
             return results
 
         result = await runtime.run_and_unwrap(program(), env={"key": "parent_value"})
 
-        # Child with Local sees its override
         assert result[0] == "local_child:child_override"
-        # Other children see parent value (not affected by sibling's Local)
         assert result[1] == "normal_child:parent_value"
         assert result[2] == "normal_child:parent_value"
 
@@ -558,7 +560,9 @@ class TestLocalGatherComposition:
         @do
         def program():
             before = yield Ask("key")
-            results = yield Gather(child_with_local(), child_with_local())
+            t1 = yield Spawn(child_with_local())
+            t2 = yield Spawn(child_with_local())
+            results = yield Gather(t1, t2)
             after = yield Ask("key")
             return (before, results, after)
 
@@ -570,11 +574,10 @@ class TestLocalGatherComposition:
         assert after == "parent_value"
 
     @pytest.mark.asyncio
-    async def test_gather_state_is_shared_not_isolated(self) -> None:
-        """State changes in Gather children ARE visible to each other.
+    async def test_gather_state_is_isolated_not_shared(self) -> None:
+        """State changes in spawned Gather children are NOT visible to each other.
 
-        Note: This confirms that Local scopes env only, not state.
-        Gather children share the same store.
+        With Spawn + Gather, each task has isolated state.
         """
         runtime = AsyncRuntime()
 
@@ -587,18 +590,15 @@ class TestLocalGatherComposition:
         @do
         def program():
             yield Put("counter", 0)
-            results = yield Gather(
-                child_increment(),
-                child_increment(),
-                child_increment(),
-            )
+            t1 = yield Spawn(child_increment())
+            t2 = yield Spawn(child_increment())
+            t3 = yield Spawn(child_increment())
+            results = yield Gather(t1, t2, t3)
             final = yield Get("counter")
-            return (sorted(results), final)
+            return (results, final)
 
         result = await runtime.run_and_unwrap(program())
-        sorted_results, final = result
+        results, final = result
 
-        # All children contribute to the shared counter
-        assert final == 3
-        # Results show the counter values each child saw
-        assert sorted_results == [0, 1, 2]
+        assert final == 0
+        assert results == [0, 0, 0]
