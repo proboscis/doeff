@@ -1,0 +1,231 @@
+rules:
+  # =============================================================================
+  # DOEFF-AGENTIC ARCHITECTURAL ENFORCEMENT RULES
+  # =============================================================================
+  # These rules enforce the CESK handler architecture for doeff-agentic.
+  # 
+  # Architecture:
+  #   - Programs yield domain effects (AgenticCreateSession, etc.)
+  #   - Handlers implement CESK contract: (effect, task_state, store) -> FrameResult
+  #   - AsyncRuntime dispatches effects to handlers
+  #   - Handlers are SYNC (not async) - they do blocking I/O
+  #
+  # Run: make lint (in packages/doeff-agentic/)
+  # =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # HANDLER CONTRACT ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: agentic-no-async-handler
+    pattern-regex: 'async\s+def\s+handle_\w+\s*\(self'
+    paths:
+      include:
+        - "**/opencode_handler.py"
+        - "**/handler.py"
+    message: |
+      Handler methods must be sync (def), not async (async def).
+      The handler does blocking I/O internally. AsyncRuntime handles concurrency
+      at the Gather/Spawn level, not at the handler level.
+      
+      WRONG:
+        async def handle_create_session(self, effect, task_state, store):
+            result = await self._client.post(...)
+      
+      CORRECT:
+        def handle_create_session(self, effect, task_state, store):
+            result = self._client.post(...)  # sync HTTP client
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: cesk-architecture
+      rationale: "Handlers are sync; AsyncRuntime provides concurrency via effects"
+
+  # ---------------------------------------------------------------------------
+  # HANDLER REGISTRATION
+  # ---------------------------------------------------------------------------
+
+  - id: agentic-no-lambda-handler-registration
+    patterns:
+      - pattern: |
+          $EFFECT_TYPE: lambda $E: $HANDLER.$METHOD($E)
+    paths:
+      include:
+        - "**/opencode_handler.py"
+        - "**/handler.py"
+    message: |
+      Do not wrap handlers in lambdas. Register handler methods directly.
+      
+      WRONG:
+        AgenticCreateSession: lambda e: handler.handle_create_session(e)
+      
+      CORRECT:
+        AgenticCreateSession: handler.handle_create_session
+      
+      Lambdas break the CESK handler contract which requires:
+        handler(effect, task_state, store) -> FrameResult
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: cesk-architecture
+      rationale: "Lambda wrappers break CESK handler signature contract"
+
+  # ---------------------------------------------------------------------------
+  # RUNTIME USAGE
+  # ---------------------------------------------------------------------------
+
+  - id: agentic-no-run-sync-with-handlers
+    patterns:
+      - pattern: run_sync($PROGRAM, handlers=$HANDLERS)
+    message: |
+      Do not use run_sync() with handlers parameter - it doesn't exist in doeff.
+      Use AsyncRuntime (preferred) or SyncRuntime directly.
+      
+      WRONG:
+        result = run_sync(workflow(), handlers=handlers)
+      
+      CORRECT:
+        runtime = AsyncRuntime(handlers=handlers)
+        result = await runtime.run(workflow())
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: runtime-usage
+      rationale: "run_sync() doesn't accept handlers; use Runtime classes"
+
+  - id: agentic-prefer-async-runtime
+    patterns:
+      - pattern: SyncRuntime(handlers=$HANDLERS)
+    paths:
+      include:
+        - "**/examples/"
+      exclude:
+        - "**/test_sync_*.py"
+    message: |
+      Prefer AsyncRuntime over SyncRuntime for doeff-agentic workflows.
+      AsyncRuntime enables parallel execution via Gather effects.
+      
+      WRONG:
+        runtime = SyncRuntime(handlers=handlers)
+        result = runtime.run(workflow())
+      
+      CORRECT:
+        runtime = AsyncRuntime(handlers=handlers)
+        result = await runtime.run(workflow())
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: runtime-usage
+      rationale: "AsyncRuntime is the canonical runtime for doeff-agentic"
+
+  - id: agentic-use-asyncio-run
+    patterns:
+      - pattern-either:
+          - pattern: asyncio.get_event_loop().run_until_complete($CORO)
+          - pattern: loop.run_until_complete($CORO)
+    paths:
+      include:
+        - "**/examples/"
+    message: |
+      Use asyncio.run() instead of run_until_complete() for cleaner async entry.
+      
+      WRONG:
+        loop = asyncio.get_event_loop()
+        result = loop.run_until_complete(main())
+      
+      CORRECT:
+        asyncio.run(main())
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: async-patterns
+
+  # ---------------------------------------------------------------------------
+  # HTTP CLIENT USAGE
+  # ---------------------------------------------------------------------------
+
+  - id: agentic-no-async-http-client-in-handler
+    patterns:
+      - pattern-inside: |
+          class $HANDLER:
+              ...
+      - pattern-either:
+          - pattern: httpx.AsyncClient(...)
+          - pattern: aiohttp.ClientSession(...)
+    paths:
+      include:
+        - "**/opencode_handler.py"
+        - "**/handler.py"
+    message: |
+      Do not use async HTTP clients (httpx.AsyncClient, aiohttp) in handlers.
+      Handlers are sync and should use sync HTTP clients.
+      
+      WRONG:
+        self._client = httpx.AsyncClient(...)
+      
+      CORRECT:
+        self._client = httpx.Client(...)
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: cesk-architecture
+      rationale: "Handlers are sync; use sync HTTP clients"
+
+  # ---------------------------------------------------------------------------
+  # EFFECT PATTERNS
+  # ---------------------------------------------------------------------------
+
+  - id: agentic-no-direct-http-in-do-function
+    patterns:
+      - pattern-inside: |
+          @do
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: httpx.get(...)
+          - pattern: httpx.post(...)
+          - pattern: requests.get(...)
+          - pattern: requests.post(...)
+    message: |
+      Do not make HTTP calls directly in @do functions. Use domain effects.
+      
+      WRONG:
+        @do
+        def my_workflow():
+            response = httpx.post("/session", ...)
+      
+      CORRECT:
+        @do
+        def my_workflow():
+            session = yield AgenticCreateSession(name="my-agent")
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: purity
+      rationale: "@do functions should be pure; side effects via handlers"
+
+  - id: agentic-no-sleep-in-do-function
+    patterns:
+      - pattern-inside: |
+          @do
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: time.sleep(...)
+          - pattern: await asyncio.sleep(...)
+    message: |
+      Do not use sleep in @do functions. Use Delay effect or let handlers manage timing.
+      
+      WRONG:
+        @do
+        def my_workflow():
+            time.sleep(1)
+      
+      CORRECT:
+        @do
+        def my_workflow():
+            yield Delay(1.0)  # if time delay needed
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: purity
