@@ -326,7 +326,10 @@ class TestListenPlusSafe:
 class TestListenPlusGather:
     """Test Listen + Gather composition."""
 
-    @pytest.mark.skip(reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn")
+    @pytest.mark.skip(
+        reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn yet. "
+        "NOTE: SyncRuntime could implement Spawn/Gather via cooperative scheduling in the future."
+    )
     def test_listen_gather_sync_sequential_logs(self) -> None:
         pass
 
