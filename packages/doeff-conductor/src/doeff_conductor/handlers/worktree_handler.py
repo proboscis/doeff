@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
-    from ..types import Issue, MergeStrategy, WorktreeEnv
+    from ..types import WorktreeEnv
 
 
 def _get_worktree_base_dir() -> Path:
@@ -44,7 +44,7 @@ def _get_default_branch(repo_path: Path) -> str:
             result = subprocess.run(
                 ["git", "rev-parse", "--verify", f"refs/heads/{branch}"],
                 capture_output=True,
-                cwd=repo_path,
+                cwd=repo_path, check=False,
             )
             if result.returncode == 0:
                 return branch
@@ -247,7 +247,7 @@ class WorktreeHandler:
                 subprocess.run(
                     ["git", "worktree", "prune"],
                     cwd=self.repo_path,
-                    capture_output=True,
+                    capture_output=True, check=False,
                 )
             else:
                 return False

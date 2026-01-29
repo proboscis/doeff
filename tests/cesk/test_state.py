@@ -1,35 +1,36 @@
 """Tests for CESK state module."""
 
-import pytest
 from datetime import datetime, timedelta
 
-from doeff.cesk.types import TaskId, FutureId, SpawnId
+import pytest
+
+from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.state import (
-    # Control states
-    Value,
-    Error,
-    EffectControl,
-    ProgramControl,
-    # Conditions
-    TimeCondition,
-    FutureCondition,
-    TaskCondition,
-    SpawnCondition,
+    Blocked,
+    CESKState,
+    CreateFuture,
     # Requests
     CreateTask,
-    CreateFuture,
-    ResolveFuture,
+    Done,
+    EffectControl,
+    Error,
+    FutureCondition,
     PerformIO,
+    ProgramControl,
     # Task status
     Ready,
-    Blocked,
     Requesting,
-    Done,
+    ResolveFuture,
+    SpawnCondition,
+    TaskCondition,
     # State classes
     TaskState,
-    CESKState,
+    # Conditions
+    TimeCondition,
+    # Control states
+    Value,
 )
-from doeff._vendor import FrozenDict, Ok, Err
+from doeff.cesk.types import FutureId, SpawnId, TaskId
 from doeff.program import Program
 
 

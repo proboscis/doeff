@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
-from .base import Effect, EffectBase, create_effect_with_trace
 from ._validators import ensure_callable, ensure_optional_callable, ensure_str
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
@@ -21,8 +22,8 @@ class AtomicGetEffect(EffectBase):
         ensure_optional_callable(self.default_factory, name="default_factory")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "AtomicGetEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> AtomicGetEffect:
         return self
 
 
@@ -40,8 +41,8 @@ class AtomicUpdateEffect(EffectBase):
         ensure_optional_callable(self.default_factory, name="default_factory")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "AtomicUpdateEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> AtomicUpdateEffect:
         return self
 
 
@@ -81,10 +82,10 @@ def AtomicUpdate(
 
 
 __all__ = [
+    "AtomicGet",
     "AtomicGetEffect",
+    "AtomicUpdate",
     "AtomicUpdateEffect",
     "atomic_get",
     "atomic_update",
-    "AtomicGet",
-    "AtomicUpdate",
 ]

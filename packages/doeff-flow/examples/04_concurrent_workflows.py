@@ -23,10 +23,9 @@ import threading
 import time
 from datetime import datetime
 
-from doeff import do
-
 from doeff_flow import run_workflow
 
+from doeff import do
 
 # =============================================================================
 # Worker Workflows

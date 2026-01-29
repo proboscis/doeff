@@ -9,7 +9,7 @@ Reference: gh#180, specs/effects/SPEC-EFF-100-combinations.md
 
 import pytest
 
-from doeff import do, Program
+from doeff import Program, do
 from doeff.cesk.runtime.async_ import AsyncRuntime
 from doeff.cesk.runtime.sync import SyncRuntime
 from doeff.effects import (
@@ -26,7 +26,6 @@ from doeff.effects import (
     Tell,
 )
 from doeff.effects.reader import AskEffect
-
 
 # ============================================================================
 # Law 1: Local Restoration Law Tests

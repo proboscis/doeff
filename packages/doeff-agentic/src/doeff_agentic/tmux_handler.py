@@ -30,7 +30,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .event_log import EventLogWriter, WorkflowIndex
 from .effects import (
     AgenticAbortSession,
     AgenticCreateEnvironment,
@@ -50,6 +49,7 @@ from .effects import (
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
+from .event_log import EventLogWriter, WorkflowIndex
 from .exceptions import (
     AgenticDuplicateNameError,
     AgenticEnvironmentInUseError,
@@ -72,7 +72,6 @@ from .types import (
     AgenticWorkflowHandle,
     AgenticWorkflowStatus,
 )
-
 
 # =============================================================================
 # Tmux utilities (inline to avoid doeff-agents dependency)
@@ -286,7 +285,7 @@ class TmuxHandler:
 
     def initialize(self) -> None:
         """Initialize handler."""
-        pass  # No-op for tmux
+        # No-op for tmux
 
     def close(self) -> None:
         """Clean up resources."""

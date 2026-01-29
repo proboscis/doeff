@@ -14,77 +14,59 @@ The unified multi-task architecture supports:
 For full documentation, see SPEC-CORE-001.
 """
 
-from doeff.cesk.types import (
-    Environment,
-    Store,
-    # New unified types
-    TaskId,
-    FutureId,
-    SpawnId,
-    TaskHandle,
-    FutureHandle,
-    SpawnHandle,
-    empty_environment,
-    empty_store,
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from doeff.cesk.classification import (
+    find_intercept_frame_index,
+    has_intercept_frame,
+    is_control_flow_effect,
+    is_effectful,
+    is_pure_effect,
+)
+from doeff.cesk.errors import (
+    HandlerRegistryError,
+    InterpreterInvariantError,
+    UnhandledEffectError,
 )
 from doeff.cesk.frames import (
+    ContinueError,
+    ContinueGenerator,
+    ContinueProgram,
+    ContinueValue,
     Frame,
+    # Frame result types
+    FrameResult,
     GatherFrame,
     InterceptFrame,
     Kontinuation,
     ListenFrame,
     LocalFrame,
+    RaceFrame,
     ReturnFrame,
     SafeFrame,
-    RaceFrame,
-    # Frame result types
-    FrameResult,
-    ContinueValue,
-    ContinueError,
-    ContinueProgram,
-    ContinueGenerator,
 )
-from doeff.cesk.state import (
-    CESKState,
-    TaskState,
-    Control,
-    EffectControl,
-    Error,
-    ProgramControl,
-    Value,
-    # Task status types
-    TaskStatus,
-    Ready,
-    Blocked,
-    Requesting,
-    Done as TaskDone,
-    # Condition types
-    Condition,
-    TimeCondition,
-    FutureCondition,
-    TaskCondition,
-    SpawnCondition,
-    # Request types
-    Request,
-    CreateTask,
-    CreateFuture,
-    ResolveFuture,
-    PerformIO,
-    AwaitExternal,
-    CreateSpawn,
+from doeff.cesk.handlers import Handler, default_handlers
+from doeff.cesk.helpers import (
+    _merge_thread_state,
+    apply_intercept_chain,
+    apply_transforms,
+    merge_store,
+    shutdown_shared_executor,
+    to_generator,
 )
 from doeff.cesk.kontinuation import (
-    push_frame,
-    pop_frame,
-    unwind_value,
-    unwind_error,
-    find_frame,
-    has_frame,
-    find_safe_frame_index,
-    has_safe_frame,
-    get_intercept_transforms,
     continuation_depth,
+    find_frame,
+    find_safe_frame_index,
+    get_intercept_transforms,
+    has_frame,
+    has_safe_frame,
+    pop_frame,
+    push_frame,
     split_at_safe,
+    unwind_error,
+    unwind_value,
 )
 from doeff.cesk.result import (
     CESKResult,
@@ -94,47 +76,68 @@ from doeff.cesk.result import (
     Suspended,
     Terminal,
 )
-from doeff.cesk.classification import (
-    find_intercept_frame_index,
-    has_intercept_frame,
-    is_control_flow_effect,
-    is_effectful,
-    is_pure_effect,
-)
-from doeff.cesk.helpers import (
-    _merge_thread_state,
-    apply_intercept_chain,
-    apply_transforms,
-    merge_store,
-    shutdown_shared_executor,
-    to_generator,
-)
-from doeff.cesk.step import step, step_task, step_cesk_task
-from doeff.cesk.errors import (
-    HandlerRegistryError,
-    InterpreterInvariantError,
-    UnhandledEffectError,
-)
-from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.runtime import BaseRuntime, SyncRuntime, SimulationRuntime, AsyncRuntime
+from doeff.cesk.runtime import AsyncRuntime, BaseRuntime, SimulationRuntime, SyncRuntime
 from doeff.cesk.runtime_result import (
+    EffectCallNode,
+    EffectStackTrace,
+    KFrame,
+    KStackTrace,
+    PythonFrame,
+    PythonStackTrace,
     RuntimeResult,
     RuntimeResultImpl,
-    KStackTrace,
-    KFrame,
-    EffectStackTrace,
-    EffectCallNode,
-    PythonStackTrace,
-    PythonFrame,
     SourceLocation,
 )
-
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from doeff.cesk.state import (
+    AwaitExternal,
+    Blocked,
+    CESKState,
+    # Condition types
+    Condition,
+    Control,
+    CreateFuture,
+    CreateSpawn,
+    CreateTask,
+    EffectControl,
+    Error,
+    FutureCondition,
+    PerformIO,
+    ProgramControl,
+    Ready,
+    # Request types
+    Request,
+    Requesting,
+    ResolveFuture,
+    SpawnCondition,
+    TaskCondition,
+    TaskState,
+    # Task status types
+    TaskStatus,
+    TimeCondition,
+    Value,
+)
+from doeff.cesk.state import (
+    Done as TaskDone,
+)
+from doeff.cesk.step import step, step_cesk_task, step_task
+from doeff.cesk.types import (
+    Environment,
+    FutureHandle,
+    FutureId,
+    SpawnHandle,
+    SpawnId,
+    Store,
+    TaskHandle,
+    # New unified types
+    TaskId,
+    empty_environment,
+    empty_store,
+)
 
 if TYPE_CHECKING:
+    from doeff.cesk_observability import ExecutionSnapshot, OnStepCallback
     from doeff.program import Program
     from doeff.storage import DurableStorage
-    from doeff.cesk_observability import ExecutionSnapshot, OnStepCallback
 
 _T = TypeVar("_T")
 
@@ -183,12 +186,12 @@ def run_sync(
 
         result = run_sync(my_workflow(), on_step=log_step)
     """
-    from doeff._vendor import FrozenDict, Ok, Err
+    from doeff._vendor import Err, FrozenDict, Ok
+    from doeff.cesk.frames import ContinueError, ContinueProgram, ContinueValue
+    from doeff.cesk.result import Done, Failed, Suspended
     from doeff.cesk.runtime import SyncRuntime
     from doeff.cesk.runtime.base import ExecutionError
     from doeff.cesk.state import CESKState, ProgramControl
-    from doeff.cesk.result import Done, Failed, Suspended
-    from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram
 
     runtime = SyncRuntime()
 
@@ -264,124 +267,124 @@ def run_sync(
 
 
 __all__ = [
-    # Types
-    "Environment",
-    "Store",
-    # New unified types
-    "TaskId",
-    "FutureId",
-    "SpawnId",
-    "TaskHandle",
-    "FutureHandle",
-    "SpawnHandle",
-    "empty_environment",
-    "empty_store",
-    # Control
-    "Control",
-    "Value",
-    "Error",
-    "EffectControl",
-    "ProgramControl",
-    # Task status types
-    "TaskStatus",
-    "Ready",
-    "Blocked",
-    "Requesting",
-    "TaskDone",
-    # Condition types
-    "Condition",
-    "TimeCondition",
-    "FutureCondition",
-    "TaskCondition",
-    "SpawnCondition",
-    # Request types
-    "Request",
-    "CreateTask",
-    "CreateFuture",
-    "ResolveFuture",
-    "PerformIO",
+    "AsyncRuntime",
     "AwaitExternal",
-    "CreateSpawn",
-    # Frames
-    "Frame",
-    "ReturnFrame",
-    "LocalFrame",
-    "InterceptFrame",
-    "ListenFrame",
-    "GatherFrame",
-    "SafeFrame",
-    "RaceFrame",
-    "Kontinuation",
-    # Frame results
-    "FrameResult",
-    "ContinueValue",
-    "ContinueError",
-    "ContinueProgram",
-    "ContinueGenerator",
-    # Kontinuation helpers
-    "push_frame",
-    "pop_frame",
-    "unwind_value",
-    "unwind_error",
-    "find_frame",
-    "has_frame",
-    "find_safe_frame_index",
-    "has_safe_frame",
-    "get_intercept_transforms",
-    "continuation_depth",
-    "split_at_safe",
-    # State
-    "CESKState",
-    "TaskState",
-    # Step results
-    "StepResult",
-    "Done",
-    "Failed",
-    "Suspended",
-    "Terminal",
-    # Public result type
-    "CESKResult",
-    # Classification
-    "is_control_flow_effect",
-    "is_pure_effect",
-    "is_effectful",
-    "has_intercept_frame",
-    "find_intercept_frame_index",
-    # Errors
-    "UnhandledEffectError",
-    "InterpreterInvariantError",
-    "HandlerRegistryError",
-    # Transform
-    "apply_transforms",
-    "apply_intercept_chain",
-    # State merging
-    "merge_store",
-    "_merge_thread_state",
-    # Thread pool
-    "shutdown_shared_executor",
-    # Generator conversion
-    "to_generator",
-    # Step functions
-    "step",
-    "step_task",
-    "step_cesk_task",
-    # Handlers
-    "Handler",
-    "default_handlers",
     # New runtimes
     "BaseRuntime",
-    "SyncRuntime",
-    "SimulationRuntime",
-    "AsyncRuntime",
+    "Blocked",
+    # Public result type
+    "CESKResult",
+    # State
+    "CESKState",
+    # Condition types
+    "Condition",
+    "ContinueError",
+    "ContinueGenerator",
+    "ContinueProgram",
+    "ContinueValue",
+    # Control
+    "Control",
+    "CreateFuture",
+    "CreateSpawn",
+    "CreateTask",
+    "Done",
+    "EffectCallNode",
+    "EffectControl",
+    "EffectStackTrace",
+    # Types
+    "Environment",
+    "Error",
+    "Failed",
+    # Frames
+    "Frame",
+    # Frame results
+    "FrameResult",
+    "FutureCondition",
+    "FutureHandle",
+    "FutureId",
+    "GatherFrame",
+    # Handlers
+    "Handler",
+    "HandlerRegistryError",
+    "InterceptFrame",
+    "InterpreterInvariantError",
+    "KFrame",
+    "KStackTrace",
+    "Kontinuation",
+    "ListenFrame",
+    "LocalFrame",
+    "PerformIO",
+    "ProgramControl",
+    "PythonFrame",
+    "PythonStackTrace",
+    "RaceFrame",
+    "Ready",
+    # Request types
+    "Request",
+    "Requesting",
+    "ResolveFuture",
+    "ReturnFrame",
     # RuntimeResult (SPEC-CESK-002)
     "RuntimeResult",
     "RuntimeResultImpl",
-    "KStackTrace",
-    "KFrame",
-    "EffectStackTrace",
-    "EffectCallNode",
-    "PythonStackTrace",
-    "PythonFrame",
+    "SafeFrame",
+    "SimulationRuntime",
     "SourceLocation",
+    "SpawnCondition",
+    "SpawnHandle",
+    "SpawnId",
+    # Step results
+    "StepResult",
+    "Store",
+    "Suspended",
+    "SyncRuntime",
+    "TaskCondition",
+    "TaskDone",
+    "TaskHandle",
+    # New unified types
+    "TaskId",
+    "TaskState",
+    # Task status types
+    "TaskStatus",
+    "Terminal",
+    "TimeCondition",
+    # Errors
+    "UnhandledEffectError",
+    "Value",
+    "_merge_thread_state",
+    "apply_intercept_chain",
+    # Transform
+    "apply_transforms",
+    "continuation_depth",
+    "default_handlers",
+    "empty_environment",
+    "empty_store",
+    "find_frame",
+    "find_intercept_frame_index",
+    "find_safe_frame_index",
+    "get_intercept_transforms",
+    "has_frame",
+    "has_intercept_frame",
+    "has_safe_frame",
+    # Classification
+    "is_control_flow_effect",
+    "is_effectful",
+    "is_pure_effect",
+    # State merging
+    "merge_store",
+    "pop_frame",
+    # Kontinuation helpers
+    "push_frame",
     "run_sync",
+    # Thread pool
+    "shutdown_shared_executor",
+    "split_at_safe",
+    # Step functions
+    "step",
+    "step_cesk_task",
+    "step_task",
+    # Generator conversion
+    "to_generator",
+    "unwind_error",
+    "unwind_value",
 ]

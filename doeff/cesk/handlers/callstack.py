@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from doeff._types_internal import CallFrame
-from doeff.cesk.frames import ContinueValue, ContinueError, FrameResult, ReturnFrame
+from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult, ReturnFrame
 from doeff.cesk.state import TaskState
 from doeff.cesk.types import Store
 from doeff.effects.callstack import ProgramCallFrameEffect, ProgramCallStackEffect

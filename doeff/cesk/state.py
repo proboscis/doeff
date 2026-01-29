@@ -11,33 +11,26 @@ This module provides the core state types for the unified CESK machine:
 
 from __future__ import annotations
 
-from abc import ABC
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from doeff._vendor import FrozenDict, Result
 from doeff._types_internal import EffectBase
+from doeff._vendor import FrozenDict, Result
 from doeff.cesk.types import (
     Environment,
     FutureId,
     SpawnId,
     Store,
     TaskId,
-    TaskHandle,
-    FutureHandle,
-    SpawnHandle,
-    empty_environment,
-    empty_store,
 )
 
 if TYPE_CHECKING:
-    from doeff.cesk_traceback import CapturedTraceback
-    from doeff.program import ProgramBase
     from doeff.cesk.frames import Kontinuation
-    from doeff.effects.spawn import SpawnBackend
+    from doeff.cesk_traceback import CapturedTraceback
     from doeff.effects._program_types import ProgramLike
+    from doeff.effects.spawn import SpawnBackend
 
 
 # ============================================
@@ -126,7 +119,6 @@ class CreateTask:
 class CreateFuture:
     """Request to create a new unresolved future."""
 
-    pass
 
 
 @dataclass(frozen=True)
@@ -520,33 +512,33 @@ class CESKState:
 
 
 __all__ = [
-    # Control states
-    "Value",
-    "Error",
-    "EffectControl",
-    "ProgramControl",
-    "Control",
-    # Conditions
-    "TimeCondition",
-    "FutureCondition",
-    "TaskCondition",
-    "SpawnCondition",
+    "AwaitExternal",
+    "Blocked",
+    "CESKState",
     "Condition",
+    "Control",
+    "CreateFuture",
+    "CreateSpawn",
     # Requests
     "CreateTask",
-    "CreateFuture",
-    "ResolveFuture",
+    "Done",
+    "EffectControl",
+    "Error",
+    "FutureCondition",
     "PerformIO",
-    "AwaitExternal",
-    "CreateSpawn",
-    "Request",
+    "ProgramControl",
     # Task status
     "Ready",
-    "Blocked",
+    "Request",
     "Requesting",
-    "Done",
-    "TaskStatus",
+    "ResolveFuture",
+    "SpawnCondition",
+    "TaskCondition",
     # State classes
     "TaskState",
-    "CESKState",
+    "TaskStatus",
+    # Conditions
+    "TimeCondition",
+    # Control states
+    "Value",
 ]

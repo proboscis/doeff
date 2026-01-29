@@ -92,9 +92,9 @@ def handle_tell(
 
 
 __all__ = [
+    "handle_intercept",
+    "handle_listen",
     "handle_local",
     "handle_safe",
-    "handle_listen",
-    "handle_intercept",
     "handle_tell",
 ]

@@ -2,28 +2,28 @@
 
 import pytest
 
-from doeff._vendor import FrozenDict, Ok, Err
-from doeff.program import Program
-from doeff.cesk.types import TaskId, Store
+from doeff._vendor import FrozenDict
+from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.state import (
-    CESKState,
-    TaskState,
-    ProgramControl,
-    Value,
-    Error,
-    Ready,
     Blocked,
-    Done as DoneStatus,
+    CESKState,
+    Error,
     FutureCondition,
+    Ready,
+    TaskState,
+    Value,
+)
+from doeff.cesk.state import (
+    Done as DoneStatus,
 )
 from doeff.cesk.step import (
-    step,
-    step_task,
-    step_cesk_task,
     InterpreterInvariantError,
+    step,
+    step_cesk_task,
+    step_task,
 )
-from doeff.cesk.result import Done, Failed, Suspended
-from doeff.cesk.types import FutureId
+from doeff.cesk.types import FutureId, Store, TaskId
+from doeff.program import Program
 
 
 class TestStep:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do, EffectGenerator
+from doeff import EffectGenerator, do
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
@@ -35,7 +35,7 @@ def reviewed_pr(
     Returns:
         PRHandle for the created PR
     """
-    from ..effects import CreateWorktree, RunAgent, Commit, Push, CreatePR, ResolveIssue
+    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
 
     # Step 1: Create isolated worktree
     env = yield CreateWorktree(issue=issue)

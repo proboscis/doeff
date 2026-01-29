@@ -14,16 +14,17 @@ Run:
 
 from pathlib import Path
 
-from doeff import do, EffectGenerator, SyncRuntime
 from doeff_conductor import (
+    Commit,
     CreateWorktree,
     DeleteWorktree,
-    Commit,
-    WorktreeHandler,
     GitHandler,
     WorktreeEnv,
+    WorktreeHandler,
     make_scheduled_handler,
 )
+
+from doeff import EffectGenerator, SyncRuntime, do
 
 
 @do
@@ -36,20 +37,20 @@ def hello_workflow() -> EffectGenerator[str]:
     # Step 1: Create a worktree
     env: WorktreeEnv = yield CreateWorktree(suffix="hello")
     print(f"Created worktree at: {env.path}")
-    
+
     # Step 2: Make a change
     hello_file = env.path / "hello.txt"
     hello_file.write_text("Hello from doeff-conductor!\n")
     print(f"Created file: {hello_file}")
-    
+
     # Step 3: Commit the change
     yield Commit(env=env, message="Add hello.txt")
     print("Committed changes")
-    
+
     # Step 4: Cleanup
     yield DeleteWorktree(env=env)
     print("Cleaned up worktree")
-    
+
     return "Hello workflow completed successfully!"
 
 
@@ -58,17 +59,17 @@ def main():
     # Set up handlers
     worktree_handler = WorktreeHandler(repo_path=Path.cwd())
     git_handler = GitHandler()
-    
+
     handlers = {
         CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
         DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
         Commit: make_scheduled_handler(git_handler.handle_commit),
     }
-    
+
     # Run the workflow
     runtime = SyncRuntime(handlers=handlers)
     result = runtime.run(hello_workflow())
-    
+
     print(f"\nResult: {result}")
 
 

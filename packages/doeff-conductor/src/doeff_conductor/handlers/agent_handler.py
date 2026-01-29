@@ -5,10 +5,9 @@ Agent handler for doeff-conductor.
 from __future__ import annotations
 
 import secrets
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from ..exceptions import AgentError, AgentTimeoutError
+from ..exceptions import AgentTimeoutError
 
 if TYPE_CHECKING:
     from doeff_agentic import AgenticSessionStatus
@@ -20,7 +19,7 @@ if TYPE_CHECKING:
         SpawnAgent,
         WaitForStatus,
     )
-    from ..types import AgentRef, WorktreeEnv
+    from ..types import AgentRef
 
 
 class AgentHandler:
@@ -46,9 +45,8 @@ class AgentHandler:
         """
         from doeff_agentic import (
             AgenticCreateSession,
-            AgenticSendMessage,
             AgenticGetMessages,
-            AgenticSessionStatus,
+            AgenticSendMessage,
         )
 
         handler = self._get_opencode_handler()

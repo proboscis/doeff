@@ -13,19 +13,18 @@ Reference: gh#174
 
 import pytest
 
-from doeff import do, Program
+from doeff import Program, do
 from doeff.cesk.errors import MissingEnvKeyError
 from doeff.cesk.runtime.async_ import AsyncRuntime
 from doeff.effects import (
     Ask,
-    Get,
     Gather,
+    Get,
     Local,
     Modify,
     Put,
     Safe,
 )
-
 
 # ============================================================================
 # Ask on Missing Key Tests

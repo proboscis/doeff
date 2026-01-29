@@ -76,6 +76,6 @@ class DeleteWorktree(ConductorEffectBase):
 
 __all__ = [
     "CreateWorktree",
-    "MergeBranches",
     "DeleteWorktree",
+    "MergeBranches",
 ]

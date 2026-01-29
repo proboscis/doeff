@@ -265,7 +265,7 @@ class Err(Result[NoReturn]):
     """Error result with optional captured traceback."""
 
     error: Exception
-    captured_traceback: Maybe["EffectTraceback"] = field(default_factory=lambda: NOTHING)
+    captured_traceback: Maybe[EffectTraceback] = field(default_factory=lambda: NOTHING)
 
 
 class Maybe(Generic[T_co]):
@@ -500,7 +500,7 @@ class WGraph:
 # =========================================================
 FrozenDict = frozendict
 
-__all__ = [  # noqa: DOEFF021
+__all__ = [
     "NOTHING",
     "Err",
     "FrozenDict",

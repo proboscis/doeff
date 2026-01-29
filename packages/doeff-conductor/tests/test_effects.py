@@ -1,25 +1,23 @@
 """Tests for doeff-conductor effects."""
 
-import pytest
 
 from doeff_conductor.effects import (
-    ConductorEffectBase,
-    CreateWorktree,
-    MergeBranches,
-    DeleteWorktree,
-    CreateIssue,
-    ListIssues,
-    GetIssue,
-    ResolveIssue,
-    RunAgent,
-    SpawnAgent,
-    SendMessage,
-    WaitForStatus,
     CaptureOutput,
     Commit,
-    Push,
+    CreateIssue,
     CreatePR,
+    CreateWorktree,
+    DeleteWorktree,
+    GetIssue,
+    ListIssues,
+    MergeBranches,
     MergePR,
+    Push,
+    ResolveIssue,
+    RunAgent,
+    SendMessage,
+    SpawnAgent,
+    WaitForStatus,
 )
 
 
@@ -68,8 +66,9 @@ class TestWorktreeEffects:
         assert effect.envs == ()
 
     def test_delete_worktree(self):
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -83,8 +82,9 @@ class TestWorktreeEffects:
         assert effect.force is False
 
     def test_delete_worktree_force(self):
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -130,8 +130,9 @@ class TestIssueEffects:
         assert effect.id == "ISSUE-001"
 
     def test_resolve_issue(self):
-        from doeff_conductor.types import Issue, IssueStatus
         from datetime import datetime, timezone
+
+        from doeff_conductor.types import Issue, IssueStatus
 
         issue = Issue(
             id="ISSUE-001",
@@ -147,8 +148,9 @@ class TestIssueEffects:
         assert effect.pr_url == "https://github.com/org/repo/pull/1"
 
     def test_resolve_issue_with_result(self):
-        from doeff_conductor.types import Issue, IssueStatus
         from datetime import datetime, timezone
+
+        from doeff_conductor.types import Issue, IssueStatus
 
         issue = Issue(
             id="ISSUE-002",
@@ -168,8 +170,9 @@ class TestAgentEffects:
 
     def test_run_agent_required_fields(self):
         """Test RunAgent required fields."""
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -183,8 +186,9 @@ class TestAgentEffects:
         assert effect.agent_type == "claude"  # default
 
     def test_spawn_agent_name(self):
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -227,8 +231,8 @@ class TestAgentEffects:
         assert effect.wait is False
 
     def test_wait_for_status(self):
-        from doeff_conductor.types import AgentRef
         from doeff_agentic import AgenticSessionStatus
+        from doeff_conductor.types import AgentRef
 
         agent_ref = AgentRef(
             id="session-001",
@@ -248,8 +252,8 @@ class TestAgentEffects:
         assert effect.timeout == 60.0
 
     def test_wait_for_status_defaults(self):
-        from doeff_conductor.types import AgentRef
         from doeff_agentic import AgenticSessionStatus
+        from doeff_conductor.types import AgentRef
 
         agent_ref = AgentRef(
             id="session-001",
@@ -298,8 +302,9 @@ class TestGitEffects:
 
     def test_commit_defaults(self):
         """Test Commit effect defaults."""
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -314,8 +319,9 @@ class TestGitEffects:
 
     def test_push_defaults(self):
         """Test Push effect defaults."""
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -331,8 +337,9 @@ class TestGitEffects:
 
     def test_create_pr_required_fields(self):
         """Test CreatePR required fields."""
-        from doeff_conductor.types import WorktreeEnv
         from pathlib import Path
+
+        from doeff_conductor.types import WorktreeEnv
 
         env = WorktreeEnv(
             id="test",
@@ -347,8 +354,9 @@ class TestGitEffects:
         assert effect.draft is False
 
     def test_merge_pr(self):
-        from doeff_conductor.types import PRHandle, MergeStrategy
         from datetime import datetime, timezone
+
+        from doeff_conductor.types import PRHandle
 
         pr = PRHandle(
             url="https://github.com/org/repo/pull/42",
@@ -366,8 +374,9 @@ class TestGitEffects:
         assert effect.delete_branch is True  # default is True
 
     def test_merge_pr_with_strategy(self):
-        from doeff_conductor.types import PRHandle, MergeStrategy
         from datetime import datetime, timezone
+
+        from doeff_conductor.types import MergeStrategy, PRHandle
 
         pr = PRHandle(
             url="https://github.com/org/repo/pull/43",

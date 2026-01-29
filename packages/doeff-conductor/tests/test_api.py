@@ -10,20 +10,17 @@ Tests the ConductorAPI Python interface:
 """
 
 import json
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-import subprocess
+from unittest.mock import patch
 
 import pytest
-
 from doeff_conductor.api import ConductorAPI
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
     WorkflowHandle,
     WorkflowStatus,
-    WorktreeEnv,
 )
 
 
@@ -404,14 +401,14 @@ class TestRunWorkflow:
         Note: This test uses a custom workflow file to avoid patching complexities.
         """
         workflow_file = tmp_path / "test_workflow.py"
-        workflow_file.write_text('''
+        workflow_file.write_text("""
 from doeff import do, Program
 
 @do
 def workflow(issue):
     return Program.pure("done")
-''')
-        
+""")
+
         try:
             handle = api.run_workflow(str(workflow_file), issue=mock_issue)
             assert handle.id is not None
@@ -425,14 +422,14 @@ def workflow(issue):
         Note: This test uses a custom workflow file to avoid patching complexities.
         """
         workflow_file = tmp_path / "param_workflow.py"
-        workflow_file.write_text('''
+        workflow_file.write_text("""
 from doeff import do, Program
 
 @do
 def workflow(issue, custom_param=None):
     return Program.pure(custom_param)
-''')
-        
+""")
+
         try:
             handle = api.run_workflow(
                 str(workflow_file),

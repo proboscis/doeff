@@ -1,12 +1,10 @@
 """Tests for doeff_agentic.state module."""
 
-import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-
 from doeff_agentic.state import (
     StateManager,
     generate_workflow_id,

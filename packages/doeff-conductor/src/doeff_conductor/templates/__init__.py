@@ -11,12 +11,13 @@ Pre-built workflow templates:
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .basic_pr import basic_pr
 from .enforced_pr import enforced_pr
-from .reviewed_pr import reviewed_pr
 from .multi_agent import multi_agent
+from .reviewed_pr import reviewed_pr
 
 # Template registry
 TEMPLATES: dict[str, tuple[Callable[..., Any], str]] = {
@@ -65,13 +66,13 @@ def get_template_source(name: str) -> str:
 
 
 __all__ = [
+    "TEMPLATES",
     "basic_pr",
     "enforced_pr",
-    "reviewed_pr",
-    "multi_agent",
-    "is_template",
-    "get_template",
     "get_available_templates",
+    "get_template",
     "get_template_source",
-    "TEMPLATES",
+    "is_template",
+    "multi_agent",
+    "reviewed_pr",
 ]

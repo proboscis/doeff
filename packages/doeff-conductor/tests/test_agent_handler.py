@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from doeff_conductor.effects.agent import (
     CaptureOutput,
     RunAgent,

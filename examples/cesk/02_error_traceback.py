@@ -17,7 +17,6 @@ from doeff.cesk import run_sync
 from doeff.cesk_traceback import format_traceback, format_traceback_short, to_dict
 from doeff.effects import Pure, catch
 
-
 # =============================================================================
 # Example 1: Simple exception with traceback
 # =============================================================================
@@ -148,7 +147,7 @@ def example_mixed_chain():
 def risky_operation():
     """An operation that might fail."""
     yield Pure("Starting risky operation...")
-    raise IOError("Network connection failed!")
+    raise OSError("Network connection failed!")
 
 
 @do
@@ -207,7 +206,7 @@ def example_serialization():
         import json
 
         json_str = json.dumps(data, indent=2)
-        print(f"\nJSON output (first 500 chars):")
+        print("\nJSON output (first 500 chars):")
         print(json_str[:500] + "..." if len(json_str) > 500 else json_str)
     print()
 

@@ -35,8 +35,9 @@ if "pydantic" not in sys.modules:
     pydantic_stub.ValidationError = ValidationError  # type: ignore[attr-defined]
     sys.modules["pydantic"] = pydantic_stub
 
-from doeff import AsyncRuntime, EffectGenerator, do
 from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
+
+from doeff import AsyncRuntime, EffectGenerator, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
@@ -109,7 +110,7 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
 
     assert result.is_err()
     error = result.error
-    while hasattr(error, "cause") and getattr(error, "cause") is not None:
+    while hasattr(error, "cause") and error.cause is not None:
         error = error.cause
     assert isinstance(error, RuntimeError)
     assert str(error) == "Resource exhausted"
@@ -177,7 +178,7 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
 
     assert result.is_err()
     error = result.error
-    while hasattr(error, "cause") and getattr(error, "cause") is not None:
+    while hasattr(error, "cause") and error.cause is not None:
         error = error.cause
     assert isinstance(error, RuntimeError)
     assert str(error) == "Resource exhausted"

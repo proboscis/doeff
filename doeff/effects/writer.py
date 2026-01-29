@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Callable
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 from ._validators import ensure_program_like
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -17,8 +17,8 @@ class WriterTellEffect(EffectBase):
     message: object
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "WriterTellEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> WriterTellEffect:
         return self
 
 
@@ -32,8 +32,8 @@ class WriterListenEffect(EffectBase):
         ensure_program_like(self.sub_program, name="sub_program")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "WriterListenEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> WriterListenEffect:
         sub_program = intercept_value(self.sub_program, transform)
         if sub_program is self.sub_program:
             return self
@@ -67,12 +67,12 @@ def StructuredLog(**entries: object) -> Effect:
 
 
 __all__ = [
-    "WriterTellEffect",
-    "WriterListenEffect",
-    "tell",
-    "listen",
-    "Tell",
     "Listen",
-    "slog",
     "StructuredLog",
+    "Tell",
+    "WriterListenEffect",
+    "WriterTellEffect",
+    "listen",
+    "slog",
+    "tell",
 ]

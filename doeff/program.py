@@ -272,7 +272,7 @@ class ProgramBase(ABC, Generic[T]):
                 resolved_args = yield gather(*arg_programs)
                 kw_keys = list(kw_programs.keys())
                 kw_values = yield gather(*kw_programs.values())
-                resolved_kwargs = dict(zip(kw_keys, kw_values))
+                resolved_kwargs = dict(zip(kw_keys, kw_values, strict=False))
                 return list(resolved_args), resolved_kwargs
 
             def call_program() -> Generator[Effect | Program, Any, Any]:
@@ -412,7 +412,7 @@ class ProgramBase(ABC, Generic[T]):
             program_map = {key: ProgramBase.lift(value) for key, value in raw.items()}
             keys = list(program_map.keys())
             values = yield gather(*program_map.values())
-            return dict(zip(keys, values))
+            return dict(zip(keys, values, strict=False))
 
         return GeneratorProgram(dict_generator)
 
@@ -512,13 +512,13 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
 
             if program_args:
                 unwrapped_args = yield Gather(*program_args)
-                for idx, unwrapped_value in zip(program_indices, unwrapped_args):
+                for idx, unwrapped_value in zip(program_indices, unwrapped_args, strict=False):
                     regular_args[idx] = unwrapped_value
 
             if program_kwargs:
                 keys = list(program_kwargs.keys())
                 values = yield Gather(*program_kwargs.values())
-                unwrapped_kwargs = dict(zip(keys, values))
+                unwrapped_kwargs = dict(zip(keys, values, strict=False))
                 regular_kwargs.update(unwrapped_kwargs)
 
             final_args = tuple(regular_args)
@@ -660,4 +660,4 @@ class _InterceptedProgram(ProgramBase[T]):
 
 Program = ProgramBase
 
-__all__ = ["GeneratorProgram", "KleisliProgramCall", "Program", "ProgramProtocol"]  # noqa: DOEFF021
+__all__ = ["GeneratorProgram", "KleisliProgramCall", "Program", "ProgramProtocol"]

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from .base import Effect, EffectBase, create_effect_with_trace
 from ._validators import ensure_callable
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,8 @@ class IOPerformEffect(EffectBase):
         ensure_callable(self.action, name="action")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "IOPerformEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> IOPerformEffect:
         return self
 
 
@@ -38,8 +38,8 @@ def IO(action: Callable[[], Any]) -> Effect:
 
 
 __all__ = [
-    "IOPerformEffect",
     "IO",
+    "IOPerformEffect",
     "perform",
     "run",
 ]

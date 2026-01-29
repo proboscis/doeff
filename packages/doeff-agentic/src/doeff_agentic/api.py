@@ -29,13 +29,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .state import StateManager, generate_workflow_id, get_default_state_dir
 from .types import (
-    AgentConfig,
     AgentStatus,
     WatchEventType,
     WatchUpdate,
@@ -206,10 +205,10 @@ class AgenticAPI:
 
         if in_tmux:
             # Switch client
-            subprocess.run(["tmux", "switch-client", "-t", session_name])
+            subprocess.run(["tmux", "switch-client", "-t", session_name], check=False)
         else:
             # Attach
-            subprocess.run(["tmux", "attach-session", "-t", session_name])
+            subprocess.run(["tmux", "attach-session", "-t", session_name], check=False)
 
     def send_message(
         self,
@@ -262,7 +261,7 @@ class AgenticAPI:
         target = pane_id or session_name
         result = subprocess.run(
             ["tmux", "send-keys", "-t", target, "-l", message, "Enter"],
-            capture_output=True,
+            capture_output=True, check=False,
         )
         return result.returncode == 0
 
@@ -283,7 +282,7 @@ class AgenticAPI:
         for agent in workflow.agents:
             result = subprocess.run(
                 ["tmux", "kill-session", "-t", agent.session_name],
-                capture_output=True,
+                capture_output=True, check=False,
             )
             if result.returncode == 0:
                 stopped.append(agent.name)
@@ -348,7 +347,7 @@ class AgenticAPI:
         result = subprocess.run(
             ["tmux", "capture-pane", "-p", "-t", pane_id, "-S", f"-{lines}"],
             capture_output=True,
-            text=True,
+            text=True, check=False,
         )
         return result.stdout if result.returncode == 0 else ""
 
@@ -369,6 +368,7 @@ class AgenticAPI:
             Workflow ID
         """
         from doeff import run_sync
+
         from .handler import agentic_effectful_handlers
 
         wf_name = name or "unnamed"

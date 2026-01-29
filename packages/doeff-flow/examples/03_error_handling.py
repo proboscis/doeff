@@ -21,10 +21,9 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 import random
 import time
 
-from doeff import do
-
 from doeff_flow import run_workflow
 
+from doeff import do
 
 # =============================================================================
 # Simulated External Services

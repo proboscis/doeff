@@ -234,9 +234,7 @@ def _run_program_instance(
     quiet: bool,
     load_default_env: bool,
 ) -> ProgramRunResult:
-    from doeff.cesk.runtime import SyncRuntime
     from doeff.__main__ import SymbolResolver
-    from doeff.effects import Local
 
     resolver = SymbolResolver()
     env_sources: list[str] = []
@@ -351,8 +349,8 @@ def _apply_envs(
     load_default_env: bool,
     quiet: bool,
 ) -> tuple[Program[Any], list[str]]:
-    from doeff.cesk.runtime import SyncRuntime
     from doeff.__main__ import RunServices
+    from doeff.cesk.runtime import SyncRuntime
     from doeff.effects import Local
 
     env_sources: list[str] = []
@@ -447,8 +445,8 @@ def _execute_program(
     program: Program[Any],
     interpreter_obj: Any,
 ) -> Any:
-    from doeff.cesk.runtime import SyncRuntime
     from doeff.__main__ import _call_interpreter, _finalize_result
+    from doeff.cesk.runtime import SyncRuntime
 
     if isinstance(interpreter_obj, SyncRuntime):
         return interpreter_obj.run(program)
@@ -478,4 +476,4 @@ class _QuietRunCommand:
             return self._inner.execute()
 
 
-__all__ = ["run_program", "ProgramRunResult"]
+__all__ = ["ProgramRunResult", "run_program"]

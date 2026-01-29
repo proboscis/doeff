@@ -19,12 +19,10 @@ from doeff._types_internal import EffectBase
 from doeff.cesk import (
     Environment,
     Store,
-    default_pure_handlers,
     run_sync,
     wrap_sync_handler,
 )
 from doeff.do import do
-
 
 # ============================================================================
 # Step 1: Define Custom Effect Types
@@ -226,7 +224,6 @@ def program_with_builtin_effects():
 
 def custom_state_get_with_logging(effect, env, store):
     """Override built-in StateGetEffect with logging."""
-    from doeff.effects.state import StateGetEffect
 
     print(f"[AUDIT] Reading state key: {effect.key}")
     value = store.get(effect.key)

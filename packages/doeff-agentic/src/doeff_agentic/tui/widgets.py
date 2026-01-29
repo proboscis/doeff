@@ -190,7 +190,7 @@ class AgentListItem(Static):
         # Format: marker symbol name       [status]   env      snippet
         content = (
             f"  {marker} {symbol} {a.name:<12}  [{a.status.value:<8}]  "
-            f"{env_hint:<8}  \"{snippet}\""
+            f'{env_hint:<8}  "{snippet}"'
         )
         yield Static(content)
 

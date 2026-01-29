@@ -11,25 +11,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from doeff.cesk.types import Environment, Store
 from doeff.cesk.frames import (
-    Kontinuation,
+    ContinueError,
+    ContinueValue,
     Frame,
     FrameResult,
-    ContinueValue,
-    ContinueError,
-    ContinueProgram,
-    ContinueGenerator,
-    ReturnFrame,
-    LocalFrame,
     InterceptFrame,
-    ListenFrame,
-    GatherFrame,
+    Kontinuation,
     SafeFrame,
 )
+from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
-    from doeff.cesk.state import TaskState, Control
+    pass
 
 
 def push_frame(k: Kontinuation, frame: Frame) -> Kontinuation:
@@ -295,23 +289,23 @@ def split_at_safe(k: Kontinuation) -> tuple[Kontinuation, Kontinuation]:
 
 
 __all__ = [
-    # Stack operations
-    "push_frame",
-    "pop_frame",
-    # Unwinding
-    "unwind_value",
-    "unwind_error",
-    # Frame finding
-    "find_frame",
-    "has_frame",
-    "find_intercept_frame_index",
-    "has_intercept_frame",
-    "find_safe_frame_index",
-    "has_safe_frame",
-    # Intercept helpers
-    "get_intercept_transforms",
     "apply_intercept_chain",
     # Utilities
     "continuation_depth",
+    # Frame finding
+    "find_frame",
+    "find_intercept_frame_index",
+    "find_safe_frame_index",
+    # Intercept helpers
+    "get_intercept_transforms",
+    "has_frame",
+    "has_intercept_frame",
+    "has_safe_frame",
+    "pop_frame",
+    # Stack operations
+    "push_frame",
     "split_at_safe",
+    "unwind_error",
+    # Unwinding
+    "unwind_value",
 ]

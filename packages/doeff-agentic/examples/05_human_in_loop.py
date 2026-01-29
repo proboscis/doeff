@@ -20,9 +20,6 @@ In another terminal, when the workflow is waiting:
 
 import time
 
-from doeff import do
-from doeff.effects.writer import slog
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
@@ -33,6 +30,9 @@ from doeff_agentic import (
     AgenticTimeoutError,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
+from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -161,19 +161,25 @@ def draft_with_approval(task: str):
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
+    from doeff import AsyncRuntime
 
-    task = "Write a haiku about programming"
+    async def main():
+        task = "Write a haiku about programming"
 
-    print("Starting human-in-the-loop workflow...")
-    print(f"Task: {task}")
-    print()
+        print("Starting human-in-the-loop workflow...")
+        print(f"Task: {task}")
+        print()
 
-    handlers = opencode_handler()
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-    try:
-        result = run_sync(draft_with_approval(task), handlers=handlers)
-        print(f"\n=== Result: {result['status'].upper()} ===")
-        print(result["content"][:500])
-    except Exception as e:
-        print(f"Error: {e}")
+        try:
+            result = await runtime.run(draft_with_approval(task))
+            output = result.value
+            print(f"\n=== Result: {output['status'].upper()} ===")
+            print(output["content"][:500])
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

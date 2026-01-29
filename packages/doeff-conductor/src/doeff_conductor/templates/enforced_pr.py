@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do, EffectGenerator
+from doeff import EffectGenerator, do
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
@@ -40,7 +40,7 @@ def enforced_pr(
     Raises:
         RuntimeError: If tests still fail after max_retries
     """
-    from ..effects import CreateWorktree, RunAgent, Commit, Push, CreatePR, ResolveIssue
+    from ..effects import Commit, CreatePR, CreateWorktree, Push, ResolveIssue, RunAgent
 
     # Step 1: Create isolated worktree
     env = yield CreateWorktree(issue=issue)

@@ -19,33 +19,34 @@ Run:
 from datetime import datetime, timezone
 from pathlib import Path
 
-from doeff import do, EffectGenerator, SyncRuntime
 from doeff_conductor import (
+    Commit,
+    CreatePR,
+    # Effects
+    CreateWorktree,
     # Types
     Issue,
     IssueStatus,
-    WorktreeEnv,
     PRHandle,
-    # Effects
-    CreateWorktree,
-    RunAgent,
-    Commit,
     Push,
-    CreatePR,
     ResolveIssue,
+    RunAgent,
+    WorktreeEnv,
     # Handler utility
     make_scheduled_handler,
 )
+
+from doeff import EffectGenerator, SyncRuntime, do
 
 
 # Mock handlers for demonstration (no real git/agent operations)
 class MockHandlers:
     """Mock handlers that simulate conductor operations."""
-    
+
     def __init__(self):
         self._worktree_counter = 0
         self._commit_counter = 0
-        
+
     def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
         """Simulate creating a worktree."""
         self._worktree_counter += 1
@@ -58,35 +59,35 @@ class MockHandlers:
             base_commit="abc1234",
             issue_id=issue_id,
         )
-    
+
     def handle_run_agent(self, effect: RunAgent) -> str:
         """Simulate running an agent."""
         print(f"  [Mock Agent] Processing in {effect.env.path}")
         print(f"  [Mock Agent] Prompt: {effect.prompt[:80]}...")
         return "Mock agent completed implementation successfully."
-    
+
     def handle_commit(self, effect: Commit) -> str:
         """Simulate creating a commit."""
         self._commit_counter += 1
         sha = f"commit{self._commit_counter:04d}"
         print(f"  [Mock Git] Created commit {sha}: {effect.message}")
         return sha
-    
+
     def handle_push(self, effect: Push) -> bool:
         """Simulate pushing to remote."""
         print(f"  [Mock Git] Pushed {effect.env.branch} to {effect.remote}")
         return True
-    
+
     def handle_create_pr(self, effect: CreatePR) -> PRHandle:
         """Simulate creating a PR."""
         return PRHandle(
-            url=f"https://github.com/example/repo/pull/42",
+            url="https://github.com/example/repo/pull/42",
             number=42,
             title=effect.title,
             branch=effect.env.branch,
             target=effect.target,
         )
-    
+
     def handle_resolve_issue(self, effect: ResolveIssue) -> Issue:
         """Simulate resolving an issue."""
         return Issue(
@@ -110,12 +111,12 @@ def basic_pr_workflow(issue: Issue) -> EffectGenerator[PRHandle]:
         PRHandle for the created PR.
     """
     print(f"Starting basic_pr workflow for: {issue.title}")
-    
+
     # Step 1: Create isolated worktree
     print("\n1. Creating worktree...")
     env: WorktreeEnv = yield CreateWorktree(issue=issue)
     print(f"   Worktree created: {env.path}")
-    
+
     # Step 2: Run agent to implement the issue
     print("\n2. Running agent...")
     prompt = f"""
@@ -129,13 +130,13 @@ Please implement the changes needed to resolve this issue.
 """
     output: str = yield RunAgent(env=env, prompt=prompt)
     print(f"   Agent output: {output}")
-    
+
     # Step 3: Commit and push changes
     print("\n3. Committing and pushing...")
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
     yield Commit(env=env, message=commit_msg)
     yield Push(env=env)
-    
+
     # Step 4: Create PR
     print("\n4. Creating PR...")
     pr: PRHandle = yield CreatePR(
@@ -144,12 +145,12 @@ Please implement the changes needed to resolve this issue.
         body=f"Implements {issue.id}",
     )
     print(f"   PR created: {pr.url}")
-    
+
     # Step 5: Resolve the issue
     print("\n5. Resolving issue...")
     yield ResolveIssue(issue=issue, pr_url=pr.url)
     print("   Issue resolved!")
-    
+
     return pr
 
 
@@ -172,7 +173,7 @@ Implement user authentication with JWT tokens.
         status=IssueStatus.OPEN,
         labels=("feature", "security"),
     )
-    
+
     # Set up mock handlers
     mock = MockHandlers()
     handlers = {
@@ -183,11 +184,11 @@ Implement user authentication with JWT tokens.
         CreatePR: make_scheduled_handler(mock.handle_create_pr),
         ResolveIssue: make_scheduled_handler(mock.handle_resolve_issue),
     }
-    
+
     # Run the workflow
     runtime = SyncRuntime(handlers=handlers)
     pr = runtime.run(basic_pr_workflow(issue))
-    
+
     print(f"\n{'='*50}")
     print(f"Workflow completed! PR: {pr.url}")
 

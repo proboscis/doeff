@@ -18,8 +18,9 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from doeff import do, Program
+from doeff import Program, do
 from doeff.effects import (
+    IO,
     Ask,
     Await,
     CacheDelete,
@@ -30,7 +31,6 @@ from doeff.effects import (
     Gather,
     Get,
     GetTime,
-    IO,
     Listen,
     Local,
     Modify,
@@ -39,12 +39,9 @@ from doeff.effects import (
     Safe,
     Tell,
 )
-from doeff.effects.intercept import InterceptEffect
 from doeff.effects.atomic import AtomicGet, AtomicUpdate
-from doeff.effects.spawn import Spawn, Task
-from doeff.effects.graph import graph, Step, Annotate, Snapshot, CaptureGraph
 from doeff.effects.callstack import ProgramCallFrame, ProgramCallStack
-
+from doeff.effects.graph import Annotate, CaptureGraph, Snapshot, Step
 
 # ============================================================================
 # Phase 1: Core Effects Tests
@@ -411,7 +408,6 @@ class TestAsyncRuntimeAsyncEffects:
         """Test WaitUntil effect waits until target time."""
         from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects import WaitUntil
-        from datetime import timedelta
 
         runtime = AsyncRuntime()
 
@@ -432,7 +428,6 @@ class TestAsyncRuntimeAsyncEffects:
         """Test WaitUntil with past time returns immediately."""
         from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects import WaitUntil
-        from datetime import timedelta
 
         runtime = AsyncRuntime()
 
@@ -896,9 +891,9 @@ class TestAsyncRuntimeCustomHandlers:
     @pytest.mark.asyncio
     async def test_custom_ask_handler(self) -> None:
         """Test custom Ask handler overrides default."""
-        from doeff.cesk.runtime import AsyncRuntime
-        from doeff.cesk.handlers import default_handlers
         from doeff.cesk.frames import ContinueValue
+        from doeff.cesk.handlers import default_handlers
+        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.reader import AskEffect
 
         def custom_ask_handler(effect, task_state, store):
@@ -924,9 +919,9 @@ class TestAsyncRuntimeCustomHandlers:
     @pytest.mark.asyncio
     async def test_handlers_shared_across_runs(self) -> None:
         """Test handlers are shared across multiple runs."""
-        from doeff.cesk.runtime import AsyncRuntime
-        from doeff.cesk.handlers import default_handlers
         from doeff.cesk.frames import ContinueValue
+        from doeff.cesk.handlers import default_handlers
+        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.pure import PureEffect
 
         run_counter = [0]
@@ -1381,8 +1376,8 @@ class TestGatherComposition:
         """
         from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.intercept import intercept_program_effect
-        from doeff.effects.reader import AskEffect
         from doeff.effects.pure import Pure
+        from doeff.effects.reader import AskEffect
 
         runtime = AsyncRuntime()
 

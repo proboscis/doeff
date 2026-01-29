@@ -57,92 +57,84 @@ CLI Usage:
 """
 
 # Types - new spec-compliant types
-from .types import (
-    # Enums
-    AgenticEnvironmentType,
-    AgenticSessionStatus,
-    AgenticWorkflowStatus,
-    # Handles
-    AgenticWorkflowHandle,
-    AgenticEnvironmentHandle,
-    AgenticSessionHandle,
-    AgenticMessageHandle,
-    AgenticMessage,
-    # Events
-    AgenticEvent,
-    AgenticEndOfEvents,
-    # Legacy types (deprecated)
-    AgentConfig,
-    AgentInfo,
-    AgentStatus,
-    WatchEventType,
-    WatchUpdate,
-    WorkflowInfo,
-    WorkflowStatus,
+# API
+from .api import AgenticAPI
+
+# Effects - new spec-compliant effects
+from .effects import (
+    AgenticAbortSession,
+    # Environment effects
+    AgenticCreateEnvironment,
+    # Session effects
+    AgenticCreateSession,
+    # Workflow effects
+    AgenticCreateWorkflow,
+    AgenticDeleteEnvironment,
+    AgenticDeleteSession,
+    # Effect base
+    AgenticEffectBase,
+    AgenticForkSession,
+    # Parallel effects
+    AgenticGather,
+    AgenticGetEnvironment,
+    AgenticGetMessages,
+    AgenticGetSession,
+    # Status effects
+    AgenticGetSessionStatus,
+    AgenticGetWorkflow,
+    # Event effects
+    AgenticNextEvent,
+    AgenticRace,
+    # Message effects
+    AgenticSendMessage,
+    AgenticSupportsCapability,
+    AgentNotRunningError,
+    AmbiguousPrefixError,
+    CaptureOutput,
+    CaptureOutputEffect,
+    # Legacy constructors (deprecated)
+    RunAgent,
+    # Legacy effects (deprecated)
+    RunAgentEffect,
+    SendMessage,
+    SendMessageEffect,
+    StopAgent,
+    StopAgentEffect,
+    UserInputTimeoutError,
+    WaitForStatus,
+    WaitForStatusEffect,
+    WaitForUserInput,
+    WaitForUserInputEffect,
+    # Legacy error aliases
+    WorkflowNotFoundError,
+)
+
+# Event logging (new - JSONL event logs)
+from .event_log import (
+    EventLogReader,
+    EventLogWriter,
+    WorkflowIndex,
 )
 
 # Exceptions
 from .exceptions import (
-    AgenticError,
-    AgenticSessionNotFoundError,
-    AgenticEnvironmentNotFoundError,
-    AgenticWorkflowNotFoundError,
-    AgenticSessionNotRunningError,
-    AgenticEnvironmentInUseError,
-    AgenticUnsupportedOperationError,
-    AgenticServerError,
-    AgenticTimeoutError,
-    AgenticDuplicateNameError,
     AgenticAmbiguousPrefixError,
+    AgenticDuplicateNameError,
+    AgenticEnvironmentInUseError,
+    AgenticEnvironmentNotFoundError,
+    AgenticError,
+    AgenticServerError,
+    AgenticSessionNotFoundError,
+    AgenticSessionNotRunningError,
+    AgenticTimeoutError,
+    AgenticUnsupportedOperationError,
+    AgenticWorkflowNotFoundError,
 )
 
-# Effects - new spec-compliant effects
-from .effects import (
-    # Effect base
-    AgenticEffectBase,
-    # Workflow effects
-    AgenticCreateWorkflow,
-    AgenticGetWorkflow,
-    # Environment effects
-    AgenticCreateEnvironment,
-    AgenticGetEnvironment,
-    AgenticDeleteEnvironment,
-    # Session effects
-    AgenticCreateSession,
-    AgenticForkSession,
-    AgenticGetSession,
-    AgenticAbortSession,
-    AgenticDeleteSession,
-    # Message effects
-    AgenticSendMessage,
-    AgenticGetMessages,
-    # Event effects
-    AgenticNextEvent,
-    # Parallel effects
-    AgenticGather,
-    AgenticRace,
-    # Status effects
-    AgenticGetSessionStatus,
-    AgenticSupportsCapability,
-    # Legacy effects (deprecated)
-    RunAgentEffect,
-    SendMessageEffect,
-    WaitForStatusEffect,
-    CaptureOutputEffect,
-    WaitForUserInputEffect,
-    StopAgentEffect,
-    # Legacy constructors (deprecated)
-    RunAgent,
-    SendMessage,
-    WaitForStatus,
-    CaptureOutput,
-    WaitForUserInput,
-    StopAgent,
-    # Legacy error aliases
-    WorkflowNotFoundError,
-    AgentNotRunningError,
-    UserInputTimeoutError,
-    AmbiguousPrefixError,
+# OpenCode Handler (new - primary)
+from .opencode_handler import (
+    OpenCodeHandler,
+    opencode_handler,
 )
 
 # State management
@@ -152,26 +144,33 @@ from .state import (
     get_default_state_dir,
 )
 
-# Event logging (new - JSONL event logs)
-from .event_log import (
-    EventLogWriter,
-    EventLogReader,
-    WorkflowIndex,
-)
-
-# API
-from .api import AgenticAPI
-
-# OpenCode Handler (new - primary)
-from .opencode_handler import (
-    OpenCodeHandler,
-    opencode_handler,
-)
-
 # Tmux Handler (legacy fallback)
 from .tmux_handler import (
     TmuxHandler,
     tmux_handler,
+)
+from .types import (
+    # Legacy types (deprecated)
+    AgentConfig,
+    AgenticEndOfEvents,
+    AgenticEnvironmentHandle,
+    # Enums
+    AgenticEnvironmentType,
+    # Events
+    AgenticEvent,
+    AgenticMessage,
+    AgenticMessageHandle,
+    AgenticSessionHandle,
+    AgenticSessionStatus,
+    # Handles
+    AgenticWorkflowHandle,
+    AgenticWorkflowStatus,
+    AgentInfo,
+    AgentStatus,
+    WatchEventType,
+    WatchUpdate,
+    WorkflowInfo,
+    WorkflowStatus,
 )
 
 # Legacy Handler (deprecated - requires doeff-agents)
@@ -188,92 +187,92 @@ except ImportError:
     agentic_effectful_handlers = None  # type: ignore
 
 __all__ = [
-    # Types - new
-    "AgenticEnvironmentType",
-    "AgenticSessionStatus",
-    "AgenticWorkflowStatus",
-    "AgenticWorkflowHandle",
-    "AgenticEnvironmentHandle",
-    "AgenticSessionHandle",
-    "AgenticMessageHandle",
-    "AgenticMessage",
-    "AgenticEvent",
-    "AgenticEndOfEvents",
     # Types - legacy
     "AgentConfig",
     "AgentInfo",
-    "AgentStatus",
-    "WatchEventType",
-    "WatchUpdate",
-    "WorkflowInfo",
-    "WorkflowStatus",
-    # Exceptions
-    "AgenticError",
-    "AgenticSessionNotFoundError",
-    "AgenticEnvironmentNotFoundError",
-    "AgenticWorkflowNotFoundError",
-    "AgenticSessionNotRunningError",
-    "AgenticEnvironmentInUseError",
-    "AgenticUnsupportedOperationError",
-    "AgenticServerError",
-    "AgenticTimeoutError",
-    "AgenticDuplicateNameError",
-    "AgenticAmbiguousPrefixError",
-    # Effects - new
-    "AgenticEffectBase",
-    "AgenticCreateWorkflow",
-    "AgenticGetWorkflow",
-    "AgenticCreateEnvironment",
-    "AgenticGetEnvironment",
-    "AgenticDeleteEnvironment",
-    "AgenticCreateSession",
-    "AgenticForkSession",
-    "AgenticGetSession",
-    "AgenticAbortSession",
-    "AgenticDeleteSession",
-    "AgenticSendMessage",
-    "AgenticGetMessages",
-    "AgenticNextEvent",
-    "AgenticGather",
-    "AgenticRace",
-    "AgenticGetSessionStatus",
-    "AgenticSupportsCapability",
-    # Effects - legacy
-    "RunAgentEffect",
-    "SendMessageEffect",
-    "WaitForStatusEffect",
-    "CaptureOutputEffect",
-    "WaitForUserInputEffect",
-    "StopAgentEffect",
-    "RunAgent",
-    "SendMessage",
-    "WaitForStatus",
-    "CaptureOutput",
-    "WaitForUserInput",
-    "StopAgent",
-    # Errors - legacy aliases
-    "WorkflowNotFoundError",
     "AgentNotRunningError",
-    "UserInputTimeoutError",
-    "AmbiguousPrefixError",
-    # State
-    "StateManager",
-    "generate_workflow_id",
-    "get_default_state_dir",
-    # Event logging
-    "EventLogWriter",
-    "EventLogReader",
-    "WorkflowIndex",
+    "AgentStatus",
     # API
     "AgenticAPI",
-    # OpenCode Handler (new - primary)
-    "OpenCodeHandler",
-    "opencode_handler",
-    # Tmux Handler (legacy fallback)
-    "TmuxHandler",
-    "tmux_handler",
+    "AgenticAbortSession",
+    "AgenticAmbiguousPrefixError",
+    "AgenticCreateEnvironment",
+    "AgenticCreateSession",
+    "AgenticCreateWorkflow",
+    "AgenticDeleteEnvironment",
+    "AgenticDeleteSession",
+    "AgenticDuplicateNameError",
+    # Effects - new
+    "AgenticEffectBase",
+    "AgenticEndOfEvents",
+    "AgenticEnvironmentHandle",
+    "AgenticEnvironmentInUseError",
+    "AgenticEnvironmentNotFoundError",
+    # Types - new
+    "AgenticEnvironmentType",
+    # Exceptions
+    "AgenticError",
+    "AgenticEvent",
+    "AgenticForkSession",
+    "AgenticGather",
+    "AgenticGetEnvironment",
+    "AgenticGetMessages",
+    "AgenticGetSession",
+    "AgenticGetSessionStatus",
+    "AgenticGetWorkflow",
     # Handler (deprecated - requires doeff-agents)
     "AgenticHandler",
+    "AgenticMessage",
+    "AgenticMessageHandle",
+    "AgenticNextEvent",
+    "AgenticRace",
+    "AgenticSendMessage",
+    "AgenticServerError",
+    "AgenticSessionHandle",
+    "AgenticSessionNotFoundError",
+    "AgenticSessionNotRunningError",
+    "AgenticSessionStatus",
+    "AgenticSupportsCapability",
+    "AgenticTimeoutError",
+    "AgenticUnsupportedOperationError",
+    "AgenticWorkflowHandle",
+    "AgenticWorkflowNotFoundError",
+    "AgenticWorkflowStatus",
+    "AmbiguousPrefixError",
+    "CaptureOutput",
+    "CaptureOutputEffect",
+    "EventLogReader",
+    # Event logging
+    "EventLogWriter",
+    # OpenCode Handler (new - primary)
+    "OpenCodeHandler",
+    "RunAgent",
+    # Effects - legacy
+    "RunAgentEffect",
+    "SendMessage",
+    "SendMessageEffect",
+    # State
+    "StateManager",
+    "StopAgent",
+    "StopAgentEffect",
+    # Tmux Handler (legacy fallback)
+    "TmuxHandler",
+    "UserInputTimeoutError",
+    "WaitForStatus",
+    "WaitForStatusEffect",
+    "WaitForUserInput",
+    "WaitForUserInputEffect",
+    "WatchEventType",
+    "WatchUpdate",
+    "WorkflowIndex",
+    "WorkflowInfo",
+    # Errors - legacy aliases
+    "WorkflowNotFoundError",
+    "WorkflowStatus",
     "agent_handler",
     "agentic_effectful_handlers",
+    "generate_workflow_id",
+    "get_default_state_dir",
+    "opencode_handler",
+    "tmux_handler",
 ]

@@ -5,14 +5,14 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-
-from doeff import AsyncRuntime, EffectGenerator, Local, do
 from doeff_gemini import (
     CostInfo,
     GeminiCallResult,
     GeminiCostEstimate,
 )
 from doeff_gemini.client import track_api_call
+
+from doeff import AsyncRuntime, EffectGenerator, Local, do
 
 
 def _fake_response(usage: dict[str, int]) -> Any:

@@ -1,26 +1,24 @@
 """Tests for CESK frames module."""
 
-import pytest
-from typing import Generator, Any
+from collections.abc import Generator
 
-from doeff._vendor import FrozenDict, Ok, Err
-from doeff.cesk.types import Environment, Store, TaskId
+from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.frames import (
-    Frame,
-    FrameResult,
-    ContinueValue,
     ContinueError,
-    ContinueProgram,
     ContinueGenerator,
-    ReturnFrame,
-    LocalFrame,
-    InterceptFrame,
-    ListenFrame,
+    ContinueProgram,
+    ContinueValue,
+    Frame,
     GatherFrame,
-    SafeFrame,
-    RaceFrame,
+    InterceptFrame,
     Kontinuation,
+    ListenFrame,
+    LocalFrame,
+    RaceFrame,
+    ReturnFrame,
+    SafeFrame,
 )
+from doeff.cesk.types import Environment, Store, TaskId
 from doeff.program import Program
 
 

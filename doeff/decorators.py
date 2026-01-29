@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-
 F = TypeVar("F", bound=Callable[..., object])
 
 
@@ -18,7 +17,7 @@ def do_wrapper(factory: F) -> F:
     tracing dependencies.
     """
 
-    setattr(factory, "__doeff_do_wrapper__", True)
+    factory.__doeff_do_wrapper__ = True
     return factory
 
 

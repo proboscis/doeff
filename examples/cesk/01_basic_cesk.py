@@ -13,8 +13,7 @@ The CESK machine (Control, Environment, Store, Kontinuation) provides:
 
 from doeff import do
 from doeff.cesk import run_sync
-from doeff.effects import Pure, ask, local, get, put, tell, listen
-
+from doeff.effects import Pure, ask, get, listen, local, put, tell
 
 # =============================================================================
 # Example 1: Simple @do function returning a value

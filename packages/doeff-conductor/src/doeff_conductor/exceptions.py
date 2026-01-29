@@ -6,9 +6,8 @@ Provides a hierarchy of exceptions for specific error handling in workflows.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from subprocess import CalledProcessError
-from typing import Any
 
 
 class ConductorError(Exception):
@@ -18,7 +17,6 @@ class ConductorError(Exception):
     allowing workflows to catch conductor errors specifically.
     """
 
-    pass
 
 
 class IssueNotFoundError(ConductorError):
@@ -81,9 +79,9 @@ class GitCommandError(ConductorError):
     @classmethod
     def from_subprocess_error(
         cls,
-        error: "CalledProcessError",
+        error: CalledProcessError,
         cwd: str | None = None,
-    ) -> "GitCommandError":
+    ) -> GitCommandError:
         """Create from a subprocess.CalledProcessError.
 
         Args:
@@ -207,12 +205,12 @@ class PRError(ConductorError):
 
 
 __all__ = [
-    "ConductorError",
-    "IssueNotFoundError",
-    "IssueAlreadyExistsError",
-    "GitCommandError",
-    "WorktreeError",
     "AgentError",
     "AgentTimeoutError",
+    "ConductorError",
+    "GitCommandError",
+    "IssueAlreadyExistsError",
+    "IssueNotFoundError",
     "PRError",
+    "WorktreeError",
 ]

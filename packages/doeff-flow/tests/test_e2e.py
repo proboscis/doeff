@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
+from doeff_flow import run_workflow, trace_observer
+from doeff_flow.cli import cli
 
 from doeff import do
 from doeff.cesk import run_sync
 from doeff.effects import Pure
-from doeff_flow import run_workflow, trace_observer
-from doeff_flow.cli import cli
 
 
 class TestE2EWorkflowExecution:

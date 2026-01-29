@@ -245,4 +245,4 @@ def track_api_call(
     yield Step(value=value, meta=meta)
 
 
-__all__ = ["SeedreamClient", "DEFAULT_BASE_URL", "DEFAULT_TIMEOUT", "get_seedream_client", "track_api_call"]
+__all__ = ["DEFAULT_BASE_URL", "DEFAULT_TIMEOUT", "SeedreamClient", "get_seedream_client", "track_api_call"]

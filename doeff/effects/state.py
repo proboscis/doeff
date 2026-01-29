@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from .base import Effect, EffectBase, create_effect_with_trace
 from ._validators import ensure_callable, ensure_str
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,8 @@ class StateGetEffect(EffectBase):
         ensure_str(self.key, name="key")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "StateGetEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> StateGetEffect:
         return self
 
 
@@ -36,8 +36,8 @@ class StatePutEffect(EffectBase):
         ensure_str(self.key, name="key")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "StatePutEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> StatePutEffect:
         return self
 
 
@@ -53,8 +53,8 @@ class StateModifyEffect(EffectBase):
         ensure_callable(self.func, name="func")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "StateModifyEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> StateModifyEffect:
         return self
 
 
@@ -83,13 +83,13 @@ def Modify(key: str, f: Callable[[Any], Any]) -> Effect:
 
 
 __all__ = [
-    "StateGetEffect",
-    "StatePutEffect",
-    "StateModifyEffect",
-    "get",
-    "modify",
-    "put",
     "Get",
     "Modify",
     "Put",
+    "StateGetEffect",
+    "StateModifyEffect",
+    "StatePutEffect",
+    "get",
+    "modify",
+    "put",
 ]

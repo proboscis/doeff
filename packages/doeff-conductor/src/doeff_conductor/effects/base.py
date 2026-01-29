@@ -4,8 +4,9 @@ Base effect class for doeff-conductor effects.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from doeff.types import EffectBase
 
@@ -24,7 +25,7 @@ class ConductorEffectBase(EffectBase):
 
     def intercept(
         self: E,
-        transform: "Callable[[Effect], Effect | Program]",
+        transform: Callable[[Effect], Effect | Program],
     ) -> E:
         """Conductor effects have no nested programs, returns self unchanged."""
         return self

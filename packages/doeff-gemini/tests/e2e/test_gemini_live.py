@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
 from PIL import Image
 from pydantic import BaseModel
-import sys
-from pathlib import Path
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import AsyncRuntime, EffectGenerator, do
-
 from doeff_gemini import edit_image__gemini, structured_llm__gemini
+
+from doeff import AsyncRuntime, EffectGenerator, do
 
 
 def _get_gemini_env_or_skip() -> dict[str, Any]:

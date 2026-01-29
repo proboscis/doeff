@@ -28,11 +28,12 @@ Example usage (callback-based):
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 if TYPE_CHECKING:
-    from doeff.cesk import CESKState, Frame, Kontinuation, Store
+    from doeff.cesk import CESKState, Frame
     from doeff.storage import DurableStorage
 
 T = TypeVar("T")
@@ -82,7 +83,7 @@ class KFrameSnapshot:
     description: str
 
     @classmethod
-    def from_frame(cls, frame: "Frame") -> "KFrameSnapshot":
+    def from_frame(cls, frame: Frame) -> KFrameSnapshot:
         """Create a snapshot from a CESK frame."""
         from doeff.cesk import (
             GatherFrame,
@@ -215,11 +216,11 @@ class ExecutionSnapshot:
     @classmethod
     def from_state(
         cls,
-        state: "CESKState",
+        state: CESKState,
         status: ExecutionStatus,
         step_count: int,
-        storage: "DurableStorage | None" = None,
-    ) -> "ExecutionSnapshot":
+        storage: DurableStorage | None = None,
+    ) -> ExecutionSnapshot:
         """Create a snapshot from the current CESK state."""
         from doeff.cesk import EffectControl, Error, ProgramControl
 
@@ -374,10 +375,10 @@ class ExecutionMonitor(Generic[T]):
         step_count: Number of interpreter steps executed (property).
     """
 
-    _state: "CESKState | None" = field(default=None)
+    _state: CESKState | None = field(default=None)
     _status: ExecutionStatus = field(default="pending")
     _step_count: int = field(default=0)
-    _storage: "DurableStorage | None" = field(default=None)
+    _storage: DurableStorage | None = field(default=None)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
     def snapshot(self) -> ExecutionSnapshot:
@@ -442,7 +443,7 @@ class ExecutionMonitor(Generic[T]):
 
     def _update(
         self,
-        state: "CESKState | None" = None,
+        state: CESKState | None = None,
         status: ExecutionStatus | None = None,
         step_count: int | None = None,
     ) -> None:
@@ -461,13 +462,13 @@ OnStepCallback = Callable[[ExecutionSnapshot], None]
 
 
 __all__ = [
+    "CodeLocation",
+    "ErrorInfo",
+    "ExecutionMonitor",
+    "ExecutionSnapshot",
     # Types
     "ExecutionStatus",
-    "CodeLocation",
-    "KFrameSnapshot",
-    "ErrorInfo",
     "GatherInfo",
-    "ExecutionSnapshot",
-    "ExecutionMonitor",
+    "KFrameSnapshot",
     "OnStepCallback",
 ]

@@ -141,9 +141,9 @@ class CaptureOutput(ConductorEffectBase):
 
 
 __all__ = [
-    "RunAgent",
-    "SpawnAgent",
-    "SendMessage",
-    "WaitForStatus",
     "CaptureOutput",
+    "RunAgent",
+    "SendMessage",
+    "SpawnAgent",
+    "WaitForStatus",
 ]
