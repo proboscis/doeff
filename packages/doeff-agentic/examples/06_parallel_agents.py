@@ -1,11 +1,16 @@
 """
 Example 06: Parallel Agents
 
-Run multiple agents concurrently using AgenticGather.
+Run multiple agents concurrently using core Spawn + Gather effects.
 
 This demonstrates how to run multiple agents in parallel
 and collect their results. Each agent runs in its own
 session simultaneously.
+
+Pattern:
+    - Effects are blocking by default
+    - Use Spawn to opt into concurrent execution
+    - Use Gather to wait for all spawned tasks
 
 Run:
     cd packages/doeff-agentic
@@ -14,14 +19,13 @@ Run:
 
 from doeff_agentic import (
     AgenticCreateSession,
-    AgenticGather,
     AgenticGetMessages,
     AgenticMessage,
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
-from doeff import do
+from doeff import Gather, Spawn, do
 from doeff.effects.writer import slog
 
 
@@ -31,6 +35,17 @@ def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
         if msg.role == "assistant":
             return msg.content
     return ""
+
+
+@do
+def run_agent(session_id: str, content: str):
+    """Send message to agent and wait for completion, returning the response.
+
+    This is a blocking operation - use Spawn() to run multiple agents concurrently.
+    """
+    yield AgenticSendMessage(session_id=session_id, content=content, wait=True)
+    messages = yield AgenticGetMessages(session_id=session_id)
+    return get_last_assistant_message(messages)
 
 
 @do
@@ -44,54 +59,50 @@ def multi_perspective_analysis(topic: str):
     biz_session = yield AgenticCreateSession(name="biz-analyst")
     ux_session = yield AgenticCreateSession(name="ux-analyst")
 
-    # Send messages to all (don't wait)
+    # Spawn concurrent agent tasks
+    # Each task sends a message and waits for completion (blocking)
+    # Spawn makes them run concurrently
     yield slog(status="launching", msg="Launching parallel analysis agents")
 
-    yield AgenticSendMessage(
-        session_id=tech_session.id,
-        content=f"Analyze '{topic}' from a technical perspective. 3 bullet points. Then exit.",
-        wait=False,
+    tech_task = yield Spawn(
+        run_agent(
+            tech_session.id,
+            f"Analyze '{topic}' from a technical perspective. 3 bullet points. Then exit.",
+        )
     )
-    yield AgenticSendMessage(
-        session_id=biz_session.id,
-        content=f"Analyze '{topic}' from a business perspective. 3 bullet points. Then exit.",
-        wait=False,
+    biz_task = yield Spawn(
+        run_agent(
+            biz_session.id,
+            f"Analyze '{topic}' from a business perspective. 3 bullet points. Then exit.",
+        )
     )
-    yield AgenticSendMessage(
-        session_id=ux_session.id,
-        content=f"Analyze '{topic}' from a user experience perspective. 3 bullet points. Then exit.",
-        wait=False,
+    ux_task = yield Spawn(
+        run_agent(
+            ux_session.id,
+            f"Analyze '{topic}' from a user experience perspective. 3 bullet points. Then exit.",
+        )
     )
 
-    # Wait for all to complete
+    # Wait for all to complete and collect results
     yield slog(status="waiting", msg="Waiting for all agents to complete")
+    tech_result, biz_result, ux_result = yield Gather(tech_task, biz_task, ux_task)
 
-    final_sessions = yield AgenticGather(
-        session_names=("tech-analyst", "biz-analyst", "ux-analyst"),
-        timeout=300.0,
-    )
+    perspectives = {
+        "tech-analyst": tech_result,
+        "biz-analyst": biz_result,
+        "ux-analyst": ux_result,
+    }
 
-    # Collect results
-    yield slog(status="collecting", msg="Collecting results")
-
-    perspectives = {}
-    for name, session in final_sessions.items():
-        messages = yield AgenticGetMessages(session_id=session.id)
-        perspectives[name] = get_last_assistant_message(messages)
-
-    # Synthesize results
+    # Synthesize results (single blocking call)
     yield slog(status="synthesizing", msg="Combining perspectives")
 
     combined = "\n\n".join([f"## {name}\n{text}" for name, text in perspectives.items()])
 
     synthesizer = yield AgenticCreateSession(name="synthesizer")
-    yield AgenticSendMessage(
-        session_id=synthesizer.id,
-        content=f"Synthesize these perspectives into 3 key insights:\n\n{combined}\n\nThen exit.",
-        wait=True,
+    synthesis = yield run_agent(
+        synthesizer.id,
+        f"Synthesize these perspectives into 3 key insights:\n\n{combined}\n\nThen exit.",
     )
-    messages = yield AgenticGetMessages(session_id=synthesizer.id)
-    synthesis = get_last_assistant_message(messages)
 
     yield slog(status="complete", msg="Analysis complete")
 
