@@ -22,8 +22,10 @@ These examples use the new spec-compliant API:
 | `AgenticSendMessage` | Send a message to a session |
 | `AgenticGetMessages` | Get messages from a session |
 | `AgenticNextEvent` | Wait for next event from session |
-| `AgenticGather` | Wait for multiple sessions to complete |
+| `AgenticGetSessionStatus` | Get current status of a session |
 | `opencode_handler()` | Create handlers for use with `AsyncRuntime` |
+
+For parallel execution, use core doeff effects: `Spawn` + `Gather` (see example 06).
 
 ### Basic Pattern
 
@@ -100,7 +102,25 @@ doeff-agentic send <workflow-id>:drafter "approve"
 ```
 
 ### 06. Parallel Agents
-Run multiple agents concurrently with AgenticGather.
+Run multiple agents concurrently using core `Spawn` + `Gather` effects.
+
+**Pattern**: Effects are blocking by default. Use `Spawn` to opt into concurrent execution:
+```python
+# Blocking helper that sends message and waits for response
+@do
+def run_agent(session_id: str, content: str):
+    yield AgenticSendMessage(session_id=session_id, content=content, wait=True)
+    messages = yield AgenticGetMessages(session_id=session_id)
+    return get_last_assistant_message(messages)
+
+# Spawn makes blocking operations concurrent
+tech_task = yield Spawn(run_agent(tech_session.id, "Analyze from tech perspective..."))
+biz_task = yield Spawn(run_agent(biz_session.id, "Analyze from business perspective..."))
+
+# Gather waits for all and collects results
+tech_result, biz_result = yield Gather(tech_task, biz_task)
+```
+
 ```bash
 uv run python examples/06_parallel_agents.py
 ```
