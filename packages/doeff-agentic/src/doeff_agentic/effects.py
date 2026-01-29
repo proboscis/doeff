@@ -9,7 +9,7 @@ Effect Categories:
 - Session: AgenticCreateSession, AgenticForkSession, AgenticGetSession, etc.
 - Message: AgenticSendMessage, AgenticGetMessages
 - Event: AgenticNextEvent
-- Parallel: AgenticGather, AgenticRace
+- Parallel: (use core Gather/Race effects)
 - Status: AgenticGetSessionStatus, AgenticSupportsCapability
 """
 
@@ -281,38 +281,6 @@ class AgenticNextEvent(AgenticEffectBase):
 
 
 # =============================================================================
-# Parallel Execution Effects
-# =============================================================================
-
-
-@dataclass(frozen=True, kw_only=True)
-class AgenticGather(AgenticEffectBase):
-    """Wait for multiple sessions to complete.
-
-    Yields: dict[str, AgenticSessionHandle]  # name -> final handle
-    Raises: AgenticTimeoutError
-
-    Completes when all specified sessions reach a terminal status
-    (DONE, ERROR, or ABORTED).
-    """
-
-    session_names: tuple[str, ...]  # Session names to wait for
-    timeout: float | None = None  # Total timeout for all
-
-
-@dataclass(frozen=True, kw_only=True)
-class AgenticRace(AgenticEffectBase):
-    """Wait for first session to complete.
-
-    Yields: tuple[str, AgenticSessionHandle]  # (name, handle) of first to complete
-    Raises: AgenticTimeoutError
-    """
-
-    session_names: tuple[str, ...]
-    timeout: float | None = None
-
-
-# =============================================================================
 # Status & Capability Effects
 # =============================================================================
 
@@ -548,8 +516,6 @@ __all__ = [
     # Exceptions
     "AgenticError",
     "AgenticForkSession",
-    # Parallel effects
-    "AgenticGather",
     "AgenticGetEnvironment",
     "AgenticGetMessages",
     "AgenticGetSession",
@@ -558,7 +524,6 @@ __all__ = [
     "AgenticGetWorkflow",
     # Event effects
     "AgenticNextEvent",
-    "AgenticRace",
     # Message effects
     "AgenticSendMessage",
     "AgenticServerError",

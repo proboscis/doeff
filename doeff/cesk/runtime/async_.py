@@ -30,6 +30,7 @@ from doeff.cesk.step import step
 from doeff.cesk.types import Store, TaskId
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
+from doeff.effects.race import RaceEffect
 from doeff.effects.spawn import (
     SpawnEffect,
     Task,
@@ -116,6 +117,7 @@ class AsyncRuntime(BaseRuntime):
         base_handlers[WaitUntilEffect] = _placeholder_handler
         base_handlers[FutureAwaitEffect] = _placeholder_handler
         base_handlers[GatherEffect] = _placeholder_handler
+        base_handlers[RaceEffect] = _placeholder_handler
         # Spawn effects are intercepted by runtime
         base_handlers[SpawnEffect] = _placeholder_handler
         base_handlers[TaskJoinEffect] = _placeholder_handler
@@ -196,6 +198,7 @@ class AsyncRuntime(BaseRuntime):
         task_results: dict[TaskId, Any] = {}
         task_errors: dict[TaskId, BaseException] = {}
         gather_waiters: dict[TaskId, tuple[list[TaskId], Suspended]] = {}
+        race_waiters: dict[TaskId, tuple[list[TaskId], Suspended]] = {}
 
         # Spawn tracking: maps Task handle ID -> SpawnedTaskInfo
         spawned_tasks: dict[Any, SpawnedTaskInfo] = {}
@@ -218,6 +221,7 @@ class AsyncRuntime(BaseRuntime):
                 tid for tid in state.get_ready_tasks()
                 if (tid not in pending_async
                     and tid not in gather_waiters
+                    and tid not in race_waiters
                     and tid not in join_waiting_task_ids)
             ]
 
@@ -267,6 +271,9 @@ class AsyncRuntime(BaseRuntime):
                     state = self._check_gather_complete(
                         state, task_id, gather_waiters, task_results, task_errors
                     )
+                    state = self._check_race_complete(
+                        state, task_id, race_waiters, task_results, task_errors
+                    )
                     continue
 
                 if isinstance(result, Failed):
@@ -308,14 +315,15 @@ class AsyncRuntime(BaseRuntime):
                     state = self._check_gather_complete(
                         state, task_id, gather_waiters, task_results, task_errors
                     )
+                    state = self._check_race_complete(
+                        state, task_id, race_waiters, task_results, task_errors
+                    )
                     continue
 
                 if isinstance(result, CESKState):
-                    # Check if this is a spawned task
                     is_spawned_task = task_id in task_id_to_handle
 
                     if is_spawned_task:
-                        # Don't merge store changes to parent - update isolated store instead
                         handle_id = task_id_to_handle[task_id]
                         spawned_info = spawned_tasks[handle_id]
                         spawned_info.store_snapshot = result.store
@@ -406,6 +414,26 @@ class AsyncRuntime(BaseRuntime):
                             child_ids.append(child_id)
 
                         gather_waiters[task_id] = (child_ids, result)
+                        continue
+
+                    # Runtime intercepts Race for parallel execution (first to complete wins)
+                    if isinstance(effect, RaceEffect):
+                        programs = effect.programs
+                        if not programs:
+                            # Empty Race returns None (edge case)
+                            new_single = result.resume((0, None), state.store)
+                            state = self._merge_task(state, task_id, new_single)
+                            continue
+
+                        child_ids = []
+                        current_env = state.tasks[task_id].env
+                        for prog in programs:
+                            child_id = TaskId.new()
+                            child_task = TaskState.initial(prog, dict(current_env))  # type: ignore[arg-type]
+                            state = state.add_task(child_id, child_task)
+                            child_ids.append(child_id)
+
+                        race_waiters[task_id] = (child_ids, result)
                         continue
 
                     # Runtime intercepts Await for asyncio integration
@@ -912,6 +940,33 @@ class AsyncRuntime(BaseRuntime):
                 del gather_waiters[parent_id]
                 results = [task_results[cid] for cid in child_ids]
                 new_single = suspended.resume(results, state.store)
+                return self._merge_task(state, parent_id, new_single)
+
+        return state
+
+    def _check_race_complete(
+        self,
+        state: CESKState,
+        completed_id: TaskId,
+        race_waiters: dict[TaskId, tuple[list[TaskId], Suspended]],
+        task_results: dict[TaskId, Any],
+        task_errors: dict[TaskId, BaseException],
+    ) -> CESKState:
+        for parent_id, (child_ids, suspended) in list(race_waiters.items()):
+            if completed_id not in child_ids:
+                continue
+
+            if completed_id in task_errors:
+                del race_waiters[parent_id]
+                error_state = suspended.resume_error(task_errors[completed_id])
+                error_state = self._fix_store_rollback(error_state, state.store)
+                return self._merge_task(state, parent_id, error_state)
+
+            if completed_id in task_results:
+                del race_waiters[parent_id]
+                winner_index = child_ids.index(completed_id)
+                result_tuple = (winner_index, task_results[completed_id])
+                new_single = suspended.resume(result_tuple, state.store)
                 return self._merge_task(state, parent_id, new_single)
 
         return state
