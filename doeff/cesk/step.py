@@ -20,6 +20,7 @@ from doeff.cesk.frames import (
     AskLazyFrame,
     GatherFrame,
     GraphCaptureFrame,
+    InterceptBypassFrame,
     InterceptFrame,
     ListenFrame,
     LocalFrame,
@@ -74,7 +75,7 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             from doeff.cesk_traceback import capture_traceback_safe
 
             try:
-                transformed = apply_intercept_chain(K, effect)
+                transformed, returning_frame = apply_intercept_chain(K, effect)
             except Exception as ex:
                 captured = capture_traceback_safe(K, ex)
                 return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K)
@@ -102,7 +103,12 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
                 )
 
             if isinstance(transformed, ProgramBase):
-                return CESKState(C=ProgramControl(transformed), E=E, S=S, K=K)
+                if returning_frame is not None:
+                    bypass = InterceptBypassFrame(returning_frame, id(effect))
+                    bypassed_K: list[Any] = [bypass] + K
+                else:
+                    bypassed_K = K
+                return CESKState(C=ProgramControl(transformed), E=E, S=S, K=bypassed_K)
 
             unknown_ex = UnhandledEffectError(f"No handler for {type(transformed).__name__}")
             captured = capture_traceback_safe(K, unknown_ex)
@@ -231,6 +237,9 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
         if isinstance(frame, InterceptFrame):
             return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
 
+        if isinstance(frame, InterceptBypassFrame):
+            return CESKState(C=Value(C.v), E=E, S=S, K=K_rest)
+
         if isinstance(frame, ListenFrame):
             current_log = S.get("__log__", [])
             captured = current_log[frame.log_start_index :]
@@ -335,6 +344,11 @@ def step(state: CESKState, handlers: dict[type, Any] | None = None) -> StepResul
             )
 
         if isinstance(frame, InterceptFrame):
+            return CESKState(
+                C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest
+            )
+
+        if isinstance(frame, InterceptBypassFrame):
             return CESKState(
                 C=Error(C.ex, captured_traceback=C.captured_traceback), E=E, S=S, K=K_rest
             )

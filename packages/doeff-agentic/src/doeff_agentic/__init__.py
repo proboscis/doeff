@@ -146,6 +146,12 @@ from .tmux_handler import (
     TmuxHandler,
     tmux_handler,
 )
+
+# Visual Interceptor (for examples/debugging)
+from .visual_interceptor import (
+    VisualInterceptorConfig,
+    with_visual_logging,
+)
 from .types import (
     # Legacy types (deprecated)
     AgentConfig,
@@ -270,4 +276,6 @@ __all__ = [
     "get_default_state_dir",
     "opencode_handler",
     "tmux_handler",
+    "VisualInterceptorConfig",
+    "with_visual_logging",
 ]

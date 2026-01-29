@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
 
-from doeff.cesk.frames import InterceptFrame, Kontinuation
+from doeff.cesk.frames import InterceptBypassFrame, InterceptFrame, Kontinuation
 from doeff.cesk.types import Store
 
 if TYPE_CHECKING:
@@ -25,28 +25,35 @@ def apply_transforms(
     return effect
 
 
-def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | ProgramBase:
+def apply_intercept_chain(
+    K: Kontinuation, effect: Effect
+) -> tuple[Effect | ProgramBase, InterceptFrame | None]:
     """Apply intercept transforms from continuation frames to an effect.
     
-    Once any transform returns a ProgramBase (not an Effect), we stop applying
-    further transforms and return immediately - you're no longer transforming
-    an effect, you're resuming execution with a new program.
+    Returns (result, returning_frame) where returning_frame is the InterceptFrame
+    that returned a Program, or None if result is an Effect.
     """
     from doeff._types_internal import EffectBase
 
+    bypass_map: dict[int, int] = {}
+    for frame in K:
+        if isinstance(frame, InterceptBypassFrame):
+            bypass_map[id(frame.bypassed_frame)] = frame.bypassed_effect_id
+
+    effect_id = id(effect)
     current: Effect | ProgramBase = effect
     for frame in K:
         if isinstance(frame, InterceptFrame):
+            if id(frame) in bypass_map and effect_id == bypass_map[id(frame)]:
+                continue
             for transform in frame.transforms:
                 result = transform(current)  # type: ignore[arg-type]
                 if result is not None:
                     current = result
-                    # If result is a ProgramBase but NOT an Effect, stop processing
-                    # intercept frames entirely - we're resuming with a program
                     if not isinstance(result, EffectBase):
-                        return current
+                        return current, frame
                     break
-    return current
+    return current, None
 
 
 def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store | None = None) -> Store:
