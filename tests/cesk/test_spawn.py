@@ -12,20 +12,18 @@ Design Decisions (from spec):
 3. Cancellation: Follow asyncio conventions (cancel() is sync request, CancelledError on join)
 """
 
-import asyncio
 
 import pytest
 
-from doeff import do, Program
+from doeff import Program, do
 from doeff.effects import (
+    IO,
     Ask,
     Delay,
-    Get,
     Gather,
-    IO,
+    Get,
     Listen,
     Local,
-    Modify,
     Pure,
     Put,
     Safe,
@@ -34,7 +32,6 @@ from doeff.effects import (
     TaskCancelledError,
     Tell,
 )
-
 
 # ============================================================================
 # Basic Spawn/Join Tests
@@ -140,11 +137,11 @@ class TestSpawnBasic:
             task1 = yield Spawn(task_n(1))
             task2 = yield Spawn(task_n(2))
             task3 = yield Spawn(task_n(3))
-            
+
             result1 = yield task1.join()
             result2 = yield task2.join()
             result3 = yield task3.join()
-            
+
             return (result1, result2, result3)
 
         result = await runtime.run_and_unwrap(program())
@@ -909,14 +906,14 @@ class TestSpawnTiming:
 
 __all__ = [
     "TestSpawnBasic",
-    "TestSpawnErrorHandling",
     "TestSpawnCancellation",
+    "TestSpawnComposition",
+    "TestSpawnConcurrentJoin",
+    "TestSpawnEdgeCases",
+    "TestSpawnEnvironment",
+    "TestSpawnErrorHandling",
     "TestSpawnIsDone",
     "TestSpawnStoreIsolation",
-    "TestSpawnEnvironment",
-    "TestSpawnComposition",
-    "TestSpawnEdgeCases",
-    "TestSpawnConcurrentJoin",
     "TestSpawnTiming",
 ]
 
@@ -966,14 +963,14 @@ class TestSpawnOracleReview:
         
         Oracle identified that user handlers could bypass store isolation.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-        from doeff.cesk.handlers import default_handlers
         from doeff.cesk.frames import ContinueValue
+        from doeff.cesk.handlers import default_handlers
+        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.pure import PureEffect
 
         # Custom handler that reads and modifies store
         handler_saw_value = []
-        
+
         def custom_pure_handler(effect, task_state, store):
             # Record what value we saw in the store
             handler_saw_value.append(store.get("marker", "not_set"))

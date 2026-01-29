@@ -16,7 +16,7 @@ from doeff.do import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.effects.callstack import ProgramCallStack
 from doeff.effects.result import Safe
-from doeff.effects.writer import Tell, slog
+from doeff.effects.writer import slog
 from doeff.types import EffectCreationContext, EffectGenerator
 
 

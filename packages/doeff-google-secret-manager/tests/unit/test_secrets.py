@@ -13,8 +13,9 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import EffectGenerator, AsyncRuntime, do  # noqa: E402
 from doeff_google_secret_manager import access_secret  # noqa: E402
+
+from doeff import AsyncRuntime, EffectGenerator, do  # noqa: E402
 
 
 @pytest.fixture(autouse=True)

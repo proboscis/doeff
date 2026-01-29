@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from doeff_conductor.effects.git import Commit, CreatePR, MergePR, Push
 from doeff_conductor.exceptions import GitCommandError
 from doeff_conductor.handlers.git_handler import GitHandler
@@ -109,7 +108,7 @@ class TestGitHandler:
         result = subprocess.run(
             ["git", "ls-remote", str(remote_path)],
             capture_output=True,
-            text=True,
+            text=True, check=False,
         )
         assert "refs/heads/main" in result.stdout
 

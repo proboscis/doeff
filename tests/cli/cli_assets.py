@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from doeff import Program, do
-from doeff.effects import Ask
 from doeff.cesk.runtime import SyncRuntime
+from doeff.effects import Ask
 
 sample_program: Program[int] = Program.pure(5)
 

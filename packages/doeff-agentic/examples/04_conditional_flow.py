@@ -11,9 +11,6 @@ Run:
     uv run python examples/04_conditional_flow.py
 """
 
-from doeff import do
-from doeff.effects.writer import slog
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -21,6 +18,9 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
+from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -77,30 +77,36 @@ def review_and_maybe_fix(code: str):
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
+    from doeff import AsyncRuntime
 
-    # Code with issues to review
-    sample_code = '''
+    async def main():
+        # Code with issues to review
+        sample_code = """
 def calculate_average(numbers):
     total = 0
     for n in numbers:
         total = total + n
     return total / len(numbers)  # Bug: division by zero if empty
-'''
+"""
 
-    print("Starting code review workflow...")
-    print()
-    print("Code to review:")
-    print(sample_code)
-    print()
+        print("Starting code review workflow...")
+        print()
+        print("Code to review:")
+        print(sample_code)
+        print()
 
-    handlers = opencode_handler()
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-    try:
-        result = run_sync(review_and_maybe_fix(sample_code), handlers=handlers)
-        print(f"\n=== Result: {result['status'].upper()} ===")
-        if result["status"] == "fixed":
-            print("\nFixed code:")
-            print(result["fixed_code"][:500])
-    except Exception as e:
-        print(f"Error: {e}")
+        try:
+            result = await runtime.run(review_and_maybe_fix(sample_code))
+            output = result.value
+            print(f"\n=== Result: {output['status'].upper()} ===")
+            if output["status"] == "fixed":
+                print("\nFixed code:")
+                print(output["fixed_code"][:500])
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

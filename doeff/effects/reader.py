@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from collections.abc import Mapping
-from typing import Any, Callable
+from typing import Any
 
 from doeff.types import EnvKey
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 from ._validators import ensure_env_mapping, ensure_hashable, ensure_program_like
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -23,8 +23,8 @@ class AskEffect(EffectBase):
         ensure_hashable(self.key, name="key")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "AskEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> AskEffect:
         return self
 
 
@@ -40,8 +40,8 @@ class LocalEffect(EffectBase):
         ensure_program_like(self.sub_program, name="sub_program")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "LocalEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> LocalEffect:
         sub_program = intercept_value(self.sub_program, transform)
         if sub_program is self.sub_program:
             return self
@@ -69,10 +69,10 @@ def Local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> Effect:
 
 
 __all__ = [
+    "Ask",
     "AskEffect",
+    "Local",
     "LocalEffect",
     "ask",
     "local",
-    "Ask",
-    "Local",
 ]

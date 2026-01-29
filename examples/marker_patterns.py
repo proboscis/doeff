@@ -5,17 +5,18 @@ This file demonstrates various patterns and conventions for using
 doeff marker comments effectively in your codebase.
 """
 
-from doeff import Program, do, Effect
-from typing import TypeVar, Generic, Callable, Any, List
 import functools
+from collections.abc import Callable
+from typing import Any, TypeVar
 
+from doeff import Effect, Program, do
 
 # ============================================================================
 # PATTERN 1: Generic Type Parameters with Markers
 # ============================================================================
 
-T = TypeVar('T')
-R = TypeVar('R')
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 def generic_interpreter(  # doeff: interpreter
@@ -88,7 +89,7 @@ from typing import Protocol
 
 class Interpreter(Protocol):
     """Protocol defining interpreter interface."""
-    
+
     def interpret(self, program: Program) -> Any:
         """Interpret a program."""
         ...
@@ -96,7 +97,7 @@ class Interpreter(Protocol):
 
 class CustomInterpreter:
     """Concrete interpreter implementation."""
-    
+
     def interpret(  # doeff: interpreter
         self,
         program: Program
@@ -110,11 +111,11 @@ class CustomInterpreter:
 
 class BatchInterpreter:
     """Interpreter that handles multiple programs."""
-    
+
     def interpret_batch(  # doeff: interpreter
         self,
-        programs: List[Program]
-    ) -> List[Any]:
+        programs: list[Program]
+    ) -> list[Any]:
         """
         Batch interpreter for multiple programs.
         Marker indicates this is an interpreter variant.
@@ -137,11 +138,10 @@ def conditional_interpreter(
     if mode == "debug":
         print(f"Debug: executing {program}")
         return program.run_debug()
-    elif mode == "async":
+    if mode == "async":
         import asyncio
         return asyncio.run(program.async_run())
-    else:
-        return program.run()
+    return program.run()
 
 
 def interpreter_factory(
@@ -197,12 +197,12 @@ def partial_transform(  # doeff: transform
 
 def compose_interpreters(  # doeff: interpreter
     *interpreters: Callable[[Program], Any]
-) -> Callable[[Program], List[Any]]:
+) -> Callable[[Program], list[Any]]:
     """
     Composes multiple interpreters to run in sequence.
     The composer itself is marked as interpreter-related.
     """
-    def composed(program: Program) -> List[Any]:
+    def composed(program: Program) -> list[Any]:
         return [interp(program) for interp in interpreters]
     return composed
 
@@ -229,16 +229,16 @@ def pipeline_transform(  # doeff: transform
 
 class InterpreterContext:
     """Context manager for interpreter execution."""
-    
+
     def __enter__(self):  # doeff: interpreter
         """Enter interpreter context."""
         print("Entering interpreter context")
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit interpreter context."""
         print("Exiting interpreter context")
-    
+
     def run(self, program: Program) -> Any:  # doeff: interpreter
         """Run program in context."""
         return program.run()
@@ -276,10 +276,10 @@ async def async_kleisli():  # doeff: kleisli
 
 class ProgramManager:
     """Manager class with property-based program access."""
-    
+
     def __init__(self, program: Program):
         self._program = program
-    
+
     @property
     def interpreter(self) -> Callable[[], Any]:  # doeff: interpreter
         """
@@ -287,7 +287,7 @@ class ProgramManager:
         Properties can be marked too.
         """
         return lambda: self._program.run()
-    
+
     @property
     @do
     def transformer(self) -> Program:  # doeff: transform
@@ -342,30 +342,31 @@ def resilient_transform(  # doeff: transform
 
 if __name__ == "__main__":
     import asyncio
+
     from doeff import Program
-    
+
     # Test generic interpreter
     prog = Program.of(lambda: "test")
     result = generic_interpreter(prog)
     print(f"Generic interpreter: {result}")
-    
+
     # Test decorator stacking
     cached_result = cached_kleisli("key1")
     print(f"Cached kleisli: {cached_result}")
-    
+
     # Test protocol implementation
     custom = CustomInterpreter()
     custom_result = custom.interpret(prog)
     print(f"Custom interpreter: {custom_result}")
-    
+
     # Test curried interpreter
     configured = curried_interpreter({"debug": True})
     configured_result = configured(prog)
     print(f"Configured interpreter: {configured_result}")
-    
+
     # Test context manager
     with InterpreterContext() as ctx:
         ctx_result = ctx.run(prog)
         print(f"Context manager result: {ctx_result}")
-    
+
     print("\nAdvanced marker patterns demonstration complete!")

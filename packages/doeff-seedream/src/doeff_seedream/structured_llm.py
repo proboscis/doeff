@@ -8,12 +8,11 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-
 from PIL import Image
 
-from doeff import Ask, AtomicGet, AtomicUpdate, Await, Delay, EffectGenerator, Tell, Safe, Step, do
+from doeff import Ask, AtomicGet, AtomicUpdate, Await, Delay, EffectGenerator, Safe, Step, Tell, do
 
-from .client import SeedreamClient, get_seedream_client, track_api_call
+from .client import get_seedream_client, track_api_call
 from .costs import CostEstimate, calculate_cost
 from .types import SeedreamImage, SeedreamImageEditResult
 
@@ -144,16 +143,16 @@ def edit_image__seedream4(
     prompt: str,
     model: str = DEFAULT_MODEL,
     images: list[Image.Image] | None = None,
-    max_output_tokens: int = 8192,  # noqa: ARG001 - kept for signature parity
-    temperature: float = 0.9,  # noqa: ARG001 - kept for signature parity
-    top_p: float | None = None,  # noqa: ARG001 - kept for signature parity
-    top_k: int | None = None,  # noqa: ARG001 - kept for signature parity
-    candidate_count: int = 1,  # noqa: ARG001 - kept for signature parity
-    system_instruction: str | None = None,  # noqa: ARG001 - kept for signature parity
-    safety_settings: list[dict[str, Any]] | None = None,  # noqa: ARG001 - kept for parity
-    tools: list[dict[str, Any]] | None = None,  # noqa: ARG001 - kept for signature parity
-    tool_config: dict[str, Any] | None = None,  # noqa: ARG001 - kept for parity
-    response_modalities: list[str] | None = None,  # noqa: ARG001 - kept for parity
+    max_output_tokens: int = 8192,
+    temperature: float = 0.9,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    candidate_count: int = 1,
+    system_instruction: str | None = None,
+    safety_settings: list[dict[str, Any]] | None = None,
+    tools: list[dict[str, Any]] | None = None,
+    tool_config: dict[str, Any] | None = None,
+    response_modalities: list[str] | None = None,
     generation_config_overrides: dict[str, Any] | None = None,
     max_retries: int = 3,
 ) -> EffectGenerator[SeedreamImageEditResult]:
@@ -323,7 +322,7 @@ def edit_image__seedream4(
         last_error = safe_attempt.error
         if attempt < max_retries - 1:
             yield Delay(seconds=1.0)
-    
+
     if response is None:
         raise last_error if last_error else RuntimeError("All retry attempts failed")
 
@@ -437,4 +436,4 @@ def edit_image__seedream4(
     return result
 
 
-__all__ = ["edit_image__seedream4", "DEFAULT_MODEL", "DEFAULT_RESPONSE_FORMAT"]
+__all__ = ["DEFAULT_MODEL", "DEFAULT_RESPONSE_FORMAT", "edit_image__seedream4"]

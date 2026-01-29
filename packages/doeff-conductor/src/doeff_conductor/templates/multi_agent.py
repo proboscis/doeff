@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import do, EffectGenerator, Gather
+from doeff import EffectGenerator, Gather, do
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle
@@ -32,13 +32,13 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
         PRHandle for the created PR
     """
     from ..effects import (
+        Commit,
+        CreatePR,
         CreateWorktree,
         MergeBranches,
-        RunAgent,
-        Commit,
         Push,
-        CreatePR,
         ResolveIssue,
+        RunAgent,
     )
 
     # Step 1: Create parallel worktrees

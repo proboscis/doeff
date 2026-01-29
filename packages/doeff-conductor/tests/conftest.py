@@ -12,16 +12,18 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Generator
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 if TYPE_CHECKING:
+    from doeff_conductor.types import Issue
+
     from doeff.cesk.runtime_result import RuntimeResult
     from doeff.program import Program
-    from doeff_conductor.types import Issue
 
 
 # =============================================================================
@@ -30,11 +32,11 @@ if TYPE_CHECKING:
 
 
 def run_sync(
-    program: "Program[Any]",
+    program: Program[Any],
     scheduled_handlers: dict[type, Callable[..., Any]] | None = None,
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
-) -> "RuntimeResult[Any]":
+) -> RuntimeResult[Any]:
     """Compatibility wrapper for the old run_sync API.
 
     This function provides backwards compatibility with the old doeff.cesk.run_sync()
@@ -98,7 +100,7 @@ def is_opencode_available() -> bool:
             return resp.status_code == 200 and resp.json().get("healthy", False)
         except Exception:
             return False
-    
+
     # Check default port
     try:
         import httpx
@@ -106,7 +108,7 @@ def is_opencode_available() -> bool:
         return resp.status_code == 200 and resp.json().get("healthy", False)
     except Exception:
         pass
-    
+
     # Check if opencode binary exists (we can auto-start)
     return shutil.which("opencode") is not None
 
@@ -185,7 +187,7 @@ def init_test_repo(path: Path) -> None:
 
 
 @pytest.fixture
-def test_repo(tmp_path: Path) -> Generator[Path, None, None]:
+def test_repo(tmp_path: Path) -> Path:
     """Fixture providing a test git repository.
     
     Creates a temporary git repository with:
@@ -195,11 +197,11 @@ def test_repo(tmp_path: Path) -> Generator[Path, None, None]:
     """
     if not is_git_available():
         pytest.skip("git not available")
-    
+
     repo_path = tmp_path / "test_repo"
     repo_path.mkdir()
     init_test_repo(repo_path)
-    yield repo_path
+    return repo_path
 
 
 @pytest.fixture
@@ -229,10 +231,10 @@ def opencode_url() -> str | None:
     url = os.environ.get("CONDUCTOR_OPENCODE_URL")
     if url:
         return url
-    
+
     if is_opencode_available():
         return "http://127.0.0.1:4096"
-    
+
     return None
 
 
@@ -242,10 +244,10 @@ def opencode_url() -> str | None:
 
 
 @pytest.fixture
-def sample_issue() -> "Issue":
+def sample_issue() -> Issue:
     """Fixture providing a sample Issue for testing."""
     from doeff_conductor.types import Issue, IssueStatus
-    
+
     return Issue(
         id="TEST-001",
         title="Test Feature Implementation",
@@ -257,7 +259,7 @@ def sample_issue() -> "Issue":
 
 
 @pytest.fixture
-def sample_issue_file(issues_dir: Path, sample_issue: "Issue") -> Path:
+def sample_issue_file(issues_dir: Path, sample_issue: Issue) -> Path:
     """Fixture that writes a sample issue to the issues directory."""
     issue_path = issues_dir / f"{sample_issue.id}.md"
     content = f"""# {sample_issue.title}
@@ -289,7 +291,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 item.add_marker(pytest.mark.skip(
                     reason="OpenCode not available. Start server or install CLI."
                 ))
-        
+
         # Skip e2e tests if not enabled (unless running with -m e2e)
         if "e2e" in item.keywords:
             if not is_e2e_enabled():
@@ -302,16 +304,16 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 __all__ = [
-    # Skip decorators
-    "skip_without_e2e",
-    "skip_without_opencode",
-    "skip_without_git",
-    # Detection functions
-    "is_opencode_available",
-    "is_e2e_enabled",
-    "is_git_available",
     # Helper functions
     "init_test_repo",
+    "is_e2e_enabled",
+    "is_git_available",
+    # Detection functions
+    "is_opencode_available",
     # CESK API compatibility
     "run_sync",
+    # Skip decorators
+    "skip_without_e2e",
+    "skip_without_git",
+    "skip_without_opencode",
 ]

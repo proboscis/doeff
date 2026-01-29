@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Await, EffectGenerator, Tell, Step, do
+from doeff import Await, EffectGenerator, Step, Tell, do
 
 from .client import SecretManagerClient, get_secret_manager_client
 

@@ -11,19 +11,19 @@ Run:
     uv run python examples/test_event_logging.py
 """
 
+import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-import tempfile
-import sys
 
 from doeff_agentic import (
-    EventLogWriter,
-    EventLogReader,
-    WorkflowIndex,
     AgenticEnvironmentHandle,
     AgenticEnvironmentType,
     AgenticSessionHandle,
     AgenticSessionStatus,
+    EventLogReader,
+    EventLogWriter,
+    WorkflowIndex,
 )
 
 
@@ -173,9 +173,8 @@ def test_event_logging():
         for err in errors:
             print(f"  - {err}")
         return 1
-    else:
-        print("SUCCESS: All tests passed!")
-        return 0
+    print("SUCCESS: All tests passed!")
+    return 0
 
 
 if __name__ == "__main__":

@@ -24,7 +24,6 @@ from doeff_agents import (
     Launch,
     LaunchConfig,
     Monitor,
-    Observation,
     Send,
     SessionHandle,
     SessionStatus,
@@ -44,7 +43,7 @@ from .effects import (
     WaitForUserInputEffect,
 )
 from .state import StateManager, generate_workflow_id
-from .types import AgentConfig, AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
+from .types import AgentInfo, AgentStatus, WorkflowInfo, WorkflowStatus
 
 
 def _agent_type_from_str(s: str) -> AgentType:
@@ -52,12 +51,11 @@ def _agent_type_from_str(s: str) -> AgentType:
     s = s.lower()
     if s == "claude":
         return AgentType.CLAUDE
-    elif s == "codex":
+    if s == "codex":
         return AgentType.CODEX
-    elif s == "gemini":
+    if s == "gemini":
         return AgentType.GEMINI
-    else:
-        return AgentType.CUSTOM
+    return AgentType.CUSTOM
 
 
 def _agent_status_from_session_status(s: SessionStatus) -> AgentStatus:

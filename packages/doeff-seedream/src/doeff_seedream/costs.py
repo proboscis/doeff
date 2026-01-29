@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 DEFAULT_COST_PER_IMAGE = 0.03
 DEFAULT_SIZE_PRICING = {
@@ -111,4 +111,4 @@ def calculate_cost(
     )
 
 
-__all__ = ["CostEstimate", "calculate_cost", "DEFAULT_COST_PER_IMAGE", "DEFAULT_SIZE_PRICING"]
+__all__ = ["DEFAULT_COST_PER_IMAGE", "DEFAULT_SIZE_PRICING", "CostEstimate", "calculate_cost"]

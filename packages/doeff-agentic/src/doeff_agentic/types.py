@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-
 # =============================================================================
 # Enums
 # =============================================================================
@@ -462,23 +461,23 @@ class AgentConfig:
 
 
 __all__ = [
+    "AgentConfig",
+    "AgentInfo",
+    "AgentStatus",
+    "AgenticEndOfEvents",
+    "AgenticEnvironmentHandle",
     # New types (spec-compliant)
     "AgenticEnvironmentType",
-    "AgenticSessionStatus",
-    "AgenticWorkflowStatus",
-    "AgenticWorkflowHandle",
-    "AgenticEnvironmentHandle",
-    "AgenticSessionHandle",
-    "AgenticMessageHandle",
-    "AgenticMessage",
     "AgenticEvent",
-    "AgenticEndOfEvents",
-    # Legacy types (for backward compatibility)
-    "WorkflowStatus",
-    "AgentStatus",
-    "AgentInfo",
-    "WorkflowInfo",
+    "AgenticMessage",
+    "AgenticMessageHandle",
+    "AgenticSessionHandle",
+    "AgenticSessionStatus",
+    "AgenticWorkflowHandle",
+    "AgenticWorkflowStatus",
     "WatchEventType",
     "WatchUpdate",
-    "AgentConfig",
+    "WorkflowInfo",
+    # Legacy types (for backward compatibility)
+    "WorkflowStatus",
 ]

@@ -15,9 +15,6 @@ In another terminal:
     doeff-agentic watch <workflow-id>
 """
 
-from doeff import do
-from doeff.effects.writer import slog
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -25,6 +22,9 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
+from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -59,20 +59,26 @@ def agent_with_status():
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
+    from doeff import AsyncRuntime
 
-    print("Starting agent_with_status workflow...")
-    print()
-    print("You can watch the workflow in another terminal:")
-    print("  doeff-agentic ps")
-    print("  doeff-agentic watch <workflow-id>")
-    print()
+    async def main():
+        print("Starting agent_with_status workflow...")
+        print()
+        print("You can watch the workflow in another terminal:")
+        print("  doeff-agentic ps")
+        print("  doeff-agentic watch <workflow-id>")
+        print()
 
-    handlers = opencode_handler()
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-    try:
-        result = run_sync(agent_with_status(), handlers=handlers)
-        print("\n=== Agent Output ===")
-        print(result[:500] if len(result) > 500 else result)
-    except Exception as e:
-        print(f"Error: {e}")
+        try:
+            result = await runtime.run(agent_with_status())
+            print("\n=== Agent Output ===")
+            output = result.value
+            print(output[:500] if len(output) > 500 else output)
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

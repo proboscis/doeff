@@ -2,43 +2,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, TypeAlias
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
+    from doeff.cesk.frames import FrameResult
     from doeff.cesk.state import TaskState
     from doeff.cesk.types import Store
-    from doeff.cesk.frames import FrameResult
 
 Handler: TypeAlias = Callable[..., Any]
 
 
 def default_handlers() -> dict[type, Handler]:
-    from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
-    from doeff.effects.cache import (
-        CacheDeleteEffect,
-        CacheExistsEffect,
-        CacheGetEffect,
-        CachePutEffect,
-    )
-    from doeff.effects.callstack import ProgramCallFrameEffect, ProgramCallStackEffect
-    from doeff.effects.gather import GatherEffect
-    from doeff.effects.graph import (
-        GraphAnnotateEffect,
-        GraphCaptureEffect,
-        GraphSnapshotEffect,
-        GraphStepEffect,
-    )
-    from doeff.effects.intercept import InterceptEffect
-    from doeff.effects.io import IOPerformEffect
-    from doeff.effects.pure import PureEffect
-    from doeff.effects.reader import AskEffect, LocalEffect
-    from doeff.effects.result import ResultSafeEffect
-
-    from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
-    from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
-    from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-
     from doeff.cesk.handlers.atomic import handle_atomic_get, handle_atomic_update
     from doeff.cesk.handlers.callstack import (
         handle_program_call_frame,
@@ -71,9 +47,31 @@ def default_handlers() -> dict[type, Handler]:
         handle_cache_put,
         handle_io,
     )
-
     from doeff.cesk.handlers.task import handle_gather
     from doeff.cesk.handlers.time import handle_delay, handle_get_time, handle_wait_until
+    from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
+    from doeff.effects.cache import (
+        CacheDeleteEffect,
+        CacheExistsEffect,
+        CacheGetEffect,
+        CachePutEffect,
+    )
+    from doeff.effects.callstack import ProgramCallFrameEffect, ProgramCallStackEffect
+    from doeff.effects.gather import GatherEffect
+    from doeff.effects.graph import (
+        GraphAnnotateEffect,
+        GraphCaptureEffect,
+        GraphSnapshotEffect,
+        GraphStepEffect,
+    )
+    from doeff.effects.intercept import InterceptEffect
+    from doeff.effects.io import IOPerformEffect
+    from doeff.effects.pure import PureEffect
+    from doeff.effects.reader import AskEffect, LocalEffect
+    from doeff.effects.result import ResultSafeEffect
+    from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
+    from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
+    from doeff.effects.writer import WriterListenEffect, WriterTellEffect
 
     return {
         PureEffect: handle_pure,

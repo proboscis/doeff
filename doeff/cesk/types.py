@@ -12,11 +12,10 @@ This module contains:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, NewType, TypeAlias
+from typing import Any, TypeAlias
 from uuid import UUID, uuid4
 
 from doeff._vendor import FrozenDict
-
 
 # ============================================
 # Identity Types
@@ -154,17 +153,17 @@ def empty_store() -> Store:
 
 
 __all__ = [
-    # Identity types
-    "TaskId",
-    "FutureId",
-    "SpawnId",
-    # Handle types
-    "TaskHandle",
-    "FutureHandle",
-    "SpawnHandle",
     # Core types
     "Environment",
+    "FutureHandle",
+    "FutureId",
+    "SpawnHandle",
+    "SpawnId",
     "Store",
+    # Handle types
+    "TaskHandle",
+    # Identity types
+    "TaskId",
     # Factory functions
     "empty_environment",
     "empty_store",

@@ -1,18 +1,18 @@
 from doeff import Program, do
 from doeff.effects import log
 
-from .core.alpha import helper_alpha
-from .core.beta import helper_beta
-from .core.gamma import helper_gamma
-from .core.delta import helper_delta
-from .core.epsilon import helper_epsilon
-from .core.zeta import helper_zeta
 from .combinators.advanced import (
     helper_eta,
-    helper_theta,
     helper_iota,
     helper_kappa,
+    helper_theta,
 )
+from .core.alpha import helper_alpha
+from .core.beta import helper_beta
+from .core.delta import helper_delta
+from .core.epsilon import helper_epsilon
+from .core.gamma import helper_gamma
+from .core.zeta import helper_zeta
 
 
 @do

@@ -2,8 +2,6 @@
 
 from datetime import datetime, timezone
 
-import pytest
-
 from doeff_agentic.types import (
     AgentConfig,
     AgentInfo,

@@ -23,11 +23,12 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Generator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from doeff.cesk_observability import ExecutionSnapshot
@@ -193,7 +194,7 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
 def trace_observer(
     workflow_id: str,
     trace_dir: Path | str | None = None,
-) -> Generator[Callable[["ExecutionSnapshot"], None], None, None]:
+) -> Generator[Callable[[ExecutionSnapshot], None], None, None]:
     """Context manager that creates an on_step callback for live trace.
 
     Creates a callback function that writes execution snapshots to a JSONL
@@ -225,7 +226,7 @@ def trace_observer(
 
     started_at = datetime.now().isoformat()
 
-    def on_step(snapshot: "ExecutionSnapshot") -> None:
+    def on_step(snapshot: ExecutionSnapshot) -> None:
         # For error cases, use the captured effect trace and error location
         if snapshot.error is not None and snapshot.error.effect_trace:
             # Build frames from the captured effect trace
@@ -332,10 +333,10 @@ def trace_observer(
 
 
 __all__ = [
-    "TraceFrame",
     "GatherState",
     "LiveTrace",
+    "TraceFrame",
+    "get_default_trace_dir",
     "trace_observer",
     "validate_workflow_id",
-    "get_default_trace_dir",
 ]

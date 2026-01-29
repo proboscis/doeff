@@ -12,16 +12,14 @@ effects with SQLite storage. This pattern enables:
 The key pattern is: check cache -> if miss, compute and cache -> return result
 """
 
-import os
-import time
 import tempfile
+import time
 from pathlib import Path
 
 from doeff import do
 from doeff.cesk import run_sync
-from doeff.effects import Pure, CacheGet, CachePut, CacheDelete, CacheExists
-from doeff.storage import SQLiteStorage, InMemoryStorage
-
+from doeff.effects import CacheDelete, CacheExists, CacheGet, CachePut
+from doeff.storage import InMemoryStorage, SQLiteStorage
 
 # =============================================================================
 # Example 1: Basic cache operations
@@ -128,7 +126,7 @@ def example_idempotent():
     result = run_sync(workflow_with_caching(), storage=storage)
 
     print(f"\nTotal operations: {len(result.value)}")
-    print(f"Unique computations: 2 (req-001 and req-002)")
+    print("Unique computations: 2 (req-001 and req-002)")
     print()
 
 

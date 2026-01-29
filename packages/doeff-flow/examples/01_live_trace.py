@@ -18,11 +18,10 @@ You can override with --trace-dir or DOEFF_FLOW_TRACE_DIR env var.
 
 from time import sleep
 
-from doeff import do
-
 # Import from doeff_flow
 from doeff_flow import run_workflow, trace_observer
 
+from doeff import do
 
 # =============================================================================
 # Example 1: Using run_workflow convenience wrapper

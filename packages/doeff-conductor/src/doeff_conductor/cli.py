@@ -42,12 +42,11 @@ def _format_duration(dt: datetime) -> str:
 
     if seconds < 60:
         return f"{seconds}s ago"
-    elif seconds < 3600:
+    if seconds < 3600:
         return f"{seconds // 60}m ago"
-    elif seconds < 86400:
+    if seconds < 86400:
         return f"{seconds // 3600}h ago"
-    else:
-        return f"{seconds // 86400}d ago"
+    return f"{seconds // 86400}d ago"
 
 
 def _status_color(status: WorkflowStatus | IssueStatus | str) -> str:
@@ -61,7 +60,7 @@ def _status_color(status: WorkflowStatus | IssueStatus | str) -> str:
             WorkflowStatus.ERROR: "red",
             WorkflowStatus.ABORTED: "magenta",
         }.get(status, "white")
-    elif isinstance(status, IssueStatus):
+    if isinstance(status, IssueStatus):
         return {
             IssueStatus.OPEN: "green",
             IssueStatus.IN_PROGRESS: "yellow",
@@ -327,11 +326,10 @@ def stop_cmd(
 
         if output_json:
             click.echo(json.dumps({"ok": True, "stopped": stopped}))
+        elif stopped:
+            console.print(f"[green]Stopped:[/green] {', '.join(stopped)}")
         else:
-            if stopped:
-                console.print(f"[green]Stopped:[/green] {', '.join(stopped)}")
-            else:
-                console.print("[dim]Nothing to stop[/dim]")
+            console.print("[dim]Nothing to stop[/dim]")
 
     except Exception as e:
         if output_json:
@@ -349,7 +347,6 @@ def stop_cmd(
 @cli.group()
 def issue() -> None:
     """Issue management commands."""
-    pass
 
 
 @issue.command("create")
@@ -550,7 +547,6 @@ def issue_resolve(
 @cli.group()
 def env() -> None:
     """Environment management commands."""
-    pass
 
 
 @env.command("list")
@@ -633,14 +629,13 @@ def env_cleanup(
                 "dry_run": dry_run,
                 "cleaned": [str(p) for p in cleaned],
             }))
+        elif cleaned:
+            action = "Would clean" if dry_run else "Cleaned"
+            console.print(f"[green]{action}:[/green]")
+            for path in cleaned:
+                console.print(f"  {path}")
         else:
-            if cleaned:
-                action = "Would clean" if dry_run else "Cleaned"
-                console.print(f"[green]{action}:[/green]")
-                for path in cleaned:
-                    console.print(f"  {path}")
-            else:
-                console.print("[dim]No orphaned environments found[/dim]")
+            console.print("[dim]No orphaned environments found[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -655,7 +650,6 @@ def env_cleanup(
 @cli.group()
 def template() -> None:
     """Template management commands."""
-    pass
 
 
 @template.command("list")

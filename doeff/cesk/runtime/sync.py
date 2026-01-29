@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from doeff.cesk.handlers import Handler
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
-from doeff.cesk.handlers import Handler
 
 if TYPE_CHECKING:
     from doeff.program import Program
@@ -45,7 +45,7 @@ class SyncRuntime(BaseRuntime):
                 as they represent external control signals, not program errors.
         """
         state = self._create_initial_state(program, env, store)
-        
+
         try:
             value, final_state, final_store = self._step_until_done(state)
             return self._build_success_result(value, final_state, final_store)
@@ -55,7 +55,7 @@ class SyncRuntime(BaseRuntime):
                 raise err.exception from None
             # Use the state at failure point, not initial state
             return self._build_error_result(
-                err.exception, 
+                err.exception,
                 err.final_state,
                 captured_traceback=err.captured_traceback,
             )

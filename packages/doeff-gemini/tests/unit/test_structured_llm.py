@@ -3,9 +3,9 @@
 import importlib
 import json
 import math
+import sys
 import time
 from io import BytesIO
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -13,13 +13,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 
 from PIL import Image
+
 google_genai = pytest.importorskip("google.genai")
 from doeff_gemini import (
     GeminiImageEditResult,
@@ -32,14 +32,16 @@ from doeff_gemini import (
     process_unstructured_response,
     structured_llm__gemini,
 )
-from doeff_gemini.structured_llm import GeminiStructuredOutputError
-from doeff_gemini.costs import calculate_cost
 from doeff_gemini.client import track_api_call
+from doeff_gemini.costs import calculate_cost
+from doeff_gemini.structured_llm import GeminiStructuredOutputError
 from doeff_gemini.types import APICallMetadata
+
 genai_types = google_genai.types
 from pydantic import BaseModel
 
 from doeff import AsyncRuntime, EffectGenerator, Gather, do
+
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
 
@@ -295,7 +297,7 @@ async def test_process_structured_response_from_json_part() -> None:
 async def test_process_structured_response_from_json_part_string_payload() -> None:
     """String JSON payloads should be parsed after trimming whitespace."""
 
-    json_part = SimpleNamespace(json="  {\n    \"answer\": \"84\", \n    \"confidence\": 0.55\n}  ")
+    json_part = SimpleNamespace(json='  {\n    "answer": "84", \n    "confidence": 0.55\n}  ')
     response = SimpleNamespace(
         parsed=None,
         candidates=[

@@ -61,14 +61,14 @@ T = TypeVar("T")
 
 
 def run_workflow(
-    program: "Program[T]",
+    program: Program[T],
     workflow_id: str,
     trace_dir: Path | str | None = None,
     *,
-    env: "Environment | dict[Any, Any] | None" = None,
-    store: "Store | None" = None,
-    storage: "DurableStorage | None" = None,
-) -> "CESKResult[T]":
+    env: Environment | dict[Any, Any] | None = None,
+    store: Store | None = None,
+    storage: DurableStorage | None = None,
+) -> CESKResult[T]:
     """Run a workflow with live trace observability.
 
     Convenience wrapper that combines run_sync with trace_observer.
@@ -123,15 +123,15 @@ def run_workflow(
 
 
 __all__ = [
+    "LiveTrace",
     # Core types
     "TraceFrame",
-    "LiveTrace",
-    # Observer
-    "trace_observer",
-    # Validation
-    "validate_workflow_id",
     # XDG support
     "get_default_trace_dir",
     # Convenience wrapper
     "run_workflow",
+    # Observer
+    "trace_observer",
+    # Validation
+    "validate_workflow_id",
 ]

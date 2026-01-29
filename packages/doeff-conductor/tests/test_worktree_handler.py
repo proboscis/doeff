@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-
 from doeff_conductor.effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
 from doeff_conductor.handlers.worktree_handler import WorktreeHandler
 from doeff_conductor.types import Issue, IssueStatus, MergeStrategy, WorktreeEnv

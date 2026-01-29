@@ -3,21 +3,19 @@
 from datetime import datetime, timezone
 
 import pytest
-
 from doeff_agentic.types import (
+    AgenticEndOfEvents,
+    AgenticEnvironmentHandle,
     # Enums
     AgenticEnvironmentType,
-    AgenticSessionStatus,
-    AgenticWorkflowStatus,
-    # Handles
-    AgenticWorkflowHandle,
-    AgenticEnvironmentHandle,
-    AgenticSessionHandle,
-    AgenticMessageHandle,
-    AgenticMessage,
     # Events
     AgenticEvent,
-    AgenticEndOfEvents,
+    AgenticMessage,
+    AgenticSessionHandle,
+    AgenticSessionStatus,
+    # Handles
+    AgenticWorkflowHandle,
+    AgenticWorkflowStatus,
 )
 
 

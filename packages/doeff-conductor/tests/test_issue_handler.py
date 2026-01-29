@@ -1,10 +1,8 @@
 """Tests for issue handler."""
 
-import tempfile
 from pathlib import Path
 
 import pytest
-
 from doeff_conductor.effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
 from doeff_conductor.exceptions import IssueNotFoundError
 from doeff_conductor.handlers.issue_handler import IssueHandler

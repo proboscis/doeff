@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Dict
+from typing import Any
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 from ._validators import ensure_dict_str_any, ensure_program_like
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -15,14 +16,14 @@ class GraphStepEffect(EffectBase):
     """Appends a node to the graph and yields the provided value."""
 
     value: Any
-    meta: Dict[str, Any]
+    meta: dict[str, Any]
 
     def __post_init__(self) -> None:
         ensure_dict_str_any(self.meta, name="meta")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "GraphStepEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> GraphStepEffect:
         return self
 
 
@@ -30,14 +31,14 @@ class GraphStepEffect(EffectBase):
 class GraphAnnotateEffect(EffectBase):
     """Updates metadata on the latest graph step and completes without a value."""
 
-    meta: Dict[str, Any]
+    meta: dict[str, Any]
 
     def __post_init__(self) -> None:
         ensure_dict_str_any(self.meta, name="meta")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "GraphAnnotateEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> GraphAnnotateEffect:
         return self
 
 
@@ -46,8 +47,8 @@ class GraphSnapshotEffect(EffectBase):
     """Captures the current computation graph and yields it."""
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "GraphSnapshotEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> GraphSnapshotEffect:
         return self
 
 
@@ -61,8 +62,8 @@ class GraphCaptureEffect(EffectBase):
         ensure_program_like(self.program, name="program")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "GraphCaptureEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> GraphCaptureEffect:
         program = intercept_value(self.program, transform)
         if program is self.program:
             return self
@@ -120,14 +121,14 @@ capture = CaptureGraph
 
 
 __all__ = [
-    "GraphStepEffect",
-    "GraphAnnotateEffect",
-    "GraphSnapshotEffect",
-    "GraphCaptureEffect",
     "Annotate",
+    "CaptureGraph",
+    "GraphAnnotateEffect",
+    "GraphCaptureEffect",
+    "GraphSnapshotEffect",
+    "GraphStepEffect",
     "Snapshot",
     "Step",
-    "CaptureGraph",
     "capture",
     "capture_graph",
     "graph",

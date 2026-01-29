@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
+
+from doeff.program import ProgramBase
 
 from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
-from doeff.program import ProgramBase
 
 if TYPE_CHECKING:  # pragma: no cover - type-only import to avoid a runtime cycle
     from doeff.program import Program
@@ -16,8 +18,8 @@ if TYPE_CHECKING:  # pragma: no cover - type-only import to avoid a runtime cycl
 class InterceptEffect(EffectBase):
     """Intercepts a program and applies transforms to its yielded effects."""
 
-    program: "Program"
-    transforms: tuple[Callable[[Effect], Effect | "Program"], ...]
+    program: Program
+    transforms: tuple[Callable[[Effect], Effect | Program], ...]
 
     def __post_init__(self):
         if not isinstance(self.program, ProgramBase):
@@ -25,7 +27,7 @@ class InterceptEffect(EffectBase):
                 f"program must be a Program instance, got {type(self.program)}"
             )
 
-    def intercept(self, transform: Callable[[Effect], Effect | "Program"]) -> "InterceptEffect":
+    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> InterceptEffect:
         intercepted_program = intercept_value(self.program, transform)
         if intercepted_program is self.program:
             return self
@@ -33,8 +35,8 @@ class InterceptEffect(EffectBase):
 
 
 def intercept_program_effect(
-    program: "Program",
-    transforms: tuple[Callable[[Effect], Effect | "Program"], ...],
+    program: Program,
+    transforms: tuple[Callable[[Effect], Effect | Program], ...],
 ) -> InterceptEffect:
     """Helper to create an InterceptEffect with trace metadata."""
 

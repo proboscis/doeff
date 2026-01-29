@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Generator, Any
+from collections.abc import Generator
+from typing import Any
 
 from doeff import Program, do
 

@@ -6,26 +6,25 @@ from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff._vendor import FrozenDict, Ok, Err
-from doeff.cesk.state import CESKState, TaskState, Ready
-from doeff.cesk.result import Done, Failed, Suspended
-from doeff.cesk.step import step
-from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram, FrameResult
+from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.errors import UnhandledEffectError
+from doeff.cesk.frames import ContinueError, ContinueProgram, ContinueValue, FrameResult
+from doeff.cesk.handlers import Handler, default_handlers
+from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime_result import (
-    RuntimeResult,
-    RuntimeResultImpl,
-    KStackTrace,
     EffectStackTrace,
+    KStackTrace,
     PythonStackTrace,
+    RuntimeResultImpl,
     build_k_stack_trace,
     build_stacks_from_captured_traceback,
 )
+from doeff.cesk.state import CESKState, TaskState
+from doeff.cesk.step import step
 
 if TYPE_CHECKING:
-    from doeff.program import Program
     from doeff.cesk.types import Environment, Store
+    from doeff.program import Program
 
 T = TypeVar("T")
 
@@ -124,7 +123,7 @@ class BaseRuntime(ABC):
         """
         # Use final_store if provided (from Done.store), else state.store
         store = final_store if final_store is not None else state.store
-        
+
         # Extract state (excluding internal keys)
         final_state = {
             k: v for k, v in store.items()
@@ -173,7 +172,7 @@ class BaseRuntime(ABC):
         """
         # Use final_store if provided (from Failed.store), else state.store
         store = final_store if final_store is not None else state.store
-        
+
         # Extract state (excluding internal keys)
         final_state = {
             k: v for k, v in store.items()

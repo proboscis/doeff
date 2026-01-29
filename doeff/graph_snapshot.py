@@ -6,15 +6,15 @@ using vis.js Network, which is simpler and more reliable than Cytoscape.
 
 from __future__ import annotations
 
-import json
 import asyncio
+import json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
-from doeff import do, Await
+from doeff import Await, do
 from doeff.types import WGraph
 
 
@@ -51,31 +51,31 @@ def build_graph_snapshot(
     node_lookup: dict[int, dict[str, Any]] = {}
 
     # First pass: create nodes for all steps
-    if hasattr(graph, 'steps'):
+    if hasattr(graph, "steps"):
         for step in graph.steps:
             node_id = node_counter
             node_counter += 1
 
             # Map output node to ID
-            if hasattr(step, 'output'):
+            if hasattr(step, "output"):
                 node_ids[id(step.output)] = node_id
 
             # WStep has output (WNode) which has value
-            value = step.output.value if hasattr(step, 'output') and hasattr(step.output, 'value') else None
-            
+            value = step.output.value if hasattr(step, "output") and hasattr(step.output, "value") else None
+
             # Try to get a label from value or meta
-            label = str(value) if value is not None else f'Step {node_id}'
-            if hasattr(step, 'meta') and step.meta and 'label' in step.meta:
-                label = step.meta['label']
-            
+            label = str(value) if value is not None else f"Step {node_id}"
+            if hasattr(step, "meta") and step.meta and "label" in step.meta:
+                label = step.meta["label"]
+
             # Truncate label if too long
             if len(label) > 30:
                 label = label[:27] + "..."
-            
+
             node_data = {
                 "id": node_id,
                 "label": label,
-                "title": repr(value) if value is not None else '',  # Tooltip
+                "title": repr(value) if value is not None else "",  # Tooltip
                 "color": {
                     "background": "#dbeafe",
                     "border": "#60a5fa"
@@ -86,9 +86,9 @@ def build_graph_snapshot(
             node_lookup[node_id] = node_data
 
     # Process last node (which is also a WStep)
-    if hasattr(graph, 'last') and graph.last:
+    if hasattr(graph, "last") and graph.last:
         # Check if last node already exists
-        if hasattr(graph.last, 'output') and id(graph.last.output) in node_ids:
+        if hasattr(graph.last, "output") and id(graph.last.output) in node_ids:
             last_node_id = node_ids[id(graph.last.output)]
             # Mark existing node as last
             for node in nodes:
@@ -104,33 +104,33 @@ def build_graph_snapshot(
             # Create new node for last
             node_id = node_counter
             last_node_id = node_id
-            
+
             # Map output node to ID
-            if hasattr(graph.last, 'output'):
+            if hasattr(graph.last, "output"):
                 node_ids[id(graph.last.output)] = node_id
 
-            value = graph.last.output.value if hasattr(graph.last, 'output') and hasattr(graph.last.output, 'value') else None
+            value = graph.last.output.value if hasattr(graph.last, "output") and hasattr(graph.last.output, "value") else None
 
-            label = str(value) if value is not None else 'Complete'
-            if hasattr(graph.last, 'meta') and graph.last.meta and 'label' in graph.last.meta:
-                label = graph.last.meta['label']
+            label = str(value) if value is not None else "Complete"
+            if hasattr(graph.last, "meta") and graph.last.meta and "label" in graph.last.meta:
+                label = graph.last.meta["label"]
 
             if len(label) > 30:
                 label = label[:27] + "..."
-            
+
             node_data = {
                 "id": node_id,
                 "label": label,
-                "title": repr(value) if value is not None else '',
+                "title": repr(value) if value is not None else "",
                 "font": {"bold": True}
             }
-            
+
             if mark_success:
                 node_data["color"] = {
                     "background": "#bbf7d0",
                     "border": "#16a34a"
                 }
-            
+
             nodes.append(node_data)
             node_lookup[node_id] = node_data
 
@@ -139,9 +139,9 @@ def build_graph_snapshot(
     edges_list: list[dict[str, int]] = []
     seen_edges: set[tuple[int, int]] = set()
 
-    if hasattr(graph, 'steps'):
+    if hasattr(graph, "steps"):
         for step in graph.steps:
-            if hasattr(step, 'output') and hasattr(step, 'inputs'):
+            if hasattr(step, "output") and hasattr(step, "inputs"):
                 target_id = node_ids.get(id(step.output))
                 if target_id:
                     for input_node in step.inputs:
@@ -156,8 +156,8 @@ def build_graph_snapshot(
                                 })
 
     # Add edges for last node
-    if hasattr(graph, 'last') and hasattr(graph.last, 'inputs'):
-        included_in_steps = hasattr(graph, 'steps') and graph.last in getattr(graph, 'steps')
+    if hasattr(graph, "last") and hasattr(graph.last, "inputs"):
+        included_in_steps = hasattr(graph, "steps") and graph.last in graph.steps
         if not included_in_steps:
             target_id = node_ids.get(id(graph.last.output))
             if target_id:
@@ -216,7 +216,6 @@ def build_graph_snapshot(
             topo_order.append(node_id)
             level_map.setdefault(node_id, 0)
 
-    from collections import defaultdict
 
     level_buckets: dict[int, list[int]] = defaultdict(list)
     for node_id in topo_order:
@@ -266,10 +265,10 @@ def generate_html_template(snapshot_data: dict[str, Any], title: str = "doeff Gr
     """
     # Escape title for HTML
     title_escaped = escape_html(title)
-    
+
     # Convert snapshot to JSON
     snapshot_json = json.dumps(snapshot_data, indent=2)
-    
+
     template = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -541,7 +540,7 @@ def generate_html_template(snapshot_data: dict[str, Any], title: str = "doeff Gr
   </script>
 </body>
 </html>"""
-    
+
     return template
 
 
@@ -568,7 +567,7 @@ async def graph_to_html_async(
         graph,
         mark_success=mark_success,
     )
-    
+
     # Generate HTML from the snapshot
     html = generate_html_template(snapshot, title=title)
     return html
@@ -624,13 +623,13 @@ async def write_graph_html_async(
         title=title,
         mark_success=mark_success,
     )
-    
+
     path = Path(output_path).expanduser().resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Write file in thread to avoid blocking
     await asyncio.to_thread(path.write_text, html, encoding="utf-8")
-    
+
     logger.info("Graph snapshot (vis.js) saved to {}", path)
     return path
 

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from doeff.cesk.frames import ContinueProgram, ContinueValue, GatherFrame, RaceFrame, FrameResult
+from doeff.cesk.frames import ContinueProgram, ContinueValue, FrameResult, GatherFrame, RaceFrame
 from doeff.cesk.state import TaskState
-from doeff.cesk.types import TaskId, Store
+from doeff.cesk.types import Store, TaskId
 from doeff.effects.gather import GatherEffect
 
 
@@ -38,7 +38,7 @@ def handle_race(
     programs = list(effect.programs)
     if not programs:
         raise ValueError("RaceEffect requires at least one program")
-    
+
     first, *rest = programs
     task_ids = tuple(TaskId.new() for _ in programs)
     return ContinueProgram(

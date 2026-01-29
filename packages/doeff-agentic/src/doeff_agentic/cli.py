@@ -42,12 +42,11 @@ def _format_duration(dt: datetime) -> str:
 
     if seconds < 60:
         return f"{seconds}s ago"
-    elif seconds < 3600:
+    if seconds < 3600:
         return f"{seconds // 60}m ago"
-    elif seconds < 86400:
+    if seconds < 86400:
         return f"{seconds // 3600}h ago"
-    else:
-        return f"{seconds // 86400}d ago"
+    return f"{seconds // 86400}d ago"
 
 
 def _status_color(status: WorkflowStatus | AgentStatus) -> str:
@@ -61,17 +60,16 @@ def _status_color(status: WorkflowStatus | AgentStatus) -> str:
             WorkflowStatus.FAILED: "red",
             WorkflowStatus.STOPPED: "magenta",
         }.get(status, "white")
-    else:
-        return {
-            AgentStatus.PENDING: "dim",
-            AgentStatus.BOOTING: "cyan",
-            AgentStatus.RUNNING: "green",
-            AgentStatus.BLOCKED: "yellow",
-            AgentStatus.DONE: "blue",
-            AgentStatus.FAILED: "red",
-            AgentStatus.EXITED: "dim",
-            AgentStatus.STOPPED: "dim",
-        }.get(status, "white")
+    return {
+        AgentStatus.PENDING: "dim",
+        AgentStatus.BOOTING: "cyan",
+        AgentStatus.RUNNING: "green",
+        AgentStatus.BLOCKED: "yellow",
+        AgentStatus.DONE: "blue",
+        AgentStatus.FAILED: "red",
+        AgentStatus.EXITED: "dim",
+        AgentStatus.STOPPED: "dim",
+    }.get(status, "white")
 
 
 def _parse_session_ref(ref: str) -> tuple[str, str | None]:
@@ -378,11 +376,10 @@ def stop(
 
         if output_json:
             click.echo(json.dumps({"ok": True, "stopped": stopped}))
+        elif stopped:
+            console.print(f"[green]Stopped sessions:[/green] {', '.join(stopped)}")
         else:
-            if stopped:
-                console.print(f"[green]Stopped sessions:[/green] {', '.join(stopped)}")
-            else:
-                console.print("[dim]No sessions to stop[/dim]")
+            console.print("[dim]No sessions to stop[/dim]")
     except ValueError as e:
         if output_json:
             click.echo(json.dumps({"ok": False, "error": str(e)}))
@@ -467,7 +464,6 @@ def _workflow_details(workflow) -> str:
 @cli.group()
 def env() -> None:
     """Environment management commands."""
-    pass
 
 
 @env.command("list")
@@ -597,14 +593,13 @@ def env_cleanup(
             "dry_run": dry_run,
             "cleaned": cleaned,
         }))
+    elif cleaned:
+        action = "Would clean" if dry_run else "Cleaned"
+        console.print(f"[green]{action}:[/green]")
+        for path in cleaned:
+            console.print(f"  {path}")
     else:
-        if cleaned:
-            action = "Would clean" if dry_run else "Cleaned"
-            console.print(f"[green]{action}:[/green]")
-            for path in cleaned:
-                console.print(f"  {path}")
-        else:
-            console.print("[dim]No orphaned environments found[/dim]")
+        console.print("[dim]No orphaned environments found[/dim]")
 
 
 @cli.command()
@@ -648,12 +643,11 @@ def send(
 
     if output_json:
         click.echo(json.dumps({"ok": success, "deprecated": True}))
+    elif success:
+        console.print("[green]Message sent[/green]")
     else:
-        if success:
-            console.print("[green]Message sent[/green]")
-        else:
-            console.print("[red]Failed to send message[/red]")
-            sys.exit(1)
+        console.print("[red]Failed to send message[/red]")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

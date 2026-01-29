@@ -2,19 +2,19 @@
 
 import pytest
 
+from doeff._vendor import FrozenDict
 from doeff.cesk.types import (
-    TaskId,
-    FutureId,
-    SpawnId,
-    TaskHandle,
-    FutureHandle,
-    SpawnHandle,
     Environment,
+    FutureHandle,
+    FutureId,
+    SpawnHandle,
+    SpawnId,
     Store,
+    TaskHandle,
+    TaskId,
     empty_environment,
     empty_store,
 )
-from doeff._vendor import FrozenDict
 
 
 class TestTaskId:

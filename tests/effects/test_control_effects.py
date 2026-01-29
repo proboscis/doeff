@@ -15,7 +15,7 @@ Reference: gh#177
 
 import pytest
 
-from doeff import do, Program
+from doeff import Program, do
 from doeff.effects import (
     Ask,
     Gather,
@@ -27,7 +27,6 @@ from doeff.effects import (
     Tell,
 )
 from doeff.effects.reader import AskEffect
-
 
 # ============================================================================
 # Pure Effect Tests
@@ -119,7 +118,7 @@ class TestSafeLocalComposition:
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         original, is_err, after = result
-        
+
         assert original == "original"
         assert is_err is True
         assert after == "original"  # Environment restored
@@ -145,7 +144,7 @@ class TestSafeLocalComposition:
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         original, inner_result, after = result
-        
+
         assert original == "original"
         assert inner_result == "modified"
         assert after == "original"  # Environment restored
@@ -175,7 +174,7 @@ class TestSafePutComposition:
             return (result.is_err(), counter)
 
         is_err, counter = await runtime.run_and_unwrap(program())
-        
+
         assert is_err is True
         assert counter == 1  # State persisted despite error
 
@@ -202,7 +201,7 @@ class TestSafePutComposition:
             return (result.is_err(), a, b, c)
 
         is_err, a, b, c = await runtime.run_and_unwrap(program())
-        
+
         assert is_err is True
         assert (a, b, c) == (1, 2, 3)  # All state changes persisted
 
@@ -227,7 +226,7 @@ class TestNestedSafe:
             return result
 
         result = await runtime.run_and_unwrap(program())
-        
+
         # Outer Safe sees successful completion (Err value from inner)
         assert result.is_ok()
         # Inner Safe caught the error
@@ -252,7 +251,7 @@ class TestNestedSafe:
             return result
 
         result = await runtime.run_and_unwrap(program())
-        
+
         # Level 1 (outermost): Ok
         assert result.is_ok()
         # Level 2: Ok
@@ -279,7 +278,7 @@ class TestNestedSafe:
             return result
 
         result = await runtime.run_and_unwrap(program())
-        
+
         # Both levels see success
         assert result.is_ok()
         inner_result = result.value
@@ -425,7 +424,6 @@ class TestInterceptGatherScope:
 
         def track_intercept(e):
             intercepted_effects.append(type(e).__name__)
-            return None  # Passthrough
 
         @do
         def child():
@@ -437,7 +435,7 @@ class TestInterceptGatherScope:
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
-        
+
         assert result == ["original", "original"]
         # Children's AskEffects ARE intercepted (InterceptFrame is on continuation stack)
         assert "AskEffect" in intercepted_effects
@@ -482,7 +480,6 @@ class TestInterceptGatherScope:
         def track_gather(e):
             if isinstance(e, GatherEffect):
                 gather_intercepted.append(True)
-            return None  # Always passthrough
 
         @do
         def child():
@@ -617,10 +614,10 @@ class TestCombinedComposition:
             return (result, stored, outer_key)
 
         result, stored, outer_key = await runtime.run_and_unwrap(
-            program(), 
+            program(),
             env={"key": "original"}
         )
-        
+
         assert result.is_ok()
         assert result.value == "intercepted"  # Intercept worked
         assert stored == "intercepted"  # State persisted
@@ -649,7 +646,7 @@ class TestCombinedComposition:
             return results
 
         results = await runtime.run_and_unwrap(program())
-        
+
         assert len(results) == 3
         assert results[0].is_ok()
         assert results[0].value == "success"

@@ -18,10 +18,9 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 import random
 import time
 
-from doeff import do
-
 from doeff_flow import run_workflow
 
+from doeff import do
 
 # =============================================================================
 # Data Pipeline Stages
@@ -120,7 +119,7 @@ def etl_pipeline(source: str, destination: str):
     4. Aggregate - Calculate statistics
     """
     print(f"\n{'=' * 60}")
-    print(f"Starting ETL Pipeline")
+    print("Starting ETL Pipeline")
     print(f"  Source: {source}")
     print(f"  Destination: {destination}")
     print(f"{'=' * 60}\n")
@@ -138,7 +137,7 @@ def etl_pipeline(source: str, destination: str):
     stats = yield aggregate_stats(transformed_data)
 
     print(f"\n{'=' * 60}")
-    print(f"Pipeline Complete!")
+    print("Pipeline Complete!")
     print(f"  Records processed: {loaded_count}")
     print(f"  Statistics: {stats}")
     print(f"{'=' * 60}\n")

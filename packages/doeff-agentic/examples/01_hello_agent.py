@@ -10,14 +10,14 @@ Run:
     uv run python examples/01_hello_agent.py
 """
 
-from doeff import do
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
 
 
 @do
@@ -45,17 +45,23 @@ def hello_agent():
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
+    from doeff import AsyncRuntime
 
-    print("Starting hello_agent workflow...")
-    print("This will launch an OpenCode agent session.")
-    print()
+    async def main():
+        print("Starting hello_agent workflow...")
+        print("This will launch an OpenCode agent session.")
+        print()
 
-    handlers = opencode_handler()
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-    try:
-        result = run_sync(hello_agent(), handlers=handlers)
-        print("\n=== Agent Output ===")
-        print(result[:500] if len(result) > 500 else result)
-    except Exception as e:
-        print(f"Error: {e}")
+        try:
+            result = await runtime.run(hello_agent())
+            print("\n=== Agent Output ===")
+            output = result.value
+            print(output[:500] if len(output) > 500 else output)
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

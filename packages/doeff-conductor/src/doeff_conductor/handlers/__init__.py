@@ -18,20 +18,21 @@ Testing utilities:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
-from .worktree_handler import WorktreeHandler
-from .issue_handler import IssueHandler
 from .agent_handler import AgentHandler
 from .git_handler import GitHandler
+from .issue_handler import IssueHandler
 from .utils import (
-    make_scheduled_handler,
-    make_scheduled_handler_with_store,
+    default_scheduled_handlers,
     make_async_scheduled_handler,
     make_blocking_scheduled_handler,
     make_blocking_scheduled_handler_with_store,
-    default_scheduled_handlers,
+    make_scheduled_handler,
+    make_scheduled_handler_with_store,
 )
+from .worktree_handler import WorktreeHandler
 
 if TYPE_CHECKING:
     from doeff.cesk.runtime_result import RuntimeResult
@@ -39,11 +40,11 @@ if TYPE_CHECKING:
 
 
 def run_sync(
-    program: "Program[Any]",
+    program: Program[Any],
     scheduled_handlers: dict[type, Callable[..., Any]] | None = None,
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
-) -> "RuntimeResult[Any]":
+) -> RuntimeResult[Any]:
     """Run a program synchronously with custom handlers.
 
     This function provides backwards compatibility with the old doeff.cesk.run_sync()
@@ -70,18 +71,18 @@ def run_sync(
 
 
 __all__ = [
-    # Handlers
-    "WorktreeHandler",
-    "IssueHandler",
     "AgentHandler",
     "GitHandler",
-    # Utilities
-    "make_scheduled_handler",
-    "make_scheduled_handler_with_store",
+    "IssueHandler",
+    # Handlers
+    "WorktreeHandler",
+    "default_scheduled_handlers",
     "make_async_scheduled_handler",
     "make_blocking_scheduled_handler",
     "make_blocking_scheduled_handler_with_store",
-    "default_scheduled_handlers",
+    # Utilities
+    "make_scheduled_handler",
+    "make_scheduled_handler_with_store",
     # Testing utility
     "run_sync",
 ]

@@ -6,7 +6,8 @@ This module contains the common imports used across all effect modules.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from doeff.types import Effect, EffectBase, _intercept_value
 from doeff.utils import create_effect_with_trace

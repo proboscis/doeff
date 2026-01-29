@@ -17,7 +17,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-
 # =============================================================================
 # Enums
 # =============================================================================
@@ -318,18 +317,18 @@ class WorkflowHandle:
 
 
 __all__ = [
-    # Enums
-    "IssueStatus",
-    "WorkflowStatus",
-    "MergeStrategy",
-    # Issue types
-    "Issue",
-    # Environment types
-    "WorktreeEnv",
     # Agent types
     "AgentRef",
+    # Issue types
+    "Issue",
+    # Enums
+    "IssueStatus",
+    "MergeStrategy",
     # Git types
     "PRHandle",
     # Workflow types
     "WorkflowHandle",
+    "WorkflowStatus",
+    # Environment types
+    "WorktreeEnv",
 ]

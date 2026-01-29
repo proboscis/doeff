@@ -1,8 +1,8 @@
 """Streaming response handlers with observability."""
 
 import time
-from collections.abc import AsyncIterator
-from typing import Any, Callable
+from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 from openai.types.chat import ChatCompletionChunk
 

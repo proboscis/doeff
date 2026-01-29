@@ -14,9 +14,10 @@ Migration from old API:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff.cesk.frames import ContinueValue, ContinueError, FrameResult
+from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult
 
 if TYPE_CHECKING:
     from doeff.cesk.state import TaskState
@@ -39,7 +40,7 @@ StoreAwareHandler = Callable[[Any, dict[str, Any], "Store"], tuple[Any, "Store"]
 
 def make_cesk_handler(
     handler: SimpleHandler,
-) -> Callable[..., "FrameResult"]:
+) -> Callable[..., FrameResult]:
     """Wrap a simple sync handler for the CESK runtime.
 
     USE FOR: Fast, deterministic operations that complete instantly.
@@ -56,10 +57,10 @@ def make_cesk_handler(
     """
 
     def cesk_handler(
-        effect: "EffectBase",
-        task_state: "TaskState",
-        store: "Store",
-    ) -> "FrameResult":
+        effect: EffectBase,
+        task_state: TaskState,
+        store: Store,
+    ) -> FrameResult:
         try:
             result = handler(effect)
             return ContinueValue(
@@ -81,7 +82,7 @@ def make_cesk_handler(
 
 def make_cesk_handler_with_store(
     handler: StoreAwareHandler,
-) -> Callable[..., "FrameResult"]:
+) -> Callable[..., FrameResult]:
     """Wrap a store-aware sync handler for the CESK runtime.
 
     USE FOR: Operations that need to track state in store.
@@ -96,10 +97,10 @@ def make_cesk_handler_with_store(
     """
 
     def cesk_handler(
-        effect: "EffectBase",
-        task_state: "TaskState",
-        store: "Store",
-    ) -> "FrameResult":
+        effect: EffectBase,
+        task_state: TaskState,
+        store: Store,
+    ) -> FrameResult:
         try:
             value, new_store = handler(effect, dict(task_state.env), store)
             return ContinueValue(
@@ -130,7 +131,7 @@ make_blocking_scheduled_handler_with_store = make_cesk_handler_with_store
 
 def make_async_scheduled_handler(
     handler: Callable[[Any], Any],
-) -> Callable[..., "FrameResult"]:
+) -> Callable[..., FrameResult]:
     """Wrap an async handler for the CESK runtime.
 
     DEPRECATED: In the new CESK architecture, async operations should be
@@ -159,11 +160,11 @@ def make_async_scheduled_handler(
 
 
 def default_scheduled_handlers(
-    worktree_handler: "WorktreeHandler | None" = None,
-    issue_handler: "IssueHandler | None" = None,
-    agent_handler: "AgentHandler | None" = None,
-    git_handler: "GitHandler | None" = None,
-) -> dict[type, Callable[..., "FrameResult"]]:
+    worktree_handler: WorktreeHandler | None = None,
+    issue_handler: IssueHandler | None = None,
+    agent_handler: AgentHandler | None = None,
+    git_handler: GitHandler | None = None,
+) -> dict[type, Callable[..., FrameResult]]:
     """Build a complete handler map for all conductor effects.
 
     Creates CESK-compatible handlers for all conductor effects.
@@ -184,11 +185,6 @@ def default_scheduled_handlers(
         runtime = AsyncRuntime(handlers=handlers)
         result = await runtime.run(workflow_program())
     """
-    from .agent_handler import AgentHandler
-    from .git_handler import GitHandler
-    from .issue_handler import IssueHandler
-    from .worktree_handler import WorktreeHandler
-
     # Import effect types
     from ..effects.agent import (
         CaptureOutput,
@@ -200,6 +196,10 @@ def default_scheduled_handlers(
     from ..effects.git import Commit, CreatePR, MergePR, Push
     from ..effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
     from ..effects.worktree import CreateWorktree, DeleteWorktree, MergeBranches
+    from .agent_handler import AgentHandler
+    from .git_handler import GitHandler
+    from .issue_handler import IssueHandler
+    from .worktree_handler import WorktreeHandler
 
     # Create default handlers if not provided
     wt = worktree_handler or WorktreeHandler()
@@ -235,15 +235,15 @@ def default_scheduled_handlers(
 
 
 __all__ = [
+    # Default handler factory
+    "default_scheduled_handlers",
+    "make_async_scheduled_handler",  # Deprecated
+    "make_blocking_scheduled_handler",
+    "make_blocking_scheduled_handler_with_store",
     # New CESK-compatible handlers
     "make_cesk_handler",
     "make_cesk_handler_with_store",
     # Backwards compatibility aliases
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
-    "make_async_scheduled_handler",  # Deprecated
-    "make_blocking_scheduled_handler",
-    "make_blocking_scheduled_handler_with_store",
-    # Default handler factory
-    "default_scheduled_handlers",
 ]

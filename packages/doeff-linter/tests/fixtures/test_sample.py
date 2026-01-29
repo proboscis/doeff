@@ -2,7 +2,6 @@
 
 import os
 from dataclasses import dataclass
-from typing import Tuple
 
 
 # DOEFF001: Builtin shadowing
@@ -34,7 +33,7 @@ class Config:
 
 
 # DOEFF006: No tuple returns
-def get_user_info() -> Tuple[str, int]:  # Should trigger DOEFF006
+def get_user_info() -> tuple[str, int]:  # Should trigger DOEFF006
     return ("Alice", 25)
 
 

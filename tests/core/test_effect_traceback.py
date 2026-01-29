@@ -10,10 +10,11 @@ ISSUE-CORE-429: Tests for the abstract traceback protocol and its implementation
 
 import json
 import time
-import pytest
 from typing import Any
 
-from doeff._vendor import Err, Ok, Some, NOTHING, Maybe
+import pytest
+
+from doeff._vendor import NOTHING, Err, Maybe, Some
 from doeff.traceback import EffectTraceback, PythonTraceback, capture_python_traceback
 
 try:
@@ -34,7 +35,7 @@ class TestEffectTracebackProtocol:
     def test_captured_traceback_is_effect_traceback(self):
         """CapturedTraceback should be an instance of EffectTraceback protocol."""
         from doeff.cesk_traceback import CapturedTraceback, CodeLocation, EffectFrame
-        
+
         tb = CapturedTraceback(
             effect_frames=(
                 EffectFrame(
@@ -146,13 +147,13 @@ class TestPythonTraceback:
         ex = ValueError("dict test")
         tb = PythonTraceback(exception=ex)
         d = tb.to_dict()
-        
+
         assert d["version"] == "1.0"
         assert d["type"] == "python"
         assert "frames" in d
         assert "exception" in d
         assert "metadata" in d
-        
+
         assert d["exception"]["type"] == "ValueError"
         assert d["exception"]["message"] == "dict test"
         assert d["metadata"]["interpreter"] == "program_interpreter"
@@ -217,7 +218,7 @@ class TestCapturedTracebackEffectTracebackMethods:
     def _create_captured_traceback(self, exception: BaseException) -> Any:
         """Helper to create a CapturedTraceback."""
         from doeff.cesk_traceback import CapturedTraceback, CodeLocation, EffectFrame, PythonFrame
-        
+
         return CapturedTraceback(
             effect_frames=(
                 EffectFrame(
@@ -300,7 +301,7 @@ class TestCapturedTracebackEffectTracebackMethods:
         """to_dict() follows expected schema."""
         tb = self._create_captured_traceback(ValueError("schema test"))
         d = tb.to_dict()
-        
+
         assert d["version"] == "1.0"
         assert "effect_frames" in d
         assert "python_frames" in d
@@ -327,14 +328,14 @@ class TestErrWithCapturedTraceback:
         ex = ValueError("test")
         tb = PythonTraceback(exception=ex)
         err = Err(ex, captured_traceback=Some(tb))
-        
+
         assert err.captured_traceback.is_some()
         assert err.captured_traceback.unwrap() is tb
 
     def test_err_with_captured_traceback(self):
         """Err can store CapturedTraceback in captured_traceback."""
         from doeff.cesk_traceback import CapturedTraceback, CodeLocation, EffectFrame
-        
+
         ex = ValueError("test")
         tb = CapturedTraceback(
             effect_frames=(
@@ -350,7 +351,7 @@ class TestErrWithCapturedTraceback:
             exception=ex,
         )
         err = Err(ex, captured_traceback=Some(tb))
-        
+
         assert err.captured_traceback.is_some()
         assert err.captured_traceback.unwrap() is tb
 
@@ -370,7 +371,7 @@ class TestErrWithCapturedTraceback:
         ex = ValueError("pattern test")
         tb = PythonTraceback(exception=ex)
         err = Err(ex, captured_traceback=Some(tb))
-        
+
         match err:
             case Err(error=e, captured_traceback=Some(trace)):
                 assert isinstance(e, ValueError)
@@ -381,7 +382,7 @@ class TestErrWithCapturedTraceback:
     def test_err_pattern_matching_without_traceback(self):
         """Err without traceback can be pattern matched."""
         err = Err(ValueError("no trace"))
-        
+
         match err:
             case Err(error=e, captured_traceback=tb) if tb.is_none():
                 assert isinstance(e, ValueError)
@@ -410,7 +411,7 @@ class TestMaybeWithEffectTraceback:
         """Maybe.map works with EffectTraceback."""
         tb = PythonTraceback(exception=ValueError("map test"))
         maybe_tb: Maybe[EffectTraceback] = Some(tb)
-        
+
         result = maybe_tb.map(lambda t: t.format_short())
         assert result.is_some()
         assert "ValueError" in result.unwrap()
@@ -428,7 +429,7 @@ class TestTracebackInteroperability:
     def test_both_satisfy_protocol(self):
         """Both PythonTraceback and CapturedTraceback satisfy EffectTraceback."""
         from doeff.cesk_traceback import CapturedTraceback, CodeLocation, EffectFrame
-        
+
         py_tb = PythonTraceback(exception=ValueError("py"))
         cesk_tb = CapturedTraceback(
             effect_frames=(
@@ -443,17 +444,17 @@ class TestTracebackInteroperability:
             exception_args=("cesk",),
             exception=ValueError("cesk"),
         )
-        
+
         assert isinstance(py_tb, EffectTraceback)
         assert isinstance(cesk_tb, EffectTraceback)
 
     def test_generic_function_accepts_both(self):
         """A function typed for EffectTraceback accepts both implementations."""
         from doeff.cesk_traceback import CapturedTraceback, CodeLocation, EffectFrame
-        
+
         def format_any_traceback(tb: EffectTraceback) -> str:
             return tb.format_short()
-        
+
         py_tb = PythonTraceback(exception=ValueError("py"))
         cesk_tb = CapturedTraceback(
             effect_frames=(
@@ -468,17 +469,17 @@ class TestTracebackInteroperability:
             exception_args=("cesk",),
             exception=ValueError("cesk"),
         )
-        
+
         py_result = format_any_traceback(py_tb)
         cesk_result = format_any_traceback(cesk_tb)
-        
+
         assert "ValueError" in py_result
         assert "ValueError" in cesk_result
 
     def test_err_accepts_both_traceback_types(self):
         """Err.captured_traceback accepts both PythonTraceback and CapturedTraceback."""
         from doeff.cesk_traceback import CapturedTraceback, CodeLocation, EffectFrame
-        
+
         py_tb = PythonTraceback(exception=ValueError("py"))
         cesk_tb = CapturedTraceback(
             effect_frames=(
@@ -493,9 +494,9 @@ class TestTracebackInteroperability:
             exception_args=("cesk",),
             exception=ValueError("cesk"),
         )
-        
+
         err_py = Err(ValueError("py"), captured_traceback=Some(py_tb))
         err_cesk = Err(ValueError("cesk"), captured_traceback=Some(cesk_tb))
-        
+
         assert err_py.captured_traceback.unwrap().format_short()
         assert err_cesk.captured_traceback.unwrap().format_short()

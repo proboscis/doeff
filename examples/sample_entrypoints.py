@@ -8,10 +8,10 @@ Run with: uv run doeff run --program examples.sample_entrypoints.hello_world_pro
 
 from pathlib import Path
 from typing import Protocol, runtime_checkable
-from doeff import do, Program, EffectGenerator
+
+from doeff import EffectGenerator, Program, do
 from doeff.effects import ask, gather
 from doeff.effects.log import slog
-
 
 # ============================================================
 # KLEISLI FUNCTIONS - Building blocks that create Programs

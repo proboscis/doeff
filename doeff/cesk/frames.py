@@ -17,10 +17,9 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 from doeff.cesk.types import Environment, Store, TaskId
 
 if TYPE_CHECKING:
+    from doeff.effects._program_types import ProgramLike
     from doeff.program import KleisliProgramCall, ProgramBase
     from doeff.types import Effect
-    from doeff.cesk.state import TaskState, Control
-    from doeff.effects._program_types import ProgramLike
 
 
 # ============================================
@@ -604,24 +603,24 @@ Kontinuation: TypeAlias = list[
 
 
 __all__ = [
+    "AskLazyFrame",
+    "ContinueError",
+    "ContinueGenerator",
+    "ContinueProgram",
+    "ContinueValue",
     # Protocol
     "Frame",
     # Result types
     "FrameResult",
-    "ContinueValue",
-    "ContinueError",
-    "ContinueProgram",
-    "ContinueGenerator",
-    # Frame types
-    "ReturnFrame",
-    "LocalFrame",
-    "InterceptFrame",
-    "ListenFrame",
     "GatherFrame",
-    "SafeFrame",
-    "RaceFrame",
     "GraphCaptureFrame",
-    "AskLazyFrame",
+    "InterceptFrame",
     # Kontinuation
     "Kontinuation",
+    "ListenFrame",
+    "LocalFrame",
+    "RaceFrame",
+    # Frame types
+    "ReturnFrame",
+    "SafeFrame",
 ]

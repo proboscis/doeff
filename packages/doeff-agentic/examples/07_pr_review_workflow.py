@@ -16,9 +16,6 @@ Run:
 
 import time
 
-from doeff import do
-from doeff.effects.writer import slog
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticEndOfEvents,
@@ -29,6 +26,9 @@ from doeff_agentic import (
     AgenticTimeoutError,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
+from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -205,49 +205,53 @@ def pr_review_workflow(pr_url: str, require_approval: bool = False):
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
     import sys
 
-    # Use a sample PR URL or accept from command line
-    pr_url = sys.argv[1] if len(sys.argv) > 1 else "https://github.com/example/repo/pull/123"
-    require_approval = "--approve" in sys.argv
+    from doeff import AsyncRuntime
 
-    print("=" * 60)
-    print("PR REVIEW WORKFLOW")
-    print("=" * 60)
-    print(f"PR URL: {pr_url}")
-    print(f"Require approval: {require_approval}")
-    print()
+    async def main():
+        # Use a sample PR URL or accept from command line
+        pr_url = sys.argv[1] if len(sys.argv) > 1 else "https://github.com/example/repo/pull/123"
+        require_approval = "--approve" in sys.argv
 
-    handlers = opencode_handler()
-
-    try:
-        result = run_sync(
-            pr_review_workflow(pr_url, require_approval),
-            handlers=handlers,
-        )
-
-        print("\n" + "=" * 60)
-        print("WORKFLOW RESULT")
         print("=" * 60)
-        print(f"Status: {result['status']}")
+        print("PR REVIEW WORKFLOW")
+        print("=" * 60)
+        print(f"PR URL: {pr_url}")
+        print(f"Require approval: {require_approval}")
         print()
 
-        print("Review:")
-        print("-" * 40)
-        print(result["review"][:500])
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-        if result["fixes"]:
+        try:
+            result = await runtime.run(pr_review_workflow(pr_url, require_approval))
+            output = result.value
+
+            print("\n" + "=" * 60)
+            print("WORKFLOW RESULT")
+            print("=" * 60)
+            print(f"Status: {output['status']}")
             print()
-            print("Fixes:")
+
+            print("Review:")
             print("-" * 40)
-            print(result["fixes"][:500])
+            print(output["review"][:500])
 
-        if "human_decision" in result:
-            print()
-            print(f"Human Decision: {result['human_decision']}")
+            if output["fixes"]:
+                print()
+                print("Fixes:")
+                print("-" * 40)
+                print(output["fixes"][:500])
 
-    except KeyboardInterrupt:
-        print("\nWorkflow interrupted")
-    except Exception as e:
-        print(f"Error: {e}")
+            if "human_decision" in output:
+                print()
+                print(f"Human Decision: {output['human_decision']}")
+
+        except KeyboardInterrupt:
+            print("\nWorkflow interrupted")
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

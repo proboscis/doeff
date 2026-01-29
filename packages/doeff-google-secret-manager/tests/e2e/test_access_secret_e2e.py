@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import os
-
-import pytest
-
 import sys
 from pathlib import Path
+
+import pytest
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import SyncRuntime, do
 from doeff_google_secret_manager import access_secret
+
+from doeff import SyncRuntime, do
 
 ENV_ENABLE = "SECRET_MANAGER_RUN_E2E"
 ENV_PROJECT = "SECRET_MANAGER_TEST_PROJECT"

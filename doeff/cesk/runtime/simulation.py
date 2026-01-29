@@ -5,15 +5,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from doeff._vendor import FrozenDict
-from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
-from doeff.cesk.state import CESKState
-from doeff.cesk.result import Done, Failed, Suspended
-from doeff.cesk.step import step
-from doeff.cesk.handlers import Handler
-from doeff.cesk.frames import ContinueValue, ContinueError
 from doeff.cesk.errors import UnhandledEffectError
+from doeff.cesk.frames import ContinueError, ContinueValue
+from doeff.cesk.handlers import Handler
+from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
+from doeff.cesk.state import CESKState
+from doeff.cesk.step import step
 from doeff.effects.time import DelayEffect, WaitUntilEffect
 
 if TYPE_CHECKING:
@@ -70,9 +69,9 @@ class SimulationRuntime(BaseRuntime):
         """
         initial_store = store if store is not None else {}
         initial_store = {**initial_store, "__current_time__": self._current_time}
-        
+
         state = self._create_initial_state(program, env, initial_store)
-        
+
         try:
             value, final_state, final_store = self._step_until_done_simulation(state)
             return self._build_success_result(value, final_state, final_store)
@@ -123,10 +122,10 @@ class SimulationRuntime(BaseRuntime):
         """
         while True:
             result = step(state, self._handlers)
-            
+
             if isinstance(result, Done):
                 return (result.value, state, result.store)
-            
+
             if isinstance(result, Failed):
                 exc = result.exception
                 captured_tb = result.captured_traceback
@@ -137,29 +136,28 @@ class SimulationRuntime(BaseRuntime):
                     final_state=state,
                     captured_traceback=captured_tb,
                 )
-            
+
             if isinstance(result, CESKState):
                 state = result
                 continue
-            
+
             if isinstance(result, Suspended):
                 main_task = state.tasks[state.main_task]
                 effect = result.effect
                 effect_type = type(effect)
-                
+
                 if isinstance(effect, DelayEffect):
                     self._current_time = self._current_time + timedelta(seconds=effect.seconds)
                     new_store = {**state.store, "__current_time__": self._current_time}
                     state = result.resume(None, new_store)
                     continue
-                    
+
                 if isinstance(effect, WaitUntilEffect):
-                    if effect.target_time > self._current_time:
-                        self._current_time = effect.target_time
+                    self._current_time = max(effect.target_time, self._current_time)
                     new_store = {**state.store, "__current_time__": self._current_time}
                     state = result.resume(None, new_store)
                     continue
-                
+
                 handler = self._handlers.get(effect_type)
                 if handler is not None:
                     try:
@@ -167,7 +165,7 @@ class SimulationRuntime(BaseRuntime):
                     except Exception as ex:
                         state = result.resume_error(ex)
                         continue
-                    
+
                     if isinstance(frame_result, ContinueValue):
                         state = result.resume(frame_result.value, frame_result.store)
                     elif isinstance(frame_result, ContinueError):
@@ -177,12 +175,12 @@ class SimulationRuntime(BaseRuntime):
                             RuntimeError(f"Unexpected FrameResult: {type(frame_result)}")
                         )
                     continue
-                
+
                 state = result.resume_error(
                     UnhandledEffectError(f"No handler for {effect_type.__name__}")
                 )
                 continue
-            
+
             raise RuntimeError(f"Unexpected step result: {type(result)}")
 
 

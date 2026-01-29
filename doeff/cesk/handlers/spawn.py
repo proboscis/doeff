@@ -11,16 +11,14 @@ Design Decisions:
 
 from __future__ import annotations
 
-from doeff.cesk.frames import ContinueValue, FrameResult
+from doeff.cesk.frames import FrameResult
 from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store, SpawnId
+from doeff.cesk.types import Store
 from doeff.effects.spawn import (
     SpawnEffect,
-    TaskJoinEffect,
     TaskCancelEffect,
     TaskIsDoneEffect,
-    Task,
-    TaskCancelledError,
+    TaskJoinEffect,
 )
 
 
@@ -99,7 +97,7 @@ def handle_task_is_done(
 
 __all__ = [
     "handle_spawn",
-    "handle_task_join",
     "handle_task_cancel",
     "handle_task_is_done",
+    "handle_task_join",
 ]

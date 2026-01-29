@@ -8,7 +8,7 @@ import shlex
 import subprocess
 import sys
 from collections import OrderedDict
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 DEFAULT_VERSIONS: tuple[str, ...] = ("3.10", "3.11", "3.12")
 DEFAULT_COMMAND: Sequence[str] = (

@@ -11,9 +11,6 @@ Run:
     uv run python examples/03_sequential_agents.py
 """
 
-from doeff import do
-from doeff.effects.writer import slog
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
@@ -21,6 +18,9 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
+from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -65,20 +65,26 @@ def research_and_summarize(topic: str):
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
+    from doeff import AsyncRuntime
 
-    topic = "functional programming"
+    async def main():
+        topic = "functional programming"
 
-    print(f"Starting research workflow for: {topic}")
-    print()
+        print(f"Starting research workflow for: {topic}")
+        print()
 
-    handlers = opencode_handler()
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-    try:
-        result = run_sync(research_and_summarize(topic), handlers=handlers)
-        print("\n=== Research ===")
-        print(result["research"][:500])
-        print("\n=== Summary ===")
-        print(result["summary"][:500])
-    except Exception as e:
-        print(f"Error: {e}")
+        try:
+            result = await runtime.run(research_and_summarize(topic))
+            output = result.value
+            print("\n=== Research ===")
+            print(output["research"][:500])
+            print("\n=== Summary ===")
+            print(output["summary"][:500])
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

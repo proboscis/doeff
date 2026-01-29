@@ -16,7 +16,7 @@ from ..exceptions import IssueNotFoundError
 
 if TYPE_CHECKING:
     from ..effects.issue import CreateIssue, GetIssue, ListIssues, ResolveIssue
-    from ..types import Issue, IssueStatus
+    from ..types import Issue
 
 
 def _get_issues_dir() -> Path:
