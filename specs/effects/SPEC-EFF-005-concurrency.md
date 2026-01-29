@@ -1,19 +1,448 @@
 # SPEC-EFF-005: Concurrency Effects
 
-## Status: Implemented
+## Status: Draft (Redesign)
 
 ## Summary
 
-This specification defines the semantics for concurrency effects in doeff: `Gather`, `Await`, `Spawn`, and `Task`. These effects enable parallel and asynchronous program execution within the effect system.
+This specification defines the semantics for concurrency effects in doeff. The design separates **computation initiation** (`Spawn`) from **result retrieval** (`Wait`, `Race`, `Gather`), enabling flexible composition of concurrent workflows.
+
+## Design Philosophy
+
+### Separation of Concerns
+
+The key insight driving this design is that concurrent programming has two distinct operations:
+
+1. **Starting computation**: Launch work that runs independently
+2. **Waiting for results**: Retrieve the outcome when needed
+
+Previous designs conflated these operations. For example, `Gather(prog1, prog2)` both started AND waited. This limits flexibility:
+
+```python
+# OLD: Cannot do work between starting and collecting
+results = yield Gather(prog1(), prog2())  # Blocks immediately
+
+# NEW: Full control over timing
+t1 = yield Spawn(prog1())
+t2 = yield Spawn(prog2())
+# ... do other work while t1, t2 run in background ...
+results = yield Gather(t1, t2)  # Wait when ready
+```
+
+### Type Hierarchy
+
+```
+Future[T]          # Read-side handle: can be Waited, Raced, Gathered
+├── Task[T]        # From Spawn: adds cancel(), is_done()
+
+Promise[T]         # Write-side handle (handler internal): complete(value)
+                   # promise.future -> Future[T]
+
+RaceResult[T]      # Result of Race effect
+├── first: Future[T]           # Winner
+├── value: T                   # Winner's value
+└── rest: tuple[Future[T], ...]  # Losers
+```
+
+**Why separate Future and Promise?**
+- `Future` is the **read-side**: consumers wait for results
+- `Promise` is the **write-side**: handlers resolve values
+- This prevents consumer code from accidentally completing a future
+- `Task` extends `Future` with lifecycle control (cancellation, status checks)
+
+---
 
 ## Effects Overview
 
-| Effect | Purpose | Status |
-|--------|---------|--------|
-| `Gather` | Execute multiple programs in parallel, collect results | Implemented |
-| `Await` | Await an external coroutine/future | Implemented |
-| `Spawn` | Spawn a background task, return Task handle | Implemented |
-| `Task.join()` | Wait for spawned task to complete | Implemented |
+| Effect | Takes | Returns | Purpose |
+|--------|-------|---------|---------|
+| `Spawn` | `Program[T]` | `Task[T]` | Start computation, get handle |
+| `Wait` | `Future[T]` | `T` | Block until single future completes |
+| `Race` | `*Future[T]` | `RaceResult[T]` | Wait for first completion |
+| `Gather` | `*Future[T]` | `list[T]` | Wait for all completions |
+| `Await` | `Coroutine[T]` | `T` | Bridge to Python asyncio |
+
+---
+
+## Future[T] Protocol
+
+### Definition
+
+```python
+from typing import Protocol, TypeVar, Generic
+
+T = TypeVar('T', covariant=True)
+
+class Future(Protocol[T]):
+    """Read-side handle for a computation that will produce a value."""
+    pass  # Marker protocol - operations via effects
+```
+
+`Future` is intentionally minimal. All operations on futures go through effects:
+
+- `yield Wait(future)` → get value
+- `yield Race(f1, f2, f3)` → race multiple
+- `yield Gather(f1, f2, f3)` → collect all
+
+### Why Not Methods?
+
+We avoid `future.get()` or `future.result()` because:
+1. **Effect tracking**: All blocking operations should be explicit effects
+2. **Handler flexibility**: Handlers can implement waiting differently
+3. **Testability**: Effects can be intercepted; direct method calls cannot
+
+---
+
+## Task[T] (extends Future[T])
+
+### Definition
+
+```python
+@dataclass(frozen=True)
+class Task(Generic[T]):
+    """Handle for a spawned computation. Extends Future with lifecycle control."""
+    _id: TaskId
+    _handle: Any  # Runtime-specific handle
+    
+    def cancel(self) -> "CancelEffect":
+        """Request cancellation. Returns effect to yield."""
+        return CancelEffect(self)
+    
+    def is_done(self) -> bool:
+        """Non-blocking check if task completed (success, error, or cancelled)."""
+        ...
+```
+
+### Lifecycle States
+
+```
+PENDING ──spawn──> RUNNING ──success──> COMPLETED
+                      │
+                      ├──error────> FAILED
+                      │
+                      └──cancel───> CANCELLED
+```
+
+### Cancel Semantics
+
+```python
+task = yield Spawn(long_running())
+
+# Request cancellation (non-blocking)
+yield task.cancel()
+
+# Wait for cancellation to take effect (raises TaskCancelledError)
+try:
+    result = yield Wait(task)
+except TaskCancelledError:
+    print("Task was cancelled")
+```
+
+**Important**: `cancel()` is cooperative. The task will be cancelled at its next yield point.
+
+---
+
+## Promise[T] (Handler Internal)
+
+### Definition
+
+```python
+@dataclass
+class Promise(Generic[T]):
+    """Write-side handle for completing a Future. Handler-internal only."""
+    _future: Future[T]
+    _completed: bool = False
+    _value: T | None = None
+    _error: Exception | None = None
+    
+    @property
+    def future(self) -> Future[T]:
+        """Get the read-side Future."""
+        return self._future
+    
+    def complete(self, value: T) -> None:
+        """Resolve the future with a value."""
+        if self._completed:
+            raise RuntimeError("Promise already completed")
+        self._value = value
+        self._completed = True
+    
+    def fail(self, error: Exception) -> None:
+        """Resolve the future with an error."""
+        if self._completed:
+            raise RuntimeError("Promise already completed")
+        self._error = error
+        self._completed = True
+```
+
+**Note**: `Promise` is not exposed to user code. Handlers use it internally to bridge effects to results.
+
+---
+
+## Spawn Effect
+
+### Definition
+
+```python
+@dataclass(frozen=True)
+class SpawnEffect(EffectBase):
+    """Spawn execution of a program and return a Task handle."""
+    program: ProgramLike
+    preferred_backend: SpawnBackend | None = None
+    options: dict[str, Any] = field(default_factory=dict)
+```
+
+### Semantics
+
+```python
+@do
+def example():
+    # Start computation, get handle immediately
+    task = yield Spawn(background_work())
+    
+    # Task runs in background while we continue
+    intermediate = yield do_other_work()
+    
+    # Wait for result when needed
+    result = yield Wait(task)
+    return (intermediate, result)
+```
+
+### Store Semantics
+
+**Isolated store, shared environment cache**
+
+| Resource | Behavior | Rationale |
+|----------|----------|-----------|
+| Store (Get/Put) | Snapshot at spawn (isolated) | Mutations shouldn't leak between tasks |
+| Env cache (Ask resolutions) | Shared across tasks | Read-only, expensive to recompute |
+
+**Store isolation**:
+- Child task gets a copy of the store when spawned
+- Child's modifications don't affect parent
+- Parent's later modifications don't affect child
+
+```python
+@do
+def example():
+    yield Put("counter", 0)
+    
+    @do
+    def increment():
+        c = yield Get("counter")
+        yield Put("counter", c + 1)
+        return c + 1
+    
+    task = yield Spawn(increment())
+    yield Put("counter", 100)  # Parent's change
+    
+    result = yield Wait(task)
+    # result == 1 (child saw counter=0)
+    
+    final = yield Get("counter")
+    # final == 100 (parent's value, not affected by child)
+```
+
+**Shared env cache**:
+- Environment (Ask effect) resolutions are cached
+- Cache is shared across parent and all spawned tasks
+- Avoids redundant dependency resolution in parallel workloads
+
+```python
+@do
+def example():
+    # First resolution - cache miss, computes value
+    db = yield Ask("database")
+    
+    @do
+    def child():
+        # Cache hit - reuses parent's resolved value
+        db = yield Ask("database")
+        return db.query("SELECT ...")
+    
+    # All children share the env cache
+    t1 = yield Spawn(child())
+    t2 = yield Spawn(child())
+    t3 = yield Spawn(child())
+    
+    results = yield Gather(t1, t2, t3)
+    # "database" resolved once, reused 4 times
+```
+
+**Rationale**: Store isolation prevents accidental mutation leaks. Shared env cache is safe (read-only) and efficient (no redundant lookups).
+
+### Error Handling
+
+Exceptions in spawned tasks are stored until `Wait`:
+
+```python
+@do
+def example():
+    @do
+    def failing():
+        raise ValueError("oops")
+    
+    task = yield Spawn(failing())
+    # No error yet - task runs in background
+    
+    yield do_other_work()  # This completes fine
+    
+    # Error surfaces here
+    result = yield Safe(Wait(task))
+    # result.is_err() == True
+    # result.error is ValueError("oops")
+```
+
+---
+
+## Wait Effect
+
+### Definition
+
+```python
+@dataclass(frozen=True)
+class WaitEffect(EffectBase):
+    """Wait for a Future to complete and return its value."""
+    future: Future[Any]
+```
+
+### Semantics
+
+```python
+@do
+def example():
+    task = yield Spawn(computation())
+    
+    # Block until task completes
+    result = yield Wait(task)
+    return result
+```
+
+### Error Propagation
+
+If the awaited future completed with an error, `Wait` raises that error:
+
+```python
+@do
+def example():
+    task = yield Spawn(failing_program())
+    
+    try:
+        result = yield Wait(task)
+    except ValueError as e:
+        # Error from failing_program propagates here
+        return f"Failed: {e}"
+```
+
+### Cancelled Tasks
+
+Waiting on a cancelled task raises `TaskCancelledError`:
+
+```python
+@do
+def example():
+    task = yield Spawn(long_running())
+    yield task.cancel()
+    
+    try:
+        result = yield Wait(task)
+    except TaskCancelledError:
+        return "Task was cancelled"
+```
+
+---
+
+## Race Effect
+
+### Definition
+
+```python
+@dataclass(frozen=True)
+class RaceEffect(EffectBase):
+    """Wait for the first Future to complete."""
+    futures: Tuple[Future[Any], ...]
+```
+
+### RaceResult Type
+
+```python
+@dataclass(frozen=True)
+class RaceResult(Generic[T]):
+    """Result of a Race effect."""
+    first: Future[T]              # The Future that completed first
+    value: T                      # The winner's result value
+    rest: tuple[Future[T], ...]   # Remaining Futures (losers)
+```
+
+### Semantics
+
+```python
+@do
+def example():
+    t1 = yield Spawn(fast_service())
+    t2 = yield Spawn(slow_service())
+    t3 = yield Spawn(medium_service())
+    
+    # Wait for first completion
+    result = yield Race(t1, t2, t3)
+    
+    # Access winner and value directly
+    print(f"Winner: {result.first}, Value: {result.value}")
+    
+    # Cancel losers - direct access via result.rest
+    for loser in result.rest:
+        yield loser.cancel()
+    
+    return result.value
+```
+
+### Return Value
+
+`Race` returns a `RaceResult[T]` with three fields:
+- `first`: The `Future` that completed first
+- `value`: The winner's result value
+- `rest`: Tuple of remaining futures (losers), ready for cancellation
+
+**Why this structure?**
+- Named fields are clearer than positional tuples
+- `rest` provides direct access to losers without manual filtering
+- Type-safe and self-documenting
+
+### Error Handling
+
+If the first future to complete is an error, that error propagates:
+
+```python
+@do
+def example():
+    t1 = yield Spawn(quick_failure())  # Fails fast
+    t2 = yield Spawn(slow_success())
+    
+    # quick_failure completes first (with error)
+    # Race raises that error
+    result = yield Race(t1, t2)  # Raises!
+```
+
+To handle errors gracefully, wrap individual programs in `Safe`:
+
+```python
+@do
+def example():
+    t1 = yield Spawn(Safe(quick_failure()))
+    t2 = yield Spawn(Safe(slow_success()))
+    
+    result = yield Race(t1, t2)
+    # result.value is Result[T], not T
+    # Can check result.value.is_ok() / result.value.is_err()
+```
+
+### Loser Semantics
+
+**Losers continue running unless explicitly cancelled.**
+
+This is intentional:
+- User may want to use loser results later
+- Automatic cancellation adds complexity and magic
+- Explicit cancellation is predictable
 
 ---
 
@@ -24,272 +453,8 @@ This specification defines the semantics for concurrency effects in doeff: `Gath
 ```python
 @dataclass(frozen=True)
 class GatherEffect(EffectBase):
-    """Executes all programs in parallel and yields their results as a list."""
-    programs: Tuple[ProgramLike, ...]
-```
-
-### Basic Semantics
-
-```python
-@do
-def example():
-    results = yield Gather(prog1(), prog2(), prog3())
-    # results is [result1, result2, result3] in program order
-```
-
-- **Result ordering**: Results are returned in the same order as programs were passed
-- **Empty Gather**: `Gather()` returns `[]` immediately
-- **Single program**: `Gather(prog)` returns `[result]`
-
-### Store Semantics
-
-**Current behavior: Single shared store with interleaved access**
-
-All parallel branches share the same store. The store is a single shared mutable structure - there is no "merge" step. Tasks interleave at effect boundaries.
-
-```python
-@do
-def example():
-    yield Put("counter", 0)
-    
-    @do
-    def increment():
-        current = yield Get("counter")
-        yield Put("counter", current + 1)
-        return current
-    
-    results = yield Gather(increment(), increment(), increment())
-    final = yield Get("counter")
-    # final == 3 (all increments accumulated)
-    # results order depends on scheduler interleaving
-```
-
-**Important**: `Get`/`Put` sequences are NOT atomic. For read-modify-write operations under concurrency, use `AtomicUpdate`:
-
-```python
-@do
-def safe_increment():
-    # SAFE: atomic read-modify-write
-    result = yield AtomicUpdate("counter", lambda x: x + 1)
-    return result
-
-# NOT SAFE: lost updates possible
-@do
-def unsafe_increment():
-    current = yield Get("counter")  # Other task might read same value
-    yield Put("counter", current + 1)  # Overwrites other task's increment
-    return current
-```
-
-**Rationale**: Shared store enables coordination between parallel tasks and accumulation of side effects (logs, state updates). Use `AtomicUpdate` for coordination.
-
-**Known issue**: [gh#157](https://github.com/CyberAgentAILab/doeff/issues/157) may affect async store snapshot behavior.
-
-**Alternative considered**: Isolated snapshots where each child gets a copy of the store at Gather time. This provides better isolation but prevents coordination between tasks.
-
-### Error Handling
-
-**Current behavior: First error fails Gather (fail-fast)**
-
-When any parallel program raises an exception, the Gather effect immediately fails with that exception. The exception propagates to the parent context.
-
-```python
-@do
-def example():
-    @do
-    def failing():
-        raise ValueError("failed")
-    
-    @do
-    def success():
-        return "ok"
-    
-    # First error encountered fails the entire Gather
-    result = yield Safe(Gather(success(), failing()))
-    # result.is_err() == True
-    # result.error is ValueError("failed")
-```
-
-**Semantics**:
-1. All programs start executing in parallel
-2. First exception encountered aborts the Gather from the parent's perspective
-3. **Orphan children behavior**: Other children may continue running after the parent resumes with error. They may continue to mutate the shared store and append to logs. This is a consequence of the cooperative scheduler - there is no preemptive cancellation.
-4. The failing program's exception is propagated to the parent
-
-**Warning**: Because orphan children can continue modifying shared store/log, error recovery code should be aware that the store may be in an intermediate state.
-
-**Open question**: Should other children be cancelled when one fails?
-- Current: No explicit cancellation. Other children run until they yield, and are not stepped further after parent resumes.
-- Recommendation: No preemptive cancellation for simplicity. If explicit cleanup is needed, use `Safe` around individual children.
-
-**Open question**: Which error if multiple fail "simultaneously"?
-- Current: First error detected by the scheduler wins
-- This is implementation-dependent and should not be relied upon
-
-### Environment Inheritance
-
-**Behavior: Children inherit parent environment**
-
-```python
-@do
-def example():
-    config = yield Ask("config")  # Get from parent env
-    
-    @do
-    def child():
-        # Same env is accessible
-        cfg = yield Ask("config")
-        return cfg
-    
-    results = yield Gather(child(), child())
-    # Each child sees the same "config" value
-```
-
-Children receive a copy of the parent's environment at Gather time. Environment is read-only (no `Local` equivalent that propagates up).
-
-### Gather + Local
-
-**Behavior: Local changes are scoped to children**
-
-```python
-@do
-def example():
-    @do
-    def child_with_local():
-        result = yield Local(
-            {"override": "value"},
-            inner_program()
-        )
-        return result
-    
-    results = yield Gather(
-        child_with_local(),
-        other_child()  # Does not see "override"
-    )
-```
-
-Each child's `Local` scope is independent. Local environment changes do not leak between parallel branches.
-
-### Gather + Listen
-
-**Behavior: All logs from all children are captured**
-
-```python
-@do
-def example():
-    @do
-    def logging_child(name: str):
-        yield Log(f"Hello from {name}")
-        return name
-    
-    result = yield Listen(
-        Gather(
-            logging_child("A"),
-            logging_child("B")
-        )
-    )
-    # result.value == ["A", "B"]
-    # result.log contains both log messages (order depends on execution)
-```
-
-Log entries from all parallel branches are collected. The order of log entries may not match program order (depends on actual execution timing).
-
-### Gather + Safe
-
-**Behavior: First error is wrapped in Result**
-
-```python
-@do
-def example():
-    result = yield Safe(Gather(prog1(), failing_prog(), prog3()))
-    # result.is_err() == True
-    # result.error contains the exception from failing_prog
-```
-
-Safe wraps the entire Gather. If any child fails, the error is captured as `Err(exception)`.
-
-### Gather + Intercept
-
-**Behavior: Intercept DOES apply to Gather children via structural rewriting**
-
-When `program.intercept(transform)` is called, the transform is applied recursively to nested Programs within effect payloads, including Gather children. This happens at program construction time (structural rewriting), not at runtime.
-
-```python
-@do
-def example():
-    def transform(effect):
-        if isinstance(effect, AskEffect):
-            return Pure("intercepted")
-        return None
-    
-    @do
-    def child():
-        value = yield Ask("key")
-        return value
-    
-    # Intercept applies to children via structural rewriting
-    result = yield Gather(child(), child()).intercept(transform)
-    # Children's Ask effects ARE intercepted
-    # result == ["intercepted", "intercepted"]
-```
-
-**Mechanism**: The `.intercept(transform)` method on `ProgramBase` recursively rewrites nested Programs in effect payloads. For `GatherEffect`, this means each child program has the transform applied before execution.
-
-**Note on GatherEffect itself**: The `GatherEffect` is consumed directly by the runtime handler and is NOT passed through the InterceptFrame. Only effects yielded *within* the children are intercepted.
-
-```python
-intercepted_effects = []
-
-def track(e):
-    intercepted_effects.append(type(e).__name__)
-    return None  # Passthrough
-
-result = yield Gather(child(), child()).intercept(track)
-# intercepted_effects contains "AskEffect" (from children)
-# intercepted_effects does NOT contain "GatherEffect"
-```
-
-**See also**: SPEC-EFF-004 (Intercept Semantics), SPEC-EFF-100 (Law 6: Intercept Transformation Law)
-
-### Nested Gather
-
-**Behavior: Full parallelism at all levels**
-
-```python
-@do
-def outer():
-    results = yield Gather(
-        inner_gather_1(),
-        inner_gather_2()
-    )
-    return results
-
-@do
-def inner_gather_1():
-    results = yield Gather(task_a(), task_b())
-    return results
-
-@do
-def inner_gather_2():
-    results = yield Gather(task_c(), task_d())
-    return results
-```
-
-All leaf tasks (`task_a`, `task_b`, `task_c`, `task_d`) run in parallel. The nesting structure defines how results are grouped, not how parallelism is limited.
-
-**Note on parallelism**: "Parallel" means tasks can interleave at effect boundaries. This is cooperative concurrency, not CPU-parallel execution. Tasks only yield control when they yield effects (like `Await`, `Delay`, `Get`, `Put`). Pure computation runs to completion before other tasks get scheduled.
-
----
-
-## Await Effect
-
-### Definition
-
-```python
-@dataclass(frozen=True)
-class FutureAwaitEffect(EffectBase):
-    """Awaits the given awaitable and yields its resolved value."""
-    awaitable: Awaitable[Any]
+    """Wait for all Futures to complete and collect results."""
+    futures: Tuple[Future[Any], ...]
 ```
 
 ### Semantics
@@ -297,189 +462,298 @@ class FutureAwaitEffect(EffectBase):
 ```python
 @do
 def example():
-    result = yield Await(some_async_function())
-    return result
+    t1 = yield Spawn(service_a())
+    t2 = yield Spawn(service_b())
+    t3 = yield Spawn(service_c())
+    
+    # Wait for all to complete
+    results = yield Gather(t1, t2, t3)
+    # results == [result_a, result_b, result_c]
+    # Order matches input order, not completion order
 ```
 
-- Suspends the program until the awaitable completes
-- Returns the awaited value
-- If the awaitable raises, the exception propagates
+### Result Ordering
 
-### Runtime Behavior
-
-- **AsyncRuntime**: Uses `asyncio.create_task` to schedule the awaitable
-- **SyncRuntime**: Not supported (will raise unhandled effect error)
-- **SimulationRuntime**: Not currently supported. Only `DelayEffect` and `WaitUntilEffect` have simulation support; `Await` has no simulation handler.
-
----
-
-## Spawn Effect
-
-### Proposed Definition
-
-```python
-@dataclass(frozen=True)
-class SpawnEffect(EffectBase):
-    """Spawn execution of a program and return a Task handle."""
-    program: ProgramLike
-    preferred_backend: SpawnBackend | None = None  # "thread", "process", "ray"
-    options: dict[str, Any]
-```
-
-### Proposed Semantics
+Results are returned in the **same order as futures were passed**, regardless of completion order:
 
 ```python
 @do
 def example():
-    task = yield Spawn(background_work())
-    # Continue immediately, task runs in background
+    t_slow = yield Spawn(slow())   # Takes 3s
+    t_fast = yield Spawn(fast())   # Takes 1s
     
-    # Later...
-    result = yield task.join()  # Wait for completion
+    results = yield Gather(t_slow, t_fast)
+    # results == [slow_result, fast_result]
+    # Even though fast completed first
 ```
 
+### Error Handling
 
-### Implementation Notes
-
-Spawn is implemented in `doeff/cesk/runtime/async_.py` with the following design decisions:
-
-1. **Store semantics**: Snapshot at spawn time (isolated)
-   - Child task gets a copy of the store at spawn time
-   - Child's modifications don't affect parent
-   - Parent's later modifications don't affect child
-
-2. **Error handling**: Exceptions stored until join
-   - Spawned task errors don't immediately fail parent
-   - Exception is stored in Task handle
-   - Re-raised when join() is called
-
-3. **Cancellation**: Follows asyncio conventions
-   - `cancel()` is synchronous, requests cancellation
-   - `cancel()` returns True if cancellation requested, False if task already done
-   - `join()` on cancelled task raises `TaskCancelledError`
-
-4. **Additional methods**:
-   - `is_done()`: Non-blocking check if task completed (success, error, or cancelled)
-
-See: `tests/cesk/test_spawn.py` for comprehensive test coverage.
-
-### Design Decisions (Implemented)
-
-#### 1. Store semantics for Spawn
-
-**DECIDED: Snapshot at spawn time**
-- Child gets a copy of the store when spawned
-- Changes in child do not affect parent
-- Changes in parent do not affect child after spawn
-
-**Option B: Shared store (like Gather)**
-- Requires synchronization for thread/process backends
-- More complex but enables coordination
-
-**Result**: Implemented with snapshot semantics.
-
-#### 2. Error handling for background tasks
-
-**DECIDED: Exception stored in Task, raised on join**
-```python
-task = yield Spawn(failing_program())
-# No error yet
-result = yield Safe(task.join())  # Error captured here
-```
-
-**Option B: Exception propagates to spawner immediately**
-- Harder to implement, breaks "fire and forget" pattern
-
-**Result**: Implemented with exceptions stored until join.
-
-#### 3. Cancellation semantics
+**First error fails Gather (fail-fast)**
 
 ```python
-task = yield Spawn(long_running())
-# Later...
-yield task.cancel()  # How should this work?
+@do
+def example():
+    t1 = yield Spawn(success())
+    t2 = yield Spawn(failure())  # Will raise
+    t3 = yield Spawn(success())
+    
+    results = yield Gather(t1, t2, t3)  # Raises error from t2
 ```
 
-**Questions**:
-- Should cancel be synchronous or async?
-- What happens if task is already completed?
-- Should cancelled tasks raise `CancelledError` on join?
+To collect all results including errors:
 
-**DECIDED: Follow asyncio conventions:**
-- `cancel()` is synchronous, requests cancellation
-- Task may take time to actually cancel
-- `join()` on cancelled task raises `CancelledError`
+```python
+@do
+def example():
+    t1 = yield Spawn(Safe(operation1()))
+    t2 = yield Spawn(Safe(operation2()))
+    t3 = yield Spawn(Safe(operation3()))
+    
+    results = yield Gather(t1, t2, t3)
+    # results: list[Result[T]]
+    # Can inspect each for success/failure
+```
+
+### Empty Gather
+
+`Gather()` with no futures returns `[]` immediately.
 
 ---
 
-## Task Handle
+## Await Effect (asyncio Bridge)
 
 ### Definition
 
 ```python
 @dataclass(frozen=True)
-class Task(Generic[T]):
-    """Handle for a spawned task."""
-    backend: SpawnBackend
-    _handle: Any  # Backend-specific handle
-    _env_snapshot: dict[Any, Any]
-    _state_snapshot: dict[str, Any]
+class AwaitEffect(EffectBase):
+    """Await a Python coroutine (asyncio bridge)."""
+    awaitable: Awaitable[Any]
 ```
 
-### Methods
+### Purpose
 
-| Method | Description |
-|--------|-------------|
-| `join()` | Returns `TaskJoinEffect` - wait for completion |
-| `cancel()` | (Proposed) Request task cancellation |
-| `is_done()` | (Proposed) Check if task completed |
+`Await` is **only** for bridging to Python's asyncio ecosystem. It is NOT for doeff-native futures.
+
+```python
+import aiohttp
+
+@do
+def fetch_data():
+    # Bridge to asyncio
+    async with aiohttp.ClientSession() as session:
+        response = yield Await(session.get("https://api.example.com"))
+        data = yield Await(response.json())
+    return data
+```
+
+### When to Use Await vs. Wait
+
+| Use `Await` | Use `Wait` |
+|-------------|-----------|
+| Python coroutines (`async def`) | doeff `Future`/`Task` |
+| `asyncio.sleep()` | Spawned programs |
+| `aiohttp`, `httpx` calls | `yield Spawn(...)` results |
+| Third-party async libraries | doeff-native concurrency |
+
+### Combining with Spawn
+
+To gather multiple coroutines:
+
+```python
+@do
+def parallel_fetches():
+    # Wrap coroutines in Await, then Spawn
+    t1 = yield Spawn(Await(fetch_url("https://a.com")))
+    t2 = yield Spawn(Await(fetch_url("https://b.com")))
+    
+    results = yield Gather(t1, t2)
+    return results
+```
+
+**Why this works**: In doeff, an effect IS a program. `Await(coro)` is a single-effect program that can be spawned.
+
+### Runtime Support
+
+| Runtime | `Await` Support |
+|---------|----------------|
+| `AsyncRuntime` | Full support via `asyncio.create_task` |
+| `SyncRuntime` | NOT supported (raises unhandled effect) |
+| `SimulationRuntime` | NOT supported |
 
 ---
 
-## Composition Rules Summary
+## Composition Examples
 
-| Composition | Behavior | Test Status |
-|-------------|----------|-------------|
-| Gather + Local | Children inherit env at spawn; Local in child is scoped | Tested |
-| Gather + Put | Shared store; all changes visible | Tested |
-| Gather + Listen | All logs captured from all children | Tested |
-| Gather + Safe | First error wrapped in Err | Tested |
-| Gather + Intercept | Intercept applies to children via structural rewriting | Tested |
-| Nested Gather | Full parallelism at leaf level | Tested |
+### Race with Timeout
+
+```python
+@do
+def with_timeout(program: Program[T], timeout_seconds: float) -> Program[T | None]:
+    work = yield Spawn(program)
+    timer = yield Spawn(delay_then_none(timeout_seconds))
+    
+    result = yield Race(work, timer)
+    
+    # Cancel the loser
+    for loser in result.rest:
+        yield loser.cancel()
+    
+    if result.first is timer:
+        return None  # Timed out
+    else:
+        return result.value
+
+@do
+def delay_then_none(seconds: float):
+    yield Delay(seconds)
+    return None
+```
+
+### Parallel with Progress
+
+```python
+@do
+def parallel_with_progress(programs: list[Program[T]]) -> Program[list[T]]:
+    tasks = []
+    for prog in programs:
+        task = yield Spawn(prog)
+        tasks.append(task)
+    
+    results = {}
+    remaining = list(tasks)
+    
+    while remaining:
+        race_result = yield Race(*remaining)
+        results[race_result.first] = race_result.value
+        remaining = list(race_result.rest)  # rest is already the losers
+        yield Log(f"Completed {len(results)}/{len(tasks)}")
+    
+    # Reorder to match input order
+    return [results[t] for t in tasks]
+```
+
+### Fire and Forget
+
+```python
+@do
+def fire_and_forget(program: Program[Any]) -> Program[None]:
+    """Start a task but don't wait for it."""
+    _ = yield Spawn(program)
+    return None
+```
+
+---
+
+## Migration Guide
+
+### From Old Gather (Programs)
+
+```python
+# OLD
+results = yield Gather(prog1(), prog2(), prog3())
+
+# NEW
+t1 = yield Spawn(prog1())
+t2 = yield Spawn(prog2())
+t3 = yield Spawn(prog3())
+results = yield Gather(t1, t2, t3)
+```
+
+### From task.join()
+
+```python
+# OLD
+task = yield Spawn(program())
+result = yield task.join()
+
+# NEW
+task = yield Spawn(program())
+result = yield Wait(task)
+```
+
+### From Await for Everything
+
+```python
+# OLD (using Await for doeff programs via some conversion)
+result = yield Await(run_as_coroutine(program()))
+
+# NEW (native)
+task = yield Spawn(program())
+result = yield Wait(task)
+```
 
 ---
 
 ## Implementation Notes
 
-### AsyncRuntime Gather Implementation
+### Handler Implementation Pattern
 
-The `AsyncRuntime` intercepts `GatherEffect` to implement true parallelism:
+Handlers create Promise/Future pairs:
 
-1. Create child `TaskState` for each program
-2. Add children to scheduler with fresh `TaskId`
-3. Parent waits until all children complete
-4. Collect results in program order
-5. Merge stores (logs, memos, state changes)
+```python
+async def handle_spawn(effect: SpawnEffect, state: RuntimeState) -> Task:
+    promise = Promise()
+    
+    async def run_in_background():
+        try:
+            result = await execute_program(effect.program, state)
+            promise.complete(result)
+        except Exception as e:
+            promise.fail(e)
+    
+    asyncio.create_task(run_in_background())
+    return Task(promise.future)
+```
 
-See: `doeff/cesk/runtime/async_.py`
+### Wait Handler Pattern
 
-### Default Handler (Sequential)
-
-The default handler in `handlers/task.py` executes Gather sequentially using `GatherFrame`. This is used by `SyncRuntime`.
+```python
+async def handle_wait(effect: WaitEffect, state: RuntimeState) -> Any:
+    future = effect.future
+    # Block until future completes
+    while not future._is_complete:
+        await asyncio.sleep(0)  # Yield to event loop
+    
+    if future._error:
+        raise future._error
+    return future._value
+```
 
 ---
 
-## Related Issues
+## Open Questions
 
-- [gh#157](https://github.com/CyberAgentAILab/doeff/issues/157): Async store snapshot bug
-- [gh#156](https://github.com/CyberAgentAILab/doeff/issues/156): AsyncRuntime parallel Gather
-- [gh#178](https://github.com/CyberAgentAILab/doeff/issues/178): This spec
+### 1. Should Race auto-cancel losers?
+
+**Current**: No, explicit cancellation required.
+**Alternative**: `Race(..., auto_cancel=True)` option.
+**Recommendation**: Keep explicit for v1, consider option later.
+
+### 2. Should Gather support partial results on error?
+
+**Current**: Fail-fast, no partial results.
+**Alternative**: Return `list[Result[T]]` always.
+**Recommendation**: Use `Safe` wrapper pattern for this use case.
+
+### 3. Timeout as built-in?
+
+**Current**: Compose with Race + Delay.
+**Alternative**: `yield Timeout(task, seconds=5.0)`.
+**Recommendation**: Composition is flexible enough for v1.
+
+---
+
+## Related Specifications
+
+- SPEC-EFF-004: Intercept Semantics (how intercept applies to spawned programs)
+- SPEC-EFF-100: Effect Laws (composition laws for concurrency effects)
 
 ---
 
 ## References
 
-- Source: `doeff/effects/gather.py`, `doeff/effects/spawn.py`, `doeff/effects/future.py`
-- Handlers: `doeff/cesk/handlers/task.py`
+- Source: `doeff/effects/spawn.py`, `doeff/effects/wait.py`, `doeff/effects/race.py`, `doeff/effects/gather.py`
 - Runtime: `doeff/cesk/runtime/async_.py`
-- Tests: `tests/cesk/test_async_runtime.py`
+- Tests: `tests/cesk/test_spawn.py`, `tests/cesk/test_race.py`, `tests/cesk/test_gather.py`

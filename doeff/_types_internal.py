@@ -578,11 +578,6 @@ class Effect(Protocol):
 
     created_at: EffectCreationContext | None
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> Effect:
-        """Return a copy where any nested programs are intercepted."""
-
     def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
         """Return a copy with updated creation context."""
 
@@ -594,13 +589,6 @@ class EffectBase(ProgramBase):
     created_at: EffectCreationContext | None = field(
         default=None, compare=False
     )
-
-    @abstractmethod
-    def intercept(
-        self: E, transform: Callable[[Effect], Effect | Program]
-    ) -> E:
-        """Return a copy where any nested programs are intercepted."""
-        raise NotImplementedError
 
     def with_created_at(
         self: E, created_at: EffectCreationContext | None
@@ -618,11 +606,6 @@ class EffectBase(ProgramBase):
 @dataclass(frozen=True, kw_only=True)
 class NullEffect(EffectBase):
     """Placeholder effect for exceptions raised directly (not via yield Fail)."""
-
-    def intercept(
-        self: E, transform: Callable[[Effect], Effect | Program]
-    ) -> E:
-        return self
 
 
 # Type alias for generators used in @do functions

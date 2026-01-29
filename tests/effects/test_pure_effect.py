@@ -82,16 +82,6 @@ async def test_pure_effect_in_composition(interpreter):
     assert run_result.value == "Hello, World!"
 
 
-def test_pure_effect_intercept():
-    effect = PureEffect(value=42)
-
-    def dummy_transform(e):
-        return e
-
-    intercepted = effect.intercept(dummy_transform)
-    assert intercepted is effect
-
-
 def test_pure_effect_immutable():
     effect = PureEffect(value=42)
 

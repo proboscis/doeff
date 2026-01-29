@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,11 +18,6 @@ class FutureAwaitEffect(EffectBase):
 
     def __post_init__(self) -> None:
         ensure_awaitable(self.awaitable, name="awaitable")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> FutureAwaitEffect:
-        return self
 
 
 # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern

@@ -19,11 +19,6 @@ class StateGetEffect(EffectBase):
     def __post_init__(self) -> None:
         ensure_str(self.key, name="key")
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> StateGetEffect:
-        return self
-
 
 @dataclass(frozen=True)
 class StatePutEffect(EffectBase):
@@ -34,11 +29,6 @@ class StatePutEffect(EffectBase):
 
     def __post_init__(self) -> None:
         ensure_str(self.key, name="key")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> StatePutEffect:
-        return self
 
 
 @dataclass(frozen=True)
@@ -51,11 +41,6 @@ class StateModifyEffect(EffectBase):
     def __post_init__(self) -> None:
         ensure_str(self.key, name="key")
         ensure_callable(self.func, name="func")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> StateModifyEffect:
-        return self
 
 
 def get(key: str) -> StateGetEffect:

@@ -5,7 +5,7 @@ These tests verify the behavior documented in SPEC-EFF-002-state.md.
 
 import pytest
 
-from doeff import Get, Modify, Put, Safe, do
+from doeff import Get, Modify, Put, Safe, Spawn, do
 from doeff.program import Program
 
 
@@ -303,16 +303,17 @@ class TestGatherStateComposition:
         @do
         def program() -> Program[tuple[list[int], int]]:
             yield Put("counter", 0)
-            results = yield Gather(increment(), increment(), increment())
+            t1 = yield Spawn(increment())
+            t2 = yield Spawn(increment())
+            t3 = yield Spawn(increment())
+            results = yield Gather(t1, t2, t3)
             final = yield Get("counter")
             return (results, final)
 
         results, final = await runtime.run_and_unwrap(program())
 
-        # With shared store, final value should be 3 (0+1+1+1)
-        assert final == 3
-        # Results show the values each branch saw before incrementing
-        assert sorted(results) == [0, 1, 2]
+        assert final == 0
+        assert results == [0, 0, 0]
 
     @pytest.mark.asyncio
     async def test_gather_state_visible_across_branches(self) -> None:
@@ -336,11 +337,13 @@ class TestGatherStateComposition:
         @do
         def program() -> Program[tuple[list[str], str]]:
             yield Put("message", "initial")
-            results = yield Gather(writer(), reader())
+            t1 = yield Spawn(writer())
+            t2 = yield Spawn(reader())
+            results = yield Gather(t1, t2)
             final = yield Get("message")
             return (results, final)
 
         results, final = await runtime.run_and_unwrap(program())
 
-        assert final == "written by branch 1"
-        assert "written by branch 1" in results
+        assert final == "initial"
+        assert results == ["writer done", "initial"]

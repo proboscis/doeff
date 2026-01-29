@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from doeff.types import EnvKey
 
 from ._program_types import ProgramLike
 from ._validators import ensure_env_mapping, ensure_hashable, ensure_program_like
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
@@ -21,11 +21,6 @@ class AskEffect(EffectBase):
 
     def __post_init__(self) -> None:
         ensure_hashable(self.key, name="key")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> AskEffect:
-        return self
 
 
 @dataclass(frozen=True)
@@ -38,14 +33,6 @@ class LocalEffect(EffectBase):
     def __post_init__(self) -> None:
         ensure_env_mapping(self.env_update, name="env_update")
         ensure_program_like(self.sub_program, name="sub_program")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> LocalEffect:
-        sub_program = intercept_value(self.sub_program, transform)
-        if sub_program is self.sub_program:
-            return self
-        return replace(self, sub_program=sub_program)
 
 
 def ask(key: EnvKey) -> AskEffect:

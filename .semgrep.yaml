@@ -223,6 +223,27 @@ rules:
       category: cesk-architecture
 
   # ---------------------------------------------------------------------------
+  # CONCURRENCY API MIGRATION (SPEC-EFF-005 Redesign)
+  # ---------------------------------------------------------------------------
+  # These rules detect old concurrency patterns that need migration to the new
+  # Future-based API. See specs/effects/SPEC-EFF-005-concurrency.md.
+
+  - id: doeff-task-join-deprecated
+    pattern: $TASK.join()
+    message: |
+      MIGRATION: task.join() is deprecated. Use Wait(task) instead.
+      
+      OLD: result = yield task.join()
+      NEW: result = yield Wait(task)
+      
+      See SPEC-EFF-005 for details.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: concurrency-migration
+      spec: SPEC-EFF-005
+
+  # ---------------------------------------------------------------------------
   # TESTING PATTERNS
   # ---------------------------------------------------------------------------
 

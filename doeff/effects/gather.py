@@ -1,40 +1,36 @@
-"""Gather effects for parallel programs."""
-
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from typing import Any
 
-from ._program_types import ProgramLike
-from ._validators import ensure_program_tuple
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from .base import Effect, EffectBase, create_effect_with_trace
+from .spawn import Future
 
 
 @dataclass(frozen=True)
 class GatherEffect(EffectBase):
-    """Executes all programs in parallel and yields their results as a list."""
-
-    programs: tuple[ProgramLike, ...]
-
-    def __post_init__(self) -> None:
-        ensure_program_tuple(self.programs, name="programs")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> GatherEffect:
-        programs = intercept_value(self.programs, transform)
-        if programs is self.programs:
-            return self
-        return replace(self, programs=programs)
+    futures: tuple[Future[Any], ...]
 
 
-def gather(*programs: ProgramLike) -> GatherEffect:
-    return create_effect_with_trace(GatherEffect(programs=tuple(programs)))
+def _validate_futures(items: tuple[Any, ...]) -> tuple[Future[Any], ...]:
+    for i, item in enumerate(items):
+        if not isinstance(item, Future):
+            raise TypeError(
+                f"Gather expects Futures, got {type(item).__name__} at index {i}. "
+                f"Use Spawn to create Futures from Programs."
+            )
+    return items  # type: ignore[return-value]
 
 
-def Gather(*programs: ProgramLike) -> Effect:
+def gather(*items: Future[Any]) -> GatherEffect:
+    validated = _validate_futures(tuple(items))
+    return create_effect_with_trace(GatherEffect(futures=validated))
+
+
+def Gather(*items: Future[Any]) -> Effect:
+    validated = _validate_futures(tuple(items))
     return create_effect_with_trace(
-        GatherEffect(programs=tuple(programs)), skip_frames=3
+        GatherEffect(futures=validated), skip_frames=3
     )
 
 

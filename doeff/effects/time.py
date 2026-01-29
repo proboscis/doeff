@@ -20,7 +20,6 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -28,7 +27,6 @@ from typing import TYPE_CHECKING
 from .base import EffectBase, create_effect_with_trace
 
 if TYPE_CHECKING:
-    from doeff.program import Program
     from doeff.types import Effect
 
 
@@ -52,11 +50,6 @@ class DelayEffect(EffectBase):
         if self.seconds < 0:
             raise ValueError(f"seconds must be non-negative, got {self.seconds}")
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> DelayEffect:
-        return self
-
 
 @dataclass(frozen=True, kw_only=True)
 class WaitUntilEffect(EffectBase):
@@ -77,11 +70,6 @@ class WaitUntilEffect(EffectBase):
 
     target_time: datetime
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> WaitUntilEffect:
-        return self
-
 
 @dataclass(frozen=True)
 class GetTimeEffect(EffectBase):
@@ -90,11 +78,6 @@ class GetTimeEffect(EffectBase):
     In AsyncioRuntime/SyncRuntime: Returns datetime.now()
     In SimulationRuntime: Returns simulated current time
     """
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> GetTimeEffect:
-        return self
 
 
 def Delay(seconds: float) -> Effect:

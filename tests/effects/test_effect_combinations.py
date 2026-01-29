@@ -23,6 +23,7 @@ from doeff.effects import (
     Modify,
     Put,
     Safe,
+    Spawn,
     Tell,
 )
 from doeff.effects.reader import AskEffect
@@ -185,8 +186,8 @@ class TestListenCaptureLaw:
         assert "inner_log_2" in result.log
 
     @pytest.mark.asyncio
-    async def test_listen_captures_all_gather_logs(self) -> None:
-        """Law 3: Logs from all Gather children captured on success."""
+    async def test_gather_isolated_state_logs_not_captured(self) -> None:
+        """Gather uses Futures with isolated state - logs are NOT captured by parent Listen."""
         runtime = AsyncRuntime()
 
         @do
@@ -206,16 +207,16 @@ class TestListenCaptureLaw:
 
         @do
         def program():
-            listen_result = yield Listen(Gather(task1(), task2(), task3()))
+            f1 = yield Spawn(task1())
+            f2 = yield Spawn(task2())
+            f3 = yield Spawn(task3())
+            listen_result = yield Listen(Gather(f1, f2, f3))
             return listen_result
 
         result = await runtime.run_and_unwrap(program())
 
         assert result.value == [1, 2, 3]
-        assert len(result.log) == 3
-        assert "task1_log" in result.log
-        assert "task2_log" in result.log
-        assert "task3_log" in result.log
+        assert len(result.log) == 0
 
     @pytest.mark.asyncio
     async def test_nested_listen_separation(self) -> None:
@@ -364,47 +365,6 @@ class TestSafeEnvironmentRestorationLaw:
 
 
 # ============================================================================
-# Law 6: Intercept Transformation Law Tests
-# ============================================================================
-
-
-class TestInterceptTransformationLaw:
-    """Tests for Law 6: Intercept transforms effects including Gather children."""
-
-    @pytest.mark.asyncio
-    async def test_intercept_transforms_gather_children(self) -> None:
-        """Law 6: Intercept DOES transform Gather children via structural rewriting."""
-        runtime = AsyncRuntime()
-
-        transform_count = [0]
-
-        @do
-        def child1():
-            val = yield Ask("key")
-            return f"child1:{val}"
-
-        @do
-        def child2():
-            val = yield Ask("key")
-            return f"child2:{val}"
-
-        def counting_transform(effect):
-            if isinstance(effect, AskEffect):
-                transform_count[0] += 1
-            return effect
-
-        @do
-        def program():
-            results = yield Gather(child1(), child2()).intercept(counting_transform)
-            return results
-
-        result = await runtime.run_and_unwrap(program(), env={"key": "value"})
-
-        assert result == ["child1:value", "child2:value"]
-        assert transform_count[0] == 2
-
-
-# ============================================================================
 # Law 7: Gather Environment Inheritance Law Tests
 # ============================================================================
 
@@ -428,11 +388,17 @@ class TestGatherEnvironmentInheritanceLaw:
             return f"child2:{val}"
 
         @do
+        def gather_children():
+            t1 = yield Spawn(child1())
+            t2 = yield Spawn(child2())
+            return (yield Gather(t1, t2))
+
+        @do
         def program():
             outer_result = yield Ask("key")
             inner_results = yield Local(
                 {"key": "local_value"},
-                Gather(child1(), child2())
+                gather_children()
             )
             return (outer_result, inner_results)
 
@@ -451,39 +417,15 @@ class TestGatherEnvironmentInheritanceLaw:
 class TestGatherStoreSharingLaw:
     """Tests for Law 8: Gather store sharing (runtime-dependent)."""
 
+    @pytest.mark.skip(reason="SyncRuntime no longer supports Spawn/Gather - use AsyncRuntime")
     def test_sync_gather_sequential_store_sharing(self) -> None:
-        """Law 8a: SyncRuntime Gather is sequential with deterministic state."""
-        runtime = SyncRuntime()
-
-        @do
-        def task1():
-            current = yield Get("counter")
-            yield Put("counter", (current or 0) + 1)
-            return current
-
-        @do
-        def task2():
-            current = yield Get("counter")
-            yield Put("counter", (current or 0) + 1)
-            return current
-
-        @do
-        def task3():
-            current = yield Get("counter")
-            yield Put("counter", (current or 0) + 1)
-            return current
-
-        @do
-        def program():
-            yield Put("counter", 0)
-            results = yield Gather(task1(), task2(), task3())
-            final = yield Get("counter")
-            return (results, final)
-
-        results, final = runtime.run(program()).value
-
-        assert results == [0, 1, 2]
-        assert final == 3
+        """Law 8a: SyncRuntime Gather is sequential with deterministic state.
+        
+        NOTE: This test is obsolete. Gather now only accepts Future objects (from Spawn),
+        and Spawn requires AsyncRuntime. The old sequential gather behavior in SyncRuntime
+        no longer exists.
+        """
+        pass
 
     @pytest.mark.asyncio
     async def test_async_gather_parallel_execution(self) -> None:
@@ -498,11 +440,10 @@ class TestGatherStoreSharingLaw:
         @do
         def program():
             start = yield GetTime()
-            results = yield Gather(
-                delayed_task(1),
-                delayed_task(2),
-                delayed_task(3),
-            )
+            t1 = yield Spawn(delayed_task(1))
+            t2 = yield Spawn(delayed_task(2))
+            t3 = yield Spawn(delayed_task(3))
+            results = yield Gather(t1, t2, t3)
             end = yield GetTime()
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
@@ -548,12 +489,15 @@ class TestGatherErrorPropagationLaw:
             return "last"
 
         @do
+        def gather_children():
+            t1 = yield Spawn(succeeds_first())
+            t2 = yield Spawn(fails())
+            t3 = yield Spawn(succeeds_last())
+            return (yield Gather(t1, t2, t3))
+
+        @do
         def program():
-            result = yield Safe(Gather(
-                succeeds_first(),
-                fails(),
-                succeeds_last(),
-            ))
+            result = yield Safe(gather_children())
             return result
 
         result = await runtime.run_and_unwrap(program())
@@ -577,35 +521,36 @@ class TestEffectCombinationIntegration:
 
         @do
         def leaf_task(n: int):
-            yield Tell(f"leaf_{n}")
             return n
 
         @do
         def branch_a():
-            results = yield Gather(leaf_task(1), leaf_task(2))
+            t1 = yield Spawn(leaf_task(1))
+            t2 = yield Spawn(leaf_task(2))
+            results = yield Gather(t1, t2)
             return ("a", results)
 
         @do
         def branch_b():
-            results = yield Gather(leaf_task(3), leaf_task(4))
+            t1 = yield Spawn(leaf_task(3))
+            t2 = yield Spawn(leaf_task(4))
+            results = yield Gather(t1, t2)
             return ("b", results)
 
         @do
         def program():
-            listen_result = yield Listen(Gather(branch_a(), branch_b()))
-            return listen_result
+            t1 = yield Spawn(branch_a())
+            t2 = yield Spawn(branch_b())
+            results = yield Gather(t1, t2)
+            return results
 
         result = await runtime.run_and_unwrap(program())
 
-        assert len(result.value) == 2
-        branch_a_result, branch_b_result = result.value
+        assert len(result) == 2
+        branch_a_result, branch_b_result = result
 
         assert branch_a_result == ("a", [1, 2])
         assert branch_b_result == ("b", [3, 4])
-
-        assert len(result.log) == 4
-        for i in range(1, 5):
-            assert f"leaf_{i}" in result.log
 
     @pytest.mark.asyncio
     async def test_complex_safe_local_listen_combination(self) -> None:
