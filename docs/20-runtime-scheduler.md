@@ -82,7 +82,7 @@ asyncio.run(main())
 
 ### SyncRuntime
 
-A synchronous runtime for programs that don't require async I/O. Ideal for CLI tools, scripts, and testing pure logic.
+A synchronous runtime for programs that don't require async I/O. Ideal for CLI tools, scripts, and testing pure logic. Supports **cooperative concurrency** via an internal task scheduler.
 
 ```python
 from doeff import do, Program, Get, Put
@@ -101,14 +101,81 @@ if result.is_ok():
     print(result.value)  # 1
 ```
 
+#### Cooperative Concurrency (Spawn/Wait/Gather)
+
+`SyncRuntime` supports `Spawn`, `Wait`, and `Gather` via **cooperative scheduling**—no threads, no asyncio. Tasks are interleaved at yield points.
+
+```python
+from doeff import do, Program, Spawn, Wait, Gather
+
+@do
+def parallel_work() -> Program[list[int]]:
+    # Spawn tasks (enqueues them, returns immediately)
+    t1 = yield Spawn(compute_a())
+    t2 = yield Spawn(compute_b())
+    t3 = yield Spawn(compute_c())
+    
+    # Gather waits for all (scheduler interleaves execution)
+    results = yield Gather(t1, t2, t3)
+    return results
+
+runtime = SyncRuntime()
+result = runtime.run(parallel_work())
+```
+
+**How it works:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                  SyncRuntime Scheduler                   │
+│                                                          │
+│   Task Queue: [main] ──Spawn──> [main, task1, task2]    │
+│                                                          │
+│   Loop:                                                  │
+│   1. Pick next ready task                               │
+│   2. Run until yield (effect)                           │
+│   3. Handle effect:                                     │
+│      - Spawn → enqueue new task, return handle          │
+│      - Wait  → block task until target completes        │
+│      - Gather → block until all targets complete        │
+│      - Other → process normally                         │
+│   4. Repeat until all tasks done                        │
+└─────────────────────────────────────────────────────────┘
+```
+
+This is **cooperative concurrency** (not parallelism):
+- Single-threaded task execution, no race conditions
+- Deterministic execution order (for pure compute)
+- Tasks yield control at every `yield` statement
+- No asyncio, no kernel I/O multiplexing—pure Python scheduling
+
+#### Delay with Timer Thread
+
+`Delay` uses a background timer thread so other tasks can run while waiting:
+
+```
+Main Thread (Scheduler)              Timer Thread
+───────────────────────              ────────────
+task1: yield Delay(2.0)
+   ├──► mark task1 "blocked"
+   ├──► submit timer ──────────────► time.sleep(2.0)
+   ▼
+task2: running...                         │
+task3: running...                         │
+   │                                      │
+   │    ◄──── wake_task1() ◄──────────────┘
+   ▼
+task1: ready, resumes
+```
+
+- Timer threads handle `Delay` without blocking the scheduler
+- Task execution remains single-threaded (no races in user code)
+- Only timing is offloaded to threads
+
 **Limitations:**
 
-`SyncRuntime` does not support async-only effects:
-- `Await` - Use `AsyncRuntime` instead
-- `Spawn` - Use `AsyncRuntime` instead
-
-`Delay` uses `time.sleep()` in SyncRuntime (blocks the thread).
-`Gather` runs sequentially (same semantics, different performance).
+- `Await` - Not supported (requires asyncio event loop). Use `AsyncRuntime` for Python coroutines.
+- No true CPU parallelism (tasks run sequentially on main thread)
 
 ### SimulationRuntime
 
@@ -146,10 +213,11 @@ if result.is_ok():
 |----------------|-----|
 | Real HTTP/DB/file I/O | `AsyncRuntime` |
 | Real wall-clock delays | `AsyncRuntime` |
-| Background tasks (`Spawn`) | `AsyncRuntime` |
-| Parallel execution (`Gather`) | `AsyncRuntime` |
-| Simple sync execution (no async) | `SyncRuntime` |
+| True parallel execution (CPU concurrency) | `AsyncRuntime` |
+| Python async/await interop (`Await`) | `AsyncRuntime` |
+| Concurrent tasks without asyncio | `SyncRuntime` |
 | CLI tools / scripts | `SyncRuntime` |
+| Deterministic concurrent testing | `SyncRuntime` or `SimulationRuntime` |
 | Unit tests (fast, deterministic) | `SimulationRuntime` |
 | Backtesting trading strategies | `SimulationRuntime` |
 | Mocking async operations | `SimulationRuntime` |
@@ -163,10 +231,12 @@ if result.is_ok():
 | `WaitUntil` effect | Real wait | Real wait (blocking) | Instant (time advances) |
 | `GetTime` effect | `datetime.now()` | `datetime.now()` | Simulated time |
 | `Await` effect | Real await | Not supported | Mocked result |
-| `Gather` effect | Parallel | Sequential | Sequential |
-| `Spawn` effect | Background task | Not supported | Not supported |
+| `Spawn` effect | Background task (asyncio) | Cooperative (task queue) | Cooperative (task queue) |
+| `Wait` effect | Async wait | Cooperative scheduling | Cooperative scheduling |
+| `Gather` effect | Parallel (true concurrency) | Cooperative (interleaved) | Cooperative (interleaved) |
 | Time control | No | No | Yes (`current_time`) |
 | Deterministic | No | Yes | Yes |
+| Parallelism | Yes (kernel-level) | No (single-threaded) | No (single-threaded) |
 
 ---
 

@@ -77,45 +77,57 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 | Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
 |--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `GatherEffect` | `Gather(*programs)` | `task.py` | Sequential | Sequential | Intercepted (parallel) | Yes |
-| `SpawnEffect` | `Spawn(program)` | Runtime | Not Supported | Not Supported | Intercepted | Yes |
-| `TaskJoinEffect` | `task.join()` | Runtime | Not Supported | Not Supported | Intercepted | Yes |
-| `TaskCancelEffect` | `task.cancel()` | Runtime | Not Supported | Not Supported | Intercepted | Yes |
-| `TaskIsDoneEffect` | `task.is_done()` | Runtime | Not Supported | Not Supported | Intercepted | Yes |
+| `SpawnEffect` | `Spawn(program)` | Runtime | Cooperative | Cooperative | Intercepted (asyncio) | Yes |
+| `WaitEffect` | `Wait(future)` | Runtime | Cooperative | Cooperative | Intercepted | Yes |
+| `GatherEffect` | `Gather(*futures)` | Runtime | Cooperative | Cooperative | Intercepted (parallel) | Yes |
+| `RaceEffect` | `Race(*futures)` | Runtime | Cooperative | Cooperative | Intercepted | Yes |
+| `TaskCancelEffect` | `task.cancel()` | Runtime | Cooperative | Cooperative | Intercepted | Yes |
 | `FutureAwaitEffect` | `Await(awaitable)` | Runtime | Not Supported | Not Supported | Intercepted | Yes |
 
-### Spawn/Task Background Execution
+### Cooperative Scheduling (SyncRuntime / SimulationRuntime)
 
-The `Spawn` effect creates background tasks with **snapshot semantics**:
+Both `SyncRuntime` and `SimulationRuntime` implement concurrency via **cooperative scheduling**:
+
+- **Single-threaded**: All task code runs on one thread (no races in user code)
+- **Interleaved execution**: Tasks yield control at every `yield` statement
+- **Deterministic**: Execution order is reproducible for pure compute
+- **Timer threads**: `Delay` uses background threads for timing (SyncRuntime only)
+
+### Spawn/Wait/Gather Usage
+
+The `Spawn` effect creates tasks with **snapshot semantics**:
 - Environment and store are snapshotted at spawn time
 - Spawned tasks run with isolated state (no mutation of parent's store)
-- Use `task.join()` to wait for completion and retrieve results
+- Use `Wait(task)` to retrieve result
 - Use `task.cancel()` to request cancellation
-- Use `task.is_done()` to check completion status
 
 ```python
 @do
-def background_work():
-    task = yield Spawn(expensive_computation())
-    # ... do other work ...
-    result = yield task.join()  # Wait for completion
-    return result
+def concurrent_work():
+    # Spawn tasks (returns immediately)
+    t1 = yield Spawn(compute_a())
+    t2 = yield Spawn(compute_b())
+    t3 = yield Spawn(compute_c())
+    
+    # Wait for single task
+    result_a = yield Wait(t1)
+    
+    # Or gather all at once
+    results = yield Gather(t2, t3)
+    return (result_a, results)
 ```
 
 See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 
-### Gather Parallel Execution
+### Concurrency Model Comparison
 
-`Gather` runs multiple programs and collects their results:
-- **AsyncRuntime**: True parallel execution via asyncio
-- **SyncRuntime/SimulationRuntime**: Sequential execution (same semantics, different performance)
-
-```python
-@do
-def parallel_fetch():
-    results = yield Gather(fetch_a(), fetch_b(), fetch_c())
-    return results  # [result_a, result_b, result_c]
-```
+| Aspect | AsyncRuntime | SyncRuntime / SimulationRuntime |
+|--------|--------------|----------------------------------|
+| `Spawn` | asyncio.create_task | Enqueue to task scheduler |
+| `Gather` | asyncio.gather (true parallel) | Cooperative interleaving |
+| Parallelism | Yes (kernel I/O multiplexing) | No (single-threaded) |
+| Deterministic | No | Yes |
+| `Await` support | Yes | No |
 
 ## Atomic Effects
 
@@ -144,18 +156,21 @@ def parallel_fetch():
 
 | Runtime | Location | Status | Time Handling | Concurrency |
 |---------|----------|--------|---------------|-------------|
-| `AsyncRuntime` | `cesk/runtime/async_.py` | **Primary** | Real async (`asyncio.sleep`) | Parallel Gather, Spawn/Task |
-| `SyncRuntime` | `cesk/runtime/sync.py` | Active | Real blocking (`time.sleep`) | Sequential Gather |
-| `SimulationRuntime` | `cesk/runtime/simulation.py` | Active | Simulated (instant) | Sequential Gather |
+| `AsyncRuntime` | `cesk/runtime/async_.py` | **Primary** | Real async (`asyncio.sleep`) | Parallel (asyncio) |
+| `SyncRuntime` | `cesk/runtime/sync.py` | Active | Real blocking + timer threads | Cooperative scheduler |
+| `SimulationRuntime` | `cesk/runtime/simulation.py` | Active | Simulated (instant) | Cooperative scheduler |
 
 ### Runtime Selection Guide
 
 | Use Case | Recommended Runtime |
 |----------|---------------------|
 | Production async code | `AsyncRuntime` |
+| True parallel I/O | `AsyncRuntime` |
+| Python coroutine interop (`Await`) | `AsyncRuntime` |
 | Scripts, CLI tools | `SyncRuntime` |
+| Concurrent tasks without asyncio | `SyncRuntime` |
 | Testing with controlled time | `SimulationRuntime` |
-| Background task execution | `AsyncRuntime` (required for Spawn) |
+| Deterministic concurrent testing | `SyncRuntime` or `SimulationRuntime` |
 
 ## Handler Registration
 

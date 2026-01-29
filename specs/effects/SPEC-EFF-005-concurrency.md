@@ -767,6 +767,100 @@ def parallel_fetches():
 
 ---
 
+## Runtime Support Matrix
+
+| Effect | AsyncRuntime | SyncRuntime | SimulationRuntime |
+|--------|--------------|-------------|-------------------|
+| `Spawn` | asyncio.create_task | Cooperative scheduler | Cooperative scheduler |
+| `Wait` | asyncio Future.result | Cooperative scheduling | Cooperative scheduling |
+| `Gather` | asyncio.gather (parallel) | Cooperative (interleaved) | Cooperative (interleaved) |
+| `Race` | asyncio.wait FIRST_COMPLETED | Cooperative scheduling | Cooperative scheduling |
+| `Await` | Native await | NOT supported | NOT supported (mock) |
+
+### SyncRuntime: Cooperative Scheduler Design
+
+`SyncRuntime` implements `Spawn`, `Wait`, `Gather`, and `Race` via a **cooperative task scheduler**—no asyncio, no threads for task execution.
+
+#### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SyncRuntime Scheduler                         │
+│                                                                  │
+│   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐       │
+│   │ Ready Queue │     │ Blocked Map │     │ Timer Pool  │       │
+│   │ [t1,t2,t3]  │     │ t4 → t1     │     │ (threads)   │       │
+│   └─────────────┘     │ t5 → [t2,t3]│     └─────────────┘       │
+│          │            └─────────────┘            │               │
+│          ▼                   ▲                   │               │
+│   ┌──────────────────────────┴───────────────────┘              │
+│   │                 Scheduler Loop                               │
+│   │                                                              │
+│   │   while ready_queue or blocked_tasks:                       │
+│   │       task = ready_queue.pop()                              │
+│   │       effect = task.send(last_result)                       │
+│   │                                                              │
+│   │       match effect:                                         │
+│   │           Spawn(prog) → enqueue new task, return Task       │
+│   │           Wait(fut)   → block task until fut completes      │
+│   │           Gather(fs)  → block until all complete            │
+│   │           Race(fs)    → block until first completes         │
+│   │           Delay(s)    → timer thread, block task            │
+│   │           Return(v)   → complete task, unblock waiters      │
+│   │           other       → handle normally                     │
+│   └─────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Key Properties
+
+1. **Single-threaded task execution**: All `@do` generator code runs on one thread. No locks needed in user code.
+
+2. **Cooperative scheduling**: Tasks yield control at every `yield` statement. Scheduler picks next ready task.
+
+3. **Deterministic ordering**: For pure compute (no `Delay`), execution order is deterministic and reproducible.
+
+4. **Timer threads for Delay**: `Delay` effects use background threads for timing, but task resumption happens on the main thread.
+
+```python
+# Example: Interleaved execution
+@do
+def task_a():
+    yield Log("A1")
+    yield Log("A2")
+    return "A"
+
+@do
+def task_b():
+    yield Log("B1")
+    yield Log("B2")
+    return "B"
+
+@do
+def main():
+    t1 = yield Spawn(task_a())
+    t2 = yield Spawn(task_b())
+    return (yield Gather(t1, t2))
+
+# Possible log order (round-robin): A1, B1, A2, B2
+# Exact order depends on scheduler policy
+```
+
+#### Why Not asyncio?
+
+The cooperative scheduler provides:
+- **No asyncio dependency**: Works in sync-only environments
+- **Deterministic testing**: Control over execution order
+- **Simpler mental model**: No event loop complexity
+- **Portable**: Same code runs on SyncRuntime and SimulationRuntime
+
+asyncio is still preferred when:
+- You need true parallelism (kernel-level I/O multiplexing)
+- You're integrating with async Python libraries (aiohttp, etc.)
+- You need `Await` effect for Python coroutines
+
+---
+
 ## Composition Examples
 
 ### Race with Timeout
