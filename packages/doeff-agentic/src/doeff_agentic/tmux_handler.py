@@ -8,7 +8,7 @@ Limitations:
 - Only SHARED environment type (no worktree, inherited, copy)
 - No session forking (AgenticForkSession raises AgenticUnsupportedOperationError)
 - Polling-based status detection (no SSE events)
-- AgenticGather and AgenticRace use polling
+- Use core Gather/Race effects for parallel execution
 
 Usage:
     from doeff_agentic.tmux_handler import tmux_handler
@@ -38,14 +38,12 @@ from .effects import (
     AgenticDeleteEnvironment,
     AgenticDeleteSession,
     AgenticForkSession,
-    AgenticGather,
     AgenticGetEnvironment,
     AgenticGetMessages,
     AgenticGetSession,
     AgenticGetSessionStatus,
     AgenticGetWorkflow,
     AgenticNextEvent,
-    AgenticRace,
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
@@ -775,63 +773,6 @@ class TmuxHandler:
             time.sleep(1.0)
 
     # -------------------------------------------------------------------------
-    # Parallel Effects
-    # -------------------------------------------------------------------------
-
-    def handle_gather(self, effect: AgenticGather) -> dict[str, AgenticSessionHandle]:
-        """Handle AgenticGather effect - uses polling."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        results: dict[str, AgenticSessionHandle] = {}
-        pending = set(effect.session_names)
-
-        start = time.time()
-        while pending:
-            if effect.timeout and (time.time() - start) > effect.timeout:
-                raise AgenticTimeoutError("gather", effect.timeout)
-
-            for name in list(pending):
-                state = self._workflow.sessions.get(name)
-                if not state:
-                    raise AgenticSessionNotFoundError(name, by_name=True)
-
-                # Refresh status
-                self._refresh_session_status(state)
-
-                if state.handle.status.is_terminal():
-                    results[name] = state.handle
-                    pending.discard(name)
-
-            if pending:
-                time.sleep(1.0)
-
-        return results
-
-    def handle_race(self, effect: AgenticRace) -> tuple[str, AgenticSessionHandle]:
-        """Handle AgenticRace effect - uses polling."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        start = time.time()
-        while True:
-            if effect.timeout and (time.time() - start) > effect.timeout:
-                raise AgenticTimeoutError("race", effect.timeout)
-
-            for name in effect.session_names:
-                state = self._workflow.sessions.get(name)
-                if not state:
-                    raise AgenticSessionNotFoundError(name, by_name=True)
-
-                # Refresh status
-                self._refresh_session_status(state)
-
-                if state.handle.status.is_terminal():
-                    return (name, state.handle)
-
-            time.sleep(1.0)
-
-    # -------------------------------------------------------------------------
     # Status Effects
     # -------------------------------------------------------------------------
 
@@ -1002,9 +943,6 @@ def tmux_handler(working_dir: str | None = None) -> dict[type, Any]:
         AgenticGetMessages: lambda e: handler.handle_get_messages(e),
         # Event
         AgenticNextEvent: lambda e: handler.handle_next_event(e),
-        # Parallel
-        AgenticGather: lambda e: handler.handle_gather(e),
-        AgenticRace: lambda e: handler.handle_race(e),
         # Status
         AgenticGetSessionStatus: lambda e: handler.handle_get_session_status(e),
         AgenticSupportsCapability: lambda e: handler.handle_supports_capability(e),

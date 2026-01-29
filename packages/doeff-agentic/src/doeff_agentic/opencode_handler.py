@@ -43,14 +43,12 @@ from .effects import (
     AgenticDeleteEnvironment,
     AgenticDeleteSession,
     AgenticForkSession,
-    AgenticGather,
     AgenticGetEnvironment,
     AgenticGetMessages,
     AgenticGetSession,
     AgenticGetSessionStatus,
     AgenticGetWorkflow,
     AgenticNextEvent,
-    AgenticRace,
     AgenticSendMessage,
     AgenticSupportsCapability,
 )
@@ -945,93 +943,6 @@ class OpenCodeHandler:
                 pass
 
     # -------------------------------------------------------------------------
-    # Parallel Effects
-    # -------------------------------------------------------------------------
-
-    def handle_gather(
-        self, effect: AgenticGather, task_state: TaskState, store: Store
-    ) -> FrameResult:
-        """Handle AgenticGather effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        workflow = self._workflow
-        refresh_status = self._refresh_session_status
-
-        @do
-        def _gather():
-            results: dict[str, AgenticSessionHandle] = {}
-            pending = set(effect.session_names)
-
-            start = time.time()
-            while pending:
-                if effect.timeout and (time.time() - start) > effect.timeout:
-                    raise AgenticTimeoutError("gather", effect.timeout)
-
-                for name in list(pending):
-                    session = workflow.sessions.get(name)
-                    if not session:
-                        raise AgenticSessionNotFoundError(name, by_name=True)
-
-                    # Refresh status from server
-                    yield from refresh_status(session.id)
-                    session = workflow.sessions[name]
-
-                    if session.status.is_terminal():
-                        results[name] = session
-                        pending.discard(name)
-
-                if pending:
-                    yield Delay(0.5)
-
-            return results
-
-        return ContinueProgram(
-            program=_gather(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
-        )
-
-    def handle_race(
-        self, effect: AgenticRace, task_state: TaskState, store: Store
-    ) -> FrameResult:
-        """Handle AgenticRace effect."""
-        self._ensure_workflow()
-        assert self._workflow is not None
-
-        workflow = self._workflow
-        refresh_status = self._refresh_session_status
-
-        @do
-        def _race():
-            start = time.time()
-            while True:
-                if effect.timeout and (time.time() - start) > effect.timeout:
-                    raise AgenticTimeoutError("race", effect.timeout)
-
-                for name in effect.session_names:
-                    session = workflow.sessions.get(name)
-                    if not session:
-                        raise AgenticSessionNotFoundError(name, by_name=True)
-
-                    # Refresh status from server
-                    yield from refresh_status(session.id)
-                    session = workflow.sessions[name]
-
-                    if session.status.is_terminal():
-                        return (name, session)
-
-                yield Delay(0.5)
-
-        return ContinueProgram(
-            program=_race(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
-        )
-
-    # -------------------------------------------------------------------------
     # Status Effects
     # -------------------------------------------------------------------------
 
@@ -1245,9 +1156,6 @@ def opencode_handler(
         AgenticGetMessages: handler.handle_get_messages,
         # Event
         AgenticNextEvent: handler.handle_next_event,
-        # Parallel
-        AgenticGather: handler.handle_gather,
-        AgenticRace: handler.handle_race,
         # Status
         AgenticGetSessionStatus: handler.handle_get_session_status,
         AgenticSupportsCapability: handler.handle_supports_capability,
