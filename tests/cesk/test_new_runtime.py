@@ -757,11 +757,17 @@ class TestGatherHandlers:
         result = runtime.run(program())
         assert result.value == []
 
-    @pytest.mark.skip(reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn")
+    @pytest.mark.skip(
+        reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn yet. "
+        "NOTE: SyncRuntime could implement Spawn/Gather via cooperative scheduling in the future."
+    )
     def test_gather_single(self) -> None:
         pass
 
-    @pytest.mark.skip(reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn")
+    @pytest.mark.skip(
+        reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn yet. "
+        "NOTE: SyncRuntime could implement Spawn/Gather via cooperative scheduling in the future."
+    )
     def test_gather_multiple(self) -> None:
         pass
 

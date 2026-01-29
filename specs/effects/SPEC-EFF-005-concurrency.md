@@ -1,6 +1,6 @@
 # SPEC-EFF-005: Concurrency Effects
 
-## Status: Draft (Redesign)
+## Status: Implemented
 
 ## Summary
 
@@ -34,8 +34,8 @@ results = yield Gather(t1, t2)  # Wait when ready
 Future[T]          # Read-side handle: can be Waited, Raced, Gathered
 ├── Task[T]        # From Spawn: adds cancel(), is_done()
 
-Promise[T]         # Write-side handle (handler internal): complete(value)
-                   # promise.future -> Future[T]
+Promise[T]         # Write-side handle: complete via effects
+├── future         # -> Future[T] (the read-side)
 
 RaceResult[T]      # Result of Race effect
 ├── first: Future[T]           # Winner
@@ -45,13 +45,16 @@ RaceResult[T]      # Result of Race effect
 
 **Why separate Future and Promise?**
 - `Future` is the **read-side**: consumers wait for results
-- `Promise` is the **write-side**: handlers resolve values
-- This prevents consumer code from accidentally completing a future
+- `Promise` is the **write-side**: producers resolve values via effects
+- This separation enables advanced patterns like callback bridges and manual coordination
 - `Task` extends `Future` with lifecycle control (cancellation, status checks)
+- `Promise` is user-facing via `CreatePromise`, `CompletePromise`, `FailPromise` effects
 
 ---
 
 ## Effects Overview
+
+### Computation Effects
 
 | Effect | Takes | Returns | Purpose |
 |--------|-------|---------|---------|
@@ -60,6 +63,14 @@ RaceResult[T]      # Result of Race effect
 | `Race` | `*Future[T]` | `RaceResult[T]` | Wait for first completion |
 | `Gather` | `*Future[T]` | `list[T]` | Wait for all completions |
 | `Await` | `Coroutine[T]` | `T` | Bridge to Python asyncio |
+
+### Promise Effects (User-Level Future Creation)
+
+| Effect | Takes | Returns | Purpose |
+|--------|-------|---------|---------|
+| `CreatePromise` | - | `Promise[T]` | Create a new Promise/Future pair |
+| `CompletePromise` | `Promise[T]`, `T` | `None` | Resolve promise with value |
+| `FailPromise` | `Promise[T]`, `Exception` | `None` | Resolve promise with error |
 
 ---
 
@@ -141,40 +152,212 @@ except TaskCancelledError:
 
 ---
 
-## Promise[T] (Handler Internal)
+## Promise[T] and Promise Effects
 
-### Definition
+Promise enables **user-level Future creation** independent of `Spawn`. This is useful for:
+- Bridging callback-based APIs to Future-based code
+- Manual coordination between concurrent tasks
+- Creating Futures that are resolved by external events
+
+### Promise Definition
 
 ```python
 @dataclass
 class Promise(Generic[T]):
-    """Write-side handle for completing a Future. Handler-internal only."""
+    """Write-side handle for completing a Future."""
     _future: Future[T]
-    _completed: bool = False
-    _value: T | None = None
-    _error: Exception | None = None
     
     @property
     def future(self) -> Future[T]:
-        """Get the read-side Future."""
+        """Get the read-side Future that can be Waited, Raced, or Gathered."""
         return self._future
-    
-    def complete(self, value: T) -> None:
-        """Resolve the future with a value."""
-        if self._completed:
-            raise RuntimeError("Promise already completed")
-        self._value = value
-        self._completed = True
-    
-    def fail(self, error: Exception) -> None:
-        """Resolve the future with an error."""
-        if self._completed:
-            raise RuntimeError("Promise already completed")
-        self._error = error
-        self._completed = True
 ```
 
-**Note**: `Promise` is not exposed to user code. Handlers use it internally to bridge effects to results.
+### CreatePromise Effect
+
+```python
+@dataclass(frozen=True)
+class CreatePromiseEffect(EffectBase):
+    """Create a new Promise/Future pair."""
+    pass
+
+def CreatePromise() -> Effect:
+    """Create a Promise. Returns Promise[T] with promise.future as the Future."""
+    ...
+```
+
+**Semantics**:
+```python
+@do
+def example():
+    promise = yield CreatePromise()
+    # promise.future is a Future[T] that can be passed to Wait, Race, Gather
+    # promise itself is used with CompletePromise/FailPromise to resolve
+    return promise
+```
+
+### CompletePromise Effect
+
+```python
+@dataclass(frozen=True)
+class CompletePromiseEffect(EffectBase):
+    """Resolve a Promise with a success value."""
+    promise: Promise[Any]
+    value: Any
+
+def CompletePromise(promise: Promise[T], value: T) -> Effect:
+    """Complete the promise with a value. Anyone waiting on promise.future receives value."""
+    ...
+```
+
+**Semantics**:
+```python
+@do
+def example():
+    promise = yield CreatePromise()
+    # ... later ...
+    yield CompletePromise(promise, 42)
+    # Anyone doing `yield Wait(promise.future)` now receives 42
+```
+
+### FailPromise Effect
+
+```python
+@dataclass(frozen=True)
+class FailPromiseEffect(EffectBase):
+    """Resolve a Promise with an error."""
+    promise: Promise[Any]
+    error: BaseException
+
+def FailPromise(promise: Promise[T], error: BaseException) -> Effect:
+    """Fail the promise with an error. Anyone waiting on promise.future raises error."""
+    ...
+```
+
+**Semantics**:
+```python
+@do
+def example():
+    promise = yield CreatePromise()
+    # ... later ...
+    yield FailPromise(promise, ValueError("something went wrong"))
+    # Anyone doing `yield Wait(promise.future)` now raises ValueError
+```
+
+### Promise Lifecycle
+
+```
+CreatePromise() ──> PENDING ──CompletePromise──> RESOLVED (value)
+                       │
+                       └──FailPromise──> REJECTED (error)
+```
+
+**Important constraints**:
+- A Promise can only be completed **once** (either complete or fail)
+- Attempting to complete an already-completed Promise raises `RuntimeError`
+- The Future returned by `promise.future` is the same object throughout
+
+### Use Cases
+
+#### 1. Callback Bridge
+
+Bridge callback-based APIs to Future-based code:
+
+```python
+@do
+def callback_to_future(register_callback: Callable[[Callable], None]) -> Program[T]:
+    """Convert a callback-based API to a Future."""
+    promise = yield CreatePromise()
+    
+    def on_result(value):
+        # This would be called from the callback
+        # In practice, you'd need IO effect to register
+        pass
+    
+    register_callback(on_result)
+    return promise.future  # Caller can Wait on this
+```
+
+#### 2. Manual Coordination
+
+Coordinate multiple tasks with a shared signal:
+
+```python
+@do
+def coordinator():
+    """One task signals others via Promise."""
+    signal = yield CreatePromise()
+    
+    @do
+    def worker(worker_id: int):
+        # Wait for signal before proceeding
+        value = yield Wait(signal.future)
+        yield Log(f"Worker {worker_id} received: {value}")
+        return worker_id * value
+    
+    # Start workers - they all wait on the same signal
+    t1 = yield Spawn(worker(1))
+    t2 = yield Spawn(worker(2))
+    t3 = yield Spawn(worker(3))
+    
+    # Do some setup work
+    yield Delay(0.1)
+    
+    # Signal all workers at once
+    yield CompletePromise(signal, 10)
+    
+    # Gather results
+    results = yield Gather(t1, t2, t3)
+    return results  # [10, 20, 30]
+```
+
+#### 3. External Event Resolution
+
+Create a Future that's resolved by an external event:
+
+```python
+@do
+def wait_for_external_event():
+    promise = yield CreatePromise()
+    
+    # Store promise somewhere accessible to external code
+    yield Put("pending_promise", promise)
+    
+    # Wait for external resolution
+    result = yield Wait(promise.future)
+    return result
+
+# Later, external code can resolve:
+@do
+def external_resolver():
+    promise = yield Get("pending_promise")
+    yield CompletePromise(promise, "external value")
+```
+
+#### 4. Multiple Waiters
+
+Multiple tasks can wait on the same Future:
+
+```python
+@do
+def shared_future_example():
+    promise = yield CreatePromise()
+    
+    @do
+    def waiter(name: str):
+        value = yield Wait(promise.future)
+        return f"{name} got {value}"
+    
+    t1 = yield Spawn(waiter("A"))
+    t2 = yield Spawn(waiter("B"))
+    t3 = yield Spawn(waiter("C"))
+    
+    # All waiters block until promise is completed
+    yield CompletePromise(promise, "shared")
+    
+    results = yield Gather(t1, t2, t3)
+    # ["A got shared", "B got shared", "C got shared"]
+```
 
 ---
 
@@ -754,6 +937,6 @@ async def handle_wait(effect: WaitEffect, state: RuntimeState) -> Any:
 
 ## References
 
-- Source: `doeff/effects/spawn.py`, `doeff/effects/wait.py`, `doeff/effects/race.py`, `doeff/effects/gather.py`
+- Source: `doeff/effects/spawn.py`, `doeff/effects/wait.py`, `doeff/effects/race.py`, `doeff/effects/gather.py`, `doeff/effects/promise.py`
 - Runtime: `doeff/cesk/runtime/async_.py`
-- Tests: `tests/cesk/test_spawn.py`, `tests/cesk/test_race.py`, `tests/cesk/test_gather.py`
+- Tests: `tests/cesk/test_spawn.py`, `tests/cesk/test_concurrency_api.py`
