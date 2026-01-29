@@ -2,7 +2,7 @@
 # ===========================
 # Centralized commands for development, testing, and linting.
 
-.PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-doeff \
+.PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-doeff lint-packages \
         test test-unit test-e2e format check pre-commit-install clean
 
 # Default target
@@ -15,11 +15,12 @@ help:
 	@echo "  make pre-commit-install Install pre-commit hooks"
 	@echo ""
 	@echo "Linting (make lint runs all):"
-	@echo "  make lint              Run ALL linters (ruff, pyright, semgrep, doeff-linter)"
+	@echo "  make lint              Run ALL linters (core + packages)"
 	@echo "  make lint-ruff         Run ruff linter"
 	@echo "  make lint-pyright      Run pyright type checker"
 	@echo "  make lint-semgrep      Run semgrep architectural rules"
 	@echo "  make lint-doeff        Run doeff-linter (Rust-based)"
+	@echo "  make lint-packages     Run lint in all subpackages with Makefiles"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test              Run all tests"
@@ -47,8 +48,8 @@ pre-commit-install:
 # Linting - Architectural Enforcement
 # =============================================================================
 
-# Run ALL linters
-lint: lint-ruff lint-pyright lint-semgrep lint-doeff
+# Run ALL linters (core + packages)
+lint: lint-ruff lint-pyright lint-semgrep lint-doeff lint-packages
 	@echo ""
 	@echo "All linters passed!"
 
@@ -82,6 +83,17 @@ lint-doeff:
 		echo "Warning: doeff-linter not installed."; \
 		echo "Build with: cd packages/doeff-linter && cargo install --path ."; \
 	fi
+
+# Run lint in all subpackages that have Makefiles
+lint-packages:
+	@echo "Running lint in subpackages..."
+	@for dir in packages/*/; do \
+		if [ -f "$$dir/Makefile" ]; then \
+			echo ""; \
+			echo "=== Linting $$(basename $$dir) ==="; \
+			$(MAKE) -C "$$dir" lint || exit 1; \
+		fi; \
+	done
 
 # =============================================================================
 # Testing
