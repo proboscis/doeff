@@ -28,6 +28,7 @@ from doeff_agentic import (
     AgenticNextEvent,
     AgenticSendMessage,
     AgenticTimeoutError,
+    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
@@ -174,12 +175,14 @@ if __name__ == "__main__":
         handlers = opencode_handler()
         runtime = AsyncRuntime(handlers=handlers)
 
-        try:
-            result = await runtime.run(draft_with_approval(task))
+        result = await runtime.run(with_visual_logging(draft_with_approval(task)))
+
+        if result.is_err():
+            print("\n=== Workflow Failed ===")
+            print(result.format())  # Rich error info: effect path, python stack, K stack
+        else:
             output = result.value
             print(f"\n=== Result: {output['status'].upper()} ===")
             print(output["content"][:500])
-        except Exception as e:
-            print(f"Error: {e}")
 
     asyncio.run(main())

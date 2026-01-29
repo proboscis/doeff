@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Coroutine, Protocol
 
 from doeff import Await, Delay, do
 from doeff.cesk.frames import ContinueProgram, ContinueValue, FrameResult
+from doeff.effects.writer import slog
 
 if TYPE_CHECKING:
     from doeff.cesk.state import TaskState
@@ -518,7 +519,8 @@ class OpenCodeHandler:
 
         @do
         def _create_session():
-            # Create session via OpenCode API
+            yield slog(status="connecting", session=effect.name)
+
             body: dict[str, Any] = {}
             if effect.title:
                 body["title"] = effect.title
@@ -527,6 +529,8 @@ class OpenCodeHandler:
             assert api_result is not None
 
             session_id = api_result["id"]
+
+            yield slog(status="created", session=effect.name, id=session_id[:12])
 
             result = AgenticSessionHandle(
                 id=session_id,
@@ -543,7 +547,6 @@ class OpenCodeHandler:
             workflow.sessions[effect.name] = result
             workflow.session_by_id[session_id] = effect.name
 
-            # Log session creation
             event_log.log_session_created(workflow.id, result)
             event_log.log_session_bound_to_environment(
                 workflow.id, env_id, effect.name
@@ -749,17 +752,18 @@ class OpenCodeHandler:
         @do
         def _send_message():
             if effect.wait:
-                # Synchronous: wait for response
+                yield slog(status="sending", session=session_name or effect.session_id[:8])
+
                 api_result = yield client.post(
                     f"/session/{effect.session_id}/message", json=body
                 )
                 assert api_result is not None
                 info = api_result.get("info", {})
 
-                # Update session status
                 update_status(effect.session_id, AgenticSessionStatus.RUNNING)
 
-                # Log message complete
+                yield slog(status="response", session=session_name or effect.session_id[:8])
+
                 if session_name:
                     event_log.log_message_complete(workflow.id, session_name)
 
@@ -770,9 +774,10 @@ class OpenCodeHandler:
                     created_at=datetime.now(timezone.utc),
                 )
             else:
-                # Asynchronous: fire and forget
+                yield slog(status="sending-async", session=session_name or effect.session_id[:8])
+
                 yield client.post(f"/session/{effect.session_id}/prompt_async", json=body)
-                # Return a placeholder handle
+
                 return AgenticMessageHandle(
                     id=f"msg-{time.time_ns()}",
                     session_id=effect.session_id,
