@@ -18,8 +18,8 @@ from doeff.effects.spawn import (
     SpawnEffect,
     TaskCancelEffect,
     TaskIsDoneEffect,
-    TaskJoinEffect,
 )
+from doeff.effects.wait import WaitEffect
 
 
 def handle_spawn(
@@ -44,19 +44,19 @@ def handle_spawn(
     )
 
 
-def handle_task_join(
-    effect: TaskJoinEffect,
+def handle_wait(
+    effect: WaitEffect,
     task_state: TaskState,
     store: Store,
 ) -> FrameResult:
-    """Handle TaskJoinEffect by waiting for task completion.
+    """Handle WaitEffect by waiting for task completion.
     
-    Note: The actual join is handled by the runtime (AsyncRuntime).
+    Note: The actual wait is handled by the runtime (AsyncRuntime).
     This handler is a placeholder.
     """
-    # This should not be reached - the runtime should intercept TaskJoinEffect
+    # This should not be reached - the runtime should intercept WaitEffect
     raise NotImplementedError(
-        "TaskJoinEffect must be handled by the runtime, not the default handler. "
+        "WaitEffect must be handled by the runtime, not the default handler. "
         "Use AsyncRuntime for spawn support."
     )
 
@@ -99,5 +99,5 @@ __all__ = [
     "handle_spawn",
     "handle_task_cancel",
     "handle_task_is_done",
-    "handle_task_join",
+    "handle_wait",
 ]

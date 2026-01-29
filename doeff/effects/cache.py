@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,11 +20,6 @@ class CacheGetEffect(EffectBase):
     """Requests the cached value for the key and yields the stored payload."""
 
     key: Any
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> CacheGetEffect:
-        return self
 
 
 @dataclass(frozen=True)
@@ -45,11 +40,6 @@ class CachePutEffect(EffectBase):
         cloudpickle.dumps(self.key)
         # so this, is always running fine!
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> CachePutEffect:
-        return self
-
 
 @dataclass(frozen=True)
 class CacheDeleteEffect(EffectBase):
@@ -57,22 +47,12 @@ class CacheDeleteEffect(EffectBase):
 
     key: Any
 
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> CacheDeleteEffect:
-        return self
-
 
 @dataclass(frozen=True)
 class CacheExistsEffect(EffectBase):
     """Checks if a key exists in the cache and returns True or False."""
 
     key: Any
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> CacheExistsEffect:
-        return self
 
 
 def cache_get(key: Any) -> CacheGetEffect:

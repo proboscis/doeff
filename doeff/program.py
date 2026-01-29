@@ -319,14 +319,6 @@ class ProgramBase(ABC, Generic[T]):
 
         return self.flat_map(binder)
 
-    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]:
-        """Apply ``transform`` to all effects yielded by this program."""
-
-        if not callable(transform):
-            raise TypeError("transform must be callable")
-
-        return _InterceptedProgram.compose(self, (transform,))
-
     @staticmethod
     def pure(value: T) -> Program[T]:
         from doeff.effects.pure import PureEffect
@@ -443,12 +435,6 @@ class ProgramProtocol(Protocol[T]):
 
     def flat_map(self, f: Callable[[T], ProgramProtocol[U]]) -> ProgramProtocol[U]:
         """Monadic bind operation - chain programs sequentially."""
-        ...
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | ProgramProtocol]
-    ) -> ProgramProtocol[T]:
-        """Apply transform to all yielded effects in this program."""
         ...
 
 
@@ -615,47 +601,6 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
             return result
 
         return KleisliProgramCall.create_derived(flatmapped_gen, parent=self)
-
-
-@dataclass
-class _InterceptedProgram(ProgramBase[T]):
-    """Program wrapper that delegates interception to an effect handler."""
-
-    base_program: Program[T]
-    transforms: tuple[Callable[[Effect], Effect | Program], ...]
-
-    def to_generator(self) -> Generator[Effect | Program, Any, T]:
-        from doeff.effects.intercept import intercept_program_effect
-
-        def generator() -> Generator[Effect | Program, Any, T]:
-            effect = intercept_program_effect(self.base_program, self.transforms)
-            result = yield effect
-            return result
-
-        return generator()
-
-    @classmethod
-    def compose(
-        cls,
-        program: Program[T],
-        transforms: tuple[Callable[[Effect], Effect | Program], ...],
-    ) -> Program[T]:
-        if not transforms:
-            return program
-
-        if isinstance(program, cls):
-            base_program = program.base_program
-            combined = program.transforms + transforms
-        else:
-            base_program = program
-            combined = transforms
-
-        return cls(base_program=base_program, transforms=combined)
-
-    def intercept(self, transform: Callable[[Effect], Effect | Program]) -> Program[T]:
-        if not callable(transform):
-            raise TypeError("transform must be callable")
-        return self.compose(self.base_program, self.transforms + (transform,))
 
 
 Program = ProgramBase

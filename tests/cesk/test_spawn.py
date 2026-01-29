@@ -15,7 +15,7 @@ Design Decisions (from spec):
 
 import pytest
 
-from doeff import Program, do
+from doeff import Intercept, Program, do
 from doeff.effects import (
     IO,
     Ask,
@@ -669,11 +669,10 @@ class TestSpawnComposition:
 
         @do
         def program():
-            results = yield Gather(
-                spawn_and_join(1),
-                spawn_and_join(2),
-                spawn_and_join(3)
-            )
+            t1 = yield Spawn(spawn_and_join(1))
+            t2 = yield Spawn(spawn_and_join(2))
+            t3 = yield Spawn(spawn_and_join(3))
+            results = yield Gather(t1, t2, t3)
             return results
 
         result = await runtime.run_and_unwrap(program())
@@ -822,7 +821,7 @@ class TestSpawnEdgeCases:
 
         @do
         def main():
-            result = yield program().intercept(transform)
+            result = yield Intercept(program(), transform)
             return result
 
         # Spawned tasks are isolated - intercept shouldn't affect them
@@ -858,12 +857,10 @@ class TestSpawnConcurrentJoin:
         @do
         def program():
             shared = yield Spawn(shared_task())
-            # Multiple joiners
-            results = yield Gather(
-                joiner(shared),
-                joiner(shared),
-                joiner(shared)
-            )
+            t1 = yield Spawn(joiner(shared))
+            t2 = yield Spawn(joiner(shared))
+            t3 = yield Spawn(joiner(shared))
+            results = yield Gather(t1, t2, t3)
             return results
 
         result = await runtime.run_and_unwrap(program())

@@ -1,49 +1,52 @@
-"""Race effects for parallel programs - first to complete wins."""
+"""Race effect - first Future to complete wins."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
-from ._program_types import ProgramLike
-from ._validators import ensure_program_tuple
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
+from .base import Effect, EffectBase, create_effect_with_trace
+from .spawn import Future
+
+T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class RaceResult(Generic[T]):
+    """Result of a Race effect."""
+
+    first: Future[T]
+    value: T
+    rest: tuple[Future[T], ...]
 
 
 @dataclass(frozen=True)
 class RaceEffect(EffectBase):
-    """Executes all programs in parallel and yields the first result to complete.
+    """Race multiple Futures - first to complete wins. Returns RaceResult."""
 
-    Returns a tuple of (index, result) where index is the position of the
-    winning program in the input tuple.
-    """
-
-    programs: tuple[ProgramLike, ...]
+    futures: tuple[Future[Any], ...]
 
     def __post_init__(self) -> None:
-        ensure_program_tuple(self.programs, name="programs")
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> RaceEffect:
-        programs = intercept_value(self.programs, transform)
-        if programs is self.programs:
-            return self
-        return replace(self, programs=programs)
+        if not self.futures:
+            raise ValueError("Race requires at least one Future")
+        for i, f in enumerate(self.futures):
+            if not isinstance(f, Future):
+                raise TypeError(f"Race argument {i} must be a Future, got {type(f).__name__}")
 
 
-def race(*programs: ProgramLike) -> RaceEffect:
-    return create_effect_with_trace(RaceEffect(programs=tuple(programs)))
+def race(*futures: Future[Any]) -> RaceEffect:
+    return create_effect_with_trace(RaceEffect(futures=tuple(futures)))
 
 
-def Race(*programs: ProgramLike) -> Effect:
+def Race(*futures: Future[Any]) -> Effect:
     return create_effect_with_trace(
-        RaceEffect(programs=tuple(programs)), skip_frames=3
+        RaceEffect(futures=tuple(futures)), skip_frames=3
     )
 
 
 __all__ = [
     "Race",
     "RaceEffect",
+    "RaceResult",
     "race",
 ]

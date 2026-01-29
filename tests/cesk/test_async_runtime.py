@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from doeff import Program, do
+from doeff import Intercept, Program, do
 from doeff.effects import (
     IO,
     Ask,
@@ -37,6 +37,7 @@ from doeff.effects import (
     Pure,
     Put,
     Safe,
+    Spawn,
     Tell,
 )
 from doeff.effects.atomic import AtomicGet, AtomicUpdate
@@ -307,8 +308,9 @@ class TestAsyncRuntimeAsyncEffects:
 
     @pytest.mark.asyncio
     async def test_async_gather_parallel(self) -> None:
-        """Test Gather effect runs programs in parallel."""
+        """Test Gather effect runs Futures in parallel."""
         from doeff.cesk.runtime import AsyncRuntime
+        from doeff import Spawn
 
         runtime = AsyncRuntime()
 
@@ -321,7 +323,10 @@ class TestAsyncRuntimeAsyncEffects:
 
         @do
         def program():
-            results = yield Gather(task(1), task(2), task(3))
+            t1 = yield Spawn(task(1))
+            t2 = yield Spawn(task(2))
+            t3 = yield Spawn(task(3))
+            results = yield Gather(t1, t2, t3)
             return results
 
         result = await runtime.run_and_unwrap(program())
@@ -360,7 +365,9 @@ class TestAsyncRuntimeAsyncEffects:
 
         @do
         def program():
-            results = yield Safe(Gather(success_task(), failing_task()))
+            t1 = yield Spawn(success_task())
+            t2 = yield Spawn(failing_task())
+            results = yield Safe(Gather(t1, t2))
             return results
 
         result = await runtime.run_and_unwrap(program())
@@ -697,7 +704,7 @@ class TestAsyncRuntimeControlFlow:
 
         @do
         def program():
-            result = yield inner_program().intercept(transform)
+            result = yield Intercept(inner_program(), transform)
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
@@ -802,12 +809,11 @@ class TestAsyncRuntimeIntegration:
         assert result == 15
 
     @pytest.mark.asyncio
-    async def test_async_concurrent_gather_with_state(self) -> None:
-        """Test Gather runs in parallel with shared store.
+    async def test_async_gather_isolated_state(self) -> None:
+        """Test Gather with Spawn uses isolated state per task.
         
-        All parallel branches share the same store. State changes in one
-        branch are visible to other branches (interleaved at effect boundaries)
-        and to the parent after Gather completes.
+        Each spawned task has its own isolated state snapshot.
+        State changes in one task are NOT visible to others.
         """
         from doeff.cesk.runtime import AsyncRuntime
 
@@ -822,16 +828,16 @@ class TestAsyncRuntimeIntegration:
         @do
         def program():
             yield Put("counter", 0)
-            results = yield Gather(increment(), increment(), increment())
+            t1 = yield Spawn(increment())
+            t2 = yield Spawn(increment())
+            t3 = yield Spawn(increment())
+            results = yield Gather(t1, t2, t3)
             final = yield Get("counter")
             return (results, final)
 
         results, final = await runtime.run_and_unwrap(program())
-        # With shared store, each task sees and modifies the same counter
-        # Final value should be 3 (0+1+1+1)
-        assert final == 3
-        # Results order depends on execution order, but all values seen should be 0, 1, 2
-        assert sorted(results) == [0, 1, 2]
+        assert final == 0
+        assert results == [0, 0, 0]
 
     @pytest.mark.asyncio
     async def test_async_gather_true_parallelism(self) -> None:
@@ -852,7 +858,10 @@ class TestAsyncRuntimeIntegration:
         @do
         def program():
             start = yield GetTime()
-            results = yield Gather(delayed_task(1), delayed_task(2), delayed_task(3))
+            t1 = yield Spawn(delayed_task(1))
+            t2 = yield Spawn(delayed_task(2))
+            t3 = yield Spawn(delayed_task(3))
+            results = yield Gather(t1, t2, t3)
             end = yield GetTime()
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
@@ -1176,10 +1185,17 @@ class TestGatherComposition:
             return value
 
         @do
+        def spawn_children():
+            t1 = yield Spawn(child())
+            t2 = yield Spawn(child())
+            t3 = yield Spawn(child())
+            return (yield Gather(t1, t2, t3))
+
+        @do
         def program():
             results = yield Local(
                 {"parent_key": "parent_value"},
-                Gather(child(), child(), child())
+                spawn_children()
             )
             return results
 
@@ -1210,27 +1226,28 @@ class TestGatherComposition:
             return result
 
         @do
+        def spawn_children():
+            t1 = yield Spawn(child_with_local())
+            t2 = yield Spawn(child_without_local())
+            t3 = yield Spawn(child_without_local())
+            return (yield Gather(t1, t2, t3))
+
+        @do
         def program():
             results = yield Local(
                 {"key": "parent_value"},
-                Gather(
-                    child_with_local(),
-                    child_without_local(),
-                    child_without_local()
-                )
+                spawn_children()
             )
             return results
 
         results = await runtime.run_and_unwrap(program())
-        # First child sees its local override, others see parent value
         assert results == ["local_override", "parent_value", "parent_value"]
 
     @pytest.mark.asyncio
-    async def test_gather_plus_put_shared_store(self) -> None:
-        """Test Gather with shared store semantics.
+    async def test_gather_plus_put_isolated_store(self) -> None:
+        """Test Gather with Spawn uses isolated store per task.
         
-        Composition rule: Gather + Put - Shared store across children.
-        All changes are visible to parent after Gather.
+        Spawned tasks have isolated state - changes are NOT visible to parent.
         """
         from doeff.cesk.runtime import AsyncRuntime
 
@@ -1244,21 +1261,16 @@ class TestGatherComposition:
         @do
         def program():
             yield Put("initial", 0)
-            results = yield Gather(
-                child("a", 1),
-                child("b", 2),
-                child("c", 3)
-            )
-            a_val = yield Get("a")
-            b_val = yield Get("b")
-            c_val = yield Get("c")
-            return (results, a_val, b_val, c_val)
+            t1 = yield Spawn(child("a", 1))
+            t2 = yield Spawn(child("b", 2))
+            t3 = yield Spawn(child("c", 3))
+            results = yield Gather(t1, t2, t3)
+            initial = yield Get("initial")
+            return (results, initial)
 
-        results, a_val, b_val, c_val = await runtime.run_and_unwrap(program())
+        results, initial = await runtime.run_and_unwrap(program())
         assert results == ["a", "b", "c"]
-        assert a_val == 1
-        assert b_val == 2
-        assert c_val == 3
+        assert initial == 0
 
     @pytest.mark.asyncio
     async def test_gather_plus_listen_all_logs_captured(self) -> None:
@@ -1276,25 +1288,20 @@ class TestGatherComposition:
             return name
 
         @do
+        def spawn_children():
+            t1 = yield Spawn(logging_child("A"))
+            t2 = yield Spawn(logging_child("B"))
+            t3 = yield Spawn(logging_child("C"))
+            return (yield Gather(t1, t2, t3))
+
+        @do
         def program():
-            result = yield Listen(
-                Gather(
-                    logging_child("A"),
-                    logging_child("B"),
-                    logging_child("C")
-                )
-            )
+            result = yield Listen(spawn_children())
             return result
 
         result = await runtime.run_and_unwrap(program())
-        # result.value is the list of results
         assert result.value == ["A", "B", "C"]
-        # result.log contains logs from all children
-        log_messages = list(result.log)
-        assert len(log_messages) == 3
-        assert any("Message from A" in str(msg) for msg in log_messages)
-        assert any("Message from B" in str(msg) for msg in log_messages)
-        assert any("Message from C" in str(msg) for msg in log_messages)
+        assert len(result.log) == 0
 
     @pytest.mark.asyncio
     async def test_gather_plus_safe_first_error_wrapped(self) -> None:
@@ -1316,9 +1323,10 @@ class TestGatherComposition:
 
         @do
         def program():
-            result = yield Safe(
-                Gather(success(), failing(), success())
-            )
+            t1 = yield Spawn(success())
+            t2 = yield Spawn(failing())
+            t3 = yield Spawn(success())
+            result = yield Safe(Gather(t1, t2, t3))
             return result
 
         result = await runtime.run_and_unwrap(program())
@@ -1339,40 +1347,41 @@ class TestGatherComposition:
 
         @do
         def leaf_task(name: str):
-            yield Delay(seconds=0.05)  # Small delay
+            yield Delay(seconds=0.05)
             yield IO(lambda n=name: execution_order.append(n))
             return name
 
         @do
         def inner_gather_1():
-            results = yield Gather(leaf_task("a"), leaf_task("b"))
-            return results
+            t1 = yield Spawn(leaf_task("a"))
+            t2 = yield Spawn(leaf_task("b"))
+            return (yield Gather(t1, t2))
 
         @do
         def inner_gather_2():
-            results = yield Gather(leaf_task("c"), leaf_task("d"))
-            return results
+            t1 = yield Spawn(leaf_task("c"))
+            t2 = yield Spawn(leaf_task("d"))
+            return (yield Gather(t1, t2))
 
         @do
         def program():
             start = yield GetTime()
-            results = yield Gather(inner_gather_1(), inner_gather_2())
+            g1 = yield Spawn(inner_gather_1())
+            g2 = yield Spawn(inner_gather_2())
+            results = yield Gather(g1, g2)
             end = yield GetTime()
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
 
         results, elapsed = await runtime.run_and_unwrap(program())
-        # All 4 tasks should complete
         assert results == [["a", "b"], ["c", "d"]]
-        # Should complete in ~0.05s (parallel), not ~0.2s (sequential)
         assert elapsed < 0.3
 
     @pytest.mark.asyncio
-    async def test_gather_plus_intercept_not_inherited(self) -> None:
-        """Test that parent Intercept does NOT apply to Gather children.
+    async def test_gather_intercept_does_not_apply_to_spawned_children(self) -> None:
+        """Test that parent Intercept does NOT apply to spawned Gather children.
         
-        Composition rule: Gather + Intercept - Children spawned with fresh continuations.
-        AsyncRuntime creates fresh tasks for Gather children, so InterceptFrame is NOT propagated.
+        Spawned tasks run in isolated contexts, so parent InterceptFrame is NOT inherited.
         """
         from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.intercept import intercept_program_effect
@@ -1392,19 +1401,62 @@ class TestGatherComposition:
             return value
 
         @do
-        def gather_programs():
-            results = yield Gather(child(), child())
+        def gather_children():
+            t1 = yield Spawn(child())
+            t2 = yield Spawn(child())
+            return (yield Gather(t1, t2))
+
+        @do
+        def program():
+            results = yield intercept_program_effect(
+                gather_children(),
+                (transform_ask,)
+            )
+            return results
+
+        results = await runtime.run_and_unwrap(program(), env={"key": "actual_value"})
+        assert results == ["actual_value", "actual_value"]
+
+    @pytest.mark.asyncio
+    async def test_gather_plus_intercept_futures_mode_isolated(self) -> None:
+        """Test that parent Intercept does NOT apply to Gather children in futures mode.
+        
+        With future-based Gather (Spawn + Gather), children run in isolated tasks
+        with fresh continuations, so InterceptFrame is NOT inherited.
+        """
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.effects.intercept import intercept_program_effect
+        from doeff.effects.pure import Pure
+        from doeff.effects.reader import AskEffect
+        from doeff import Spawn
+
+        runtime = AsyncRuntime()
+
+        def transform_ask(effect):
+            if isinstance(effect, AskEffect):
+                return Pure("intercepted")
+            return None
+
+        @do
+        def child():
+            value = yield Ask("key")
+            return value
+
+        @do
+        def gather_futures():
+            t1 = yield Spawn(child())
+            t2 = yield Spawn(child())
+            results = yield Gather(t1, t2)
             return results
 
         @do
         def program():
             results = yield intercept_program_effect(
-                gather_programs(),
+                gather_futures(),
                 (transform_ask,)
             )
             return results
 
-        # Children's Ask effects are NOT intercepted - they see actual env value
         results = await runtime.run_and_unwrap(program(), env={"key": "actual_value"})
         assert results == ["actual_value", "actual_value"]
 
@@ -1424,8 +1476,8 @@ class TestGatherComposition:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_gather_single_program(self) -> None:
-        """Test Gather with single program returns single-element list."""
+    async def test_gather_single_future(self) -> None:
+        """Test Gather with single future returns single-element list."""
         from doeff.cesk.runtime import AsyncRuntime
 
         runtime = AsyncRuntime()
@@ -1436,7 +1488,8 @@ class TestGatherComposition:
 
         @do
         def program():
-            results = yield Gather(single())
+            t = yield Spawn(single())
+            results = yield Gather(t)
             return results
 
         results = await runtime.run_and_unwrap(program())
@@ -1463,12 +1516,13 @@ class TestGatherComposition:
 
         @do
         def program():
-            # slow_task is first but will complete last
-            results = yield Gather(slow_task(), fast_task(), fast_task())
+            t1 = yield Spawn(slow_task())
+            t2 = yield Spawn(fast_task())
+            t3 = yield Spawn(fast_task())
+            results = yield Gather(t1, t2, t3)
             return results
 
         results = await runtime.run_and_unwrap(program())
-        # Results should be in program order
         assert results == ["slow", "fast", "fast"]
 
 

@@ -15,7 +15,7 @@ Reference: gh#177
 
 import pytest
 
-from doeff import Program, do
+from doeff import Intercept, Program, Spawn, do
 from doeff.effects import (
     Ask,
     Gather,
@@ -66,27 +66,6 @@ class TestPureEffect:
 
         result = await runtime.run_and_unwrap(program())
         assert result == 10
-
-    @pytest.mark.asyncio
-    async def test_pure_intercept_returns_self(self) -> None:
-        """Pure effect intercept returns self (no nested effects)."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
-        def transform(e):
-            # This should never be called for Pure's internal effects
-            return Program.pure("transformed")
-
-        @do
-        def program():
-            pure_effect = Pure(42)
-            result = yield pure_effect.intercept(transform)
-            return result
-
-        result = await runtime.run_and_unwrap(program())
-        # Pure(42) should return 42, not be transformed
-        assert result == 42
 
 
 # ============================================================================
@@ -317,8 +296,8 @@ class TestInterceptComposition:
 
         @do
         def program():
-            # f is applied first, should win
-            result = yield inner_program().intercept(transform_f).intercept(transform_g)
+            # f is applied first (innermost), should win
+            result = yield Intercept(inner_program(), transform_f, transform_g)
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
@@ -349,7 +328,7 @@ class TestInterceptComposition:
         @do
         def program():
             # f passes through, g intercepts
-            result = yield inner_program().intercept(transform_f).intercept(transform_g)
+            result = yield Intercept(inner_program(), transform_f, transform_g)
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
@@ -374,7 +353,7 @@ class TestInterceptComposition:
 
         @do
         def program():
-            result = yield inner_program().intercept(transform_f).intercept(transform_g)
+            result = yield Intercept(inner_program(), transform_f, transform_g)
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
@@ -403,97 +382,11 @@ class TestInterceptComposition:
 
         @do
         def program():
-            result = yield inner_program().intercept(transform)
+            result = yield Intercept(inner_program(), transform)
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
         assert result == "from_replacement"
-
-
-class TestInterceptGatherScope:
-    """Tests for Intercept + Gather: Scope rules."""
-
-    @pytest.mark.asyncio
-    async def test_intercept_gather_affects_children(self) -> None:
-        """Intercept on Gather DOES affect children's effects (via continuation stack)."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
-        intercepted_effects = []
-
-        def track_intercept(e):
-            intercepted_effects.append(type(e).__name__)
-
-        @do
-        def child():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            result = yield Gather(child(), child()).intercept(track_intercept)
-            return result
-
-        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
-
-        assert result == ["original", "original"]
-        # Children's AskEffects ARE intercepted (InterceptFrame is on continuation stack)
-        assert "AskEffect" in intercepted_effects
-        # GatherEffect is NOT intercepted (consumed by handler directly)
-        assert "GatherEffect" not in intercepted_effects
-
-    @pytest.mark.asyncio
-    async def test_intercept_transforms_children_effects(self) -> None:
-        """Intercept on Gather transforms children's effects."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
-        def intercept_ask(e):
-            if isinstance(e, AskEffect):
-                return Program.pure("intercepted")
-            return None
-
-        @do
-        def child():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            result = yield Gather(child(), child()).intercept(intercept_ask)
-            return result
-
-        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
-        # Children's effects are intercepted
-        assert result == ["intercepted", "intercepted"]
-
-    @pytest.mark.asyncio
-    async def test_gather_effect_not_intercepted(self) -> None:
-        """GatherEffect itself is NOT intercepted (consumed by handler directly)."""
-        from doeff.cesk.runtime import AsyncRuntime
-        from doeff.effects.gather import GatherEffect
-
-        runtime = AsyncRuntime()
-
-        gather_intercepted = []
-
-        def track_gather(e):
-            if isinstance(e, GatherEffect):
-                gather_intercepted.append(True)
-
-        @do
-        def child():
-            return (yield Ask("key"))
-
-        @do
-        def program():
-            result = yield Gather(child(), child()).intercept(track_gather)
-            return result
-
-        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
-        assert result == ["original", "original"]
-        # GatherEffect was NOT intercepted
-        assert len(gather_intercepted) == 0
 
 
 # ============================================================================
@@ -520,7 +413,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield inner_program().intercept(bad_transform)
+            result = yield Intercept(inner_program(), bad_transform)
             return result
 
         with pytest.raises(RuntimeError, match="transform error"):
@@ -543,7 +436,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield failing_program().intercept(passthrough)
+            result = yield Intercept(failing_program(), passthrough)
             return result
 
         with pytest.raises(ValueError, match="program error"):
@@ -566,7 +459,7 @@ class TestInterceptErrorHandling:
 
         @do
         def program():
-            result = yield Safe(failing_program().intercept(passthrough))
+            result = yield Safe(Intercept(failing_program(), passthrough))
             return result
 
         result = await runtime.run_and_unwrap(program(), env={"key": "original"})
@@ -606,7 +499,7 @@ class TestCombinedComposition:
             result = yield Safe(
                 Local(
                     {"key": "modified"},
-                    inner_program().intercept(intercept_ask)
+                    Intercept(inner_program(), intercept_ask)
                 )
             )
             stored = yield Get("result")
@@ -632,20 +525,24 @@ class TestCombinedComposition:
 
         @do
         def may_fail(should_fail: bool):
+            _ = yield Ask("_")
             if should_fail:
                 raise ValueError("failed")
             return "success"
 
         @do
+        def safe_task(should_fail: bool):
+            return (yield Safe(may_fail(should_fail)))
+
+        @do
         def program():
-            results = yield Gather(
-                Safe(may_fail(False)),
-                Safe(may_fail(True)),
-                Safe(may_fail(False))
-            )
+            t1 = yield Spawn(safe_task(False))
+            t2 = yield Spawn(safe_task(True))
+            t3 = yield Spawn(safe_task(False))
+            results = yield Gather(t1, t2, t3)
             return results
 
-        results = await runtime.run_and_unwrap(program())
+        results = await runtime.run_and_unwrap(program(), env={"_": None})
 
         assert len(results) == 3
         assert results[0].is_ok()

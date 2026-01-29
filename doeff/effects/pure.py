@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .base import Effect, EffectBase, create_effect_with_trace
-
-if TYPE_CHECKING:
-    from doeff.program import Program
 
 
 @dataclass(frozen=True)
@@ -23,12 +19,6 @@ class PureEffect(EffectBase):
     """
 
     value: Any
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> PureEffect:
-        """Pure effect has no nested programs, so intercept returns self."""
-        return self
 
 
 def Pure(value: Any) -> Effect:  # noqa: N802

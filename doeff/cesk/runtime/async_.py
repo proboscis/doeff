@@ -5,9 +5,10 @@ the canonical reference for runtime behavior per SPEC-CESK-001.
 
 Spawn Support (SPEC-EFF-005):
 - SpawnEffect: Creates a background task with snapshot semantics
-- TaskJoinEffect: Waits for task completion
+- WaitEffect: Waits for Future completion
 - TaskCancelEffect: Requests task cancellation
 - TaskIsDoneEffect: Checks completion status
+- CreatePromiseEffect/CompletePromiseEffect/FailPromiseEffect: User-level promises
 """
 
 from __future__ import annotations
@@ -30,15 +31,22 @@ from doeff.cesk.step import step
 from doeff.cesk.types import Store, TaskId
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
-from doeff.effects.race import RaceEffect
+from doeff.effects.race import RaceEffect, RaceResult
 from doeff.effects.spawn import (
+    Future,
+    Promise,
     SpawnEffect,
     Task,
     TaskCancelEffect,
     TaskCancelledError,
     TaskIsDoneEffect,
-    TaskJoinEffect,
 )
+from doeff.effects.promise import (
+    CreatePromiseEffect,
+    CompletePromiseEffect,
+    FailPromiseEffect,
+)
+from doeff.effects.wait import WaitEffect
 from doeff.effects.time import DelayEffect, WaitUntilEffect
 
 if TYPE_CHECKING:
@@ -120,9 +128,12 @@ class AsyncRuntime(BaseRuntime):
         base_handlers[RaceEffect] = _placeholder_handler
         # Spawn effects are intercepted by runtime
         base_handlers[SpawnEffect] = _placeholder_handler
-        base_handlers[TaskJoinEffect] = _placeholder_handler
         base_handlers[TaskCancelEffect] = _placeholder_handler
         base_handlers[TaskIsDoneEffect] = _placeholder_handler
+        base_handlers[WaitEffect] = _placeholder_handler
+        base_handlers[CreatePromiseEffect] = _placeholder_handler
+        base_handlers[CompletePromiseEffect] = _placeholder_handler
+        base_handlers[FailPromiseEffect] = _placeholder_handler
 
         if handlers:
             base_handlers.update(handlers)
@@ -198,14 +209,18 @@ class AsyncRuntime(BaseRuntime):
         task_results: dict[TaskId, Any] = {}
         task_errors: dict[TaskId, BaseException] = {}
         gather_waiters: dict[TaskId, tuple[list[TaskId], Suspended]] = {}
+        gather_task_meta: dict[TaskId, tuple[tuple[Future[Any], ...], dict[TaskId, int]]] = {}
         race_waiters: dict[TaskId, tuple[list[TaskId], Suspended]] = {}
+        race_task_meta: dict[TaskId, tuple[tuple[Future[Any], ...], dict[TaskId, Future[Any]]]] = {}
 
         # Spawn tracking: maps Task handle ID -> SpawnedTaskInfo
         spawned_tasks: dict[Any, SpawnedTaskInfo] = {}
         # Maps internal TaskId -> Task handle ID for reverse lookup
         task_id_to_handle: dict[TaskId, Any] = {}
-        # Join waiters: maps Task handle ID -> list of (parent TaskId, Suspended)
+        # Join waiters: maps Task/Promise handle ID -> list of (parent TaskId, Suspended)
         join_waiters: dict[Any, list[tuple[TaskId, Suspended]]] = {}
+        # Promise tracking: maps Promise handle ID -> Promise object
+        user_promises: dict[Any, Promise[Any]] = {}
 
         main_task_id = state.main_task
 
@@ -269,19 +284,18 @@ class AsyncRuntime(BaseRuntime):
                         )
 
                     state = self._check_gather_complete(
-                        state, task_id, gather_waiters, task_results, task_errors
+                        state, task_id, gather_waiters, gather_task_meta,
+                        spawned_tasks, task_id_to_handle
                     )
                     state = self._check_race_complete(
-                        state, task_id, race_waiters, task_results, task_errors
+                        state, task_id, race_waiters, task_results, task_errors, race_task_meta
                     )
                     continue
 
                 if isinstance(result, Failed):
-                    # Check if this is a spawned task (isolated store, don't merge to parent)
                     is_spawned_task = task_id in task_id_to_handle
 
                     if not is_spawned_task:
-                        # Regular (Gather) task - merge store changes to parent
                         state = self._update_store(state, result.store)
 
                     if task_id == main_task_id:
@@ -289,34 +303,30 @@ class AsyncRuntime(BaseRuntime):
                         exc = result.exception
                         if result.captured_traceback is not None:
                             exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
-                        # Attach final store so error result can capture logs
                         exc.__cesk_store__ = result.store  # type: ignore[attr-defined]
                         raise exc
-                    # Mark child task as Failed
                     failed_task = state.tasks[task_id].with_status(
                         TaskDoneStatus(Err(result.exception))  # type: ignore[arg-type]
                     )
                     state = state.with_task(task_id, failed_task)
                     task_errors[task_id] = result.exception
 
-                    # Check if this is a spawned task
                     if is_spawned_task:
                         handle_id = task_id_to_handle[task_id]
                         spawned_info = spawned_tasks[handle_id]
                         spawned_info.is_complete = True
                         spawned_info.error = result.exception
-                        # Update the spawned task's isolated store
                         spawned_info.store_snapshot = result.store
-                        # Resume any waiters (they'll get the error on join)
                         state = self._resume_join_waiters(
                             state, handle_id, join_waiters, spawned_tasks
                         )
 
                     state = self._check_gather_complete(
-                        state, task_id, gather_waiters, task_results, task_errors
+                        state, task_id, gather_waiters, gather_task_meta,
+                        spawned_tasks, task_id_to_handle
                     )
                     state = self._check_race_complete(
-                        state, task_id, race_waiters, task_results, task_errors
+                        state, task_id, race_waiters, task_results, task_errors, race_task_meta
                     )
                     continue
 
@@ -373,9 +383,9 @@ class AsyncRuntime(BaseRuntime):
                         )
                         continue
 
-                    # Runtime intercepts TaskJoinEffect to wait for completion
-                    if isinstance(effect, TaskJoinEffect):
-                        state = self._handle_task_join(
+                    # Runtime intercepts WaitEffect
+                    if isinstance(effect, WaitEffect):
+                        state = self._handle_wait(
                             state, task_id, effect, result,
                             spawned_tasks, join_waiters
                         )
@@ -397,43 +407,46 @@ class AsyncRuntime(BaseRuntime):
                         )
                         continue
 
-                    # Runtime intercepts Gather for parallel execution
+                    if isinstance(effect, CreatePromiseEffect):
+                        state = self._handle_create_promise(
+                            state, task_id, result,
+                            user_promises, spawned_tasks, task_id_to_handle
+                        )
+                        continue
+
+                    if isinstance(effect, CompletePromiseEffect):
+                        state = self._handle_complete_promise(
+                            state, task_id, effect, result,
+                            user_promises, join_waiters, spawned_tasks
+                        )
+                        continue
+
+                    if isinstance(effect, FailPromiseEffect):
+                        state = self._handle_fail_promise(
+                            state, task_id, effect, result,
+                            user_promises, join_waiters, spawned_tasks
+                        )
+                        continue
+
                     if isinstance(effect, GatherEffect):
-                        programs = effect.programs
-                        if not programs:
+                        futures = effect.futures
+                        if not futures:
                             new_single = result.resume([], state.store)
                             state = self._merge_task(state, task_id, new_single)
                             continue
 
-                        child_ids: list[TaskId] = []
-                        current_env = state.tasks[task_id].env
-                        for prog in programs:
-                            child_id = TaskId.new()
-                            child_task = TaskState.initial(prog, dict(current_env))  # type: ignore[arg-type]
-                            state = state.add_task(child_id, child_task)
-                            child_ids.append(child_id)
-
-                        gather_waiters[task_id] = (child_ids, result)
+                        state = self._handle_gather_futures(
+                            state, task_id, futures, result,
+                            spawned_tasks, gather_waiters, gather_task_meta
+                        )
                         continue
 
-                    # Runtime intercepts Race for parallel execution (first to complete wins)
                     if isinstance(effect, RaceEffect):
-                        programs = effect.programs
-                        if not programs:
-                            # Empty Race returns None (edge case)
-                            new_single = result.resume((0, None), state.store)
-                            state = self._merge_task(state, task_id, new_single)
-                            continue
-
-                        child_ids = []
-                        current_env = state.tasks[task_id].env
-                        for prog in programs:
-                            child_id = TaskId.new()
-                            child_task = TaskState.initial(prog, dict(current_env))  # type: ignore[arg-type]
-                            state = state.add_task(child_id, child_task)
-                            child_ids.append(child_id)
-
-                        race_waiters[task_id] = (child_ids, result)
+                        futures = effect.futures
+                        state = self._handle_race_futures(
+                            state, task_id, futures, result,
+                            spawned_tasks, race_waiters, race_task_meta
+                        )
                         continue
 
                     # Runtime intercepts Await for asyncio integration
@@ -609,49 +622,6 @@ class AsyncRuntime(BaseRuntime):
         new_single = suspended.resume(task_handle, state.store)
         return self._merge_task(state, task_id, new_single)
 
-    def _handle_task_join(
-        self,
-        state: CESKState,
-        task_id: TaskId,
-        effect: TaskJoinEffect,
-        suspended: Suspended,
-        spawned_tasks: dict[Any, SpawnedTaskInfo],
-        join_waiters: dict[Any, list[tuple[TaskId, Suspended]]],
-    ) -> CESKState:
-        """Handle TaskJoinEffect by waiting for task completion."""
-        handle_id = effect.task._handle
-
-        if handle_id not in spawned_tasks:
-            # Task handle is invalid or already cleaned up
-            error_state = suspended.resume_error(
-                ValueError(f"Invalid task handle: {handle_id}")
-            )
-            return self._merge_task(state, task_id, error_state)
-
-        spawned_info = spawned_tasks[handle_id]
-
-        # Check if task is already complete
-        if spawned_info.is_complete:
-            if spawned_info.is_cancelled:
-                # Task was cancelled
-                error_state = suspended.resume_error(TaskCancelledError())
-                return self._merge_task(state, task_id, error_state)
-            if spawned_info.error is not None:
-                # Task failed with an exception - preserve traceback if available
-                error = spawned_info.error
-                error_state = suspended.resume_error(error)
-                return self._merge_task(state, task_id, error_state)
-            # Task completed successfully
-            new_single = suspended.resume(spawned_info.result, state.store)
-            return self._merge_task(state, task_id, new_single)
-
-        # Task not yet complete - add to waiters
-        if handle_id not in join_waiters:
-            join_waiters[handle_id] = []
-        join_waiters[handle_id].append((task_id, suspended))
-
-        return state
-
     def _handle_task_cancel(
         self,
         state: CESKState,
@@ -717,7 +687,6 @@ class AsyncRuntime(BaseRuntime):
         handle_id = effect.task._handle
 
         if handle_id not in spawned_tasks:
-            # Task handle is invalid - return True (task doesn't exist anymore)
             new_single = suspended.resume(True, state.store)
             return self._merge_task(state, task_id, new_single)
 
@@ -725,6 +694,142 @@ class AsyncRuntime(BaseRuntime):
         is_done = spawned_info.is_complete
 
         new_single = suspended.resume(is_done, state.store)
+        return self._merge_task(state, task_id, new_single)
+
+    def _handle_wait(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        effect: WaitEffect,
+        suspended: Suspended,
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+        join_waiters: dict[Any, list[tuple[TaskId, Suspended]]],
+    ) -> CESKState:
+        """Handle WaitEffect - waits for Future completion."""
+        future = effect.future
+        if not isinstance(future, Task):
+            error_state = suspended.resume_error(
+                TypeError(f"Wait requires a Task, got {type(future).__name__}")
+            )
+            return self._merge_task(state, task_id, error_state)
+
+        handle_id = future._handle
+
+        if handle_id not in spawned_tasks:
+            error_state = suspended.resume_error(
+                ValueError(f"Invalid task handle: {handle_id}")
+            )
+            return self._merge_task(state, task_id, error_state)
+
+        spawned_info = spawned_tasks[handle_id]
+
+        if spawned_info.is_complete:
+            if spawned_info.is_cancelled:
+                error_state = suspended.resume_error(TaskCancelledError())
+                return self._merge_task(state, task_id, error_state)
+            if spawned_info.error is not None:
+                error_state = suspended.resume_error(spawned_info.error)
+                return self._merge_task(state, task_id, error_state)
+            new_single = suspended.resume(spawned_info.result, state.store)
+            return self._merge_task(state, task_id, new_single)
+
+        if handle_id not in join_waiters:
+            join_waiters[handle_id] = []
+        join_waiters[handle_id].append((task_id, suspended))
+
+        return state
+
+    def _handle_create_promise(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        suspended: Suspended,
+        user_promises: dict[Any, Promise[Any]],
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+        task_id_to_handle: dict[TaskId, Any],
+    ) -> CESKState:
+        handle_id = uuid4()
+        task_handle = Task(backend="thread", _handle=handle_id)
+        promise = Promise(_future=task_handle)
+
+        spawned_info = SpawnedTaskInfo(
+            task_id=TaskId.new(),
+            env_snapshot={},
+            store_snapshot={},
+            is_complete=False,
+        )
+        spawned_tasks[handle_id] = spawned_info
+        user_promises[handle_id] = promise
+
+        new_single = suspended.resume(promise, state.store)
+        return self._merge_task(state, task_id, new_single)
+
+    def _handle_complete_promise(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        effect: CompletePromiseEffect,
+        suspended: Suspended,
+        user_promises: dict[Any, Promise[Any]],
+        join_waiters: dict[Any, list[tuple[TaskId, Suspended]]],
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+    ) -> CESKState:
+        promise = effect.promise
+        handle_id = promise.future._handle
+
+        if handle_id not in spawned_tasks:
+            error_state = suspended.resume_error(
+                ValueError(f"Invalid promise handle: {handle_id}")
+            )
+            return self._merge_task(state, task_id, error_state)
+
+        spawned_info = spawned_tasks[handle_id]
+        if spawned_info.is_complete:
+            error_state = suspended.resume_error(
+                RuntimeError("Promise already completed")
+            )
+            return self._merge_task(state, task_id, error_state)
+
+        spawned_info.is_complete = True
+        spawned_info.result = effect.value
+
+        state = self._resume_join_waiters(state, handle_id, join_waiters, spawned_tasks)
+
+        new_single = suspended.resume(None, state.store)
+        return self._merge_task(state, task_id, new_single)
+
+    def _handle_fail_promise(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        effect: FailPromiseEffect,
+        suspended: Suspended,
+        user_promises: dict[Any, Promise[Any]],
+        join_waiters: dict[Any, list[tuple[TaskId, Suspended]]],
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+    ) -> CESKState:
+        promise = effect.promise
+        handle_id = promise.future._handle
+
+        if handle_id not in spawned_tasks:
+            error_state = suspended.resume_error(
+                ValueError(f"Invalid promise handle: {handle_id}")
+            )
+            return self._merge_task(state, task_id, error_state)
+
+        spawned_info = spawned_tasks[handle_id]
+        if spawned_info.is_complete:
+            error_state = suspended.resume_error(
+                RuntimeError("Promise already completed")
+            )
+            return self._merge_task(state, task_id, error_state)
+
+        spawned_info.is_complete = True
+        spawned_info.error = effect.error
+
+        state = self._resume_join_waiters(state, handle_id, join_waiters, spawned_tasks)
+
+        new_single = suspended.resume(None, state.store)
         return self._merge_task(state, task_id, new_single)
 
     def _resume_join_waiters(
@@ -919,29 +1024,129 @@ class AsyncRuntime(BaseRuntime):
         state: CESKState,
         completed_id: TaskId,
         gather_waiters: dict[TaskId, tuple[list[TaskId], Suspended]],
-        task_results: dict[TaskId, Any],
-        task_errors: dict[TaskId, BaseException],
+        gather_task_meta: dict[TaskId, tuple[tuple[Future[Any], ...], dict[TaskId, int]]],
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+        task_id_to_handle: dict[TaskId, Any],
     ) -> CESKState:
-        """Check if any Gather is complete after a child finishes."""
         for parent_id, (child_ids, suspended) in list(gather_waiters.items()):
             if completed_id not in child_ids:
                 continue
 
-            # If child failed, fail the Gather immediately (fail-fast)
-            if completed_id in task_errors:
-                del gather_waiters[parent_id]
-                error_state = suspended.resume_error(task_errors[completed_id])
-                error_state = self._fix_store_rollback(error_state, state.store)
-                return self._merge_task(state, parent_id, error_state)
+            if parent_id not in gather_task_meta:
+                continue
 
-            # Check if all children are done
-            all_done = all(cid in task_results or cid in task_errors for cid in child_ids)
+            futures, task_to_index = gather_task_meta[parent_id]
+
+            handle_id = task_id_to_handle.get(completed_id)
+            if handle_id and handle_id in spawned_tasks:
+                spawned_info = spawned_tasks[handle_id]
+                if spawned_info.error is not None:
+                    del gather_waiters[parent_id]
+                    del gather_task_meta[parent_id]
+                    error_state = suspended.resume_error(spawned_info.error)
+                    error_state = self._fix_store_rollback(error_state, state.store)
+                    return self._merge_task(state, parent_id, error_state)
+
+            all_done = True
+            for cid in child_ids:
+                hid = task_id_to_handle.get(cid)
+                if hid and hid in spawned_tasks:
+                    if not spawned_tasks[hid].is_complete:
+                        all_done = False
+                        break
+                else:
+                    all_done = False
+                    break
+
             if all_done:
                 del gather_waiters[parent_id]
-                results = [task_results[cid] for cid in child_ids]
+                del gather_task_meta[parent_id]
+                results: list[Any] = [None] * len(futures)
+                for future in futures:
+                    hid = future._handle
+                    if hid in spawned_tasks:
+                        cid = spawned_tasks[hid].task_id
+                        idx = task_to_index[cid]
+                        results[idx] = spawned_tasks[hid].result
                 new_single = suspended.resume(results, state.store)
                 return self._merge_task(state, parent_id, new_single)
 
+        return state
+
+    def _handle_gather_futures(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        futures: tuple[Future[Any], ...],
+        suspended: Suspended,
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+        gather_waiters: dict[TaskId, tuple[list[TaskId], Suspended]],
+        gather_task_meta: dict[TaskId, tuple[tuple[Future[Any], ...], dict[TaskId, int]]],
+    ) -> CESKState:
+        task_to_index: dict[TaskId, int] = {}
+        pending_task_ids: list[TaskId] = []
+
+        for i, future in enumerate(futures):
+            handle_id = future._handle
+            if handle_id not in spawned_tasks:
+                error_state = suspended.resume_error(
+                    ValueError(f"Invalid future handle: {handle_id}")
+                )
+                return self._merge_task(state, task_id, error_state)
+
+            spawned_info = spawned_tasks[handle_id]
+            child_task_id = spawned_info.task_id
+
+            if spawned_info.is_complete:
+                if spawned_info.error is not None:
+                    error_state = suspended.resume_error(spawned_info.error)
+                    return self._merge_task(state, task_id, error_state)
+            else:
+                pending_task_ids.append(child_task_id)
+
+            task_to_index[child_task_id] = i
+
+        if not pending_task_ids:
+            results = []
+            for future in futures:
+                handle_id = future._handle
+                spawned_info = spawned_tasks[handle_id]
+                results.append(spawned_info.result)
+            new_single = suspended.resume(results, state.store)
+            return self._merge_task(state, task_id, new_single)
+
+        gather_waiters[task_id] = (pending_task_ids, suspended)
+        gather_task_meta[task_id] = (futures, task_to_index)
+        return state
+
+    def _handle_race_futures(
+        self,
+        state: CESKState,
+        task_id: TaskId,
+        futures: tuple[Future[Any], ...],
+        suspended: Suspended,
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+        race_waiters: dict[TaskId, tuple[list[TaskId], Suspended]],
+        race_task_meta: dict[TaskId, tuple[tuple[Future[Any], ...], dict[TaskId, Future[Any]]]],
+    ) -> CESKState:
+        for future in futures:
+            handle_id = future._handle
+            if handle_id in spawned_tasks:
+                spawned_info = spawned_tasks[handle_id]
+                if spawned_info.is_complete:
+                    if spawned_info.error is not None:
+                        error_state = suspended.resume_error(spawned_info.error)
+                        return self._merge_task(state, task_id, error_state)
+                    rest = tuple(f for f in futures if f is not future)
+                    race_result = RaceResult(first=future, value=spawned_info.result, rest=rest)
+                    new_single = suspended.resume(race_result, state.store)
+                    return self._merge_task(state, task_id, new_single)
+
+        future_to_task_id = {spawned_tasks[f._handle].task_id: f for f in futures if f._handle in spawned_tasks}
+        child_ids = list(future_to_task_id.keys())
+        
+        race_waiters[task_id] = (child_ids, suspended)
+        race_task_meta[task_id] = (futures, future_to_task_id)
         return state
 
     def _check_race_complete(
@@ -951,6 +1156,7 @@ class AsyncRuntime(BaseRuntime):
         race_waiters: dict[TaskId, tuple[list[TaskId], Suspended]],
         task_results: dict[TaskId, Any],
         task_errors: dict[TaskId, BaseException],
+        race_task_meta: dict[TaskId, tuple[tuple[Future[Any], ...], dict[TaskId, Future[Any]]]],
     ) -> CESKState:
         for parent_id, (child_ids, suspended) in list(race_waiters.items()):
             if completed_id not in child_ids:
@@ -958,15 +1164,26 @@ class AsyncRuntime(BaseRuntime):
 
             if completed_id in task_errors:
                 del race_waiters[parent_id]
+                if parent_id in race_task_meta:
+                    del race_task_meta[parent_id]
                 error_state = suspended.resume_error(task_errors[completed_id])
                 error_state = self._fix_store_rollback(error_state, state.store)
                 return self._merge_task(state, parent_id, error_state)
 
             if completed_id in task_results:
                 del race_waiters[parent_id]
-                winner_index = child_ids.index(completed_id)
-                result_tuple = (winner_index, task_results[completed_id])
-                new_single = suspended.resume(result_tuple, state.store)
+                race_meta = race_task_meta.pop(parent_id, None)
+                if race_meta is None:
+                    raise RuntimeError("Race metadata missing - internal error")
+                
+                futures, task_to_future = race_meta
+                winner = task_to_future.get(completed_id)
+                if winner is None:
+                    raise RuntimeError("Race winner not found - internal error")
+                
+                rest = tuple(f for f in futures if f is not winner)
+                race_result = RaceResult(first=winner, value=task_results[completed_id], rest=rest)
+                new_single = suspended.resume(race_result, state.store)
                 return self._merge_task(state, parent_id, new_single)
 
         return state
