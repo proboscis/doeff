@@ -15,13 +15,12 @@ Effect Categories:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
-from dataclasses import dataclass, field, replace
-from typing import Any, TypeVar
+from dataclasses import dataclass
+from typing import Any
+
+from doeff.types import EffectBase
 
 from .types import AgenticEnvironmentType
-
-E = TypeVar("E", bound="AgenticEffectBase")
 
 
 # =============================================================================
@@ -30,33 +29,14 @@ E = TypeVar("E", bound="AgenticEffectBase")
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgenticEffectBase:
+class AgenticEffectBase(EffectBase):
     """Base class for agentic effects.
 
     All agentic effects inherit from this class and are compatible with
-    doeff's CESK interpreter through the Effect protocol.
+    doeff's CESK interpreter by inheriting from EffectBase.
     """
 
-    created_at: Any = field(default=None, compare=False)  # EffectCreationContext | None
-
-    def with_created_at(self: E, created_at: Any) -> E:  # EffectCreationContext | None
-        """Return a copy with updated creation context."""
-        if created_at is self.created_at:
-            return self
-        return replace(self, created_at=created_at)
-
-    def intercept(self: E, transform: Callable[[Any], Any]) -> E:
-        """Return a copy where any nested programs are intercepted.
-
-        Agentic effects don't contain nested programs, so this returns self unchanged.
-        Required for CESK interpreter compatibility.
-        """
-        return self
-
-    def to_generator(self) -> Generator[Any, Any, Any]:
-        """An Effect is a single-step program that yields itself."""
-        result = yield self
-        return result
+    pass
 
 
 # =============================================================================
