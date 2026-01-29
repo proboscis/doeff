@@ -83,7 +83,7 @@ class AsyncHttpClient:
     """Asynchronous HTTP client using httpx.
 
     All methods return Program[..., T] that yield Await effects for async HTTP calls.
-    This allows handlers to simply `yield from client.get(...)` without dealing
+    This allows handlers to simply `yield client.get(...)` without dealing
     with Await directly.
     """
 
@@ -523,7 +523,7 @@ class OpenCodeHandler:
             if effect.title:
                 body["title"] = effect.title
 
-            api_result = yield from client.post("/session", json=body)
+            api_result = yield client.post("/session", json=body)
             assert api_result is not None
 
             session_id = api_result["id"]
@@ -587,7 +587,7 @@ class OpenCodeHandler:
             if effect.message_id:
                 body["messageID"] = effect.message_id
 
-            api_result = yield from client.post(f"/session/{effect.session_id}/fork", json=body)
+            api_result = yield client.post(f"/session/{effect.session_id}/fork", json=body)
             assert api_result is not None
 
             new_session_id = api_result["id"]
@@ -654,7 +654,7 @@ class OpenCodeHandler:
 
         @do
         def _abort_session():
-            yield from client.post(f"/session/{effect.session_id}/abort")
+            yield client.post(f"/session/{effect.session_id}/abort")
 
             # Update local state
             name = workflow.session_by_id.get(effect.session_id)
@@ -694,7 +694,7 @@ class OpenCodeHandler:
 
         @do
         def _delete_session():
-            api_result = yield from client.delete(f"/session/{effect.session_id}")
+            api_result = yield client.delete(f"/session/{effect.session_id}")
 
             # Update local state
             name = workflow.session_by_id.pop(effect.session_id, None)
@@ -750,7 +750,7 @@ class OpenCodeHandler:
         def _send_message():
             if effect.wait:
                 # Synchronous: wait for response
-                api_result = yield from client.post(
+                api_result = yield client.post(
                     f"/session/{effect.session_id}/message", json=body
                 )
                 assert api_result is not None
@@ -771,7 +771,7 @@ class OpenCodeHandler:
                 )
             else:
                 # Asynchronous: fire and forget
-                yield from client.post(f"/session/{effect.session_id}/prompt_async", json=body)
+                yield client.post(f"/session/{effect.session_id}/prompt_async", json=body)
                 # Return a placeholder handle
                 return AgenticMessageHandle(
                     id=f"msg-{time.time_ns()}",
@@ -802,7 +802,7 @@ class OpenCodeHandler:
             if effect.limit:
                 params["limit"] = effect.limit
 
-            api_result = yield from client.get(
+            api_result = yield client.get(
                 f"/session/{effect.session_id}/message", params=params
             )
 
@@ -958,7 +958,7 @@ class OpenCodeHandler:
 
         @do
         def _get_status():
-            yield from refresh_status(effect.session_id)
+            yield refresh_status(effect.session_id)
 
             name = workflow.session_by_id.get(effect.session_id)
             if not name:
@@ -1066,12 +1066,13 @@ class OpenCodeHandler:
             self._event_log.log_session_status(self._workflow.id, name, status)
 
     @do
+    @do
     def _refresh_session_status(self, session_id: str):
         """Refresh session status from server. Returns Program[..., None]."""
         assert self._client is not None
 
         try:
-            result = yield from self._client.get("/session/status")
+            result = yield self._client.get("/session/status")
             status_str = result.get(session_id, "pending")
             status = self._map_status(status_str)
             self._update_session_status(session_id, status)
