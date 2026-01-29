@@ -1,0 +1,284 @@
+rules:
+  # =============================================================================
+  # DOEFF ARCHITECTURAL ENFORCEMENT RULES
+  # =============================================================================
+  # These rules enforce architectural decisions specific to the doeff framework.
+  # For code quality patterns (immutability, naming), see doeff-linter (Rust).
+  # 
+  # Install semgrep: uv tool install semgrep
+  # Run: semgrep --config .semgrep.yaml doeff/ packages/
+  # =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # EFFECT SYSTEM PATTERNS
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-direct-generator-in-do
+    patterns:
+      - pattern: |
+          @do
+          def $FUNC(...):
+              ...
+              yield from $EXPR
+              ...
+    message: |
+      Do not use `yield from` in @do functions. Each effect should be yielded individually
+      to maintain proper effect tracking and call tree construction.
+      Use: `result = yield sub_program()` instead of `yield from sub_program()`.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: effect-system
+      rationale: "yield from bypasses effect tracking and breaks call tree construction"
+
+  - id: doeff-no-async-in-do-function
+    patterns:
+      - pattern: |
+          @do
+          async def $FUNC(...):
+              ...
+    message: |
+      @do functions should not be async. The @do decorator handles async execution
+      through the effect system. Remove 'async' keyword and use Await effect for
+      async operations: `result = yield Await(async_func())`.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: effect-system
+      rationale: "@do functions use generator-based concurrency, not async/await"
+
+  - id: doeff-no-bare-return-in-generator
+    patterns:
+      - pattern: |
+          @do
+          def $FUNC(...):
+              ...
+              return
+    message: |
+      @do functions should return a value, not bare `return`. If no value is needed,
+      use `return None` explicitly for clarity.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: effect-system
+
+  # ---------------------------------------------------------------------------
+  # LAYER BOUNDARIES
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-handler-import-in-effects
+    patterns:
+      - pattern-inside: |
+          # In doeff/effects/ directory
+          ...
+      - pattern-either:
+          - pattern: from doeff.handlers import $X
+          - pattern: from doeff.handlers.$MOD import $X
+          - pattern: import doeff.handlers
+    paths:
+      include:
+        - "**/doeff/effects/"
+    message: |
+      Effects should not import from handlers. This violates layer separation.
+      Effects define WHAT operations are available; handlers define HOW to execute them.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+      rationale: "Effects layer must not depend on handlers layer"
+
+  - id: doeff-no-runtime-import-in-effects
+    patterns:
+      - pattern-either:
+          - pattern: from doeff.runtimes import $X
+          - pattern: from doeff.interpreter import $X
+          - pattern: import doeff.runtimes
+    paths:
+      include:
+        - "**/doeff/effects/"
+    message: |
+      Effects should not import from runtimes or interpreter. This violates layer separation.
+      Effects are pure data structures describing operations.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: architecture
+
+  # ---------------------------------------------------------------------------
+  # PURITY PATTERNS
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-print-in-core
+    patterns:
+      - pattern: print(...)
+    paths:
+      include:
+        - "**/doeff/"
+      exclude:
+        - "**/doeff/__main__.py"
+        - "**/doeff/cli/"
+        - "**/tests/**"
+        - "**/examples/**"
+    message: |
+      Do not use print() in core library code. Use the Log effect for logging:
+      `yield Log("message")` or configure loguru for internal debugging.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: purity
+
+  - id: doeff-no-datetime-now-in-do
+    patterns:
+      - pattern-inside: |
+          @do
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: datetime.now(...)
+          - pattern: datetime.datetime.now(...)
+          - pattern: datetime.utcnow(...)
+          - pattern: datetime.datetime.utcnow(...)
+    message: |
+      Do not call datetime.now() directly in @do functions. This makes the function
+      impure and hard to test. Use the GetTime effect instead:
+      `current_time = yield GetTime()`.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: purity
+
+  - id: doeff-no-random-in-do
+    patterns:
+      - pattern-inside: |
+          @do
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: random.random(...)
+          - pattern: random.randint(...)
+          - pattern: random.choice(...)
+          - pattern: random.shuffle(...)
+    message: |
+      Do not use random module directly in @do functions. This makes the function
+      impure. Consider wrapping in an IO effect or injecting via Ask.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: purity
+
+  # ---------------------------------------------------------------------------
+  # DEPENDENCY INJECTION PATTERNS
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-hardcoded-instantiation-in-do
+    patterns:
+      - pattern-inside: |
+          @do
+          def $FUNC(...):
+              ...
+      - pattern-either:
+          - pattern: $CLIENT = httpx.Client(...)
+          - pattern: $CLIENT = httpx.AsyncClient(...)
+          - pattern: $CONN = sqlite3.connect(...)
+          - pattern: $ENGINE = create_engine(...)
+    message: |
+      Do not instantiate clients/connections directly in @do functions. 
+      Use dependency injection via the Ask effect:
+      `client = yield Ask("http_client")`.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: dependency-injection
+
+  # ---------------------------------------------------------------------------
+  # CESK ARCHITECTURE
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-hardcoded-effect-handling-in-step
+    patterns:
+      - pattern-inside: |
+          def step($...PARAMS):
+              $...BODY
+      - pattern-either:
+          - pattern: |
+              if isinstance($VAR, Ask):
+                  $...THEN
+          - pattern: |
+              if isinstance($VAR, Get):
+                  $...THEN
+          - pattern: |
+              if isinstance($VAR, Put):
+                  $...THEN
+    paths:
+      include:
+        - "**/doeff/cesk/step.py"
+        - "**/doeff/step.py"
+    message: |
+      The step() function should not contain hardcoded effect handling logic.
+      Effect-specific behavior must be implemented via extensible handlers.
+      See SPEC-CESK-001: Separation of Concerns.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: cesk-architecture
+
+  # ---------------------------------------------------------------------------
+  # TESTING PATTERNS
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-sleep-in-tests
+    patterns:
+      - pattern-either:
+          - pattern: time.sleep(...)
+          - pattern: await asyncio.sleep(...)
+    paths:
+      include:
+        - tests/
+    message: |
+      Avoid time.sleep() or asyncio.sleep() in tests. Use SimulationRuntime
+      with controlled time for deterministic testing.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: testing
+
+  # ---------------------------------------------------------------------------
+  # IMPORT HYGIENE
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-star-imports
+    patterns:
+      - pattern: from $MODULE import *
+    paths:
+      exclude:
+        - "**/__init__.py"
+    message: |
+      Do not use star imports (from x import *). Import specific names
+      for clarity and to avoid namespace pollution.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: imports
+
+  - id: doeff-no-typing-any-in-public-api
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $FUNC($...PARAMS) -> Any:
+                  $...BODY
+          - pattern: |
+              async def $FUNC($...PARAMS) -> Any:
+                  $...BODY
+    paths:
+      include:
+        - "**/doeff/"
+      exclude:
+        - "**/tests/**"
+        - "**/_*.py"
+    message: |
+      Avoid using `Any` in public API signatures. Use specific types or TypeVar
+      for proper type safety. If truly dynamic, document why Any is necessary.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: type-safety
