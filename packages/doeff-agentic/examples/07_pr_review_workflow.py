@@ -24,6 +24,7 @@ from doeff_agentic import (
     AgenticNextEvent,
     AgenticSendMessage,
     AgenticTimeoutError,
+    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
@@ -226,32 +227,35 @@ if __name__ == "__main__":
         runtime = AsyncRuntime(handlers=handlers)
 
         try:
-            result = await runtime.run(pr_review_workflow(pr_url, require_approval))
-            output = result.value
+            result = await runtime.run(with_visual_logging(pr_review_workflow(pr_url, require_approval)))
 
-            print("\n" + "=" * 60)
-            print("WORKFLOW RESULT")
-            print("=" * 60)
-            print(f"Status: {output['status']}")
-            print()
+            if result.is_err():
+                print("\n=== Workflow Failed ===")
+                print(result.format())  # Rich error info: effect path, python stack, K stack
+            else:
+                output = result.value
 
-            print("Review:")
-            print("-" * 40)
-            print(output["review"][:500])
-
-            if output["fixes"]:
+                print("\n" + "=" * 60)
+                print("WORKFLOW RESULT")
+                print("=" * 60)
+                print(f"Status: {output['status']}")
                 print()
-                print("Fixes:")
+
+                print("Review:")
                 print("-" * 40)
-                print(output["fixes"][:500])
+                print(output["review"][:500])
 
-            if "human_decision" in output:
-                print()
-                print(f"Human Decision: {output['human_decision']}")
+                if output["fixes"]:
+                    print()
+                    print("Fixes:")
+                    print("-" * 40)
+                    print(output["fixes"][:500])
+
+                if "human_decision" in output:
+                    print()
+                    print(f"Human Decision: {output['human_decision']}")
 
         except KeyboardInterrupt:
             print("\nWorkflow interrupted")
-        except Exception as e:
-            print(f"Error: {e}")
 
     asyncio.run(main())

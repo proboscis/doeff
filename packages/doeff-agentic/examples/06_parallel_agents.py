@@ -22,6 +22,7 @@ from doeff_agentic import (
     AgenticGetMessages,
     AgenticMessage,
     AgenticSendMessage,
+    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 
@@ -125,8 +126,12 @@ if __name__ == "__main__":
         handlers = opencode_handler()
         runtime = AsyncRuntime(handlers=handlers)
 
-        try:
-            result = await runtime.run(multi_perspective_analysis(topic))
+        result = await runtime.run(with_visual_logging(multi_perspective_analysis(topic)))
+
+        if result.is_err():
+            print("\n=== Workflow Failed ===")
+            print(result.format())  # Rich error info: effect path, python stack, K stack
+        else:
             output = result.value
 
             print("\n" + "=" * 50)
@@ -139,7 +144,5 @@ if __name__ == "__main__":
 
             print("\n### Synthesis")
             print(output["synthesis"][:500])
-        except Exception as e:
-            print(f"Error: {e}")
 
     asyncio.run(main())

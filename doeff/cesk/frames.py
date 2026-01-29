@@ -265,6 +265,37 @@ class InterceptFrame:
 
 
 @dataclass(frozen=True)
+class InterceptBypassFrame:
+    """Bypass a specific InterceptFrame for a specific effect object.
+
+    When an intercept transform returns a Program, this frame tracks both the
+    InterceptFrame to bypass AND the effect object ID that triggered it.
+    Only that exact effect (by object identity) is bypassed when re-yielded.
+    """
+
+    bypassed_frame: InterceptFrame
+    bypassed_effect_id: int
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        return ContinueValue(value=value, env=env, store=store, k=k_rest)
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        return ContinueError(error=error, env=env, store=store, k=k_rest)
+
+
+@dataclass(frozen=True)
 class ListenFrame:
     """Capture log output from sub-computation.
 
@@ -593,6 +624,7 @@ Kontinuation: TypeAlias = list[
     ReturnFrame
     | LocalFrame
     | InterceptFrame
+    | InterceptBypassFrame
     | ListenFrame
     | GatherFrame
     | SafeFrame
@@ -608,19 +640,16 @@ __all__ = [
     "ContinueGenerator",
     "ContinueProgram",
     "ContinueValue",
-    # Protocol
     "Frame",
-    # Result types
     "FrameResult",
     "GatherFrame",
     "GraphCaptureFrame",
+    "InterceptBypassFrame",
     "InterceptFrame",
-    # Kontinuation
     "Kontinuation",
     "ListenFrame",
     "LocalFrame",
     "RaceFrame",
-    # Frame types
     "ReturnFrame",
     "SafeFrame",
 ]

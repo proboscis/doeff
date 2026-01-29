@@ -65,6 +65,30 @@ async def main():
 asyncio.run(main())
 ```
 
+### Error Handling with `result.format()`
+
+When workflows fail, use `result.format()` to get rich debugging information:
+
+```python
+async def main():
+    handlers = opencode_handler()
+    runtime = AsyncRuntime(handlers=handlers)
+    result = await runtime.run(my_workflow())
+
+    if result.is_err():
+        print("=== Workflow Failed ===")
+        print(result.format())  # Rich error info with effect path and stack traces
+    else:
+        print(result.value)
+```
+
+The `result.format()` output includes:
+- **Effect path**: Which `@do` functions were called (e.g., `outer() -> inner() -> failing_func()`)
+- **Python stack**: Standard traceback showing where the exception was raised
+- **K stack**: Continuation stack showing active effect handlers (SafeFrame, LocalFrame, etc.)
+
+For even more detail, use `result.format(verbose=True)` which displays a full debug report.
+
 ## Examples
 
 ### 01. Hello Agent

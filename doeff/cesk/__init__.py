@@ -38,6 +38,7 @@ from doeff.cesk.frames import (
     # Frame result types
     FrameResult,
     GatherFrame,
+    InterceptBypassFrame,
     InterceptFrame,
     Kontinuation,
     ListenFrame,
@@ -306,6 +307,7 @@ __all__ = [
     # Handlers
     "Handler",
     "HandlerRegistryError",
+    "InterceptBypassFrame",
     "InterceptFrame",
     "InterpreterInvariantError",
     "KFrame",
