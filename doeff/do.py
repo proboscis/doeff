@@ -10,7 +10,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Generator
 from functools import wraps
-from typing import Any, ParamSpec, TypeVar
+from typing import Any, ParamSpec, TypeVar, cast
 
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program
@@ -18,6 +18,12 @@ from doeff.types import Effect, EffectGenerator
 
 P = ParamSpec("P")
 T = TypeVar("T")
+
+# Type alias for the internal generator wrapper signature.
+# This is what generator_wrapper actually produces - a generator that yields
+# effects/programs and returns T. KleisliProgramCall.to_generator() knows
+# how to execute this, even though KleisliProgram.func is typed as returning Program[T].
+_GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 
 class DoYieldFunction(KleisliProgram[P, T]):
@@ -30,7 +36,11 @@ class DoYieldFunction(KleisliProgram[P, T]):
         ) -> Generator[Effect | Program, Any, T]:
             gen_or_value = func(*args, **kwargs)
             if not inspect.isgenerator(gen_or_value):
-                return gen_or_value
+                # Early return for non-generator callables (e.g., async functions
+                # or plain functions mistakenly decorated). Pyright sees this as
+                # returning T from a Generator function, but at runtime Python
+                # allows returning before any yield. We cast to satisfy the checker.
+                return cast(T, gen_or_value)  # type: ignore[return-value]
 
             gen = gen_or_value
             try:
@@ -55,7 +65,10 @@ class DoYieldFunction(KleisliProgram[P, T]):
                 except StopIteration as stop_exc:
                     return stop_exc.value
 
-        super().__init__(generator_wrapper)
+        # KleisliProgram.func expects Callable[P, Program[T]], but we pass a
+        # generator function. KleisliProgramCall.to_generator() handles both
+        # Program and Generator returns at runtime. Cast to satisfy pyright.
+        super().__init__(cast(Callable[P, Program[T]], generator_wrapper))
         self.original_func = func
 
         for attr in ("__doc__", "__module__", "__name__", "__qualname__", "__annotations__"):
@@ -68,7 +81,7 @@ class DoYieldFunction(KleisliProgram[P, T]):
         except (TypeError, ValueError):
             signature = None
         if signature is not None:
-            setattr(self, "__signature__", signature)
+            self.__signature__ = signature
 
     @property
     def original_generator(self) -> Callable[P, EffectGenerator[T]]:
@@ -97,7 +110,7 @@ def do(
     Python generators execute immediately until first yield, but we need
     lazy evaluation. The KleisliProgram wrapper delays generator creation until
     execution time, achieving the laziness we need.
-    
+
     ERROR HANDLING:
     Native Python try/except blocks work inside @do functions! Exceptions from
     yielded effects and sub-programs will be caught by surrounding try blocks:
@@ -156,4 +169,4 @@ def do(
     return DoYieldFunction(func)
 
 
-__all__ = ["do", "DoYieldFunction"]  # noqa: DOEFF021
+__all__ = ["DoYieldFunction", "do"]
