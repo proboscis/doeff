@@ -12,18 +12,14 @@ Key design principles:
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+from doeff.types import EffectBase
 
 from .adapters.base import AgentType, LaunchConfig
 from .monitor import SessionStatus
-
-if TYPE_CHECKING:
-    from doeff.program import Program
-    from doeff.types import Effect, EffectCreationContext
 
 
 # =============================================================================
@@ -78,36 +74,18 @@ class Observation:
 
 
 # =============================================================================
-# Effect Base (minimal, avoids circular import)
+# Effect Base
 # =============================================================================
 
 
 @dataclass(frozen=True, kw_only=True)
-class AgentEffectBase:
+class AgentEffectBase(EffectBase):
     """Base class for agent effects.
 
-    Provides minimal effect protocol implementation without importing doeff.types
-    to avoid circular dependencies.
+    Inherits from doeff's EffectBase for CESK interpreter compatibility.
     """
 
-    created_at: EffectCreationContext | None = field(default=None, compare=False)
-
-    def intercept(
-        self, transform: Callable[[Effect], Effect | Program]
-    ) -> AgentEffectBase:
-        """Return self - agent effects don't contain nested programs."""
-        return self
-
-    def with_created_at(
-        self, created_at: EffectCreationContext | None
-    ) -> AgentEffectBase:
-        """Return a copy with updated creation context."""
-        # Use object.__setattr__ for frozen dataclass
-        new = object.__new__(self.__class__)
-        for fld in self.__dataclass_fields__:
-            val = created_at if fld == "created_at" else getattr(self, fld)
-            object.__setattr__(new, fld, val)
-        return new
+    pass
 
 
 # =============================================================================
