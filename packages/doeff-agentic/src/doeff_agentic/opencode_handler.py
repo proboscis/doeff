@@ -26,9 +26,10 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Awaitable, Coroutine, Protocol
 
-from doeff.cesk.frames import ContinueValue, FrameResult
+from doeff import Await, Delay, do
+from doeff.cesk.frames import ContinueProgram, ContinueValue, FrameResult
 
 if TYPE_CHECKING:
     from doeff.cesk.state import TaskState
@@ -80,48 +81,55 @@ from .types import (
 # =============================================================================
 
 
-class HttpClient(Protocol):
-    """Protocol for HTTP client."""
+class AsyncHttpClient:
+    """Asynchronous HTTP client using httpx.
 
-    def get(self, path: str, **kwargs: Any) -> dict[str, Any]: ...
-    def post(self, path: str, **kwargs: Any) -> dict[str, Any]: ...
-    def delete(self, path: str, **kwargs: Any) -> bool: ...
-    def patch(self, path: str, **kwargs: Any) -> dict[str, Any]: ...
-
-
-class SyncHttpClient:
-    """Synchronous HTTP client using httpx."""
+    All methods return Program[..., T] that yield Await effects for async HTTP calls.
+    This allows handlers to simply `yield from client.get(...)` without dealing
+    with Await directly.
+    """
 
     def __init__(self, base_url: str, timeout: float = 30.0) -> None:
         import httpx
 
-        self._client = httpx.Client(base_url=base_url, timeout=timeout)
+        self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
         self.base_url = base_url
 
-    def get(self, path: str, **kwargs: Any) -> dict[str, Any]:
-        resp = self._client.get(path, **kwargs)
+    @do
+    def get(self, path: str, **kwargs: Any):
+        """GET request returning Program[..., dict[str, Any]]."""
+        resp = yield Await(self._client.get(path, **kwargs))
         resp.raise_for_status()
         return resp.json()
 
-    def post(self, path: str, **kwargs: Any) -> dict[str, Any] | None:
-        resp = self._client.post(path, **kwargs)
+    @do
+    def post(self, path: str, **kwargs: Any):
+        """POST request returning Program[..., dict[str, Any] | None]."""
+        resp = yield Await(self._client.post(path, **kwargs))
         resp.raise_for_status()
         if resp.status_code == 204:
             return None
         return resp.json()
 
-    def delete(self, path: str, **kwargs: Any) -> bool:
-        resp = self._client.delete(path, **kwargs)
+    @do
+    def delete(self, path: str, **kwargs: Any):
+        """DELETE request returning Program[..., bool]."""
+        resp = yield Await(self._client.delete(path, **kwargs))
         resp.raise_for_status()
         return resp.json() if resp.content else True
 
-    def patch(self, path: str, **kwargs: Any) -> dict[str, Any]:
-        resp = self._client.patch(path, **kwargs)
+    @do
+    def patch(self, path: str, **kwargs: Any):
+        """PATCH request returning Program[..., dict[str, Any]]."""
+        resp = yield Await(self._client.patch(path, **kwargs))
         resp.raise_for_status()
         return resp.json()
 
-    def close(self) -> None:
-        self._client.close()
+    @do
+    def close(self):
+        """Close client, returning Program[..., None]."""
+        yield Await(self._client.aclose())
+        return None
 
 
 # =============================================================================
@@ -161,12 +169,17 @@ def generate_environment_id(name: str | None = None) -> str:
 
 
 class OpenCodeHandler:
-    """Handler using OpenCode's HTTP API.
+    """Handler using OpenCode's HTTP API with async I/O via Await effect.
+
+    Architecture:
+    - Handlers return ContinueProgram containing a @do program
+    - The @do program yields Await(coroutine) for async HTTP calls
+    - AsyncRuntime intercepts Await and handles the actual async execution
 
     This handler:
     1. Auto-starts OpenCode server if not running
     2. Manages workflow/environment/session state
-    3. Translates agentic effects to OpenCode API calls
+    3. Translates agentic effects to OpenCode API calls via Await
     4. Handles SSE event streaming
     """
 
@@ -195,7 +208,7 @@ class OpenCodeHandler:
         self._startup_timeout = startup_timeout
         self._working_dir = Path(working_dir) if working_dir else Path.cwd()
 
-        self._client: SyncHttpClient | None = None
+        self._client: AsyncHttpClient | None = None
         self._server_process: subprocess.Popen | None = None
         self._workflow: WorkflowState | None = None
         self._sse_connections: dict[str, Any] = {}  # session_id -> SSE iterator
@@ -209,22 +222,29 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Initialize handler and start server if needed."""
+        """Initialize handler and start server if needed (sync for startup)."""
         if self._client is not None:
             return
 
         if self._server_url:
             # Connect to existing server
-            self._client = SyncHttpClient(self._server_url)
-            self._check_health()
+            self._client = AsyncHttpClient(self._server_url)
+            self._check_health_sync()
         else:
             # Auto-start server
             self._start_server()
 
     def close(self) -> None:
         """Clean up resources."""
+        # Close the underlying httpx client directly (not via the @do method)
         if self._client:
-            self._client.close()
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._client._client.aclose())
+            except RuntimeError:
+                # No running loop, create one for cleanup
+                asyncio.run(self._client._client.aclose())
             self._client = None
 
         if self._server_process:
@@ -235,15 +255,16 @@ class OpenCodeHandler:
                 self._server_process.kill()
             self._server_process = None
 
-    def _check_health(self) -> None:
-        """Check if server is healthy."""
+    def _check_health_sync(self) -> None:
+        """Check if server is healthy (sync, for startup only)."""
+        import httpx
         try:
-            assert self._client is not None
-            result = self._client.get("/global/health")
+            resp = httpx.get(f"{self._server_url}/global/health", timeout=5.0)
+            result = resp.json()
             if not result.get("healthy"):
                 raise AgenticServerError("Server reports unhealthy")
         except Exception as e:
-            raise AgenticServerError(f"Health check failed: {e}")
+            raise AgenticServerError(f"Health check failed: {e}") from None
 
     def _start_server(self) -> None:
         """Auto-start OpenCode server."""
@@ -276,7 +297,7 @@ class OpenCodeHandler:
                 resp = httpx.get(f"{url}/global/health", timeout=1.0)
                 if resp.status_code == 200 and resp.json().get("healthy"):
                     self._server_url = url
-                    self._client = SyncHttpClient(url)
+                    self._client = AsyncHttpClient(url)
                     return
             except Exception:
                 pass
@@ -492,39 +513,51 @@ class OpenCodeHandler:
             )
             self._workflow.environments[env_id] = env
 
-        # Create session via OpenCode API
-        body: dict[str, Any] = {}
-        if effect.title:
-            body["title"] = effect.title
+        # Capture references for closure
+        client = self._client
+        workflow = self._workflow
+        event_log = self._event_log
 
-        api_result = self._client.post("/session", json=body)
-        assert api_result is not None
+        @do
+        def _create_session():
+            # Create session via OpenCode API
+            body: dict[str, Any] = {}
+            if effect.title:
+                body["title"] = effect.title
 
-        session_id = api_result["id"]
+            api_result = yield from client.post("/session", json=body)
+            assert api_result is not None
 
-        result = AgenticSessionHandle(
-            id=session_id,
-            name=effect.name,
-            workflow_id=self._workflow.id,
-            environment_id=env_id,
-            status=AgenticSessionStatus.PENDING,
-            created_at=datetime.now(timezone.utc),
-            title=effect.title or effect.name,
-            agent=effect.agent,
-            model=effect.model,
-        )
+            session_id = api_result["id"]
 
-        self._workflow.sessions[effect.name] = result
-        self._workflow.session_by_id[session_id] = effect.name
+            result = AgenticSessionHandle(
+                id=session_id,
+                name=effect.name,
+                workflow_id=workflow.id,
+                environment_id=env_id,
+                status=AgenticSessionStatus.PENDING,
+                created_at=datetime.now(timezone.utc),
+                title=effect.title or effect.name,
+                agent=effect.agent,
+                model=effect.model,
+            )
 
-        # Log session creation
-        self._event_log.log_session_created(self._workflow.id, result)
-        self._event_log.log_session_bound_to_environment(
-            self._workflow.id, env_id, effect.name
-        )
+            workflow.sessions[effect.name] = result
+            workflow.session_by_id[session_id] = effect.name
 
-        return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            # Log session creation
+            event_log.log_session_created(workflow.id, result)
+            event_log.log_session_bound_to_environment(
+                workflow.id, env_id, effect.name
+            )
+
+            return result
+
+        return ContinueProgram(
+            program=_create_session(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     def handle_fork_session(
@@ -545,32 +578,43 @@ class OpenCodeHandler:
             raise AgenticSessionNotFoundError(effect.session_id)
         source = self._workflow.sessions[source_name]
 
-        # Fork via OpenCode API
-        body: dict[str, Any] = {}
-        if effect.message_id:
-            body["messageID"] = effect.message_id
+        # Capture references for closure
+        client = self._client
+        workflow = self._workflow
 
-        api_result = self._client.post(f"/session/{effect.session_id}/fork", json=body)
-        assert api_result is not None
+        @do
+        def _fork_session():
+            # Fork via OpenCode API
+            body: dict[str, Any] = {}
+            if effect.message_id:
+                body["messageID"] = effect.message_id
 
-        new_session_id = api_result["id"]
+            api_result = yield from client.post(f"/session/{effect.session_id}/fork", json=body)
+            assert api_result is not None
 
-        result = AgenticSessionHandle(
-            id=new_session_id,
-            name=effect.name,
-            workflow_id=self._workflow.id,
-            environment_id=source.environment_id,
-            status=AgenticSessionStatus.PENDING,
-            created_at=datetime.now(timezone.utc),
-            title=effect.name,
-            agent=source.agent,
-            model=source.model,
-        )
+            new_session_id = api_result["id"]
 
-        self._workflow.sessions[effect.name] = result
-        self._workflow.session_by_id[new_session_id] = effect.name
-        return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            result = AgenticSessionHandle(
+                id=new_session_id,
+                name=effect.name,
+                workflow_id=workflow.id,
+                environment_id=source.environment_id,
+                status=AgenticSessionStatus.PENDING,
+                created_at=datetime.now(timezone.utc),
+                title=effect.name,
+                agent=source.agent,
+                model=source.model,
+            )
+
+            workflow.sessions[effect.name] = result
+            workflow.session_by_id[new_session_id] = effect.name
+            return result
+
+        return ContinueProgram(
+            program=_fork_session(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     def handle_get_session(
@@ -605,27 +649,38 @@ class OpenCodeHandler:
         """Handle AgenticAbortSession effect."""
         self._ensure_workflow()
         assert self._client is not None
+        assert self._workflow is not None
 
-        self._client.post(f"/session/{effect.session_id}/abort")
+        client = self._client
+        workflow = self._workflow
 
-        # Update local state
-        name = self._workflow.session_by_id.get(effect.session_id)  # type: ignore
-        if name and name in self._workflow.sessions:  # type: ignore
-            session = self._workflow.sessions[name]  # type: ignore
-            self._workflow.sessions[name] = AgenticSessionHandle(  # type: ignore
-                id=session.id,
-                name=session.name,
-                workflow_id=session.workflow_id,
-                environment_id=session.environment_id,
-                status=AgenticSessionStatus.ABORTED,
-                created_at=session.created_at,
-                title=session.title,
-                agent=session.agent,
-                model=session.model,
-            )
+        @do
+        def _abort_session():
+            yield from client.post(f"/session/{effect.session_id}/abort")
 
-        return ContinueValue(
-            value=None, env=task_state.env, store=store, k=task_state.kontinuation
+            # Update local state
+            name = workflow.session_by_id.get(effect.session_id)
+            if name and name in workflow.sessions:
+                session = workflow.sessions[name]
+                workflow.sessions[name] = AgenticSessionHandle(
+                    id=session.id,
+                    name=session.name,
+                    workflow_id=session.workflow_id,
+                    environment_id=session.environment_id,
+                    status=AgenticSessionStatus.ABORTED,
+                    created_at=session.created_at,
+                    title=session.title,
+                    agent=session.agent,
+                    model=session.model,
+                )
+
+            return None
+
+        return ContinueProgram(
+            program=_abort_session(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     def handle_delete_session(
@@ -636,15 +691,25 @@ class OpenCodeHandler:
         assert self._workflow is not None
         assert self._client is not None
 
-        api_result = self._client.delete(f"/session/{effect.session_id}")
+        client = self._client
+        workflow = self._workflow
 
-        # Update local state
-        name = self._workflow.session_by_id.pop(effect.session_id, None)
-        if name:
-            self._workflow.sessions.pop(name, None)
+        @do
+        def _delete_session():
+            api_result = yield from client.delete(f"/session/{effect.session_id}")
 
-        return ContinueValue(
-            value=bool(api_result), env=task_state.env, store=store, k=task_state.kontinuation
+            # Update local state
+            name = workflow.session_by_id.pop(effect.session_id, None)
+            if name:
+                workflow.sessions.pop(name, None)
+
+            return bool(api_result)
+
+        return ContinueProgram(
+            program=_delete_session(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     # -------------------------------------------------------------------------
@@ -659,8 +724,13 @@ class OpenCodeHandler:
         assert self._workflow is not None
         assert self._client is not None
 
+        client = self._client
+        workflow = self._workflow
+        event_log = self._event_log
+        update_status = self._update_session_status
+
         # Get session name for logging
-        session_name = self._workflow.session_by_id.get(effect.session_id)
+        session_name = workflow.session_by_id.get(effect.session_id)
 
         # Build request body
         body: dict[str, Any] = {
@@ -674,47 +744,49 @@ class OpenCodeHandler:
 
         # Log message sent
         if session_name:
-            self._event_log.log_message_sent(
-                self._workflow.id, session_name, effect.content, effect.wait
+            event_log.log_message_sent(
+                workflow.id, session_name, effect.content, effect.wait
             )
 
-        if effect.wait:
-            # Synchronous: wait for response
-            api_result = self._client.post(
-                f"/session/{effect.session_id}/message", json=body
-            )
-        else:
-            # Asynchronous: fire and forget
-            self._client.post(f"/session/{effect.session_id}/prompt_async", json=body)
-            # Return a placeholder handle
-            result = AgenticMessageHandle(
-                id=f"msg-{time.time_ns()}",
-                session_id=effect.session_id,
-                role="user",
-                created_at=datetime.now(timezone.utc),
-            )
-            return ContinueValue(
-                value=result, env=task_state.env, store=store, k=task_state.kontinuation
-            )
+        @do
+        def _send_message():
+            if effect.wait:
+                # Synchronous: wait for response
+                api_result = yield from client.post(
+                    f"/session/{effect.session_id}/message", json=body
+                )
+                assert api_result is not None
+                info = api_result.get("info", {})
 
-        assert api_result is not None
-        info = api_result.get("info", {})
+                # Update session status
+                update_status(effect.session_id, AgenticSessionStatus.RUNNING)
 
-        # Update session status
-        self._update_session_status(effect.session_id, AgenticSessionStatus.RUNNING)
+                # Log message complete
+                if session_name:
+                    event_log.log_message_complete(workflow.id, session_name)
 
-        # Log message complete
-        if session_name:
-            self._event_log.log_message_complete(self._workflow.id, session_name)
+                return AgenticMessageHandle(
+                    id=info.get("id", f"msg-{time.time_ns()}"),
+                    session_id=effect.session_id,
+                    role=info.get("role", "user"),
+                    created_at=datetime.now(timezone.utc),
+                )
+            else:
+                # Asynchronous: fire and forget
+                yield from client.post(f"/session/{effect.session_id}/prompt_async", json=body)
+                # Return a placeholder handle
+                return AgenticMessageHandle(
+                    id=f"msg-{time.time_ns()}",
+                    session_id=effect.session_id,
+                    role="user",
+                    created_at=datetime.now(timezone.utc),
+                )
 
-        result = AgenticMessageHandle(
-            id=info.get("id", f"msg-{time.time_ns()}"),
-            session_id=effect.session_id,
-            role=info.get("role", "user"),
-            created_at=datetime.now(timezone.utc),
-        )
-        return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+        return ContinueProgram(
+            program=_send_message(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     def handle_get_messages(
@@ -724,44 +796,53 @@ class OpenCodeHandler:
         self._ensure_workflow()
         assert self._client is not None
 
-        params: dict[str, Any] = {}
-        if effect.limit:
-            params["limit"] = effect.limit
+        client = self._client
 
-        api_result = self._client.get(
-            f"/session/{effect.session_id}/message", params=params
-        )
+        @do
+        def _get_messages():
+            params: dict[str, Any] = {}
+            if effect.limit:
+                params["limit"] = effect.limit
 
-        messages = []
-        # api_result is a list of message dicts
-        result_list: list[dict[str, Any]] = api_result if isinstance(api_result, list) else []
-        for msg in result_list:
-            info: dict[str, Any] = msg.get("info", {}) if isinstance(msg, dict) else {}
-            parts: list[dict[str, Any]] = msg.get("parts", []) if isinstance(msg, dict) else []
-
-            # Extract text content
-            content_parts = []
-            for part in parts:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    content_parts.append(part.get("text", ""))
-
-            created_at_str = info.get("createdAt") if isinstance(info, dict) else None
-            if not created_at_str:
-                created_at_str = datetime.now(timezone.utc).isoformat()
-
-            messages.append(
-                AgenticMessage(
-                    id=info.get("id", "") if isinstance(info, dict) else "",
-                    session_id=effect.session_id,
-                    role=info.get("role", "user") if isinstance(info, dict) else "user",
-                    content="\n".join(content_parts),
-                    created_at=datetime.fromisoformat(created_at_str),
-                    parts=parts,
-                )
+            api_result = yield from client.get(
+                f"/session/{effect.session_id}/message", params=params
             )
 
-        return ContinueValue(
-            value=messages, env=task_state.env, store=store, k=task_state.kontinuation
+            messages = []
+            # api_result is a list of message dicts
+            result_list: list[dict[str, Any]] = api_result if isinstance(api_result, list) else []
+            for msg in result_list:
+                info: dict[str, Any] = msg.get("info", {}) if isinstance(msg, dict) else {}
+                parts: list[dict[str, Any]] = msg.get("parts", []) if isinstance(msg, dict) else []
+
+                # Extract text content
+                content_parts = []
+                for part in parts:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        content_parts.append(part.get("text", ""))
+
+                created_at_str = info.get("createdAt") if isinstance(info, dict) else None
+                if not created_at_str:
+                    created_at_str = datetime.now(timezone.utc).isoformat()
+
+                messages.append(
+                    AgenticMessage(
+                        id=info.get("id", "") if isinstance(info, dict) else "",
+                        session_id=effect.session_id,
+                        role=info.get("role", "user") if isinstance(info, dict) else "user",
+                        content="\n".join(content_parts),
+                        created_at=datetime.fromisoformat(created_at_str),
+                        parts=parts,
+                    )
+                )
+
+            return messages
+
+        return ContinueProgram(
+            program=_get_messages(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     # -------------------------------------------------------------------------
@@ -874,32 +955,42 @@ class OpenCodeHandler:
         self._ensure_workflow()
         assert self._workflow is not None
 
-        results: dict[str, AgenticSessionHandle] = {}
-        pending = set(effect.session_names)
+        workflow = self._workflow
+        refresh_status = self._refresh_session_status
 
-        start = time.time()
-        while pending:
-            if effect.timeout and (time.time() - start) > effect.timeout:
-                raise AgenticTimeoutError("gather", effect.timeout)
+        @do
+        def _gather():
+            results: dict[str, AgenticSessionHandle] = {}
+            pending = set(effect.session_names)
 
-            for name in list(pending):
-                session = self._workflow.sessions.get(name)
-                if not session:
-                    raise AgenticSessionNotFoundError(name, by_name=True)
+            start = time.time()
+            while pending:
+                if effect.timeout and (time.time() - start) > effect.timeout:
+                    raise AgenticTimeoutError("gather", effect.timeout)
 
-                # Refresh status from server
-                self._refresh_session_status(session.id)
-                session = self._workflow.sessions[name]
+                for name in list(pending):
+                    session = workflow.sessions.get(name)
+                    if not session:
+                        raise AgenticSessionNotFoundError(name, by_name=True)
 
-                if session.status.is_terminal():
-                    results[name] = session
-                    pending.discard(name)
+                    # Refresh status from server
+                    yield from refresh_status(session.id)
+                    session = workflow.sessions[name]
 
-            if pending:
-                time.sleep(0.5)
+                    if session.status.is_terminal():
+                        results[name] = session
+                        pending.discard(name)
 
-        return ContinueValue(
-            value=results, env=task_state.env, store=store, k=task_state.kontinuation
+                if pending:
+                    yield Delay(0.5)
+
+            return results
+
+        return ContinueProgram(
+            program=_gather(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     def handle_race(
@@ -909,27 +1000,36 @@ class OpenCodeHandler:
         self._ensure_workflow()
         assert self._workflow is not None
 
-        start = time.time()
-        while True:
-            if effect.timeout and (time.time() - start) > effect.timeout:
-                raise AgenticTimeoutError("race", effect.timeout)
+        workflow = self._workflow
+        refresh_status = self._refresh_session_status
 
-            for name in effect.session_names:
-                session = self._workflow.sessions.get(name)
-                if not session:
-                    raise AgenticSessionNotFoundError(name, by_name=True)
+        @do
+        def _race():
+            start = time.time()
+            while True:
+                if effect.timeout and (time.time() - start) > effect.timeout:
+                    raise AgenticTimeoutError("race", effect.timeout)
 
-                # Refresh status from server
-                self._refresh_session_status(session.id)
-                session = self._workflow.sessions[name]
+                for name in effect.session_names:
+                    session = workflow.sessions.get(name)
+                    if not session:
+                        raise AgenticSessionNotFoundError(name, by_name=True)
 
-                if session.status.is_terminal():
-                    result = (name, session)
-                    return ContinueValue(
-                        value=result, env=task_state.env, store=store, k=task_state.kontinuation
-                    )
+                    # Refresh status from server
+                    yield from refresh_status(session.id)
+                    session = workflow.sessions[name]
 
-            time.sleep(0.5)
+                    if session.status.is_terminal():
+                        return (name, session)
+
+                yield Delay(0.5)
+
+        return ContinueProgram(
+            program=_race(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
+        )
 
     # -------------------------------------------------------------------------
     # Status Effects
@@ -942,15 +1042,24 @@ class OpenCodeHandler:
         self._ensure_workflow()
         assert self._workflow is not None
 
-        self._refresh_session_status(effect.session_id)
+        workflow = self._workflow
+        refresh_status = self._refresh_session_status
 
-        name = self._workflow.session_by_id.get(effect.session_id)
-        if not name:
-            raise AgenticSessionNotFoundError(effect.session_id)
+        @do
+        def _get_status():
+            yield from refresh_status(effect.session_id)
 
-        result = self._workflow.sessions[name].status
-        return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            name = workflow.session_by_id.get(effect.session_id)
+            if not name:
+                raise AgenticSessionNotFoundError(effect.session_id)
+
+            return workflow.sessions[name].status
+
+        return ContinueProgram(
+            program=_get_status(),
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
         )
 
     def handle_supports_capability(
@@ -1045,17 +1154,19 @@ class OpenCodeHandler:
         if old_status != status:
             self._event_log.log_session_status(self._workflow.id, name, status)
 
-    def _refresh_session_status(self, session_id: str) -> None:
-        """Refresh session status from server."""
+    @do
+    def _refresh_session_status(self, session_id: str):
+        """Refresh session status from server. Returns Program[..., None]."""
         assert self._client is not None
 
         try:
-            result = self._client.get("/session/status")
+            result = yield from self._client.get("/session/status")
             status_str = result.get(session_id, "pending")
             status = self._map_status(status_str)
             self._update_session_status(session_id, status)
         except Exception:
             pass
+        return None
 
     def _map_status(self, status: str) -> AgenticSessionStatus:
         """Map OpenCode status to AgenticSessionStatus."""
