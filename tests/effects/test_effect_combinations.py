@@ -417,13 +417,17 @@ class TestGatherEnvironmentInheritanceLaw:
 class TestGatherStoreSharingLaw:
     """Tests for Law 8: Gather store sharing (runtime-dependent)."""
 
-    @pytest.mark.skip(reason="SyncRuntime no longer supports Spawn/Gather - use AsyncRuntime")
+    @pytest.mark.skip(
+        reason="SyncRuntime doesn't support Spawn/Gather yet - use AsyncRuntime. "
+        "NOTE: SyncRuntime could implement Spawn/Gather via cooperative scheduling in the future."
+    )
     def test_sync_gather_sequential_store_sharing(self) -> None:
         """Law 8a: SyncRuntime Gather is sequential with deterministic state.
         
         NOTE: This test is obsolete. Gather now only accepts Future objects (from Spawn),
         and Spawn requires AsyncRuntime. The old sequential gather behavior in SyncRuntime
-        no longer exists.
+        no longer exists. However, SyncRuntime could implement Spawn/Gather via cooperative
+        scheduling (round-robin stepping through generators) in the future.
         """
         pass
 
