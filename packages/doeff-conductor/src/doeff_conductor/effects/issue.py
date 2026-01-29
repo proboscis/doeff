@@ -101,7 +101,7 @@ class ResolveIssue(ConductorEffectBase):
 
 __all__ = [
     "CreateIssue",
-    "ListIssues",
     "GetIssue",
+    "ListIssues",
     "ResolveIssue",
 ]

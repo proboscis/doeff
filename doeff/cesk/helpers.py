@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
 
-from doeff.cesk.types import Store
 from doeff.cesk.frames import InterceptFrame, Kontinuation
+from doeff.cesk.types import Store
 
 if TYPE_CHECKING:
+    from doeff.effects._program_types import ProgramLike
     from doeff.program import ProgramBase
     from doeff.types import Effect
-    from doeff.effects._program_types import ProgramLike
 
 
 def apply_transforms(
@@ -33,7 +33,7 @@ def apply_intercept_chain(K: Kontinuation, effect: Effect) -> Effect | ProgramBa
     an effect, you're resuming execution with a new program.
     """
     from doeff._types_internal import EffectBase
-    
+
     current: Effect | ProgramBase = effect
     for frame in K:
         if isinstance(frame, InterceptFrame):
@@ -116,10 +116,10 @@ def shutdown_shared_executor(wait: bool = True) -> None:
 
 
 __all__ = [
-    "apply_transforms",
-    "apply_intercept_chain",
-    "merge_store",
     "_merge_thread_state",
-    "to_generator",
+    "apply_intercept_chain",
+    "apply_transforms",
+    "merge_store",
     "shutdown_shared_executor",
+    "to_generator",
 ]

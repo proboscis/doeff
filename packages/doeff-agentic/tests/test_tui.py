@@ -2,7 +2,6 @@
 Tests for doeff-agentic TUI module.
 """
 
-import pytest
 
 
 class TestTUIImports:
@@ -20,16 +19,16 @@ class TestTUIImports:
 
     def test_import_screens(self):
         """Test that screens can be imported."""
-        from doeff_agentic.tui.screens import WorkflowListScreen, WatchScreen
+        from doeff_agentic.tui.screens import WatchScreen, WorkflowListScreen
         assert WorkflowListScreen is not None
         assert WatchScreen is not None
 
     def test_import_widgets(self):
         """Test that widgets can be imported."""
         from doeff_agentic.tui.widgets import (
-            WorkflowListItem,
-            WorkflowInfoPane,
             AgentOutputPane,
+            WorkflowInfoPane,
+            WorkflowListItem,
         )
         assert WorkflowListItem is not None
         assert WorkflowInfoPane is not None
@@ -41,7 +40,8 @@ class TestFormatRelativeTime:
 
     def test_format_seconds(self):
         """Test formatting seconds."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         from doeff_agentic.tui.widgets import _format_relative_time
 
         now = datetime.now(timezone.utc)
@@ -51,7 +51,8 @@ class TestFormatRelativeTime:
 
     def test_format_minutes(self):
         """Test formatting minutes."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         from doeff_agentic.tui.widgets import _format_relative_time
 
         now = datetime.now(timezone.utc)
@@ -61,7 +62,8 @@ class TestFormatRelativeTime:
 
     def test_format_hours(self):
         """Test formatting hours."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         from doeff_agentic.tui.widgets import _format_relative_time
 
         now = datetime.now(timezone.utc)
@@ -71,7 +73,8 @@ class TestFormatRelativeTime:
 
     def test_format_days(self):
         """Test formatting days."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
+
         from doeff_agentic.tui.widgets import _format_relative_time
 
         now = datetime.now(timezone.utc)
@@ -85,8 +88,8 @@ class TestStatusHelpers:
 
     def test_get_status_symbol_workflow(self):
         """Test getting status symbols for workflow status."""
-        from doeff_agentic.types import WorkflowStatus
         from doeff_agentic.tui.widgets import _get_status_symbol
+        from doeff_agentic.types import WorkflowStatus
 
         assert _get_status_symbol(WorkflowStatus.RUNNING) == "●"
         assert _get_status_symbol(WorkflowStatus.BLOCKED) == "◉"
@@ -95,8 +98,8 @@ class TestStatusHelpers:
 
     def test_get_status_symbol_agent(self):
         """Test getting status symbols for agent status."""
-        from doeff_agentic.types import AgentStatus
         from doeff_agentic.tui.widgets import _get_status_symbol
+        from doeff_agentic.types import AgentStatus
 
         assert _get_status_symbol(AgentStatus.RUNNING) == "●"
         assert _get_status_symbol(AgentStatus.BLOCKED) == "◉"
@@ -105,8 +108,8 @@ class TestStatusHelpers:
 
     def test_get_status_class(self):
         """Test getting CSS class for status."""
-        from doeff_agentic.types import WorkflowStatus
         from doeff_agentic.tui.widgets import _get_status_class
+        from doeff_agentic.types import WorkflowStatus
 
         assert _get_status_class(WorkflowStatus.RUNNING) == "status-running"
         assert _get_status_class(WorkflowStatus.BLOCKED) == "status-blocked"

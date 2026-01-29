@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from collections.abc import Mapping
-from typing import Any, Callable
+from typing import Any
 
 from ..cache_policy import (
     CacheLifecycle,
@@ -22,8 +22,8 @@ class CacheGetEffect(EffectBase):
     key: Any
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "CacheGetEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> CacheGetEffect:
         return self
 
 
@@ -46,8 +46,8 @@ class CachePutEffect(EffectBase):
         # so this, is always running fine!
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "CachePutEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> CachePutEffect:
         return self
 
 
@@ -58,8 +58,8 @@ class CacheDeleteEffect(EffectBase):
     key: Any
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "CacheDeleteEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> CacheDeleteEffect:
         return self
 
 
@@ -70,8 +70,8 @@ class CacheExistsEffect(EffectBase):
     key: Any
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "CacheExistsEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> CacheExistsEffect:
         return self
 
 
@@ -144,19 +144,19 @@ def CacheExists(key: Any) -> Effect:
 
 
 __all__ = [
-    "CacheGetEffect",
-    "CachePutEffect",
-    "CacheDeleteEffect",
-    "CacheExistsEffect",
-    "cache_get",
-    "cache_put",
-    "cache_delete",
-    "cache_exists",
-    "CacheGet",
-    "CachePut",
     "CacheDelete",
+    "CacheDeleteEffect",
     "CacheExists",
+    "CacheExistsEffect",
+    "CacheGet",
+    "CacheGetEffect",
     "CacheLifecycle",
     "CachePolicy",
+    "CachePut",
+    "CachePutEffect",
     "CacheStorage",
+    "cache_delete",
+    "cache_exists",
+    "cache_get",
+    "cache_put",
 ]

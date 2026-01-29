@@ -13,29 +13,30 @@ Spawn Support (SPEC-EFF-005):
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from doeff._vendor import Err, Ok
-from doeff.cesk.runtime.base import BaseRuntime
-from doeff.cesk.state import CESKState, TaskState, ProgramControl, Done as TaskDoneStatus
-from doeff.cesk.result import Done, Failed, Suspended
-from doeff.cesk.step import step
+from doeff._vendor import Err
+from doeff.cesk.frames import ContinueError, ContinueProgram, ContinueValue, FrameResult
 from doeff.cesk.handlers import Handler, default_handlers
-from doeff.cesk.frames import ContinueValue, ContinueError, ContinueProgram, FrameResult
-from doeff.cesk.types import Store, TaskId
+from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.runtime.base import BaseRuntime
 from doeff.cesk.runtime_result import RuntimeResult
+from doeff.cesk.state import CESKState, ProgramControl, TaskState
+from doeff.cesk.state import Done as TaskDoneStatus
+from doeff.cesk.step import step
+from doeff.cesk.types import Store, TaskId
 from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.gather import GatherEffect
 from doeff.effects.spawn import (
     SpawnEffect,
-    TaskJoinEffect,
-    TaskCancelEffect,
-    TaskIsDoneEffect,
     Task,
+    TaskCancelEffect,
     TaskCancelledError,
+    TaskIsDoneEffect,
+    TaskJoinEffect,
 )
 from doeff.effects.time import DelayEffect, WaitUntilEffect
 
@@ -195,7 +196,7 @@ class AsyncRuntime(BaseRuntime):
         task_results: dict[TaskId, Any] = {}
         task_errors: dict[TaskId, BaseException] = {}
         gather_waiters: dict[TaskId, tuple[list[TaskId], Suspended]] = {}
-        
+
         # Spawn tracking: maps Task handle ID -> SpawnedTaskInfo
         spawned_tasks: dict[Any, SpawnedTaskInfo] = {}
         # Maps internal TaskId -> Task handle ID for reverse lookup
@@ -208,48 +209,48 @@ class AsyncRuntime(BaseRuntime):
         while True:
             # Collect all task IDs that are waiting on joins
             join_waiting_task_ids = {
-                parent_tid 
-                for waiters in join_waiters.values() 
+                parent_tid
+                for waiters in join_waiters.values()
                 for parent_tid, _ in waiters
             }
-            
+
             ready_task_ids = [
                 tid for tid in state.get_ready_tasks()
-                if (tid not in pending_async 
+                if (tid not in pending_async
                     and tid not in gather_waiters
                     and tid not in join_waiting_task_ids)
             ]
 
             if ready_task_ids:
                 task_id = ready_task_ids[0]
-                
+
                 # Check if this is a spawned task - use isolated store if so
                 isolated_store = None
                 if task_id in task_id_to_handle:
                     handle_id = task_id_to_handle[task_id]
                     spawned_info = spawned_tasks[handle_id]
                     isolated_store = spawned_info.store_snapshot
-                
+
                 single_state = self._make_single_task_state(state, task_id, isolated_store)
                 result = step(single_state, self._handlers)
 
                 if isinstance(result, Done):
                     # Check if this is a spawned task (isolated store, don't merge to parent)
                     is_spawned_task = task_id in task_id_to_handle
-                    
+
                     if not is_spawned_task:
                         # Regular (Gather) task - merge store changes to parent
                         state = self._update_store(state, result.store)
-                    
+
                     if task_id == main_task_id:
                         await self._cancel_all(pending_async)
                         return (result.value, state)
-                    
+
                     # Mark child task as Done
                     done_task = state.tasks[task_id].with_status(TaskDoneStatus.ok(result.value))
                     state = state.with_task(task_id, done_task)
                     task_results[task_id] = result.value
-                    
+
                     # Check if this is a spawned task
                     if is_spawned_task:
                         handle_id = task_id_to_handle[task_id]
@@ -262,7 +263,7 @@ class AsyncRuntime(BaseRuntime):
                         state = self._resume_join_waiters(
                             state, handle_id, join_waiters, spawned_tasks
                         )
-                    
+
                     state = self._check_gather_complete(
                         state, task_id, gather_waiters, task_results, task_errors
                     )
@@ -271,11 +272,11 @@ class AsyncRuntime(BaseRuntime):
                 if isinstance(result, Failed):
                     # Check if this is a spawned task (isolated store, don't merge to parent)
                     is_spawned_task = task_id in task_id_to_handle
-                    
+
                     if not is_spawned_task:
                         # Regular (Gather) task - merge store changes to parent
                         state = self._update_store(state, result.store)
-                    
+
                     if task_id == main_task_id:
                         await self._cancel_all(pending_async)
                         exc = result.exception
@@ -290,7 +291,7 @@ class AsyncRuntime(BaseRuntime):
                     )
                     state = state.with_task(task_id, failed_task)
                     task_errors[task_id] = result.exception
-                    
+
                     # Check if this is a spawned task
                     if is_spawned_task:
                         handle_id = task_id_to_handle[task_id]
@@ -303,7 +304,7 @@ class AsyncRuntime(BaseRuntime):
                         state = self._resume_join_waiters(
                             state, handle_id, join_waiters, spawned_tasks
                         )
-                    
+
                     state = self._check_gather_complete(
                         state, task_id, gather_waiters, task_results, task_errors
                     )
@@ -312,7 +313,7 @@ class AsyncRuntime(BaseRuntime):
                 if isinstance(result, CESKState):
                     # Check if this is a spawned task
                     is_spawned_task = task_id in task_id_to_handle
-                    
+
                     if is_spawned_task:
                         # Don't merge store changes to parent - update isolated store instead
                         handle_id = task_id_to_handle[task_id]
@@ -344,7 +345,7 @@ class AsyncRuntime(BaseRuntime):
                             task_id, state, spawned_tasks, task_id_to_handle
                         )
                         dispatch_result = self._dispatch_effect(effect, task_state, store_for_dispatch)
-                        
+
                         # For spawned tasks, use isolated dispatch result handler
                         if task_id in task_id_to_handle:
                             handle_id = task_id_to_handle[task_id]
@@ -400,7 +401,6 @@ class AsyncRuntime(BaseRuntime):
                         current_env = state.tasks[task_id].env
                         for prog in programs:
                             child_id = TaskId.new()
-                            from doeff.program import Program
                             child_task = TaskState.initial(prog, dict(current_env))  # type: ignore[arg-type]
                             state = state.add_task(child_id, child_task)
                             child_ids.append(child_id)
@@ -428,7 +428,7 @@ class AsyncRuntime(BaseRuntime):
 
                     # Default: dispatch to handler
                     task_state = state.tasks[task_id]
-                    
+
                     # Use isolated store for spawned tasks
                     if task_id in task_id_to_handle:
                         handle_id = task_id_to_handle[task_id]
@@ -436,9 +436,9 @@ class AsyncRuntime(BaseRuntime):
                         store_for_dispatch = spawned_info.store_snapshot
                     else:
                         store_for_dispatch = state.store
-                    
+
                     dispatch_result = self._dispatch_effect(effect, task_state, store_for_dispatch)
-                    
+
                     # For spawned tasks, update isolated store instead of parent store
                     if task_id in task_id_to_handle:
                         handle_id = task_id_to_handle[task_id]
@@ -459,7 +459,7 @@ class AsyncRuntime(BaseRuntime):
                     atask, suspended = pending_async[tid]
                     if atask in done:
                         del pending_async[tid]
-                        
+
                         # Check if this is a spawned task that was cancelled
                         if tid in task_id_to_handle:
                             handle_id = task_id_to_handle[tid]
@@ -467,16 +467,16 @@ class AsyncRuntime(BaseRuntime):
                             if spawned_info.is_cancelled:
                                 # Task was cancelled - ignore async completion
                                 continue
-                        
+
                         # Get appropriate store for this task
                         store_for_resume = self._get_store_for_task(
                             tid, state, spawned_tasks, task_id_to_handle
                         )
-                        
+
                         try:
                             value = atask.result()
                             new_single = suspended.resume(value, store_for_resume)
-                            
+
                             # For spawned tasks, update isolated store
                             if tid in task_id_to_handle:
                                 handle_id = task_id_to_handle[tid]
@@ -496,7 +496,7 @@ class AsyncRuntime(BaseRuntime):
                                 state = self._merge_task(state, tid, new_single)
                         except Exception as ex:
                             error_state = suspended.resume_error(ex)
-                            
+
                             # For spawned tasks, use isolated store
                             if tid in task_id_to_handle:
                                 handle_id = task_id_to_handle[tid]
@@ -539,11 +539,11 @@ class AsyncRuntime(BaseRuntime):
         """Handle SpawnEffect by creating a new background task with snapshot semantics."""
         # Create unique handle ID
         handle_id = uuid4()
-        
+
         # Get current task's env for the snapshot
         current_task = state.tasks[task_id]
         env_snapshot = dict(current_task.env)
-        
+
         # Snapshot the store - if spawning from a spawned task, use its isolated store
         if task_id in task_id_to_handle:
             parent_handle_id = task_id_to_handle[task_id]
@@ -551,16 +551,15 @@ class AsyncRuntime(BaseRuntime):
             store_snapshot = {k: v for k, v in parent_info.store_snapshot.items()}
         else:
             store_snapshot = {k: v for k, v in state.store.items()}
-        
+
         # Create child task with the snapshot (isolated store not used, but env is)
         child_id = TaskId.new()
-        from doeff.program import Program
         child_task = TaskState.initial(effect.program, env_snapshot)  # type: ignore[arg-type]
         state = state.add_task(child_id, child_task)
-        
+
         # Determine backend (default to "thread" for asyncio-based runtime)
         backend = effect.preferred_backend or "thread"
-        
+
         # Create the Task handle
         task_handle = Task(
             backend=backend,
@@ -568,7 +567,7 @@ class AsyncRuntime(BaseRuntime):
             _env_snapshot=env_snapshot,
             _state_snapshot=store_snapshot,
         )
-        
+
         # Track the spawned task
         spawned_info = SpawnedTaskInfo(
             task_id=child_id,
@@ -577,7 +576,7 @@ class AsyncRuntime(BaseRuntime):
         )
         spawned_tasks[handle_id] = spawned_info
         task_id_to_handle[child_id] = handle_id
-        
+
         # Resume parent with the Task handle
         new_single = suspended.resume(task_handle, state.store)
         return self._merge_task(state, task_id, new_single)
@@ -593,37 +592,36 @@ class AsyncRuntime(BaseRuntime):
     ) -> CESKState:
         """Handle TaskJoinEffect by waiting for task completion."""
         handle_id = effect.task._handle
-        
+
         if handle_id not in spawned_tasks:
             # Task handle is invalid or already cleaned up
             error_state = suspended.resume_error(
                 ValueError(f"Invalid task handle: {handle_id}")
             )
             return self._merge_task(state, task_id, error_state)
-        
+
         spawned_info = spawned_tasks[handle_id]
-        
+
         # Check if task is already complete
         if spawned_info.is_complete:
             if spawned_info.is_cancelled:
                 # Task was cancelled
                 error_state = suspended.resume_error(TaskCancelledError())
                 return self._merge_task(state, task_id, error_state)
-            elif spawned_info.error is not None:
+            if spawned_info.error is not None:
                 # Task failed with an exception - preserve traceback if available
                 error = spawned_info.error
                 error_state = suspended.resume_error(error)
                 return self._merge_task(state, task_id, error_state)
-            else:
-                # Task completed successfully
-                new_single = suspended.resume(spawned_info.result, state.store)
-                return self._merge_task(state, task_id, new_single)
-        
+            # Task completed successfully
+            new_single = suspended.resume(spawned_info.result, state.store)
+            return self._merge_task(state, task_id, new_single)
+
         # Task not yet complete - add to waiters
         if handle_id not in join_waiters:
             join_waiters[handle_id] = []
         join_waiters[handle_id].append((task_id, suspended))
-        
+
         return state
 
     def _handle_task_cancel(
@@ -638,43 +636,43 @@ class AsyncRuntime(BaseRuntime):
     ) -> CESKState:
         """Handle TaskCancelEffect by requesting task cancellation."""
         handle_id = effect.task._handle
-        
+
         if handle_id not in spawned_tasks:
             # Task handle is invalid - return False
             new_single = suspended.resume(False, state.store)
             return self._merge_task(state, task_id, new_single)
-        
+
         spawned_info = spawned_tasks[handle_id]
-        
+
         # Check if task is already complete
         if spawned_info.is_complete:
             # Already done - cancellation has no effect
             new_single = suspended.resume(False, state.store)
             return self._merge_task(state, task_id, new_single)
-        
+
         # Mark as cancelled
         spawned_info.is_cancelled = True
         spawned_info.is_complete = True
         spawned_info.error = TaskCancelledError()
-        
+
         child_task_id = spawned_info.task_id
-        
+
         # Cancel any pending async operations for this task
         if pending_async is not None and child_task_id in pending_async:
             atask, _ = pending_async[child_task_id]
             atask.cancel()
             del pending_async[child_task_id]
-        
+
         # Mark the child task as done with cancellation error
         if child_task_id in state.tasks:
             cancelled_task = state.tasks[child_task_id].with_status(
                 TaskDoneStatus(Err(TaskCancelledError()))  # type: ignore[arg-type]
             )
             state = state.with_task(child_task_id, cancelled_task)
-        
+
         # Resume any join waiters with CancelledError
         state = self._resume_join_waiters(state, handle_id, join_waiters, spawned_tasks)
-        
+
         # Return True to indicate cancellation was requested
         new_single = suspended.resume(True, state.store)
         return self._merge_task(state, task_id, new_single)
@@ -689,15 +687,15 @@ class AsyncRuntime(BaseRuntime):
     ) -> CESKState:
         """Handle TaskIsDoneEffect by checking task completion status."""
         handle_id = effect.task._handle
-        
+
         if handle_id not in spawned_tasks:
             # Task handle is invalid - return True (task doesn't exist anymore)
             new_single = suspended.resume(True, state.store)
             return self._merge_task(state, task_id, new_single)
-        
+
         spawned_info = spawned_tasks[handle_id]
         is_done = spawned_info.is_complete
-        
+
         new_single = suspended.resume(is_done, state.store)
         return self._merge_task(state, task_id, new_single)
 
@@ -711,10 +709,10 @@ class AsyncRuntime(BaseRuntime):
         """Resume all tasks waiting to join a completed spawned task."""
         if handle_id not in join_waiters:
             return state
-        
+
         waiters = join_waiters.pop(handle_id)
         spawned_info = spawned_tasks[handle_id]
-        
+
         for waiter_task_id, suspended in waiters:
             if spawned_info.is_cancelled:
                 error_state = suspended.resume_error(TaskCancelledError())
@@ -729,12 +727,12 @@ class AsyncRuntime(BaseRuntime):
             else:
                 new_single = suspended.resume(spawned_info.result, state.store)
                 state = self._merge_task(state, waiter_task_id, new_single)
-        
+
         # Note: We don't clean up spawned_tasks here because:
         # 1. Multiple joins on the same task should return the same result
         # 2. The tracking dicts are scoped to a single run() call anyway
         # 3. Memory is freed when run() completes
-        
+
         return state
 
     async def _do_await(self, awaitable: Any) -> Any:
@@ -753,8 +751,8 @@ class AsyncRuntime(BaseRuntime):
             await asyncio.sleep(delay_seconds)
 
     def _make_single_task_state(
-        self, 
-        state: CESKState, 
+        self,
+        state: CESKState,
         task_id: TaskId,
         isolated_store: Store | None = None
     ) -> CESKState:

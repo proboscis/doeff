@@ -5,9 +5,9 @@ This file shows how to use # doeff: markers to explicitly categorize functions
 for better IDE integration and indexing.
 """
 
-from doeff import Program, do
-from typing import Any, Dict, Optional
+from typing import Any
 
+from doeff import Program, do
 
 # ============================================================================
 # INTERPRETERS - Functions that execute/interpret Program objects
@@ -23,7 +23,7 @@ def simple_interpreter(program: Program):  # doeff: interpreter
 
 def async_interpreter(  # doeff: interpreter
     program: Program,
-    timeout: Optional[float] = None
+    timeout: float | None = None
 ):
     """
     An async interpreter with the marker on the function definition line.
@@ -106,7 +106,7 @@ def fetch_data():  # doeff: kleisli
 
 @do
 def process_data(  # doeff: kleisli
-    data: Dict[str, Any]
+    data: dict[str, Any]
 ):
     """
     Processes fetched data in a Kleisli composition.
@@ -119,7 +119,7 @@ def process_data(  # doeff: kleisli
 
 @do
 def save_results(
-    results: Dict[str, Any],  # doeff: kleisli
+    results: dict[str, Any],  # doeff: kleisli
     path: str = "/tmp/results.json"
 ):
     """
@@ -183,11 +183,11 @@ def regular_function(x: int, y: int) -> int:
 
 class ProgramExecutor:
     """Class containing methods with doeff markers."""
-    
+
     def execute(self, program: Program):  # doeff: interpreter
         """Class method interpreter with marker."""
         return program.run()
-    
+
     @do
     def transform(  # doeff: transform
         self,
@@ -195,14 +195,14 @@ class ProgramExecutor:
     ) -> Program:
         """Class method transformer with marker."""
         return program.with_context(self.get_context())
-    
+
     @staticmethod
     @do
     def static_kleisli():  # doeff: kleisli
         """Static method Kleisli function with marker."""
         yield Effect("static_action")
-    
-    def get_context(self) -> Dict[str, Any]:
+
+    def get_context(self) -> dict[str, Any]:
         """Regular method without doeff functionality."""
         return {"executor": self.__class__.__name__}
 
@@ -232,7 +232,7 @@ async def async_marked_interpreter(  # doeff: interpreter
 
 
 def factory_interpreter(
-    config: Dict[str, Any]
+    config: dict[str, Any]
 ):  # doeff: interpreter
     """
     A factory that returns an interpreter function.
@@ -249,23 +249,23 @@ def factory_interpreter(
 
 if __name__ == "__main__":
     # Example usage of marked functions
-    from doeff import Program, Effect
-    
+    from doeff import Effect, Program
+
     # Create a sample program
     prog = Program.of(lambda: 42)
-    
+
     # Use marked interpreter
     result = simple_interpreter(prog)
     print(f"Simple interpreter result: {result}")
-    
+
     # Use marked transformer
     optimized = optimize_transform(prog)
     print(f"Optimized program: {optimized}")
-    
+
     # Use class-based executor
     executor = ProgramExecutor()
     executor.execute(prog)
-    
+
     print("\nMarker demonstration complete!")
     print("The IDE plugin will recognize and categorize these functions")
     print("based on their # doeff: markers for better navigation and execution.")

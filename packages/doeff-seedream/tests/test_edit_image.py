@@ -11,9 +11,9 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from doeff import AsyncRuntime, do
-
 from doeff_seedream import SeedreamClient, edit_image__seedream4
+
+from doeff import AsyncRuntime, do
 
 
 class DummySeedreamClient(SeedreamClient):

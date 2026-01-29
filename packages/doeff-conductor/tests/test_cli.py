@@ -14,13 +14,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
-
 from doeff_conductor.cli import cli
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
-    WorkflowHandle,
-    WorkflowStatus,
     WorktreeEnv,
 )
 

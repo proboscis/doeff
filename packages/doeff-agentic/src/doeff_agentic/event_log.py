@@ -50,10 +50,10 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .types import (
     AgenticEnvironmentHandle,
@@ -484,7 +484,7 @@ class EventLogReader:
         if not path.exists():
             return []
         entries = []
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -756,15 +756,14 @@ class WorkflowIndex:
 
         if len(matches) == 0:
             return None
-        elif len(matches) == 1:
+        if len(matches) == 1:
             return matches[0]
-        else:
-            match_details = ", ".join(
-                f"{wf_id} ({index[wf_id]})" for wf_id in matches
-            )
-            raise ValueError(
-                f"Ambiguous prefix '{prefix}' matches multiple workflows: {match_details}"
-            )
+        match_details = ", ".join(
+            f"{wf_id} ({index[wf_id]})" for wf_id in matches
+        )
+        raise ValueError(
+            f"Ambiguous prefix '{prefix}' matches multiple workflows: {match_details}"
+        )
 
     def list_all(self) -> dict[str, str]:
         """List all workflows in index."""
@@ -773,8 +772,8 @@ class WorkflowIndex:
 
 __all__ = [
     "EventLogEntry",
-    "EventLogWriter",
     "EventLogReader",
+    "EventLogWriter",
     "WorkflowIndex",
     "get_default_state_dir",
 ]

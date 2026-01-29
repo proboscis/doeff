@@ -8,9 +8,8 @@ Profiling is enabled by default. To disable it, set the DOEFF_DISABLE_PROFILE en
 import os
 import sys
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
-
 
 # Profiling is enabled by default, disabled via env var
 PROFILING_ENABLED = not bool(os.environ.get("DOEFF_DISABLE_PROFILE"))  # noqa: PINJ050

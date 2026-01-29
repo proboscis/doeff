@@ -3,17 +3,15 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
-import pytest
-
 from doeff_conductor.types import (
+    AgentRef,
     Issue,
     IssueStatus,
+    MergeStrategy,
+    PRHandle,
     WorkflowHandle,
     WorkflowStatus,
     WorktreeEnv,
-    PRHandle,
-    AgentRef,
-    MergeStrategy,
 )
 
 

@@ -5,6 +5,6 @@ from .secrets import access_secret
 
 __all__ = [
     "SecretManagerClient",
-    "get_secret_manager_client",
     "access_secret",
+    "get_secret_manager_client",
 ]

@@ -11,13 +11,13 @@ Design Decisions (from spec):
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from ._program_types import ProgramLike
 from ._validators import ensure_dict_str_any, ensure_program_like, ensure_str
 from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
-
 
 SpawnBackend = Literal["thread", "process", "ray"]
 
@@ -33,7 +33,6 @@ class TaskCancelledError(Exception):
     - cancel() was called on the task
     - The task was awaited via join()
     """
-    pass
 
 
 @dataclass(frozen=True)
@@ -61,8 +60,8 @@ class SpawnEffect(EffectBase):
         ensure_dict_str_any(self.options, name="options")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "SpawnEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> SpawnEffect:
         program = intercept_value(self.program, transform)
         if program is self.program:
             return self
@@ -135,8 +134,8 @@ class TaskJoinEffect(EffectBase):
             )
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "TaskJoinEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> TaskJoinEffect:
         return self
 
 
@@ -153,8 +152,8 @@ class TaskCancelEffect(EffectBase):
             )
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "TaskCancelEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> TaskCancelEffect:
         return self
 
 
@@ -171,8 +170,8 @@ class TaskIsDoneEffect(EffectBase):
             )
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "TaskIsDoneEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> TaskIsDoneEffect:
         return self
 
 
@@ -228,13 +227,13 @@ def Spawn(
 
 
 __all__ = [
+    "Spawn",
     "SpawnBackend",
     "SpawnEffect",
     "Task",
-    "TaskCancelledError",
     "TaskCancelEffect",
+    "TaskCancelledError",
     "TaskIsDoneEffect",
     "TaskJoinEffect",
     "spawn",
-    "Spawn",
 ]

@@ -46,7 +46,7 @@ class EffectTraceback(Protocol):
     - CESK: CapturedTraceback (rich - effect chain + Python chain)
     - ProgramInterpreter: PythonTraceback (basic - wraps exception.__traceback__)
     """
-    
+
     def format(self) -> str:
         """Full human-readable traceback.
         
@@ -54,7 +54,7 @@ class EffectTraceback(Protocol):
             Multi-line string similar to Python's standard traceback format.
         """
         ...
-    
+
     def format_short(self) -> str:
         """One-line summary.
         
@@ -62,7 +62,7 @@ class EffectTraceback(Protocol):
             Single line summary like: "func1 -> func2 -> func3: ExceptionType: message"
         """
         ...
-    
+
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable representation.
         
@@ -85,17 +85,17 @@ class PythonTraceback:
         traceback_obj: The traceback object (exception.__traceback__)
         capture_timestamp: time.time() when captured (optional)
     """
-    
+
     exception: BaseException
     traceback_obj: TracebackType | None = None
     capture_timestamp: float | None = field(default=None)
-    
+
     def __post_init__(self) -> None:
         if self.traceback_obj is None and self.exception.__traceback__ is not None:
             object.__setattr__(self, "traceback_obj", self.exception.__traceback__)
         if self.capture_timestamp is None:
             object.__setattr__(self, "capture_timestamp", time.time())
-    
+
     def format(self) -> str:
         """Full human-readable traceback.
         
@@ -103,9 +103,9 @@ class PythonTraceback:
             Multi-line string in standard Python traceback format.
         """
         lines: list[str] = []
-        
+
         lines.append("Python Traceback (most recent call last):")
-        
+
         if self.traceback_obj is not None:
             tb_lines = traceback.format_tb(self.traceback_obj)
             for tb_line in tb_lines:
@@ -114,15 +114,15 @@ class PythonTraceback:
                         lines.append(f"  {line.lstrip()}" if not line.startswith("  ") else line)
         else:
             lines.append("  (no traceback available)")
-        
+
         lines.append("")
-        
+
         exc_type = type(self.exception).__name__
         exc_msg = str(self.exception)
         lines.append(f"{exc_type}: {exc_msg}")
-        
+
         return "\n".join(lines)
-    
+
     def format_short(self) -> str:
         """One-line summary of the traceback.
         
@@ -133,7 +133,7 @@ class PythonTraceback:
         """
         exc_type = type(self.exception).__name__
         exc_msg = str(self.exception).replace("\n", "\\n")
-        
+
         location = "<unknown>"
         if self.traceback_obj is not None:
             tb = self.traceback_obj
@@ -142,9 +142,9 @@ class PythonTraceback:
             frame = tb.tb_frame
             func_name = frame.f_code.co_name
             location = func_name
-        
+
         return f"{location}: {exc_type}: {exc_msg}"
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict.
         
@@ -161,7 +161,7 @@ class PythonTraceback:
             JSON-serializable dict.
         """
         frames: list[dict[str, Any]] = []
-        
+
         if self.traceback_obj is not None:
             tb = self.traceback_obj
             while tb is not None:
@@ -173,7 +173,7 @@ class PythonTraceback:
                     "code": None,
                 })
                 tb = tb.tb_next
-        
+
         return {
             "version": "1.0",
             "type": "python",

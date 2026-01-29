@@ -49,7 +49,7 @@ class MissingEnvKeyError(KeyError):
 
 __all__ = [
     "HandlerRegistryError",
-    "UnhandledEffectError",
     "InterpreterInvariantError",
     "MissingEnvKeyError",
+    "UnhandledEffectError",
 ]

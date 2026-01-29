@@ -7,7 +7,6 @@ import tempfile
 from pathlib import Path
 
 from click.testing import CliRunner
-
 from doeff_flow.cli import cli
 
 

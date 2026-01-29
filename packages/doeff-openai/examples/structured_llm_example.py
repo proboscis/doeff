@@ -13,25 +13,24 @@ To run this example with pinjected:
         --openai-api-key "sk-..."
 """
 
-from typing import List, Optional, Protocol
+from typing import Protocol
+
+from doeff_openai import (
+    get_total_cost,
+    gpt5_nano_structured,
+    reset_cost_tracking,
+    structured_llm__openai,
+)
+from pinjected import injected, instance
 from pydantic import BaseModel, Field
 
 from doeff import (
-    do,
-    EffectGenerator,
     Ask,
+    EffectGenerator,
     Safe,
     Tell,
+    do,
 )
-
-from doeff_openai import (
-    structured_llm__openai,
-    gpt5_nano_structured,
-    get_total_cost,
-    reset_cost_tracking,
-)
-
-from pinjected import injected, instance
 
 
 # Define structured output models
@@ -41,13 +40,13 @@ class CityInfo(BaseModel):
     country: str = Field(description="The country where the city is located")
     population: int = Field(description="The population of the city")
     is_capital: bool = Field(description="Whether this city is a capital")
-    famous_landmarks: List[str] = Field(description="List of famous landmarks")
+    famous_landmarks: list[str] = Field(description="List of famous landmarks")
 
 
 class MathProblem(BaseModel):
     """Solution to a math problem."""
     problem: str = Field(description="The original problem statement")
-    steps: List[str] = Field(description="Step-by-step solution")
+    steps: list[str] = Field(description="Step-by-step solution")
     answer: float = Field(description="The final numerical answer")
     confidence: float = Field(description="Confidence in the answer (0-1)")
 
@@ -56,8 +55,8 @@ class CodeAnalysis(BaseModel):
     """Analysis of code snippet."""
     language: str = Field(description="Programming language")
     complexity: str = Field(description="Complexity level: simple, moderate, complex")
-    issues: List[str] = Field(description="List of potential issues")
-    improvements: List[str] = Field(description="Suggested improvements")
+    issues: list[str] = Field(description="List of potential issues")
+    improvements: list[str] = Field(description="Suggested improvements")
     has_security_issues: bool = Field(description="Whether there are security concerns")
 
 
@@ -66,14 +65,14 @@ class CodeAnalysis(BaseModel):
 def example_plain_text() -> EffectGenerator[str]:
     """Example of getting a plain text response."""
     yield Tell("Example 1: Plain text response")
-    
+
     result = yield structured_llm__openai(
         text="What is the capital of France? Answer in one sentence.",
         model="gpt-4o",
         max_tokens=100,
         temperature=0.5,
     )
-    
+
     yield Tell(f"Response: {result}")
     return result
 
@@ -83,7 +82,7 @@ def example_plain_text() -> EffectGenerator[str]:
 def example_structured_output() -> EffectGenerator[CityInfo]:
     """Example of getting structured output."""
     yield Tell("Example 2: Structured output with Pydantic")
-    
+
     result = yield structured_llm__openai(
         text="Tell me about Tokyo, Japan. Include population and famous landmarks.",
         model="gpt-4o",
@@ -91,27 +90,27 @@ def example_structured_output() -> EffectGenerator[CityInfo]:
         max_tokens=500,
         temperature=0.3,
     )
-    
+
     yield Tell(f"City: {result.name}")
     yield Tell(f"Population: {result.population:,}")
     yield Tell(f"Is Capital: {result.is_capital}")
     yield Tell(f"Landmarks: {', '.join(result.famous_landmarks)}")
-    
+
     return result
 
 
-# Example 3: Math problem with optional GPT-5 
+# Example 3: Math problem with optional GPT-5
 @do
 def example_gpt5_reasoning() -> EffectGenerator[MathProblem]:
     """Example of using GPT-5 with reasoning mode for complex problem solving."""
     yield Tell("Example 3: GPT-5 with thinking mode (if available)")
-    
+
     # Check if GPT-5 is available via Ask effect
     gpt5_available = yield Ask("gpt5_available")
     model_name = "gpt-5-nano" if gpt5_available else "gpt-4o"
-    
+
     yield Tell(f"Using model: {model_name}")
-    
+
     problem_text = """Solve this problem step by step:
     
     A train leaves Station A at 10:00 AM traveling at 60 mph.
@@ -119,7 +118,7 @@ def example_gpt5_reasoning() -> EffectGenerator[MathProblem]:
     The stations are 280 miles apart.
     At what time will the trains meet?
     """
-    
+
     if gpt5_available:
         result = yield gpt5_nano_structured(
             text=problem_text,
@@ -135,31 +134,31 @@ def example_gpt5_reasoning() -> EffectGenerator[MathProblem]:
             max_tokens=1000,
             temperature=0.2,
         )
-    
+
     yield Tell(f"Problem: {result.problem}")
     yield Tell("Solution steps:")
     for i, step in enumerate(result.steps, 1):
         yield Tell(f"  {i}. {step}")
     yield Tell(f"Answer: {result.answer}")
     yield Tell(f"Confidence: {result.confidence:.1%}")
-    
+
     return result
 
 
 # Example 4: Code analysis with error handling
 @do
-def example_code_analysis() -> EffectGenerator[Optional[CodeAnalysis]]:
+def example_code_analysis() -> EffectGenerator[CodeAnalysis | None]:
     """Example of analyzing code with error handling."""
     yield Tell("Example 4: Code analysis with error handling")
-    
-    code_snippet = '''
+
+    code_snippet = """
     def calculate_average(numbers):
         total = 0
         for num in numbers:
             total += num
         return total / len(numbers)
-    '''
-    
+    """
+
     # Using Safe effect for error handling
     @do
     def analyze_code():
@@ -171,23 +170,23 @@ def example_code_analysis() -> EffectGenerator[Optional[CodeAnalysis]]:
             temperature=0.1,
         )
         return result
-    
+
     safe_result = yield Safe(analyze_code())
-    
+
     if safe_result.is_err():
         yield Tell(f"Error analyzing code: {safe_result.error}")
         yield Tell("Returning None as fallback")
         result = None
     else:
         result = safe_result.value
-    
+
     if result:
         yield Tell(f"Language: {result.language}")
         yield Tell(f"Complexity: {result.complexity}")
         yield Tell(f"Issues: {result.issues}")
         yield Tell(f"Improvements: {result.improvements}")
         yield Tell(f"Security issues: {result.has_security_issues}")
-    
+
     return result
 
 
@@ -196,27 +195,27 @@ def example_code_analysis() -> EffectGenerator[Optional[CodeAnalysis]]:
 def example_with_cost_tracking() -> EffectGenerator[None]:
     """Example showing cost tracking across multiple API calls."""
     yield Tell("Example 5: Cost tracking")
-    
+
     # Reset cost tracking for this example
     yield reset_cost_tracking()
-    
+
     # Make several API calls
     yield Tell("Making multiple API calls...")
-    
+
     # Call 1: Simple question
     yield structured_llm__openai(
         text="What is 2+2?",
         model="gpt-4o",
         max_tokens=50,
     )
-    
+
     # Call 2: Structured output
     yield structured_llm__openai(
         text="List 3 programming languages",
         model="gpt-4o",
         max_tokens=100,
     )
-    
+
     # Call 3: Another structured output
     yield structured_llm__openai(
         text="Describe Python in one sentence",
@@ -224,11 +223,11 @@ def example_with_cost_tracking() -> EffectGenerator[None]:
         response_format=None,  # Plain text
         max_tokens=100,
     )
-    
+
     # Get total cost
     total_cost = yield get_total_cost()
     yield Tell(f"Total cost for all API calls: ${total_cost:.6f}")
-    
+
     return None
 
 
@@ -239,7 +238,7 @@ def _run_all_examples_impl() -> EffectGenerator[None]:
     yield Tell("=" * 60)
     yield Tell("DoEff OpenAI Structured LLM Examples")
     yield Tell("=" * 60)
-    
+
     # Check if API key is available
     api_key = yield Ask("openai_api_key")
     if not api_key:
@@ -247,30 +246,30 @@ def _run_all_examples_impl() -> EffectGenerator[None]:
         yield Tell("Please provide your OpenAI API key via dependency injection:")
         yield Tell("  python -m pinjected run <module>.a_run_all_examples --openai-api-key 'sk-...'")
         return None
-    
+
     # Run examples
     try:
         yield Tell("\n")
         yield example_plain_text()
-        
+
         yield Tell("\n" + "-" * 40 + "\n")
         yield example_structured_output()
-        
+
         yield Tell("\n" + "-" * 40 + "\n")
         yield example_gpt5_reasoning()
-        
+
         yield Tell("\n" + "-" * 40 + "\n")
         yield example_code_analysis()
-        
+
         yield Tell("\n" + "-" * 40 + "\n")
         yield example_with_cost_tracking()
-        
+
     except Exception as e:
         yield Tell(f"Error running examples: {e}")
-    
+
     yield Tell("\n" + "=" * 60)
     yield Tell("Examples completed!")
-    
+
     return None
 
 
@@ -300,7 +299,7 @@ async def a_run_all_examples(
             --gpt5-available false
     """
     from doeff import run_with_env
-    
+
     # Run with environment
     result = await run_with_env(
         _run_all_examples_impl(),
@@ -309,20 +308,20 @@ async def a_run_all_examples(
             "gpt5_available": gpt5_available,
         }
     )
-    
+
     if result.is_err:
         print(f"Error: {result.result.error}")
         import traceback
         traceback.print_exception(
-            type(result.result.error), 
-            result.result.error, 
+            type(result.result.error),
+            result.result.error,
             result.result.error.__traceback__
         )
-    
+
     # Print execution logs
     print("\nExecution Log:")
     for log_entry in result.log:
-        if isinstance(log_entry, tuple) and log_entry[0] == 'log':
+        if isinstance(log_entry, tuple) and log_entry[0] == "log":
             print(f"  {log_entry[1]}")
 
 

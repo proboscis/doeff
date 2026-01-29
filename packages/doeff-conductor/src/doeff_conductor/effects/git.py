@@ -104,7 +104,7 @@ class MergePR(ConductorEffectBase):
 
 __all__ = [
     "Commit",
-    "Push",
     "CreatePR",
     "MergePR",
+    "Push",
 ]

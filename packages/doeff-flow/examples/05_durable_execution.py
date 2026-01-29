@@ -30,12 +30,11 @@ import sys
 import time
 from pathlib import Path
 
+from doeff_flow import run_workflow
+
 from doeff import do
 from doeff.effects.cache import CacheGet, CachePut
 from doeff.storage import SQLiteStorage
-
-from doeff_flow import run_workflow
-
 
 # =============================================================================
 # Simulated Expensive Operations
@@ -55,7 +54,7 @@ def expensive_api_call(endpoint: str) -> dict:
 
 def expensive_computation(data: dict) -> dict:
     """Simulate expensive computation."""
-    print(f"  [COMPUTE] Processing data... (takes 0.5 seconds)")
+    print("  [COMPUTE] Processing data... (takes 0.5 seconds)")
     time.sleep(0.5)
     return {
         "input": data,

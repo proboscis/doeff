@@ -6,10 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
-from doeff._vendor import Err, Ok, Result
 from doeff._types_internal import EffectBase
-from doeff.cesk.types import Store
+from doeff._vendor import Err, Ok, Result
 from doeff.cesk.state import CESKState
+from doeff.cesk.types import Store
 
 if TYPE_CHECKING:
     from doeff.cesk_traceback import CapturedTraceback
@@ -98,10 +98,10 @@ class CESKResult(Generic[T]):
 
 
 __all__ = [
+    "CESKResult",
     "Done",
     "Failed",
+    "StepResult",
     "Suspended",
     "Terminal",
-    "StepResult",
-    "CESKResult",
 ]

@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from collections.abc import Awaitable
-from typing import Any, Callable
+from typing import Any
 
-from .base import Effect, EffectBase, create_effect_with_trace
 from ._validators import ensure_awaitable
+from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,8 @@ class FutureAwaitEffect(EffectBase):
         ensure_awaitable(self.awaitable, name="awaitable")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "FutureAwaitEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> FutureAwaitEffect:
         return self
 
 
@@ -38,7 +38,7 @@ def Await(awaitable: Awaitable[Any]) -> Effect:
 
 
 __all__ = [
+    "Await",
     "FutureAwaitEffect",
     "await_",
-    "Await",
 ]

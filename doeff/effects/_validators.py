@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Hashable, Mapping
 import inspect
-from typing import Any, TYPE_CHECKING
+from collections.abc import Awaitable, Hashable, Mapping
+from typing import TYPE_CHECKING
 
 from doeff.types import EffectBase
 
 if TYPE_CHECKING:
-    from doeff.program import Program, KleisliProgramCall
+    pass
 
 
 def _type_name(value: object) -> str:
@@ -21,7 +21,7 @@ def _is_program_like(value: object) -> bool:
     if isinstance(value, EffectBase):
         return True
     # Import here to avoid circular imports
-    from doeff.program import Program, KleisliProgramCall
+    from doeff.program import KleisliProgramCall, Program
     return isinstance(value, (Program, KleisliProgramCall))
 
 
@@ -138,20 +138,20 @@ def ensure_non_empty_tuple(values: object, *, name: str) -> None:
 
 
 __all__ = [
-    "ensure_str",
-    "ensure_hashable",
-    "ensure_callable",
-    "ensure_optional_callable",
-    "ensure_program_like",
-    "ensure_program_like_or_thunk",
-    "ensure_program_tuple",
-    "ensure_program_mapping",
-    "ensure_env_mapping",
-    "ensure_dict_str_any",
     "ensure_awaitable",
     "ensure_awaitable_tuple",
+    "ensure_callable",
+    "ensure_dict_str_any",
+    "ensure_env_mapping",
     "ensure_exception",
-    "ensure_positive_int",
-    "ensure_non_negative_int",
+    "ensure_hashable",
     "ensure_non_empty_tuple",
+    "ensure_non_negative_int",
+    "ensure_optional_callable",
+    "ensure_positive_int",
+    "ensure_program_like",
+    "ensure_program_like_or_thunk",
+    "ensure_program_mapping",
+    "ensure_program_tuple",
+    "ensure_str",
 ]

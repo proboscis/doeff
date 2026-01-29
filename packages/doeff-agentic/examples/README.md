@@ -23,12 +23,13 @@ These examples use the new spec-compliant API:
 | `AgenticGetMessages` | Get messages from a session |
 | `AgenticNextEvent` | Wait for next event from session |
 | `AgenticGather` | Wait for multiple sessions to complete |
-| `opencode_handler()` | Create handlers for use with `run_sync` |
+| `opencode_handler()` | Create handlers for use with `AsyncRuntime` |
 
 ### Basic Pattern
 
 ```python
-from doeff import do, run_sync
+import asyncio
+from doeff import do, AsyncRuntime
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticSendMessage,
@@ -53,8 +54,13 @@ def my_workflow():
     return messages[-1].content
 
 # Run the workflow
-handlers = opencode_handler()
-result = run_sync(my_workflow(), handlers=handlers)
+async def main():
+    handlers = opencode_handler()
+    runtime = AsyncRuntime(handlers=handlers)
+    result = await runtime.run(my_workflow())
+    print(result.value)  # Access the result value
+
+asyncio.run(main())
 ```
 
 ## Examples

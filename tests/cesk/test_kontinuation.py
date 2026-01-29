@@ -1,36 +1,32 @@
 """Tests for CESK kontinuation module."""
 
-import pytest
 
 from doeff._vendor import FrozenDict
-from doeff.cesk.types import Environment, Store
 from doeff.cesk.frames import (
-    Kontinuation,
-    ContinueValue,
     ContinueError,
-    ContinueProgram,
-    LocalFrame,
+    ContinueValue,
     InterceptFrame,
+    Kontinuation,
+    LocalFrame,
     SafeFrame,
-    ListenFrame,
-    GatherFrame,
 )
 from doeff.cesk.kontinuation import (
-    push_frame,
-    pop_frame,
-    unwind_value,
-    unwind_error,
-    find_frame,
-    has_frame,
-    find_intercept_frame_index,
-    has_intercept_frame,
-    find_safe_frame_index,
-    has_safe_frame,
-    get_intercept_transforms,
     apply_intercept_chain,
     continuation_depth,
+    find_frame,
+    find_intercept_frame_index,
+    find_safe_frame_index,
+    get_intercept_transforms,
+    has_frame,
+    has_intercept_frame,
+    has_safe_frame,
+    pop_frame,
+    push_frame,
     split_at_safe,
+    unwind_error,
+    unwind_value,
 )
+from doeff.cesk.types import Environment, Store
 from doeff.program import Program
 
 

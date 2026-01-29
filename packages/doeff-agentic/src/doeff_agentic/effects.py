@@ -15,12 +15,11 @@ Effect Categories:
 
 from __future__ import annotations
 
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field, replace
-from typing import Any, Callable, Generator, TypeVar
+from typing import Any, TypeVar
 
-
-from .types import AgenticEnvironmentType, AgenticSessionStatus
-
+from .types import AgenticEnvironmentType
 
 E = TypeVar("E", bound="AgenticEffectBase")
 
@@ -86,7 +85,6 @@ class AgenticGetWorkflow(AgenticEffectBase):
     Yields: AgenticWorkflowHandle
     """
 
-    pass
 
 
 # =============================================================================
@@ -510,17 +508,17 @@ def StopAgent(session_name: str) -> StopAgentEffect:  # noqa: N802
 # =============================================================================
 
 from .exceptions import (
-    AgenticError,
-    AgenticSessionNotFoundError,
-    AgenticEnvironmentNotFoundError,
-    AgenticWorkflowNotFoundError,
-    AgenticSessionNotRunningError,
-    AgenticEnvironmentInUseError,
-    AgenticUnsupportedOperationError,
-    AgenticServerError,
-    AgenticTimeoutError,
-    AgenticDuplicateNameError,
     AgenticAmbiguousPrefixError,
+    AgenticDuplicateNameError,
+    AgenticEnvironmentInUseError,
+    AgenticEnvironmentNotFoundError,
+    AgenticError,
+    AgenticServerError,
+    AgenticSessionNotFoundError,
+    AgenticSessionNotRunningError,
+    AgenticTimeoutError,
+    AgenticUnsupportedOperationError,
+    AgenticWorkflowNotFoundError,
 )
 
 # Legacy error aliases
@@ -531,61 +529,61 @@ AmbiguousPrefixError = AgenticAmbiguousPrefixError
 
 
 __all__ = [
-    # Effect base
-    "AgenticEffectBase",
-    # Workflow effects
-    "AgenticCreateWorkflow",
-    "AgenticGetWorkflow",
+    "AgentNotRunningError",
+    "AgenticAbortSession",
+    "AgenticAmbiguousPrefixError",
     # Environment effects
     "AgenticCreateEnvironment",
-    "AgenticGetEnvironment",
-    "AgenticDeleteEnvironment",
     # Session effects
     "AgenticCreateSession",
-    "AgenticForkSession",
-    "AgenticGetSession",
-    "AgenticAbortSession",
+    # Workflow effects
+    "AgenticCreateWorkflow",
+    "AgenticDeleteEnvironment",
     "AgenticDeleteSession",
-    # Message effects
-    "AgenticSendMessage",
-    "AgenticGetMessages",
-    # Event effects
-    "AgenticNextEvent",
-    # Parallel effects
-    "AgenticGather",
-    "AgenticRace",
-    # Status effects
-    "AgenticGetSessionStatus",
-    "AgenticSupportsCapability",
-    # Legacy effects (deprecated)
-    "RunAgentEffect",
-    "SendMessageEffect",
-    "WaitForStatusEffect",
-    "CaptureOutputEffect",
-    "WaitForUserInputEffect",
-    "StopAgentEffect",
-    # Legacy constructors (deprecated)
-    "RunAgent",
-    "SendMessage",
-    "WaitForStatus",
-    "CaptureOutput",
-    "WaitForUserInput",
-    "StopAgent",
+    "AgenticDuplicateNameError",
+    # Effect base
+    "AgenticEffectBase",
+    "AgenticEnvironmentInUseError",
+    "AgenticEnvironmentNotFoundError",
     # Exceptions
     "AgenticError",
-    "AgenticSessionNotFoundError",
-    "AgenticEnvironmentNotFoundError",
-    "AgenticWorkflowNotFoundError",
-    "AgenticSessionNotRunningError",
-    "AgenticEnvironmentInUseError",
-    "AgenticUnsupportedOperationError",
+    "AgenticForkSession",
+    # Parallel effects
+    "AgenticGather",
+    "AgenticGetEnvironment",
+    "AgenticGetMessages",
+    "AgenticGetSession",
+    # Status effects
+    "AgenticGetSessionStatus",
+    "AgenticGetWorkflow",
+    # Event effects
+    "AgenticNextEvent",
+    "AgenticRace",
+    # Message effects
+    "AgenticSendMessage",
     "AgenticServerError",
+    "AgenticSessionNotFoundError",
+    "AgenticSessionNotRunningError",
+    "AgenticSupportsCapability",
     "AgenticTimeoutError",
-    "AgenticDuplicateNameError",
-    "AgenticAmbiguousPrefixError",
+    "AgenticUnsupportedOperationError",
+    "AgenticWorkflowNotFoundError",
+    "AmbiguousPrefixError",
+    "CaptureOutput",
+    "CaptureOutputEffect",
+    # Legacy constructors (deprecated)
+    "RunAgent",
+    # Legacy effects (deprecated)
+    "RunAgentEffect",
+    "SendMessage",
+    "SendMessageEffect",
+    "StopAgent",
+    "StopAgentEffect",
+    "UserInputTimeoutError",
+    "WaitForStatus",
+    "WaitForStatusEffect",
+    "WaitForUserInput",
+    "WaitForUserInputEffect",
     # Legacy error aliases
     "WorkflowNotFoundError",
-    "AgentNotRunningError",
-    "UserInputTimeoutError",
-    "AmbiguousPrefixError",
 ]

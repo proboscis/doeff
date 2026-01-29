@@ -4,12 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from typing import Tuple
-
-from doeff.types import CallFrame
-
-from .base import EffectBase, create_effect_with_trace
 from ._validators import ensure_non_negative_int
+from .base import EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)

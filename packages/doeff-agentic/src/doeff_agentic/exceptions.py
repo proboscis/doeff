@@ -10,7 +10,6 @@ from __future__ import annotations
 class AgenticError(Exception):
     """Base exception for all agentic errors."""
 
-    pass
 
 
 class AgenticSessionNotFoundError(AgenticError):
@@ -114,15 +113,15 @@ class AgenticAmbiguousPrefixError(AgenticError):
 
 
 __all__ = [
-    "AgenticError",
-    "AgenticSessionNotFoundError",
-    "AgenticEnvironmentNotFoundError",
-    "AgenticWorkflowNotFoundError",
-    "AgenticSessionNotRunningError",
-    "AgenticEnvironmentInUseError",
-    "AgenticUnsupportedOperationError",
-    "AgenticServerError",
-    "AgenticTimeoutError",
-    "AgenticDuplicateNameError",
     "AgenticAmbiguousPrefixError",
+    "AgenticDuplicateNameError",
+    "AgenticEnvironmentInUseError",
+    "AgenticEnvironmentNotFoundError",
+    "AgenticError",
+    "AgenticServerError",
+    "AgenticSessionNotFoundError",
+    "AgenticSessionNotRunningError",
+    "AgenticTimeoutError",
+    "AgenticUnsupportedOperationError",
+    "AgenticWorkflowNotFoundError",
 ]

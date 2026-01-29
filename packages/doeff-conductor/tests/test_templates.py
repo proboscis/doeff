@@ -7,27 +7,23 @@ Tests workflow templates with mocked handlers:
 - multi_agent: issue -> parallel agents -> merge -> PR
 """
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
-from unittest.mock import MagicMock, patch
+from typing import Any
 
 import pytest
-
-from doeff import do
-from doeff_conductor.handlers import run_sync
-
 from doeff_conductor import (
+    Commit,
+    CreatePR,
     CreateWorktree,
     MergeBranches,
-    DeleteWorktree,
-    RunAgent,
-    Commit,
     Push,
-    CreatePR,
     ResolveIssue,
+    RunAgent,
     make_scheduled_handler,
 )
+from doeff_conductor.handlers import run_sync
 
 try:
     from doeff.effects.gather import Gather
@@ -35,21 +31,21 @@ except ImportError:
     # Fallback if Gather is not available
     Gather = None
 from doeff_conductor.templates import (
+    TEMPLATES,
     basic_pr,
     enforced_pr,
-    reviewed_pr,
-    multi_agent,
     get_available_templates,
     get_template,
     get_template_source,
     is_template,
-    TEMPLATES,
+    multi_agent,
+    reviewed_pr,
 )
 from doeff_conductor.types import (
     Issue,
     IssueStatus,
-    WorktreeEnv,
     PRHandle,
+    WorktreeEnv,
 )
 
 
@@ -101,7 +97,6 @@ class TestTemplateRegistry:
         Note: The @do decorator wraps functions in DoYieldFunction which
         cannot be inspected with getsource(). This is an existing limitation.
         """
-        import inspect
         try:
             source = get_template_source("basic_pr")
             assert "@do" in source
@@ -231,7 +226,7 @@ class TestBasicPRTemplate(MockHandlerFixtures):
         """Verify basic_pr is a valid @do workflow."""
         assert callable(basic_pr)
         # Should have __wrapped__ from @do decorator
-        assert hasattr(basic_pr, "__wrapped__") or hasattr(basic_pr, "__call__")
+        assert hasattr(basic_pr, "__wrapped__") or callable(basic_pr)
 
     def test_template_returns_program(self, mock_issue: Issue):
         """Test that basic_pr returns a Program."""
@@ -301,7 +296,7 @@ class TestEnforcedPRTemplate(MockHandlerFixtures):
             # First call is implementation, second is test (fails), third is fix, fourth is test (passes)
             if test_call_count[0] == 2:
                 return "FAILED: test_something - AssertionError"
-            elif test_call_count[0] == 4:
+            if test_call_count[0] == 4:
                 return "All tests passed successfully"
             return "Implementation complete"
 
@@ -448,8 +443,7 @@ class TestReviewedPRTemplate(MockHandlerFixtures):
                 review_count[0] += 1
                 if review_count[0] == 1:
                     return "Issues found: Missing error handling"
-                else:
-                    return "APPROVED - Issues addressed"
+                return "APPROVED - Issues addressed"
             return "Implementation complete"
 
         def handle_create_worktree(e):
@@ -506,7 +500,7 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
     def test_multi_agent_effects_include_gather(self, mock_issue: Issue):
         """Verify multi_agent uses Gather for parallel execution."""
         from doeff.effects.gather import GatherEffect
-        
+
         program = multi_agent(mock_issue)
         gen = program.to_generator()
 
@@ -522,7 +516,7 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
     ):
         """Run multi_agent template with mocked effects."""
         from doeff.effects.gather import GatherEffect
-        
+
         def handle_create_worktree(e):
             return mock_worktree_env
 

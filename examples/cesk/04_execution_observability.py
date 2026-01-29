@@ -13,10 +13,9 @@ using the observability API. You can:
 
 from doeff import do
 from doeff.cesk import run_sync
-from doeff.cesk_observability import ExecutionSnapshot, KFrameSnapshot
+from doeff.cesk_observability import ExecutionSnapshot
 from doeff.effects import Pure, catch, finally_, get, put
 from doeff.storage import InMemoryStorage
-
 
 # =============================================================================
 # Example 1: Basic step callback
@@ -107,7 +106,6 @@ def example_k_stack_depth():
 def cleanup_action():
     """Cleanup that runs in finally block."""
     yield Pure("cleanup done")
-    return None
 
 
 @do

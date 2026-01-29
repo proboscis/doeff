@@ -6,16 +6,16 @@ import os
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
-
-from doeff import EffectGenerator, SyncRuntime, do
 from doeff_openrouter.chat import chat_completion
 from doeff_openrouter.structured_llm import (
+    StructuredOutputParsingError,
     build_messages,
     build_response_format_payload,
     process_structured_response,
-    StructuredOutputParsingError,
 )
+from pydantic import BaseModel
+
+from doeff import EffectGenerator, SyncRuntime, do
 
 STRUCTURED_MODELS = [
     pytest.param("openai/gpt-4o-mini", True, id="openai-gpt-4o-mini"),

@@ -20,9 +20,10 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Callable
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .base import EffectBase, create_effect_with_trace
 
@@ -52,8 +53,8 @@ class DelayEffect(EffectBase):
             raise ValueError(f"seconds must be non-negative, got {self.seconds}")
 
     def intercept(
-        self, transform: Callable[["Effect"], "Effect | Program"]
-    ) -> "DelayEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> DelayEffect:
         return self
 
 
@@ -77,8 +78,8 @@ class WaitUntilEffect(EffectBase):
     target_time: datetime
 
     def intercept(
-        self, transform: Callable[["Effect"], "Effect | Program"]
-    ) -> "WaitUntilEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> WaitUntilEffect:
         return self
 
 
@@ -91,12 +92,12 @@ class GetTimeEffect(EffectBase):
     """
 
     def intercept(
-        self, transform: Callable[["Effect"], "Effect | Program"]
-    ) -> "GetTimeEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> GetTimeEffect:
         return self
 
 
-def Delay(seconds: float) -> "Effect":
+def Delay(seconds: float) -> Effect:
     """Wait for a specified duration.
 
     Args:
@@ -117,7 +118,7 @@ def Delay(seconds: float) -> "Effect":
     )
 
 
-def delay(seconds: float) -> "Effect":
+def delay(seconds: float) -> Effect:
     """Wait for a specified duration (lowercase alias).
 
     Args:
@@ -132,7 +133,7 @@ def delay(seconds: float) -> "Effect":
     )
 
 
-def WaitUntil(target_time: datetime) -> "Effect":
+def WaitUntil(target_time: datetime) -> Effect:
     """Wait until a specific point in time.
 
     Args:
@@ -154,7 +155,7 @@ def WaitUntil(target_time: datetime) -> "Effect":
     )
 
 
-def wait_until(target_time: datetime) -> "Effect":
+def wait_until(target_time: datetime) -> Effect:
     """Wait until a specific point in time (lowercase alias).
 
     Args:
@@ -169,7 +170,7 @@ def wait_until(target_time: datetime) -> "Effect":
     )
 
 
-def GetTime() -> "Effect":
+def GetTime() -> Effect:
     """Get current time.
 
     Returns:
@@ -188,7 +189,7 @@ def GetTime() -> "Effect":
     )
 
 
-def get_time() -> "Effect":
+def get_time() -> Effect:
     """Get current time (lowercase alias).
 
     Returns:
@@ -201,13 +202,13 @@ def get_time() -> "Effect":
 
 
 __all__ = [
-    "DelayEffect",
-    "WaitUntilEffect",
-    "GetTimeEffect",
     "Delay",
-    "delay",
-    "WaitUntil",
-    "wait_until",
+    "DelayEffect",
     "GetTime",
+    "GetTimeEffect",
+    "WaitUntil",
+    "WaitUntilEffect",
+    "delay",
     "get_time",
+    "wait_until",
 ]

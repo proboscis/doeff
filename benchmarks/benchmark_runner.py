@@ -10,10 +10,10 @@ from __future__ import annotations
 import argparse
 import statistics
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 from doeff import ExecutionContext, ProgramInterpreter, do
-from doeff.effects import Ask, Tell, Put
+from doeff.effects import Ask, Put, Tell
 
 
 @do

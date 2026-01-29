@@ -17,7 +17,7 @@ Related issue: gh#176
 
 import pytest
 
-from doeff import do, Program
+from doeff import Program, do
 from doeff.effects import (
     Ask,
     Gather,

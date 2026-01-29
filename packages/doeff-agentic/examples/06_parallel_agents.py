@@ -12,9 +12,6 @@ Run:
     uv run python examples/06_parallel_agents.py
 """
 
-from doeff import do
-from doeff.effects.writer import slog
-
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticGather,
@@ -23,6 +20,9 @@ from doeff_agentic import (
     AgenticSendMessage,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+
+from doeff import do
+from doeff.effects.writer import slog
 
 
 def get_last_assistant_message(messages: list[AgenticMessage]) -> str:
@@ -102,27 +102,33 @@ def multi_perspective_analysis(topic: str):
 
 
 if __name__ == "__main__":
-    from doeff import run_sync
+    import asyncio
+    from doeff import AsyncRuntime
 
-    topic = "AI code assistants"
+    async def main():
+        topic = "AI code assistants"
 
-    print(f"Starting multi-perspective analysis: {topic}")
-    print()
+        print(f"Starting multi-perspective analysis: {topic}")
+        print()
 
-    handlers = opencode_handler()
+        handlers = opencode_handler()
+        runtime = AsyncRuntime(handlers=handlers)
 
-    try:
-        result = run_sync(multi_perspective_analysis(topic), handlers=handlers)
+        try:
+            result = await runtime.run(multi_perspective_analysis(topic))
+            output = result.value
 
-        print("\n" + "=" * 50)
-        print("ANALYSIS RESULTS")
-        print("=" * 50)
+            print("\n" + "=" * 50)
+            print("ANALYSIS RESULTS")
+            print("=" * 50)
 
-        for name, text in result["perspectives"].items():
-            print(f"\n### {name}")
-            print(text[:300])
+            for name, text in output["perspectives"].items():
+                print(f"\n### {name}")
+                print(text[:300])
 
-        print("\n### Synthesis")
-        print(result["synthesis"][:500])
-    except Exception as e:
-        print(f"Error: {e}")
+            print("\n### Synthesis")
+            print(output["synthesis"][:500])
+        except Exception as e:
+            print(f"Error: {e}")
+
+    asyncio.run(main())

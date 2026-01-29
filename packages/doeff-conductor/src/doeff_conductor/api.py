@@ -13,9 +13,10 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .types import Issue, WorkflowHandle, WorkflowStatus, WorktreeEnv
@@ -58,8 +59,8 @@ class ConductorAPI:
         Returns:
             WorkflowHandle for the started workflow
         """
-        from .types import WorkflowHandle, WorkflowStatus
         from .templates import get_template, is_template
+        from .types import WorkflowHandle, WorkflowStatus
 
         # Generate workflow ID
         workflow_id = secrets.token_hex(4)
@@ -136,7 +137,7 @@ class ConductorAPI:
             program = workflow_func(**kwargs)
 
             # Run with conductor handlers
-            from .handlers import WorktreeHandler, IssueHandler, AgentHandler, GitHandler
+            from .handlers import AgentHandler, GitHandler, IssueHandler, WorktreeHandler
 
             worktree_handler = WorktreeHandler()
             issue_handler = IssueHandler()
@@ -144,22 +145,22 @@ class ConductorAPI:
             git_handler = GitHandler()
 
             from .effects import (
-                CreateWorktree,
-                MergeBranches,
-                DeleteWorktree,
-                CreateIssue,
-                ListIssues,
-                GetIssue,
-                ResolveIssue,
-                RunAgent,
-                SpawnAgent,
-                SendMessage,
-                WaitForStatus,
                 CaptureOutput,
                 Commit,
-                Push,
+                CreateIssue,
                 CreatePR,
+                CreateWorktree,
+                DeleteWorktree,
+                GetIssue,
+                ListIssues,
+                MergeBranches,
                 MergePR,
+                Push,
+                ResolveIssue,
+                RunAgent,
+                SendMessage,
+                SpawnAgent,
+                WaitForStatus,
             )
 
             handlers = {
@@ -286,7 +287,7 @@ class ConductorAPI:
         Yields status updates as dictionaries.
         """
         import time
-        from .types import WorkflowStatus
+
 
         last_status = None
 
@@ -354,8 +355,8 @@ class ConductorAPI:
         workflow_id: str | None = None,
     ) -> list[WorktreeEnv]:
         """List worktree environments."""
-        from .types import WorktreeEnv
         from .handlers.worktree_handler import _get_worktree_base_dir
+        from .types import WorktreeEnv
 
         environments = []
         worktree_base = _get_worktree_base_dir()
@@ -380,7 +381,7 @@ class ConductorAPI:
                     ["git", "branch", "--show-current"],
                     cwd=env_dir,
                     capture_output=True,
-                    text=True,
+                    text=True, check=False,
                 )
                 branch = result.stdout.strip()
 
@@ -389,7 +390,7 @@ class ConductorAPI:
                     ["git", "rev-parse", "HEAD"],
                     cwd=env_dir,
                     capture_output=True,
-                    text=True,
+                    text=True, check=False,
                 )
                 commit = result.stdout.strip()
 
@@ -418,6 +419,7 @@ class ConductorAPI:
         Returns list of cleaned paths.
         """
         import shutil
+
         from .handlers.worktree_handler import _get_worktree_base_dir
 
         cleaned = []
@@ -448,7 +450,7 @@ class ConductorAPI:
                     # Remove worktree from git
                     subprocess.run(
                         ["git", "worktree", "remove", "--force", str(env_dir)],
-                        capture_output=True,
+                        capture_output=True, check=False,
                     )
                     # Ensure directory is removed
                     if env_dir.exists():

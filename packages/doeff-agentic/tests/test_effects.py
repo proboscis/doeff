@@ -1,7 +1,6 @@
 """Tests for doeff_agentic.effects module."""
 
 import pytest
-
 from doeff_agentic.effects import (
     CaptureOutput,
     CaptureOutputEffect,

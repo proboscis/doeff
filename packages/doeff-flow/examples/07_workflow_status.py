@@ -22,12 +22,11 @@ making multi-agent orchestration observable.
 
 from time import sleep
 
+from doeff_flow import run_workflow
+
 from doeff import do
 from doeff.effects import Pure
 from doeff.effects.writer import slog
-
-from doeff_flow import run_workflow
-
 
 # =============================================================================
 # Example: PR Review Workflow with Status Updates

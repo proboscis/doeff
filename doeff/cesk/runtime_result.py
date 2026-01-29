@@ -15,7 +15,11 @@ from doeff._vendor import Err, Ok, Result
 if TYPE_CHECKING:
     from doeff.cesk_traceback import (
         CapturedTraceback,
+    )
+    from doeff.cesk_traceback import (
         EffectFrame as CTEffectFrame,
+    )
+    from doeff.cesk_traceback import (
         PythonFrame as CTPythonFrame,
     )
 
@@ -67,7 +71,7 @@ class EffectCallNode:
     is_effect: bool                     # True if this is a leaf effect
     args_repr: str = ""                 # Short repr of arguments
     count: int = 1                      # How many times (for effects)
-    children: tuple["EffectCallNode", ...] = ()
+    children: tuple[EffectCallNode, ...] = ()
     source_location: SourceLocation | None = None
     is_error_site: bool = False         # True if error occurred here
 
@@ -114,25 +118,25 @@ class EffectStackTrace:
         """Get linear effect path string: main() -> fetch() -> Ask('key')."""
         if self.root is None:
             return "<not captured>"
-        
+
         path_parts: list[str] = []
         self._collect_path(self.root, path_parts)
         return " -> ".join(path_parts) if path_parts else "<empty>"
-    
+
     def _collect_path(self, node: EffectCallNode, path: list[str]) -> None:
         """Collect path to deepest error or leaf."""
         display = node.name
         if node.args_repr:
             display = f"{node.name}({node.args_repr})"
         path.append(display)
-        
+
         # Find error child or last child
         error_child = None
         for child in node.children:
             if child.is_error_site:
                 error_child = child
                 break
-        
+
         if error_child:
             self._collect_path(error_child, path)
         elif node.children:
@@ -246,7 +250,7 @@ class RuntimeResult(Protocol[T_co]):
 # Conversion Helpers
 # ============================================
 
-def _convert_python_frames(ct_frames: tuple["CTPythonFrame", ...]) -> tuple[PythonFrame, ...]:
+def _convert_python_frames(ct_frames: tuple[CTPythonFrame, ...]) -> tuple[PythonFrame, ...]:
     """Convert CapturedTraceback PythonFrames to RuntimeResult PythonFrames."""
     result = []
     for f in ct_frames:
@@ -260,7 +264,7 @@ def _convert_python_frames(ct_frames: tuple["CTPythonFrame", ...]) -> tuple[Pyth
 
 
 def _convert_effect_frames_to_tree(
-    ct_frames: tuple["CTEffectFrame", ...],
+    ct_frames: tuple[CTEffectFrame, ...],
     error_function: str | None = None,
 ) -> EffectStackTrace:
     """Convert CapturedTraceback EffectFrames to EffectStackTrace tree.
@@ -269,16 +273,16 @@ def _convert_effect_frames_to_tree(
     """
     if not ct_frames:
         return EffectStackTrace(root=None)
-    
+
     # Build from innermost to outermost (reverse order)
     # ct_frames is in outermost→innermost order, we reverse to build bottom-up
     reversed_frames = list(reversed(ct_frames))
-    
+
     current_node: EffectCallNode | None = None
     for i, ef in enumerate(reversed_frames):
         is_innermost = i == 0
         is_error = bool(is_innermost and error_function and ef.location.function == error_function)
-        
+
         node = EffectCallNode(
             name=ef.location.function,
             is_effect=is_innermost,  # Innermost is typically the effect
@@ -294,26 +298,26 @@ def _convert_effect_frames_to_tree(
             is_error_site=is_error,
         )
         current_node = node
-    
+
     return EffectStackTrace(root=current_node)
 
 
 def build_stacks_from_captured_traceback(
-    captured_tb: "CapturedTraceback | None",
+    captured_tb: CapturedTraceback | None,
 ) -> tuple[PythonStackTrace, EffectStackTrace]:
     """Build PythonStackTrace and EffectStackTrace from CapturedTraceback."""
     if captured_tb is None:
         return PythonStackTrace(frames=()), EffectStackTrace(root=None)
-    
+
     python_stack = PythonStackTrace(frames=_convert_python_frames(captured_tb.python_frames))
-    
+
     # Get error function name from innermost effect frame
     error_func = None
     if captured_tb.effect_frames:
         error_func = captured_tb.effect_frames[-1].location.function
-    
+
     effect_stack = _convert_effect_frames_to_tree(captured_tb.effect_frames, error_func)
-    
+
     return python_stack, effect_stack
 
 
@@ -372,8 +376,7 @@ class RuntimeResultImpl(Generic[T]):
         """Unwrap Ok value or raise the Err error."""
         if isinstance(self._result, Ok):
             return self._result.ok()  # type: ignore[return-value]
-        else:
-            raise self._result.err()  # type: ignore[misc]
+        raise self._result.err()  # type: ignore[misc]
 
     @property
     def error(self) -> BaseException:
@@ -517,45 +520,44 @@ def _describe_frame(frame: Any) -> str:
 
     if frame_type == "SafeFrame":
         return "will catch errors"
-    elif frame_type == "LocalFrame":
+    if frame_type == "LocalFrame":
         env = getattr(frame, "restore_env", {})
         if env:
             keys = list(env.keys())[:3]
             return f"env={{{', '.join(repr(k) for k in keys)}{'...' if len(env) > 3 else ''}}}"
         return "env={}"
-    elif frame_type == "InterceptFrame":
+    if frame_type == "InterceptFrame":
         transforms = getattr(frame, "transforms", ())
         return f"{len(transforms)} transform(s)"
-    elif frame_type == "GatherFrame":
+    if frame_type == "GatherFrame":
         remaining = getattr(frame, "remaining_programs", [])
         collected = getattr(frame, "collected_results", [])
         total = len(remaining) + len(collected) + 1
         return f"completed {len(collected)}/{total} children"
-    elif frame_type == "ListenFrame":
+    if frame_type == "ListenFrame":
         return "capturing logs"
-    elif frame_type == "ReturnFrame":
+    if frame_type == "ReturnFrame":
         return "resume generator"
-    elif frame_type == "RaceFrame":
+    if frame_type == "RaceFrame":
         task_ids = getattr(frame, "task_ids", ())
         return f"{len(task_ids)} racing tasks"
-    elif frame_type == "GraphCaptureFrame":
+    if frame_type == "GraphCaptureFrame":
         return "capturing graph"
-    else:
-        return ""
+    return ""
 
 
 __all__ = [
-    # Stack trace types
-    "SourceLocation",
-    "KFrame",
-    "KStackTrace",
     "EffectCallNode",
     "EffectStackTrace",
+    "KFrame",
+    "KStackTrace",
     "PythonFrame",
     "PythonStackTrace",
     # Protocol and implementation
     "RuntimeResult",
     "RuntimeResultImpl",
+    # Stack trace types
+    "SourceLocation",
     # Helpers
     "build_k_stack_trace",
     "build_stacks_from_captured_traceback",

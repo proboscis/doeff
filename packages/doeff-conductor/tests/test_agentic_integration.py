@@ -22,17 +22,12 @@ import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 import pytest
-
-from doeff import do
-from doeff_conductor.handlers import run_sync
 from doeff_agentic import (
     AgenticCreateEnvironment,
     AgenticCreateSession,
     AgenticEnvironmentHandle,
-    AgenticEnvironmentType,
     AgenticGetMessages,
     AgenticGetSessionStatus,
     AgenticMessage,
@@ -41,16 +36,17 @@ from doeff_agentic import (
     AgenticSessionStatus,
 )
 from doeff_conductor import (
+    CaptureOutput,
     RunAgent,
     SpawnAgent,
-    SendMessage,
     WaitForStatus,
-    CaptureOutput,
     make_scheduled_handler,
 )
+from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.agent_handler import AgentHandler
 from doeff_conductor.types import AgentRef, WorktreeEnv
 
+from doeff import do
 
 # =============================================================================
 # Mock OpenCode Handler
@@ -218,18 +214,17 @@ class MockOpenCodeHandler:
         # Check "fix" before "review" since fix prompts often contain review text
         if "fix" in content_lower:
             return "I've fixed the issues:\n- Added null checks\n- Improved error handling"
-        elif "review" in content_lower:
+        if "review" in content_lower:
             return (
                 "I've reviewed the code. Found some issues:\n"
                 "- Line 15: Missing error handling\n"
                 "- Line 42: Potential null reference"
             )
-        elif "test" in content_lower:
+        if "test" in content_lower:
             return "All tests pass. Coverage: 85%"
-        elif "implement" in content_lower:
+        if "implement" in content_lower:
             return "Implementation complete. Created 3 new files."
-        else:
-            return f"Task completed successfully. Processed: {content[:50]}..."
+        return f"Task completed successfully. Processed: {content[:50]}..."
 
 
 # =============================================================================

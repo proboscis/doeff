@@ -93,9 +93,9 @@ def find_intercept_frame_index(K: Kontinuation) -> int:
 
 
 __all__ = [
-    "is_control_flow_effect",
-    "is_pure_effect",
-    "is_effectful",
-    "has_intercept_frame",
     "find_intercept_frame_index",
+    "has_intercept_frame",
+    "is_control_flow_effect",
+    "is_effectful",
+    "is_pure_effect",
 ]

@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-
 from doeff_agentic.event_log import (
     EventLogEntry,
     EventLogReader,

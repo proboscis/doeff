@@ -4,8 +4,10 @@ Each section tests specific detection rules.
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional, TypeVar, Generic
-from doeff import Program, KleisliProgram, do, Effect
+from collections.abc import Iterable
+from typing import Any, Generic, TypeVar
+
+from doeff import Effect, Program, do
 
 # ===========================================================================
 # SECTION 1: INTERPRETERS (Program[T] -> Any where Any != Program)
@@ -104,7 +106,7 @@ def kleisli_int(count: int) -> str:  # doeff: kleisli
     return str(count)
 
 @do
-def kleisli_optional(value: Optional[str]) -> int:  # doeff: kleisli
+def kleisli_optional(value: str | None) -> int:  # doeff: kleisli
     """For testing: Optional parameters"""
     return len(value or "")
 
@@ -182,7 +184,7 @@ class Controller:
     def run_program(self, program: Program[int]) -> int:  # doeff: interpreter
         """Class method interpreter"""
         return program.run()
-    
+
     @do
     def fetch_data(self, key: str) -> Data:
         """Class method Kleisli"""

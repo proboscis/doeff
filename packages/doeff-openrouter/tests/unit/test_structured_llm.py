@@ -7,18 +7,18 @@ import json
 from typing import Any
 
 import pytest
+from doeff_openrouter.chat import chat_completion
 from pydantic import BaseModel
 
 from doeff import AsyncRuntime, EffectGenerator, SyncRuntime, do
-from doeff_openrouter.chat import chat_completion
 
 structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
 from doeff_openrouter.structured_llm import (
+    StructuredOutputParsingError,
     build_messages,
     ensure_strict_schema,
     process_structured_response,
     process_unstructured_response,
-    StructuredOutputParsingError,
     structured_llm,
 )
 

@@ -4,7 +4,7 @@ import os
 
 
 # This should NOT trigger because of noqa
-def dict():  # noqa: DOEFF001
+def dict():
     return {}
 
 
@@ -14,7 +14,7 @@ def list():  # noqa
 
 
 # This should still trigger DOEFF009 (no return type)
-def set():  # noqa: DOEFF001
+def set():
     return set()
 
 
@@ -23,16 +23,16 @@ api_key = os.environ["API_KEY"]
 
 
 # This should NOT trigger - noqa for DOEFF004
-db_url = os.environ["DB_URL"]  # noqa: DOEFF004
+db_url = os.environ["DB_URL"]
 
 # This should NOT trigger - noqa:DOEFF004 (no space after colon)
-cache_url = os.environ["CACHE_URL"]  # noqa:DOEFF004
+cache_url = os.environ["CACHE_URL"]
 
 # This should NOT trigger - lowercase rule ID
 redis_url = os.environ["REDIS_URL"]  # noqa: doeff004
 
 # This should NOT trigger - multiple rules, no spaces
-queue_url = os.environ["QUEUE_URL"]  # noqa:DOEFF004,DOEFF009
+queue_url = os.environ["QUEUE_URL"]
 
 
 

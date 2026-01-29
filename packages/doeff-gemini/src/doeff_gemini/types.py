@@ -106,7 +106,7 @@ class APICallMetadata:
     request_id: str | None
     latency_ms: float | None
     token_usage: TokenUsage | None
-    cost_info: 'CostInfo' | None = None
+    cost_info: CostInfo | None = None
     error: str | None = None
 
     def to_graph_metadata(self) -> dict[str, Any]:
@@ -154,9 +154,9 @@ class GeminiCostEstimate:
 
 __all__ = [
     "APICallMetadata",
-    "TokenUsage",
     "CostInfo",
-    "GeminiImageEditResult",
     "GeminiCallResult",
     "GeminiCostEstimate",
+    "GeminiImageEditResult",
+    "TokenUsage",
 ]

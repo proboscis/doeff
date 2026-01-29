@@ -13,17 +13,18 @@ Run:
     uv run python examples/02_issue_lifecycle.py
 """
 
-from doeff import do, EffectGenerator, SyncRuntime
 from doeff_conductor import (
     CreateIssue,
-    ListIssues,
     GetIssue,
-    ResolveIssue,
-    IssueHandler,
     Issue,
+    IssueHandler,
     IssueStatus,
+    ListIssues,
+    ResolveIssue,
     make_scheduled_handler,
 )
+
+from doeff import EffectGenerator, SyncRuntime, do
 
 
 @do
@@ -49,18 +50,18 @@ Implement user login with OAuth2 support.
         labels=("feature", "auth"),
     )
     print(f"Created issue: {issue.id} - {issue.title}")
-    
+
     # Step 2: List all open issues
     print("\nListing open issues...")
     open_issues: list[Issue] = yield ListIssues(status=IssueStatus.OPEN)
     for i in open_issues:
         print(f"  - {i.id}: {i.title} [{i.status.value}]")
-    
+
     # Step 3: Get issue by ID
     print(f"\nFetching issue {issue.id}...")
     fetched: Issue = yield GetIssue(id=issue.id)
     print(f"Issue body:\n{fetched.body[:100]}...")
-    
+
     # Step 4: Resolve the issue
     print(f"\nResolving issue {issue.id}...")
     resolved: Issue = yield ResolveIssue(
@@ -70,7 +71,7 @@ Implement user login with OAuth2 support.
     )
     print(f"Issue resolved: {resolved.status.value}")
     print(f"Linked PR: {resolved.pr_url}")
-    
+
     return resolved
 
 
@@ -78,18 +79,18 @@ def main():
     """Run the issue lifecycle demo."""
     # Set up handlers
     issue_handler = IssueHandler()
-    
+
     handlers = {
         CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
         ListIssues: make_scheduled_handler(issue_handler.handle_list_issues),
         GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
         ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
     }
-    
+
     # Run the demo
     runtime = SyncRuntime(handlers=handlers)
     result = runtime.run(issue_lifecycle_demo())
-    
+
     print(f"\nFinal issue state: {result.to_dict()}")
 
 

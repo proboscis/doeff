@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff.cesk.frames import ContinueValue, ContinueError, FrameResult
+from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult
 from doeff.cesk.state import TaskState
 from doeff.cesk.types import Store
-from doeff.effects.io import IOPerformEffect
 from doeff.effects.cache import (
+    CacheDeleteEffect,
+    CacheExistsEffect,
     CacheGetEffect,
     CachePutEffect,
-    CacheExistsEffect,
-    CacheDeleteEffect,
 )
+from doeff.effects.io import IOPerformEffect
 
 
 def handle_io(
@@ -116,9 +116,9 @@ def handle_cache_delete(
 
 
 __all__ = [
-    "handle_io",
+    "handle_cache_delete",
+    "handle_cache_exists",
     "handle_cache_get",
     "handle_cache_put",
-    "handle_cache_exists",
-    "handle_cache_delete",
+    "handle_io",
 ]

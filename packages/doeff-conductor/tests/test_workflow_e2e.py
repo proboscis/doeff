@@ -4,24 +4,24 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from doeff import do
-from doeff_conductor.handlers import run_sync
 from doeff_conductor import (
+    Commit,
+    CreateIssue,
     CreateWorktree,
     DeleteWorktree,
-    MergeBranches,
-    CreateIssue,
     GetIssue,
-    ResolveIssue,
-    Commit,
-    Push,
-    WorktreeHandler,
-    IssueHandler,
     GitHandler,
+    IssueHandler,
     IssueStatus,
+    MergeBranches,
+    Push,
+    ResolveIssue,
+    WorktreeHandler,
     make_scheduled_handler,
 )
+from doeff_conductor.handlers import run_sync
+
+from doeff import do
 
 
 def _is_git_available() -> bool:
@@ -233,7 +233,7 @@ class TestWorkflowE2E:
             # Step 5: Resolve issue (in real workflow, this would be after PR)
             resolved = yield ResolveIssue(
                 issue=issue,
-                pr_url=f"https://github.com/test/repo/pull/1",
+                pr_url="https://github.com/test/repo/pull/1",
                 result=f"Implemented in commit {sha[:7]}",
             )
 
@@ -353,7 +353,7 @@ class TestWorkflowE2E:
         remote_refs = subprocess.run(
             ["git", "ls-remote", str(remote_path)],
             capture_output=True,
-            text=True,
+            text=True, check=False,
         )
         assert result.value in remote_refs.stdout
 
@@ -372,10 +372,6 @@ class TestTemplateE2E:
     def test_template_imports(self):
         """Test that all templates can be imported."""
         from doeff_conductor.templates import (
-            basic_pr,
-            enforced_pr,
-            reviewed_pr,
-            multi_agent,
             get_available_templates,
             get_template,
             is_template,

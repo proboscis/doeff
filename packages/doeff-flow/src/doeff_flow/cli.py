@@ -236,13 +236,12 @@ def _render_trace_panel(data: dict, status_only: bool = False) -> Panel:
                 subtitle=f"[dim]Updated: {updated}[/dim]",
                 border_style=color,
             )
-        else:
-            return Panel(
-                Text(f"Step {step}: {data.get('current_effect') or '-'}", style="dim"),
-                title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
-                subtitle=f"[dim]Updated: {updated}[/dim]",
-                border_style=color,
-            )
+        return Panel(
+            Text(f"Step {step}: {data.get('current_effect') or '-'}", style="dim"),
+            title=f"[{color}]{icon}[/] {wf_id} [{color}]{status}[/] step {step}",
+            subtitle=f"[dim]Updated: {updated}[/dim]",
+            border_style=color,
+        )
 
     # Build content with optional sections
     content_parts = []

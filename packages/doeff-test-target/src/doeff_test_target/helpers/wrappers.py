@@ -1,15 +1,21 @@
-from doeff_test_target.core.alpha import helper_alpha as _helper_alpha
-from doeff_test_target.core.beta import helper_beta as _helper_beta
-from doeff_test_target.core.gamma import helper_gamma as _helper_gamma
-from doeff_test_target.core.delta import helper_delta as _helper_delta
-from doeff_test_target.core.epsilon import helper_epsilon as _helper_epsilon
-from doeff_test_target.core.zeta import helper_zeta as _helper_zeta
 from doeff_test_target.combinators.advanced import (
     helper_eta as _helper_eta,
-    helper_theta as _helper_theta,
+)
+from doeff_test_target.combinators.advanced import (
     helper_iota as _helper_iota,
+)
+from doeff_test_target.combinators.advanced import (
     helper_kappa as _helper_kappa,
 )
+from doeff_test_target.combinators.advanced import (
+    helper_theta as _helper_theta,
+)
+from doeff_test_target.core.alpha import helper_alpha as _helper_alpha
+from doeff_test_target.core.beta import helper_beta as _helper_beta
+from doeff_test_target.core.delta import helper_delta as _helper_delta
+from doeff_test_target.core.epsilon import helper_epsilon as _helper_epsilon
+from doeff_test_target.core.gamma import helper_gamma as _helper_gamma
+from doeff_test_target.core.zeta import helper_zeta as _helper_zeta
 
 
 def helper_alpha():

@@ -28,7 +28,66 @@ Effects API Example:
 """
 
 from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig
+
+# CESK handler imports (for doeff integration)
+from .cesk_handlers import (
+    AGENT_SESSIONS_KEY,
+    MOCK_AGENT_STATE_KEY,
+    MockAgentState,
+    agent_effectful_handlers,
+    configure_mock_session,
+    mock_agent_handlers,
+)
+from .cesk_handlers import (
+    MockSessionScript as CeskMockSessionScript,
+)
+
+# Effects API imports
+from .effects import (
+    # Errors (re-export effect-specific errors)
+    AgentError,
+    AgentNotAvailableError,
+    Capture,
+    CaptureEffect,
+    # Constructors
+    Launch,
+    # Effects
+    LaunchEffect,
+    Monitor,
+    MonitorEffect,
+    Observation,
+    Send,
+    SendEffect,
+    # Types
+    SessionHandle,
+    Sleep,
+    SleepEffect,
+    Stop,
+    StopEffect,
+    WithSessionEffect,
+)
+
+# Handler imports
+from .handlers import (
+    AgentHandler,
+    MockAgentHandler,
+    MockSessionScript,
+    TmuxAgentHandler,
+    dispatch_effect,
+)
 from .monitor import MonitorState, OnStatusChange, SessionStatus
+
+# Program imports
+from .programs import (
+    AgentResult,
+    interactive_session,
+    monitor_once,
+    monitor_until_terminal,
+    quick_agent,
+    run_agent_to_completion,
+    wait_and_monitor,
+    with_session,
+)
 from .session import (
     AgentLaunchError,
     AgentReadyTimeoutError,
@@ -54,137 +113,80 @@ from .tmux import (
     TmuxNotAvailableError,
 )
 
-# Effects API imports
-from .effects import (
-    # Types
-    SessionHandle,
-    Observation,
-    # Effects
-    LaunchEffect,
-    MonitorEffect,
-    CaptureEffect,
-    SendEffect,
-    StopEffect,
-    SleepEffect,
-    WithSessionEffect,
-    # Constructors
-    Launch,
-    Monitor,
-    Capture,
-    Send,
-    Stop,
-    Sleep,
-    # Errors (re-export effect-specific errors)
-    AgentError,
-    AgentNotAvailableError,
-)
-
-# Handler imports
-from .handlers import (
-    AgentHandler,
-    TmuxAgentHandler,
-    MockAgentHandler,
-    MockSessionScript,
-    dispatch_effect,
-)
-
-# Program imports
-from .programs import (
-    AgentResult,
-    run_agent_to_completion,
-    with_session,
-    monitor_until_terminal,
-    monitor_once,
-    wait_and_monitor,
-    quick_agent,
-    interactive_session,
-)
-
-# CESK handler imports (for doeff integration)
-from .cesk_handlers import (
-    agent_effectful_handlers,
-    mock_agent_handlers,
-    MockSessionScript as CeskMockSessionScript,
-    MockAgentState,
-    configure_mock_session,
-    AGENT_SESSIONS_KEY,
-    MOCK_AGENT_STATE_KEY,
-)
-
 __all__ = [
+    "AGENT_SESSIONS_KEY",
+    "MOCK_AGENT_STATE_KEY",
     # Adapters
     "AgentAdapter",
-    "AgentType",
-    "InjectionMethod",
-    "LaunchConfig",
-    # Monitor
-    "MonitorState",
-    "OnStatusChange",
-    "SessionStatus",
+    # Effects API - Errors
+    "AgentError",
+    # Handlers
+    "AgentHandler",
     # Session (imperative API)
     "AgentLaunchError",
+    "AgentNotAvailableError",
     "AgentReadyTimeoutError",
+    # Programs
+    "AgentResult",
     "AgentSession",
+    "AgentType",
+    "Capture",
+    "CaptureEffect",
+    "CeskMockSessionScript",
+    "InjectionMethod",
+    # Effects API - Constructors
+    "Launch",
+    "LaunchConfig",
+    # Effects API - Effects
+    "LaunchEffect",
+    "MockAgentHandler",
+    "MockAgentState",
+    "MockSessionScript",
+    "Monitor",
+    "MonitorEffect",
+    # Monitor
+    "MonitorState",
+    "Observation",
+    "OnStatusChange",
+    "Send",
+    "SendEffect",
+    # Tmux
+    "SessionAlreadyExistsError",
+    "SessionConfig",
+    # Effects API - Types
+    "SessionHandle",
+    "SessionInfo",
+    "SessionNotFoundError",
+    "SessionStatus",
+    "Sleep",
+    "SleepEffect",
+    "Stop",
+    "StopEffect",
+    "TmuxAgentHandler",
+    "TmuxError",
+    "TmuxNotAvailableError",
+    "WithSessionEffect",
+    # CESK Handlers (doeff integration)
+    "agent_effectful_handlers",
     "async_monitor_session",
     "async_session_scope",
     "attach_session",
     "capture_output",
+    "configure_mock_session",
+    "dispatch_effect",
     "get_adapter",
+    "interactive_session",
     "launch_session",
+    "mock_agent_handlers",
+    "monitor_once",
     "monitor_session",
+    "monitor_until_terminal",
+    "quick_agent",
     "register_adapter",
+    "run_agent_to_completion",
     "send_message",
     "session_scope",
     "stop_session",
-    # Tmux
-    "SessionAlreadyExistsError",
-    "SessionConfig",
-    "SessionInfo",
-    "SessionNotFoundError",
-    "TmuxError",
-    "TmuxNotAvailableError",
-    # Effects API - Types
-    "SessionHandle",
-    "Observation",
-    # Effects API - Effects
-    "LaunchEffect",
-    "MonitorEffect",
-    "CaptureEffect",
-    "SendEffect",
-    "StopEffect",
-    "SleepEffect",
-    "WithSessionEffect",
-    # Effects API - Constructors
-    "Launch",
-    "Monitor",
-    "Capture",
-    "Send",
-    "Stop",
-    "Sleep",
-    # Effects API - Errors
-    "AgentError",
-    "AgentNotAvailableError",
-    # Handlers
-    "AgentHandler",
-    "TmuxAgentHandler",
-    "MockAgentHandler",
-    "MockSessionScript",
-    "dispatch_effect",
-    # Programs
-    "AgentResult",
-    "run_agent_to_completion",
-    "with_session",
-    "monitor_until_terminal",
-    "monitor_once",
     "wait_and_monitor",
-    "quick_agent",
-    "interactive_session",
-    # CESK Handlers (doeff integration)
-    "agent_effectful_handlers",
-    "mock_agent_handlers",
-    "CeskMockSessionScript",
-    "MockAgentState",
-    "configure_mock_session",
-    "AGENT_SESSIONS_KEY",
-    "MOCK_AGENT_STATE_KEY",
+    "with_session",
 ]

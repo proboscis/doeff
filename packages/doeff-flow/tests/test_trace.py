@@ -7,10 +7,6 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-from doeff import do
-from doeff.cesk import run_sync
-from doeff.effects import Pure
 from doeff_flow import run_workflow
 from doeff_flow.trace import (
     LiveTrace,
@@ -19,6 +15,10 @@ from doeff_flow.trace import (
     trace_observer,
     validate_workflow_id,
 )
+
+from doeff import do
+from doeff.cesk import run_sync
+from doeff.effects import Pure
 
 
 class TestValidateWorkflowId:

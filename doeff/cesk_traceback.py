@@ -36,11 +36,11 @@ import sys
 import time
 import warnings
 from collections.abc import Generator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from doeff.cesk import Frame, Kontinuation, ReturnFrame
+    from doeff.cesk import Kontinuation
     from doeff.program import KleisliProgramCall
 
 
@@ -136,15 +136,15 @@ class CapturedTraceback:
     exception: BaseException
     capture_timestamp: float | None = None
     interpreter_version: str = "cesk-v1"
-    
+
     def format(self) -> str:
         """Full human-readable traceback (implements EffectTraceback protocol)."""
         return format_traceback(self)
-    
+
     def format_short(self) -> str:
         """One-line summary (implements EffectTraceback protocol)."""
         return format_traceback_short(self)
-    
+
     def to_dict(self) -> dict[str, Any]:
         """JSON-serializable representation (implements EffectTraceback protocol)."""
         result = to_dict(self)
@@ -219,7 +219,7 @@ def _safe_getline(filename: str, lineno: int) -> str | None:
 
 def _get_function_name(
     gen: Generator[Any, Any, Any],
-    program_call: "KleisliProgramCall | None",
+    program_call: KleisliProgramCall | None,
 ) -> str:
     """Get display function name for traceback.
 
@@ -288,7 +288,7 @@ def _find_user_generator(gen: Generator[Any, Any, Any]) -> Generator[Any, Any, A
 
 def _get_user_source_location(
     gen: Generator[Any, Any, Any],
-    program_call: "KleisliProgramCall | None",
+    program_call: KleisliProgramCall | None,
     is_resumed: bool,
 ) -> tuple[str, int]:
     """
@@ -322,7 +322,7 @@ def _get_user_source_location(
 def pre_capture_generator(
     gen: Generator[Any, Any, Any],
     is_resumed: bool = False,
-    program_call: "KleisliProgramCall | None" = None,
+    program_call: KleisliProgramCall | None = None,
 ) -> PreCapturedFrame:
     """
     Pre-capture generator info BEFORE next()/send()/throw().
@@ -357,7 +357,7 @@ def pre_capture_generator(
             function=function,
             frame_kind="kleisli_yield",
         )
-    elif is_resumed and gen.gi_frame is None:
+    if is_resumed and gen.gi_frame is None:
         # Edge case: is_resumed=True but gi_frame=None means generator was closed
         # (e.g., by a previous throw() or close()). Use definition location with
         # "kleisli_closed" to indicate unusual state.
@@ -368,21 +368,20 @@ def pre_capture_generator(
             function=function,
             frame_kind="kleisli_closed",
         )
-    else:
-        # Generator not started - use definition location
-        return PreCapturedFrame(
-            generator=gen,
-            filename=filename,
-            lineno=lineno,
-            function=function,
-            frame_kind="kleisli_entry",
-        )
+    # Generator not started - use definition location
+    return PreCapturedFrame(
+        generator=gen,
+        filename=filename,
+        lineno=lineno,
+        function=function,
+        frame_kind="kleisli_entry",
+    )
 
 
 def precapture_to_effect_frame(
     pc: PreCapturedFrame,
     caller_gen: Generator[Any, Any, Any] | None = None,
-    caller_program_call: "KleisliProgramCall | None" = None,
+    caller_program_call: KleisliProgramCall | None = None,
 ) -> EffectFrame:
     """
     Convert PreCapturedFrame to EffectFrame (called only on error path).
@@ -431,7 +430,7 @@ def precapture_to_effect_frame(
 
 def capture_effect_frame_from_generator(
     gen: Generator[Any, Any, Any],
-    program_call: "KleisliProgramCall | None" = None,
+    program_call: KleisliProgramCall | None = None,
 ) -> EffectFrame | None:
     """
     Extract effect frame data from a paused generator.
@@ -479,8 +478,8 @@ def capture_effect_frame_from_generator(
 def capture_effect_frame_with_call_site(
     gen: Generator[Any, Any, Any],
     caller_gen: Generator[Any, Any, Any] | None,
-    program_call: "KleisliProgramCall | None" = None,
-    caller_program_call: "KleisliProgramCall | None" = None,
+    program_call: KleisliProgramCall | None = None,
+    caller_program_call: KleisliProgramCall | None = None,
 ) -> EffectFrame | None:
     """
     Capture effect frame with call site from caller.
@@ -537,7 +536,7 @@ def capture_effect_frame_with_call_site(
 
 
 def capture_effect_frames_from_k_with_ids(
-    K: "Kontinuation",
+    K: Kontinuation,
 ) -> tuple[tuple[EffectFrame, ...], set[int]]:
     """
     Capture effect frames AND generator ids for deduplication.
@@ -641,7 +640,7 @@ def capture_python_frames_from_traceback(tb: Any) -> tuple[PythonFrame, ...]:
 
 
 def capture_traceback(
-    K: "Kontinuation",
+    K: Kontinuation,
     ex: BaseException,
     pre_captured: PreCapturedFrame | None = None,
 ) -> CapturedTraceback:
@@ -686,7 +685,7 @@ def capture_traceback(
 
 
 def capture_traceback_safe(
-    K: "Kontinuation",
+    K: Kontinuation,
     ex: BaseException,
     pre_captured: PreCapturedFrame | None = None,
 ) -> CapturedTraceback | None:
@@ -980,9 +979,9 @@ def to_dict(tb: CapturedTraceback | None) -> dict[str, Any] | None:
 __all__ = [
     # Data types
     "CapturedTraceback",
+    "CodeLocation",
     "EffectFrame",
     "PythonFrame",
-    "CodeLocation",
     # Format functions
     "format_traceback",
     "format_traceback_short",

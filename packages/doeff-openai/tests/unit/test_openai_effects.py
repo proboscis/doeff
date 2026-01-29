@@ -414,19 +414,18 @@ async def test_track_api_call_accumulates_under_gather():
     """
     import math
     import time
-    from types import SimpleNamespace
-    
+
     from doeff_openai.client import track_api_call
-    
+
     model = "gpt-4"
-    
+
     # Define multiple API calls with different token counts
     call_defs = [
         {"request_id": "req-1", "prompt": "First", "input": 100, "output": 50},
         {"request_id": "req-2", "prompt": "Second", "input": 200, "output": 100},
         {"request_id": "req-3", "prompt": "Third", "input": 150, "output": 75},
     ]
-    
+
     def _fake_response(call: dict[str, Any]) -> Any:
         """Create a fake OpenAI response with usage metadata."""
         resp = MagicMock()
@@ -438,7 +437,7 @@ async def test_track_api_call_accumulates_under_gather():
         resp.choices = [MagicMock()]
         resp.choices[0].finish_reason = "stop"
         return resp
-    
+
     @do
     def invoke(call: dict[str, Any]) -> EffectGenerator[Any]:
         response = _fake_response(call)
@@ -453,22 +452,22 @@ async def test_track_api_call_accumulates_under_gather():
                 error=None,
             )
         )
-    
+
     @do
     def run_parallel() -> EffectGenerator[list[Any]]:
         return (yield Gather(*(invoke(call) for call in call_defs)))
-    
+
     runtime = AsyncRuntime()
     result = await runtime.run(run_parallel())
-    
+
     assert result.is_ok()
     state = result.state
-    
+
     # Verify all API calls were tracked
     api_calls = state.get("openai_api_calls")
     assert api_calls is not None, "openai_api_calls should not be None"
     assert len(api_calls) == 3, f"Expected 3 API calls, got {len(api_calls)}"
-    
+
     # Calculate expected total cost
     expected_total = sum(
         calculate_cost(
@@ -481,13 +480,13 @@ async def test_track_api_call_accumulates_under_gather():
         ).total_cost
         for call in call_defs
     )
-    
+
     # Verify total cost accumulation
     actual_total = state.get("total_openai_cost", 0.0)
     assert math.isclose(actual_total, expected_total, rel_tol=1e-9), (
         f"Expected total cost {expected_total}, got {actual_total}"
     )
-    
+
     # Verify per-model cost accumulation
     model_cost = state.get(f"openai_cost_{model}", 0.0)
     assert math.isclose(model_cost, expected_total, rel_tol=1e-9), (

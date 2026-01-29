@@ -12,7 +12,7 @@ from ..exceptions import GitCommandError
 
 if TYPE_CHECKING:
     from ..effects.git import Commit, CreatePR, MergePR, Push
-    from ..types import MergeStrategy, PRHandle, WorktreeEnv
+    from ..types import PRHandle
 
 
 def _run_git(

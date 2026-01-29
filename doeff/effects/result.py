@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 from ._program_types import ProgramLike
-from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 from ._validators import ensure_program_like
+from .base import Effect, EffectBase, create_effect_with_trace, intercept_value
 
 
 @dataclass(frozen=True)
@@ -20,8 +20,8 @@ class ResultSafeEffect(EffectBase):
         ensure_program_like(self.sub_program, name="sub_program")
 
     def intercept(
-        self, transform: Callable[[Effect], Effect | "Program"]
-    ) -> "ResultSafeEffect":
+        self, transform: Callable[[Effect], Effect | Program]
+    ) -> ResultSafeEffect:
         sub_program = intercept_value(self.sub_program, transform)
         if sub_program is self.sub_program:
             return self
@@ -41,6 +41,6 @@ def Safe(sub_program: ProgramLike) -> Effect:
 
 __all__ = [
     "ResultSafeEffect",
-    "safe",
     "Safe",
+    "safe",
 ]

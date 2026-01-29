@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(cursor --install-extension:*)",
-      "Bash(~/.local/bin/doeff-indexer find-env-chain:*)"
+      "Bash(~/.local/bin/doeff-indexer find-env-chain:*)",
+      "Bash(wc:*)"
     ]
   }
 }

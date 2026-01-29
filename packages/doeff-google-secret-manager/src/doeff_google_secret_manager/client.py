@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Ask, EffectGenerator, Get, Tell, Put, Safe, do
+from doeff import Ask, EffectGenerator, Get, Put, Safe, Tell, do
 
 DEFAULT_SECRET_MANAGER_SCOPES: tuple[str, ...] = (
     "https://www.googleapis.com/auth/cloud-platform",
@@ -162,7 +162,7 @@ def get_secret_manager_client() -> EffectGenerator[SecretManagerClient]:
 
 
 __all__ = [
+    "DEFAULT_SECRET_MANAGER_SCOPES",
     "SecretManagerClient",
     "get_secret_manager_client",
-    "DEFAULT_SECRET_MANAGER_SCOPES",
 ]

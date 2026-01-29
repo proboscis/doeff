@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Any, Iterable, Optional, TypeVar
+from collections.abc import Iterable
+from typing import Any, TypeVar
 
 
 class BoundedLog(list):
@@ -53,12 +54,12 @@ class BoundedLog(list):
         super().insert(index, item)
         self._trim()
 
-    def copy(self) -> "BoundedLog":  # type: ignore[override]
+    def copy(self) -> BoundedLog:  # type: ignore[override]
         """Return a shallow copy that preserves the retention limit."""
 
         return type(self)(self, max_entries=self._max_entries)
 
-    def spawn_empty(self) -> "BoundedLog":
+    def spawn_empty(self) -> BoundedLog:
         """Create an empty buffer with the same retention semantics."""
 
         return type(self)(max_entries=self._max_entries)
@@ -101,7 +102,7 @@ def _is_user_frame(path: str) -> bool:
 DEBUG_EFFECTS = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
 
 
-def capture_creation_context(skip_frames: int = 2) -> Optional["EffectCreationContext"]:
+def capture_creation_context(skip_frames: int = 2) -> EffectCreationContext | None:
     """
     Capture the current stack context for debugging effect creation.
     
@@ -194,8 +195,8 @@ def create_effect_with_trace(effect: E, skip_frames: int = 3) -> E:
 
 
 __all__ = [
-    "BoundedLog",
     "DEBUG_EFFECTS",
+    "BoundedLog",
     "capture_creation_context",
     "create_effect_with_trace",
 ]
