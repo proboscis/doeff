@@ -508,3 +508,184 @@ class TestSyncRuntimeStoreSemantics:
 
         result = runtime.run_and_unwrap(program())
         assert result == [1, 2]
+
+    def test_spawned_task_await_does_not_leak_store_to_main(self) -> None:
+        """Spawned task's store modifications during Await don't leak to main store.
+        
+        This tests the fix for: "can even overwrite the global store with a
+        spawned task's isolated store" (Oracle review).
+        """
+        runtime = SyncRuntime()
+
+        @do
+        def background():
+            yield Put("leaked_key", "SHOULD_NOT_APPEAR_IN_MAIN")
+            yield Await(asyncio.sleep(0.01))
+            yield Put("another_leaked", "ALSO_SHOULD_NOT_LEAK")
+            return "bg_done"
+
+        @do
+        def program():
+            yield Put("main_key", "main_value")
+            task = yield Spawn(background())
+            result = yield Wait(task)
+            main_value = yield Get("main_key")
+            leaked = yield Safe(Get("leaked_key"))
+            another = yield Safe(Get("another_leaked"))
+            return {
+                "bg_result": result,
+                "main_key": main_value,
+                "leaked_found": leaked.is_ok(),
+                "another_found": another.is_ok(),
+            }
+
+        result = runtime.run_and_unwrap(program())
+        assert result["bg_result"] == "bg_done"
+        assert result["main_key"] == "main_value"
+        assert result["leaked_found"] is False, "Spawned task store leaked to main!"
+        assert result["another_found"] is False, "Spawned task store leaked to main!"
+
+    def test_main_task_await_sees_pre_await_state(self) -> None:
+        """Main task's state before Await is visible after resume.
+        
+        Verifies current store (not snapshot) is used at resume time.
+        """
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            yield Put("step", "initial")
+            yield Put("step", "before_await")
+            yield Put("counter", 0)
+            
+            yield Put("counter", 1)
+            yield Await(asyncio.sleep(0.01))
+            
+            step_after = yield Get("step")
+            counter_after = yield Get("counter")
+            
+            return {"step": step_after, "counter": counter_after}
+
+        result = runtime.run_and_unwrap(program())
+        assert result["step"] == "before_await"
+        assert result["counter"] == 1
+
+    def test_concurrent_spawned_tasks_with_await_maintain_isolation(self) -> None:
+        """Multiple spawned tasks with Await maintain store isolation.
+        
+        Each spawned task should see its own snapshot, not other tasks' changes.
+        """
+        runtime = SyncRuntime()
+
+        @do
+        def task_a():
+            yield Put("shared_key", "from_a")
+            yield Await(asyncio.sleep(0.02))
+            value = yield Get("shared_key")
+            return f"a_saw_{value}"
+
+        @do
+        def task_b():
+            yield Put("shared_key", "from_b")
+            yield Await(asyncio.sleep(0.01))
+            value = yield Get("shared_key")
+            return f"b_saw_{value}"
+
+        @do
+        def program():
+            yield Put("shared_key", "main_initial")
+            t1 = yield Spawn(task_a())
+            t2 = yield Spawn(task_b())
+            results = yield Gather(t1, t2)
+            main_value = yield Get("shared_key")
+            return {"results": results, "main_value": main_value}
+
+        result = runtime.run_and_unwrap(program())
+        assert result["results"][0] == "a_saw_from_a"
+        assert result["results"][1] == "b_saw_from_b"
+        assert result["main_value"] == "main_initial"
+
+
+class TestSuspensionHandleThreadSafety:
+    """Tests for SuspensionHandle thread safety."""
+
+    def test_suspension_handle_double_complete_raises(self) -> None:
+        """Double completion of SuspensionHandle raises error."""
+        from doeff.cesk.runtime.context import SuspensionHandle
+
+        results: list[str] = []
+
+        def on_complete(v: int) -> None:
+            results.append(f"complete:{v}")
+
+        def on_fail(e: BaseException) -> None:
+            results.append(f"fail:{e}")
+
+        handle: SuspensionHandle[int] = SuspensionHandle(on_complete, on_fail)
+
+        handle.complete(42)
+        assert results == ["complete:42"]
+
+        try:
+            handle.complete(99)
+            assert False, "Should have raised RuntimeError"
+        except RuntimeError as e:
+            assert "already completed" in str(e)
+
+    def test_suspension_handle_complete_then_fail_raises(self) -> None:
+        """Fail after complete raises error."""
+        from doeff.cesk.runtime.context import SuspensionHandle
+
+        results: list[str] = []
+        handle: SuspensionHandle[int] = SuspensionHandle(
+            lambda v: results.append(f"complete:{v}"),
+            lambda e: results.append(f"fail:{e}"),
+        )
+
+        handle.complete(42)
+
+        try:
+            handle.fail(ValueError("too late"))
+            assert False, "Should have raised RuntimeError"
+        except RuntimeError as e:
+            assert "already completed" in str(e)
+
+    def test_suspension_handle_concurrent_complete_one_wins(self) -> None:
+        """Concurrent completion attempts - exactly one succeeds.
+        
+        Tests the thread safety fix for SuspensionHandle.
+        """
+        import threading
+        from doeff.cesk.runtime.context import SuspensionHandle
+
+        results: list[int] = []
+        errors: list[str] = []
+        lock = threading.Lock()
+
+        def on_complete(v: int) -> None:
+            with lock:
+                results.append(v)
+
+        def on_fail(e: BaseException) -> None:
+            pass
+
+        handle: SuspensionHandle[int] = SuspensionHandle(on_complete, on_fail)
+        barrier = threading.Barrier(10)
+
+        def try_complete(value: int) -> None:
+            barrier.wait()
+            try:
+                handle.complete(value)
+            except RuntimeError as e:
+                with lock:
+                    errors.append(str(e))
+
+        threads = [threading.Thread(target=try_complete, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == 1, f"Expected exactly 1 completion, got {len(results)}"
+        assert len(errors) == 9, f"Expected 9 errors, got {len(errors)}"
+        assert all("already completed" in e for e in errors)
