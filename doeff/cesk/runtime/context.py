@@ -6,6 +6,7 @@ CESK pure data with runtime-level suspension support.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
@@ -33,24 +34,26 @@ class SuspensionHandle(Generic[T]):
         self._on_complete = on_complete
         self._on_fail = on_fail
         self._completed = False
+        self._lock = threading.Lock()
 
     def complete(self, value: T) -> None:
-        """Signal successful completion. Thread-safe."""
-        if self._completed:
-            raise RuntimeError("SuspensionHandle already completed")
-        self._completed = True
+        with self._lock:
+            if self._completed:
+                raise RuntimeError("SuspensionHandle already completed")
+            self._completed = True
         self._on_complete(value)
 
     def fail(self, error: BaseException) -> None:
-        """Signal failure. Thread-safe."""
-        if self._completed:
-            raise RuntimeError("SuspensionHandle already completed")
-        self._completed = True
+        with self._lock:
+            if self._completed:
+                raise RuntimeError("SuspensionHandle already completed")
+            self._completed = True
         self._on_fail(error)
 
     @property
     def is_completed(self) -> bool:
-        return self._completed
+        with self._lock:
+            return self._completed
 
 
 @dataclass
