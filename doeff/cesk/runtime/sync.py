@@ -24,11 +24,17 @@ from doeff.cesk.frames import (
     FrameResult,
     SuspendOn,
 )
-from doeff.cesk.handlers import Handler, default_handlers
+from doeff.cesk.runtime.context import HandlerContext, SuspensionHandle
+from doeff.cesk.handlers import (
+    Handler,
+    default_handlers,
+    make_await_handler,
+    make_delay_handler,
+    make_wait_until_handler,
+)
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
-from doeff.cesk.runtime.context import HandlerContext
-from doeff.cesk.runtime.executor import AsyncExecutor, ThreadedAsyncioExecutor
+from doeff.cesk.runtime.executor import ThreadedAsyncioExecutor
 from doeff.cesk.runtime.scheduler import (
     InitialState,
     PendingComplete,
@@ -111,19 +117,18 @@ class SyncRuntime(BaseRuntime):
     def __init__(
         self,
         handlers: dict[type, Handler] | None = None,
-        executor: AsyncExecutor | None = None,
     ):
         """Initialize SyncRuntime.
 
         Args:
             handlers: Optional custom handlers. These override defaults.
-            executor: Optional AsyncExecutor for running awaitables.
-                     Defaults to ThreadedAsyncioExecutor.
         """
+        # Create executor for async effects (owned by this runtime)
+        self._executor: ThreadedAsyncioExecutor | None = None
+
         base_handlers = default_handlers()
-        base_handlers[DelayEffect] = _placeholder_handler
-        base_handlers[WaitUntilEffect] = _placeholder_handler
-        base_handlers[FutureAwaitEffect] = _placeholder_handler
+
+        # Register placeholder handlers for effects handled directly by the scheduler
         base_handlers[GatherEffect] = _placeholder_handler
         base_handlers[RaceEffect] = _placeholder_handler
         base_handlers[SpawnEffect] = _placeholder_handler
@@ -139,22 +144,30 @@ class SyncRuntime(BaseRuntime):
 
         super().__init__(base_handlers)
         self._user_handlers = handlers or {}
-        self._executor = executor
-        self._owns_executor = False
 
-    def _get_executor(self) -> AsyncExecutor:
-        """Get or create the async executor."""
+    def _get_executor(self) -> ThreadedAsyncioExecutor:
+        """Get or create the async executor (lazy initialization)."""
         if self._executor is None:
             self._executor = ThreadedAsyncioExecutor()
-            self._owns_executor = True
         return self._executor
 
+    def _get_external_handlers(self) -> dict[type, Handler]:
+        """Get handlers for effects that require external suspension.
+
+        These handlers are created lazily with the executor reference.
+        """
+        executor = self._get_executor()
+        return {
+            FutureAwaitEffect: make_await_handler(executor),
+            DelayEffect: make_delay_handler(executor),
+            WaitUntilEffect: make_wait_until_handler(executor),
+        }
+
     def _shutdown_executor(self) -> None:
-        """Shutdown executor if we own it."""
-        if self._owns_executor and self._executor is not None:
+        """Shutdown executor if it was created."""
+        if self._executor is not None:
             self._executor.shutdown()
             self._executor = None
-            self._owns_executor = False
 
     def run(
         self,
@@ -624,40 +637,19 @@ class SyncRuntime(BaseRuntime):
                     )
                     continue
 
-                if isinstance(effect, FutureAwaitEffect):
-                    self._handle_await(
-                        state,
-                        task_id,
+                if isinstance(effect, (FutureAwaitEffect, DelayEffect, WaitUntilEffect)):
+                    new_state = self._dispatch_external_effect(
                         effect,
+                        task_id,
                         result,
+                        state,
                         spawned_tasks,
                         task_id_to_handle,
                         scheduler,
                     )
-                    continue
-
-                if isinstance(effect, DelayEffect):
-                    self._handle_delay(
-                        state,
-                        task_id,
-                        effect,
-                        result,
-                        spawned_tasks,
-                        task_id_to_handle,
-                        scheduler,
-                    )
-                    continue
-
-                if isinstance(effect, WaitUntilEffect):
-                    self._handle_wait_until(
-                        state,
-                        task_id,
-                        effect,
-                        result,
-                        spawned_tasks,
-                        task_id_to_handle,
-                        scheduler,
-                    )
+                    if new_state is not None:
+                        state = new_state
+                        scheduler.enqueue_ready(task_id, ResumeWithState(state))
                     continue
 
                 task_state = state.tasks[task_id]
@@ -825,6 +817,66 @@ class SyncRuntime(BaseRuntime):
         if isinstance(dispatch_result, SuspendOn):
             return state
         raise RuntimeError(f"Unexpected dispatch result type: {type(dispatch_result)}")
+
+    def _dispatch_external_effect(
+        self,
+        effect: FutureAwaitEffect | DelayEffect | WaitUntilEffect,
+        task_id: TaskId,
+        suspended: Suspended,
+        state: CESKState,
+        spawned_tasks: dict[Any, SpawnedTaskInfo],
+        task_id_to_handle: dict[TaskId, Any],
+        scheduler: Scheduler,
+    ) -> CESKState | None:
+        """Dispatch an effect that may require external suspension.
+
+        Creates a SuspensionHandle, dispatches to handler, and handles SuspendOn.
+        Returns the new state, or None if the task was suspended externally.
+        """
+        task_state = state.tasks[task_id]
+        store_for_dispatch = self._get_store_for_task(
+            task_id, state, spawned_tasks, task_id_to_handle
+        )
+
+        def on_complete(value: Any) -> None:
+            scheduler.complete(task_id, value)
+
+        def on_fail(error: BaseException) -> None:
+            scheduler.fail(task_id, error)
+
+        suspension_handle: SuspensionHandle[Any] = SuspensionHandle(on_complete, on_fail)
+        ctx = HandlerContext(
+            task_state=task_state,
+            store=store_for_dispatch,
+            suspend=suspension_handle,
+        )
+
+        external_handlers = self._get_external_handlers()
+        handler = external_handlers.get(type(effect))
+        if handler is None:
+            raise RuntimeError(f"No external handler for {type(effect).__name__}")
+
+        try:
+            dispatch_result = handler(effect, ctx)
+        except Exception as ex:
+            dispatch_result = ContinueError(
+                error=ex,
+                env=task_state.env,
+                store=store_for_dispatch,
+                k=task_state.kontinuation,
+            )
+
+        if isinstance(dispatch_result, SuspendOn):
+            scheduler.suspend_on(task_id, task_id, suspended)
+            return None
+
+        if task_id in task_id_to_handle:
+            handle_id = task_id_to_handle[task_id]
+            spawned_info = spawned_tasks[handle_id]
+            return self._apply_dispatch_result_isolated(
+                state, task_id, suspended, dispatch_result, spawned_info
+            )
+        return self._apply_dispatch_result(state, task_id, suspended, dispatch_result)
 
     # ========== Spawn/Task Effects ==========
 
@@ -1356,84 +1408,6 @@ class SyncRuntime(BaseRuntime):
                 return state
 
         return state
-
-    # ========== Async Effects (via ThreadedAsyncioExecutor) ==========
-
-    def _handle_await(
-        self,
-        state: CESKState,
-        task_id: TaskId,
-        effect: FutureAwaitEffect,
-        suspended: Suspended,
-        spawned_tasks: dict[Any, SpawnedTaskInfo],
-        task_id_to_handle: dict[TaskId, Any],
-        scheduler: Scheduler,
-    ) -> None:
-        executor = self._get_executor()
-
-        def on_success(value: Any) -> None:
-            scheduler.complete(task_id, value)
-
-        def on_error(error: BaseException) -> None:
-            scheduler.fail(task_id, error)
-
-        scheduler.suspend_on(task_id, task_id, suspended)
-        executor.submit(effect.awaitable, on_success, on_error)
-
-    def _handle_delay(
-        self,
-        state: CESKState,
-        task_id: TaskId,
-        effect: DelayEffect,
-        suspended: Suspended,
-        spawned_tasks: dict[Any, SpawnedTaskInfo],
-        task_id_to_handle: dict[TaskId, Any],
-        scheduler: Scheduler,
-    ) -> None:
-        import asyncio
-
-        executor = self._get_executor()
-
-        async def do_delay() -> None:
-            await asyncio.sleep(effect.seconds)
-
-        def on_success(value: Any) -> None:
-            scheduler.complete(task_id, None)
-
-        def on_error(error: BaseException) -> None:
-            scheduler.fail(task_id, error)
-
-        scheduler.suspend_on(task_id, task_id, suspended)
-        executor.submit(do_delay(), on_success, on_error)
-
-    def _handle_wait_until(
-        self,
-        state: CESKState,
-        task_id: TaskId,
-        effect: WaitUntilEffect,
-        suspended: Suspended,
-        spawned_tasks: dict[Any, SpawnedTaskInfo],
-        task_id_to_handle: dict[TaskId, Any],
-        scheduler: Scheduler,
-    ) -> None:
-        import asyncio
-
-        executor = self._get_executor()
-
-        async def do_wait_until() -> None:
-            now = datetime.now()
-            if effect.target_time > now:
-                delay_seconds = (effect.target_time - now).total_seconds()
-                await asyncio.sleep(delay_seconds)
-
-        def on_success(value: Any) -> None:
-            scheduler.complete(task_id, None)
-
-        def on_error(error: BaseException) -> None:
-            scheduler.fail(task_id, error)
-
-        scheduler.suspend_on(task_id, task_id, suspended)
-        executor.submit(do_wait_until(), on_success, on_error)
 
 
 __all__ = [
