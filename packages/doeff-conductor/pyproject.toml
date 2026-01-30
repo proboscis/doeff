@@ -56,3 +56,4 @@ packages = ["src/doeff_conductor"]
 doeff = { workspace = true }
 doeff-agentic = { workspace = true }
 doeff-flow = { workspace = true }
+doeff-preset = { workspace = true }
