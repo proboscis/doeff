@@ -2,17 +2,16 @@
 
 This runtime implements:
 - Cooperative multi-task scheduling via Scheduler
-- External suspension for Await effects via ThreadedAsyncioExecutor
+- External suspension for Await/Delay/WaitUntil effects via user-provided handlers
 - Spawn/Wait/Task handling with snapshot semantics
 
-Unlike AsyncRuntime which uses asyncio, SyncRuntime runs in a single thread
-and uses a background thread pool for async operations (Await effects).
+For Await/Delay/WaitUntil effects, users must provide handlers created via
+make_await_handler(), make_delay_handler(), make_wait_until_handler() factories.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import uuid4
 
@@ -24,17 +23,10 @@ from doeff.cesk.frames import (
     FrameResult,
     SuspendOn,
 )
-from doeff.cesk.runtime.context import HandlerContext, SuspensionHandle
-from doeff.cesk.handlers import (
-    Handler,
-    default_handlers,
-    make_await_handler,
-    make_delay_handler,
-    make_wait_until_handler,
-)
+from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
-from doeff.cesk.runtime.executor import ThreadedAsyncioExecutor
+from doeff.cesk.runtime.context import HandlerContext, SuspensionHandle
 from doeff.cesk.runtime.scheduler import (
     InitialState,
     PendingComplete,
@@ -107,11 +99,12 @@ class SyncRuntime(BaseRuntime):
     This runtime executes programs synchronously but supports:
     - Multi-task execution via cooperative scheduling
     - Spawn/Wait for background task creation
-    - Await for external async operations (run in background thread)
+    - Await/Delay/WaitUntil via user-provided handlers (see make_await_handler)
     - Gather/Race for parallel Future completion
 
-    The runtime uses a Scheduler for task management and a ThreadedAsyncioExecutor
-    for running async awaitables in a background thread.
+    The runtime uses a Scheduler for task management. For Await/Delay/WaitUntil
+    effects, users must provide handlers created via the factory functions in
+    doeff.cesk.handlers.external.
     """
 
     def __init__(
@@ -122,13 +115,11 @@ class SyncRuntime(BaseRuntime):
 
         Args:
             handlers: Optional custom handlers. These override defaults.
+                     For Await/Delay/WaitUntil effects, provide handlers created via
+                     make_await_handler(), make_delay_handler(), make_wait_until_handler().
         """
-        # Create executor for async effects (owned by this runtime)
-        self._executor: ThreadedAsyncioExecutor | None = None
-
         base_handlers = default_handlers()
 
-        # Register placeholder handlers for effects handled directly by the scheduler
         base_handlers[GatherEffect] = _placeholder_handler
         base_handlers[RaceEffect] = _placeholder_handler
         base_handlers[SpawnEffect] = _placeholder_handler
@@ -144,30 +135,6 @@ class SyncRuntime(BaseRuntime):
 
         super().__init__(base_handlers)
         self._user_handlers = handlers or {}
-
-    def _get_executor(self) -> ThreadedAsyncioExecutor:
-        """Get or create the async executor (lazy initialization)."""
-        if self._executor is None:
-            self._executor = ThreadedAsyncioExecutor()
-        return self._executor
-
-    def _get_external_handlers(self) -> dict[type, Handler]:
-        """Get handlers for effects that require external suspension.
-
-        These handlers are created lazily with the executor reference.
-        """
-        executor = self._get_executor()
-        return {
-            FutureAwaitEffect: make_await_handler(executor),
-            DelayEffect: make_delay_handler(executor),
-            WaitUntilEffect: make_wait_until_handler(executor),
-        }
-
-    def _shutdown_executor(self) -> None:
-        """Shutdown executor if it was created."""
-        if self._executor is not None:
-            self._executor.shutdown()
-            self._executor = None
 
     def run(
         self,
@@ -202,8 +169,6 @@ class SyncRuntime(BaseRuntime):
                 err.final_state,
                 captured_traceback=err.captured_traceback,
             )
-        finally:
-            self._shutdown_executor()
 
     def run_and_unwrap(
         self,
@@ -508,9 +473,26 @@ class SyncRuntime(BaseRuntime):
                     store_for_dispatch = self._get_store_for_task(
                         task_id, state, spawned_tasks, task_id_to_handle
                     )
-                    dispatch_result = self._dispatch_effect(
-                        effect, task_state, store_for_dispatch
+
+                    # Create suspension handle for handlers that need async completion
+                    suspension_handle: SuspensionHandle[Any] = SuspensionHandle(
+                        on_complete=lambda v, tid=task_id: scheduler.complete(tid, v),
+                        on_fail=lambda e, tid=task_id: scheduler.fail(tid, e),
                     )
+                    ctx = HandlerContext(
+                        task_state=task_state,
+                        store=store_for_dispatch,
+                        suspend=suspension_handle,
+                    )
+
+                    dispatch_result = self._dispatch_effect(
+                        effect, task_state, store_for_dispatch, ctx
+                    )
+
+                    # Handler returned SuspendOn → park task, wait for callback
+                    if isinstance(dispatch_result, SuspendOn):
+                        scheduler.suspend_on(task_id, task_id, result)
+                        continue
 
                     if task_id in task_id_to_handle:
                         handle_id = task_id_to_handle[task_id]
@@ -637,28 +619,28 @@ class SyncRuntime(BaseRuntime):
                     )
                     continue
 
-                if isinstance(effect, (FutureAwaitEffect, DelayEffect, WaitUntilEffect)):
-                    new_state = self._dispatch_external_effect(
-                        effect,
-                        task_id,
-                        result,
-                        state,
-                        spawned_tasks,
-                        task_id_to_handle,
-                        scheduler,
-                    )
-                    if new_state is not None:
-                        state = new_state
-                        scheduler.enqueue_ready(task_id, ResumeWithState(state))
-                    continue
-
                 task_state = state.tasks[task_id]
                 store_for_dispatch = self._get_store_for_task(
                     task_id, state, spawned_tasks, task_id_to_handle
                 )
-                dispatch_result = self._dispatch_effect(
-                    effect, task_state, store_for_dispatch
+
+                suspension_handle: SuspensionHandle[Any] = SuspensionHandle(
+                    on_complete=lambda v, tid=task_id: scheduler.complete(tid, v),
+                    on_fail=lambda e, tid=task_id: scheduler.fail(tid, e),
                 )
+                ctx = HandlerContext(
+                    task_state=task_state,
+                    store=store_for_dispatch,
+                    suspend=suspension_handle,
+                )
+
+                dispatch_result = self._dispatch_effect(
+                    effect, task_state, store_for_dispatch, ctx
+                )
+
+                if isinstance(dispatch_result, SuspendOn):
+                    scheduler.suspend_on(task_id, task_id, result)
+                    continue
 
                 if task_id in task_id_to_handle:
                     handle_id = task_id_to_handle[task_id]
@@ -817,66 +799,6 @@ class SyncRuntime(BaseRuntime):
         if isinstance(dispatch_result, SuspendOn):
             return state
         raise RuntimeError(f"Unexpected dispatch result type: {type(dispatch_result)}")
-
-    def _dispatch_external_effect(
-        self,
-        effect: FutureAwaitEffect | DelayEffect | WaitUntilEffect,
-        task_id: TaskId,
-        suspended: Suspended,
-        state: CESKState,
-        spawned_tasks: dict[Any, SpawnedTaskInfo],
-        task_id_to_handle: dict[TaskId, Any],
-        scheduler: Scheduler,
-    ) -> CESKState | None:
-        """Dispatch an effect that may require external suspension.
-
-        Creates a SuspensionHandle, dispatches to handler, and handles SuspendOn.
-        Returns the new state, or None if the task was suspended externally.
-        """
-        task_state = state.tasks[task_id]
-        store_for_dispatch = self._get_store_for_task(
-            task_id, state, spawned_tasks, task_id_to_handle
-        )
-
-        def on_complete(value: Any) -> None:
-            scheduler.complete(task_id, value)
-
-        def on_fail(error: BaseException) -> None:
-            scheduler.fail(task_id, error)
-
-        suspension_handle: SuspensionHandle[Any] = SuspensionHandle(on_complete, on_fail)
-        ctx = HandlerContext(
-            task_state=task_state,
-            store=store_for_dispatch,
-            suspend=suspension_handle,
-        )
-
-        external_handlers = self._get_external_handlers()
-        handler = external_handlers.get(type(effect))
-        if handler is None:
-            raise RuntimeError(f"No external handler for {type(effect).__name__}")
-
-        try:
-            dispatch_result = handler(effect, ctx)
-        except Exception as ex:
-            dispatch_result = ContinueError(
-                error=ex,
-                env=task_state.env,
-                store=store_for_dispatch,
-                k=task_state.kontinuation,
-            )
-
-        if isinstance(dispatch_result, SuspendOn):
-            scheduler.suspend_on(task_id, task_id, suspended)
-            return None
-
-        if task_id in task_id_to_handle:
-            handle_id = task_id_to_handle[task_id]
-            spawned_info = spawned_tasks[handle_id]
-            return self._apply_dispatch_result_isolated(
-                state, task_id, suspended, dispatch_result, spawned_info
-            )
-        return self._apply_dispatch_result(state, task_id, suspended, dispatch_result)
 
     # ========== Spawn/Task Effects ==========
 
