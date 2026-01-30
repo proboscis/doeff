@@ -5,6 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from doeff.cesk.handlers.external import (
+    make_await_handler,
+    make_delay_handler,
+    make_wait_until_handler,
+)
+
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
     from doeff.cesk.frames import FrameResult
@@ -109,4 +115,7 @@ def default_handlers() -> dict[type, Handler]:
 __all__ = [
     "Handler",
     "default_handlers",
+    "make_await_handler",
+    "make_delay_handler",
+    "make_wait_until_handler",
 ]
