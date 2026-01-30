@@ -24,6 +24,7 @@ import time
 from doeff_flow import run_workflow
 
 from doeff import do
+from doeff.effects.writer import slog
 
 # =============================================================================
 # Simulated External Services
@@ -33,14 +34,14 @@ from doeff import do
 @do
 def call_external_api(endpoint: str, attempt: int = 1):
     """Simulate calling an external API that might fail."""
-    print(f"  [API] Calling {endpoint} (attempt {attempt})...")
+    yield slog(step="api", status="calling", endpoint=endpoint, attempt=attempt)
     time.sleep(0.1)
 
     # Simulate random failures
     if random.random() < 0.3:  # 30% failure rate
         raise ConnectionError(f"Failed to connect to {endpoint}")
 
-    print(f"  [API] Success: {endpoint}")
+    yield slog(step="api", status="success", endpoint=endpoint)
     return {"status": "ok", "endpoint": endpoint}
 
 
@@ -66,15 +67,15 @@ def fetch_orders(user_id: int):
 @do
 def process_user_data(user_id: int):
     """Process complete user data - may fail at any step."""
-    print(f"\n[Processing] User {user_id}")
+    yield slog(step="processing", user_id=user_id)
 
     # Step 1: Fetch user
     user = yield fetch_user(user_id)
-    print(f"  [Data] Got user: {user['name']}")
+    yield slog(step="data", status="got_user", name=user['name'])
 
     # Step 2: Fetch orders
     orders = yield fetch_orders(user_id)
-    print(f"  [Data] Got {len(orders)} orders")
+    yield slog(step="data", status="got_orders", count=len(orders))
 
     # Step 3: Calculate total
     total = sum(o["amount"] for o in orders)
@@ -84,7 +85,7 @@ def process_user_data(user_id: int):
         "total_amount": total,
     }
 
-    print(f"  [Data] Total amount: ${total}")
+    yield slog(step="data", status="complete", total=total)
     return result
 
 
@@ -99,9 +100,7 @@ def workflow_with_errors():
     Workflow that processes multiple users.
     Some may fail, demonstrating error capture in traces.
     """
-    print("\n" + "=" * 60)
-    print("Starting Workflow (with potential failures)")
-    print("=" * 60)
+    yield slog(step="workflow", status="starting", msg="with potential failures")
 
     results = []
     failed = []
@@ -111,7 +110,7 @@ def workflow_with_errors():
             result = yield process_user_data(user_id)
             results.append(result)
         except ConnectionError as e:
-            print(f"  [ERROR] User {user_id}: {e}")
+            yield slog(step="error", user_id=user_id, error=str(e))
             failed.append({"user_id": user_id, "error": str(e)})
             # Continue processing other users
 
@@ -123,17 +122,15 @@ def workflow_with_errors():
         "failures": failed,
     }
 
-    print("\n" + "=" * 60)
-    print(f"Workflow Complete: {len(results)} success, {len(failed)} failed")
-    print("=" * 60)
+    yield slog(step="workflow", status="complete", success=len(results), failed=len(failed))
 
     return summary
 
 
 @do
 def do_step(name: str):
-    """Simple step that prints completion."""
-    print(f"  {name} complete")
+    """Simple step that logs completion."""
+    yield slog(step=name, status="complete")
     return name
 
 
@@ -142,16 +139,14 @@ def workflow_that_fails():
     """
     Workflow that intentionally fails to demonstrate error tracing.
     """
-    print("\n" + "=" * 60)
-    print("Starting Workflow (will fail)")
-    print("=" * 60)
+    yield slog(step="workflow", status="starting", msg="will fail")
 
     # Some successful steps first
     yield do_step("Step 1")
     yield do_step("Step 2")
 
     # This step will fail
-    print("  Step 3: About to fail...")
+    yield slog(step="Step 3", status="about_to_fail")
     raise ValueError("Intentional failure for demonstration")
 
 

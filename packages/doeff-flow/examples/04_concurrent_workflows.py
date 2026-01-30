@@ -26,6 +26,7 @@ from datetime import datetime
 from doeff_flow import run_workflow
 
 from doeff import do
+from doeff.effects.writer import slog
 
 # =============================================================================
 # Worker Workflows
@@ -62,7 +63,7 @@ def worker_workflow(worker_id: str, num_tasks: int):
     Worker that processes multiple tasks.
     Each worker runs independently and has its own trace.
     """
-    print(f"[Worker {worker_id}] Starting with {num_tasks} tasks")
+    yield slog(step="worker", worker_id=worker_id, status="starting", num_tasks=num_tasks)
     start_time = datetime.now()
 
     completed_tasks = []
@@ -71,10 +72,10 @@ def worker_workflow(worker_id: str, num_tasks: int):
         task_id = f"{worker_id}-task-{i:02d}"
         complexity = random.randint(2, 5)
 
-        print(f"[Worker {worker_id}] Processing {task_id} (complexity: {complexity})")
+        yield slog(step="worker", worker_id=worker_id, status="processing", task_id=task_id, complexity=complexity)
         result = yield process_task(task_id, complexity)
         completed_tasks.append(result)
-        print(f"[Worker {worker_id}] Completed {task_id}")
+        yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
 
     elapsed = (datetime.now() - start_time).total_seconds()
 
@@ -85,7 +86,7 @@ def worker_workflow(worker_id: str, num_tasks: int):
         "tasks": completed_tasks,
     }
 
-    print(f"[Worker {worker_id}] Finished in {elapsed:.2f}s")
+    yield slog(step="worker", worker_id=worker_id, status="finished", elapsed=f"{elapsed:.2f}s")
     return summary
 
 

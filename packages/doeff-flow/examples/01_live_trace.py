@@ -22,6 +22,7 @@ from time import sleep
 from doeff_flow import run_workflow, trace_observer
 
 from doeff import do
+from doeff.effects.writer import slog
 
 # =============================================================================
 # Example 1: Using run_workflow convenience wrapper
@@ -53,18 +54,18 @@ def main_workflow():
     """Main workflow that composes the above functions."""
     # Step 1: Fetch data
     data = yield fetch_data()
-    print(f"Fetched data: {data}")
+    yield slog(step="fetch", msg=f"Fetched data: {data}")
 
     # Step 2: Process each item
     results = []
     for item in data["items"]:
         result = yield process_item(item)
         results.append(result)
-        print(f"Processed item {item} -> {result}")
+        yield slog(step="process", item=item, result=result)
 
     # Step 3: Aggregate
     total = yield aggregate_results(results)
-    print(f"Total: {total}")
+    yield slog(step="aggregate", total=total)
 
     return total
 
