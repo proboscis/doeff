@@ -21,6 +21,7 @@ import time
 from doeff_flow import run_workflow
 
 from doeff import do
+from doeff.effects.writer import slog
 
 # =============================================================================
 # Data Pipeline Stages
@@ -30,7 +31,7 @@ from doeff import do
 @do
 def extract_data(source: str):
     """Extract data from a source (simulated)."""
-    print(f"  [Extract] Reading from {source}...")
+    yield slog(step="extract", status="reading", source=source)
     time.sleep(0.2)  # Simulate I/O
 
     # Simulate extracted records
@@ -39,7 +40,7 @@ def extract_data(source: str):
         for i in range(5)
     ]
 
-    print(f"  [Extract] Got {len(records)} records")
+    yield slog(step="extract", status="done", count=len(records))
     return records
 
 
@@ -60,13 +61,13 @@ def transform_record(record: dict):
 @do
 def transform_all(records: list[dict]):
     """Transform all records."""
-    print(f"  [Transform] Processing {len(records)} records...")
+    yield slog(step="transform", status="processing", count=len(records))
     transformed = []
 
     for i, record in enumerate(records):
         result = yield transform_record(record)
         transformed.append(result)
-        print(f"  [Transform] Processed record {i + 1}/{len(records)}")
+        yield slog(step="transform", status="progress", current=i + 1, total=len(records))
 
     return transformed
 
@@ -74,19 +75,19 @@ def transform_all(records: list[dict]):
 @do
 def load_data(records: list[dict], destination: str):
     """Load transformed data to destination (simulated)."""
-    print(f"  [Load] Writing {len(records)} records to {destination}...")
+    yield slog(step="load", status="writing", count=len(records), destination=destination)
     time.sleep(0.1)  # Simulate I/O
 
     # Simulate loading
     loaded_count = len(records)
-    print(f"  [Load] Successfully loaded {loaded_count} records")
+    yield slog(step="load", status="done", loaded=loaded_count)
     return loaded_count
 
 
 @do
 def aggregate_stats(records: list[dict]):
     """Calculate aggregate statistics."""
-    print("  [Aggregate] Computing statistics...")
+    yield slog(step="aggregate", status="computing")
 
     total = sum(r["doubled"] for r in records)
     avg = total / len(records) if records else 0
@@ -118,11 +119,7 @@ def etl_pipeline(source: str, destination: str):
     3. Load - Write to destination
     4. Aggregate - Calculate statistics
     """
-    print(f"\n{'=' * 60}")
-    print("Starting ETL Pipeline")
-    print(f"  Source: {source}")
-    print(f"  Destination: {destination}")
-    print(f"{'=' * 60}\n")
+    yield slog(step="pipeline", status="starting", source=source, destination=destination)
 
     # Stage 1: Extract
     raw_data = yield extract_data(source)
@@ -136,11 +133,7 @@ def etl_pipeline(source: str, destination: str):
     # Stage 4: Aggregate
     stats = yield aggregate_stats(transformed_data)
 
-    print(f"\n{'=' * 60}")
-    print("Pipeline Complete!")
-    print(f"  Records processed: {loaded_count}")
-    print(f"  Statistics: {stats}")
-    print(f"{'=' * 60}\n")
+    yield slog(step="pipeline", status="complete", loaded=loaded_count, stats=stats)
 
     return {
         "loaded_count": loaded_count,
