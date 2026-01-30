@@ -31,6 +31,8 @@ from doeff.cesk.runtime.context import HandlerContext
 from doeff.cesk.runtime.executor import AsyncExecutor, ThreadedAsyncioExecutor
 from doeff.cesk.runtime.scheduler import (
     InitialState,
+    PendingComplete,
+    PendingFail,
     ResumeWithError,
     ResumeWithState,
     ResumeWithValue,
@@ -303,6 +305,56 @@ class SyncRuntime(BaseRuntime):
                 )
             elif isinstance(resume_info, ResumeWithError):
                 pass
+            elif isinstance(resume_info, PendingComplete):
+                pending = scheduler.pop_pending(resume_info.handle)
+                if pending is None:
+                    continue
+                _pending_task_id, suspended = pending
+                store_for_resume = self._get_store_for_task(
+                    task_id, state, spawned_tasks, task_id_to_handle
+                )
+                new_state = suspended.resume(resume_info.value, store_for_resume)
+                new_tasks = dict(state.tasks)
+                if task_id in new_state.tasks:
+                    new_tasks[task_id] = new_state.tasks[task_id]
+                else:
+                    new_tasks[task_id] = new_state.tasks[new_state.main_task]
+                if task_id in task_id_to_handle:
+                    handle_id = task_id_to_handle[task_id]
+                    spawned_tasks[handle_id].store_snapshot = new_state.store
+                    state = CESKState(
+                        tasks=new_tasks,
+                        store=state.store,
+                        main_task=state.main_task,
+                        futures=state.futures,
+                        spawn_results=state.spawn_results,
+                    )
+                else:
+                    state = CESKState(
+                        tasks=new_tasks,
+                        store=new_state.store,
+                        main_task=state.main_task,
+                        futures=state.futures,
+                        spawn_results=state.spawn_results,
+                    )
+            elif isinstance(resume_info, PendingFail):
+                pending = scheduler.pop_pending(resume_info.handle)
+                if pending is None:
+                    continue
+                _pending_task_id, suspended = pending
+                new_state = suspended.resume_error(resume_info.error)
+                new_tasks = dict(state.tasks)
+                if task_id in new_state.tasks:
+                    new_tasks[task_id] = new_state.tasks[task_id]
+                else:
+                    new_tasks[task_id] = new_state.tasks[new_state.main_task]
+                state = CESKState(
+                    tasks=new_tasks,
+                    store=state.store,
+                    main_task=state.main_task,
+                    futures=state.futures,
+                    spawn_results=state.spawn_results,
+                )
 
             if task_id not in state.tasks:
                 continue
@@ -1317,11 +1369,7 @@ class SyncRuntime(BaseRuntime):
         task_id_to_handle: dict[TaskId, Any],
         scheduler: Scheduler,
     ) -> None:
-        """Handle FutureAwaitEffect by running awaitable in background thread."""
         executor = self._get_executor()
-        store_for_resume = self._get_store_for_task(
-            task_id, state, spawned_tasks, task_id_to_handle
-        )
 
         def on_success(value: Any) -> None:
             scheduler.complete(task_id, value)
@@ -1329,7 +1377,7 @@ class SyncRuntime(BaseRuntime):
         def on_error(error: BaseException) -> None:
             scheduler.fail(task_id, error)
 
-        scheduler.suspend_on(task_id, task_id, suspended, store_for_resume)
+        scheduler.suspend_on(task_id, task_id, suspended)
         executor.submit(effect.awaitable, on_success, on_error)
 
     def _handle_delay(
@@ -1342,14 +1390,9 @@ class SyncRuntime(BaseRuntime):
         task_id_to_handle: dict[TaskId, Any],
         scheduler: Scheduler,
     ) -> None:
-        """Handle DelayEffect by sleeping in background thread."""
         import asyncio
 
         executor = self._get_executor()
-
-        store_for_resume = self._get_store_for_task(
-            task_id, state, spawned_tasks, task_id_to_handle
-        )
 
         async def do_delay() -> None:
             await asyncio.sleep(effect.seconds)
@@ -1360,7 +1403,7 @@ class SyncRuntime(BaseRuntime):
         def on_error(error: BaseException) -> None:
             scheduler.fail(task_id, error)
 
-        scheduler.suspend_on(task_id, task_id, suspended, store_for_resume)
+        scheduler.suspend_on(task_id, task_id, suspended)
         executor.submit(do_delay(), on_success, on_error)
 
     def _handle_wait_until(
@@ -1373,14 +1416,9 @@ class SyncRuntime(BaseRuntime):
         task_id_to_handle: dict[TaskId, Any],
         scheduler: Scheduler,
     ) -> None:
-        """Handle WaitUntilEffect by sleeping until target time in background thread."""
         import asyncio
 
         executor = self._get_executor()
-
-        store_for_resume = self._get_store_for_task(
-            task_id, state, spawned_tasks, task_id_to_handle
-        )
 
         async def do_wait_until() -> None:
             now = datetime.now()
@@ -1394,7 +1432,7 @@ class SyncRuntime(BaseRuntime):
         def on_error(error: BaseException) -> None:
             scheduler.fail(task_id, error)
 
-        scheduler.suspend_on(task_id, task_id, suspended, store_for_resume)
+        scheduler.suspend_on(task_id, task_id, suspended)
         executor.submit(do_wait_until(), on_success, on_error)
 
 
