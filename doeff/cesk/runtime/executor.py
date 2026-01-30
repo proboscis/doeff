@@ -35,12 +35,16 @@ class ThreadedAsyncioExecutor:
         self._thread: threading.Thread | None = None
         self._started = threading.Event()
         self._shutdown = False
+        self._pending_futures: list[asyncio.Future[None]] = []
+        self._lock = threading.Lock()
 
     def _run_loop(self) -> None:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         self._started.set()
         self._loop.run_forever()
+        self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+        self._loop.close()
 
     def _ensure_started(self) -> asyncio.AbstractEventLoop:
         if self._thread is None:
@@ -65,11 +69,17 @@ class ThreadedAsyncioExecutor:
             except BaseException as e:
                 on_error(e)
 
-        asyncio.run_coroutine_threadsafe(wrapper(), loop)
+        future = asyncio.run_coroutine_threadsafe(wrapper(), loop)
+        with self._lock:
+            self._pending_futures.append(future)
 
     def shutdown(self) -> None:
         if self._loop is not None and not self._shutdown:
             self._shutdown = True
+            with self._lock:
+                for future in self._pending_futures:
+                    future.cancel()
+                self._pending_futures.clear()
             self._loop.call_soon_threadsafe(self._loop.stop)
             if self._thread is not None:
                 self._thread.join(timeout=5.0)

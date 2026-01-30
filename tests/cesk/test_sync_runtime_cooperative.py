@@ -400,3 +400,111 @@ class TestSyncRuntimeCooperativeScheduling:
         assert result == ("a-done", "b-done")
         assert "a-start" in execution_order
         assert "b-start" in execution_order
+
+
+class TestSyncRuntimeStoreSemantics:
+    """Tests for correct store handling during external suspension.
+
+    These tests verify the fix for using current store at resume time
+    rather than snapshotting store at suspension time.
+    """
+
+    def test_await_preserves_state_modifications(self) -> None:
+        """State modifications before Await are visible after resume."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            yield Put("counter", 0)
+            yield Put("counter", 1)
+            yield Await(asyncio.sleep(0.01))
+            value = yield Get("counter")
+            return value
+
+        result = runtime.run_and_unwrap(program())
+        assert result == 1
+
+    def test_multiple_awaits_preserve_state_sequence(self) -> None:
+        """Sequential Awaits correctly preserve all intermediate state changes."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            yield Put("step", 0)
+
+            yield Put("step", 1)
+            yield Await(asyncio.sleep(0.01))
+            v1 = yield Get("step")
+
+            yield Put("step", 2)
+            yield Await(asyncio.sleep(0.01))
+            v2 = yield Get("step")
+
+            yield Put("step", 3)
+            yield Await(asyncio.sleep(0.01))
+            v3 = yield Get("step")
+
+            return (v1, v2, v3)
+
+        result = runtime.run_and_unwrap(program())
+        assert result == (1, 2, 3)
+
+    def test_spawned_task_await_uses_isolated_store(self) -> None:
+        """Spawned task Await uses isolated store, not shared store."""
+        runtime = SyncRuntime()
+
+        @do
+        def background():
+            yield Put("bg_local", "from_bg")
+            yield Await(asyncio.sleep(0.01))
+            bg_value = yield Get("bg_local")
+            return bg_value
+
+        @do
+        def program():
+            yield Put("main_key", "main_value")
+            task = yield Spawn(background())
+            result = yield Wait(task)
+            main_value = yield Get("main_key")
+            return (result, main_value)
+
+        result = runtime.run_and_unwrap(program())
+        assert result == ("from_bg", "main_value")
+
+    def test_delay_preserves_state(self) -> None:
+        """State is preserved across Delay effects."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            yield Put("before_delay", True)
+            yield Delay(0.01)
+            before = yield Get("before_delay")
+            yield Put("after_delay", True)
+            yield Delay(0.01)
+            after = yield Get("after_delay")
+            return (before, after)
+
+        result = runtime.run_and_unwrap(program())
+        assert result == (True, True)
+
+    def test_gather_with_state_modifications(self) -> None:
+        """Gather correctly handles tasks that modify state and await."""
+        runtime = SyncRuntime()
+
+        @do
+        def task_with_await(task_id: int):
+            yield Put(f"task_{task_id}_started", True)
+            yield Await(asyncio.sleep(0.01))
+            yield Put(f"task_{task_id}_finished", True)
+            return task_id
+
+        @do
+        def program():
+            t1 = yield Spawn(task_with_await(1))
+            t2 = yield Spawn(task_with_await(2))
+            results = yield Gather(t1, t2)
+            return results
+
+        result = runtime.run_and_unwrap(program())
+        assert result == [1, 2]
