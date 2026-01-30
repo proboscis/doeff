@@ -4,7 +4,7 @@ Handler utilities for doeff-conductor.
 Provides adapter functions to wrap simple handlers into CESK effect handlers
 compatible with the doeff CESK runtime.
 
-Handler signature: (effect, task_state, store) -> FrameResult
+Handler signature: (effect, ctx: HandlerContext) -> FrameResult
 
 Migration from old API:
 - Resume(value, store) -> ContinueValue(value, env, store, k)
@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult
 
 if TYPE_CHECKING:
-    from doeff.cesk.state import TaskState
+    from doeff.cesk.runtime.context import HandlerContext
     from doeff.cesk.types import Store
     from doeff.types import EffectBase
 
@@ -58,23 +58,22 @@ def make_cesk_handler(
 
     def cesk_handler(
         effect: EffectBase,
-        task_state: TaskState,
-        store: Store,
+        ctx: HandlerContext,
     ) -> FrameResult:
         try:
             result = handler(effect)
             return ContinueValue(
                 value=result,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
         except Exception as ex:
             return ContinueError(
                 error=ex,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
     return cesk_handler
@@ -98,23 +97,22 @@ def make_cesk_handler_with_store(
 
     def cesk_handler(
         effect: EffectBase,
-        task_state: TaskState,
-        store: Store,
+        ctx: HandlerContext,
     ) -> FrameResult:
         try:
-            value, new_store = handler(effect, dict(task_state.env), store)
+            value, new_store = handler(effect, dict(ctx.task_state.env), ctx.store)
             return ContinueValue(
                 value=value,
-                env=task_state.env,
+                env=ctx.task_state.env,
                 store=new_store,
-                k=task_state.kontinuation,
+                k=ctx.task_state.kontinuation,
             )
         except Exception as ex:
             return ContinueError(
                 error=ex,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
     return cesk_handler

@@ -1,24 +1,20 @@
 """CESK-compatible effect handlers for doeff integration.
 
 This module provides handlers that integrate with doeff's CESK interpreter,
-following the SyncEffectHandler and AsyncEffectHandler protocols.
+following the HandlerContext-based handler protocol.
 
-Usage with CESK interpreter:
-    from doeff.cesk import run
+Usage with CESK runtime:
+    from doeff import AsyncRuntime
     from doeff_agents.cesk_handlers import agent_effectful_handlers
 
-    result = await run(
-        my_program,
-        effectful_handlers=agent_effectful_handlers(),
-    )
+    runtime = AsyncRuntime(handlers=agent_effectful_handlers())
+    result = await runtime.run(my_program)
 
 For testing without real tmux:
     from doeff_agents.cesk_handlers import mock_agent_handlers
 
-    result = await run(
-        my_program,
-        effectful_handlers=mock_agent_handlers(script),
-    )
+    runtime = AsyncRuntime(handlers=mock_agent_handlers())
+    result = await runtime.run(my_program)
 """
 
 from __future__ import annotations
@@ -30,6 +26,8 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
+
+from doeff.cesk.frames import ContinueValue, FrameResult
 
 from . import tmux
 from .adapters.base import AgentAdapter, AgentType, InjectionMethod
@@ -60,9 +58,8 @@ from .monitor import (
 )
 
 if TYPE_CHECKING:
-    # These are the CESK types
-    Environment = dict[Any, Any]  # FrozenDict at runtime
-    Store = dict[str, Any]
+    from doeff.cesk.runtime.context import HandlerContext
+    from doeff.cesk.types import Store
 
 
 # =============================================================================
@@ -117,12 +114,12 @@ def _get_sessions(store: Store) -> dict[str, SessionState]:
 # =============================================================================
 
 
-async def _handle_launch(
+def _handle_launch(
     effect: LaunchEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[SessionHandle, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Handle Launch effect - creates real tmux session."""
+    store = ctx.store
     config = effect.config
     adapter = get_adapter(config.agent_type)
 
@@ -149,7 +146,7 @@ async def _handle_launch(
     else:
         tmux.send_keys(session_info.pane_id, command)
         if adapter.ready_pattern:
-            ready = await _wait_for_ready_async(
+            ready = _wait_for_ready_sync(
                 session_info.pane_id,
                 adapter.ready_pattern,
                 effect.ready_timeout,
@@ -176,26 +173,31 @@ async def _handle_launch(
         adapter=adapter,
     )
 
-    return (handle, store)
+    return ContinueValue(
+        value=handle,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _wait_for_ready_async(target: str, pattern: str, timeout: float) -> bool:
-    """Wait for agent to be ready for input (async version)."""
+def _wait_for_ready_sync(target: str, pattern: str, timeout: float) -> bool:
+    """Wait for agent to be ready for input (sync version)."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         output = tmux.capture_pane(target, 50)
         if re.search(pattern, output):
             return True
-        await asyncio.sleep(0.2)
+        time.sleep(0.2)
     return False
 
 
-async def _handle_monitor(
+def _handle_monitor(
     effect: MonitorEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[Observation, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Handle Monitor effect - checks session status."""
+    store = ctx.store
     handle = effect.handle
     sessions = _get_sessions(store)
     state = sessions.get(handle.session_name)
@@ -203,7 +205,12 @@ async def _handle_monitor(
     if state is None:
         # Session not tracked - check if it exists
         if not tmux.has_session(handle.session_name):
-            return (Observation(status=SessionStatus.EXITED), store)
+            return ContinueValue(
+                value=Observation(status=SessionStatus.EXITED),
+                env=ctx.task_state.env,
+                store=store,
+                k=ctx.task_state.kontinuation,
+            )
         # Create minimal state for monitoring
         state = SessionState(
             handle=handle,
@@ -213,7 +220,12 @@ async def _handle_monitor(
 
     if not tmux.has_session(handle.session_name):
         state.status = SessionStatus.EXITED
-        return (Observation(status=SessionStatus.EXITED), store)
+        return ContinueValue(
+            value=Observation(status=SessionStatus.EXITED),
+            env=ctx.task_state.env,
+            store=store,
+            k=ctx.task_state.kontinuation,
+        )
 
     output = tmux.capture_pane(handle.pane_id)
 
@@ -242,35 +254,40 @@ async def _handle_monitor(
     if new_status:
         state.status = new_status
 
-    return (
-        Observation(
+    return ContinueValue(
+        value=Observation(
             status=state.status,
             output_changed=output_changed,
             pr_url=pr_url,
             output_snippet=output[-500:] if output else None,
         ),
-        store,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
     )
 
 
-async def _handle_capture(
+def _handle_capture(
     effect: CaptureEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[str, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Handle Capture effect - captures pane output."""
     handle = effect.handle
     if not tmux.has_session(handle.session_name):
         raise SessionNotFoundError(f"Session {handle.session_name} does not exist")
     output = tmux.capture_pane(handle.pane_id, effect.lines)
-    return (output, store)
+    return ContinueValue(
+        value=output,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _handle_send(
+def _handle_send(
     effect: SendEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[None, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Handle Send effect - sends message to session."""
     handle = effect.handle
     if not tmux.has_session(handle.session_name):
@@ -281,15 +298,20 @@ async def _handle_send(
         literal=effect.literal,
         enter=effect.enter,
     )
-    return (None, store)
+    return ContinueValue(
+        value=None,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _handle_stop(
+def _handle_stop(
     effect: StopEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[None, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Handle Stop effect - stops session."""
+    store = ctx.store
     handle = effect.handle
     if tmux.has_session(handle.session_name):
         tmux.kill_session(handle.session_name)
@@ -300,17 +322,26 @@ async def _handle_stop(
     if state:
         state.status = SessionStatus.STOPPED
 
-    return (None, store)
+    return ContinueValue(
+        value=None,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _handle_sleep(
+def _handle_sleep(
     effect: SleepEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[None, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Handle Sleep effect - sleeps for duration."""
-    await asyncio.sleep(effect.seconds)
-    return (None, store)
+    time.sleep(effect.seconds)
+    return ContinueValue(
+        value=None,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
 def agent_effectful_handlers() -> dict[type, Any]:
@@ -389,12 +420,12 @@ def configure_mock_session(
     state.statuses[session_name] = SessionStatus.BOOTING
 
 
-async def _mock_handle_launch(
+def _mock_handle_launch(
     effect: LaunchEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[SessionHandle, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Mock Launch effect."""
+    store = ctx.store
     state = _get_mock_state(store)
 
     if effect.session_name in state.handles:
@@ -413,94 +444,128 @@ async def _mock_handle_launch(
     state.statuses[effect.session_name] = SessionStatus.BOOTING
     state.outputs.setdefault(effect.session_name, "")
 
-    return (handle, store)
+    return ContinueValue(
+        value=handle,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _mock_handle_monitor(
+def _mock_handle_monitor(
     effect: MonitorEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[Observation, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Mock Monitor effect."""
+    store = ctx.store
     state = _get_mock_state(store)
     session_name = effect.handle.session_name
 
     if session_name not in state.handles:
-        return (Observation(status=SessionStatus.EXITED), store)
+        return ContinueValue(
+            value=Observation(status=SessionStatus.EXITED),
+            env=ctx.task_state.env,
+            store=store,
+            k=ctx.task_state.kontinuation,
+        )
 
     script = state.scripts.get(session_name)
     if script:
         status, output = script.next_observation()
         state.statuses[session_name] = status
         state.outputs[session_name] = output
-        return (
-            Observation(
+        return ContinueValue(
+            value=Observation(
                 status=status,
                 output_changed=True,
                 output_snippet=output[-500:] if output else None,
             ),
-            store,
+            env=ctx.task_state.env,
+            store=store,
+            k=ctx.task_state.kontinuation,
         )
 
     # Default behavior without script
-    return (
-        Observation(
+    return ContinueValue(
+        value=Observation(
             status=state.statuses.get(session_name, SessionStatus.RUNNING),
             output_changed=False,
         ),
-        store,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
     )
 
 
-async def _mock_handle_capture(
+def _mock_handle_capture(
     effect: CaptureEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[str, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Mock Capture effect."""
+    store = ctx.store
     state = _get_mock_state(store)
     session_name = effect.handle.session_name
     if session_name not in state.handles:
         raise SessionNotFoundError(f"Session {session_name} does not exist")
-    return (state.outputs.get(session_name, ""), store)
+    return ContinueValue(
+        value=state.outputs.get(session_name, ""),
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _mock_handle_send(
+def _mock_handle_send(
     effect: SendEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[None, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Mock Send effect."""
+    store = ctx.store
     state = _get_mock_state(store)
     session_name = effect.handle.session_name
     if session_name not in state.handles:
         raise SessionNotFoundError(f"Session {session_name} does not exist")
     state.sends.append((session_name, effect.message))
-    return (None, store)
+    return ContinueValue(
+        value=None,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _mock_handle_stop(
+def _mock_handle_stop(
     effect: StopEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[None, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Mock Stop effect."""
+    store = ctx.store
     state = _get_mock_state(store)
     session_name = effect.handle.session_name
     if session_name in state.handles:
         state.statuses[session_name] = SessionStatus.STOPPED
-    return (None, store)
+    return ContinueValue(
+        value=None,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
-async def _mock_handle_sleep(
+def _mock_handle_sleep(
     effect: SleepEffect,
-    env: Environment,
-    store: Store,
-) -> tuple[None, Store]:
+    ctx: HandlerContext,
+) -> FrameResult:
     """Mock Sleep effect - records but doesn't wait."""
+    store = ctx.store
     state = _get_mock_state(store)
     state.sleep_calls.append(effect.seconds)
-    return (None, store)
+    return ContinueValue(
+        value=None,
+        env=ctx.task_state.env,
+        store=store,
+        k=ctx.task_state.kontinuation,
+    )
 
 
 def mock_agent_handlers() -> dict[type, Any]:

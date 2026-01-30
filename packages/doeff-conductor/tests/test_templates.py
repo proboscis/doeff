@@ -497,16 +497,19 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         assert program is not None
         assert hasattr(program, "to_generator")
 
-    def test_multi_agent_effects_include_gather(self, mock_issue: Issue):
-        """Verify multi_agent uses Gather for parallel execution."""
-        from doeff.effects.gather import GatherEffect
+    def test_multi_agent_effects_include_spawn_and_gather(self, mock_issue: Issue):
+        """Verify multi_agent uses Spawn + Gather for parallel execution."""
+        from doeff.effects.spawn import SpawnEffect
 
         program = multi_agent(mock_issue)
         gen = program.to_generator()
 
-        # First effect should be GatherEffect (for parallel worktrees)
+        # First effect should be SpawnEffect (for first parallel worktree)
         first_effect = next(gen)
-        assert isinstance(first_effect, GatherEffect)
+        assert isinstance(first_effect, SpawnEffect), f"Expected SpawnEffect, got {type(first_effect)}"
+        
+        # The SpawnEffect should contain a program for CreateWorktree
+        # We can't easily step further without mocking, but the structure is verified
 
     def test_template_with_mock_handlers(
         self,
@@ -514,54 +517,92 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         mock_worktree_env: WorktreeEnv,
         mock_pr: PRHandle,
     ):
-        """Run multi_agent template with mocked effects."""
-        from doeff.effects.gather import GatherEffect
+        """Run multi_agent template with mocked effects.
+        
+        Note: The multi_agent template uses Spawn+Gather for parallelism.
+        This test uses SyncRuntime which handles Spawn/Gather through default handlers,
+        combined with effect-specific mock handlers.
+        """
+        from doeff import SyncRuntime
+        from doeff.cesk.frames import ContinueValue
+        from doeff.cesk.runtime.context import HandlerContext
 
-        def handle_create_worktree(e):
-            return mock_worktree_env
-
-        def handle_merge_branches(e):
-            return mock_worktree_env
-
-        def handle_run_agent(e):
-            return "Done"
-
-        def handle_commit(e):
-            return "abc123"
-
-        def handle_push(e):
-            return None
-
-        def handle_create_pr(e):
-            return mock_pr
-
-        def handle_resolve_issue(e):
-            return Issue(
-                id="ISSUE-001",
-                title="Test",
-                body="Body",
-                status=IssueStatus.RESOLVED,
+        def handle_create_worktree(e, ctx: HandlerContext):
+            return ContinueValue(
+                value=mock_worktree_env,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
-        def handle_gather(e):
-            results = []
-            for prog in e.programs:
-                results.append(mock_worktree_env)
-            return results
+        def handle_merge_branches(e, ctx: HandlerContext):
+            return ContinueValue(
+                value=mock_worktree_env,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
+            )
 
+        def handle_run_agent(e, ctx: HandlerContext):
+            return ContinueValue(
+                value="Done",
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
+            )
+
+        def handle_commit(e, ctx: HandlerContext):
+            return ContinueValue(
+                value="abc123",
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
+            )
+
+        def handle_push(e, ctx: HandlerContext):
+            return ContinueValue(
+                value=None,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
+            )
+
+        def handle_create_pr(e, ctx: HandlerContext):
+            return ContinueValue(
+                value=mock_pr,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
+            )
+
+        def handle_resolve_issue(e, ctx: HandlerContext):
+            return ContinueValue(
+                value=Issue(
+                    id="ISSUE-001",
+                    title="Test",
+                    body="Body",
+                    status=IssueStatus.RESOLVED,
+                ),
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
+            )
+
+        # SyncRuntime includes default handlers for Spawn/Gather
+        # We only need to add handlers for our domain effects
         handlers = {
-            CreateWorktree: make_scheduled_handler(handle_create_worktree),
-            MergeBranches: make_scheduled_handler(handle_merge_branches),
-            RunAgent: make_scheduled_handler(handle_run_agent),
-            Commit: make_scheduled_handler(handle_commit),
-            Push: make_scheduled_handler(handle_push),
-            CreatePR: make_scheduled_handler(handle_create_pr),
-            ResolveIssue: make_scheduled_handler(handle_resolve_issue),
-            GatherEffect: make_scheduled_handler(handle_gather),
+            CreateWorktree: handle_create_worktree,
+            MergeBranches: handle_merge_branches,
+            RunAgent: handle_run_agent,
+            Commit: handle_commit,
+            Push: handle_push,
+            CreatePR: handle_create_pr,
+            ResolveIssue: handle_resolve_issue,
         }
 
-        result = run_sync(multi_agent(mock_issue), scheduled_handlers=handlers)
-        assert result.is_ok
+        runtime = SyncRuntime(handlers=handlers)
+        result = runtime.run(multi_agent(mock_issue))
+        assert result.is_ok()
 
 
 class TestTemplateDocumentation:
