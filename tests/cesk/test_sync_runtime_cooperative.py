@@ -361,6 +361,243 @@ class TestSyncRuntimePromise:
         assert isinstance(result.err(), ValueError)
 
 
+class TestSpawnPromiseWaitCombinations:
+    """Tests for Spawn + Promise + Wait combinations."""
+
+    def test_spawned_task_creates_promise_main_waits(self) -> None:
+        """Spawned task creates Promise, main task Waits on it."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            @do
+            def producer():
+                promise = yield CreatePromise()
+                yield Await(asyncio.sleep(0.01))
+                yield CompletePromise(promise, "from_producer")
+                return promise
+
+            task = yield Spawn(producer())
+            promise = yield Wait(task)
+            result = yield Wait(promise.future)
+            return result
+
+        result = runtime.run_and_unwrap(program())
+        assert result == "from_producer"
+
+    def test_two_spawned_tasks_producer_consumer_pattern(self) -> None:
+        """Producer spawned task creates+completes Promise, consumer spawned task Waits."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def producer():
+                yield Await(asyncio.sleep(0.02))
+                yield CompletePromise(promise, "produced_value")
+                return "producer_done"
+
+            @do
+            def consumer():
+                value = yield Wait(promise.future)
+                return f"consumed_{value}"
+
+            producer_task = yield Spawn(producer())
+            consumer_task = yield Spawn(consumer())
+
+            consumer_result = yield Wait(consumer_task)
+            producer_result = yield Wait(producer_task)
+
+            return {
+                "producer": producer_result,
+                "consumer": consumer_result,
+            }
+
+        result = runtime.run_and_unwrap(program())
+        assert result["producer"] == "producer_done"
+        assert result["consumer"] == "consumed_produced_value"
+
+    def test_spawned_task_fails_promise_another_spawned_waits(self) -> None:
+        """Spawned task FailPromise, another spawned task catches via Safe+Wait."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def failer():
+                yield Await(asyncio.sleep(0.01))
+                yield FailPromise(promise, ValueError("intentional_failure"))
+                return "failer_done"
+
+            @do
+            def waiter():
+                safe_result = yield Safe(Wait(promise.future))
+                if safe_result.is_err():
+                    return f"caught_{safe_result.err()}"
+                return f"got_{safe_result.ok()}"
+
+            failer_task = yield Spawn(failer())
+            waiter_task = yield Spawn(waiter())
+
+            waiter_result = yield Wait(waiter_task)
+            failer_result = yield Wait(failer_task)
+
+            return {
+                "failer": failer_result,
+                "waiter": waiter_result,
+            }
+
+        result = runtime.run_and_unwrap(program())
+        assert result["failer"] == "failer_done"
+        assert "caught_" in result["waiter"]
+        assert "intentional_failure" in result["waiter"]
+
+    def test_multiple_spawned_waiters_on_same_promise(self) -> None:
+        """Multiple spawned tasks Wait on same Promise, all receive the value."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def completer():
+                yield Await(asyncio.sleep(0.02))
+                yield CompletePromise(promise, "shared_value")
+
+            @do
+            def waiter(waiter_id: int):
+                value = yield Wait(promise.future)
+                return f"waiter_{waiter_id}_got_{value}"
+
+            completer_task = yield Spawn(completer())
+            waiter1 = yield Spawn(waiter(1))
+            waiter2 = yield Spawn(waiter(2))
+            waiter3 = yield Spawn(waiter(3))
+
+            r1 = yield Wait(waiter1)
+            r2 = yield Wait(waiter2)
+            r3 = yield Wait(waiter3)
+            yield Wait(completer_task)
+
+            return [r1, r2, r3]
+
+        result = runtime.run_and_unwrap(program())
+        assert result[0] == "waiter_1_got_shared_value"
+        assert result[1] == "waiter_2_got_shared_value"
+        assert result[2] == "waiter_3_got_shared_value"
+
+    def test_spawned_task_await_then_complete_promise_then_main_wait(self) -> None:
+        """Spawned task: Await -> state change -> CompletePromise, main Waits."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def worker():
+                yield Put("step", "started")
+                yield Await(asyncio.sleep(0.01))
+                yield Put("step", "after_await")
+                step = yield Get("step")
+                yield CompletePromise(promise, f"completed_at_{step}")
+                return "worker_done"
+
+            task = yield Spawn(worker())
+            promise_result = yield Wait(promise.future)
+            task_result = yield Wait(task)
+
+            return {
+                "promise": promise_result,
+                "task": task_result,
+            }
+
+        result = runtime.run_and_unwrap(program())
+        assert result["promise"] == "completed_at_after_await"
+        assert result["task"] == "worker_done"
+
+    def test_chain_of_spawned_tasks_with_promises(self) -> None:
+        """Chain: Task A creates Promise1, Task B waits Promise1 + creates Promise2, Task C waits Promise2."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise1 = yield CreatePromise()
+            promise2 = yield CreatePromise()
+
+            @do
+            def task_a():
+                yield Await(asyncio.sleep(0.01))
+                yield CompletePromise(promise1, "value_from_a")
+                return "a_done"
+
+            @do
+            def task_b():
+                val = yield Wait(promise1.future)
+                yield Await(asyncio.sleep(0.01))
+                yield CompletePromise(promise2, f"b_processed_{val}")
+                return "b_done"
+
+            @do
+            def task_c():
+                val = yield Wait(promise2.future)
+                return f"c_got_{val}"
+
+            ta = yield Spawn(task_a())
+            tb = yield Spawn(task_b())
+            tc = yield Spawn(task_c())
+
+            rc = yield Wait(tc)
+            rb = yield Wait(tb)
+            ra = yield Wait(ta)
+
+            return {"a": ra, "b": rb, "c": rc}
+
+        result = runtime.run_and_unwrap(program())
+        assert result["a"] == "a_done"
+        assert result["b"] == "b_done"
+        assert result["c"] == "c_got_b_processed_value_from_a"
+
+    def test_spawned_task_fail_promise_multiple_waiters_all_fail(self) -> None:
+        """FailPromise propagates to all spawned Waiters."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def failer():
+                yield Await(asyncio.sleep(0.02))
+                yield FailPromise(promise, RuntimeError("broadcast_error"))
+
+            @do
+            def waiter(waiter_id: int):
+                safe = yield Safe(Wait(promise.future))
+                if safe.is_err():
+                    return f"waiter_{waiter_id}_failed"
+                return f"waiter_{waiter_id}_ok"
+
+            failer_task = yield Spawn(failer())
+            w1 = yield Spawn(waiter(1))
+            w2 = yield Spawn(waiter(2))
+
+            r1 = yield Wait(w1)
+            r2 = yield Wait(w2)
+            yield Wait(failer_task)
+
+            return [r1, r2]
+
+        result = runtime.run_and_unwrap(program())
+        assert result[0] == "waiter_1_failed"
+        assert result[1] == "waiter_2_failed"
+
+
 class TestSyncRuntimePromiseWithAwait:
     """Tests for Promise effects inside spawned tasks with Await/Delay."""
 
