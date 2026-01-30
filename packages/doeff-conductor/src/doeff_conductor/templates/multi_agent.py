@@ -15,10 +15,32 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import EffectGenerator, Gather, do
+from doeff import EffectGenerator, Gather, Spawn, do
 
 if TYPE_CHECKING:
-    from ..types import Issue, PRHandle
+    from ..types import Issue, PRHandle, WorktreeEnv
+
+
+# Helper functions to wrap effects as Programs for Spawn
+@do
+def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator["WorktreeEnv"]:
+    """Create a worktree (wrapper for Spawn compatibility)."""
+    from ..effects import CreateWorktree
+    return (yield CreateWorktree(issue=issue, suffix=suffix))
+
+
+@do
+def _run_agent(env: "WorktreeEnv", prompt: str, name: str) -> EffectGenerator[str]:
+    """Run an agent (wrapper for Spawn compatibility)."""
+    from ..effects import RunAgent
+    return (yield RunAgent(env=env, prompt=prompt, name=name))
+
+
+@do
+def _commit(env: "WorktreeEnv", message: str) -> EffectGenerator[str]:
+    """Create a commit (wrapper for Spawn compatibility)."""
+    from ..effects import Commit
+    return (yield Commit(env=env, message=message))
 
 
 @do
@@ -34,18 +56,16 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
     from ..effects import (
         Commit,
         CreatePR,
-        CreateWorktree,
         MergeBranches,
         Push,
         ResolveIssue,
         RunAgent,
     )
 
-    # Step 1: Create parallel worktrees
-    impl_env, test_env = yield Gather(
-        CreateWorktree(issue=issue, suffix="impl"),
-        CreateWorktree(issue=issue, suffix="tests"),
-    )
+    # Step 1: Create parallel worktrees (spawn to get futures, then gather)
+    impl_task = yield Spawn(_create_worktree(issue, "impl"))
+    test_task = yield Spawn(_create_worktree(issue, "tests"))
+    impl_env, test_env = yield Gather(impl_task, test_task)
 
     # Step 2: Run agents in parallel
     impl_prompt = f"""
@@ -74,16 +94,14 @@ Focus on writing comprehensive tests:
 Do NOT implement the feature - just write the tests.
 """
 
-    yield Gather(
-        RunAgent(env=impl_env, prompt=impl_prompt, name="implementer"),
-        RunAgent(env=test_env, prompt=test_prompt, name="tester"),
-    )
+    impl_agent_task = yield Spawn(_run_agent(impl_env, impl_prompt, "implementer"))
+    test_agent_task = yield Spawn(_run_agent(test_env, test_prompt, "tester"))
+    yield Gather(impl_agent_task, test_agent_task)
 
     # Step 3: Commit changes in parallel environments
-    yield Gather(
-        Commit(env=impl_env, message=f"feat: implement {issue.title}"),
-        Commit(env=test_env, message=f"test: add tests for {issue.title}"),
-    )
+    impl_commit_task = yield Spawn(_commit(impl_env, f"feat: implement {issue.title}"))
+    test_commit_task = yield Spawn(_commit(test_env, f"test: add tests for {issue.title}"))
+    yield Gather(impl_commit_task, test_commit_task)
 
     # Step 4: Merge branches
     merged_env = yield MergeBranches(envs=(impl_env, test_env))

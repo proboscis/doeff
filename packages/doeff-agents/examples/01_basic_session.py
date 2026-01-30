@@ -1,88 +1,187 @@
 #!/usr/bin/env python3
 """
-Basic Session Example
+Basic Session Example - Using doeff Effects API
 
-This example demonstrates the fundamental operations of doeff-agents:
-- Launching an agent session
-- Monitoring session status
-- Capturing output
-- Stopping a session
+This example demonstrates the fundamental operations of doeff-agents
+using the effects-based approach with doeff AsyncRuntime:
+- Launching an agent session with Launch effect
+- Monitoring session status with Monitor effect
+- Capturing output with Capture effect
+- Stopping a session with Stop effect
 
-Note: This example requires tmux and the Claude CLI to be installed.
+The effects API provides:
+- Composable, testable programs
+- Integration with doeff preset handlers for logging
+- Mock handlers for testing without real tmux
 """
 
+import asyncio
 import time
 from pathlib import Path
 
+from doeff import AsyncRuntime, do
+from doeff.effects.writer import slog
+from doeff_preset import preset_handlers
+
 from doeff_agents import (
     AgentType,
+    Capture,
+    CeskMockSessionScript,
+    Launch,
     LaunchConfig,
+    Monitor,
+    SessionHandle,
     SessionStatus,
-    capture_output,
-    launch_session,
-    monitor_session,
-    stop_session,
+    Sleep,
+    Stop,
+    agent_effectful_handlers,
+    configure_mock_session,
+    mock_agent_handlers,
 )
 
 
-def main() -> None:
-    # Configure the agent session
+@do
+def basic_session_workflow(session_name: str, config: LaunchConfig):
+    """Run a basic agent session using effects.
+    
+    This program yields fine-grained effects that are interpreted
+    by the runtime's handlers.
+    """
+    yield slog(step="launch", session_name=session_name, work_dir=str(config.work_dir))
+    yield slog(step="launch", agent_type=config.agent_type.value)
+    
+    # Launch the session
+    handle: SessionHandle = yield Launch(session_name, config)
+    yield slog(step="launched", pane_id=handle.pane_id)
+    
+    try:
+        # Monitor the session until terminal state or timeout
+        max_iterations = 60
+        iteration = 0
+        final_status = SessionStatus.PENDING
+        
+        while iteration < max_iterations:
+            observation = yield Monitor(handle)
+            final_status = observation.status
+            
+            if observation.output_changed:
+                yield slog(
+                    step="status",
+                    iteration=iteration,
+                    status=observation.status.value,
+                )
+            
+            if observation.is_terminal:
+                yield slog(step="terminal", status=observation.status.value)
+                break
+            
+            # If blocked (waiting for input), log it
+            if observation.status == SessionStatus.BLOCKED:
+                yield slog(step="blocked", msg="Agent is waiting for input")
+            
+            iteration += 1
+            yield Sleep(1.0)
+        
+        # Capture final output
+        output: str = yield Capture(handle, lines=30)
+        yield slog(step="output", lines=30, preview=output[-200:] if output else "")
+        
+        return {
+            "session_name": session_name,
+            "final_status": final_status.value,
+            "output": output,
+            "iterations": iteration,
+        }
+    
+    finally:
+        # Always clean up the session
+        yield slog(step="stopping", session_name=session_name)
+        yield Stop(handle)
+        yield slog(step="stopped")
+
+
+async def run_with_mock_handlers() -> None:
+    """Run the example with mock handlers (no real tmux needed)."""
+    print("=" * 60)
+    print("Running with AsyncRuntime + mock handlers")
+    print("=" * 60)
+    
+    session_name = f"demo-{int(time.time())}"
+    
+    # Configure mock session behavior in initial store
+    initial_store = {}
+    configure_mock_session(
+        initial_store,
+        session_name,
+        CeskMockSessionScript([
+            (SessionStatus.BOOTING, "Agent starting..."),
+            (SessionStatus.RUNNING, "Processing request..."),
+            (SessionStatus.RUNNING, "Listing files..."),
+            (SessionStatus.DONE, "Task completed!\n\nFiles:\n- README.md\n- main.py"),
+        ]),
+    )
+    
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
         prompt="List the files in the current directory and describe what you see.",
     )
+    
+    # Create runtime with combined handlers
+    handlers = {
+        **preset_handlers(),  # slog display and config
+        **mock_agent_handlers(),  # mock agent effects
+    }
+    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
+    
+    # Run the program
+    result = await runtime.run(basic_session_workflow(session_name, config))
+    print(f"\nResult: {result}")
 
-    # Generate a unique session name
+
+async def run_with_real_tmux() -> None:
+    """Run the example with real tmux (requires tmux + claude CLI)."""
+    import shutil
+    
+    if not shutil.which("tmux"):
+        print("tmux not available, skipping real tmux example")
+        return
+    
+    if not shutil.which("claude"):
+        print("Claude CLI not available, skipping real tmux example")
+        return
+    
+    print("\n" + "=" * 60)
+    print("Running with AsyncRuntime + real tmux")
+    print("=" * 60)
+    
+    config = LaunchConfig(
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="List the files in the current directory and describe what you see.",
+    )
+    
     session_name = f"demo-{int(time.time())}"
+    
+    # Create runtime with combined handlers
+    handlers = {
+        **preset_handlers(),  # slog display and config
+        **agent_effectful_handlers(),  # real tmux agent effects
+    }
+    runtime = AsyncRuntime(handlers=handlers)
+    
+    # Run the program
+    result = await runtime.run(basic_session_workflow(session_name, config))
+    print(f"\nResult: {result}")
 
-    print(f"Launching session: {session_name}")
-    print(f"Working directory: {config.work_dir}")
-    print(f"Agent type: {config.agent_type.value}")
-    print("-" * 50)
 
-    # Launch the session
-    try:
-        session = launch_session(session_name, config)
-        print(f"Session started with pane ID: {session.pane_id}")
-        print(f"Initial status: {session.status.value}")
-
-        # Monitor the session for up to 60 seconds
-        max_wait = 60
-        start_time = time.time()
-
-        while not session.is_terminal and (time.time() - start_time) < max_wait:
-            # Check for status changes
-            new_status = monitor_session(session)
-            if new_status:
-                print(f"Status changed: {new_status.value}")
-
-            # If blocked (waiting for input), we could send a message
-            if session.status == SessionStatus.BLOCKED:
-                print("Agent is waiting for input...")
-                # In a real application, you might send a follow-up message:
-                # send_message(session, "Continue")
-
-            time.sleep(1)
-
-        # Capture and display the final output
-        print("-" * 50)
-        print("Final output (last 30 lines):")
-        output = capture_output(session, lines=30)
-        print(output)
-
-        print("-" * 50)
-        print(f"Final status: {session.status.value}")
-
-    except Exception as e:
-        print(f"Error: {e}")
-
-    finally:
-        # Always clean up the session
-        print("Stopping session...")
-        stop_session(session)
-        print("Session stopped.")
+async def main() -> None:
+    """Run the examples."""
+    await run_with_mock_handlers()
+    
+    # Uncomment to run with real tmux (requires tmux + claude CLI)
+    # await run_with_real_tmux()
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

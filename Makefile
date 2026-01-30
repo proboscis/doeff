@@ -3,7 +3,7 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-doeff lint-packages \
-        test test-unit test-e2e format check pre-commit-install clean
+        test test-unit test-e2e test-packages test-all format check pre-commit-install clean
 
 # Default target
 help:
@@ -23,9 +23,11 @@ help:
 	@echo "  make lint-packages     Run lint in all subpackages with Makefiles"
 	@echo ""
 	@echo "Testing:"
-	@echo "  make test              Run all tests"
+	@echo "  make test              Run core tests"
 	@echo "  make test-unit         Run unit tests only (exclude e2e)"
 	@echo "  make test-e2e          Run e2e tests only"
+	@echo "  make test-packages     Run tests in all subpackages"
+	@echo "  make test-all          Run ALL tests (core + packages)"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format            Format code with ruff"
@@ -107,6 +109,22 @@ test-unit:
 
 test-e2e:
 	uv run pytest -m "e2e"
+
+# Run tests in all subpackages that have tests/ directories
+test-packages:
+	@echo "Running tests in subpackages..."
+	@for dir in packages/*/; do \
+		if [ -d "$$dir/tests" ]; then \
+			echo ""; \
+			echo "=== Testing $$(basename $$dir) ==="; \
+			(cd "$$dir" && uv run pytest tests/) || exit 1; \
+		fi; \
+	done
+
+# Run ALL tests: core + all subpackages
+test-all: test test-packages
+	@echo ""
+	@echo "All tests passed!"
 
 # =============================================================================
 # Formatting

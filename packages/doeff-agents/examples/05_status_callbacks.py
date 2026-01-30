@@ -1,59 +1,59 @@
 #!/usr/bin/env python3
 """
-Status Callbacks Example
+Status Callbacks Example - Using doeff Effects API
 
-This example demonstrates using callbacks to react to session events:
-- Status changes (RUNNING, BLOCKED, DONE, etc.)
-- PR URL detection (when agent creates a pull request)
+This example demonstrates using slog effects to track and react to
+session events instead of traditional callbacks.
 
-Callbacks are useful for:
-- Logging and monitoring
-- Sending notifications (Slack, email, etc.)
-- Triggering automated workflows
-- Updating dashboards
+With the effects-based approach:
+- Status changes are logged via slog effects
+- PR URL detection is logged via slog effects  
+- Event collection is done through the runtime's log accumulation
+- All events are structured and queryable
+
+Benefits:
+- Pure effects, no side effects in callbacks
+- Structured logging with slog
+- Testable with mock handlers
+- Log accumulation through the runtime
 """
 
+import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from doeff import AsyncRuntime, do
+from doeff.effects.writer import slog
+from doeff_preset import preset_handlers
+
 from doeff_agents import (
     AgentType,
+    Capture,
+    CeskMockSessionScript,
+    Launch,
     LaunchConfig,
+    Monitor,
+    Observation,
+    SessionHandle,
     SessionStatus,
-    monitor_session,
-    session_scope,
+    Sleep,
+    Stop,
+    agent_effectful_handlers,
+    configure_mock_session,
+    mock_agent_handlers,
 )
 
-# =============================================================================
-# Example 1: Simple Logging Callbacks
-# =============================================================================
-
-
-def simple_status_callback(
-    old_status: SessionStatus,
-    new_status: SessionStatus,
-    output: str | None,
-) -> None:
-    """Log status changes with timestamps."""
-    timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{timestamp}] Status: {old_status.value} -> {new_status.value}")
-
-
-def simple_pr_callback(url: str) -> None:
-    """Log when a PR is created."""
-    print(f"PR Created: {url}")
-
 
 # =============================================================================
-# Example 2: Event Collector
+# Event Types for Structured Logging
 # =============================================================================
 
 
 @dataclass
 class SessionEvent:
-    """Represents a session event."""
+    """Represents a session event (for post-processing logs)."""
 
     timestamp: datetime
     event_type: str
@@ -63,131 +63,246 @@ class SessionEvent:
     output_snippet: str | None = None
 
 
-@dataclass
-class EventCollector:
-    """Collects and stores session events for later analysis."""
+# =============================================================================
+# Effects-based Workflows with Structured Logging
+# =============================================================================
 
-    events: list[SessionEvent] = field(default_factory=list)
 
-    def on_status_change(
-        self,
-        old_status: SessionStatus,
-        new_status: SessionStatus,
-        output: str | None,
-    ) -> None:
-        """Record a status change event."""
-        event = SessionEvent(
-            timestamp=datetime.now(timezone.utc),
-            event_type="status_change",
-            old_status=old_status,
-            new_status=new_status,
-            output_snippet=output[-200:] if output else None,
+@do
+def monitored_session_workflow(session_name: str, config: LaunchConfig):
+    """Run a session with comprehensive slog-based monitoring.
+    
+    Instead of callbacks, we yield slog effects for every event.
+    The runtime accumulates these logs for later analysis.
+    """
+    yield slog(step="session_start", session_name=session_name, timestamp=datetime.now(timezone.utc).isoformat())
+    
+    handle: SessionHandle = yield Launch(session_name, config)
+    yield slog(step="launched", pane_id=handle.pane_id)
+    
+    previous_status = SessionStatus.PENDING
+    final_status = SessionStatus.PENDING
+    pr_url: str | None = None
+    iteration = 0
+    
+    try:
+        for iteration in range(60):
+            observation: Observation = yield Monitor(handle)
+            final_status = observation.status
+            
+            # Log status changes (equivalent to on_status_change callback)
+            if observation.status != previous_status:
+                yield slog(
+                    step="status_change",
+                    event_type="status_change",
+                    old_status=previous_status.value,
+                    new_status=observation.status.value,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+                
+                # Log specific status events
+                if observation.status == SessionStatus.BLOCKED:
+                    yield slog(
+                        step="notification",
+                        event_type="blocked",
+                        msg=f"Agent waiting for input ({iteration}s)",
+                    )
+                elif observation.status == SessionStatus.BLOCKED_API:
+                    yield slog(
+                        step="alert",
+                        event_type="rate_limited",
+                        msg="Hit API rate limit",
+                        severity="warning",
+                    )
+                elif observation.status == SessionStatus.FAILED:
+                    output = yield Capture(handle, lines=20)
+                    yield slog(
+                        step="alert",
+                        event_type="failed",
+                        msg="Session failed",
+                        severity="error",
+                        output_snippet=output[-300:] if output else None,
+                    )
+                elif observation.status == SessionStatus.DONE:
+                    yield slog(
+                        step="success",
+                        event_type="completed",
+                        msg=f"Session completed ({iteration}s)",
+                    )
+                
+                previous_status = observation.status
+            
+            # Log PR detection (equivalent to on_pr_detected callback)
+            if observation.pr_url and not pr_url:
+                pr_url = observation.pr_url
+                yield slog(
+                    step="pr_created",
+                    event_type="pr_detected",
+                    pr_url=pr_url,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+            
+            if observation.is_terminal:
+                break
+            
+            yield Sleep(1.0)
+        
+        # Final output capture
+        output = yield Capture(handle, lines=50)
+        yield slog(
+            step="session_end",
+            session_name=session_name,
+            final_status=final_status.value,
+            pr_url=pr_url,
+            duration_iterations=iteration,
         )
-        self.events.append(event)
-        print(f"Collected event: {old_status.value} -> {new_status.value}")
-
-    def on_pr_detected(self, url: str) -> None:
-        """Record a PR detection event."""
-        event = SessionEvent(
-            timestamp=datetime.now(timezone.utc),
-            event_type="pr_detected",
-            pr_url=url,
-        )
-        self.events.append(event)
-        print(f"Collected PR event: {url}")
-
-    def summary(self) -> dict:
-        """Generate a summary of collected events."""
-        status_changes = [e for e in self.events if e.event_type == "status_change"]
-        pr_events = [e for e in self.events if e.event_type == "pr_detected"]
-
+        
         return {
-            "total_events": len(self.events),
-            "status_changes": len(status_changes),
-            "pr_detections": len(pr_events),
-            "pr_urls": [e.pr_url for e in pr_events],
-            "final_status": status_changes[-1].new_status.value if status_changes else "unknown",
-            "duration": (
-                (self.events[-1].timestamp - self.events[0].timestamp).total_seconds()
-                if len(self.events) > 1
-                else 0
-            ),
+            "session_name": session_name,
+            "final_status": final_status.value,
+            "pr_url": pr_url,
+            "output": output,
+            "iterations": iteration,
         }
+    
+    finally:
+        yield Stop(handle)
 
 
-# =============================================================================
-# Example 3: Notification Handler
-# =============================================================================
-
-
-class NotificationHandler:
+@do
+def event_collecting_workflow(session_name: str, config: LaunchConfig):
+    """Workflow that collects events for post-run analysis.
+    
+    Uses slog with structured data that can be extracted from
+    the runtime's accumulated log.
     """
-    Handle notifications for important events.
+    yield slog(
+        step="collector_start",
+        event_type="collection_started",
+        session_name=session_name,
+    )
+    
+    result = yield from monitored_session_workflow(session_name, config)
+    
+    yield slog(
+        step="collector_end",
+        event_type="collection_complete",
+        total_events="see_accumulated_log",
+        final_status=result["final_status"],
+    )
+    
+    return result
 
-    In a real application, these methods would send actual notifications
-    via Slack, email, webhooks, etc.
+
+@do
+def notification_workflow(session_name: str, config: LaunchConfig):
+    """Workflow demonstrating notification-style events.
+    
+    In production, these slogs could be processed by a handler
+    that sends actual notifications (Slack, email, etc.).
     """
-
-    def __init__(self, session_name: str) -> None:
-        self.session_name = session_name
-        self.start_time = time.time()
-
-    def on_status_change(
-        self,
-        old_status: SessionStatus,
-        new_status: SessionStatus,
-        output: str | None,
-    ) -> None:
-        """Send notifications for important status changes."""
-        elapsed = time.time() - self.start_time
-
-        # Notify on important transitions
-        if new_status == SessionStatus.BLOCKED:
-            self._notify_blocked(elapsed)
-        elif new_status == SessionStatus.BLOCKED_API:
-            self._notify_rate_limited(elapsed)
-        elif new_status == SessionStatus.FAILED:
-            self._notify_failed(elapsed, output)
-        elif new_status == SessionStatus.DONE:
-            self._notify_completed(elapsed)
-
-    def on_pr_detected(self, url: str) -> None:
-        """Send notification when PR is created."""
-        self._notify_pr(url)
-
-    def _notify_blocked(self, elapsed: float) -> None:
-        print(f"NOTIFICATION: [{self.session_name}] Agent waiting for input ({elapsed:.0f}s)")
-        # In production: send to Slack, etc.
-
-    def _notify_rate_limited(self, elapsed: float) -> None:
-        print(f"ALERT: [{self.session_name}] Hit API rate limit ({elapsed:.0f}s)")
-        # In production: alert on-call, pause other sessions, etc.
-
-    def _notify_failed(self, elapsed: float, output: str | None) -> None:
-        error_snippet = output[-300:] if output else "No output available"
-        print(f"ALERT: [{self.session_name}] Session FAILED ({elapsed:.0f}s)")
-        print(f"  Last output: {error_snippet}")
-        # In production: create incident ticket, etc.
-
-    def _notify_completed(self, elapsed: float) -> None:
-        print(f"SUCCESS: [{self.session_name}] Session completed ({elapsed:.0f}s)")
-        # In production: update dashboard, trigger CI/CD, etc.
-
-    def _notify_pr(self, url: str) -> None:
-        print(f"PR CREATED: [{self.session_name}] {url}")
-        # In production: post to Slack channel, add reviewers, etc.
+    start_time = time.time()
+    
+    yield slog(
+        step="notifier_start",
+        event_type="notification",
+        channel="monitoring",
+        msg=f"Starting session: {session_name}",
+    )
+    
+    handle: SessionHandle = yield Launch(session_name, config)
+    previous_status = SessionStatus.PENDING
+    final_status = SessionStatus.PENDING
+    
+    try:
+        for iteration in range(60):
+            observation = yield Monitor(handle)
+            final_status = observation.status
+            elapsed = time.time() - start_time
+            
+            if observation.status != previous_status:
+                # Notification-style logging
+                if observation.status == SessionStatus.BLOCKED:
+                    yield slog(
+                        step="notification",
+                        channel="alerts",
+                        severity="info",
+                        msg=f"[{session_name}] Agent waiting for input ({elapsed:.0f}s)",
+                    )
+                elif observation.status == SessionStatus.BLOCKED_API:
+                    yield slog(
+                        step="notification",
+                        channel="alerts",
+                        severity="warning",
+                        msg=f"[{session_name}] Hit API rate limit ({elapsed:.0f}s)",
+                    )
+                elif observation.status == SessionStatus.FAILED:
+                    output = yield Capture(handle, lines=10)
+                    yield slog(
+                        step="notification",
+                        channel="alerts",
+                        severity="error",
+                        msg=f"[{session_name}] Session FAILED ({elapsed:.0f}s)",
+                        output_snippet=output[-200:] if output else None,
+                    )
+                elif observation.status == SessionStatus.DONE:
+                    yield slog(
+                        step="notification",
+                        channel="success",
+                        severity="info",
+                        msg=f"[{session_name}] Session completed ({elapsed:.0f}s)",
+                    )
+                
+                previous_status = observation.status
+            
+            if observation.pr_url:
+                yield slog(
+                    step="notification",
+                    channel="prs",
+                    severity="info",
+                    msg=f"[{session_name}] PR Created: {observation.pr_url}",
+                )
+            
+            if observation.is_terminal:
+                break
+            
+            yield Sleep(1.0)
+        
+        output = yield Capture(handle, lines=30)
+        return {
+            "session_name": session_name,
+            "final_status": final_status.value,
+            "output": output,
+        }
+    
+    finally:
+        yield Stop(handle)
 
 
 # =============================================================================
-# Running the Examples
+# Demo Functions
 # =============================================================================
 
 
-def run_with_simple_callbacks() -> None:
-    """Run a session with simple logging callbacks."""
+async def run_monitored_session() -> None:
+    """Run with mock handlers and show accumulated logs."""
     print("=" * 60)
-    print("Example: Simple Logging Callbacks")
+    print("Status Callbacks via slog Effects")
     print("=" * 60)
+
+    session_name = f"callbacks-{int(time.time())}"
+    
+    initial_store = {}
+    configure_mock_session(
+        initial_store,
+        session_name,
+        CeskMockSessionScript([
+            (SessionStatus.RUNNING, "Starting task..."),
+            (SessionStatus.BLOCKED, "Need input..."),
+            (SessionStatus.RUNNING, "Continuing..."),
+            (SessionStatus.DONE, "Task completed! Created PR: https://github.com/user/repo/pull/123"),
+        ]),
+    )
 
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
@@ -195,64 +310,51 @@ def run_with_simple_callbacks() -> None:
         prompt="List the current directory contents.",
     )
 
-    session_name = f"callbacks-{int(time.time())}"
+    handlers = {
+        **preset_handlers(),
+        **mock_agent_handlers(),
+    }
+    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
 
-    with session_scope(session_name, config) as session:
-        for _ in range(60):  # Monitor for up to 60 seconds
-            monitor_session(
-                session,
-                on_status_change=simple_status_callback,
-                on_pr_detected=simple_pr_callback,
-            )
-
-            if session.is_terminal:
-                break
-
-            time.sleep(1)
-
-        print(f"\nFinal status: {session.status.value}")
+    result = await runtime.run(monitored_session_workflow(session_name, config))
+    print(f"\nResult: {result}")
 
 
-def run_with_event_collector() -> None:
-    """Run a session with event collection for analysis."""
-    print("=" * 60)
-    print("Example: Event Collector")
+def simulate_events_demo() -> None:
+    """Show how slog effects replace traditional callbacks."""
+    print("\n" + "=" * 60)
+    print("Demo: slog Effects as Callbacks")
     print("=" * 60)
 
-    config = LaunchConfig(
-        agent_type=AgentType.CLAUDE,
-        work_dir=Path.cwd(),
-        prompt="Create a new file called hello.txt with some content.",
-    )
-
-    session_name = f"collector-{int(time.time())}"
-    collector = EventCollector()
-
-    with session_scope(session_name, config) as session:
-        for _ in range(60):
-            monitor_session(
-                session,
-                on_status_change=collector.on_status_change,
-                on_pr_detected=collector.on_pr_detected,
-            )
-
-            if session.is_terminal:
-                break
-
-            time.sleep(1)
-
-    # Print collected events summary
-    print("\n" + "-" * 40)
-    print("Event Summary:")
-    summary = collector.summary()
-    for key, value in summary.items():
-        print(f"  {key}: {value}")
+    print("\nTraditional callback approach:")
+    print("  def on_status_change(old, new, output):")
+    print("      print(f'{old} -> {new}')")
+    print()
+    print("Effects-based approach (what we use now):")
+    print("  yield slog(")
+    print("      step='status_change',")
+    print("      old_status=old.value,")
+    print("      new_status=new.value,")
+    print("  )")
+    print()
+    print("Benefits:")
+    print("  - Pure effects, no side effects")
+    print("  - Structured data, easily queryable")
+    print("  - Accumulated in runtime log")
+    print("  - Testable with mock handlers")
+    print("  - Composable with preset_handlers for display")
 
 
-def run_with_notifications() -> None:
-    """Run a session with notification handling."""
-    print("=" * 60)
-    print("Example: Notification Handler")
+async def run_with_real_tmux() -> None:
+    """Run with AsyncRuntime and real tmux."""
+    import shutil
+
+    if not shutil.which("claude"):
+        print("Claude CLI not available, skipping real tmux example")
+        return
+
+    print("\n" + "=" * 60)
+    print("Running with AsyncRuntime + real tmux")
     print("=" * 60)
 
     config = LaunchConfig(
@@ -262,45 +364,25 @@ def run_with_notifications() -> None:
     )
 
     session_name = f"notifier-{int(time.time())}"
-    handler = NotificationHandler(session_name)
 
-    with session_scope(session_name, config) as session:
-        for _ in range(60):
-            monitor_session(
-                session,
-                on_status_change=handler.on_status_change,
-                on_pr_detected=handler.on_pr_detected,
-            )
+    handlers = {
+        **preset_handlers(),
+        **agent_effectful_handlers(),
+    }
+    runtime = AsyncRuntime(handlers=handlers)
 
-            if session.is_terminal:
-                break
+    result = await runtime.run(notification_workflow(session_name, config))
+    print(f"\nResult: {result}")
 
-            time.sleep(1)
 
-        print(f"\nFinal status: {session.status.value}")
+async def main() -> None:
+    """Run all examples."""
+    await run_monitored_session()
+    simulate_events_demo()
+
+    # Uncomment to run with real tmux
+    # await run_with_real_tmux()
 
 
 if __name__ == "__main__":
-    import shutil
-
-    if not shutil.which("claude"):
-        print("Warning: Claude CLI not found.")
-        print("Install with: npm install -g @anthropic/claude-code")
-
-        # Show a demo without actually running
-        print("\n" + "=" * 60)
-        print("Demo: Callback Types")
-        print("=" * 60)
-
-        # Simulate events
-        print("\nSimulating events...")
-        simple_status_callback(SessionStatus.PENDING, SessionStatus.BOOTING, None)
-        simple_status_callback(SessionStatus.BOOTING, SessionStatus.RUNNING, None)
-        simple_status_callback(SessionStatus.RUNNING, SessionStatus.DONE, "Task completed")
-        simple_pr_callback("https://github.com/user/repo/pull/123")
-    else:
-        # Run actual examples
-        run_with_simple_callbacks()
-        # Uncomment to run other examples:
-        # run_with_event_collector()
-        # run_with_notifications()
+    asyncio.run(main())
