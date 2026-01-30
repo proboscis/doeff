@@ -20,7 +20,6 @@ from doeff_agentic import (
     AgenticGetMessages,
     AgenticMessage,
     AgenticSendMessage,
-    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
 from doeff_preset import preset_handlers
@@ -78,7 +77,7 @@ if __name__ == "__main__":
         handlers = {**preset_handlers(), **opencode_handler()}
         runtime = AsyncRuntime(handlers=handlers)
 
-        result = await runtime.run(with_visual_logging(agent_with_status()))
+        result = await runtime.run(agent_with_status())
 
         if result.is_err():
             print("\n=== Workflow Failed ===")

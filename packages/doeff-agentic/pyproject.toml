@@ -60,3 +60,4 @@ packages = ["src/doeff_agentic"]
 [tool.uv.sources]
 doeff = { workspace = true }
 doeff-flow = { workspace = true }
+doeff-preset = { workspace = true }
