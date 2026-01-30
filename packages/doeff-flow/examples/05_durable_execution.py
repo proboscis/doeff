@@ -34,6 +34,7 @@ from doeff_flow import run_workflow
 
 from doeff import do
 from doeff.effects.cache import CacheGet, CachePut
+from doeff.effects.writer import slog
 from doeff.storage import SQLiteStorage
 
 # =============================================================================
@@ -92,17 +93,17 @@ def fetch_step(step_id: str, endpoint: str):
     # Check if we have a cached result
     cached = yield CacheGet(cache_key)
     if cached is not None:
-        print(f"  [CACHE HIT] Step '{step_id}' - using cached result")
+        yield slog(step="cache", status="hit", step_id=step_id)
         return cached
 
-    print(f"  [CACHE MISS] Step '{step_id}' - executing...")
+    yield slog(step="cache", status="miss", step_id=step_id)
 
     # Execute the expensive operation
     result = expensive_api_call(endpoint)
 
     # Cache the result for future runs
     yield CachePut(cache_key, result)
-    print(f"  [CACHED] Step '{step_id}' result saved")
+    yield slog(step="cache", status="saved", step_id=step_id)
 
     return result
 
@@ -116,13 +117,13 @@ def compute_step(step_id: str, input_data: dict):
 
     cached = yield CacheGet(cache_key)
     if cached is not None:
-        print(f"  [CACHE HIT] Step '{step_id}' - using cached result")
+        yield slog(step="cache", status="hit", step_id=step_id)
         return cached
 
-    print(f"  [CACHE MISS] Step '{step_id}' - executing...")
+    yield slog(step="cache", status="miss", step_id=step_id)
     result = expensive_computation(input_data)
     yield CachePut(cache_key, result)
-    print(f"  [CACHED] Step '{step_id}' result saved")
+    yield slog(step="cache", status="saved", step_id=step_id)
 
     return result
 
@@ -136,13 +137,13 @@ def aggregate_step(step_id: str, results: list[dict]):
 
     cached = yield CacheGet(cache_key)
     if cached is not None:
-        print(f"  [CACHE HIT] Step '{step_id}' - using cached result")
+        yield slog(step="cache", status="hit", step_id=step_id)
         return cached
 
-    print(f"  [CACHE MISS] Step '{step_id}' - executing...")
+    yield slog(step="cache", status="miss", step_id=step_id)
     result = expensive_aggregation(results)
     yield CachePut(cache_key, result)
-    print(f"  [CACHED] Step '{step_id}' result saved")
+    yield slog(step="cache", status="saved", step_id=step_id)
 
     return result
 
@@ -164,28 +165,26 @@ def durable_pipeline():
     Total time on first run: ~5 seconds
     Total time on cached run: ~0 seconds
     """
-    print("\n" + "=" * 60)
-    print("Starting Durable Pipeline")
-    print("=" * 60 + "\n")
+    yield slog(step="pipeline", status="starting")
 
     start_time = time.time()
 
     # Phase 1: Fetch data from multiple sources (parallel in real app)
-    print("[Phase 1] Fetching data from sources...")
+    yield slog(step="phase1", msg="Fetching data from sources")
 
     source_a = yield fetch_step("source_a", "/api/users")
     source_b = yield fetch_step("source_b", "/api/orders")
     source_c = yield fetch_step("source_c", "/api/products")
 
     # Phase 2: Process each source
-    print("\n[Phase 2] Processing data...")
+    yield slog(step="phase2", msg="Processing data")
 
     processed_a = yield compute_step("process_a", source_a)
     processed_b = yield compute_step("process_b", source_b)
     processed_c = yield compute_step("process_c", source_c)
 
     # Phase 3: Aggregate results
-    print("\n[Phase 3] Aggregating results...")
+    yield slog(step="phase3", msg="Aggregating results")
 
     final_result = yield aggregate_step(
         "final_aggregation",
@@ -194,9 +193,7 @@ def durable_pipeline():
 
     elapsed = time.time() - start_time
 
-    print("\n" + "=" * 60)
-    print(f"Pipeline Complete! (took {elapsed:.2f}s)")
-    print("=" * 60 + "\n")
+    yield slog(step="pipeline", status="complete", elapsed=f"{elapsed:.2f}s")
 
     return {
         "status": "success",
