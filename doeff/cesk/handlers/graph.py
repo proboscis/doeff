@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from doeff.cesk.frames import ContinueProgram, ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
 from doeff.cesk.types import Store
 from doeff.effects.graph import (
     GraphAnnotateEffect,
@@ -13,6 +12,9 @@ from doeff.effects.graph import (
     GraphSnapshotEffect,
     GraphStepEffect,
 )
+
+if TYPE_CHECKING:
+    from doeff.cesk.runtime.context import HandlerContext
 
 
 def _get_graph(store: Store) -> list[dict[str, Any]]:
@@ -25,69 +27,65 @@ def _set_graph(store: Store, graph: list[dict[str, Any]]) -> Store:
 
 def handle_graph_step(
     effect: GraphStepEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    graph = _get_graph(store)
+    graph = _get_graph(ctx.store)
     node = {"value": effect.value, "meta": effect.meta}
     new_graph = graph + [node]
-    new_store = _set_graph(store, new_graph)
+    new_store = _set_graph(ctx.store, new_graph)
     return ContinueValue(
         value=effect.value,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_graph_annotate(
     effect: GraphAnnotateEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    graph = _get_graph(store)
+    graph = _get_graph(ctx.store)
     if graph:
         last_node = graph[-1]
         updated_node = {**last_node, "meta": {**last_node.get("meta", {}), **effect.meta}}
         new_graph = graph[:-1] + [updated_node]
-        new_store = _set_graph(store, new_graph)
+        new_store = _set_graph(ctx.store, new_graph)
     else:
-        new_store = store
+        new_store = ctx.store
     return ContinueValue(
         value=None,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_graph_snapshot(
     effect: GraphSnapshotEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    graph = _get_graph(store)
+    graph = _get_graph(ctx.store)
     return ContinueValue(
         value=list(graph),
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_graph_capture(
     effect: GraphCaptureEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
     from doeff.cesk.frames import GraphCaptureFrame
 
-    graph_start = len(_get_graph(store))
+    graph_start = len(_get_graph(ctx.store))
     return ContinueProgram(
         program=effect.program,
-        env=task_state.env,
-        store=store,
-        k=[GraphCaptureFrame(graph_start)] + task_state.kontinuation,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=[GraphCaptureFrame(graph_start)] + ctx.task_state.kontinuation,
     )
 
 
