@@ -1,14 +1,14 @@
 [project]
-name = "doeff-conductor"
+name = "doeff-preset"
 version = "0.1.0"
-description = "Multi-agent workflow orchestration for doeff with issue-driven development, git worktree management, and DAG execution"
+description = "Batteries-included handlers for doeff: slog display, preset configuration, and development utilities"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Kento Masui", email = "nameissoap@gmail.com"}
 ]
-keywords = ["doeff", "conductor", "orchestration", "multi-agent", "workflow", "git", "worktree"]
+keywords = ["doeff", "preset", "handlers", "slog", "rich", "logging"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -21,25 +21,17 @@ classifiers = [
 ]
 
 dependencies = [
-    "doeff>=0.1.9",
-    "doeff-agentic>=0.1.0",
-    "doeff-flow>=0.1.0",
-    "click>=8.0.0",
-    "rich>=13.0.0",
-    "pyyaml>=6.0",
+    "doeff>=0.1.0",
+    "rich>=13.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
-    "httpx>=0.25.0",
-    "doeff-preset",
 ]
-examples = ["doeff-preset"]
-
-[project.scripts]
-conductor = "doeff_conductor.cli:cli"
+textual = ["textual>=0.40"]
+web = ["fastapi", "uvicorn"]
 
 [project.urls]
 Homepage = "https://github.com/proboscis/doeff"
@@ -50,9 +42,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doeff_conductor"]
+packages = ["src/doeff_preset"]
 
 [tool.uv.sources]
 doeff = { workspace = true }
-doeff-agentic = { workspace = true }
-doeff-flow = { workspace = true }
