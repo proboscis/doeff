@@ -16,9 +16,9 @@ from doeff_agentic import (
     AgenticGetMessages,
     AgenticMessage,
     AgenticSendMessage,
-    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+from doeff_preset import preset_handlers
 
 from doeff import do
 from doeff.effects.writer import slog
@@ -97,10 +97,13 @@ def calculate_average(numbers):
         print(sample_code)
         print()
 
-        handlers = opencode_handler()
+        # Merge preset handlers with opencode handlers
+        # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
+        # OpenCode provides: agent session management effects
+        handlers = {**preset_handlers(), **opencode_handler()}
         runtime = AsyncRuntime(handlers=handlers)
 
-        result = await runtime.run(with_visual_logging(review_and_maybe_fix(sample_code)))
+        result = await runtime.run(review_and_maybe_fix(sample_code))
 
         if result.is_err():
             print("\n=== Workflow Failed ===")
