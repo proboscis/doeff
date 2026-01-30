@@ -1,0 +1,158 @@
+"""Configuration handlers for preset.* Ask keys.
+
+Provides default configuration values that can be queried via Ask("preset.*") effects.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
+from doeff.cesk.errors import MissingEnvKeyError
+from doeff.cesk.frames import ContinueValue, FrameResult
+from doeff.effects.reader import AskEffect
+
+if TYPE_CHECKING:
+    from doeff.cesk.state import TaskState
+    from doeff.cesk.types import Store
+
+
+# Default preset configuration
+DEFAULT_CONFIG: dict[str, Any] = {
+    "preset.show_logs": True,
+    "preset.log_level": "info",
+    "preset.log_format": "rich",  # "simple" | "rich" | "json"
+}
+
+
+def make_config_handler(
+    defaults: dict[str, Any] | None = None,
+) -> tuple[type, Any]:
+    """Create a config handler for Ask("preset.*") effects.
+    
+    This is a DECORATOR handler that wraps the default Ask handler.
+    It intercepts Ask effects with "preset.*" keys and returns values
+    from the defaults dict.
+    
+    For non-preset keys, it falls back to the normal Ask behavior
+    (looking up in env).
+    
+    Args:
+        defaults: Optional dict of preset.* -> value mappings.
+                  Merged with DEFAULT_CONFIG (user values override).
+    
+    Returns:
+        Tuple of (AskEffect, handler) for use in handler dict.
+    """
+    config = {**DEFAULT_CONFIG}
+    if defaults:
+        config.update(defaults)
+    
+    def handle_ask_with_config(
+        effect: AskEffect,
+        task_state: TaskState,
+        store: Store,
+    ) -> FrameResult:
+        """Handle Ask effect with preset.* config support.
+        
+        If key starts with "preset.", look it up in config.
+        Otherwise, fall back to normal env lookup.
+        """
+        from doeff.program import ProgramBase
+        
+        key = effect.key
+        
+        # Handle preset.* keys from config
+        if isinstance(key, str) and key.startswith("preset."):
+            if key in config:
+                return ContinueValue(
+                    value=config[key],
+                    env=task_state.env,
+                    store=store,
+                    k=task_state.kontinuation,
+                )
+            # Key not in config - raise error (standard Ask behavior)
+            raise MissingEnvKeyError(key)
+        
+        # Standard Ask behavior for non-preset keys
+        if key not in task_state.env:
+            raise MissingEnvKeyError(key)
+        
+        value = task_state.env[key]
+        
+        # Handle lazy Program evaluation (same as default handle_ask)
+        if isinstance(value, ProgramBase):
+            from doeff.cesk.frames import ContinueProgram
+            from doeff.cesk.frames import AskLazyFrame
+            from doeff.cesk.handlers.core import _ASK_IN_PROGRESS, CircularAskError
+            
+            cache = store.get("__ask_lazy_cache__", {})
+            
+            if key in cache:
+                cached_program, cached_value = cache[key]
+                if cached_value is _ASK_IN_PROGRESS:
+                    raise CircularAskError(key)
+                if cached_program is value:
+                    return ContinueValue(
+                        value=cached_value,
+                        env=task_state.env,
+                        store=store,
+                        k=task_state.kontinuation,
+                    )
+            
+            new_cache = {**cache, key: (value, _ASK_IN_PROGRESS)}
+            new_store = {**store, "__ask_lazy_cache__": new_cache}
+            
+            return ContinueProgram(
+                program=value,
+                env=task_state.env,
+                store=new_store,
+                k=[AskLazyFrame(ask_key=key, program=value)] + task_state.kontinuation,
+            )
+        
+        return ContinueValue(
+            value=value,
+            env=task_state.env,
+            store=store,
+            k=task_state.kontinuation,
+        )
+    
+    return AskEffect, handle_ask_with_config
+
+
+def config_handlers(defaults: dict[str, Any] | None = None) -> dict[type, Any]:
+    """Return handlers for preset configuration.
+    
+    Args:
+        defaults: Optional dict to override default config values.
+        
+    Returns:
+        Handler dict with AskEffect handler that supports preset.* keys.
+        
+    Example:
+        >>> from doeff import SyncRuntime, do, Ask
+        >>> from doeff_preset import config_handlers
+        >>> 
+        >>> @do
+        ... def workflow():
+        ...     show_logs = yield Ask("preset.show_logs")
+        ...     return show_logs
+        >>> 
+        >>> runtime = SyncRuntime(handlers=config_handlers())
+        >>> result = runtime.run(workflow())
+        >>> # result.value == True (default)
+        
+        >>> # With custom defaults:
+        >>> custom = config_handlers(defaults={"preset.show_logs": False})
+        >>> runtime = SyncRuntime(handlers=custom)
+        >>> result = runtime.run(workflow())
+        >>> # result.value == False
+    """
+    effect_type, handler = make_config_handler(defaults)
+    return {effect_type: handler}
+
+
+__all__ = [
+    "DEFAULT_CONFIG",
+    "config_handlers",
+    "make_config_handler",
+]
