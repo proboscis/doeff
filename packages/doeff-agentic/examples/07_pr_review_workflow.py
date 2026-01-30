@@ -24,9 +24,9 @@ from doeff_agentic import (
     AgenticNextEvent,
     AgenticSendMessage,
     AgenticTimeoutError,
-    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+from doeff_preset import preset_handlers
 
 from doeff import do
 from doeff.effects.writer import slog
@@ -223,11 +223,14 @@ if __name__ == "__main__":
         print(f"Require approval: {require_approval}")
         print()
 
-        handlers = opencode_handler()
+        # Merge preset handlers with opencode handlers
+        # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
+        # OpenCode provides: agent session management effects
+        handlers = {**preset_handlers(), **opencode_handler()}
         runtime = AsyncRuntime(handlers=handlers)
 
         try:
-            result = await runtime.run(with_visual_logging(pr_review_workflow(pr_url, require_approval)))
+            result = await runtime.run(pr_review_workflow(pr_url, require_approval))
 
             if result.is_err():
                 print("\n=== Workflow Failed ===")

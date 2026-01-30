@@ -14,9 +14,9 @@ from doeff_agentic import (
     AgenticCreateSession,
     AgenticGetMessages,
     AgenticSendMessage,
-    with_visual_logging,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+from doeff_preset import preset_handlers
 
 from doeff import do
 
@@ -54,10 +54,13 @@ if __name__ == "__main__":
         print("This will launch an OpenCode agent session.")
         print()
 
-        handlers = opencode_handler()
+        # Merge preset handlers with opencode handlers
+        # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
+        # OpenCode provides: agent session management effects
+        handlers = {**preset_handlers(), **opencode_handler()}
         runtime = AsyncRuntime(handlers=handlers)
 
-        result = await runtime.run(with_visual_logging(hello_agent()))
+        result = await runtime.run(hello_agent())
 
         if result.is_err():
             print("\n=== Workflow Failed ===")
