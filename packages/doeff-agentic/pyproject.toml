@@ -34,6 +34,12 @@ dependencies = [
 legacy = [
     "doeff-agents>=0.1.0",
 ]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "doeff-preset",
+]
+examples = ["doeff-preset"]
 
 [project.scripts]
 # Note: doeff-agentic binary is provided by the Rust package (doeff-agentic-cli)
