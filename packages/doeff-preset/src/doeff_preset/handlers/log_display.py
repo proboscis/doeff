@@ -16,8 +16,7 @@ from doeff.cesk.frames import ContinueValue, FrameResult
 from doeff.effects.writer import WriterTellEffect
 
 if TYPE_CHECKING:
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
+    from doeff.cesk.runtime.context import HandlerContext
 
 # Global console for log output
 _console = Console(stderr=True)
@@ -75,8 +74,7 @@ def format_slog(message: dict[str, Any]) -> Panel | Text:
 
 def handle_tell_with_display(
     effect: WriterTellEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
     """Handle WriterTellEffect with console display for slog messages.
     
@@ -85,8 +83,7 @@ def handle_tell_with_display(
     
     Args:
         effect: The WriterTellEffect to handle.
-        task_state: Current task state.
-        store: Current store.
+        ctx: Handler context containing task_state and store.
         
     Returns:
         FrameResult continuing with None value and updated store.
@@ -99,15 +96,15 @@ def handle_tell_with_display(
         _console.print(formatted)
     
     # Normal WriterTellEffect behavior: append to log
-    current_log = store.get("__log__", [])
+    current_log = ctx.store.get("__log__", [])
     new_log = list(current_log) + [message]
-    new_store = {**store, "__log__": new_log}
+    new_store = {**ctx.store, "__log__": new_log}
     
     return ContinueValue(
         value=None,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 

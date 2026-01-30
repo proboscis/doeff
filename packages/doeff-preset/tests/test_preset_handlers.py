@@ -163,6 +163,7 @@ class TestPresetHandlers:
     def test_handlers_can_be_merged(self):
         """Preset handlers should merge with other handlers."""
         from doeff.cesk.frames import ContinueValue
+        from doeff.cesk.runtime.context import HandlerContext
 
         # Custom effect type for testing
         from dataclasses import dataclass
@@ -172,12 +173,12 @@ class TestPresetHandlers:
         class CustomEffect(EffectBase):
             value: str
 
-        def handle_custom(effect, task_state, store):
+        def handle_custom(effect: CustomEffect, ctx: HandlerContext):
             return ContinueValue(
                 value=f"handled: {effect.value}",
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         @do

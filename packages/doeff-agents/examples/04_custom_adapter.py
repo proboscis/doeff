@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Custom Adapter Example
+Custom Adapter Example - Using doeff Effects API
 
 This example shows how to create a custom adapter for an agent that isn't
 built into doeff-agents. The adapter pattern allows you to integrate any
@@ -8,29 +8,43 @@ command-line agent that runs in a terminal.
 
 Key concepts:
 - Implementing the AgentAdapter protocol
-- Registering custom adapters
-- Different injection methods (ARG vs TMUX)
+- Using adapters with the effects-based API
+- Testing custom adapters with AsyncRuntime and mock handlers
 """
 
+import asyncio
 import shutil
+import time
 from pathlib import Path
+
+from doeff import AsyncRuntime, do
+from doeff.effects.writer import slog
+from doeff_preset import preset_handlers
 
 from doeff_agents import (
     AgentType,
+    Capture,
+    CeskMockSessionScript,
+    Launch,
     LaunchConfig,
-    capture_output,
-    monitor_session,
-    register_adapter,
-    session_scope,
+    Monitor,
+    SessionHandle,
+    SessionStatus,
+    Sleep,
+    Stop,
+    agent_effectful_handlers,
+    configure_mock_session,
+    mock_agent_handlers,
 )
-from doeff_agents.adapters.base import InjectionMethod
+from doeff_agents.adapters.base import AgentAdapter, InjectionMethod
+
 
 # =============================================================================
 # Example 1: Simple Custom Adapter (ARG injection)
 # =============================================================================
 
 
-class AiderAdapter:
+class AiderAdapter(AgentAdapter):
     """
     Adapter for Aider (https://aider.chat).
 
@@ -79,7 +93,7 @@ class AiderAdapter:
 # =============================================================================
 
 
-class ReplitAgentAdapter:
+class ReplitAgentAdapter(AgentAdapter):
     """
     Adapter for Replit Agent (hypothetical example).
 
@@ -125,7 +139,7 @@ class ReplitAgentAdapter:
 # =============================================================================
 
 
-class ContinueDevAdapter:
+class ContinueDevAdapter(AgentAdapter):
     """
     Adapter for Continue.dev CLI.
 
@@ -134,14 +148,14 @@ class ContinueDevAdapter:
     that indicate various states.
     """
 
-    # Custom UI patterns for this specific agent (noqa for example simplicity)
-    UI_PATTERNS: list[str] = [  # noqa: RUF012
+    # Custom UI patterns for this specific agent
+    UI_PATTERNS: list[str] = [
         "Continue>",
         "Thinking...",
         "[continue]",
     ]
 
-    BLOCKED_PATTERNS: list[str] = [  # noqa: RUF012
+    BLOCKED_PATTERNS: list[str] = [
         "Press Enter to confirm",
         "Choose an option:",
         "Continue>",
@@ -176,57 +190,52 @@ class ContinueDevAdapter:
 
 
 # =============================================================================
-# Usage Examples
+# Effects-based Workflow
 # =============================================================================
 
 
-def use_custom_adapter() -> None:
-    """Demonstrate using a custom adapter."""
-    # Register the custom adapter
-    register_adapter(AgentType.CUSTOM, AiderAdapter)  # type: ignore
-
-    print("Registered AiderAdapter for AgentType.CUSTOM")
-
-    # Check if the adapter is available
-    from doeff_agents import get_adapter
-
-    adapter = get_adapter(AgentType.CUSTOM)
-    if not adapter.is_available():
-        print("Aider is not installed. Install with: pip install aider-chat")
-        return
-
-    # Create a config using the custom adapter
-    config = LaunchConfig(
-        agent_type=AgentType.CUSTOM,  # Uses our registered adapter
-        work_dir=Path.cwd(),
-        prompt="List the Python files in this directory",
-        profile="gpt-4",  # Model to use (passed to --model)
-    )
-
-    print(f"Launch command: {adapter.launch_command(config)}")
-    print(f"Injection method: {adapter.injection_method.value}")
-
-    # Run a session with the custom adapter
-    import time
-
-    session_name = f"aider-{int(time.time())}"
-
-    with session_scope(session_name, config) as session:
-        print(f"Session started: {session.session_name}")
-
-        # Monitor for a short time
-        for _ in range(30):
-            new_status = monitor_session(session)
-            if new_status:
-                print(f"Status: {new_status.value}")
-
-            if session.is_terminal:
+@do
+def custom_adapter_workflow(session_name: str, config: LaunchConfig):
+    """Run a session with any adapter using effects.
+    
+    The adapter is determined by the agent_type in the config.
+    """
+    yield slog(step="start", session_name=session_name, agent_type=config.agent_type.value)
+    
+    handle: SessionHandle = yield Launch(session_name, config)
+    yield slog(step="launched", pane_id=handle.pane_id)
+    
+    final_status = SessionStatus.PENDING
+    
+    try:
+        for iteration in range(30):
+            observation = yield Monitor(handle)
+            final_status = observation.status
+            
+            if observation.output_changed:
+                yield slog(step="status", status=observation.status.value)
+            
+            if observation.is_terminal:
                 break
+            
+            yield Sleep(1.0)
+        
+        output = yield Capture(handle, lines=30)
+        yield slog(step="complete", status=final_status.value)
+        
+        return {
+            "session_name": session_name,
+            "status": final_status.value,
+            "output": output,
+        }
+    
+    finally:
+        yield Stop(handle)
 
-            time.sleep(1)
 
-        print("\nOutput:")
-        print(capture_output(session, lines=30))
+# =============================================================================
+# Demo Functions
+# =============================================================================
 
 
 def demo_adapter_protocol() -> None:
@@ -235,7 +244,7 @@ def demo_adapter_protocol() -> None:
     print("Adapter Protocol Demonstration")
     print("=" * 60)
 
-    adapters = [
+    adapters: list[tuple[str, AgentAdapter]] = [
         ("Aider", AiderAdapter()),
         ("ReplitAgent", ReplitAgentAdapter()),
         ("ContinueDev", ContinueDevAdapter()),
@@ -260,9 +269,82 @@ def demo_adapter_protocol() -> None:
         print(f"  Command: {' '.join(cmd)}")
 
 
-if __name__ == "__main__":
-    # Show adapter protocol without running
+async def run_with_mock_handlers() -> None:
+    """Run the workflow with AsyncRuntime and mock handlers."""
+    print("\n" + "=" * 60)
+    print("Running with AsyncRuntime + mock handlers")
+    print("=" * 60)
+
+    session_name = f"aider-demo-{int(time.time())}"
+    
+    initial_store = {}
+    configure_mock_session(
+        initial_store,
+        session_name,
+        CeskMockSessionScript([
+            (SessionStatus.RUNNING, "Analyzing code..."),
+            (SessionStatus.RUNNING, "Making changes..."),
+            (SessionStatus.DONE, "Changes complete!\n\nModified: main.py"),
+        ]),
+    )
+
+    config = LaunchConfig(
+        agent_type=AgentType.CUSTOM,
+        work_dir=Path.cwd(),
+        prompt="List the Python files in this directory",
+        profile="gpt-4",
+    )
+
+    handlers = {
+        **preset_handlers(),
+        **mock_agent_handlers(),
+    }
+    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
+
+    result = await runtime.run(custom_adapter_workflow(session_name, config))
+    print(f"\nResult: {result}")
+
+
+async def run_with_real_tmux() -> None:
+    """Run with real tmux (requires aider installed)."""
+    if not shutil.which("aider"):
+        print("Aider not installed, skipping real example")
+        return
+
+    print("\n" + "=" * 60)
+    print("Running with real tmux + Aider")
+    print("=" * 60)
+
+    config = LaunchConfig(
+        agent_type=AgentType.CUSTOM,
+        work_dir=Path.cwd(),
+        prompt="List the Python files in this directory",
+        profile="gpt-4",
+    )
+
+    session_name = f"aider-real-{int(time.time())}"
+
+    handlers = {
+        **preset_handlers(),
+        **agent_effectful_handlers(),
+    }
+    runtime = AsyncRuntime(handlers=handlers)
+
+    result = await runtime.run(custom_adapter_workflow(session_name, config))
+    print(f"\nResult: {result}")
+
+
+async def main() -> None:
+    """Run all examples."""
+    # Show adapter protocol (always works)
     demo_adapter_protocol()
 
-    # Uncomment to actually use the adapter (requires aider installed)
-    # use_custom_adapter()
+    # Run with mock handlers
+    await run_with_mock_handlers()
+
+    # Uncomment to run with real tmux + aider
+    # await run_with_real_tmux()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

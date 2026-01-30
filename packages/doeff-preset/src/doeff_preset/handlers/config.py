@@ -12,8 +12,7 @@ from doeff.cesk.frames import ContinueValue, FrameResult
 from doeff.effects.reader import AskEffect
 
 if TYPE_CHECKING:
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
+    from doeff.cesk.runtime.context import HandlerContext
 
 
 # Default preset configuration
@@ -49,8 +48,7 @@ def make_config_handler(
     
     def handle_ask_with_config(
         effect: AskEffect,
-        task_state: TaskState,
-        store: Store,
+        ctx: HandlerContext,
     ) -> FrameResult:
         """Handle Ask effect with preset.* config support.
         
@@ -60,6 +58,8 @@ def make_config_handler(
         from doeff.program import ProgramBase
         
         key = effect.key
+        task_state = ctx.task_state
+        store = ctx.store
         
         # Handle preset.* keys from config
         if isinstance(key, str) and key.startswith("preset."):

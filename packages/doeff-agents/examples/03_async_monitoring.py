@@ -1,212 +1,330 @@
 #!/usr/bin/env python3
 """
-Async Monitoring Example
+Async Monitoring Example - Using doeff Effects API
 
-This example demonstrates the async API for monitoring agent sessions.
-The async API is useful when:
-- Running multiple sessions concurrently
-- Integrating with async web frameworks
-- Non-blocking monitoring in event loops
+This example demonstrates using the doeff AsyncRuntime for monitoring
+agent sessions with async/await patterns.
 
 Features shown:
-- async_session_scope context manager
-- async_monitor_session for non-blocking monitoring
-- Running multiple sessions in parallel
+- AsyncRuntime for non-blocking execution
+- Parallel session execution with Gather-like patterns
+- Fine-grained effects for monitoring multiple sessions
+- Integration with preset_handlers for logging
 """
 
 import asyncio
 import time
 from pathlib import Path
 
+from doeff import AsyncRuntime, do
+from doeff.effects.writer import slog
+from doeff_preset import preset_handlers
+
 from doeff_agents import (
     AgentType,
+    Capture,
+    Launch,
     LaunchConfig,
+    Monitor,
+    Observation,
+    SessionHandle,
     SessionStatus,
-    async_monitor_session,
-    async_session_scope,
-    capture_output,
+    Sleep,
+    Stop,
+    agent_effectful_handlers,
+    mock_agent_handlers,
+    configure_mock_session,
+    CeskMockSessionScript,
 )
 
 
-async def run_single_async_session() -> None:
-    """Run a single session using async API."""
+@do
+def single_session_workflow(session_name: str, config: LaunchConfig):
+    """Run a single session using effects.
+    
+    Yields effects that are handled by the AsyncRuntime.
+    """
+    yield slog(step="start", session_name=session_name)
+    
+    handle: SessionHandle = yield Launch(session_name, config)
+    yield slog(step="launched", pane_id=handle.pane_id)
+    
+    final_status = SessionStatus.PENDING
+    iteration = 0
+    
+    try:
+        while iteration < 120:
+            observation: Observation = yield Monitor(handle)
+            final_status = observation.status
+            
+            if observation.output_changed:
+                yield slog(
+                    step="status_change",
+                    status=observation.status.value,
+                )
+            
+            if observation.pr_url:
+                yield slog(step="pr_detected", url=observation.pr_url)
+            
+            if observation.is_terminal:
+                break
+            
+            iteration += 1
+            yield Sleep(0.5)
+        
+        output = yield Capture(handle, lines=20)
+        yield slog(step="complete", status=final_status.value)
+        
+        return {
+            "session_name": session_name,
+            "status": final_status.value,
+            "output": output,
+            "iterations": iteration,
+        }
+    
+    finally:
+        yield Stop(handle)
+
+
+@do
+def parallel_tasks_workflow(tasks: list[tuple[str, str]]):
+    """Run multiple agent tasks, demonstrating parallel-like patterns.
+    
+    Note: True parallelism requires launching separate runtimes or
+    using asyncio.gather at the Python level. This example shows
+    how to structure the effects for sequential execution.
+    
+    For true parallel execution, see run_truly_parallel() below.
+    """
+    yield slog(step="parallel_start", task_count=len(tasks))
+    
+    results = []
+    
+    for prompt, name_suffix in tasks:
+        config = LaunchConfig(
+            agent_type=AgentType.CLAUDE,
+            work_dir=Path.cwd(),
+            prompt=prompt,
+        )
+        
+        session_name = f"parallel-{name_suffix}-{int(time.time())}"
+        yield slog(step="task_start", name=name_suffix)
+        
+        # Run each task (sequentially in this case)
+        result = yield from single_session_workflow(session_name, config)
+        results.append((name_suffix, result))
+        
+        yield slog(step="task_complete", name=name_suffix, status=result["status"])
+    
+    yield slog(step="parallel_complete", completed=len(results))
+    return results
+
+
+@do
+def interleaved_monitoring_workflow(configs: list[tuple[str, LaunchConfig]]):
+    """Monitor multiple sessions with interleaved checks.
+    
+    This pattern launches all sessions first, then monitors them
+    in a round-robin fashion until all are terminal.
+    """
+    yield slog(step="interleaved_start", session_count=len(configs))
+    
+    # Launch all sessions
+    handles: list[tuple[str, SessionHandle]] = []
+    for suffix, config in configs:
+        session_name = f"interleaved-{suffix}-{int(time.time())}"
+        handle = yield Launch(session_name, config)
+        handles.append((suffix, handle))
+        yield slog(step="launched", name=suffix, pane_id=handle.pane_id)
+    
+    # Track status for each session
+    statuses = {suffix: SessionStatus.PENDING for suffix, _ in handles}
+    
+    try:
+        timeout = 120
+        start_time = time.time()
+        
+        while not all(s in (SessionStatus.DONE, SessionStatus.FAILED, SessionStatus.EXITED) 
+                      for s in statuses.values()):
+            if time.time() - start_time > timeout:
+                yield slog(step="timeout", msg="Timeout reached")
+                break
+            
+            # Check each session
+            for suffix, handle in handles:
+                if statuses[suffix] not in (SessionStatus.DONE, SessionStatus.FAILED, SessionStatus.EXITED):
+                    observation = yield Monitor(handle)
+                    
+                    if observation.status != statuses[suffix]:
+                        statuses[suffix] = observation.status
+                        yield slog(
+                            step="status_change",
+                            name=suffix,
+                            status=observation.status.value,
+                        )
+            
+            yield Sleep(0.5)
+        
+        # Capture final outputs
+        results = []
+        for suffix, handle in handles:
+            output = yield Capture(handle, lines=30)
+            results.append({
+                "name": suffix,
+                "status": statuses[suffix].value,
+                "output": output,
+            })
+        
+        yield slog(step="interleaved_complete", results_count=len(results))
+        return results
+    
+    finally:
+        # Stop all sessions
+        for suffix, handle in handles:
+            yield Stop(handle)
+            yield slog(step="stopped", name=suffix)
+
+
+async def run_with_mock_runtime() -> None:
+    """Run the example with mock handlers via AsyncRuntime."""
+    print("=" * 60)
+    print("Running single session with mock AsyncRuntime")
+    print("=" * 60)
+    
+    # Create initial store with mock configuration
+    initial_store = {}
+    configure_mock_session(
+        initial_store,
+        "async-demo",  # Will be overwritten by actual session name
+        CeskMockSessionScript([
+            (SessionStatus.RUNNING, "Writing haiku..."),
+            (SessionStatus.DONE, "Code flows like water\nBugs emerge then disappear\nTests pass, peace returns"),
+        ]),
+    )
+    
+    # For mock, we need to pre-configure the session name
+    session_name = f"async-demo-{int(time.time())}"
+    configure_mock_session(
+        initial_store,
+        session_name,
+        CeskMockSessionScript([
+            (SessionStatus.RUNNING, "Writing haiku..."),
+            (SessionStatus.DONE, "Code flows like water\nBugs emerge then disappear\nTests pass, peace returns"),
+        ]),
+    )
+    
     config = LaunchConfig(
         agent_type=AgentType.CLAUDE,
         work_dir=Path.cwd(),
         prompt="Write a haiku about programming.",
     )
-
-    session_name = f"async-demo-{int(time.time())}"
-
-    print(f"Starting async session: {session_name}")
-
-    def on_status_change(old: SessionStatus, new: SessionStatus, output: str | None) -> None:
-        print(f"  Status: {old.value} -> {new.value}")
-
-    def on_pr_detected(url: str) -> None:
-        print(f"  PR Created: {url}")
-
-    async with async_session_scope(session_name, config) as session:
-        print(f"Session running: {session.pane_id}")
-
-        # async_monitor_session runs until terminal state
-        final_status = await async_monitor_session(
-            session,
-            poll_interval=0.5,
-            on_status_change=on_status_change,
-            on_pr_detected=on_pr_detected,
-        )
-
-        print(f"\nFinal status: {final_status.value}")
-        print("Output:")
-        print(capture_output(session, lines=20))
+    
+    # Create runtime with combined handlers
+    handlers = {
+        **preset_handlers(),
+        **mock_agent_handlers(),  # Mock handlers for testing
+    }
+    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
+    
+    result = await runtime.run(single_session_workflow(session_name, config))
+    print(f"\nResult: {result}")
 
 
-async def run_parallel_sessions() -> None:
-    """Run multiple sessions in parallel."""
-    tasks = [
+async def run_truly_parallel() -> None:
+    """Run multiple sessions truly in parallel using asyncio.gather.
+    
+    This demonstrates how to achieve true parallelism by running
+    multiple AsyncRuntime instances concurrently.
+    """
+    print("\n" + "=" * 60)
+    print("Running truly parallel sessions")
+    print("=" * 60)
+    
+    tasks_config = [
         ("Write a function to reverse a string", "reverse-string"),
         ("Write a function to check if a number is prime", "is-prime"),
         ("Write a function to calculate fibonacci numbers", "fibonacci"),
     ]
-
-    print("=" * 60)
-    print("Running 3 agent sessions in parallel")
-    print("=" * 60)
-
-    async def run_task(prompt: str, name_suffix: str) -> tuple[str, SessionStatus, str]:
-        """Run a single task and return results."""
+    
+    async def run_single_task(prompt: str, suffix: str) -> dict:
+        """Run a single task with its own runtime."""
+        session_name = f"parallel-{suffix}-{int(time.time())}"
+        
+        # Each task gets its own mock configuration
+        initial_store = {}
+        configure_mock_session(
+            initial_store,
+            session_name,
+            CeskMockSessionScript([
+                (SessionStatus.RUNNING, f"Working on {suffix}..."),
+                (SessionStatus.DONE, f"Completed {suffix}!"),
+            ]),
+        )
+        
         config = LaunchConfig(
             agent_type=AgentType.CLAUDE,
             work_dir=Path.cwd(),
             prompt=prompt,
         )
-
-        session_name = f"parallel-{name_suffix}-{int(time.time())}"
-
-        print(f"[{name_suffix}] Starting session...")
-
-        async with async_session_scope(session_name, config) as session:
-
-            def on_change(old: SessionStatus, new: SessionStatus, _: str | None) -> None:
-                print(f"[{name_suffix}] {old.value} -> {new.value}")
-
-            final_status = await async_monitor_session(
-                session,
-                poll_interval=1.0,
-                on_status_change=on_change,
-            )
-
-            output = capture_output(session, lines=30)
-            return name_suffix, final_status, output
-
-    # Run all tasks concurrently
+        
+        handlers = {
+            **preset_handlers(),
+            **mock_agent_handlers(),
+        }
+        runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
+        
+        return await runtime.run(single_session_workflow(session_name, config))
+    
+    # Run all tasks truly in parallel
     start_time = time.time()
-    results = await asyncio.gather(*[run_task(prompt, name) for prompt, name in tasks])
+    results = await asyncio.gather(*[
+        run_single_task(prompt, suffix)
+        for prompt, suffix in tasks_config
+    ])
     elapsed = time.time() - start_time
+    
+    print(f"\nAll sessions completed in {elapsed:.1f}s")
+    for result in results:
+        print(f"  {result['session_name']}: {result['status']}")
 
-    # Display results
+
+async def run_with_real_tmux() -> None:
+    """Run with real tmux (requires tmux + claude CLI)."""
+    import shutil
+    
+    if not shutil.which("tmux") or not shutil.which("claude"):
+        print("tmux or Claude CLI not available, skipping")
+        return
+    
     print("\n" + "=" * 60)
-    print(f"All sessions completed in {elapsed:.1f}s")
+    print("Running with real tmux")
     print("=" * 60)
-
-    for name, status, output in results:
-        print(f"\n[{name}] Status: {status.value}")
-        print("-" * 40)
-        # Show last 500 chars of output
-        print(output[-500:] if len(output) > 500 else output)
-
-
-async def interleaved_monitoring() -> None:
-    """
-    Demonstrate monitoring multiple sessions with interleaved checks.
-
-    This pattern is useful when you need fine-grained control over
-    multiple sessions without blocking on any single one.
-    """
-    from doeff_agents import launch_session, monitor_session, stop_session
-
-    configs = [
-        ("Task 1: List directory contents", "list-dir"),
-        ("Task 2: Show current date", "show-date"),
-    ]
-
-    sessions = []
-    session_names = []
-
-    print("=" * 60)
-    print("Interleaved monitoring of multiple sessions")
-    print("=" * 60)
-
-    # Launch all sessions
-    for prompt, suffix in configs:
-        config = LaunchConfig(
-            agent_type=AgentType.CLAUDE,
-            work_dir=Path.cwd(),
-            prompt=prompt,
-        )
-        name = f"interleaved-{suffix}-{int(time.time())}"
-        session = launch_session(name, config)
-        sessions.append(session)
-        session_names.append(suffix)
-        print(f"Launched: {suffix}")
-
-    try:
-        # Monitor all sessions until all are terminal
-        start_time = time.time()
-        timeout = 120
-
-        while not all(s.is_terminal for s in sessions):
-            if time.time() - start_time > timeout:
-                print("Timeout reached!")
-                break
-
-            # Check each session
-            for session, name in zip(sessions, session_names, strict=False):
-                if not session.is_terminal:
-                    new_status = monitor_session(session)
-                    if new_status:
-                        print(f"[{name}] Status: {new_status.value}")
-
-            # Small delay to avoid busy-waiting
-            await asyncio.sleep(0.5)
-
-        # Show final results
-        print("\n" + "-" * 40)
-        for session, name in zip(sessions, session_names, strict=False):
-            print(f"[{name}] Final: {session.status.value}")
-
-    finally:
-        # Clean up all sessions
-        for session in sessions:
-            stop_session(session)
-        print("\nAll sessions stopped.")
+    
+    config = LaunchConfig(
+        agent_type=AgentType.CLAUDE,
+        work_dir=Path.cwd(),
+        prompt="Write a haiku about programming.",
+    )
+    
+    session_name = f"async-real-{int(time.time())}"
+    
+    handlers = {
+        **preset_handlers(),
+        **agent_effectful_handlers(),  # Real tmux handlers
+    }
+    runtime = AsyncRuntime(handlers=handlers)
+    
+    result = await runtime.run(single_session_workflow(session_name, config))
+    print(f"\nResult: {result}")
 
 
 async def main() -> None:
     """Run all async examples."""
-    import shutil
-
-    if not shutil.which("claude"):
-        print("Warning: Claude CLI not found.")
-        print("Install with: npm install -g @anthropic/claude-code")
-        return
-
-    # Run single session example
-    print("\n" + "=" * 60)
-    print("Example 1: Single Async Session")
-    print("=" * 60)
-    await run_single_async_session()
-
-    # Run parallel sessions example
-    # (Uncomment to run - uses more resources)
-    # print("\n")
-    # await run_parallel_sessions()
-
-    # Run interleaved monitoring example
-    # (Uncomment to run)
-    # print("\n")
-    # await interleaved_monitoring()
+    await run_with_mock_runtime()
+    await run_truly_parallel()
+    
+    # Uncomment to run with real tmux
+    # await run_with_real_tmux()
 
 
 if __name__ == "__main__":

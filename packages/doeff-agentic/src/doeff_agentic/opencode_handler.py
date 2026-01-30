@@ -33,8 +33,7 @@ from doeff.cesk.frames import ContinueProgram, ContinueValue, FrameResult
 from doeff.effects.writer import slog
 
 if TYPE_CHECKING:
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
+    from doeff.cesk.runtime.context import HandlerContext
 
 from .effects import (
     AgenticAbortSession,
@@ -314,7 +313,7 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def handle_create_workflow(
-        self, effect: AgenticCreateWorkflow, task_state: TaskState, store: Store
+        self, effect: AgenticCreateWorkflow, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticCreateWorkflow effect."""
         self.initialize()
@@ -343,13 +342,13 @@ class OpenCodeHandler:
         )
         return ContinueValue(
             value=result,
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     def handle_get_workflow(
-        self, effect: AgenticGetWorkflow, task_state: TaskState, store: Store
+        self, effect: AgenticGetWorkflow, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticGetWorkflow effect."""
         self._ensure_workflow()
@@ -364,9 +363,9 @@ class OpenCodeHandler:
         )
         return ContinueValue(
             value=result,
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     # -------------------------------------------------------------------------
@@ -374,7 +373,7 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def handle_create_environment(
-        self, effect: AgenticCreateEnvironment, task_state: TaskState, store: Store
+        self, effect: AgenticCreateEnvironment, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticCreateEnvironment effect."""
         self._ensure_workflow()
@@ -424,11 +423,11 @@ class OpenCodeHandler:
         self._event_log.log_environment_created(self._workflow.id, result)
 
         return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
         )
 
     def handle_get_environment(
-        self, effect: AgenticGetEnvironment, task_state: TaskState, store: Store
+        self, effect: AgenticGetEnvironment, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticGetEnvironment effect."""
         self._ensure_workflow()
@@ -438,11 +437,11 @@ class OpenCodeHandler:
         if not result:
             raise AgenticEnvironmentNotFoundError(effect.environment_id)
         return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
         )
 
     def handle_delete_environment(
-        self, effect: AgenticDeleteEnvironment, task_state: TaskState, store: Store
+        self, effect: AgenticDeleteEnvironment, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticDeleteEnvironment effect."""
         self._ensure_workflow()
@@ -475,7 +474,7 @@ class OpenCodeHandler:
 
         del self._workflow.environments[effect.environment_id]
         return ContinueValue(
-            value=True, env=task_state.env, store=store, k=task_state.kontinuation
+            value=True, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
         )
 
     # -------------------------------------------------------------------------
@@ -483,7 +482,7 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def handle_create_session(
-        self, effect: AgenticCreateSession, task_state: TaskState, store: Store
+        self, effect: AgenticCreateSession, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticCreateSession effect."""
         self._ensure_workflow()
@@ -556,13 +555,13 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_create_session(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     def handle_fork_session(
-        self, effect: AgenticForkSession, task_state: TaskState, store: Store
+        self, effect: AgenticForkSession, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticForkSession effect."""
         self._ensure_workflow()
@@ -613,13 +612,13 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_fork_session(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     def handle_get_session(
-        self, effect: AgenticGetSession, task_state: TaskState, store: Store
+        self, effect: AgenticGetSession, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticGetSession effect."""
         self._ensure_workflow()
@@ -630,7 +629,7 @@ class OpenCodeHandler:
             if not result:
                 raise AgenticSessionNotFoundError(effect.name, by_name=True)
             return ContinueValue(
-                value=result, env=task_state.env, store=store, k=task_state.kontinuation
+                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
             )
 
         if effect.session_id:
@@ -639,13 +638,13 @@ class OpenCodeHandler:
                 raise AgenticSessionNotFoundError(effect.session_id)
             result = self._workflow.sessions[name]
             return ContinueValue(
-                value=result, env=task_state.env, store=store, k=task_state.kontinuation
+                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
             )
 
         raise ValueError("Either session_id or name must be provided")
 
     def handle_abort_session(
-        self, effect: AgenticAbortSession, task_state: TaskState, store: Store
+        self, effect: AgenticAbortSession, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticAbortSession effect."""
         self._ensure_workflow()
@@ -679,13 +678,13 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_abort_session(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     def handle_delete_session(
-        self, effect: AgenticDeleteSession, task_state: TaskState, store: Store
+        self, effect: AgenticDeleteSession, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticDeleteSession effect."""
         self._ensure_workflow()
@@ -708,9 +707,9 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_delete_session(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     # -------------------------------------------------------------------------
@@ -718,7 +717,7 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def handle_send_message(
-        self, effect: AgenticSendMessage, task_state: TaskState, store: Store
+        self, effect: AgenticSendMessage, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticSendMessage effect."""
         self._ensure_workflow()
@@ -787,13 +786,13 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_send_message(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     def handle_get_messages(
-        self, effect: AgenticGetMessages, task_state: TaskState, store: Store
+        self, effect: AgenticGetMessages, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticGetMessages effect."""
         self._ensure_workflow()
@@ -843,9 +842,9 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_get_messages(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     # -------------------------------------------------------------------------
@@ -853,7 +852,7 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def handle_next_event(
-        self, effect: AgenticNextEvent, task_state: TaskState, store: Store
+        self, effect: AgenticNextEvent, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticNextEvent effect."""
         self._ensure_workflow()
@@ -908,7 +907,7 @@ class OpenCodeHandler:
                                 final_status=final_status,
                             )
                             return ContinueValue(
-                                value=result, env=task_state.env, store=store, k=task_state.kontinuation
+                                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
                             )
 
                 result = AgenticEvent(
@@ -918,7 +917,7 @@ class OpenCodeHandler:
                     timestamp=datetime.now(timezone.utc),
                 )
                 return ContinueValue(
-                    value=result, env=task_state.env, store=store, k=task_state.kontinuation
+                    value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
                 )
 
         except StopIteration:
@@ -928,13 +927,13 @@ class OpenCodeHandler:
                 final_status=None,
             )
             return ContinueValue(
-                value=result, env=task_state.env, store=store, k=task_state.kontinuation
+                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
             )
 
         # Should not reach here
         result = AgenticEndOfEvents(reason="connection_closed", final_status=None)
         return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
         )
 
     def _close_sse(self, session_id: str) -> None:
@@ -952,7 +951,7 @@ class OpenCodeHandler:
     # -------------------------------------------------------------------------
 
     def handle_get_session_status(
-        self, effect: AgenticGetSessionStatus, task_state: TaskState, store: Store
+        self, effect: AgenticGetSessionStatus, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticGetSessionStatus effect."""
         self._ensure_workflow()
@@ -973,18 +972,18 @@ class OpenCodeHandler:
 
         return ContinueProgram(
             program=_get_status(),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
     def handle_supports_capability(
-        self, effect: AgenticSupportsCapability, task_state: TaskState, store: Store
+        self, effect: AgenticSupportsCapability, ctx: HandlerContext
     ) -> FrameResult:
         """Handle AgenticSupportsCapability effect."""
         result = effect.capability in self.SUPPORTED_CAPABILITIES
         return ContinueValue(
-            value=result, env=task_state.env, store=store, k=task_state.kontinuation
+            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
         )
 
     # -------------------------------------------------------------------------
