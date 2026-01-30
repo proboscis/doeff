@@ -361,6 +361,175 @@ class TestSyncRuntimePromise:
         assert isinstance(result.err(), ValueError)
 
 
+class TestSyncRuntimePromiseWithAwait:
+    """Tests for Promise effects inside spawned tasks with Await/Delay."""
+
+    def test_complete_promise_after_await_in_spawned_task(self) -> None:
+        """CompletePromise works correctly after Await in spawned task."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def completer():
+                yield Await(asyncio.sleep(0.01))
+                yield CompletePromise(promise, "completed_after_await")
+
+            task = yield Spawn(completer())
+            result = yield Wait(promise.future)
+            yield Wait(task)
+            return result
+
+        result = runtime.run_and_unwrap(program())
+        assert result == "completed_after_await"
+
+    def test_fail_promise_after_await_in_spawned_task(self) -> None:
+        """FailPromise works correctly after Await in spawned task."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def failer():
+                yield Await(asyncio.sleep(0.01))
+                yield FailPromise(promise, ValueError("failed_after_await"))
+
+            task = yield Spawn(failer())
+            safe_result = yield Safe(Wait(promise.future))
+            yield Wait(task)
+            return safe_result
+
+        result = runtime.run_and_unwrap(program())
+        assert result.is_err()
+        assert "failed_after_await" in str(result.err())
+
+    def test_complete_promise_after_delay_in_spawned_task(self) -> None:
+        """CompletePromise works correctly after Delay in spawned task."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def completer():
+                yield Delay(0.01)
+                yield CompletePromise(promise, "completed_after_delay")
+
+            task = yield Spawn(completer())
+            result = yield Wait(promise.future)
+            yield Wait(task)
+            return result
+
+        result = runtime.run_and_unwrap(program())
+        assert result == "completed_after_delay"
+
+    def test_fail_promise_after_delay_in_spawned_task(self) -> None:
+        """FailPromise works correctly after Delay in spawned task."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def failer():
+                yield Delay(0.01)
+                yield FailPromise(promise, RuntimeError("failed_after_delay"))
+
+            task = yield Spawn(failer())
+            safe_result = yield Safe(Wait(promise.future))
+            yield Wait(task)
+            return safe_result
+
+        result = runtime.run_and_unwrap(program())
+        assert result.is_err()
+        assert "failed_after_delay" in str(result.err())
+
+    def test_promise_with_multiple_awaits_before_complete(self) -> None:
+        """Promise completion after multiple Awaits in spawned task."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def multi_await_completer():
+                yield Await(asyncio.sleep(0.005))
+                yield Put("step", 1)
+                yield Await(asyncio.sleep(0.005))
+                yield Put("step", 2)
+                step = yield Get("step")
+                yield CompletePromise(promise, f"done_at_step_{step}")
+
+            task = yield Spawn(multi_await_completer())
+            result = yield Wait(promise.future)
+            yield Wait(task)
+            return result
+
+        result = runtime.run_and_unwrap(program())
+        assert result == "done_at_step_2"
+
+    def test_nested_spawn_with_promise_and_await(self) -> None:
+        """Nested spawn where inner task completes promise after Await."""
+        runtime = SyncRuntime()
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def inner_completer():
+                yield Await(asyncio.sleep(0.01))
+                yield CompletePromise(promise, "from_inner")
+
+            @do
+            def outer_task():
+                inner = yield Spawn(inner_completer())
+                yield Wait(inner)
+                return "outer_done"
+
+            outer = yield Spawn(outer_task())
+            promise_result = yield Wait(promise.future)
+            outer_result = yield Wait(outer)
+            return {"promise": promise_result, "outer": outer_result}
+
+        result = runtime.run_and_unwrap(program())
+        assert result["promise"] == "from_inner"
+        assert result["outer"] == "outer_done"
+
+    def test_fail_promise_propagates_through_wait(self) -> None:
+        """FailPromise error propagates correctly through Wait."""
+        runtime = SyncRuntime()
+
+        class CustomError(Exception):
+            pass
+
+        @do
+        def program():
+            promise = yield CreatePromise()
+
+            @do
+            def failer():
+                yield Await(asyncio.sleep(0.01))
+                yield FailPromise(promise, CustomError("custom_error"))
+
+            task = yield Spawn(failer())
+            safe_result = yield Safe(Wait(promise.future))
+            yield Wait(task)
+            return safe_result
+
+        result = runtime.run_and_unwrap(program())
+        assert result.is_err()
+        assert isinstance(result.err(), CustomError)
+        assert "custom_error" in str(result.err())
+
+
 class TestSyncRuntimeCooperativeScheduling:
 
     def test_cooperative_interleaving(self) -> None:
