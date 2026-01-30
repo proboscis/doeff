@@ -35,8 +35,10 @@ from doeff_conductor import (
     # Handler utility
     make_scheduled_handler,
 )
+from doeff_preset import preset_handlers
 
 from doeff import EffectGenerator, SyncRuntime, do
+from doeff.effects.writer import slog
 
 
 # Mock handlers for demonstration (no real git/agent operations)
@@ -110,15 +112,15 @@ def basic_pr_workflow(issue: Issue) -> EffectGenerator[PRHandle]:
     Returns:
         PRHandle for the created PR.
     """
-    print(f"Starting basic_pr workflow for: {issue.title}")
+    yield slog(step="start", msg=f"Starting basic_pr workflow for: {issue.title}")
 
     # Step 1: Create isolated worktree
-    print("\n1. Creating worktree...")
+    yield slog(step="worktree", status="creating")
     env: WorktreeEnv = yield CreateWorktree(issue=issue)
-    print(f"   Worktree created: {env.path}")
+    yield slog(step="worktree", status="created", path=str(env.path))
 
     # Step 2: Run agent to implement the issue
-    print("\n2. Running agent...")
+    yield slog(step="agent", status="running")
     prompt = f"""
 Implement the following issue:
 
@@ -129,27 +131,28 @@ Implement the following issue:
 Please implement the changes needed to resolve this issue.
 """
     output: str = yield RunAgent(env=env, prompt=prompt)
-    print(f"   Agent output: {output}")
+    yield slog(step="agent", status="completed", output=output[:100])
 
     # Step 3: Commit and push changes
-    print("\n3. Committing and pushing...")
+    yield slog(step="commit", status="committing")
     commit_msg = f"feat: {issue.title}\n\nResolves: {issue.id}"
     yield Commit(env=env, message=commit_msg)
     yield Push(env=env)
+    yield slog(step="commit", status="pushed")
 
     # Step 4: Create PR
-    print("\n4. Creating PR...")
+    yield slog(step="pr", status="creating")
     pr: PRHandle = yield CreatePR(
         env=env,
         title=issue.title,
         body=f"Implements {issue.id}",
     )
-    print(f"   PR created: {pr.url}")
+    yield slog(step="pr", status="created", url=pr.url)
 
     # Step 5: Resolve the issue
-    print("\n5. Resolving issue...")
+    yield slog(step="resolve", status="resolving")
     yield ResolveIssue(issue=issue, pr_url=pr.url)
-    print("   Issue resolved!")
+    yield slog(step="resolve", status="done")
 
     return pr
 
@@ -176,7 +179,7 @@ Implement user authentication with JWT tokens.
 
     # Set up mock handlers
     mock = MockHandlers()
-    handlers = {
+    domain_handlers = {
         CreateWorktree: make_scheduled_handler(mock.handle_create_worktree),
         RunAgent: make_scheduled_handler(mock.handle_run_agent),
         Commit: make_scheduled_handler(mock.handle_commit),
@@ -185,12 +188,15 @@ Implement user authentication with JWT tokens.
         ResolveIssue: make_scheduled_handler(mock.handle_resolve_issue),
     }
 
+    # Merge preset handlers (slog display) with domain handlers
+    handlers = {**preset_handlers(), **domain_handlers}
+
     # Run the workflow
     runtime = SyncRuntime(handlers=handlers)
-    pr = runtime.run(basic_pr_workflow(issue))
+    result = runtime.run(basic_pr_workflow(issue))
 
     print(f"\n{'='*50}")
-    print(f"Workflow completed! PR: {pr.url}")
+    print(f"Workflow completed! PR: {result.value.url}")
 
 
 if __name__ == "__main__":
