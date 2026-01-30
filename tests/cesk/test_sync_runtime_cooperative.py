@@ -10,7 +10,9 @@ This test file covers:
 import asyncio
 
 from doeff import do
+from doeff.cesk.handlers import make_await_handler, make_delay_handler
 from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.runtime.executor import ThreadedAsyncioExecutor
 from doeff.effects import (
     Await,
     Delay,
@@ -21,8 +23,20 @@ from doeff.effects import (
     Spawn,
     Wait,
 )
+from doeff.effects.future import FutureAwaitEffect
 from doeff.effects.promise import CompletePromise, CreatePromise, FailPromise
 from doeff.effects.race import Race
+from doeff.effects.time import DelayEffect
+
+
+def create_async_runtime() -> SyncRuntime:
+    """Create a SyncRuntime with handlers for Await/Delay effects."""
+    executor = ThreadedAsyncioExecutor()
+    handlers = {
+        FutureAwaitEffect: make_await_handler(executor),
+        DelayEffect: make_delay_handler(executor),
+    }
+    return SyncRuntime(handlers=handlers)
 
 
 class TestSyncRuntimeBasic:
@@ -157,7 +171,7 @@ class TestSyncRuntimeSpawn:
 class TestSyncRuntimeAwait:
 
     def test_await_simple_coroutine(self) -> None:
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         async def async_work():
             await asyncio.sleep(0.01)
@@ -172,7 +186,7 @@ class TestSyncRuntimeAwait:
         assert result == 42
 
     def test_await_multiple_coroutines(self) -> None:
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         async def async_a():
             await asyncio.sleep(0.01)
@@ -192,7 +206,7 @@ class TestSyncRuntimeAwait:
         assert result == "ab"
 
     def test_await_with_exception(self) -> None:
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         async def failing_async():
             await asyncio.sleep(0.01)
@@ -366,7 +380,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_spawned_task_creates_promise_main_waits(self) -> None:
         """Spawned task creates Promise, main task Waits on it."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -387,7 +401,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_two_spawned_tasks_producer_consumer_pattern(self) -> None:
         """Producer spawned task creates+completes Promise, consumer spawned task Waits."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -421,7 +435,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_spawned_task_fails_promise_another_spawned_waits(self) -> None:
         """Spawned task FailPromise, another spawned task catches via Safe+Wait."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -458,7 +472,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_multiple_spawned_waiters_on_same_promise(self) -> None:
         """Multiple spawned tasks Wait on same Promise, all receive the value."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -493,7 +507,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_spawned_task_await_then_complete_promise_then_main_wait(self) -> None:
         """Spawned task: Await -> state change -> CompletePromise, main Waits."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -523,7 +537,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_chain_of_spawned_tasks_with_promises(self) -> None:
         """Chain: Task A creates Promise1, Task B waits Promise1 + creates Promise2, Task C waits Promise2."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -565,7 +579,7 @@ class TestSpawnPromiseWaitCombinations:
 
     def test_spawned_task_fail_promise_multiple_waiters_all_fail(self) -> None:
         """FailPromise propagates to all spawned Waiters."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -603,7 +617,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_complete_promise_after_await_in_spawned_task(self) -> None:
         """CompletePromise works correctly after Await in spawned task."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -624,7 +638,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_fail_promise_after_await_in_spawned_task(self) -> None:
         """FailPromise works correctly after Await in spawned task."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -646,7 +660,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_complete_promise_after_delay_in_spawned_task(self) -> None:
         """CompletePromise works correctly after Delay in spawned task."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -667,7 +681,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_fail_promise_after_delay_in_spawned_task(self) -> None:
         """FailPromise works correctly after Delay in spawned task."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -689,7 +703,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_promise_with_multiple_awaits_before_complete(self) -> None:
         """Promise completion after multiple Awaits in spawned task."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -714,7 +728,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_nested_spawn_with_promise_and_await(self) -> None:
         """Nested spawn where inner task completes promise after Await."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -742,7 +756,7 @@ class TestSyncRuntimePromiseWithAwait:
 
     def test_fail_promise_propagates_through_wait(self) -> None:
         """FailPromise error propagates correctly through Wait."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         class CustomError(Exception):
             pass
@@ -817,7 +831,7 @@ class TestSyncRuntimeStoreSemantics:
 
     def test_await_preserves_state_modifications(self) -> None:
         """State modifications before Await are visible after resume."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -832,7 +846,7 @@ class TestSyncRuntimeStoreSemantics:
 
     def test_multiple_awaits_preserve_state_sequence(self) -> None:
         """Sequential Awaits correctly preserve all intermediate state changes."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -857,7 +871,7 @@ class TestSyncRuntimeStoreSemantics:
 
     def test_spawned_task_await_uses_isolated_store(self) -> None:
         """Spawned task Await uses isolated store, not shared store."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def background():
@@ -879,7 +893,7 @@ class TestSyncRuntimeStoreSemantics:
 
     def test_delay_preserves_state(self) -> None:
         """State is preserved across Delay effects."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
@@ -896,7 +910,7 @@ class TestSyncRuntimeStoreSemantics:
 
     def test_gather_with_state_modifications(self) -> None:
         """Gather correctly handles tasks that modify state and await."""
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def task_with_await(task_id: int):
@@ -921,7 +935,7 @@ class TestSyncRuntimeStoreSemantics:
         This tests the fix for: "can even overwrite the global store with a
         spawned task's isolated store" (Oracle review).
         """
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def background():
@@ -956,20 +970,20 @@ class TestSyncRuntimeStoreSemantics:
         
         Verifies current store (not snapshot) is used at resume time.
         """
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def program():
             yield Put("step", "initial")
             yield Put("step", "before_await")
             yield Put("counter", 0)
-            
+
             yield Put("counter", 1)
             yield Await(asyncio.sleep(0.01))
-            
+
             step_after = yield Get("step")
             counter_after = yield Get("counter")
-            
+
             return {"step": step_after, "counter": counter_after}
 
         result = runtime.run_and_unwrap(program())
@@ -981,7 +995,7 @@ class TestSyncRuntimeStoreSemantics:
         
         Each spawned task should see its own snapshot, not other tasks' changes.
         """
-        runtime = SyncRuntime()
+        runtime = create_async_runtime()
 
         @do
         def task_a():
@@ -1062,6 +1076,7 @@ class TestSuspensionHandleThreadSafety:
         Tests the thread safety fix for SuspensionHandle.
         """
         import threading
+
         from doeff.cesk.runtime.context import SuspensionHandle
 
         results: list[int] = []
