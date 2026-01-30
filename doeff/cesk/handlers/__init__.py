@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 if TYPE_CHECKING:
     from doeff._types_internal import EffectBase
     from doeff.cesk.frames import FrameResult
+    from doeff.cesk.runtime.context import HandlerContext
     from doeff.cesk.state import TaskState
     from doeff.cesk.types import Store
 
-Handler: TypeAlias = Callable[..., Any]
+Handler: TypeAlias = Callable[[Any, "HandlerContext"], "FrameResult"]
 
 
 def default_handlers() -> dict[type, Handler]:

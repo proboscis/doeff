@@ -50,12 +50,22 @@ class Promise(Generic[T]):
         return self._future
 
     def complete(self, value: T) -> None:
+        warnings.warn(
+            "Promise.complete() is deprecated. Use 'yield CompletePromise(promise, value)' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if self._completed:
             raise RuntimeError("Promise already completed")
         self._value = value
         self._completed = True
 
     def fail(self, error: BaseException) -> None:
+        warnings.warn(
+            "Promise.fail() is deprecated. Use 'yield FailPromise(promise, error)' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if self._completed:
             raise RuntimeError("Promise already completed")
         self._error = error

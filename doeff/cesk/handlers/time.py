@@ -4,55 +4,54 @@ from __future__ import annotations
 
 import time
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from doeff.cesk.frames import ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
 from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
+
+if TYPE_CHECKING:
+    from doeff.cesk.runtime.context import HandlerContext
 
 
 def handle_delay(
     effect: DelayEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
     time.sleep(effect.seconds)
 
-    new_store = store
-    if "__current_time__" in store:
-        new_store = {**store, "__current_time__": datetime.now()}
+    new_store = ctx.store
+    if "__current_time__" in ctx.store:
+        new_store = {**ctx.store, "__current_time__": datetime.now()}
 
     return ContinueValue(
         value=None,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_get_time(
     effect: GetTimeEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    current_time = store.get("__current_time__")
+    current_time = ctx.store.get("__current_time__")
     if current_time is None:
         current_time = datetime.now()
     return ContinueValue(
         value=current_time,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_wait_until(
     effect: WaitUntilEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    has_store_time = "__current_time__" in store
-    current_time = store.get("__current_time__")
+    has_store_time = "__current_time__" in ctx.store
+    current_time = ctx.store.get("__current_time__")
     if current_time is None:
         current_time = datetime.now()
 
@@ -60,15 +59,15 @@ def handle_wait_until(
         wait_seconds = (effect.target_time - current_time).total_seconds()
         time.sleep(wait_seconds)
 
-    new_store = store
+    new_store = ctx.store
     if has_store_time:
-        new_store = {**store, "__current_time__": datetime.now()}
+        new_store = {**ctx.store, "__current_time__": datetime.now()}
 
     return ContinueValue(
         value=None,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
