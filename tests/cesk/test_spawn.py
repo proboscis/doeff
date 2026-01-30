@@ -965,17 +965,15 @@ class TestSpawnOracleReview:
         from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.pure import PureEffect
 
-        # Custom handler that reads and modifies store
         handler_saw_value = []
 
-        def custom_pure_handler(effect, task_state, store):
-            # Record what value we saw in the store
-            handler_saw_value.append(store.get("marker", "not_set"))
+        def custom_pure_handler(effect, ctx):
+            handler_saw_value.append(ctx.store.get("marker", "not_set"))
             return ContinueValue(
                 value=effect.value,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         custom_handlers = default_handlers()

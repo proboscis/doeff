@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from doeff.cesk.frames import ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
 from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
+
+if TYPE_CHECKING:
+    from doeff.cesk.runtime.context import HandlerContext
 
 
 def handle_atomic_get(
     effect: AtomicGetEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
     key = effect.key
+    store = ctx.store
     if key in store:
         value = store[key]
     elif effect.default_factory is not None:
@@ -23,18 +26,18 @@ def handle_atomic_get(
         value = None
     return ContinueValue(
         value=value,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_atomic_update(
     effect: AtomicUpdateEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
     key = effect.key
+    store = ctx.store
     if key in store:
         old_value = store[key]
     elif effect.default_factory is not None:
@@ -45,9 +48,9 @@ def handle_atomic_update(
     new_store = {**store, key: new_value}
     return ContinueValue(
         value=new_value,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 

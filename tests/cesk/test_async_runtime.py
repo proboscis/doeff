@@ -905,12 +905,12 @@ class TestAsyncRuntimeCustomHandlers:
         from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.reader import AskEffect
 
-        def custom_ask_handler(effect, task_state, store):
+        def custom_ask_handler(effect, ctx):
             return ContinueValue(
                 value=f"custom:{effect.key}",
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         custom_handlers = default_handlers()
@@ -935,13 +935,13 @@ class TestAsyncRuntimeCustomHandlers:
 
         run_counter = [0]
 
-        def counting_pure_handler(effect, task_state, store):
+        def counting_pure_handler(effect, ctx):
             run_counter[0] += 1
             return ContinueValue(
                 value=effect.value,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         custom_handlers = default_handlers()

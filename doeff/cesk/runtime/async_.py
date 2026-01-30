@@ -55,13 +55,12 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-def _placeholder_handler(effect: Any, task_state: TaskState, store: Store) -> ContinueValue:
-    """Placeholder handler for effects that are intercepted by the runtime."""
+def _placeholder_handler(effect: Any, ctx: Any) -> ContinueValue:
     return ContinueValue(
         value=None,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
     )
 
 

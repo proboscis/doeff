@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.errors import UnhandledEffectError
-from doeff.cesk.frames import ContinueError, ContinueProgram, ContinueValue, FrameResult
+from doeff.cesk.frames import ContinueError, ContinueProgram, ContinueValue, FrameResult, SuspendOn
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.runtime.context import HandlerContext
 from doeff.cesk.runtime_result import (
     EffectStackTrace,
     KStackTrace,
@@ -76,6 +77,7 @@ class BaseRuntime(ABC):
         effect: Any,
         task_state: TaskState,
         store: dict[str, Any],
+        ctx: HandlerContext | None = None,
     ) -> FrameResult:
         handler = self._handlers.get(type(effect))
 
@@ -87,12 +89,15 @@ class BaseRuntime(ABC):
                 k=task_state.kontinuation,
             )
 
+        if ctx is None:
+            ctx = HandlerContext(task_state=task_state, store=store, suspend=None)
+
         try:
-            frame_result = handler(effect, task_state, store)
+            frame_result = handler(effect, ctx)
         except Exception as ex:
             return ContinueError(error=ex, env=task_state.env, store=store, k=task_state.kontinuation)
 
-        if isinstance(frame_result, (ContinueValue, ContinueError, ContinueProgram)):
+        if isinstance(frame_result, (ContinueValue, ContinueError, ContinueProgram, SuspendOn)):
             return frame_result
 
         return ContinueError(
