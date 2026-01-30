@@ -10,6 +10,7 @@ from doeff.cesk.frames import ContinueError, ContinueValue
 from doeff.cesk.handlers import Handler
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
+from doeff.cesk.runtime.context import HandlerContext
 from doeff.cesk.runtime_result import RuntimeResult
 from doeff.cesk.state import CESKState
 from doeff.cesk.step import step
@@ -160,8 +161,9 @@ class SimulationRuntime(BaseRuntime):
 
                 handler = self._handlers.get(effect_type)
                 if handler is not None:
+                    ctx = HandlerContext(task_state=main_task, store=state.store, suspend=None)
                     try:
-                        frame_result = handler(effect, main_task, state.store)
+                        frame_result = handler(effect, ctx)
                     except Exception as ex:
                         state = result.resume_error(ex)
                         continue
