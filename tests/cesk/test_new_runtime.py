@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from doeff import do
+from doeff.cesk.runtime.context import HandlerContext
 from doeff.effects import (
     IO,
     Ask,
@@ -233,8 +234,9 @@ class TestCoreHandlers:
         effect = PureEffect(value=42)
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_pure(effect, task_state, store)
+        result = handle_pure(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value == 42
@@ -248,8 +250,9 @@ class TestCoreHandlers:
         effect = AskEffect(key="test_key")
         task_state = TaskState.initial(Program.pure(0), env={"test_key": "test_value"})
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_ask(effect, task_state, store)
+        result = handle_ask(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value == "test_value"
@@ -263,8 +266,9 @@ class TestCoreHandlers:
         effect = StateGetEffect(key="counter")
         task_state = TaskState.initial(Program.pure(0))
         store = {"counter": 100}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_state_get(effect, task_state, store)
+        result = handle_state_get(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value == 100
@@ -278,8 +282,9 @@ class TestCoreHandlers:
         effect = StatePutEffect(key="counter", value=42)
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_state_put(effect, task_state, store)
+        result = handle_state_put(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value is None
@@ -294,8 +299,9 @@ class TestCoreHandlers:
         effect = StateModifyEffect(key="counter", func=lambda x: (x or 0) + 10)
         task_state = TaskState.initial(Program.pure(0))
         store = {"counter": 5}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_state_modify(effect, task_state, store)
+        result = handle_state_modify(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value == 15
@@ -312,8 +318,9 @@ class TestIOHandlers:
         effect = IOPerformEffect(action=lambda: 42)
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_io(effect, task_state, store)
+        result = handle_io(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value == 42
@@ -330,8 +337,9 @@ class TestIOHandlers:
         effect = IOPerformEffect(action=failing_action)
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_io(effect, task_state, store)
+        result = handle_io(effect, ctx)
 
         assert isinstance(result, ContinueError)
         assert isinstance(result.error, ValueError)
@@ -345,12 +353,14 @@ class TestIOHandlers:
         put_effect = cache_put(key="cached_key", value="cached_value")
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        put_result = handle_cache_put(put_effect, task_state, store)
+        put_result = handle_cache_put(put_effect, ctx)
         assert isinstance(put_result, ContinueValue)
 
         get_effect = CacheGetEffect(key="cached_key")
-        get_result = handle_cache_get(get_effect, task_state, put_result.store)
+        ctx_with_store = HandlerContext(task_state=task_state, store=put_result.store)
+        get_result = handle_cache_get(get_effect, ctx_with_store)
         assert isinstance(get_result, ContinueValue)
         assert get_result.value == "cached_value"
 
@@ -362,16 +372,18 @@ class TestIOHandlers:
 
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
         exists_effect = CacheExistsEffect(key="test_key")
-        result = handle_cache_exists(exists_effect, task_state, store)
+        result = handle_cache_exists(exists_effect, ctx)
         assert isinstance(result, ContinueValue)
         assert result.value is False
 
         put_effect = cache_put(key="test_key", value="value")
-        put_result = handle_cache_put(put_effect, task_state, store)
+        put_result = handle_cache_put(put_effect, ctx)
 
-        result = handle_cache_exists(exists_effect, task_state, put_result.store)
+        ctx_with_store = HandlerContext(task_state=task_state, store=put_result.store)
+        result = handle_cache_exists(exists_effect, ctx_with_store)
         assert isinstance(result, ContinueValue)
         assert result.value is True
 
@@ -387,15 +399,20 @@ class TestIOHandlers:
 
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
         put_effect = cache_put(key="test_key", value="value")
-        store = handle_cache_put(put_effect, task_state, store).store
+        put_result = handle_cache_put(put_effect, ctx)
+        store = put_result.store
 
+        ctx_with_store = HandlerContext(task_state=task_state, store=store)
         delete_effect = CacheDeleteEffect(key="test_key")
-        store = handle_cache_delete(delete_effect, task_state, store).store
+        delete_result = handle_cache_delete(delete_effect, ctx_with_store)
+        store = delete_result.store
 
+        ctx_final = HandlerContext(task_state=task_state, store=store)
         exists_effect = CacheExistsEffect(key="test_key")
-        result = handle_cache_exists(exists_effect, task_state, store)
+        result = handle_cache_exists(exists_effect, ctx_final)
         assert isinstance(result, ContinueValue)
         assert result.value is False
 
@@ -414,8 +431,9 @@ class TestTimeHandlers:
         effect = DelayEffect(seconds=5.0)
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_delay(effect, task_state, store)
+        result = handle_delay(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value is None
@@ -434,8 +452,9 @@ class TestTimeHandlers:
         task_state = TaskState.initial(Program.pure(0))
         initial_time = datetime(2025, 1, 1, 12, 0, 0)
         store = {"__current_time__": initial_time}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_delay(effect, task_state, store)
+        result = handle_delay(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert "__current_time__" in result.store
@@ -451,8 +470,9 @@ class TestTimeHandlers:
         task_state = TaskState.initial(Program.pure(0))
         test_time = datetime(2025, 1, 1, 12, 0, 0)
         store = {"__current_time__": test_time}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
-        result = handle_get_time(effect, task_state, store)
+        result = handle_get_time(effect, ctx)
 
         assert isinstance(result, ContinueValue)
         assert result.value == test_time
@@ -466,9 +486,10 @@ class TestTimeHandlers:
         effect = GetTimeEffect()
         task_state = TaskState.initial(Program.pure(0))
         store = {}
+        ctx = HandlerContext(task_state=task_state, store=store)
 
         before = datetime.now()
-        result = handle_get_time(effect, task_state, store)
+        result = handle_get_time(effect, ctx)
         after = datetime.now()
 
         assert isinstance(result, ContinueValue)
@@ -482,12 +503,12 @@ class TestHandlerIntegration:
         from doeff.cesk.runtime import SyncRuntime
         from doeff.effects.reader import AskEffect
 
-        def custom_ask_handler(effect, task_state, store):
+        def custom_ask_handler(effect, ctx):
             return ContinueValue(
                 value=f"intercepted:{effect.key}",
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         @do
@@ -509,13 +530,13 @@ class TestHandlerIntegration:
         from doeff.cesk.runtime import SyncRuntime
         from doeff.effects.state import StateGetEffect
 
-        def custom_get_handler(effect, task_state, store):
-            actual = store.get(effect.key)
+        def custom_get_handler(effect, ctx):
+            actual = ctx.store.get(effect.key)
             return ContinueValue(
                 value=f"wrapped:{actual}",
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         @do
@@ -540,14 +561,14 @@ class TestHandlerIntegration:
 
         call_count = [0]
 
-        def counting_io_handler(effect, task_state, store):
+        def counting_io_handler(effect, ctx):
             call_count[0] += 1
             result = effect.action()
             return ContinueValue(
                 value=result,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         @do
@@ -570,13 +591,13 @@ class TestHandlerIntegration:
 
         run_counter = [0]
 
-        def counting_pure_handler(effect, task_state, store):
+        def counting_pure_handler(effect, ctx):
             run_counter[0] += 1
             return ContinueValue(
                 value=effect.value,
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         custom_handlers = default_handlers()
@@ -600,12 +621,12 @@ class TestHandlerIntegration:
         from doeff.cesk.runtime import SimulationRuntime
         from doeff.effects.reader import AskEffect
 
-        def sim_ask_handler(effect, task_state, store):
+        def sim_ask_handler(effect, ctx):
             return ContinueValue(
                 value=f"sim:{effect.key}",
-                env=task_state.env,
-                store=store,
-                k=task_state.kontinuation,
+                env=ctx.task_state.env,
+                store=ctx.store,
+                k=ctx.task_state.kontinuation,
             )
 
         @do

@@ -125,7 +125,27 @@ class ContinueGenerator:
     program_call: KleisliProgramCall | None = None
 
 
-FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator
+@dataclass(frozen=True)
+class SuspendOn:
+    """Handler signals: task is suspended, will be woken by ctx.suspend.complete/fail.
+    
+    This is returned by handlers that need to suspend the current task and wait
+    for external completion (e.g., Await handler waiting for asyncio, external
+    executors like Ray or Dask, etc.).
+    
+    When a handler returns SuspendOn, the runtime:
+    1. Parks the task in the pending set
+    2. Moves to the next ready task
+    3. When ctx.suspend.complete(value) or ctx.suspend.fail(error) is called,
+       the task is moved back to the ready queue and resumed
+    
+    The handler MUST have registered completion callbacks via HandlerContext.suspend
+    before returning SuspendOn, otherwise the task will be parked forever.
+    """
+    pass
+
+
+FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | SuspendOn
 
 
 # ============================================
@@ -652,4 +672,5 @@ __all__ = [
     "RaceFrame",
     "ReturnFrame",
     "SafeFrame",
+    "SuspendOn",
 ]

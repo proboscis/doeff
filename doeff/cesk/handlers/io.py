@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
 from doeff.cesk.types import Store
 from doeff.effects.cache import (
     CacheDeleteEffect,
@@ -15,26 +14,28 @@ from doeff.effects.cache import (
 )
 from doeff.effects.io import IOPerformEffect
 
+if TYPE_CHECKING:
+    from doeff.cesk.runtime.context import HandlerContext
+
 
 def handle_io(
     effect: IOPerformEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
     try:
         result = effect.action()
         return ContinueValue(
             value=result,
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
     except Exception as ex:
         return ContinueError(
             error=ex,
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
 
 
@@ -48,70 +49,66 @@ def _set_cache_storage(store: Store, cache: dict[str, Any]) -> Store:
 
 def handle_cache_get(
     effect: CacheGetEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    cache = _get_cache_storage(store)
+    cache = _get_cache_storage(ctx.store)
     key = effect.key
     if key not in cache:
         return ContinueError(
             error=KeyError(f"Cache key not found: {key!r}"),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
+            env=ctx.task_state.env,
+            store=ctx.store,
+            k=ctx.task_state.kontinuation,
         )
     return ContinueValue(
         value=cache[key],
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_cache_put(
     effect: CachePutEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    cache = _get_cache_storage(store)
+    cache = _get_cache_storage(ctx.store)
     new_cache = {**cache, effect.key: effect.value}
-    new_store = _set_cache_storage(store, new_cache)
+    new_store = _set_cache_storage(ctx.store, new_cache)
     return ContinueValue(
         value=None,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_cache_exists(
     effect: CacheExistsEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    cache = _get_cache_storage(store)
+    cache = _get_cache_storage(ctx.store)
     exists = effect.key in cache
     return ContinueValue(
         value=exists,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
+        env=ctx.task_state.env,
+        store=ctx.store,
+        k=ctx.task_state.kontinuation,
     )
 
 
 def handle_cache_delete(
     effect: CacheDeleteEffect,
-    task_state: TaskState,
-    store: Store,
+    ctx: HandlerContext,
 ) -> FrameResult:
-    cache = _get_cache_storage(store)
+    cache = _get_cache_storage(ctx.store)
     new_cache = {k: v for k, v in cache.items() if k != effect.key}
-    new_store = _set_cache_storage(store, new_cache)
+    new_store = _set_cache_storage(ctx.store, new_cache)
     return ContinueValue(
         value=None,
-        env=task_state.env,
+        env=ctx.task_state.env,
         store=new_store,
-        k=task_state.kontinuation,
+        k=ctx.task_state.kontinuation,
     )
 
 
