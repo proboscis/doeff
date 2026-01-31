@@ -2,6 +2,41 @@
 
 Pure handler approach: all task scheduling happens through handlers.
 No task tracking in outer runtime - just step until Done/Failed.
+
+## Architecture Notes
+
+### P2: FutureAwaitEffect and DelayEffect Handling (ISSUE-CORE-467)
+
+The scheduler_handler currently handles FutureAwaitEffect and DelayEffect directly
+using blocking I/O operations (asyncio.run and time.sleep). This is intentional
+for the SyncRuntime use case but has limitations:
+
+- **Trade-off**: Simplifies the synchronous runtime at the cost of blocking
+- **Alternative for async**: Use AsyncRuntime which handles these natively
+- **Future improvement**: Could be extracted to a separate io_handler or made
+  configurable via dependency injection
+
+The current implementation is acceptable for:
+- Synchronous scripts where blocking is acceptable
+- Tests that don't require true parallelism
+- Simple use cases without complex async coordination
+
+For production async workloads, use AsyncRuntime instead.
+
+### P3: Lazy Imports (ISSUE-CORE-467)
+
+Several imports are performed inside function bodies to avoid circular imports:
+- GatherWaiterFrame (line ~397)
+- RaceWaiterFrame (line ~491)
+- FutureAwaitEffect, DelayEffect (line ~529-530)
+
+This is a documented design choice:
+- Frame types depend on effect types
+- Effect types may depend on handler types
+- Breaking this cycle at runtime is intentional
+
+The lazy import pattern is stable and doesn't impact performance significantly
+since these imports only happen once per effect type encountered.
 """
 
 from __future__ import annotations
