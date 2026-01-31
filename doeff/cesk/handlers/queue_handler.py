@@ -37,6 +37,7 @@ TASK_REGISTRY_KEY = "__scheduler_tasks__"
 WAITERS_KEY = "__scheduler_waiters__"
 CURRENT_TASK_KEY = "__scheduler_current_task__"
 TASK_SUSPENDED_KEY = "__scheduler_task_suspended__"
+PENDING_IO_KEY = "__scheduler_pending_io__"
 
 
 @dataclass
@@ -78,10 +79,16 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
         ))
     
     if isinstance(effect, QueuePop):
+        import os
+        debug = os.environ.get("DOEFF_DEBUG")
         queue = list(store.get(TASK_QUEUE_KEY, []))
+        if debug:
+            print(f"[QueuePop] queue_len={len(queue)}")
         if queue:
             item = queue.pop(0)
             store[TASK_QUEUE_KEY] = queue
+            if debug:
+                print(f"[QueuePop] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}")
             return Program.pure(ContinueValue(
                 value=(
                     item["task_id"],
@@ -89,11 +96,14 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
                     item.get("store_snapshot"),
                     item.get("resume_value"),
                     item.get("resume_error"),
+                    dict(store),
                 ),
                 env=ctx.env,
                 store=store,
                 k=ctx.delimited_k,
             ))
+        if debug:
+            print(f"[QueuePop] Queue empty! Returning None")
         return Program.pure(ContinueValue(
             value=None,
             env=ctx.env,
@@ -155,6 +165,9 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
         ))
     
     if isinstance(effect, TaskComplete):
+        import os
+        debug = os.environ.get("DOEFF_DEBUG")
+        
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         handle_id = effect.handle_id
         
@@ -169,20 +182,36 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             store[TASK_REGISTRY_KEY] = registry
         
         waiters = dict(store.get(WAITERS_KEY, {}))
+        if debug:
+            all_waiter_task_ids = []
+            if handle_id in waiters:
+                all_waiter_task_ids = [w["waiter_task_id"] for w in waiters[handle_id]]
+            print(f"[TaskComplete] handle={handle_id}, result={effect.result}, waiters_for_handle={handle_id in waiters}, waiter_task_ids={all_waiter_task_ids}")
         if handle_id in waiters:
             waiting_list = waiters.pop(handle_id)
             store[WAITERS_KEY] = waiters
             
             queue = list(store.get(TASK_QUEUE_KEY, []))
+            existing_task_ids = {item["task_id"] for item in queue}
             
+            added = 0
             for waiter in waiting_list:
+                waiter_task_id = waiter["waiter_task_id"]
+                if waiter_task_id in existing_task_ids:
+                    if debug:
+                        print(f"[TaskComplete] Skipping duplicate waiter for task_id={waiter_task_id}")
+                    continue
                 queue.append({
-                    "task_id": waiter["waiter_task_id"],
+                    "task_id": waiter_task_id,
                     "k": waiter["waiter_k"],
                     "store_snapshot": waiter.get("waiter_store"),
                     "resume_value": effect.result,
                     "resume_error": effect.error,
                 })
+                existing_task_ids.add(waiter_task_id)
+                added += 1
+            if debug:
+                print(f"[TaskComplete] Added {added} waiters to queue (skipped {len(waiting_list) - added}), queue_len now={len(queue)}")
             store[TASK_QUEUE_KEY] = queue
         
         return Program.pure(ContinueValue(
@@ -355,12 +384,71 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
+    from doeff.effects.queue import AddPendingIO, GetPendingIO, RemovePendingIO, ResumePendingIO
+    
+    if isinstance(effect, AddPendingIO):
+        pending = dict(store.get(PENDING_IO_KEY, {}))
+        pending[effect.task_id] = {
+            "awaitable": effect.awaitable,
+            "k": effect.k,
+            "store_snapshot": effect.store_snapshot,
+        }
+        store[PENDING_IO_KEY] = pending
+        return Program.pure(ContinueValue(
+            value=None,
+            env=ctx.env,
+            store=store,
+            k=ctx.delimited_k,
+        ))
+    
+    if isinstance(effect, GetPendingIO):
+        pending = store.get(PENDING_IO_KEY, {})
+        return Program.pure(ContinueValue(
+            value=pending,
+            env=ctx.env,
+            store=store,
+            k=ctx.delimited_k,
+        ))
+    
+    if isinstance(effect, RemovePendingIO):
+        pending = dict(store.get(PENDING_IO_KEY, {}))
+        pending.pop(effect.task_id, None)
+        store[PENDING_IO_KEY] = pending
+        return Program.pure(ContinueValue(
+            value=None,
+            env=ctx.env,
+            store=store,
+            k=ctx.delimited_k,
+        ))
+    
+    if isinstance(effect, ResumePendingIO):
+        pending = dict(store.get(PENDING_IO_KEY, {}))
+        task_info = pending.pop(effect.task_id, None)
+        store[PENDING_IO_KEY] = pending
+        if task_info is not None:
+            queue = list(store.get(TASK_QUEUE_KEY, []))
+            queue.append({
+                "task_id": effect.task_id,
+                "k": task_info["k"],
+                "store_snapshot": task_info["store_snapshot"],
+                "resume_value": effect.value,
+                "resume_error": effect.error,
+            })
+            store[TASK_QUEUE_KEY] = queue
+        return Program.pure(ContinueValue(
+            value=None,
+            env=ctx.env,
+            store=store,
+            k=ctx.delimited_k,
+        ))
+    
     from doeff.cesk.errors import UnhandledEffectError
     raise UnhandledEffectError(f"queue_handler: unhandled effect {type(effect).__name__}")
 
 
 __all__ = [
     "CURRENT_TASK_KEY",
+    "PENDING_IO_KEY",
     "TASK_QUEUE_KEY",
     "TASK_REGISTRY_KEY",
     "TASK_SUSPENDED_KEY",
