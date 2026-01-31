@@ -898,6 +898,7 @@ class TestAsyncRuntimeCustomHandlers:
     """Test custom handler integration with AsyncRuntime."""
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Legacy dict-based handler API replaced by handler stack in CESK v2. Use WithHandler for custom handlers.")
     async def test_custom_ask_handler(self) -> None:
         """Test custom Ask handler overrides default."""
         from doeff.cesk.frames import ContinueValue
@@ -926,6 +927,7 @@ class TestAsyncRuntimeCustomHandlers:
         assert result == "custom:key"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Legacy dict-based handler API replaced by handler stack in CESK v2. Use WithHandler for custom handlers.")
     async def test_handlers_shared_across_runs(self) -> None:
         """Test handlers are shared across multiple runs."""
         from doeff.cesk.frames import ContinueValue

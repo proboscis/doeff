@@ -3,18 +3,27 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
-from doeff.cesk.frames import ContinueError, ContinueValue
-from doeff.cesk.handlers import Handler
-from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.frames import ContinueValue
+from doeff.cesk.handler_frame import Handler, HandlerContext, WithHandler
+from doeff.cesk.handlers.core_handler import core_handler
+from doeff.cesk.handlers.queue_handler import (
+    CURRENT_TASK_KEY,
+    TASK_QUEUE_KEY,
+    TASK_REGISTRY_KEY,
+    WAITERS_KEY,
+    queue_handler,
+)
+from doeff.cesk.handlers.scheduler_handler import scheduler_handler
+from doeff.cesk.result import Done, Failed
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
-from doeff.cesk.runtime.context import HandlerContext
 from doeff.cesk.runtime_result import RuntimeResult
-from doeff.cesk.state import CESKState
 from doeff.cesk.step import step
-from doeff.effects.time import DelayEffect, WaitUntilEffect
+from doeff.cesk.state import CESKState, ProgramControl
+from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
 
 if TYPE_CHECKING:
     from doeff.program import Program
@@ -22,20 +31,52 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-class SimulationRuntime(BaseRuntime):
-    """Runtime with controllable time for testing time-based effects.
+def _make_simulation_time_handler(runtime: "SimulationRuntime") -> Handler:
+    def simulation_time_handler(effect: Any, ctx: HandlerContext) -> Any:
+        if isinstance(effect, DelayEffect):
+            runtime._current_time = runtime._current_time + timedelta(seconds=effect.seconds)
+            new_store = {**ctx.store, "__current_time__": runtime._current_time}
+            return ContinueValue(value=None, store=new_store)
+        
+        if isinstance(effect, WaitUntilEffect):
+            runtime._current_time = max(effect.target_time, runtime._current_time)
+            new_store = {**ctx.store, "__current_time__": runtime._current_time}
+            return ContinueValue(value=None, store=new_store)
+        
+        if isinstance(effect, GetTimeEffect):
+            return ContinueValue(value=runtime._current_time, store=ctx.store)
+        
+        raise UnhandledEffectError(f"simulation_time_handler: unhandled effect {type(effect).__name__}")
     
-    This runtime advances simulated time instantly when Delay/WaitUntil
-    effects are encountered, making it suitable for testing time-dependent
-    code without actual waiting.
-    """
+    return simulation_time_handler
+
+
+def _wrap_with_simulation_handlers(program: "Program[T]", runtime: "SimulationRuntime") -> "Program[T]":
+    simulation_handler = _make_simulation_time_handler(runtime)
+    return WithHandler(
+        handler=cast(Handler, queue_handler),
+        program=WithHandler(
+            handler=cast(Handler, scheduler_handler),
+            program=WithHandler(
+                handler=cast(Handler, simulation_handler),
+                program=WithHandler(
+                    handler=cast(Handler, core_handler),
+                    program=program,
+                ),
+            ),
+        ),
+    )
+
+
+class SimulationRuntime(BaseRuntime):
+    """Runtime with controllable time for testing time-based effects."""
 
     def __init__(
         self,
-        handlers: dict[type, Handler] | None = None,
+        handlers: dict[type, Any] | None = None,
         start_time: datetime | None = None,
     ):
-        super().__init__(handlers)
+        super().__init__(handlers or {})
         self._current_time = start_time if start_time is not None else datetime.now()
 
     @property
@@ -54,33 +95,33 @@ class SimulationRuntime(BaseRuntime):
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
     ) -> RuntimeResult[T]:
-        """Execute a program and return RuntimeResult.
-
-        Args:
-            program: The program to execute
-            env: Optional initial environment (reader context)
-            store: Optional initial store (mutable state)
-
-        Returns:
-            RuntimeResult containing the outcome and debugging context
-            
-        Raises:
-            KeyboardInterrupt, SystemExit: These are re-raised, not wrapped,
-                as they represent external control signals, not program errors.
-        """
-        initial_store = store if store is not None else {}
-        initial_store = {**initial_store, "__current_time__": self._current_time}
-
-        state = self._create_initial_state(program, env, initial_store)
-
+        from uuid import uuid4
+        
+        frozen_env = FrozenDict(env) if env else FrozenDict()
+        final_store: dict[str, Any] = dict(store) if store else {}
+        
+        main_task_id = uuid4()
+        final_store[CURRENT_TASK_KEY] = main_task_id
+        final_store[TASK_QUEUE_KEY] = []
+        final_store[TASK_REGISTRY_KEY] = {}
+        final_store[WAITERS_KEY] = {}
+        final_store["__current_time__"] = self._current_time
+        
+        wrapped_program = _wrap_with_simulation_handlers(program, self)
+        
+        state = CESKState(
+            C=ProgramControl(wrapped_program),
+            E=frozen_env,
+            S=final_store,
+            K=[],
+        )
+        
         try:
-            value, final_state, final_store = self._step_until_done_simulation(state)
-            return self._build_success_result(value, final_state, final_store)
+            value, final_state = self._run_until_done(state)
+            return self._build_success_result(value, final_state, final_state.S)
         except ExecutionError as err:
-            # Re-raise control signals - they shouldn't be wrapped in RuntimeResult
-            if isinstance(err.exception, (KeyboardInterrupt, SystemExit)):
+            if isinstance(err.exception, (KeyboardInterrupt, SystemExit, UnhandledEffectError)):
                 raise err.exception from None
-            # Use the state at failure point, not initial state
             return self._build_error_result(
                 err.exception,
                 err.final_state,
@@ -93,97 +134,34 @@ class SimulationRuntime(BaseRuntime):
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
     ) -> T:
-        """Execute a program and return just the value (raises on error).
-
-        This is a convenience method for when you don't need the full
-        RuntimeResult context. Equivalent to `run(...).value`.
-
-        Args:
-            program: The program to execute
-            env: Optional initial environment
-            store: Optional initial store
-
-        Returns:
-            The program's return value
-
-        Raises:
-            Any exception raised during program execution
-        """
         result = self.run(program, env, store)
         return result.value
 
-    def _step_until_done_simulation(self, state: CESKState) -> tuple[Any, CESKState, dict[str, Any]]:
-        """Step execution until completion with simulated time handling.
-        
-        Returns:
-            Tuple of (value, final_state, final_store) on success
+    def _run_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
+        max_steps = 100000
+        for _ in range(max_steps):
+            result = step(state)
             
-        Raises:
-            ExecutionError: On failure, containing the exception and final state
-        """
-        while True:
-            result = step(state, self._handlers)
-
             if isinstance(result, Done):
-                return (result.value, state, result.store)
-
+                return (result.value, state)
+            
             if isinstance(result, Failed):
-                exc = result.exception
-                captured_tb = result.captured_traceback
-                if captured_tb is not None:
-                    exc.__cesk_traceback__ = captured_tb  # type: ignore[attr-defined]
                 raise ExecutionError(
-                    exception=exc,
+                    exception=result.exception,
                     final_state=state,
-                    captured_traceback=captured_tb,
+                    captured_traceback=result.captured_traceback,
                 )
-
+            
             if isinstance(result, CESKState):
                 state = result
                 continue
-
-            if isinstance(result, Suspended):
-                main_task = state.tasks[state.main_task]
-                effect = result.effect
-                effect_type = type(effect)
-
-                if isinstance(effect, DelayEffect):
-                    self._current_time = self._current_time + timedelta(seconds=effect.seconds)
-                    new_store = {**state.store, "__current_time__": self._current_time}
-                    state = result.resume(None, new_store)
-                    continue
-
-                if isinstance(effect, WaitUntilEffect):
-                    self._current_time = max(effect.target_time, self._current_time)
-                    new_store = {**state.store, "__current_time__": self._current_time}
-                    state = result.resume(None, new_store)
-                    continue
-
-                handler = self._handlers.get(effect_type)
-                if handler is not None:
-                    ctx = HandlerContext(task_state=main_task, store=state.store, suspend=None)
-                    try:
-                        frame_result = handler(effect, ctx)
-                    except Exception as ex:
-                        state = result.resume_error(ex)
-                        continue
-
-                    if isinstance(frame_result, ContinueValue):
-                        state = result.resume(frame_result.value, frame_result.store)
-                    elif isinstance(frame_result, ContinueError):
-                        state = result.resume_error(frame_result.error)
-                    else:
-                        state = result.resume_error(
-                            RuntimeError(f"Unexpected FrameResult: {type(frame_result)}")
-                        )
-                    continue
-
-                state = result.resume_error(
-                    UnhandledEffectError(f"No handler for {effect_type.__name__}")
-                )
-                continue
-
+            
             raise RuntimeError(f"Unexpected step result: {type(result)}")
+        
+        raise ExecutionError(
+            exception=RuntimeError(f"Exceeded maximum steps ({max_steps})"),
+            final_state=state,
+        )
 
 
 __all__ = [
