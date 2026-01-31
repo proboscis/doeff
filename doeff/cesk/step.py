@@ -15,7 +15,6 @@ from doeff.cesk.frames import (
     ContinueProgram,
     ContinueValue,
     InterceptFrame,
-    KleisliFrame,
     ReturnFrame,
     SafeFrame,
     SuspendOn,
@@ -295,7 +294,6 @@ def step(state: CESKState) -> StepResult:
     
     if isinstance(C, ProgramControl):
         program = C.program
-        import time
         from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
         from doeff.program import KleisliProgramCall, ProgramBase
         
@@ -323,25 +321,29 @@ def step(state: CESKState) -> StepResult:
                     K=K,
                 )
             
-            new_k: list[Any] = [ReturnFrame(gen, E, program_call=program_call)]
+            kleisli_fn_name: str | None = None
+            kleisli_filename: str | None = None
+            kleisli_lineno: int | None = None
             if program_call is not None:
                 kleisli_source = getattr(program_call, "kleisli_source", None)
                 original_func = getattr(kleisli_source, "original_func", None) if kleisli_source else None
                 if original_func is not None and hasattr(original_func, "__code__"):
                     code = original_func.__code__
-                    kleisli_frame = KleisliFrame(
-                        function_name=program_call.function_name,
-                        filename=code.co_filename,
-                        lineno=code.co_firstlineno,
-                        created_at=time.time(),
-                    )
-                    new_k = [kleisli_frame] + new_k
+                    kleisli_fn_name = program_call.function_name
+                    kleisli_filename = code.co_filename
+                    kleisli_lineno = code.co_firstlineno
             
             return CESKState(
                 C=control,
                 E=E,
                 S=S,
-                K=new_k + K,
+                K=[ReturnFrame(
+                    gen, E,
+                    program_call=program_call,
+                    kleisli_function_name=kleisli_fn_name,
+                    kleisli_filename=kleisli_filename,
+                    kleisli_lineno=kleisli_lineno,
+                )] + K,
             )
         except StopIteration as e:
             return CESKState(C=Value(e.value), E=E, S=S, K=K)

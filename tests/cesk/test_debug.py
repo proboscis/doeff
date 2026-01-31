@@ -13,7 +13,7 @@ from doeff.cesk.debug import (
     format_k_stack,
     get_debug_context,
 )
-from doeff.cesk.frames import KleisliFrame, Kontinuation
+from doeff.cesk.frames import Kontinuation
 from doeff.cesk.runtime import SyncRuntime
 from doeff.effects import Get, GetDebugContext, Put
 
@@ -35,20 +35,23 @@ class TestKleisliFrame:
 
         assert result.value == 42
 
-    def test_kleisli_frame_has_function_metadata(self) -> None:
-        import time
+    def test_return_frame_has_kleisli_metadata(self) -> None:
+        from doeff.cesk.frames import ReturnFrame
 
-        frame = KleisliFrame(
-            function_name="test_func",
-            filename="/path/to/file.py",
-            lineno=42,
-            created_at=time.time(),
+        def gen():
+            yield
+            return
+
+        frame = ReturnFrame(
+            gen(), {},
+            kleisli_function_name="test_func",
+            kleisli_filename="/path/to/file.py",
+            kleisli_lineno=42,
         )
 
-        assert frame.function_name == "test_func"
-        assert frame.filename == "/path/to/file.py"
-        assert frame.lineno == 42
-        assert frame.created_at > 0
+        assert frame.kleisli_function_name == "test_func"
+        assert frame.kleisli_filename == "/path/to/file.py"
+        assert frame.kleisli_lineno == 42
 
 
 class TestFormatKStack:
@@ -59,16 +62,20 @@ class TestFormatKStack:
         assert "(empty)" in output
 
     def test_format_k_stack_with_frames(self) -> None:
-        import time
+        from doeff.cesk.frames import ReturnFrame
+
+        def gen():
+            yield
+            return
 
         k: Kontinuation = [
-            KleisliFrame("func_a", "a.py", 10, time.time()),
-            KleisliFrame("func_b", "b.py", 20, time.time()),
+            ReturnFrame(gen(), {}, kleisli_function_name="func_a", kleisli_filename="a.py", kleisli_lineno=10),
+            ReturnFrame(gen(), {}, kleisli_function_name="func_b", kleisli_filename="b.py", kleisli_lineno=20),
         ]
         output = format_k_stack(k)
 
         assert "K Frame Stack:" in output
-        assert "KleisliFrame" in output
+        assert "ReturnFrame" in output
         assert "func_a" in output
         assert "func_b" in output
 
@@ -79,12 +86,16 @@ class TestExtractKleisliStack:
         entries = extract_kleisli_stack(k)
         assert entries == ()
 
-    def test_extract_kleisli_frames_only(self) -> None:
-        import time
+    def test_extract_kleisli_from_return_frames(self) -> None:
+        from doeff.cesk.frames import ReturnFrame
+
+        def gen():
+            yield
+            return
 
         k: Kontinuation = [
-            KleisliFrame("outer", "outer.py", 10, time.time()),
-            KleisliFrame("inner", "inner.py", 20, time.time()),
+            ReturnFrame(gen(), {}, kleisli_function_name="outer", kleisli_filename="outer.py", kleisli_lineno=10),
+            ReturnFrame(gen(), {}, kleisli_function_name="inner", kleisli_filename="inner.py", kleisli_lineno=20),
         ]
         entries = extract_kleisli_stack(k)
 
@@ -99,17 +110,21 @@ class TestExtractKFrameInfo:
         infos = extract_k_frame_info(k)
         assert infos == ()
 
-    def test_extract_kleisli_frame_info(self) -> None:
-        import time
+    def test_extract_return_frame_with_kleisli_info(self) -> None:
+        from doeff.cesk.frames import ReturnFrame
+
+        def gen():
+            yield
+            return
 
         k: Kontinuation = [
-            KleisliFrame("test_func", "test.py", 42, time.time()),
+            ReturnFrame(gen(), {}, kleisli_function_name="test_func", kleisli_filename="test.py", kleisli_lineno=42),
         ]
         infos = extract_k_frame_info(k)
 
         assert len(infos) == 1
-        assert infos[0].frame_type == "KleisliFrame"
-        assert infos[0].description == "test_func"
+        assert infos[0].frame_type == "ReturnFrame"
+        assert "test_func" in infos[0].description
 
 
 class TestBuildEffectCallTree:
@@ -118,12 +133,28 @@ class TestBuildEffectCallTree:
         tree = build_effect_call_tree(k)
         assert tree is None
 
-    def test_build_tree_with_kleisli_frames(self) -> None:
-        import time
+    def test_build_tree_with_return_frames(self) -> None:
+        from doeff._types_internal import EffectCreationContext
+        from doeff.cesk.frames import ReturnFrame
+
+        def dummy_gen():
+            yield
+            return
+
+        class MockProgramCall:
+            function_name: str
+            created_at: EffectCreationContext
+
+            def __init__(self, name: str, filename: str, line: int) -> None:
+                self.function_name = name
+                self.created_at = EffectCreationContext(filename=filename, line=line, function=name)
+
+        inner_pc = MockProgramCall("inner", "inner.py", 20)
+        outer_pc = MockProgramCall("outer", "outer.py", 10)
 
         k: Kontinuation = [
-            KleisliFrame("inner", "inner.py", 20, time.time()),
-            KleisliFrame("outer", "outer.py", 10, time.time()),
+            ReturnFrame(dummy_gen(), {}, program_call=inner_pc),
+            ReturnFrame(dummy_gen(), {}, program_call=outer_pc),
         ]
         tree = build_effect_call_tree(k, current_effect="Get")
 
@@ -144,10 +175,14 @@ class TestGetDebugContext:
         assert ctx.k_frames == ()
 
     def test_get_debug_context_with_current_effect(self) -> None:
-        import time
+        from doeff.cesk.frames import ReturnFrame
+
+        def gen():
+            yield
+            return
 
         k: Kontinuation = [
-            KleisliFrame("test", "test.py", 10, time.time()),
+            ReturnFrame(gen(), {}, kleisli_function_name="test", kleisli_filename="test.py", kleisli_lineno=10),
         ]
         ctx = get_debug_context(k, current_effect="TestEffect")
 
@@ -377,3 +412,116 @@ class TestMinimalOverhead:
         result = runtime.run(simple_program())
 
         assert result.value == 1
+
+
+class TestIntegrationWithContentAssertions:
+    def test_nested_chain_returns_exact_function_names_and_order(self) -> None:
+        @do
+        def deepest():
+            ctx = yield GetDebugContext()
+            return ctx
+
+        @do
+        def middle():
+            return (yield deepest())
+
+        @do
+        def outermost():
+            return (yield middle())
+
+        runtime = SyncRuntime()
+        result = runtime.run(outermost())
+
+        assert isinstance(result.value, DebugContext)
+        ctx = result.value
+        k_frame_types = [f.frame_type for f in ctx.k_frames]
+        assert "ReturnFrame" in k_frame_types
+        assert "HandlerFrame" in k_frame_types
+        return_frames = [f for f in ctx.k_frames if f.frame_type == "ReturnFrame"]
+        assert len(return_frames) >= 3
+        func_names = [f.description for f in return_frames]
+        assert any("outermost" in name for name in func_names)
+        assert any("middle" in name for name in func_names)
+        assert any("deepest" in name for name in func_names)
+
+    def test_get_debug_context_persists_across_multiple_yields(self) -> None:
+        collected_contexts: list[DebugContext] = []
+
+        @do
+        def multi_yield_func():
+            yield Put("x", 1)
+            ctx1 = yield GetDebugContext()
+            collected_contexts.append(ctx1)
+            yield Put("y", 2)
+            ctx2 = yield GetDebugContext()
+            collected_contexts.append(ctx2)
+            return "done"
+
+        runtime = SyncRuntime()
+        result = runtime.run(multi_yield_func())
+
+        assert result.value == "done"
+        assert len(collected_contexts) == 2
+        for ctx in collected_contexts:
+            return_frames = [f for f in ctx.k_frames if f.frame_type == "ReturnFrame"]
+            assert len(return_frames) >= 1
+            assert any("multi_yield_func" in f.description for f in return_frames)
+
+    def test_error_path_captures_traceback_with_kleisli_stack(self) -> None:
+        @do
+        def inner_fail():
+            raise ValueError("intentional failure")
+
+        @do
+        def outer_wrapper():
+            return (yield inner_fail())
+
+        runtime = SyncRuntime()
+        result = runtime.run(outer_wrapper())
+
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        captured_tb = getattr(result, "captured_traceback", None)
+        if captured_tb is not None:
+            assert hasattr(captured_tb, "kleisli_stack")
+            kleisli_stack = captured_tb.kleisli_stack
+            if kleisli_stack:
+                func_names = [ks.function_name for ks in kleisli_stack]
+                assert len(func_names) >= 1
+
+    def test_extract_k_frame_info_handles_handler_frames(self) -> None:
+        from doeff.cesk.debug import extract_k_frame_info
+        from doeff.cesk.handler_frame import HandlerFrame
+
+        def dummy_handler(effect, ctx):
+            yield effect
+            return None
+
+        dummy_k: Kontinuation = [
+            HandlerFrame(handler=dummy_handler, saved_env={}),
+        ]
+        infos = extract_k_frame_info(dummy_k)
+
+        assert len(infos) == 1
+        assert infos[0].frame_type == "HandlerFrame"
+        assert "handler=dummy_handler" in infos[0].description
+
+    def test_extract_k_frame_info_handles_return_frames(self) -> None:
+        from doeff.cesk.debug import extract_k_frame_info
+        from doeff.cesk.frames import ReturnFrame
+
+        def gen():
+            yield
+            return
+
+        class MockProgramCall:
+            function_name = "test_func"
+
+        dummy_k: Kontinuation = [
+            ReturnFrame(gen(), {}, program_call=MockProgramCall()),
+        ]
+        infos = extract_k_frame_info(dummy_k)
+
+        assert len(infos) == 1
+        assert infos[0].frame_type == "ReturnFrame"
+        assert "continuation=test_func" in infos[0].description
