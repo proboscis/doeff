@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeAlias, TypeVar
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import (
     ContinueError,
+    ContinueProgram,
     ContinueValue,
     FrameResult,
     Kontinuation,
@@ -178,29 +179,42 @@ class HandlerResultFrame:
         store: Store,
         k_rest: Kontinuation,
     ) -> FrameResult:
-        full_k: Kontinuation = list(self.handled_program_k) + list(k_rest)
         if isinstance(value, ContinueValue):
+            full_k = list(value.k) + list(k_rest)
             return ContinueValue(
                 value=value.value,
-                env=env,
+                env=value.env if value.env is not None else env,
                 store=value.store if value.store else store,
                 k=full_k,
             )
         elif isinstance(value, ContinueError):
+            full_k = list(value.k) + list(k_rest)
             return ContinueError(
                 error=value.error,
-                env=env,
+                env=value.env if value.env is not None else env,
+                store=value.store if value.store else store,
+                k=full_k,
+            )
+        elif isinstance(value, ContinueProgram):
+            # Handler wants to start a new sub-program (e.g., Safe, Local, Listen)
+            # Merge the program's k with k_rest to preserve outer continuation
+            full_k = list(value.k) + list(k_rest)
+            return ContinueProgram(
+                program=value.program,
+                env=value.env if value.env is not None else env,
                 store=value.store if value.store else store,
                 k=full_k,
             )
         elif isinstance(value, ResumeK):
+            full_k = list(value.k) + list(k_rest)
             return ContinueValue(
                 value=value.value,
                 env=value.env if value.env is not None else env,
-                store=value.store if value.store is not None else store,
-                k=value.k,
+                store=store,
+                k=full_k,
             )
         else:
+            full_k = list(self.handled_program_k) + list(k_rest)
             return ContinueValue(
                 value=value,
                 env=env,

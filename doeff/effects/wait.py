@@ -1,34 +1,30 @@
-"""Wait effect for blocking on Future completion."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from .base import Effect, EffectBase, create_effect_with_trace
-from .spawn import Future
+from .spawn import Waitable
 
 T = TypeVar("T")
 
 
 @dataclass(frozen=True)
 class WaitEffect(EffectBase):
-    """Wait for a Future to complete and return its value."""
-
-    future: Future[Any]
+    future: Waitable[Any]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.future, Future):
+        if not isinstance(self.future, Waitable):
             raise TypeError(
-                f"future must be a Future, got {type(self.future).__name__}"
+                f"Wait requires Waitable, got {type(self.future).__name__}"
             )
 
 
-def wait(future: Future[T]) -> WaitEffect:
+def wait(future: Waitable[T]) -> WaitEffect:
     return create_effect_with_trace(WaitEffect(future=future))
 
 
-def Wait(future: Future[T]) -> Effect:
+def Wait(future: Waitable[T]) -> Effect:
     return create_effect_with_trace(WaitEffect(future=future), skip_frames=3)
 
 

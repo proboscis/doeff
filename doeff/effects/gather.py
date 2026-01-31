@@ -4,31 +4,30 @@ from dataclasses import dataclass
 from typing import Any
 
 from .base import Effect, EffectBase, create_effect_with_trace
-from .spawn import Future
+from .spawn import Waitable
 
 
 @dataclass(frozen=True)
 class GatherEffect(EffectBase):
-    futures: tuple[Future[Any], ...]
+    futures: tuple[Waitable[Any], ...]
 
 
-def _validate_futures(items: tuple[Any, ...]) -> tuple[Future[Any], ...]:
+def _validate_waitables(items: tuple[Any, ...]) -> tuple[Waitable[Any], ...]:
     for i, item in enumerate(items):
-        if not isinstance(item, Future):
+        if not isinstance(item, Waitable):
             raise TypeError(
-                f"Gather expects Futures, got {type(item).__name__} at index {i}. "
-                f"Use Spawn to create Futures from Programs."
+                f"Gather expects Waitable (Task or Future), got {type(item).__name__} at index {i}."
             )
     return items  # type: ignore[return-value]
 
 
-def gather(*items: Future[Any]) -> GatherEffect:
-    validated = _validate_futures(tuple(items))
+def gather(*items: Waitable[Any]) -> GatherEffect:
+    validated = _validate_waitables(tuple(items))
     return create_effect_with_trace(GatherEffect(futures=validated))
 
 
-def Gather(*items: Future[Any]) -> Effect:
-    validated = _validate_futures(tuple(items))
+def Gather(*items: Waitable[Any]) -> Effect:
+    validated = _validate_waitables(tuple(items))
     return create_effect_with_trace(
         GatherEffect(futures=validated), skip_frames=3
     )

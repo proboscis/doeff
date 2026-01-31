@@ -12,8 +12,10 @@ from doeff._types_internal import EffectBase
 from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
 from doeff.cesk.frames import (
     ContinueError,
+    ContinueProgram,
     ContinueValue,
     ReturnFrame,
+    SafeFrame,
 )
 from doeff.cesk.handler_frame import (
     HandlerContext,
@@ -37,9 +39,15 @@ if TYPE_CHECKING:
 
 
 def _get_current_handler_depth(k: list[Any]) -> int:
+    """Get the number of handlers to skip when dispatching an effect.
+    
+    If we're inside a handler's program (marked by HandlerResultFrame), we need to skip
+    past that handler to find the next outer handler. We skip 1 handler (the one
+    associated with the HandlerResultFrame).
+    """
     for frame in k:
         if isinstance(frame, HandlerResultFrame):
-            return frame.handler_depth + 1
+            return 1
     return 0
 
 
@@ -52,16 +60,22 @@ def _find_handler_in_k(
     Returns (handler_frame, depth, delimited_k, handler_idx) or None if no handler found.
     The delimited_k is the continuation from the effect site up to (but not including)
     the handler frame. handler_idx is the index in K where the handler was found.
+    
+    When start_depth > 0, we skip that many HandlerFrames. Skipped handlers are added
+    to delimited_k so they're preserved for when the outer handler resumes.
     """
+    handlers_to_skip = start_depth
     current_depth = 0
     delimited_k: list[Any] = []
     
     for i, frame in enumerate(k):
         if isinstance(frame, HandlerFrame):
-            if current_depth >= start_depth:
+            if handlers_to_skip > 0:
+                handlers_to_skip -= 1
+                current_depth += 1
+                delimited_k.append(frame)
+            else:
                 return (frame, current_depth, delimited_k, i)
-            current_depth += 1
-            delimited_k = []
         else:
             delimited_k.append(frame)
     
@@ -275,6 +289,13 @@ def step_v2(state: CESKState) -> StepResult:
                     S=result.store,
                     K=result.k,
                 )
+            elif isinstance(result, ContinueProgram):
+                return CESKState(
+                    C=ProgramControl(result.program),
+                    E=result.env,
+                    S=result.store,
+                    K=result.k,
+                )
             raise InterpreterInvariantError(f"Unexpected HandlerResultFrame result: {type(result)}")
     
     if isinstance(C, Error) and K:
@@ -358,6 +379,19 @@ def step_v2(state: CESKState) -> StepResult:
             elif isinstance(result, ContinueValue):
                 return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
             raise InterpreterInvariantError(f"Unexpected HandlerResultFrame error result: {type(result)}")
+        
+        if isinstance(frame, SafeFrame):
+            result = frame.on_error(C.ex, E, S, K_rest)
+            if isinstance(result, ContinueValue):
+                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
+            elif isinstance(result, ContinueError):
+                return CESKState(
+                    C=Error(result.error, captured_traceback=result.captured_traceback),
+                    E=result.env,
+                    S=result.store,
+                    K=result.k,
+                )
+            raise InterpreterInvariantError(f"Unexpected SafeFrame error result: {type(result)}")
     
     head_desc = type(K[0]).__name__ if K else "empty"
     raise InterpreterInvariantError(f"Unhandled state: C={type(C).__name__}, K head={head_desc}")
