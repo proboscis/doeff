@@ -29,6 +29,7 @@ from doeff.cesk.handlers.async_effects_handler import async_effects_handler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.queue_handler import queue_handler
 from doeff.cesk.handlers.scheduler_handler import scheduler_handler
+from doeff.cesk.handlers.threaded_asyncio_handler import threaded_asyncio_handler
 
 __all__ = [
     "Handler",
@@ -37,4 +38,5 @@ __all__ = [
     "core_handler",
     "queue_handler",
     "scheduler_handler",
+    "threaded_asyncio_handler",
 ]
