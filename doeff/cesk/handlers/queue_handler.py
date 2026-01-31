@@ -40,6 +40,23 @@ TASK_SUSPENDED_KEY = "__scheduler_task_suspended__"
 PENDING_IO_KEY = "__scheduler_pending_io__"
 
 
+def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
+    """Lazily initialize scheduler store keys if not present.
+    
+    This allows handlers to manage their own store structure without
+    requiring runtimes to pre-initialize handler-specific keys.
+    """
+    if TASK_QUEUE_KEY not in store:
+        store[TASK_QUEUE_KEY] = []
+    if TASK_REGISTRY_KEY not in store:
+        store[TASK_REGISTRY_KEY] = {}
+    if WAITERS_KEY not in store:
+        store[WAITERS_KEY] = {}
+    if CURRENT_TASK_KEY not in store:
+        # Initialize main task ID on first access
+        store[CURRENT_TASK_KEY] = uuid4()
+
+
 @dataclass
 class TaskInfo:
     task_id: Any
@@ -61,6 +78,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
     - Waiters (tasks waiting for other tasks to complete)
     """
     store = dict(ctx.store)
+    _ensure_scheduler_store_initialized(store)
     
     if isinstance(effect, QueueAdd):
         queue = list(store.get(TASK_QUEUE_KEY, []))
