@@ -20,6 +20,17 @@ class FutureAwaitEffect(EffectBase):
         ensure_awaitable(self.awaitable, name="awaitable")
 
 
+@dataclass(frozen=True)
+class AllTasksSuspendedEffect(EffectBase):
+    """Signal that all tasks are suspended waiting for I/O.
+    
+    Used by the scheduler when all tasks are blocked on async I/O
+    and the runtime needs to use asyncio.wait to await them all.
+    """
+    pending_io: dict[Any, Any]
+    store: dict[str, Any]
+
+
 # NOTE: For parallel execution, use asyncio.create_task + Await + Gather pattern
 # See the doeff documentation for examples of concurrent execution patterns
 
@@ -33,6 +44,7 @@ def Await(awaitable: Awaitable[Any]) -> Effect:
 
 
 __all__ = [
+    "AllTasksSuspendedEffect",
     "Await",
     "FutureAwaitEffect",
     "await_",

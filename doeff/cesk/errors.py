@@ -2,7 +2,34 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from doeff.cesk_traceback import CapturedTraceback
+
+
+@dataclass
+class CESKExecutionError(Exception):
+    """Wrapper for exceptions that occurred during CESK machine execution.
+    
+    This provides a clean way to attach CESK traceback information to exceptions
+    without monkey-patching the original exception.
+    
+    Attributes:
+        original: The original exception that was raised
+        cesk_traceback: The captured CESK stack trace at the time of the error
+        store: The store state at the time of the error
+    """
+    original: BaseException
+    cesk_traceback: "CapturedTraceback | None" = None
+    store: dict[str, Any] | None = field(default=None, repr=False)
+    
+    def __str__(self) -> str:
+        return str(self.original)
+    
+    def __repr__(self) -> str:
+        return f"CESKExecutionError({self.original!r})"
 
 
 class HandlerRegistryError(Exception):
@@ -48,6 +75,7 @@ class MissingEnvKeyError(KeyError):
 
 
 __all__ = [
+    "CESKExecutionError",
     "HandlerRegistryError",
     "InterpreterInvariantError",
     "MissingEnvKeyError",

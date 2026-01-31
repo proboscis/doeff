@@ -57,6 +57,13 @@ from doeff.effects.promise import (
     CreatePromiseEffect,
     FailPromiseEffect,
 )
+from doeff.cesk.handlers.queue_handler import (
+    CURRENT_TASK_KEY,
+    PENDING_IO_KEY,
+    TASK_QUEUE_KEY,
+    TASK_REGISTRY_KEY,
+    WAITERS_KEY,
+)
 from doeff.effects.queue import (
     CancelTask,
     CreatePromiseHandle,
@@ -106,6 +113,7 @@ def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) ->
     across all tasks. Effects from spawned tasks bubble up to the main
     queue_handler through the continuation stack.
     """
+    from doeff.cesk.handlers.async_effects_handler import async_effects_handler
     from doeff.cesk.handlers.core_handler import core_handler
     
     wrapped = _make_spawn_wrapper(program, task_id, handle_id)
@@ -113,16 +121,20 @@ def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) ->
     return WithHandler(
         handler=cast(Handler, scheduler_handler),
         program=WithHandler(
-            handler=cast(Handler, core_handler),
-            program=wrapped,
+            handler=cast(Handler, async_effects_handler),
+            program=WithHandler(
+                handler=cast(Handler, core_handler),
+                program=wrapped,
+            ),
         ),
     )
 
 
-def _make_initial_k(program: Any) -> list[Any]:
+def _make_initial_k(program: Any, env: Any = None) -> list[Any]:
     """Create initial continuation for a program."""
     gen = to_generator(program)
-    return [ReturnFrame(gen, FrozenDict())]
+    saved_env = FrozenDict(env) if env else FrozenDict()
+    return [ReturnFrame(gen, saved_env)]
 
 
 @do  # type: ignore[reportArgumentType] - @do transforms generator to KleisliProgram
@@ -133,6 +145,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         task_id = uuid4()
         env_snapshot = dict(ctx.env)
         store_snapshot = dict(ctx.store)
+        store_snapshot[CURRENT_TASK_KEY] = task_id
         
         handle_id, task_handle = yield CreateTaskHandle(
             task_id=task_id,
@@ -141,7 +154,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         )
         
         wrapped_program = _wrap_with_handlers_for_spawn(effect.program, task_id, handle_id)
-        child_k = _make_initial_k(wrapped_program)
+        child_k = _make_initial_k(wrapped_program, env_snapshot)
         yield QueueAdd(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
         
         return ContinueValue(
@@ -161,6 +174,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         
         next_task = yield QueuePop()
         if next_task is None:
+            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+            if pending_io:
+                from doeff.cesk.frames import SuspendOn
+                return SuspendOn(
+                    awaitable=None,
+                    stored_k=ctx.delimited_k,
+                    stored_env=ctx.env,
+                    stored_store=ctx.store,
+                )
             if effect.error is not None:
                 return ContinueError(
                     error=effect.error,
@@ -175,8 +197,12 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=[],
             )
         
-        next_task_id, next_k, next_store, resume_value, resume_error = next_task
-        task_store = next_store if next_store is not None else ctx.store
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        task_store = dict(next_store) if next_store is not None else {}
+        for key, val in current_store.items():
+            if isinstance(key, str) and key.startswith("__scheduler_"):
+                task_store[key] = val
+        task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
@@ -235,12 +261,21 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         yield RegisterWaiter(
             handle_id=handle_id,
             waiter_task_id=current_task_id,
-            waiter_k=ctx.delimited_k,
+            waiter_k=list(ctx.delimited_k),
             waiter_store=dict(ctx.store),
         )
         
         next_task = yield QueuePop()
         if next_task is None:
+            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+            if pending_io:
+                from doeff.cesk.frames import SuspendOn
+                return SuspendOn(
+                    awaitable=None,
+                    stored_k=list(ctx.delimited_k),
+                    stored_env=ctx.env,
+                    stored_store=ctx.store,
+                )
             return ContinueError(
                 error=RuntimeError("Deadlock: waiting for task but no other tasks to run"),
                 env=ctx.env,
@@ -248,8 +283,12 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=ctx.delimited_k,
             )
         
-        next_task_id, next_k, next_store, resume_value, resume_error = next_task
-        task_store = next_store if next_store is not None else ctx.store
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        task_store = dict(next_store) if next_store is not None else {}
+        for key, val in current_store.items():
+            if isinstance(key, str) and key.startswith("__scheduler_"):
+                task_store[key] = val
+        task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
@@ -359,6 +398,8 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         )
     
     if isinstance(effect, GatherEffect):
+        import os
+        debug = os.environ.get("DOEFF_DEBUG")
         futures = effect.futures
         if not futures:
             return ContinueValue(
@@ -371,6 +412,8 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         partial = effect._partial_results
         results: list[Any] = list(partial) if partial else [None] * len(futures)
         pending_indices: list[int] = []
+        if debug:
+            print(f"[GatherEffect] partial={partial}, results={results}, delimited_k_len={len(ctx.delimited_k)}, outer_k_len={len(ctx.outer_k)}, delimited_k_types={[type(f).__name__ for f in ctx.delimited_k[:10]]}")
         
         for i, future in enumerate(futures):
             if partial and partial[i] is not None:
@@ -396,6 +439,8 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 )
             
             is_complete, is_cancelled, value, error = task_result
+            if debug:
+                print(f"[GatherEffect] future[{i}] is_complete={is_complete}, value={value}")
             
             if is_complete:
                 if is_cancelled:
@@ -416,7 +461,11 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             else:
                 pending_indices.append(i)
         
+        if debug:
+            print(f"[GatherEffect] pending_indices={pending_indices}, results={results}")
         if not pending_indices:
+            if debug:
+                print(f"[GatherEffect] Returning results={results}, k_len={len(ctx.delimited_k)}, k_types={[type(f).__name__ for f in ctx.delimited_k[:5]]}")
             return ContinueValue(
                 value=results,
                 env=ctx.env,
@@ -449,6 +498,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         
         next_task = yield QueuePop()
         if next_task is None:
+            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+            if pending_io:
+                from doeff.cesk.frames import SuspendOn
+                return SuspendOn(
+                    awaitable=None,
+                    stored_k=waiter_k,
+                    stored_env=ctx.env,
+                    stored_store=ctx.store,
+                )
             return ContinueError(
                 error=RuntimeError("Deadlock: waiting for tasks but no other tasks to run"),
                 env=ctx.env,
@@ -456,8 +514,12 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=ctx.delimited_k,
             )
         
-        next_task_id, next_k, next_store, resume_value, resume_error = next_task
-        task_store = next_store if next_store is not None else ctx.store
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        task_store = dict(next_store) if next_store is not None else {}
+        for key, val in current_store.items():
+            if isinstance(key, str) and key.startswith("__scheduler_"):
+                task_store[key] = val
+        task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
@@ -543,6 +605,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         
         next_task = yield QueuePop()
         if next_task is None:
+            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+            if pending_io:
+                from doeff.cesk.frames import SuspendOn
+                return SuspendOn(
+                    awaitable=None,
+                    stored_k=waiter_k,
+                    stored_env=ctx.env,
+                    stored_store=ctx.store,
+                )
             return ContinueError(
                 error=RuntimeError("Deadlock: racing but no other tasks to run"),
                 env=ctx.env,
@@ -550,8 +621,12 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=ctx.delimited_k,
             )
         
-        next_task_id, next_k, next_store, resume_value, resume_error = next_task
-        task_store = next_store if next_store is not None else ctx.store
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        task_store = dict(next_store) if next_store is not None else {}
+        for key, val in current_store.items():
+            if isinstance(key, str) and key.startswith("__scheduler_"):
+                task_store[key] = val
+        task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
@@ -561,36 +636,58 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             )
         return ResumeK(k=next_k, value=resume_value, store=task_store)
     
-    from doeff.effects.future import FutureAwaitEffect
-    from doeff.effects.time import DelayEffect
+    from doeff.effects.queue import SuspendForIOEffect
+    from doeff.cesk.frames import SuspendOn
     
-    if isinstance(effect, FutureAwaitEffect):
-        import asyncio
-        from collections.abc import Coroutine
-        try:
-            result = asyncio.run(cast(Coroutine[Any, Any, Any], effect.awaitable))
-            return ContinueValue(
-                value=result,
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
-            )
-        except Exception as e:
-            return ContinueError(
-                error=e,
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
-            )
-    
-    if isinstance(effect, DelayEffect):
-        import time
-        time.sleep(effect.seconds)
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
+    if isinstance(effect, SuspendForIOEffect):
+        import os
+        debug = os.environ.get("DOEFF_DEBUG")
+        current_task_id = ctx.store.get(CURRENT_TASK_KEY)
+        
+        full_resume_k = list(ctx.delimited_k) + list(ctx.outer_k)
+        
+        new_store = dict(ctx.store)
+        pending_io = dict(new_store.get(PENDING_IO_KEY, {}))
+        pending_io[current_task_id] = {
+            "awaitable": effect.awaitable,
+            "k": full_resume_k,
+            "store_snapshot": dict(ctx.store),
+        }
+        new_store[PENDING_IO_KEY] = pending_io
+        
+        queue = list(new_store.get(TASK_QUEUE_KEY, []))
+        if debug:
+            print(f"[SuspendForIOEffect] queue_len={len(queue)}, current_task={current_task_id}")
+        if queue:
+            item = queue.pop(0)
+            new_store[TASK_QUEUE_KEY] = queue
+            next_task_id = item["task_id"]
+            next_k = item["k"]
+            next_store_snapshot = item.get("store_snapshot")
+            resume_value = item.get("resume_value")
+            resume_error = item.get("resume_error")
+            
+            task_store = dict(next_store_snapshot) if next_store_snapshot else dict(new_store)
+            task_store[CURRENT_TASK_KEY] = next_task_id
+            task_store[PENDING_IO_KEY] = new_store[PENDING_IO_KEY]
+            task_store[TASK_QUEUE_KEY] = new_store[TASK_QUEUE_KEY]
+            task_store[TASK_REGISTRY_KEY] = new_store.get(TASK_REGISTRY_KEY, {})
+            task_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
+            
+            if resume_error is not None:
+                return ContinueError(
+                    error=resume_error,
+                    env=ctx.env,
+                    store=task_store,
+                    k=next_k,
+                )
+            return ResumeK(k=next_k, value=resume_value, store=task_store)
+        
+        return SuspendOn(
+            awaitable=None,
+            stored_k=ctx.delimited_k,
+            stored_env=ctx.env,
+            stored_store=new_store,
         )
     
     result = yield effect
