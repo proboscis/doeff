@@ -96,8 +96,7 @@ class SyncRuntime(BaseRuntime):
 
     def _run_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
         """Step until Done or Failed. Handlers manage all task scheduling."""
-        max_steps = 100000
-        for _ in range(max_steps):
+        while True:
             result = step(state)
             
             if isinstance(result, Done):
@@ -115,11 +114,6 @@ class SyncRuntime(BaseRuntime):
                 continue
             
             raise RuntimeError(f"Unexpected step result: {type(result)}")
-        
-        raise ExecutionError(
-            exception=RuntimeError(f"Exceeded maximum steps ({max_steps})"),
-            final_state=state,
-        )
 
 
 __all__ = [
