@@ -119,12 +119,16 @@ class SpawnEffect(EffectBase):
         ensure_dict_str_any(self.options, name="options")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Task(Generic[T]):
+    # eq=False: hashable by id since snapshot dicts are unhashable
     backend: SpawnBackend
     _handle: Any = field(repr=False)
-    _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False)
-    _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False)
+    _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False, hash=False)
+    _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False, hash=False)
+    
+    def __hash__(self) -> int:
+        return hash(self._handle)
 
     def join(self) -> Effect:
         warnings.warn(

@@ -119,6 +119,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
         waiters[handle_id].append({
             "waiter_task_id": effect.waiter_task_id,
             "waiter_k": effect.waiter_k,
+            "waiter_store": effect.waiter_store,
         })
         store[WAITERS_KEY] = waiters
         return Program.pure(ContinueValue(
@@ -178,7 +179,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
                 queue.append({
                     "task_id": waiter["waiter_task_id"],
                     "k": waiter["waiter_k"],
-                    "store_snapshot": None,
+                    "store_snapshot": waiter.get("waiter_store"),
                     "resume_value": effect.result,
                     "resume_error": effect.error,
                 })
@@ -292,8 +293,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
         registry[handle_id] = task_info
         store[TASK_REGISTRY_KEY] = registry
         
-        task_handle = Task(backend="thread", _handle=handle_id)
-        promise = Promise(_promise_handle=task_handle)
+        promise = Promise(_promise_handle=handle_id)
         
         return Program.pure(ContinueValue(
             value=(handle_id, promise),

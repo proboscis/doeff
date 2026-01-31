@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .base import Effect, EffectBase, create_effect_with_trace
@@ -10,6 +10,7 @@ from .spawn import Waitable
 @dataclass(frozen=True)
 class GatherEffect(EffectBase):
     futures: tuple[Waitable[Any], ...]
+    _partial_results: tuple[Any, ...] | None = field(default=None, compare=False)
 
 
 def _validate_waitables(items: tuple[Any, ...]) -> tuple[Waitable[Any], ...]:

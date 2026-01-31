@@ -140,14 +140,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             )
         
         next_task_id, next_k, next_store, resume_value, resume_error = next_task
+        task_store = next_store if next_store is not None else ctx.store
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
                 env=ctx.env,
-                store=ctx.store,
+                store=task_store,
                 k=next_k,
             )
-        return ResumeK(k=next_k, value=resume_value, store=ctx.store)
+        return ResumeK(k=next_k, value=resume_value, store=task_store)
     
     if isinstance(effect, WaitEffect):
         waitable = effect.future
@@ -199,6 +200,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             handle_id=handle_id,
             waiter_task_id=current_task_id,
             waiter_k=ctx.delimited_k,
+            waiter_store=dict(ctx.store),
         )
         
         next_task = yield QueuePop()
@@ -211,14 +213,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             )
         
         next_task_id, next_k, next_store, resume_value, resume_error = next_task
+        task_store = next_store if next_store is not None else ctx.store
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
                 env=ctx.env,
-                store=ctx.store,
+                store=task_store,
                 k=next_k,
             )
-        return ResumeK(k=next_k, value=resume_value, store=ctx.store)
+        return ResumeK(k=next_k, value=resume_value, store=task_store)
     
     if isinstance(effect, TaskCancelEffect):
         handle_id = effect.task._handle
@@ -245,7 +248,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
         return ContinueValue(
             value=promise,
             env=ctx.env,
-            store=ctx.store,
+            store=None,
             k=ctx.delimited_k,
         )
     
@@ -257,7 +260,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueError(
                 error=ValueError(f"Invalid promise handle: {handle_id}"),
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
         
@@ -266,7 +269,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueError(
                 error=RuntimeError("Promise already completed"),
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
         
@@ -280,7 +283,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
         return ContinueValue(
             value=None,
             env=ctx.env,
-            store=ctx.store,
+            store=None,
             k=ctx.delimited_k,
         )
     
@@ -292,7 +295,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueError(
                 error=ValueError(f"Invalid promise handle: {handle_id}"),
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
         
@@ -301,7 +304,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueError(
                 error=RuntimeError("Promise already completed"),
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
         
@@ -315,7 +318,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
         return ContinueValue(
             value=None,
             env=ctx.env,
-            store=ctx.store,
+            store=None,
             k=ctx.delimited_k,
         )
     
@@ -325,19 +328,23 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueValue(
                 value=[],
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
         
-        results: list[Any] = [None] * len(futures)
+        partial = effect._partial_results
+        results: list[Any] = list(partial) if partial else [None] * len(futures)
         pending_indices: list[int] = []
         
         for i, future in enumerate(futures):
+            if partial and partial[i] is not None:
+                continue
+            
             if not isinstance(future, Waitable):
                 return ContinueError(
                     error=TypeError(f"Gather requires Waitable, got {type(future).__name__}"),
                     env=ctx.env,
-                    store=ctx.store,
+                    store=None,
                     k=ctx.delimited_k,
                 )
             
@@ -348,7 +355,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
                 return ContinueError(
                     error=ValueError(f"Invalid task handle: {handle_id}"),
                     env=ctx.env,
-                    store=ctx.store,
+                    store=None,
                     k=ctx.delimited_k,
                 )
             
@@ -359,14 +366,14 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
                     return ContinueError(
                         error=TaskCancelledError(),
                         env=ctx.env,
-                        store=ctx.store,
+                        store=None,
                         k=ctx.delimited_k,
                     )
                 if error is not None:
                     return ContinueError(
                         error=error,
                         env=ctx.env,
-                        store=ctx.store,
+                        store=None,
                         k=ctx.delimited_k,
                     )
                 results[i] = value
@@ -377,9 +384,22 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueValue(
                 value=results,
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
+        
+        updated_effect = GatherEffect(
+            futures=futures,
+            _partial_results=tuple(results),
+        )
+        
+        from doeff.cesk.frames import GatherWaiterFrame
+        
+        waiter_frame = GatherWaiterFrame(
+            gather_effect=updated_effect,
+            saved_env=ctx.env,
+        )
+        waiter_k = [waiter_frame] + list(ctx.delimited_k)
         
         current_task_id = yield GetCurrentTaskId()
         for i in pending_indices:
@@ -387,7 +407,8 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             yield RegisterWaiter(
                 handle_id=handle_id,
                 waiter_task_id=current_task_id,
-                waiter_k=ctx.delimited_k,
+                waiter_k=waiter_k,
+                waiter_store=dict(ctx.store),
             )
         
         next_task = yield QueuePop()
@@ -395,19 +416,20 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             return ContinueError(
                 error=RuntimeError("Deadlock: waiting for tasks but no other tasks to run"),
                 env=ctx.env,
-                store=ctx.store,
+                store=None,
                 k=ctx.delimited_k,
             )
         
         next_task_id, next_k, next_store, resume_value, resume_error = next_task
+        task_store = next_store if next_store is not None else ctx.store
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
                 env=ctx.env,
-                store=ctx.store,
+                store=task_store,
                 k=next_k,
             )
-        return ResumeK(k=next_k, value=resume_value, store=ctx.store)
+        return ResumeK(k=next_k, value=resume_value, store=task_store)
     
     if isinstance(effect, RaceEffect):
         futures = effect.futures
@@ -465,13 +487,22 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
                     k=ctx.delimited_k,
                 )
         
+        from doeff.cesk.frames import RaceWaiterFrame
+        
+        waiter_frame = RaceWaiterFrame(
+            race_effect=effect,
+            saved_env=ctx.env,
+        )
+        waiter_k = [waiter_frame] + list(ctx.delimited_k)
+        
         current_task_id = yield GetCurrentTaskId()
         for future in futures:
             handle_id = future._handle
             yield RegisterWaiter(
                 handle_id=handle_id,
                 waiter_task_id=current_task_id,
-                waiter_k=ctx.delimited_k,
+                waiter_k=waiter_k,
+                waiter_store=dict(ctx.store),
             )
         
         next_task = yield QueuePop()
@@ -484,14 +515,46 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
             )
         
         next_task_id, next_k, next_store, resume_value, resume_error = next_task
+        task_store = next_store if next_store is not None else ctx.store
         if resume_error is not None:
             return ContinueError(
                 error=resume_error,
                 env=ctx.env,
-                store=ctx.store,
+                store=task_store,
                 k=next_k,
             )
-        return ResumeK(k=next_k, value=resume_value, store=ctx.store)
+        return ResumeK(k=next_k, value=resume_value, store=task_store)
+    
+    from doeff.effects.future import FutureAwaitEffect
+    from doeff.effects.time import DelayEffect
+    
+    if isinstance(effect, FutureAwaitEffect):
+        import asyncio
+        try:
+            result = asyncio.run(effect.awaitable)
+            return ContinueValue(
+                value=result,
+                env=ctx.env,
+                store=None,
+                k=ctx.delimited_k,
+            )
+        except Exception as e:
+            return ContinueError(
+                error=e,
+                env=ctx.env,
+                store=None,
+                k=ctx.delimited_k,
+            )
+    
+    if isinstance(effect, DelayEffect):
+        import time
+        time.sleep(effect.seconds)
+        return ContinueValue(
+            value=None,
+            env=ctx.env,
+            store=None,
+            k=ctx.delimited_k,
+        )
     
     result = yield effect
     return ContinueValue(

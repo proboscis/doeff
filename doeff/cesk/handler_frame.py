@@ -207,10 +207,24 @@ class HandlerResultFrame:
             )
         elif isinstance(value, ResumeK):
             full_k = list(value.k) + list(k_rest)
+            # ResumeK is used for task switching. When a task is resumed, we need to:
+            # 1. Use the task's saved store (value.store) for task-local state
+            # 2. Preserve scheduler metadata from current store (queue, registry, waiters)
+            # Scheduler keys are prefixed with "__scheduler_"
+            if value.store is not None:
+                # Start with task's saved store
+                merged_store = dict(value.store)
+                # Overlay scheduler keys from current store
+                for key, val in store.items():
+                    if isinstance(key, str) and key.startswith("__scheduler_"):
+                        merged_store[key] = val
+                result_store = merged_store
+            else:
+                result_store = store
             return ContinueValue(
                 value=value.value,
                 env=value.env if value.env is not None else env,
-                store=store,
+                store=result_store,
                 k=full_k,
             )
         else:
