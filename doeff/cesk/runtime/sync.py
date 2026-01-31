@@ -25,6 +25,7 @@ from doeff.cesk.frames import (
 )
 from doeff.cesk.handlers import Handler, default_handlers
 from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime.context import HandlerContext, SuspensionHandle
 from doeff.cesk.runtime.scheduler import (
@@ -159,10 +160,10 @@ class SyncRuntime(BaseRuntime):
         state = self._create_initial_state(program, env, store)
 
         try:
-            value, final_state, final_store = self._run_scheduler(state)
+            value, final_state, final_store = self._step_until_done_v2(state)
             return self._build_success_result(value, final_state, final_store)
         except ExecutionError as err:
-            if isinstance(err.exception, (KeyboardInterrupt, SystemExit)):
+            if isinstance(err.exception, (KeyboardInterrupt, SystemExit, UnhandledEffectError)):
                 raise err.exception from None
             return self._build_error_result(
                 err.exception,

@@ -221,7 +221,6 @@ class TestWithHandlerEffect:
 
 
 class TestWithHandlerIntegration:
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_with_handler_creates_handler_frame_in_k(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -257,7 +256,6 @@ class TestWithHandlerIntegration:
         assert len(handled_effects) == 1
         assert isinstance(handled_effects[0], DummyEffect)
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_handler_returns_continue_value_resumes_program(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -294,7 +292,6 @@ class TestWithHandlerIntegration:
         assert result.is_ok()
         assert result.value == 42
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_handler_yields_effect_bubbles_to_outer(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -349,7 +346,6 @@ class TestWithHandlerIntegration:
         assert len(outer_handled) == 1
         assert isinstance(outer_handled[0], AnotherDummyEffect)
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_nested_handlers_innermost_first(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -388,7 +384,6 @@ class TestWithHandlerIntegration:
         assert result.is_ok()
         assert handler_order == ["inner"]
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_handler_forward_skips_self(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -435,7 +430,6 @@ class TestWithHandlerIntegration:
         assert result.is_ok()
         assert handler_invocations == ["forwarding", "final"]
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_resume_k_switches_continuation(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -459,7 +453,6 @@ class TestWithHandlerIntegration:
         assert result.is_ok()
         assert result.value == "switched early"
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_outermost_handler_uses_primitives(self) -> None:
         from doeff.cesk import SyncRuntime
 
@@ -499,7 +492,6 @@ class TestWithHandlerIntegration:
         assert result.is_ok()
         assert result.value == 25
 
-    @pytest.mark.skip(reason="TDD: Implementation pending in ISSUE-CORE-464")
     def test_unhandled_effect_raises_error(self) -> None:
         from doeff.cesk import SyncRuntime
         from doeff.cesk.errors import UnhandledEffectError
