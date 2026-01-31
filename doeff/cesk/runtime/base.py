@@ -270,6 +270,32 @@ class BaseRuntime(ABC):
 
             raise RuntimeError(f"Unexpected step result: {type(result)}")
 
+    def _step_until_done_v2(self, state: CESKState) -> tuple[Any, CESKState, dict[str, Any]]:
+        from doeff.cesk.runtime_v2 import step_v2
+
+        while True:
+            result = step_v2(state)
+
+            if isinstance(result, Done):
+                return (result.value, state, result.store)
+
+            if isinstance(result, Failed):
+                exc = result.exception
+                captured_tb = result.captured_traceback
+                if captured_tb is not None:
+                    exc.__cesk_traceback__ = captured_tb  # type: ignore[attr-defined]
+                raise ExecutionError(
+                    exception=exc,
+                    final_state=state,
+                    captured_traceback=captured_tb,
+                )
+
+            if isinstance(result, CESKState):
+                state = result
+                continue
+
+            raise RuntimeError(f"Unexpected step result: {type(result)}")
+
 
 __all__ = [
     "BaseRuntime",
