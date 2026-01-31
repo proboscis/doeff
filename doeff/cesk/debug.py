@@ -104,25 +104,25 @@ class DebugContext:
 
 
 def extract_kleisli_stack(k: Kontinuation) -> tuple[KleisliStackEntry, ...]:
-    """Extract Kleisli (@do function) entries from the K stack."""
-    from doeff.cesk.frames import KleisliFrame
+    """Extract Kleisli (@do function) entries from ReturnFrame kleisli fields."""
+    from doeff.cesk.frames import ReturnFrame
 
     entries: list[KleisliStackEntry] = []
     for frame in k:
-        if isinstance(frame, KleisliFrame):
+        if isinstance(frame, ReturnFrame) and frame.kleisli_function_name is not None:
             entries.append(
                 KleisliStackEntry(
-                    function_name=frame.function_name,
-                    filename=frame.filename,
-                    lineno=frame.lineno,
+                    function_name=frame.kleisli_function_name,
+                    filename=frame.kleisli_filename or "<unknown>",
+                    lineno=frame.kleisli_lineno or 0,
                     depth=len(entries),
                 )
             )
     return tuple(entries)
 
 
-def extract_k_frame_info(k: Kontinuation) -> tuple[KFrameInfo, ...]:
-    """Extract information about all frames in the K stack."""
+def describe_k_frame(frame: object) -> tuple[str, str]:
+    """Return (frame_type, description) for any K frame. Centralized to avoid DRY violations."""
     from doeff.cesk.frames import (
         AskLazyFrame,
         GatherFrame,
@@ -130,7 +130,6 @@ def extract_k_frame_info(k: Kontinuation) -> tuple[KFrameInfo, ...]:
         GraphCaptureFrame,
         InterceptBypassFrame,
         InterceptFrame,
-        KleisliFrame,
         ListenFrame,
         LocalFrame,
         RaceFrame,
@@ -140,125 +139,61 @@ def extract_k_frame_info(k: Kontinuation) -> tuple[KFrameInfo, ...]:
     )
     from doeff.cesk.handler_frame import HandlerFrame, HandlerResultFrame
 
+    if isinstance(frame, ReturnFrame):
+        pc = frame.program_call
+        name = pc.function_name if pc else "<generator>"
+        if frame.kleisli_function_name:
+            return ("ReturnFrame", f"kleisli={frame.kleisli_function_name}")
+        return ("ReturnFrame", f"continuation={name}")
+    if isinstance(frame, HandlerFrame):
+        handler_name = getattr(frame.handler, "__name__", "<handler>")
+        return ("HandlerFrame", f"handler={handler_name}")
+    if isinstance(frame, HandlerResultFrame):
+        effect_name = type(frame.original_effect).__name__
+        return ("HandlerResultFrame", f"effect={effect_name}")
+    if isinstance(frame, LocalFrame):
+        return ("LocalFrame", "env restore")
+    if isinstance(frame, SafeFrame):
+        return ("SafeFrame", "error boundary")
+    if isinstance(frame, ListenFrame):
+        return ("ListenFrame", f"log_start={frame.log_start_index}")
+    if isinstance(frame, GatherFrame):
+        remaining = len(frame.remaining_programs)
+        collected = len(frame.collected_results)
+        return ("GatherFrame", f"remaining={remaining}, collected={collected}")
+    if isinstance(frame, InterceptFrame):
+        return ("InterceptFrame", f"transforms={len(frame.transforms)}")
+    if isinstance(frame, GraphCaptureFrame):
+        return ("GraphCaptureFrame", f"start_index={frame.graph_start_index}")
+    if isinstance(frame, AskLazyFrame):
+        return ("AskLazyFrame", f"key={frame.ask_key!r}")
+    if isinstance(frame, RaceFrame):
+        return ("RaceFrame", f"tasks={len(frame.task_ids)}")
+    if isinstance(frame, GatherWaiterFrame):
+        return ("GatherWaiterFrame", "waiting")
+    if isinstance(frame, RaceWaiterFrame):
+        return ("RaceWaiterFrame", "waiting")
+    if isinstance(frame, InterceptBypassFrame):
+        return ("InterceptBypassFrame", "bypass")
+    return (type(frame).__name__, "")
+
+
+def extract_k_frame_info(k: Kontinuation) -> tuple[KFrameInfo, ...]:
+    """Extract information about all frames in the K stack."""
     infos: list[KFrameInfo] = []
     for i, frame in enumerate(k):
-        if isinstance(frame, KleisliFrame):
-            infos.append(KFrameInfo(
-                frame_type="KleisliFrame",
-                description=frame.function_name,
-                depth=i,
-            ))
-        elif isinstance(frame, ReturnFrame):
-            pc = frame.program_call
-            name = pc.function_name if pc else "<generator>"
-            infos.append(KFrameInfo(
-                frame_type="ReturnFrame",
-                description=f"continuation={name}",
-                depth=i,
-            ))
-        elif isinstance(frame, HandlerFrame):
-            handler_name = getattr(frame.handler, "__name__", "<handler>")
-            infos.append(KFrameInfo(
-                frame_type="HandlerFrame",
-                description=f"handler={handler_name}",
-                depth=i,
-            ))
-        elif isinstance(frame, HandlerResultFrame):
-            effect_name = type(frame.original_effect).__name__
-            infos.append(KFrameInfo(
-                frame_type="HandlerResultFrame",
-                description=f"effect={effect_name}",
-                depth=i,
-            ))
-        elif isinstance(frame, LocalFrame):
-            infos.append(KFrameInfo(
-                frame_type="LocalFrame",
-                description="env restore",
-                depth=i,
-            ))
-        elif isinstance(frame, SafeFrame):
-            infos.append(KFrameInfo(
-                frame_type="SafeFrame",
-                description="error boundary",
-                depth=i,
-            ))
-        elif isinstance(frame, ListenFrame):
-            infos.append(KFrameInfo(
-                frame_type="ListenFrame",
-                description=f"log_start={frame.log_start_index}",
-                depth=i,
-            ))
-        elif isinstance(frame, GatherFrame):
-            remaining = len(frame.remaining_programs)
-            collected = len(frame.collected_results)
-            infos.append(KFrameInfo(
-                frame_type="GatherFrame",
-                description=f"remaining={remaining}, collected={collected}",
-                depth=i,
-            ))
-        elif isinstance(frame, InterceptFrame):
-            count = len(frame.transforms)
-            infos.append(KFrameInfo(
-                frame_type="InterceptFrame",
-                description=f"transforms={count}",
-                depth=i,
-            ))
-        elif isinstance(frame, GraphCaptureFrame):
-            infos.append(KFrameInfo(
-                frame_type="GraphCaptureFrame",
-                description=f"start_index={frame.graph_start_index}",
-                depth=i,
-            ))
-        elif isinstance(frame, AskLazyFrame):
-            infos.append(KFrameInfo(
-                frame_type="AskLazyFrame",
-                description=f"key={frame.ask_key!r}",
-                depth=i,
-            ))
-        elif isinstance(frame, RaceFrame):
-            count = len(frame.task_ids)
-            infos.append(KFrameInfo(
-                frame_type="RaceFrame",
-                description=f"tasks={count}",
-                depth=i,
-            ))
-        elif isinstance(frame, GatherWaiterFrame):
-            infos.append(KFrameInfo(
-                frame_type="GatherWaiterFrame",
-                description="waiting",
-                depth=i,
-            ))
-        elif isinstance(frame, RaceWaiterFrame):
-            infos.append(KFrameInfo(
-                frame_type="RaceWaiterFrame",
-                description="waiting",
-                depth=i,
-            ))
-        elif isinstance(frame, InterceptBypassFrame):
-            infos.append(KFrameInfo(
-                frame_type="InterceptBypassFrame",
-                description="bypass",
-                depth=i,
-            ))
-        else:
-            infos.append(KFrameInfo(
-                frame_type=type(frame).__name__,
-                description="",
-                depth=i,
-            ))
-
+        frame_type, description = describe_k_frame(frame)
+        infos.append(KFrameInfo(frame_type=frame_type, description=description, depth=i))
     return tuple(infos)
 
 
 def build_effect_call_tree(k: Kontinuation, current_effect: str | None = None) -> EffectCallNode | None:
-    """Build effect call tree from K stack."""
-    from doeff.cesk.frames import KleisliFrame, ReturnFrame
+    """Build effect call tree from K stack using ReturnFrame.program_call as source."""
+    from doeff.cesk.frames import ReturnFrame
 
     kleisli_entries: list[tuple[str, str, int]] = []
     for frame in reversed(k):
-        if isinstance(frame, KleisliFrame):
-            kleisli_entries.append((frame.function_name, frame.filename, frame.lineno))
-        elif isinstance(frame, ReturnFrame) and frame.program_call:
+        if isinstance(frame, ReturnFrame) and frame.program_call:
             pc = frame.program_call
             created_at = getattr(pc, "created_at", None)
             if created_at:
@@ -323,6 +258,7 @@ __all__ = [
     "KFrameInfo",
     "KleisliStackEntry",
     "build_effect_call_tree",
+    "describe_k_frame",
     "extract_k_frame_info",
     "extract_kleisli_stack",
     "format_effect_call_tree",
