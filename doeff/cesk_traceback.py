@@ -107,26 +107,25 @@ class PythonFrame:
 
 
 @dataclass(frozen=True)
+class KleisliStackFrame:
+    """Captured KleisliFrame info for error reporting."""
+
+    function_name: str
+    filename: str
+    lineno: int
+
+
+@dataclass(frozen=True)
+class KFrameSnapshot:
+    """Snapshot of a K stack frame for error reporting."""
+
+    frame_type: str
+    description: str
+
+
+@dataclass(frozen=True)
 class CapturedTraceback:
-    """
-    Complete captured traceback from a CESK interpreter error.
-
-    Contains both the effect chain (from K stack) and Python chain
-    (from exception traceback) as separate data for maximum flexibility.
-
-    Attributes:
-        effect_frames: Effect/Kleisli call chain (outermost to innermost).
-            Captured from K stack's ReturnFrame generators.
-        python_frames: Python call chain (outermost to innermost, standard traceback order).
-            Captured from exception.__traceback__.
-        exception_type: Exception class name (e.g., "RuntimeError")
-        exception_message: String representation of exception
-        exception_args: Original exception args tuple
-        exception: The actual exception object (for re-raising, chaining, etc.)
-            Note: May hold references to frames; consider memory implications.
-        capture_timestamp: time.time() when captured
-        interpreter_version: Version identifier for the CESK interpreter
-    """
+    """Complete captured traceback from a CESK interpreter error."""
 
     effect_frames: tuple[EffectFrame, ...]
     python_frames: tuple[PythonFrame, ...]
@@ -136,17 +135,16 @@ class CapturedTraceback:
     exception: BaseException
     capture_timestamp: float | None = None
     interpreter_version: str = "cesk-v1"
+    kleisli_stack: tuple[KleisliStackFrame, ...] = ()
+    k_frame_snapshot: tuple[KFrameSnapshot, ...] = ()
 
     def format(self) -> str:
-        """Full human-readable traceback (implements EffectTraceback protocol)."""
         return format_traceback(self)
 
     def format_short(self) -> str:
-        """One-line summary (implements EffectTraceback protocol)."""
         return format_traceback_short(self)
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON-serializable representation (implements EffectTraceback protocol)."""
         result = to_dict(self)
         return result if result is not None else {}
 
@@ -639,39 +637,85 @@ def capture_python_frames_from_traceback(tb: Any) -> tuple[PythonFrame, ...]:
 # ============================================================================
 
 
+def _capture_kleisli_stack(K: Kontinuation) -> tuple[KleisliStackFrame, ...]:
+    from doeff.cesk.frames import KleisliFrame
+    
+    frames: list[KleisliStackFrame] = []
+    for frame in K:
+        if isinstance(frame, KleisliFrame):
+            frames.append(KleisliStackFrame(
+                function_name=frame.function_name,
+                filename=frame.filename,
+                lineno=frame.lineno,
+            ))
+    return tuple(frames)
+
+
+def _capture_k_frame_snapshot(K: Kontinuation) -> tuple[KFrameSnapshot, ...]:
+    from doeff.cesk.frames import (
+        AskLazyFrame,
+        GatherFrame,
+        InterceptFrame,
+        KleisliFrame,
+        ListenFrame,
+        LocalFrame,
+        ReturnFrame,
+        SafeFrame,
+    )
+    from doeff.cesk.handler_frame import HandlerFrame, HandlerResultFrame
+    
+    snapshots: list[KFrameSnapshot] = []
+    for frame in K:
+        if isinstance(frame, KleisliFrame):
+            snapshots.append(KFrameSnapshot("KleisliFrame", frame.function_name))
+        elif isinstance(frame, ReturnFrame):
+            pc = frame.program_call
+            name = pc.function_name if pc else "<generator>"
+            snapshots.append(KFrameSnapshot("ReturnFrame", f"continuation={name}"))
+        elif isinstance(frame, HandlerFrame):
+            handler_name = getattr(frame.handler, "__name__", "<handler>")
+            snapshots.append(KFrameSnapshot("HandlerFrame", f"handler={handler_name}"))
+        elif isinstance(frame, HandlerResultFrame):
+            effect_name = type(frame.original_effect).__name__
+            snapshots.append(KFrameSnapshot("HandlerResultFrame", f"effect={effect_name}"))
+        elif isinstance(frame, LocalFrame):
+            snapshots.append(KFrameSnapshot("LocalFrame", "env restore"))
+        elif isinstance(frame, SafeFrame):
+            snapshots.append(KFrameSnapshot("SafeFrame", "error boundary"))
+        elif isinstance(frame, ListenFrame):
+            snapshots.append(KFrameSnapshot("ListenFrame", f"log_start={frame.log_start_index}"))
+        elif isinstance(frame, GatherFrame):
+            snapshots.append(KFrameSnapshot("GatherFrame", f"remaining={len(frame.remaining_programs)}"))
+        elif isinstance(frame, InterceptFrame):
+            snapshots.append(KFrameSnapshot("InterceptFrame", f"transforms={len(frame.transforms)}"))
+        elif isinstance(frame, AskLazyFrame):
+            snapshots.append(KFrameSnapshot("AskLazyFrame", f"key={frame.ask_key!r}"))
+        else:
+            snapshots.append(KFrameSnapshot(type(frame).__name__, ""))
+    return tuple(snapshots)
+
+
 def capture_traceback(
     K: Kontinuation,
     ex: BaseException,
     pre_captured: PreCapturedFrame | None = None,
 ) -> CapturedTraceback:
-    """
-    Capture complete traceback data.
-
-    Args:
-        K: The continuation stack (may not include current generator if it died)
-        ex: The exception
-        pre_captured: Pre-captured frame info (generator ref + location, NO file I/O yet)
-
-    Returns:
-        CapturedTraceback with effect frames, python frames, and exception info
-    """
     from doeff.cesk import ReturnFrame
 
     effect_frames, captured_gen_ids = capture_effect_frames_from_k_with_ids(K)
 
-    # Add pre_captured frame if not already in K (dedup by generator identity)
     if pre_captured is not None:
         if id(pre_captured.generator) not in captured_gen_ids:
-            # Get call site from innermost K frame (if available)
             return_frames = [f for f in K if isinstance(f, ReturnFrame)]
             caller_gen = return_frames[0].generator if return_frames else None
             caller_pc = getattr(return_frames[0], "program_call", None) if return_frames else None
 
-            # Convert to EffectFrame with call site (linecache called here)
             current_frame = precapture_to_effect_frame(pre_captured, caller_gen, caller_pc)
             effect_frames = effect_frames + (current_frame,)
 
     python_frames = capture_python_frames_from_traceback(ex.__traceback__)
+    kleisli_stack = _capture_kleisli_stack(K)
+    k_frame_snapshot = _capture_k_frame_snapshot(K)
 
     return CapturedTraceback(
         effect_frames=effect_frames,
@@ -681,6 +725,8 @@ def capture_traceback(
         exception_args=ex.args,
         exception=ex,
         capture_timestamp=time.time(),
+        kleisli_stack=kleisli_stack,
+        k_frame_snapshot=k_frame_snapshot,
     )
 
 
@@ -725,37 +771,14 @@ def capture_traceback_safe(
 
 
 def format_traceback(tb: CapturedTraceback | None) -> str:
-    """
-    Format captured traceback for human-readable display.
-
-    Returns a string similar to Python's standard traceback format,
-    but with effect chain shown separately from Python chain.
-
-    Args:
-        tb: The CapturedTraceback to format, or None
-
-    Returns:
-        Formatted string. If tb is None, returns "(no captured traceback)".
-
-    Format:
-        Effect Traceback (Kleisli call chain):
-          File "filename", line N, in function
-            code line
-          ...
-
-        Python Traceback (most recent call last):
-          File "filename", line N, in function
-            code line
-          ...
-
-        ExceptionType: exception message
-    """
+    import os
+    
     if tb is None:
         return "(no captured traceback)"
 
+    debug_mode = os.environ.get("DOEFF_DEBUG")
     lines: list[str] = []
 
-    # Effect Traceback section
     lines.append("Effect Traceback (Kleisli call chain):")
     if not tb.effect_frames:
         lines.append("  (no effect frames)")
@@ -763,17 +786,27 @@ def format_traceback(tb: CapturedTraceback | None) -> str:
         for ef in tb.effect_frames:
             loc = ef.location
             lines.append(f'  File "{loc.filename}", line {loc.lineno}, in {loc.function}')
-            # Code line handling: skip for built-in files, show placeholder for missing
             if not loc.filename.startswith("<"):
                 if loc.code is not None:
                     lines.append(f"    {loc.code}")
                 else:
                     lines.append("    <source unavailable>")
 
-    # Blank line between sections
     lines.append("")
 
-    # Python Traceback section
+    if debug_mode and tb.kleisli_stack:
+        lines.append("Kleisli Call Stack:")
+        for i, kf in enumerate(tb.kleisli_stack):
+            lines.append(f"  [{i}] {kf.function_name} ({kf.filename}:{kf.lineno})")
+        lines.append("")
+
+    if debug_mode and tb.k_frame_snapshot:
+        lines.append("K Frame Stack:")
+        for i, fs in enumerate(tb.k_frame_snapshot):
+            desc = f"({fs.description})" if fs.description else ""
+            lines.append(f"  [{i}] {fs.frame_type}{desc}")
+        lines.append("")
+
     lines.append("Python Traceback (most recent call last):")
     if not tb.python_frames:
         lines.append("  (no python frames)")
@@ -781,21 +814,17 @@ def format_traceback(tb: CapturedTraceback | None) -> str:
         for pf in tb.python_frames:
             loc = pf.location
             lines.append(f'  File "{loc.filename}", line {loc.lineno}, in {loc.function}')
-            # Code line handling: skip for built-in files, show placeholder for missing
             if not loc.filename.startswith("<"):
                 if loc.code is not None:
                     lines.append(f"    {loc.code}")
                 else:
                     lines.append("    <source unavailable>")
 
-    # Blank line before exception
     lines.append("")
 
-    # Exception line
     exc_line = f"{tb.exception_type}: {tb.exception_message}"
     lines.append(exc_line)
 
-    # ExceptionGroup handling (Python 3.11+)
     if sys.version_info >= (3, 11) and isinstance(tb.exception, ExceptionGroup):
         _format_exception_group_details(tb.exception, lines)
 
@@ -977,13 +1006,16 @@ def to_dict(tb: CapturedTraceback | None) -> dict[str, Any] | None:
 # ============================================================================
 
 __all__ = [
-    # Data types
     "CapturedTraceback",
     "CodeLocation",
     "EffectFrame",
+    "KFrameSnapshot",
+    "KleisliStackFrame",
     "PythonFrame",
-    # Format functions
+    "capture_traceback",
+    "capture_traceback_safe",
     "format_traceback",
     "format_traceback_short",
+    "pre_capture_generator",
     "to_dict",
 ]
