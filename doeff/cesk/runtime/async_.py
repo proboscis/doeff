@@ -105,10 +105,9 @@ class AsyncRuntime(BaseRuntime):
         return result.value
 
     async def _run_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
-        max_steps = 100000
         pending_async: dict[Any, asyncio.Task[Any]] = {}
         
-        for step_num in range(max_steps):
+        while True:
             result = step(state)
             
             if isinstance(result, Done):
@@ -213,11 +212,6 @@ class AsyncRuntime(BaseRuntime):
                 continue
             
             raise RuntimeError(f"Unexpected step result: {type(result)}")
-        
-        raise ExecutionError(
-            exception=RuntimeError(f"Exceeded maximum steps ({max_steps})"),
-            final_state=state,
-        )
 
 
 __all__ = [
