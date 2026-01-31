@@ -6,13 +6,14 @@ No task tracking in outer runtime - just step until Done/Failed.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
+from doeff._vendor import FrozenDict
 from doeff.do import do
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult, ReturnFrame
-from doeff.cesk.handler_frame import HandlerContext, ResumeK, WithHandler
+from doeff.cesk.handler_frame import Handler, HandlerContext, ResumeK, WithHandler
 from doeff.cesk.helpers import to_generator
 from doeff.cesk.state import ProgramControl
 from doeff.effects.gather import GatherEffect
@@ -75,9 +76,9 @@ def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) ->
     wrapped = _make_spawn_wrapper(program, task_id, handle_id)
     
     return WithHandler(
-        handler=scheduler_handler,
+        handler=cast(Handler, scheduler_handler),
         program=WithHandler(
-            handler=core_handler,
+            handler=cast(Handler, core_handler),
             program=wrapped,
         ),
     )
@@ -86,11 +87,11 @@ def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) ->
 def _make_initial_k(program: Any) -> list[Any]:
     """Create initial continuation for a program."""
     gen = to_generator(program)
-    return [ReturnFrame(gen, {})]
+    return [ReturnFrame(gen, FrozenDict())]
 
 
-@do
-def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResult | ResumeK]:
+@do  # type: ignore[reportArgumentType] - @do transforms generator to KleisliProgram
+def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     """Handle scheduling effects using ResumeK for task switching."""
     
     if isinstance(effect, SpawnEffect):
@@ -530,8 +531,9 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
     
     if isinstance(effect, FutureAwaitEffect):
         import asyncio
+        from collections.abc import Coroutine
         try:
-            result = asyncio.run(effect.awaitable)
+            result = asyncio.run(cast(Coroutine[Any, Any, Any], effect.awaitable))
             return ContinueValue(
                 value=result,
                 env=ctx.env,

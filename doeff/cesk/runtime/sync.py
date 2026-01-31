@@ -11,13 +11,13 @@ in the runtime. The runtime just steps until Done/Failed.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import uuid4
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.frames import ReturnFrame
-from doeff.cesk.handler_frame import WithHandler
+from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.queue_handler import (
     CURRENT_TASK_KEY,
@@ -44,11 +44,11 @@ T = TypeVar("T")
 def _wrap_with_handlers(program: Program[T]) -> Program[T]:
     """Wrap a program with the handler stack for cooperative scheduling."""
     return WithHandler(
-        handler=queue_handler,
+        handler=cast(Handler, queue_handler),
         program=WithHandler(
-            handler=scheduler_handler,
+            handler=cast(Handler, scheduler_handler),
             program=WithHandler(
-                handler=core_handler,
+                handler=cast(Handler, core_handler),
                 program=program,
             ),
         ),
