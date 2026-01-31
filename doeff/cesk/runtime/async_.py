@@ -9,7 +9,12 @@ from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.async_effects_handler import async_effects_handler
 from doeff.cesk.handlers.core_handler import core_handler
-from doeff.cesk.handlers.queue_handler import queue_handler
+from doeff.cesk.handlers.queue_handler import (
+    CURRENT_TASK_KEY,
+    PENDING_IO_KEY,
+    SCHEDULER_KEY_PREFIX,
+    queue_handler,
+)
 from doeff.cesk.handlers.scheduler_handler import scheduler_handler
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
@@ -23,8 +28,6 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-SCHEDULER_KEY_PREFIX = "__scheduler_"
-
 
 def _merge_scheduler_state(
     task_store: dict[str, Any],
@@ -35,7 +38,7 @@ def _merge_scheduler_state(
     for key, value in current_store.items():
         if isinstance(key, str) and key.startswith(SCHEDULER_KEY_PREFIX):
             merged[key] = value
-    merged[f"{SCHEDULER_KEY_PREFIX}current_task__"] = task_id
+    merged[CURRENT_TASK_KEY] = task_id
     return merged
 
 
@@ -165,7 +168,7 @@ class AsyncRuntime(BaseRuntime):
                             new_pending = dict(pending_io)
                             del new_pending[task_id]
                             new_store = dict(effect_store)
-                            new_store[f"{SCHEDULER_KEY_PREFIX}pending_io__"] = new_pending
+                            new_store[PENDING_IO_KEY] = new_pending
                             
                             task_k = task_info["k"]
                             task_store_snapshot = task_info.get("store_snapshot", {})

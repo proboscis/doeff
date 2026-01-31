@@ -40,11 +40,14 @@ TASK_SUSPENDED_KEY = "__scheduler_task_suspended__"
 PENDING_IO_KEY = "__scheduler_pending_io__"
 
 
+SCHEDULER_KEY_PREFIX = "__scheduler_"
+
+
 def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
-    """Lazily initialize scheduler store keys if not present.
+    """Lazily initialize core scheduler store keys if not present.
     
-    This allows handlers to manage their own store structure without
-    requiring runtimes to pre-initialize handler-specific keys.
+    Initializes: TASK_QUEUE_KEY, TASK_REGISTRY_KEY, WAITERS_KEY, CURRENT_TASK_KEY.
+    Does NOT initialize PENDING_IO_KEY or TASK_SUSPENDED_KEY (set on-demand by effects).
     """
     if TASK_QUEUE_KEY not in store:
         store[TASK_QUEUE_KEY] = []
@@ -53,7 +56,6 @@ def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
     if WAITERS_KEY not in store:
         store[WAITERS_KEY] = {}
     if CURRENT_TASK_KEY not in store:
-        # Initialize main task ID on first access
         store[CURRENT_TASK_KEY] = uuid4()
 
 
@@ -467,6 +469,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
 __all__ = [
     "CURRENT_TASK_KEY",
     "PENDING_IO_KEY",
+    "SCHEDULER_KEY_PREFIX",
     "TASK_QUEUE_KEY",
     "TASK_REGISTRY_KEY",
     "TASK_SUSPENDED_KEY",

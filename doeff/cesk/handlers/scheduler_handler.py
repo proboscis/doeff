@@ -642,7 +642,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     if isinstance(effect, SuspendForIOEffect):
         import os
         debug = os.environ.get("DOEFF_DEBUG")
-        current_task_id = ctx.store.get(CURRENT_TASK_KEY)
+        current_task_id = yield GetCurrentTaskId()
         
         full_resume_k = list(ctx.delimited_k) + list(ctx.outer_k)
         
