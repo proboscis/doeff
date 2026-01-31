@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
-from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.async_effects_handler import async_effects_handler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.queue_handler import (
     CURRENT_TASK_KEY,
-    PENDING_IO_KEY,
     TASK_QUEUE_KEY,
     TASK_REGISTRY_KEY,
     WAITERS_KEY,
@@ -104,125 +103,60 @@ class AsyncRuntime(BaseRuntime):
         return result.value
 
     async def _run_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
-        max_steps = 100000
-        pending_async: dict[Any, asyncio.Task[Any]] = {}
-        
-        for step_num in range(max_steps):
+        active_tasks: dict[Any, asyncio.Task[Any]] = {}
+        for _ in range(100000):
             result = step(state)
-            
             if isinstance(result, Done):
-                import os
-                debug = os.environ.get("DOEFF_DEBUG")
-                if debug:
-                    print(f"[runtime] Done! value={result.value}")
                 return (result.value, state)
-            
             if isinstance(result, Failed):
-                raise ExecutionError(
-                    exception=result.exception,
-                    final_state=state,
-                    captured_traceback=result.captured_traceback,
-                )
-            
+                raise ExecutionError(result.exception, state, result.captured_traceback)
             if isinstance(result, Suspended):
-                from doeff.effects.future import AllTasksSuspendedEffect
-                import os
-                debug = os.environ.get("DOEFF_DEBUG")
-                if debug:
-                    print(f"[runtime] Suspended, effect type: {type(result.effect).__name__}")
-                
-                if isinstance(result.effect, AllTasksSuspendedEffect):
-                    pending_io = result.effect.pending_io
-                    effect_store = result.effect.store
-                    if not pending_io:
-                        raise ExecutionError(
-                            exception=RuntimeError("Suspended with no pending I/O"),
-                            final_state=state,
-                        )
-                    
-                    for task_id, info in pending_io.items():
-                        if task_id not in pending_async:
-                            coro = info["awaitable"]
-                            pending_async[task_id] = asyncio.create_task(coro)
-                    
-                    tasks_only = list(pending_async.values())
-                    import os
-                    debug = os.environ.get("DOEFF_DEBUG")
-                    if debug:
-                        print(f"[runtime] asyncio.wait with {len(tasks_only)} tasks, pending_async={list(pending_async.keys())}")
-                    done, _ = await asyncio.wait(tasks_only, return_when=asyncio.FIRST_COMPLETED)
-                    if debug:
-                        print(f"[runtime] asyncio.wait done, {len(done)} completed")
-                    
-                    for task_id, atask in list(pending_async.items()):
-                        if atask in done:
-                            del pending_async[task_id]
-                            task_info = pending_io.get(task_id)
-                            if task_info is None:
-                                continue
-                            
-                            new_pending = dict(pending_io)
-                            del new_pending[task_id]
-                            new_store = dict(effect_store)
-                            new_store[PENDING_IO_KEY] = new_pending
-                            new_store[CURRENT_TASK_KEY] = task_id
-                            
-                            task_k = task_info["k"]
-                            task_store_snapshot = task_info.get("store_snapshot", {})
-                            import os
-                            debug = os.environ.get("DOEFF_DEBUG")
-                            if debug:
-                                print(f"[runtime] Resuming task {task_id} with k_len={len(task_k)}, k_types={[type(f).__name__ for f in task_k[:10]]}")
-                            
-                            merged_store = dict(task_store_snapshot)
-                            merged_store[PENDING_IO_KEY] = new_store[PENDING_IO_KEY]
-                            merged_store[TASK_QUEUE_KEY] = new_store.get(TASK_QUEUE_KEY, [])
-                            merged_store[TASK_REGISTRY_KEY] = new_store.get(TASK_REGISTRY_KEY, {})
-                            merged_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
-                            merged_store[CURRENT_TASK_KEY] = task_id
-                            
-                            try:
-                                value = atask.result()
-                                from doeff.cesk.state import Value
-                                state = CESKState(
-                                    C=Value(value),
-                                    E=FrozenDict(),
-                                    S=merged_store,
-                                    K=task_k,
-                                )
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as ex:
-                                from doeff.cesk.state import Error
-                                state = CESKState(
-                                    C=Error(ex),
-                                    E=FrozenDict(),
-                                    S=merged_store,
-                                    K=task_k,
-                                )
-                            break
-                    continue
-                else:
-                    awaitable = result.effect.awaitable  # type: ignore[attr-defined]
-                    try:
-                        value = await cast(Any, awaitable)
-                        state = result.resume(value, state.S)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as ex:
-                        state = result.resume_error(ex)
-                    continue
-            
+                state = await self._handle_suspended(result, state, active_tasks)
+                continue
             if isinstance(result, CESKState):
                 state = result
                 continue
-            
             raise RuntimeError(f"Unexpected step result: {type(result)}")
+        raise ExecutionError(RuntimeError("Exceeded maximum steps"), state)
+    
+    async def _handle_suspended(
+        self, result: Suspended, state: CESKState, active_tasks: dict[Any, asyncio.Task[Any]]
+    ) -> CESKState:
+        if result.awaitables:
+            completed = await self._await_first(result.awaitables, active_tasks)
+            return result.resume(completed, result.stored_store or state.S)
+        awaitable = result.effect.awaitable  # type: ignore[attr-defined]
+        try:
+            value = await cast(Any, awaitable)
+            return result.resume(value, state.S)
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            return result.resume_error(ex)
+    
+    async def _await_first(
+        self,
+        awaitables: dict[Any, Awaitable[Any]],
+        active_tasks: dict[Any, asyncio.Task[Any]],
+    ) -> tuple[Any, Any]:
+        for tid, awaitable in awaitables.items():
+            if tid not in active_tasks:
+                active_tasks[tid] = asyncio.ensure_future(awaitable)
         
-        raise ExecutionError(
-            exception=RuntimeError(f"Exceeded maximum steps ({max_steps})"),
-            final_state=state,
-        )
+        tasks_to_wait = [active_tasks[tid] for tid in awaitables if tid in active_tasks]
+        done, _ = await asyncio.wait(tasks_to_wait, return_when=asyncio.FIRST_COMPLETED)
+        
+        for task in done:
+            for tid, t in list(active_tasks.items()):
+                if t is task:
+                    del active_tasks[tid]
+                    try:
+                        return (tid, task.result())
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ex:
+                        return (tid, ex)
+        raise RuntimeError("No task completed")
 
 
 __all__ = [

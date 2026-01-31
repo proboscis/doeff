@@ -172,43 +172,104 @@ def _invoke_handler(
 def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
     from doeff.cesk.frames import SuspendOn as SuspendOnType
     from doeff.effects.future import AllTasksSuspendedEffect, FutureAwaitEffect
+    from doeff.cesk.handlers.queue_handler import (
+        CURRENT_TASK_KEY,
+        PENDING_IO_KEY,
+        TASK_QUEUE_KEY,
+        TASK_REGISTRY_KEY,
+        WAITERS_KEY,
+    )
     
     stored_k = suspend_on.stored_k or []
     stored_env = suspend_on.stored_env or {}
     stored_store = suspend_on.stored_store or {}
     
-    def resume(value: Any, new_store: "Store") -> CESKState:
-        merged_store = dict(new_store)
-        for key, val in stored_store.items():
-            if key not in merged_store:
-                merged_store[key] = val
-        return CESKState(
-            C=Value(value),
-            E=stored_env,
-            S=merged_store,
-            K=stored_k,
-        )
-    
-    def resume_error(error: BaseException) -> CESKState:
-        return CESKState(
-            C=Error(error),
-            E=stored_env,
-            S=stored_store,
-            K=stored_k,
-        )
-    
     if suspend_on.awaitable is None:
-        from doeff.cesk.handlers.queue_handler import PENDING_IO_KEY
         pending_io = stored_store.get(PENDING_IO_KEY, {})
+        awaitables_dict = {task_id: info["awaitable"] for task_id, info in pending_io.items()}
+        
+        def resume_multi(result: Any, new_store: "Store") -> CESKState:
+            task_id, value = result
+            task_info = pending_io.get(task_id)
+            if task_info is None:
+                return CESKState(
+                    C=Error(RuntimeError(f"Unknown task_id: {task_id}")),
+                    E=stored_env,
+                    S=stored_store,
+                    K=stored_k,
+                )
+            
+            new_pending = dict(pending_io)
+            del new_pending[task_id]
+            
+            task_k = task_info["k"]
+            task_store_snapshot = task_info.get("store_snapshot", {})
+            
+            merged_store = dict(task_store_snapshot)
+            merged_store[PENDING_IO_KEY] = new_pending
+            merged_store[TASK_QUEUE_KEY] = stored_store.get(TASK_QUEUE_KEY, [])
+            merged_store[TASK_REGISTRY_KEY] = stored_store.get(TASK_REGISTRY_KEY, {})
+            merged_store[WAITERS_KEY] = stored_store.get(WAITERS_KEY, {})
+            merged_store[CURRENT_TASK_KEY] = task_id
+            
+            if isinstance(value, BaseException):
+                return CESKState(
+                    C=Error(value),
+                    E=stored_env,
+                    S=merged_store,
+                    K=task_k,
+                )
+            
+            return CESKState(
+                C=Value(value),
+                E=stored_env,
+                S=merged_store,
+                K=task_k,
+            )
+        
+        def resume_error_multi(error: BaseException) -> CESKState:
+            return CESKState(
+                C=Error(error),
+                E=stored_env,
+                S=stored_store,
+                K=stored_k,
+            )
+        
         effect: Any = AllTasksSuspendedEffect(pending_io=pending_io, store=stored_store)
+        return Suspended(
+            effect=effect,
+            resume=resume_multi,
+            resume_error=resume_error_multi,
+            awaitables=awaitables_dict,
+            stored_store=stored_store,
+        )
     else:
+        def resume(value: Any, new_store: "Store") -> CESKState:
+            merged_store = dict(new_store)
+            for key, val in stored_store.items():
+                if key not in merged_store:
+                    merged_store[key] = val
+            return CESKState(
+                C=Value(value),
+                E=stored_env,
+                S=merged_store,
+                K=stored_k,
+            )
+        
+        def resume_error(error: BaseException) -> CESKState:
+            return CESKState(
+                C=Error(error),
+                E=stored_env,
+                S=stored_store,
+                K=stored_k,
+            )
+        
         effect = FutureAwaitEffect(awaitable=suspend_on.awaitable)
-    
-    return Suspended(
-        effect=effect,
-        resume=resume,
-        resume_error=resume_error,
-    )
+        return Suspended(
+            effect=effect,
+            resume=resume,
+            resume_error=resume_error,
+        )
 
 
 def step(state: CESKState) -> StepResult:

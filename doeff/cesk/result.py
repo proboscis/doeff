@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
@@ -51,11 +51,23 @@ class Suspended:
     Per spec: continuations take (value, new_store) to incorporate handler's
     store updates. On error, resume_error uses the original store (S) from
     before the effect - effectful handlers should NOT mutate S in-place.
+    
+    Attributes:
+        effect: The effect that caused suspension (for backward compatibility)
+        resume: Callback to continue execution with a value
+        resume_error: Callback to continue with an error
+        awaitables: Optional dict of {task_id: awaitable} for multi-task I/O.
+            When set, the runtime should await the first completion and resume
+            with (task_id, value) tuple. When None, use effect.awaitable.
+        stored_store: The store state captured at suspension time, used for
+            reconstructing state on resumption.
     """
 
     effect: EffectBase
     resume: Callable[[Any, Store], CESKState]
     resume_error: Callable[[BaseException], CESKState]
+    awaitables: dict[Any, Awaitable[Any]] | None = None
+    stored_store: Store | None = None
 
 
 Terminal: TypeAlias = Done | Failed
