@@ -91,9 +91,11 @@ def make_delay_handler(executor: AsyncExecutor) -> Handler:
             await asyncio.sleep(effect.seconds)
 
         def on_success(_: Any) -> None:
+            # ctx.suspend is narrowed to non-None by guard above, but pyright doesn't track closure captures
             ctx.suspend.complete(None)  # type: ignore[union-attr]
 
         def on_error(error: BaseException) -> None:
+            # ctx.suspend is narrowed to non-None by guard above, but pyright doesn't track closure captures
             ctx.suspend.fail(error)  # type: ignore[union-attr]
 
         executor.submit(do_delay(), on_success, on_error)
@@ -134,9 +136,11 @@ def make_wait_until_handler(executor: AsyncExecutor) -> Handler:
                 await asyncio.sleep(delay_seconds)
 
         def on_success(_: Any) -> None:
+            # ctx.suspend is narrowed to non-None by guard above, but pyright doesn't track closure captures
             ctx.suspend.complete(None)  # type: ignore[union-attr]
 
         def on_error(error: BaseException) -> None:
+            # ctx.suspend is narrowed to non-None by guard above, but pyright doesn't track closure captures
             ctx.suspend.fail(error)  # type: ignore[union-attr]
 
         executor.submit(do_wait_until(), on_success, on_error)
