@@ -68,10 +68,12 @@ class RegisterWaiter(EffectBase):
         handle_id: The handle ID to wait on (Task or Promise handle)
         waiter_task_id: The task ID of the waiting task
         waiter_k: The continuation to resume when complete
+        waiter_store: The waiter's store at suspension time (for isolation)
     """
     handle_id: Any
     waiter_task_id: Any
     waiter_k: Kontinuation
+    waiter_store: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

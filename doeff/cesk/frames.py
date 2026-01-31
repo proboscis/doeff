@@ -521,6 +521,86 @@ class RaceFrame:
 
 
 @dataclass(frozen=True)
+class GatherWaiterFrame:
+    gather_effect: Any
+    saved_env: Environment
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        from doeff.do import do
+        
+        @do
+        def retry_gather():
+            return (yield self.gather_effect)
+        
+        return ContinueProgram(
+            program=retry_gather(),
+            env=self.saved_env,
+            store=store,
+            k=k_rest,
+        )
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        return ContinueError(
+            error=error,
+            env=self.saved_env,
+            store=store,
+            k=k_rest,
+        )
+
+
+@dataclass(frozen=True)
+class RaceWaiterFrame:
+    race_effect: Any
+    saved_env: Environment
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        from doeff.do import do
+        
+        @do
+        def retry_race():
+            return (yield self.race_effect)
+        
+        return ContinueProgram(
+            program=retry_race(),
+            env=self.saved_env,
+            store=store,
+            k=k_rest,
+        )
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> FrameResult:
+        return ContinueError(
+            error=error,
+            env=self.saved_env,
+            store=store,
+            k=k_rest,
+        )
+
+
+@dataclass(frozen=True)
 class GraphCaptureFrame:
     """Capture graph nodes produced by sub-computation."""
 
@@ -652,6 +732,7 @@ __all__ = [
     "Frame",
     "FrameResult",
     "GatherFrame",
+    "GatherWaiterFrame",
     "GraphCaptureFrame",
     "InterceptBypassFrame",
     "InterceptFrame",
@@ -659,6 +740,7 @@ __all__ = [
     "ListenFrame",
     "LocalFrame",
     "RaceFrame",
+    "RaceWaiterFrame",
     "ReturnFrame",
     "SafeFrame",
     "SuspendOn",
