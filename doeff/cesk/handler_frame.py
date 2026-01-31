@@ -229,11 +229,12 @@ class HandlerResultFrame:
         store: Store,
         k_rest: Kontinuation,
     ) -> FrameResult:
+        full_k = list(self.handled_program_k) + list(k_rest)
         return ContinueError(
             error=error,
             env=env,
             store=store,
-            k=k_rest,
+            k=full_k,
         )
 
 
