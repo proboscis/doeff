@@ -178,19 +178,20 @@ class HandlerResultFrame:
         store: Store,
         k_rest: Kontinuation,
     ) -> FrameResult:
+        full_k: Kontinuation = list(self.handled_program_k) + list(k_rest)
         if isinstance(value, ContinueValue):
             return ContinueValue(
                 value=value.value,
                 env=env,
                 store=value.store if value.store else store,
-                k=self.handled_program_k,
+                k=full_k,
             )
         elif isinstance(value, ContinueError):
             return ContinueError(
                 error=value.error,
                 env=env,
                 store=value.store if value.store else store,
-                k=self.handled_program_k,
+                k=full_k,
             )
         elif isinstance(value, ResumeK):
             return ContinueValue(
@@ -204,7 +205,7 @@ class HandlerResultFrame:
                 value=value,
                 env=env,
                 store=store,
-                k=self.handled_program_k,
+                k=full_k,
             )
 
     def on_error(
