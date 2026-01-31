@@ -128,33 +128,39 @@ class ContinueGenerator:
 @dataclass(frozen=True)
 class SuspendOn:
     """Handler signals: task is suspended on an external awaitable.
-    
+
     This is returned by handlers that need to suspend the current task and wait
     for an external async operation to complete (e.g., FutureAwaitEffect,
     DelayEffect, WaitUntilEffect).
-    
+
     When a handler returns SuspendOn, step converts it to a Suspended result.
     The runtime then:
     1. Awaits the awaitable (for AsyncRuntime) or uses callbacks (for other runtimes)
     2. Resumes the task with the awaited value using the stored continuation
-    
+
     For AsyncRuntime, the awaitable is directly awaited. For callback-based runtimes,
     handlers should register completion callbacks via HandlerContext.suspend before
     returning SuspendOn (legacy mode with awaitable=None).
-    
+
     Attributes:
-        awaitable: The coroutine/future to await. None for callback-based suspension.
+        awaitable: The coroutine/future to await. None when using pending_io dict.
         stored_k: The continuation to resume when the awaitable completes.
         stored_env: The environment to use when resuming.
         stored_store: The store to use when resuming.
+        pending_io: Dict of {task_id: {awaitable, k, store_snapshot}} for multi-task I/O.
+                    When set, runtime awaits first completion and resumes that task.
     """
+
     awaitable: Any = None
     stored_k: Kontinuation | None = None
     stored_env: Environment | None = None
     stored_store: Store | None = None
+    pending_io: dict[Any, Any] | None = None
 
 
-FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | SuspendOn
+FrameResult: TypeAlias = (
+    ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | SuspendOn
+)
 
 
 # ============================================
@@ -542,11 +548,11 @@ class GatherWaiterFrame:
         k_rest: Kontinuation,
     ) -> FrameResult:
         from doeff.do import do
-        
+
         @do
         def retry_gather():
             return (yield self.gather_effect)
-        
+
         return ContinueProgram(
             program=retry_gather(),
             env=self.saved_env,
@@ -582,11 +588,11 @@ class RaceWaiterFrame:
         k_rest: Kontinuation,
     ) -> FrameResult:
         from doeff.do import do
-        
+
         @do
         def retry_race():
             return (yield self.race_effect)
-        
+
         return ContinueProgram(
             program=retry_race(),
             env=self.saved_env,

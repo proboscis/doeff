@@ -15,8 +15,9 @@ See ISSUE-CORE-462 for full architecture context.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import (
@@ -191,7 +192,7 @@ class HandlerResultFrame:
                 store=value.store if value.store else store,
                 k=full_k,
             )
-        elif isinstance(value, ContinueError):
+        if isinstance(value, ContinueError):
             full_k = list(value.k) + list(k_rest)
             return ContinueError(
                 error=value.error,
@@ -199,7 +200,7 @@ class HandlerResultFrame:
                 store=value.store if value.store else store,
                 k=full_k,
             )
-        elif isinstance(value, ContinueProgram):
+        if isinstance(value, ContinueProgram):
             # Handler wants to start a new sub-program (e.g., Safe, Local, Listen)
             # Merge the program's k with k_rest to preserve outer continuation
             full_k = list(value.k) + list(k_rest)
@@ -209,7 +210,7 @@ class HandlerResultFrame:
                 store=value.store if value.store else store,
                 k=full_k,
             )
-        elif isinstance(value, SuspendOn):
+        if isinstance(value, SuspendOn):
             full_k = list(self.handled_program_k) + list(k_rest)
             result_store = value.stored_store if value.stored_store is not None else store
             return SuspendOn(
@@ -217,8 +218,9 @@ class HandlerResultFrame:
                 stored_k=full_k,
                 stored_env=env,
                 stored_store=result_store,
+                pending_io=value.pending_io,
             )
-        elif isinstance(value, ResumeK):
+        if isinstance(value, ResumeK):
             full_k = list(value.k) + list(k_rest)
             result_store = value.store if value.store is not None else store
             return ContinueValue(
@@ -227,14 +229,13 @@ class HandlerResultFrame:
                 store=result_store,
                 k=full_k,
             )
-        else:
-            full_k = list(self.handled_program_k) + list(k_rest)
-            return ContinueValue(
-                value=value,
-                env=env,
-                store=store,
-                k=full_k,
-            )
+        full_k = list(self.handled_program_k) + list(k_rest)
+        return ContinueValue(
+            value=value,
+            env=env,
+            store=store,
+            k=full_k,
+        )
 
     def on_error(
         self,
@@ -294,7 +295,7 @@ class WithHandler(EffectBase, Generic[T]):
     """
 
     handler: Handler
-    program: "Program[T]"
+    program: Program[T]
 
 
 __all__ = [

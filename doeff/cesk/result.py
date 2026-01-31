@@ -51,11 +51,16 @@ class Suspended:
     Per spec: continuations take (value, new_store) to incorporate handler's
     store updates. On error, resume_error uses the original store (S) from
     before the effect - effectful handlers should NOT mutate S in-place.
+
+    When pending_io is set, the runtime should await the first completion from
+    the pending_io dict and resume that specific task with its continuation.
     """
 
     effect: EffectBase
     resume: Callable[[Any, Store], CESKState]
     resume_error: Callable[[BaseException], CESKState]
+    pending_io: dict[Any, Any] | None = None
+    stored_store: dict[str, Any] | None = None
 
 
 Terminal: TypeAlias = Done | Failed
