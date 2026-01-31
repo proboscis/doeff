@@ -18,6 +18,7 @@ from doeff.effects import (
     Delay,
     Gather,
     Get,
+    Modify,
     Put,
     Safe,
     Spawn,
@@ -820,6 +821,120 @@ class TestSyncRuntimeCooperativeScheduling:
         assert result == ("a-done", "b-done")
         assert "a-start" in execution_order
         assert "b-start" in execution_order
+
+    def test_state_modify_in_spawned_task(self) -> None:
+        """StateModify works correctly in cooperative scheduling (ISSUE-CORE-467).
+        
+        This test verifies that the k=ctx.delimited_k fix in core_handler.py
+        allows StateModify to work in spawned tasks.
+        """
+        runtime = SyncRuntime()
+
+        @do
+        def counter_task():
+            # Use Modify to increment counter and return old value
+            old_value = yield Modify("counter", lambda x: x + 1)
+            current_value = yield Get("counter")
+            return {"old": old_value, "new": current_value}
+
+        @do
+        def program():
+            yield Put("counter", 10)
+            task = yield Spawn(counter_task())
+            result = yield Wait(task)
+            return result
+
+        result = runtime.run_and_unwrap(program())
+        assert result["old"] == 10, "Modify should return old value"
+        assert result["new"] == 11, "Counter should be incremented"
+
+    def test_state_modify_multiple_tasks(self) -> None:
+        """Multiple spawned tasks using Modify in cooperative scheduling."""
+        runtime = SyncRuntime()
+
+        @do
+        def increment_task(amount: int):
+            old = yield Modify("shared_counter", lambda x: x + amount)
+            return old
+
+        @do
+        def program():
+            yield Put("shared_counter", 0)
+            t1 = yield Spawn(increment_task(5))
+            t2 = yield Spawn(increment_task(3))
+            t3 = yield Spawn(increment_task(7))
+            r1 = yield Wait(t1)
+            r2 = yield Wait(t2)
+            r3 = yield Wait(t3)
+            # Each task gets its own isolated store snapshot
+            return (r1, r2, r3)
+
+        result = runtime.run_and_unwrap(program())
+        # All tasks see initial value 0 due to store isolation
+        assert result == (0, 0, 0)
+
+    def test_state_modify_error_handling(self) -> None:
+        """StateModify error handling in cooperative scheduling."""
+        runtime = SyncRuntime()
+
+        @do
+        def failing_modify_task():
+            # This will fail because "missing_key" doesn't exist
+            old = yield Modify("missing_key", lambda x: x + 1)
+            return old
+
+        @do
+        def program():
+            task = yield Spawn(failing_modify_task())
+            safe_result = yield Safe(Wait(task))
+            return safe_result
+
+        result = runtime.run_and_unwrap(program())
+        assert result.is_err()
+        assert isinstance(result.err(), KeyError)
+
+    def test_state_modify_with_continuation(self) -> None:
+        """StateModify continuation works correctly in cooperative scheduling.
+        
+        Specifically tests that after Modify, the program continues with
+        the correct continuation (k=ctx.delimited_k, not k=new_store).
+        """
+        runtime = SyncRuntime()
+
+        @do
+        def complex_modify_task():
+            # Initial state
+            yield Put("value", 100)
+            
+            # First Modify - should return old value and continue
+            old1 = yield Modify("value", lambda x: x * 2)  # 100 -> 200
+            
+            # Verify continuation works - read the new value
+            after_first = yield Get("value")
+            
+            # Second Modify - chained operation
+            old2 = yield Modify("value", lambda x: x + 50)  # 200 -> 250
+            
+            # Final read
+            final = yield Get("value")
+            
+            return {
+                "old1": old1,
+                "after_first": after_first,
+                "old2": old2,
+                "final": final,
+            }
+
+        @do
+        def program():
+            task = yield Spawn(complex_modify_task())
+            return (yield Wait(task))
+
+        result = runtime.run_and_unwrap(program())
+        assert result["old1"] == 100, "First Modify should return old value"
+        assert result["after_first"] == 200, "Value should be doubled"
+        assert result["old2"] == 200, "Second Modify should return previous value"
+        assert result["final"] == 250, "Final value should be 250"
 
 
 class TestSyncRuntimeStoreSemantics:
