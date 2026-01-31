@@ -9,14 +9,7 @@ from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.async_effects_handler import async_effects_handler
 from doeff.cesk.handlers.core_handler import core_handler
-from doeff.cesk.handlers.queue_handler import (
-    CURRENT_TASK_KEY,
-    PENDING_IO_KEY,
-    TASK_QUEUE_KEY,
-    TASK_REGISTRY_KEY,
-    WAITERS_KEY,
-    queue_handler,
-)
+from doeff.cesk.handlers.queue_handler import queue_handler
 from doeff.cesk.handlers.scheduler_handler import scheduler_handler
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
@@ -29,6 +22,21 @@ if TYPE_CHECKING:
     pass
 
 T = TypeVar("T")
+
+SCHEDULER_KEY_PREFIX = "__scheduler_"
+
+
+def _merge_scheduler_state(
+    task_store: dict[str, Any],
+    current_store: dict[str, Any],
+    task_id: Any,
+) -> dict[str, Any]:
+    merged = dict(task_store)
+    for key, value in current_store.items():
+        if isinstance(key, str) and key.startswith(SCHEDULER_KEY_PREFIX):
+            merged[key] = value
+    merged[f"{SCHEDULER_KEY_PREFIX}current_task__"] = task_id
+    return merged
 
 
 def _wrap_with_handlers(program: Program[T]) -> Program[T]:
@@ -61,13 +69,6 @@ class AsyncRuntime(BaseRuntime):
     ) -> RuntimeResult[T]:
         frozen_env = FrozenDict(env) if env else FrozenDict()
         final_store: dict[str, Any] = dict(store) if store else {}
-        
-        from uuid import uuid4
-        main_task_id = uuid4()
-        final_store[CURRENT_TASK_KEY] = main_task_id
-        final_store[TASK_QUEUE_KEY] = []
-        final_store[TASK_REGISTRY_KEY] = {}
-        final_store[WAITERS_KEY] = {}
         
         wrapped_program = _wrap_with_handlers(program)
         
@@ -164,8 +165,7 @@ class AsyncRuntime(BaseRuntime):
                             new_pending = dict(pending_io)
                             del new_pending[task_id]
                             new_store = dict(effect_store)
-                            new_store[PENDING_IO_KEY] = new_pending
-                            new_store[CURRENT_TASK_KEY] = task_id
+                            new_store[f"{SCHEDULER_KEY_PREFIX}pending_io__"] = new_pending
                             
                             task_k = task_info["k"]
                             task_store_snapshot = task_info.get("store_snapshot", {})
@@ -174,12 +174,7 @@ class AsyncRuntime(BaseRuntime):
                             if debug:
                                 print(f"[runtime] Resuming task {task_id} with k_len={len(task_k)}, k_types={[type(f).__name__ for f in task_k[:10]]}")
                             
-                            merged_store = dict(task_store_snapshot)
-                            merged_store[PENDING_IO_KEY] = new_store[PENDING_IO_KEY]
-                            merged_store[TASK_QUEUE_KEY] = new_store.get(TASK_QUEUE_KEY, [])
-                            merged_store[TASK_REGISTRY_KEY] = new_store.get(TASK_REGISTRY_KEY, {})
-                            merged_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
-                            merged_store[CURRENT_TASK_KEY] = task_id
+                            merged_store = _merge_scheduler_state(task_store_snapshot, new_store, task_id)
                             
                             try:
                                 value = atask.result()

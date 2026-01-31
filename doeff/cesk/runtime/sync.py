@@ -12,20 +12,13 @@ in the runtime. The runtime just steps until Done/Failed.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar, cast
-from uuid import uuid4
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.core_handler import core_handler
-from doeff.cesk.handlers.queue_handler import (
-    CURRENT_TASK_KEY,
-    TASK_QUEUE_KEY,
-    TASK_REGISTRY_KEY,
-    WAITERS_KEY,
-    queue_handler,
-)
+from doeff.cesk.handlers.queue_handler import queue_handler
 from doeff.cesk.handlers.scheduler_handler import scheduler_handler
 from doeff.cesk.helpers import to_generator
 from doeff.cesk.result import Done, Failed
@@ -70,12 +63,6 @@ class SyncRuntime(BaseRuntime):
     ) -> RuntimeResult[T]:
         frozen_env = FrozenDict(env) if env else FrozenDict()
         final_store: dict[str, Any] = dict(store) if store else {}
-        
-        main_task_id = uuid4()
-        final_store[CURRENT_TASK_KEY] = main_task_id
-        final_store[TASK_QUEUE_KEY] = []
-        final_store[TASK_REGISTRY_KEY] = {}
-        final_store[WAITERS_KEY] = {}
         
         wrapped_program = _wrap_with_handlers(program)
         
