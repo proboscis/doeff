@@ -749,7 +749,7 @@ class AsyncRuntime(BaseRuntime):
     ) -> CESKState:
         handle_id = uuid4()
         task_handle = Task(backend="thread", _handle=handle_id)
-        promise = Promise(_future=task_handle)
+        promise = Promise(_promise_handle=handle_id)
 
         spawned_info = SpawnedTaskInfo(
             task_id=TaskId.new(),
