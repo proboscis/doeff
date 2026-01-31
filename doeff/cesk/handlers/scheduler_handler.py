@@ -333,9 +333,9 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameR
         pending_indices: list[int] = []
         
         for i, future in enumerate(futures):
-            if not isinstance(future, Task):
+            if not isinstance(future, Waitable):
                 return ContinueError(
-                    error=TypeError(f"Gather requires Tasks, got {type(future).__name__}"),
+                    error=TypeError(f"Gather requires Waitable, got {type(future).__name__}"),
                     env=ctx.env,
                     store=ctx.store,
                     k=ctx.delimited_k,

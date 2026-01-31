@@ -293,7 +293,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
         store[TASK_REGISTRY_KEY] = registry
         
         task_handle = Task(backend="thread", _handle=handle_id)
-        promise = Promise(_future=task_handle)
+        promise = Promise(_promise_handle=task_handle)
         
         return Program.pure(ContinueValue(
             value=(handle_id, promise),
