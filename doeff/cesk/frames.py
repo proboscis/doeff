@@ -87,7 +87,7 @@ class ContinueValue:
 
     value: Any
     env: Environment
-    store: Store
+    store: Store | None
     k: Kontinuation
 
 
@@ -97,9 +97,9 @@ class ContinueError:
 
     error: BaseException
     env: Environment
-    store: Store
+    store: Store | None
     k: Kontinuation
-    captured_traceback: Any | None = None  # CapturedTraceback
+    captured_traceback: Any | None = None
 
 
 @dataclass(frozen=True)
