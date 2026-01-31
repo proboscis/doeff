@@ -25,6 +25,7 @@ from doeff.cesk.frames import (
     ContinueValue,
     FrameResult,
     Kontinuation,
+    SuspendOn,
 )
 from doeff.cesk.types import Environment, Store
 
@@ -51,18 +52,21 @@ class HandlerContext:
     - Access the environment for reader effects
     - Capture the delimited continuation up to the handler
     - Know their depth in the handler stack for forwarding
+    - Access the outer continuation (beyond the handler) for full task suspension
 
     Attributes:
         store: The current store (mutable state)
         env: The current environment (reader context)
         delimited_k: The continuation from the effect site up to this handler
         handler_depth: The depth of this handler in the handler stack (0 = outermost)
+        outer_k: The continuation beyond this handler (for full task suspension)
     """
 
     store: Store
     env: Environment
     delimited_k: Kontinuation
     handler_depth: int
+    outer_k: Kontinuation = field(default_factory=list)
 
 
 # ============================================
@@ -205,22 +209,18 @@ class HandlerResultFrame:
                 store=value.store if value.store else store,
                 k=full_k,
             )
+        elif isinstance(value, SuspendOn):
+            full_k = list(self.handled_program_k) + list(k_rest)
+            result_store = value.stored_store if value.stored_store is not None else store
+            return SuspendOn(
+                awaitable=value.awaitable,
+                stored_k=full_k,
+                stored_env=env,
+                stored_store=result_store,
+            )
         elif isinstance(value, ResumeK):
             full_k = list(value.k) + list(k_rest)
-            # ResumeK is used for task switching. When a task is resumed, we need to:
-            # 1. Use the task's saved store (value.store) for task-local state
-            # 2. Preserve scheduler metadata from current store (queue, registry, waiters)
-            # Scheduler keys are prefixed with "__scheduler_"
-            if value.store is not None:
-                # Start with task's saved store
-                merged_store = dict(value.store)
-                # Overlay scheduler keys from current store
-                for key, val in store.items():
-                    if isinstance(key, str) and key.startswith("__scheduler_"):
-                        merged_store[key] = val
-                result_store = merged_store
-            else:
-                result_store = store
+            result_store = value.store if value.store is not None else store
             return ContinueValue(
                 value=value.value,
                 env=value.env if value.env is not None else env,

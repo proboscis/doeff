@@ -1,19 +1,17 @@
-"""Handler context and suspension handle for runtime-level extension.
+"""Runtime-level suspension handle for external thread completion.
 
-This module provides the HandlerContext and SuspensionHandle classes that bridge
-CESK pure data with runtime-level suspension support.
+This module provides the SuspensionHandle class that bridges CESK pure data
+with runtime-level suspension support.
+
+Note: The v2 HandlerContext is now in handler_frame.py. This module only
+contains SuspensionHandle for runtime-level external thread signaling.
 """
 
 from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
-
-if TYPE_CHECKING:
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 
@@ -56,19 +54,6 @@ class SuspensionHandle(Generic[T]):
             return self._completed
 
 
-@dataclass
-class HandlerContext:
-    """Structured context object for handlers.
-
-    Contains pure CESK data plus runtime-level extension for external suspension.
-    """
-
-    task_state: TaskState
-    store: Store
-    suspend: SuspensionHandle[Any] | None = None
-
-
 __all__ = [
-    "HandlerContext",
     "SuspensionHandle",
 ]

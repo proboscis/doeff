@@ -18,18 +18,19 @@ from doeff import (
     Wait,
     do,
 )
+from doeff.effects.spawn import Waitable
 from doeff.effects.spawn import TaskCancelledError
 
 
 class TestFutureProtocol:
 
     @pytest.mark.asyncio
-    async def test_task_is_future(self) -> None:
-        """Task from Spawn is a Future."""
+    async def test_task_is_waitable(self) -> None:
+        """Task from Spawn is a Waitable."""
         @do
         def program():
             task = yield Spawn(do(lambda: 42)())
-            return isinstance(task, Future)
+            return isinstance(task, Waitable)
 
         runtime = AsyncRuntime()
         result = await runtime.run(program())
@@ -406,7 +407,7 @@ class TestRaceEffect:
         def prog():
             return 1
 
-        with pytest.raises(TypeError, match="must be a Future"):
+        with pytest.raises(TypeError, match="must be Waitable"):
             Race(prog(), prog())
 
     def test_race_requires_at_least_one(self) -> None:
