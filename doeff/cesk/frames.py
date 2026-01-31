@@ -640,18 +640,7 @@ class AskLazyFrame:
 
 # Type alias for the continuation stack
 # Using list for mutable efficiency; conceptually this is a stack (LIFO)
-Kontinuation: TypeAlias = list[
-    ReturnFrame
-    | LocalFrame
-    | InterceptFrame
-    | InterceptBypassFrame
-    | ListenFrame
-    | GatherFrame
-    | SafeFrame
-    | RaceFrame
-    | GraphCaptureFrame
-    | AskLazyFrame
-]
+Kontinuation: TypeAlias = list[Any]
 
 
 __all__ = [
