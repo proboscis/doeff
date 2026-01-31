@@ -638,60 +638,26 @@ def capture_python_frames_from_traceback(tb: Any) -> tuple[PythonFrame, ...]:
 
 
 def _capture_kleisli_stack(K: Kontinuation) -> tuple[KleisliStackFrame, ...]:
-    from doeff.cesk.frames import KleisliFrame
+    from doeff.cesk.frames import ReturnFrame
     
     frames: list[KleisliStackFrame] = []
     for frame in K:
-        if isinstance(frame, KleisliFrame):
+        if isinstance(frame, ReturnFrame) and frame.kleisli_function_name is not None:
             frames.append(KleisliStackFrame(
-                function_name=frame.function_name,
-                filename=frame.filename,
-                lineno=frame.lineno,
+                function_name=frame.kleisli_function_name,
+                filename=frame.kleisli_filename or "<unknown>",
+                lineno=frame.kleisli_lineno or 0,
             ))
     return tuple(frames)
 
 
 def _capture_k_frame_snapshot(K: Kontinuation) -> tuple[KFrameSnapshot, ...]:
-    from doeff.cesk.frames import (
-        AskLazyFrame,
-        GatherFrame,
-        InterceptFrame,
-        KleisliFrame,
-        ListenFrame,
-        LocalFrame,
-        ReturnFrame,
-        SafeFrame,
-    )
-    from doeff.cesk.handler_frame import HandlerFrame, HandlerResultFrame
+    from doeff.cesk.debug import describe_k_frame
     
     snapshots: list[KFrameSnapshot] = []
     for frame in K:
-        if isinstance(frame, KleisliFrame):
-            snapshots.append(KFrameSnapshot("KleisliFrame", frame.function_name))
-        elif isinstance(frame, ReturnFrame):
-            pc = frame.program_call
-            name = pc.function_name if pc else "<generator>"
-            snapshots.append(KFrameSnapshot("ReturnFrame", f"continuation={name}"))
-        elif isinstance(frame, HandlerFrame):
-            handler_name = getattr(frame.handler, "__name__", "<handler>")
-            snapshots.append(KFrameSnapshot("HandlerFrame", f"handler={handler_name}"))
-        elif isinstance(frame, HandlerResultFrame):
-            effect_name = type(frame.original_effect).__name__
-            snapshots.append(KFrameSnapshot("HandlerResultFrame", f"effect={effect_name}"))
-        elif isinstance(frame, LocalFrame):
-            snapshots.append(KFrameSnapshot("LocalFrame", "env restore"))
-        elif isinstance(frame, SafeFrame):
-            snapshots.append(KFrameSnapshot("SafeFrame", "error boundary"))
-        elif isinstance(frame, ListenFrame):
-            snapshots.append(KFrameSnapshot("ListenFrame", f"log_start={frame.log_start_index}"))
-        elif isinstance(frame, GatherFrame):
-            snapshots.append(KFrameSnapshot("GatherFrame", f"remaining={len(frame.remaining_programs)}"))
-        elif isinstance(frame, InterceptFrame):
-            snapshots.append(KFrameSnapshot("InterceptFrame", f"transforms={len(frame.transforms)}"))
-        elif isinstance(frame, AskLazyFrame):
-            snapshots.append(KFrameSnapshot("AskLazyFrame", f"key={frame.ask_key!r}"))
-        else:
-            snapshots.append(KFrameSnapshot(type(frame).__name__, ""))
+        frame_type, description = describe_k_frame(frame)
+        snapshots.append(KFrameSnapshot(frame_type, description))
     return tuple(snapshots)
 
 
