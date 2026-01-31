@@ -1,121 +1,40 @@
-"""CESK machine effect handlers."""
+"""CESK machine effect handlers (v2 architecture).
+
+This module exports the new handler-based effect system:
+- Handler: Type alias for handler functions
+- HandlerContext: Context passed to handlers (from handler_frame.py)
+- The v2 handlers: core_handler, scheduler_handler, queue_handler, async_effects_handler
+
+The old v1 handler functions (handle_ask, handle_get, etc.) and default_handlers()
+have been removed. Use the v2 WithHandler-based system instead.
+"""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeAlias
 
-from doeff.cesk.handlers.external import (
-    make_await_handler,
-    make_delay_handler,
-    make_wait_until_handler,
-)
+from doeff.cesk.handler_frame import HandlerContext
 
 if TYPE_CHECKING:
-    from doeff._types_internal import EffectBase
+    from collections.abc import Callable
+
     from doeff.cesk.frames import FrameResult
-    from doeff.cesk.runtime.context import HandlerContext
-    from doeff.cesk.state import TaskState
-    from doeff.cesk.types import Store
 
-Handler: TypeAlias = Callable[[Any, "HandlerContext"], "FrameResult"]
+# Handler type alias for v2 handler functions
+# Handlers take (effect, context) and return a FrameResult
+Handler: TypeAlias = "Callable[[Any, HandlerContext], FrameResult]"
 
-
-def default_handlers() -> dict[type, Handler]:
-    from doeff.cesk.handlers.atomic import handle_atomic_get, handle_atomic_update
-    from doeff.cesk.handlers.callstack import (
-        handle_program_call_frame,
-        handle_program_call_stack,
-    )
-    from doeff.cesk.handlers.control import (
-        handle_intercept,
-        handle_listen,
-        handle_local,
-        handle_safe,
-        handle_tell,
-    )
-    from doeff.cesk.handlers.core import (
-        handle_ask,
-        handle_pure,
-        handle_state_get,
-        handle_state_modify,
-        handle_state_put,
-    )
-    from doeff.cesk.handlers.graph import (
-        handle_graph_annotate,
-        handle_graph_capture,
-        handle_graph_snapshot,
-        handle_graph_step,
-    )
-    from doeff.cesk.handlers.io import (
-        handle_cache_delete,
-        handle_cache_exists,
-        handle_cache_get,
-        handle_cache_put,
-        handle_io,
-    )
-    from doeff.cesk.handlers.task import handle_gather
-    from doeff.cesk.handlers.time import handle_delay, handle_get_time, handle_wait_until
-    from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
-    from doeff.effects.cache import (
-        CacheDeleteEffect,
-        CacheExistsEffect,
-        CacheGetEffect,
-        CachePutEffect,
-    )
-    from doeff.effects.callstack import ProgramCallFrameEffect, ProgramCallStackEffect
-    from doeff.effects.gather import GatherEffect
-    from doeff.effects.graph import (
-        GraphAnnotateEffect,
-        GraphCaptureEffect,
-        GraphSnapshotEffect,
-        GraphStepEffect,
-    )
-    from doeff.effects.intercept import InterceptEffect
-    from doeff.effects.io import IOPerformEffect
-    from doeff.effects.pure import PureEffect
-    from doeff.effects.reader import AskEffect, LocalEffect
-    from doeff.effects.result import ResultSafeEffect
-    from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
-    from doeff.effects.time import DelayEffect, GetTimeEffect, WaitUntilEffect
-    from doeff.effects.writer import WriterListenEffect, WriterTellEffect
-
-    return {
-        PureEffect: handle_pure,
-        AskEffect: handle_ask,
-        StateGetEffect: handle_state_get,
-        StatePutEffect: handle_state_put,
-        StateModifyEffect: handle_state_modify,
-        LocalEffect: handle_local,
-        ResultSafeEffect: handle_safe,
-        WriterListenEffect: handle_listen,
-        InterceptEffect: handle_intercept,
-        WriterTellEffect: handle_tell,
-        GatherEffect: handle_gather,
-        IOPerformEffect: handle_io,
-        CacheGetEffect: handle_cache_get,
-        CachePutEffect: handle_cache_put,
-        CacheExistsEffect: handle_cache_exists,
-        CacheDeleteEffect: handle_cache_delete,
-        DelayEffect: handle_delay,
-        GetTimeEffect: handle_get_time,
-        WaitUntilEffect: handle_wait_until,
-        AtomicGetEffect: handle_atomic_get,
-        AtomicUpdateEffect: handle_atomic_update,
-        GraphStepEffect: handle_graph_step,
-        GraphAnnotateEffect: handle_graph_annotate,
-        GraphSnapshotEffect: handle_graph_snapshot,
-        GraphCaptureEffect: handle_graph_capture,
-        ProgramCallFrameEffect: handle_program_call_frame,
-        ProgramCallStackEffect: handle_program_call_stack,
-
-    }
-
+# Import v2 handlers for convenience
+from doeff.cesk.handlers.async_effects_handler import async_effects_handler
+from doeff.cesk.handlers.core_handler import core_handler
+from doeff.cesk.handlers.queue_handler import queue_handler
+from doeff.cesk.handlers.scheduler_handler import scheduler_handler
 
 __all__ = [
     "Handler",
-    "default_handlers",
-    "make_await_handler",
-    "make_delay_handler",
-    "make_wait_until_handler",
+    "HandlerContext",
+    "async_effects_handler",
+    "core_handler",
+    "queue_handler",
+    "scheduler_handler",
 ]

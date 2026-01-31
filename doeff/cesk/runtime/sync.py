@@ -31,7 +31,7 @@ from doeff.cesk.helpers import to_generator
 from doeff.cesk.result import Done, Failed
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
-from doeff.cesk.runtime_v2 import step_v2
+from doeff.cesk.step import step
 from doeff.cesk.state import CESKState, ProgramControl
 from doeff.program import Program
 
@@ -111,17 +111,14 @@ class SyncRuntime(BaseRuntime):
         """Step until Done or Failed. Handlers manage all task scheduling."""
         max_steps = 100000
         for _ in range(max_steps):
-            result = step_v2(state)
+            result = step(state)
             
             if isinstance(result, Done):
                 return (result.value, state)
             
             if isinstance(result, Failed):
-                exc = result.exception
-                if result.captured_traceback is not None:
-                    exc.__cesk_traceback__ = result.captured_traceback  # type: ignore[attr-defined]
                 raise ExecutionError(
-                    exception=exc,
+                    exception=result.exception,
                     final_state=state,
                     captured_traceback=result.captured_traceback,
                 )

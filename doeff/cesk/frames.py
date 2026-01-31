@@ -127,22 +127,31 @@ class ContinueGenerator:
 
 @dataclass(frozen=True)
 class SuspendOn:
-    """Handler signals: task is suspended, will be woken by ctx.suspend.complete/fail.
+    """Handler signals: task is suspended on an external awaitable.
     
     This is returned by handlers that need to suspend the current task and wait
-    for external completion (e.g., Await handler waiting for asyncio, external
-    executors like Ray or Dask, etc.).
+    for an external async operation to complete (e.g., FutureAwaitEffect,
+    DelayEffect, WaitUntilEffect).
     
-    When a handler returns SuspendOn, the runtime:
-    1. Parks the task in the pending set
-    2. Moves to the next ready task
-    3. When ctx.suspend.complete(value) or ctx.suspend.fail(error) is called,
-       the task is moved back to the ready queue and resumed
+    When a handler returns SuspendOn, step converts it to a Suspended result.
+    The runtime then:
+    1. Awaits the awaitable (for AsyncRuntime) or uses callbacks (for other runtimes)
+    2. Resumes the task with the awaited value using the stored continuation
     
-    The handler MUST have registered completion callbacks via HandlerContext.suspend
-    before returning SuspendOn, otherwise the task will be parked forever.
+    For AsyncRuntime, the awaitable is directly awaited. For callback-based runtimes,
+    handlers should register completion callbacks via HandlerContext.suspend before
+    returning SuspendOn (legacy mode with awaitable=None).
+    
+    Attributes:
+        awaitable: The coroutine/future to await. None for callback-based suspension.
+        stored_k: The continuation to resume when the awaitable completes.
+        stored_env: The environment to use when resuming.
+        stored_store: The store to use when resuming.
     """
-    pass
+    awaitable: Any = None
+    stored_k: Kontinuation | None = None
+    stored_env: Environment | None = None
+    stored_store: Store | None = None
 
 
 FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | SuspendOn

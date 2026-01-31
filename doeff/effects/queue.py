@@ -221,19 +221,71 @@ class TaskCompletedEffect(EffectBase):
     error: BaseException | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class SuspendForIOEffect(EffectBase):
+    """Signal that current task needs to suspend for async I/O.
+    
+    This is yielded by async_effects_handler instead of returning SuspendOn.
+    The scheduler_handler intercepts this:
+    1. Stores the awaitable with the current task's continuation
+    2. Switches to another task if available
+    3. If no other tasks, propagates as SuspendOn with all pending awaitables
+    
+    Attributes:
+        awaitable: The async awaitable to wait for
+        resume_k: The full continuation to use when resuming this task
+    """
+    awaitable: Any
+    resume_k: Any = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class AddPendingIO(EffectBase):
+    """Add a task to the pending I/O list."""
+    task_id: Any
+    awaitable: Any
+    k: Any
+    store_snapshot: dict[str, Any]
+
+
+@dataclass(frozen=True, kw_only=True)
+class GetPendingIO(EffectBase):
+    """Get all pending I/O tasks. Returns dict[task_id, (awaitable, k, store)]."""
+    pass
+
+
+@dataclass(frozen=True, kw_only=True)
+class RemovePendingIO(EffectBase):
+    """Remove a task from pending I/O after completion."""
+    task_id: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class ResumePendingIO(EffectBase):
+    """Resume a pending I/O task with a value or error."""
+    task_id: Any
+    value: Any = None
+    error: BaseException | None = None
+
+
 __all__ = [
+    "AddPendingIO",
     "CancelTask",
     "CreatePromiseHandle",
     "CreateTaskHandle",
     "GetCurrentTaskId",
     "GetCurrentTaskStore",
+    "GetPendingIO",
     "GetTaskResult",
     "IsTaskDone",
     "QueueAdd",
     "QueueIsEmpty",
     "QueuePop",
     "RegisterWaiter",
+    "RemovePendingIO",
+    "ResumePendingIO",
     "SetTaskSuspended",
+    "SuspendForIOEffect",
     "TaskComplete",
     "TaskCompletedEffect",
     "UpdateTaskStore",
