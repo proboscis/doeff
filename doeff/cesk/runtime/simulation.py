@@ -10,13 +10,7 @@ from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.frames import ContinueValue
 from doeff.cesk.handler_frame import Handler, HandlerContext, WithHandler
 from doeff.cesk.handlers.core_handler import core_handler
-from doeff.cesk.handlers.queue_handler import (
-    CURRENT_TASK_KEY,
-    TASK_QUEUE_KEY,
-    TASK_REGISTRY_KEY,
-    WAITERS_KEY,
-    queue_handler,
-)
+from doeff.cesk.handlers.queue_handler import queue_handler
 from doeff.cesk.handlers.scheduler_handler import scheduler_handler
 from doeff.cesk.result import Done, Failed
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
@@ -95,16 +89,8 @@ class SimulationRuntime(BaseRuntime):
         env: dict[str, Any] | None = None,
         store: dict[str, Any] | None = None,
     ) -> RuntimeResult[T]:
-        from uuid import uuid4
-        
         frozen_env = FrozenDict(env) if env else FrozenDict()
         final_store: dict[str, Any] = dict(store) if store else {}
-        
-        main_task_id = uuid4()
-        final_store[CURRENT_TASK_KEY] = main_task_id
-        final_store[TASK_QUEUE_KEY] = []
-        final_store[TASK_REGISTRY_KEY] = {}
-        final_store[WAITERS_KEY] = {}
         final_store["__current_time__"] = self._current_time
         
         wrapped_program = _wrap_with_simulation_handlers(program, self)
