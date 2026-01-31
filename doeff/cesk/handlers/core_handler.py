@@ -145,15 +145,15 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
             value=old_value,
             env=ctx.env,
             store=new_store,
-            k=new_store,
+            k=ctx.delimited_k,
         )
     
     if isinstance(effect, LocalEffect):
-        overrides = effect.env_override
+        overrides = effect.env_update
         new_env = FrozenDict(dict(ctx.env) | dict(overrides))
         new_k = [LocalFrame(restore_env=ctx.env)] + ctx.delimited_k
         return ContinueProgram(
-            program=effect.program,
+            program=effect.sub_program,
             env=new_env,
             store=store,
             k=new_k,
