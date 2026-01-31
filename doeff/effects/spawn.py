@@ -28,26 +28,27 @@ T_co = TypeVar("T_co", covariant=True)
 
 
 @runtime_checkable
-class Future(Protocol[T_co]):
-    """Read-side handle for a computation that will produce a value."""
-    
+class Waitable(Protocol[T_co]):
     @property
     def _handle(self) -> Any:
         ...
 
 
+@dataclass(frozen=True)
+class Future(Generic[T]):
+    _handle: Any = field(repr=False)
+
+
 @dataclass
 class Promise(Generic[T]):
-    """Write-side handle for completing a Future. Used by handlers internally."""
-    
-    _future: "Task[T]"
+    _promise_handle: Any = field(repr=False)
     _completed: bool = field(default=False, repr=False)
     _value: T | None = field(default=None, repr=False)
     _error: BaseException | None = field(default=None, repr=False)
 
     @property
-    def future(self) -> "Task[T]":
-        return self._future
+    def future(self) -> Future[T]:
+        return Future(_handle=self._promise_handle)
 
     def complete(self, value: T) -> None:
         warnings.warn(
@@ -120,15 +121,12 @@ class SpawnEffect(EffectBase):
 
 @dataclass(frozen=True)
 class Task(Generic[T]):
-    """Handle for a spawned task. Implements Future[T] protocol."""
-
     backend: SpawnBackend
     _handle: Any = field(repr=False)
     _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False)
     _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def join(self) -> Effect:
-        """Deprecated: Use ``yield Wait(task)`` instead."""
         warnings.warn(
             "task.join() is deprecated. Use 'yield Wait(task)' instead.",
             DeprecationWarning,
@@ -250,5 +248,6 @@ __all__ = [
     "TaskCancelEffect",
     "TaskCancelledError",
     "TaskIsDoneEffect",
+    "Waitable",
     "spawn",
 ]
