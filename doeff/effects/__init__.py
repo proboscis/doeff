@@ -30,6 +30,10 @@ from .callstack import (
     ProgramCallStack,
     ProgramCallStackEffect,
 )
+from .debug import (
+    GetDebugContext,
+    GetDebugContextEffect,
+)
 from .future import Await, FutureAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
 from .race import Race, RaceEffect, RaceResult, race
@@ -147,6 +151,8 @@ __all__ = [
     "Gather",
     "GatherEffect",
     "Get",
+    "GetDebugContext",
+    "GetDebugContextEffect",
     "GetTime",
     "GetTimeEffect",
     "GraphAnnotateEffect",
