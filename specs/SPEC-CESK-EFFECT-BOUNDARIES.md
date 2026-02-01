@@ -699,42 +699,38 @@ class async_effects_handler:  # What does this do? Unclear.
 # GOOD: Explicit name indicating Python async integration
 class PythonAsyncLoopHandler:
     """
-    Handler for effects that require Python async loop integration.
+    Handler for Await effect - Python async loop integration.
     
     Produces PythonAsyncSyntaxEscape for:
-    - FutureAwaitEffect (await a coroutine)
-    - DelayEffect (asyncio.sleep)
-    - etc.
+    - Await(coroutine) - await any Python coroutine
     
-Use with AsyncRunner for loop integration.
-Use with SyncRunner for thread pool isolation.
+    Use with AsyncRunner for loop integration.
+    Use with SyncRunner for thread pool isolation.
+    
+    NOTE: Delay/WaitUntil are NOT primitives.
+          User can: yield Await(asyncio.sleep(seconds))
     """
     ...
 ```
 
-### Effects That Produce Escapes
+### The Only Escape-Producing Effect
 
 ```python
-# Effects that result in PythonAsyncSyntaxEscape:
-
-class FutureAwaitEffect:
+class Await(EffectBase):
     """
     Await a Python coroutine.
     
-    Handler converts this to PythonAsyncSyntaxEscape.
-Runner then either:
-- awaits in user's loop (AsyncRunner)
-- runs in thread pool (SyncRunner)
+    Handler returns PythonAsyncSyntaxEscape DIRECTLY.
+    Runner then either:
+    - awaits in user's loop (AsyncRunner)
+    - runs in thread pool (SyncRunner)
+    
+    Examples:
+        yield Await(some_async_function())
+        yield Await(asyncio.sleep(1.0))  # instead of Delay
+        yield Await(aiohttp.get(url))
     """
     awaitable: Coroutine
-
-class DelayEffect:
-    """
-    Sleep for a duration.
-    
-    Handler converts to PythonAsyncSyntaxEscape(asyncio.sleep(seconds)).
-    """
-    seconds: float
 ```
 
 ### Handler Produces Escape, Runner Handles It
@@ -768,34 +764,234 @@ User Program
 
 | Current Name | Proposed Name | Purpose |
 |--------------|---------------|---------|
-| `async_effects_handler` | `PythonAsyncLoopHandler` | Handles FutureAwait, Delay → produces escapes |
-| `queue_handler` | (keep) | Task queue management |
-| `scheduler_handler` | (keep) | Spawn/Wait scheduling |
+| `async_effects_handler` | `PythonAsyncLoopHandler` | Handles Await → produces PythonAsyncSyntaxEscape |
+| `queue_handler` | `SchedulerStateHandler` | Manages scheduler's internal state in store |
+| `scheduler_handler` | `TaskSchedulerHandler` | High-level Spawn/Wait/Gather/Race |
 | `core_handler` | (keep) | Get/Put/Ask/Tell/Log |
 
-### User Composes Handler Stack
+### Scheduler-Internal Effects (Rename Plan)
+
+The effects in `queue.py` are **scheduler-internal** - used between handlers, NOT for user programs.
+
+Current confusing names suggest general-purpose queue:
+
+```
+queue.py (CONFUSING - suggests general queue)
+├── QueueAdd
+├── QueuePop  
+├── QueueIsEmpty
+├── RegisterWaiter
+├── TaskComplete
+├── CreateTaskHandle
+├── SuspendForIOEffect
+└── ...
+```
+
+Proposed explicit names:
+
+```
+scheduler_internal.py (CLEAR - scheduler internals)
+├── _SchedulerEnqueueTask      (was QueueAdd)
+├── _SchedulerDequeueTask      (was QueuePop)
+├── _SchedulerQueueEmpty       (was QueueIsEmpty)
+├── _SchedulerRegisterWaiter   (was RegisterWaiter)
+├── _SchedulerTaskComplete     (was TaskComplete)
+├── _SchedulerCreateTaskHandle (was CreateTaskHandle)
+├── _SchedulerGetCurrentTaskId (was GetCurrentTaskId)
+├── _SchedulerGetTaskStore     (was GetCurrentTaskStore)
+├── _SchedulerUpdateTaskStore  (was UpdateTaskStore)
+├── _SchedulerSetTaskSuspended (was SetTaskSuspended)
+├── _SchedulerTaskCompleted    (was TaskCompletedEffect)
+├── _SchedulerCancelTask       (was CancelTask)
+├── _SchedulerIsTaskDone       (was IsTaskDone)
+├── _SchedulerCreatePromise    (was CreatePromiseHandle)
+└── _SchedulerGetTaskResult    (was GetTaskResult)
+
+REMOVED (conflated concerns):
+├── SuspendForIOEffect    → REMOVE (Python async is separate from scheduler)
+├── AddPendingIO          → REMOVE (Python async is separate from scheduler)
+├── GetPendingIO          → REMOVE (Python async is separate from scheduler)
+├── RemovePendingIO       → REMOVE (Python async is separate from scheduler)
+└── ResumePendingIO       → REMOVE (Python async is separate from scheduler)
+
+These "pending IO" effects conflated Python async with scheduler.
+In desired architecture: Python async escape goes DIRECTLY to runner.
+```
+
+The underscore prefix signals:
+- These are INTERNAL (not for user programs)
+- They're part of scheduler implementation
+- Users should use high-level effects: `Spawn`, `Wait`, `Gather`, `Race`
+
+---
+
+## Effect Categorization
+
+### User-Facing Effects (Public API)
+
+Effects that user programs yield directly:
+
+```
+Core Effects (core_handler):
+├── Ask(key)              - read from environment
+├── Local(env, program)   - run with modified environment
+├── Get(key)              - read from state
+├── Put(key, value)       - write to state
+├── Modify(key, fn)       - modify state
+├── Tell(message)         - append to log
+├── Listen(program)       - capture log output
+├── Safe(program)         - catch errors
+├── IO(fn)                - perform IO
+├── GetTime()             - current time
+├── CacheGet/Put/Delete   - cache operations
+└── Pure(value)           - return pure value
+
+Scheduling Effects (TaskSchedulerHandler):
+├── Spawn(program)        - create new task, returns Task[T]
+├── Wait(task_or_promise) - wait for completion
+├── Gather([waitables])   - wait for all
+├── Race([waitables])     - wait for first
+├── CreatePromise()       - create promise, returns Promise[T]
+├── CompletePromise(p, v) - resolve promise
+└── FailPromise(p, err)   - reject promise
+
+Python Async Effects (PythonAsyncLoopHandler):
+└── Await(coroutine)      - await Python coroutine
+
+NOTE: Delay/WaitUntil are NOT needed as primitives.
+      User can: yield Await(asyncio.sleep(seconds))
+```
+
+### Handler-Internal Effects (Private)
+
+Effects used between handlers - NOT for user programs:
+
+```
+Scheduler Internals (_Scheduler*):
+├── _SchedulerEnqueueTask
+├── _SchedulerDequeueTask
+├── _SchedulerRegisterWaiter
+├── _SchedulerTaskComplete
+└── ... (see full list above)
+
+NOTE: _SchedulerSuspendForIO should NOT exist in desired architecture.
+      Python async escape goes DIRECTLY to PythonAsyncSyntaxEscape,
+      NOT through scheduler. These are separate concerns.
+```
+
+### Effect → Handler Mapping (DESIRED Architecture)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  User Program                                                    │
+│    yield Spawn(task)                                             │
+│    yield Wait(future)                                            │
+│    yield Get("key")                                              │
+│    yield Await(coro)                                             │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  core_handler                                                    │
+│    Get, Put, Ask, Tell, etc. → handled here, return value       │
+│    Other effects → bubble up                                     │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TaskSchedulerHandler                                            │
+│    Spawn → create task, add to queue via _Scheduler* effects    │
+│    Wait  → if done: return value                                │
+│            if not: TaskWaitingForCallback, switch task          │
+│    Gather, Race → similar pattern                               │
+│    Other effects → bubble up                                     │
+│                                                                  │
+│    NOTE: Manages task switching INTERNALLY                       │
+│          Returns CESKState (next task), NOT special result      │
+│          CESK machine just sees state after state               │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  SchedulerStateHandler                                           │
+│    _Scheduler* effects → manage state in store                  │
+│    Unhandled → error                                             │
+└─────────────────────────────────────────────────────────────────┘
+
+
+For Python Async (SEPARATE path - only if user wants loop integration):
+
+┌─────────────────────────────────────────────────────────────────┐
+│  User Program                                                    │
+│    yield Await(coro)                                             │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  PythonAsyncLoopHandler                                          │
+│    Await(coro) → return PythonAsyncSyntaxEscape DIRECTLY        │
+│                                                                  │
+│    NO scheduler involvement. Direct escape.                      │
+│    (User can: yield Await(asyncio.sleep(s)) for delays)         │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  CESK step() returns PythonAsyncSyntaxEscape                     │
+└─────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Runner                                                          │
+│    SyncRunner:  run in thread pool                              │
+│    AsyncRunner: await in user's loop                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key difference from current implementation:**
+- `PythonAsyncLoopHandler` returns `PythonAsyncSyntaxEscape` DIRECTLY
+- NOT via `_SchedulerSuspendForIO`
+- Scheduler is NOT involved in Python async escape
+- These are SEPARATE concerns
+
+### User Composes Handler Stack (DESIRED)
 
 With the Runner abstraction, users explicitly compose handlers:
 
 ```python
-# Minimal: just core effects
-result = runner.run(program, handlers=[core_handler])
-
-# With scheduling
-result = runner.run(program, handlers=[
+# Minimal: just core effects (no scheduling, no async)
+result = sync_runner.run(program, handlers=[
     core_handler,
-    scheduler_handler,
 ])
 
-# With Python async loop integration
+# With scheduling (Spawn/Wait/Gather/Race)
+result = sync_runner.run(program, handlers=[
+    SchedulerStateHandler,      # outermost: manages scheduler state
+    TaskSchedulerHandler,       # handles Spawn/Wait/Gather/Race
+    core_handler,               # innermost: handles Get/Put/Ask/etc
+])
+
+# With Python async loop integration (opt-in)
 result = await async_runner.run(program, handlers=[
+    SchedulerStateHandler,      # outermost
+    TaskSchedulerHandler,
+    PythonAsyncLoopHandler,     # ← produces PythonAsyncSyntaxEscape
+    core_handler,               # innermost
+])
+
+# WITHOUT Python async (no PythonAsyncLoopHandler)
+# SyncRunner and AsyncRunner behave IDENTICALLY
+result = sync_runner.run(program, handlers=[
+    SchedulerStateHandler,
+    TaskSchedulerHandler,
     core_handler,
-    scheduler_handler,
-    PythonAsyncLoopHandler,  # ← produces PythonAsyncSyntaxEscape
 ])
 ```
 
-**Key insight:** `PythonAsyncLoopHandler` is opt-in. If you don't include it, no `PythonAsyncSyntaxEscape` is produced, and `SyncRunner` vs `AsyncRunner` behaves identically.
+**Key insight:** `PythonAsyncLoopHandler` is **opt-in**:
+- Include it → `Await` effects escape via `PythonAsyncSyntaxEscape`
+- Don't include it → `Await` effects are unhandled (error) or handled differently
+- Without it, `SyncRunner` and `AsyncRunner` behave identically
 
 ---
 
