@@ -211,8 +211,42 @@ class HandlerResultFrame:
                 k=full_k,
             )
         elif isinstance(value, PythonAsyncSyntaxEscape):
-            # Handler returned escape directly - pass through (new architecture)
-            return value
+            if value.awaitables is not None:
+                # Multi-task escape: continuation already complete in pending_io
+                return value
+            
+            # Single-task escape: need to extend continuation with k_rest
+            from doeff.cesk.state import CESKState
+            
+            original_resume = value.resume
+            original_resume_error = value.resume_error
+            captured_k_rest = list(k_rest)
+            
+            def wrapped_resume(v: Any, s: Store) -> CESKState:
+                state = original_resume(v, s)
+                return CESKState(
+                    C=state.C,
+                    E=state.E,
+                    S=state.S,
+                    K=list(state.K) + captured_k_rest,
+                )
+            
+            def wrapped_resume_error(e: BaseException) -> CESKState:
+                state = original_resume_error(e)
+                return CESKState(
+                    C=state.C,
+                    E=state.E,
+                    S=state.S,
+                    K=list(state.K) + captured_k_rest,
+                )
+            
+            return PythonAsyncSyntaxEscape(
+                resume=wrapped_resume,
+                resume_error=wrapped_resume_error,
+                awaitable=value.awaitable,
+                awaitables=value.awaitables,
+                store=value.store,
+            )
         elif isinstance(value, SuspendOn):
             # Legacy: handler returned SuspendOn - transform and pass through
             full_k = list(self.handled_program_k) + list(k_rest)
