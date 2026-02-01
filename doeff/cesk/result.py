@@ -87,6 +87,17 @@ class PythonAsyncSyntaxEscape:
 
     # Legacy: effect field kept for compatibility but not used by runtime
     effect: EffectBase | None = None
+    
+    # Marker: True when escape has been wrapped and is propagating through handler stack
+    _propagating: bool = False
+    
+    # Marker: True when escape should exit handler stack immediately (single-task case)
+    _is_final: bool = False
+    
+    # Stored continuation data (for scheduler interception)
+    _stored_k: Any = None
+    _stored_env: Any = None
+    _stored_store: Any = None
 
 
 # Backwards compatibility alias (deprecated, will be removed)
@@ -100,8 +111,8 @@ def python_async_escape(
     stored_store: Store,
 ) -> PythonAsyncSyntaxEscape:
     """Build PythonAsyncSyntaxEscape with resume callbacks.
-    
-    Handlers call this directly instead of returning SuspendOn.
+
+    Used by python_async_handler for AsyncRunner.
     The callbacks are built from the stored continuation data.
     """
     def resume(value: Any, new_store: Store) -> CESKState:
@@ -129,6 +140,9 @@ def python_async_escape(
         resume_error=resume_error,
         awaitable=awaitable,
         store=stored_store,
+        _stored_k=stored_k,
+        _stored_env=stored_env,
+        _stored_store=stored_store,
     )
 
 

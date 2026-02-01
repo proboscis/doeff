@@ -17,7 +17,6 @@ from doeff.cesk.frames import (
     InterceptFrame,
     ReturnFrame,
     SafeFrame,
-    SuspendOn,
 )
 from doeff.cesk.handler_frame import (
     HandlerContext,
@@ -167,102 +166,6 @@ def _invoke_handler(
     )
 
 
-def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> PythonAsyncSyntaxEscape:
-    """Create a PythonAsyncSyntaxEscape result from a SuspendOn frame result.
-
-    Two cases:
-    1. Single awaitable: suspend_on.awaitable is set
-       -> PythonAsyncSyntaxEscape with awaitable field, resume gets plain value
-    2. Multi-task: suspend_on.awaitable is None, pending_io in store
-       -> PythonAsyncSyntaxEscape with awaitables dict, resume gets (task_id, value)
-    """
-    from doeff.cesk.handlers.scheduler_state_handler import (
-        CURRENT_TASK_KEY,
-        PENDING_IO_KEY,
-    )
-
-    stored_k = suspend_on.stored_k or []
-    stored_env = suspend_on.stored_env or {}
-    stored_store = suspend_on.stored_store or {}
-
-    if suspend_on.awaitable is None:
-        pending_io = stored_store.get(PENDING_IO_KEY, {})
-
-        awaitables_dict = {
-            task_id: info["awaitable"]
-            for task_id, info in pending_io.items()
-        }
-
-        def resume_multi(value: Any, new_store: Store) -> CESKState:
-            task_id, result = value
-
-            task_info = pending_io.get(task_id)
-            if task_info is None:
-                raise RuntimeError(f"Task {task_id} not found in pending_io")
-
-            task_k = task_info["k"]
-            task_store_snapshot = task_info.get("store_snapshot", {})
-
-            new_pending = dict(pending_io)
-            del new_pending[task_id]
-
-            merged_store = dict(task_store_snapshot)
-            for key, val in stored_store.items():
-                if isinstance(key, str) and key.startswith("__scheduler_"):
-                    merged_store[key] = val
-            merged_store[PENDING_IO_KEY] = new_pending
-            merged_store[CURRENT_TASK_KEY] = task_id
-
-            return CESKState(
-                C=Value(result),
-                E=stored_env,
-                S=merged_store,
-                K=task_k,
-            )
-
-        def resume_error_multi(error: BaseException) -> CESKState:
-            return CESKState(
-                C=Error(error),
-                E=stored_env,
-                S=stored_store,
-                K=stored_k,
-            )
-
-        return PythonAsyncSyntaxEscape(
-            resume=resume_multi,
-            resume_error=resume_error_multi,
-            awaitables=awaitables_dict,
-            store=stored_store,
-        )
-
-    def resume_single(value: Any, new_store: Store) -> CESKState:
-        merged_store = dict(new_store)
-        for key, val in stored_store.items():
-            if key not in merged_store:
-                merged_store[key] = val
-        return CESKState(
-            C=Value(value),
-            E=stored_env,
-            S=merged_store,
-            K=stored_k,
-        )
-
-    def resume_error_single(error: BaseException) -> CESKState:
-        return CESKState(
-            C=Error(error),
-            E=stored_env,
-            S=stored_store,
-            K=stored_k,
-        )
-
-    return PythonAsyncSyntaxEscape(
-        resume=resume_single,
-        resume_error=resume_error_single,
-        awaitable=suspend_on.awaitable,
-        store=stored_store,
-    )
-
-
 def step(state: CESKState) -> StepResult:
     """Step the CESK machine with handler-based effect dispatch.
     
@@ -278,6 +181,8 @@ def step(state: CESKState) -> StepResult:
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         if debug:
             print(f"[step] Done: C.v type = {type(C.v).__name__}, value = {str(C.v)[:100]}")
+        if isinstance(C.v, PythonAsyncSyntaxEscape):
+            return C.v
         return Done(C.v, S)
 
     if isinstance(C, Error) and not K:
@@ -464,6 +369,15 @@ def step(state: CESKState) -> StepResult:
                     S=result.store,
                     K=result.k,
                 )
+            if isinstance(result, ContinueProgram):
+                return CESKState(
+                    C=ProgramControl(result.program),
+                    E=result.env,
+                    S=result.store,
+                    K=result.k,
+                )
+            if isinstance(result, PythonAsyncSyntaxEscape):
+                return result
             raise InterpreterInvariantError(f"Unexpected HandlerFrame result: {type(result)}")
 
         if isinstance(frame, HandlerResultFrame):
@@ -491,13 +405,8 @@ def step(state: CESKState) -> StepResult:
                     K=result.k,
                 )
             if isinstance(result, PythonAsyncSyntaxEscape):
-                # New architecture: handler returned escape directly - pass through
+                # Handler returned escape directly - pass through
                 return result
-            if isinstance(result, SuspendOn):
-                # Legacy: convert SuspendOn to PythonAsyncSyntaxEscape
-                if debug:
-                    print(f"[step] SuspendOn: awaitable={result.awaitable}, k_len={len(result.stored_k or [])}")
-                return _make_suspended_from_suspend_on(result)
             raise InterpreterInvariantError(f"Unexpected HandlerResultFrame result: {type(result)}")
 
         from doeff.cesk.frames import Frame

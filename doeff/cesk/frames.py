@@ -126,28 +126,19 @@ class ContinueGenerator:
 
 
 @dataclass(frozen=True)
-class SuspendOn:
-    """Handler-side data for Python async escape.
+class ContinueDirect:
+    """Continue with exact state - bypasses k merge in HandlerResultFrame.
     
-    Returned by handlers that need to suspend for an external async operation.
-    step() converts this to PythonAsyncSyntaxEscape (which has resume callbacks).
-    
-    The conversion exists because handlers return stored data (k, env, store),
-    while the runner needs callbacks. step() builds the callbacks.
-    
-    Attributes:
-        awaitable: The coroutine/future to await. None for multi-task suspension.
-        stored_k: The continuation to resume when complete.
-        stored_env: The environment to use when resuming.
-        stored_store: The store to use when resuming.
+    Use when handler has already computed the correct K (e.g., from a wrapped
+    escape.resume() callback) and should NOT have k_rest appended.
     """
-    awaitable: Any = None
-    stored_k: Kontinuation | None = None
-    stored_env: Environment | None = None
-    stored_store: Store | None = None
+    value: Any
+    env: Environment
+    store: Store | None
+    k: Kontinuation
 
 
-FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | SuspendOn
+FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | ContinueDirect
 
 
 # ============================================
@@ -751,5 +742,4 @@ __all__ = [
     "RaceWaiterFrame",
     "ReturnFrame",
     "SafeFrame",
-    "SuspendOn",
 ]

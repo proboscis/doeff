@@ -60,7 +60,7 @@ It is:
 
 - **Specifically** for users who want `AsyncRunner` (opt-in loop integration)
 - **A workaround** for Python's syntax-level async/await
-- **Avoidable** by using `SyncRunner` (thread pool hides async)
+- **ONLY for AsyncRunner** - SyncRunner never sees it (handlers handle Await directly)
 
 ---
 
@@ -96,13 +96,13 @@ It is:
 └──────────────────────────────────────────────────────────────────┘
                                │
                                │ PythonAsyncSyntaxEscape
-                               │ (only for async loop integration)
+                               │ (ONLY for AsyncRunner)
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       External Runtime                           │
 │                                                                  │
-│  AsyncRunner: awaits in user's event loop                       │
-│  SyncRunner: runs in thread pool (hides async from user)        │
+│  AsyncRunner: receives PythonAsyncSyntaxEscape, awaits          │
+│  SyncRunner: NEVER sees escape (handlers handle Await directly) │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -632,18 +632,23 @@ We are gradually migrating from `Runtime` to `Runner + Handler`:
 
 ---
 
-## Runner Difference: Only PythonAsyncSyntaxEscape Handling
+## Runner Difference: PythonAsyncSyntaxEscape is ONLY for AsyncRunner
 
-**SyncRunner and AsyncRunner are identical except for one thing:**
-How they handle `PythonAsyncSyntaxEscape`.
+**IMPORTANT: PythonAsyncSyntaxEscape is ONLY for AsyncRunner.**
+
+SyncRunner should NEVER see `PythonAsyncSyntaxEscape`. For SyncRunner, handlers
+must handle `Await` effects directly (e.g., by running awaitables in a thread pool).
+
+**Do NOT share handlers between SyncRunner and AsyncRunner.** Each runner type
+should use handlers appropriate for its execution model.
 
 ```python
 class SyncRunner:
     """
-    Handles PythonAsyncSyntaxEscape via thread pool.
-    User never sees async. Returns plain T.
+    Steps until Done/Failed. NEVER sees PythonAsyncSyntaxEscape.
+    Handlers must handle Await directly. Returns plain T.
     """
-    
+
     def run(self, program: Program[T], handlers: list[Handler]) -> T:
         state = self.init(program, handlers)
         while True:
@@ -651,18 +656,15 @@ class SyncRunner:
                 case Done(v): return v
                 case Failed(e): raise e
                 case CESKState() as s: state = s
-                case PythonAsyncSyntaxEscape() as escape:
-                    # Thread pool with isolated event loop
-                    result = run_in_thread_with_new_loop(escape.awaitable)
-                    state = escape.resume(result, escape.store)
+                # NO PythonAsyncSyntaxEscape case - handlers handle Await directly
 
 
 class AsyncRunner:
     """
-    Handles PythonAsyncSyntaxEscape via user's event loop.
-    User sees async. Returns async T.
+    Steps until Done/Failed. Handles PythonAsyncSyntaxEscape via await.
+    Returns async T.
     """
-    
+
     async def run(self, program: Program[T], handlers: list[Handler]) -> T:
         state = self.init(program, handlers)
         while True:
@@ -676,36 +678,42 @@ class AsyncRunner:
                     state = escape.resume(result, escape.store)
 ```
 
-**The ONLY difference is the `PythonAsyncSyntaxEscape` case:**
-- `SyncRunner`: `run_in_thread_with_new_loop()` → sync
-- `AsyncRunner`: `await` → async
+**Key distinction:**
+- `SyncRunner`: Handlers handle Await directly (e.g., sync_await_handler runs in thread)
+- `AsyncRunner`: python_async_handler produces PythonAsyncSyntaxEscape, runner awaits
 
-Everything else (CESK machine, handlers, step function) is identical.
-Handlers are provided by user, not hardcoded.
+Handlers are provided by user, not hardcoded. Use different handlers for each runner type.
 
 ---
 
 ## Handlers That Produce PythonAsyncSyntaxEscape
 
-Only specific handlers should produce `PythonAsyncSyntaxEscape`. These handlers should have explicit names indicating their purpose.
+**PythonAsyncSyntaxEscape is ONLY for AsyncRunner.** Only handlers designed for
+AsyncRunner should produce it.
 
-### Naming Convention
+### Handler Separation by Runner Type
 
 ```python
-# BAD: Generic name, unclear purpose
-class async_effects_handler:  # What does this do? Unclear.
-    ...
-
-# GOOD: Explicit name indicating Python async integration
-class PythonAsyncLoopHandler:
+# FOR AsyncRunner: produces PythonAsyncSyntaxEscape
+class python_async_handler:
     """
-    Handler for Await effect - Python async loop integration.
-    
+    Handler for Await effect - FOR AsyncRunner ONLY.
+
     Produces PythonAsyncSyntaxEscape for:
     - Await(coroutine) - await any Python coroutine
-    
-    Use with AsyncRunner for loop integration.
-    Use with SyncRunner for thread pool isolation.
+
+    AsyncRunner awaits the escape in the user's event loop.
+    """
+    ...
+
+# FOR SyncRunner: handles Await directly (no escape)
+class sync_await_handler:
+    """
+    Handler for Await effect - FOR SyncRunner ONLY.
+
+    Handles Await by running awaitable in thread pool.
+    Does NOT produce PythonAsyncSyntaxEscape.
+    """
     
     NOTE: Delay/WaitUntil are NOT primitives.
           User can: yield Await(asyncio.sleep(seconds))
@@ -1007,20 +1015,21 @@ result = sync_runner.run(program, handlers=[
 
 **Key insights:**
 
-1. `PythonAsyncSyntaxEscape` (currently `Suspended`) exists specifically for Python's `async/await` syntax. It is NOT a general escape mechanism.
+1. `PythonAsyncSyntaxEscape` exists specifically for Python's `async/await` syntax. It is NOT a general escape mechanism.
 
-2. `SyncRunner` vs `AsyncRunner` differ ONLY in how they handle `PythonAsyncSyntaxEscape`:
-   - `SyncRunner`: thread pool → user sees sync
-   - `AsyncRunner`: await in user's loop → user sees async
+2. **`PythonAsyncSyntaxEscape` is ONLY for AsyncRunner:**
+   - `SyncRunner`: NEVER sees PythonAsyncSyntaxEscape. Handlers handle Await directly.
+   - `AsyncRunner`: Handlers produce PythonAsyncSyntaxEscape, runner awaits.
 
-3. If no handler produces `PythonAsyncSyntaxEscape`, both runners behave identically.
+3. **Do NOT share handlers between SyncRunner and AsyncRunner.** Each runner type needs its own handlers appropriate for its execution model.
 
 4. We are migrating from `Runtime` (hardcoded handlers) to `Runner` (user provides handlers).
 
-**On `_make_suspended_from_suspend_on`:** This function should be REMOVED. With the correct architecture:
-- Scheduling is handler-internal (TaskWaitingForCallback, invisible to CESK)
-- Python async escape is returned directly by handler (PythonAsyncSyntaxEscape)
-- No conversion between them needed
+**Removed legacy code:**
+- `SuspendOn` type - removed entirely
+- `_make_suspended_from_suspend_on` - removed entirely
+- Scheduling is handler-internal (invisible to CESK)
+- Python async escape is returned directly by handler (only for AsyncRunner)
 
 ---
 
