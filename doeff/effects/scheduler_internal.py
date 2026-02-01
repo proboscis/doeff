@@ -1,10 +1,11 @@
-"""Queue effects for cooperative scheduling.
+"""Scheduler-internal effects for cooperative scheduling.
 
-These effects are used internally by the scheduler_handler to manage
-the task queue and waiters. They are handled by queue_handler, which
+These effects are used internally by the task_scheduler_handler to manage
+the task queue and waiters. They are handled by scheduler_state_handler, which
 uses store primitives to maintain scheduling state.
 
 These effects are NOT meant to be used directly by user programs.
+The underscore prefix (_Scheduler*) signals internal/private use.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ T = TypeVar("T")
 
 
 @dataclass(frozen=True, kw_only=True)
-class QueueAdd(EffectBase):
+class _SchedulerEnqueueTask(EffectBase):
     """Add a task to the queue.
     
-    Used by scheduler_handler to enqueue tasks for cooperative scheduling.
+    Used by task_scheduler_handler to enqueue tasks for cooperative scheduling.
     
     Attributes:
         task_id: Unique identifier for the task
@@ -40,7 +41,7 @@ class QueueAdd(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class QueuePop(EffectBase):
+class _SchedulerDequeueTask(EffectBase):
     """Pop next continuation from the task queue.
     
     Returns a tuple of (task_id, k, store_snapshot) or None if queue is empty.
@@ -49,7 +50,7 @@ class QueuePop(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class QueueIsEmpty(EffectBase):
+class _SchedulerQueueEmpty(EffectBase):
     """Check if the task queue is empty.
     
     Returns True if no tasks are waiting to run.
@@ -58,7 +59,7 @@ class QueueIsEmpty(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class RegisterWaiter(EffectBase):
+class _SchedulerRegisterWaiter(EffectBase):
     """Register a continuation to wake when a task/promise completes.
     
     When the specified task completes (success or failure), the waiter
@@ -77,7 +78,7 @@ class RegisterWaiter(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class TaskComplete(EffectBase):
+class _SchedulerTaskComplete(EffectBase):
     """Mark a task as complete with a result.
     
     This triggers wake-up of any registered waiters.
@@ -97,7 +98,7 @@ class TaskComplete(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetTaskResult(EffectBase):
+class _SchedulerGetTaskResult(EffectBase):
     """Get the result of a completed task.
     
     Attributes:
@@ -109,7 +110,7 @@ class GetTaskResult(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CreateTaskHandle(EffectBase):
+class _SchedulerCreateTaskHandle(EffectBase):
     """Create a new task handle for tracking a spawned task.
     
     Attributes:
@@ -125,7 +126,7 @@ class CreateTaskHandle(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CancelTask(EffectBase):
+class _SchedulerCancelTask(EffectBase):
     """Request cancellation of a task.
     
     Attributes:
@@ -137,7 +138,7 @@ class CancelTask(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class IsTaskDone(EffectBase):
+class _SchedulerIsTaskDone(EffectBase):
     """Check if a task is complete.
     
     Attributes:
@@ -149,7 +150,7 @@ class IsTaskDone(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class CreatePromiseHandle(EffectBase):
+class _SchedulerCreatePromise(EffectBase):
     """Create a new promise handle.
     
     Returns a tuple of (handle_id, Promise).
@@ -158,7 +159,7 @@ class CreatePromiseHandle(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetCurrentTaskId(EffectBase):
+class _SchedulerGetCurrentTaskId(EffectBase):
     """Get the current task's ID.
     
     Returns the task_id of the currently executing task.
@@ -167,7 +168,7 @@ class GetCurrentTaskId(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetCurrentTaskStore(EffectBase):
+class _SchedulerGetTaskStore(EffectBase):
     """Get the current task's isolated store (for spawned tasks).
     
     Returns the store snapshot if this is a spawned task, None for main task.
@@ -176,7 +177,7 @@ class GetCurrentTaskStore(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class UpdateTaskStore(EffectBase):
+class _SchedulerUpdateTaskStore(EffectBase):
     """Update a spawned task's isolated store.
     
     Attributes:
@@ -188,7 +189,7 @@ class UpdateTaskStore(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SetTaskSuspended(EffectBase):
+class _SchedulerSetTaskSuspended(EffectBase):
     """Signal that current task should suspend (waiting for another task).
     
     The outer scheduler loop will check for this and switch to another task.
@@ -202,11 +203,11 @@ class SetTaskSuspended(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class TaskCompletedEffect(EffectBase):
+class _SchedulerTaskCompleted(EffectBase):
     """Spawned task completed - handler intercepts to switch to next task.
     
     Spawned programs are wrapped to yield this effect instead of returning.
-    The scheduler_handler intercepts this, records the result, wakes waiters,
+    The task_scheduler_handler intercepts this, records the result, wakes waiters,
     and uses ResumeK to switch to the next task.
     
     Attributes:
@@ -222,11 +223,11 @@ class TaskCompletedEffect(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SuspendForIOEffect(EffectBase):
+class _SchedulerSuspendForIO(EffectBase):
     """Signal that current task needs to suspend for async I/O.
     
-    This is yielded by async_effects_handler instead of returning SuspendOn.
-    The scheduler_handler intercepts this:
+    This is yielded by python_async_handler instead of returning SuspendOn.
+    The task_scheduler_handler intercepts this:
     1. Stores the awaitable with the current task's continuation
     2. Switches to another task if available
     3. If no other tasks, propagates as SuspendOn with all pending awaitables
@@ -240,7 +241,7 @@ class SuspendForIOEffect(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class AddPendingIO(EffectBase):
+class _SchedulerAddPendingIO(EffectBase):
     """Add a task to the pending I/O list."""
     task_id: Any
     awaitable: Any
@@ -249,26 +250,71 @@ class AddPendingIO(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class GetPendingIO(EffectBase):
+class _SchedulerGetPendingIO(EffectBase):
     """Get all pending I/O tasks. Returns dict[task_id, (awaitable, k, store)]."""
     pass
 
 
 @dataclass(frozen=True, kw_only=True)
-class RemovePendingIO(EffectBase):
+class _SchedulerRemovePendingIO(EffectBase):
     """Remove a task from pending I/O after completion."""
     task_id: Any
 
 
 @dataclass(frozen=True, kw_only=True)
-class ResumePendingIO(EffectBase):
+class _SchedulerResumePendingIO(EffectBase):
     """Resume a pending I/O task with a value or error."""
     task_id: Any
     value: Any = None
     error: BaseException | None = None
 
 
+# Backwards compatibility aliases (deprecated, will be removed in future version)
+QueueAdd = _SchedulerEnqueueTask
+QueuePop = _SchedulerDequeueTask
+QueueIsEmpty = _SchedulerQueueEmpty
+RegisterWaiter = _SchedulerRegisterWaiter
+TaskComplete = _SchedulerTaskComplete
+CreateTaskHandle = _SchedulerCreateTaskHandle
+CancelTask = _SchedulerCancelTask
+IsTaskDone = _SchedulerIsTaskDone
+CreatePromiseHandle = _SchedulerCreatePromise
+GetCurrentTaskId = _SchedulerGetCurrentTaskId
+GetCurrentTaskStore = _SchedulerGetTaskStore
+UpdateTaskStore = _SchedulerUpdateTaskStore
+SetTaskSuspended = _SchedulerSetTaskSuspended
+TaskCompletedEffect = _SchedulerTaskCompleted
+SuspendForIOEffect = _SchedulerSuspendForIO
+AddPendingIO = _SchedulerAddPendingIO
+GetPendingIO = _SchedulerGetPendingIO
+RemovePendingIO = _SchedulerRemovePendingIO
+ResumePendingIO = _SchedulerResumePendingIO
+GetTaskResult = _SchedulerGetTaskResult
+
+
 __all__ = [
+    # New names (preferred)
+    "_SchedulerAddPendingIO",
+    "_SchedulerCancelTask",
+    "_SchedulerCreatePromise",
+    "_SchedulerCreateTaskHandle",
+    "_SchedulerDequeueTask",
+    "_SchedulerEnqueueTask",
+    "_SchedulerGetCurrentTaskId",
+    "_SchedulerGetPendingIO",
+    "_SchedulerGetTaskResult",
+    "_SchedulerGetTaskStore",
+    "_SchedulerIsTaskDone",
+    "_SchedulerQueueEmpty",
+    "_SchedulerRegisterWaiter",
+    "_SchedulerRemovePendingIO",
+    "_SchedulerResumePendingIO",
+    "_SchedulerSetTaskSuspended",
+    "_SchedulerSuspendForIO",
+    "_SchedulerTaskComplete",
+    "_SchedulerTaskCompleted",
+    "_SchedulerUpdateTaskStore",
+    # Backwards compatibility aliases (deprecated)
     "AddPendingIO",
     "CancelTask",
     "CreatePromiseHandle",

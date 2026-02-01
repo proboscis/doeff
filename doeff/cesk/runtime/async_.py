@@ -6,10 +6,10 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.handler_frame import Handler, WithHandler
-from doeff.cesk.handlers.async_effects_handler import async_effects_handler
 from doeff.cesk.handlers.core_handler import core_handler
-from doeff.cesk.handlers.queue_handler import queue_handler
-from doeff.cesk.handlers.scheduler_handler import scheduler_handler
+from doeff.cesk.handlers.python_async_handler import python_async_handler
+from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
+from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
 from doeff.cesk.result import Done, Failed, Suspended
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
@@ -25,11 +25,11 @@ T = TypeVar("T")
 
 def _wrap_with_handlers(program: Program[T]) -> Program[T]:
     return WithHandler(
-        handler=cast(Handler, queue_handler),
+        handler=cast(Handler, scheduler_state_handler),
         program=WithHandler(
-            handler=cast(Handler, scheduler_handler),
+            handler=cast(Handler, task_scheduler_handler),
             program=WithHandler(
-                handler=cast(Handler, async_effects_handler),
+                handler=cast(Handler, python_async_handler),
                 program=WithHandler(
                     handler=cast(Handler, core_handler),
                     program=program,
