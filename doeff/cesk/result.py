@@ -48,14 +48,36 @@ class Suspended:
     Continuation-based suspension for async operations. The effect is handled
     externally, then the appropriate continuation is called with the result.
 
+    The runtime awaits using ONE of these patterns:
+    1. Single awaitable: `awaitable` field is set, await it, call resume(value)
+    2. Multiple awaitables: `awaitables` dict is set, await first completion,
+       call resume((task_id, value)) where task_id is the key that completed
+
+    This design keeps the runtime GENERIC - it has no knowledge of task IDs,
+    AllTasksSuspendedEffect, or scheduling logic. All routing decisions are
+    made in the resume callback (created by handlers).
+
     Per spec: continuations take (value, new_store) to incorporate handler's
     store updates. On error, resume_error uses the original store (S) from
     before the effect - effectful handlers should NOT mutate S in-place.
     """
 
-    effect: EffectBase
+    # Resume callbacks
     resume: Callable[[Any, Store], CESKState]
     resume_error: Callable[[BaseException], CESKState]
+
+    # Single awaitable (simple case: Await, Delay, etc.)
+    awaitable: Any | None = None
+
+    # Multiple awaitables (multi-task case: dict[task_id, Awaitable])
+    # Runtime awaits FIRST_COMPLETED, returns (task_id, value) to resume
+    awaitables: dict[Any, Any] | None = None
+
+    # Store to pass to resume (handlers may need current store for merging)
+    store: Store | None = None
+
+    # Legacy: effect field kept for compatibility but not used by runtime
+    effect: EffectBase | None = None
 
 
 Terminal: TypeAlias = Done | Failed
