@@ -105,6 +105,7 @@ class AsyncRuntime(BaseRuntime):
                 )
 
             if isinstance(result, PythonAsyncSyntaxEscape):
+                from doeff.cesk.result import DirectState
                 current_store = result.store if result.store is not None else state.S
 
                 if result.awaitables:
@@ -122,22 +123,28 @@ class AsyncRuntime(BaseRuntime):
                             del pending_tasks[task_id]
                             try:
                                 value = atask.result()
-                                state = result.resume((task_id, value), current_store)
+                                resume_result = result.resume((task_id, value), current_store)
+                                # Unwrap DirectState if present
+                                state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
                             except asyncio.CancelledError:
                                 raise
                             except Exception as ex:
-                                state = result.resume_error((task_id, ex))
+                                error_result = result.resume_error((task_id, ex))
+                                state = error_result.state if isinstance(error_result, DirectState) else error_result
                             break
                     else:
                         raise RuntimeError("asyncio.wait returned but no task completed")
                 elif result.awaitable is not None:
                     try:
                         value = await result.awaitable
-                        state = result.resume(value, current_store)
+                        resume_result = result.resume(value, current_store)
+                        # Unwrap DirectState if present
+                        state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
                     except asyncio.CancelledError:
                         raise
                     except Exception as ex:
-                        state = result.resume_error(ex)
+                        error_result = result.resume_error(ex)
+                        state = error_result.state if isinstance(error_result, DirectState) else error_result
                 else:
                     raise RuntimeError("PythonAsyncSyntaxEscape with neither awaitable nor awaitables")
                 continue

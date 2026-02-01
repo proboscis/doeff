@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue, FrameResult
 from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 from doeff.effects.scheduler_internal import (
     _SchedulerAddPendingIO,
     _SchedulerCancelTask,
@@ -72,7 +72,7 @@ class TaskInfo:
     error: BaseException | None = None
 
 
-def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResult]:
+def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[CESKState]:
     """Handle scheduler state effects using store primitives.
 
     This is the outermost handler in the handler stack. It manages:
@@ -94,14 +94,7 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             }
         )
         store[TASK_QUEUE_KEY] = queue
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerDequeueTask):
         import os
@@ -117,42 +110,24 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 print(
                     f"[_SchedulerDequeueTask] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}, resume_error={item.get('resume_error')}"
                 )
-            return Program.pure(
-                ContinueValue(
-                    value=(
-                        item["task_id"],
-                        item["k"],
-                        item.get("store_snapshot"),
-                        item.get("resume_value"),
-                        item.get("resume_error"),
-                        dict(store),
-                    ),
-                    env=ctx.env,
-                    store=store,
-                    k=ctx.delimited_k,
-                )
-            )
+            return Program.pure(CESKState.with_value(
+                (
+                    item["task_id"],
+                    item["k"],
+                    item.get("store_snapshot"),
+                    item.get("resume_value"),
+                    item.get("resume_error"),
+                    dict(store),
+                ),
+                ctx.env, store, ctx.k,
+            ))
         if debug:
             print(f"[_SchedulerDequeueTask] Queue empty! Returning None")
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerQueueEmpty):
         queue = store.get(TASK_QUEUE_KEY, [])
-        return Program.pure(
-            ContinueValue(
-                value=len(queue) == 0,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(len(queue) == 0, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerRegisterWaiter):
         waiters = dict(store.get(WAITERS_KEY, {}))
@@ -168,14 +143,7 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             }
         )
         store[WAITERS_KEY] = waiters
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerCreateTaskHandle):
         handle_id = uuid4()
@@ -195,14 +163,7 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             _env_snapshot=effect.env_snapshot,
             _state_snapshot=effect.store_snapshot,
         )
-        return Program.pure(
-            ContinueValue(
-                value=(handle_id, task_handle),
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value((handle_id, task_handle), ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerTaskComplete):
         import os
@@ -263,68 +224,31 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 )
             store[TASK_QUEUE_KEY] = queue
 
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerGetTaskResult):
         registry = store.get(TASK_REGISTRY_KEY, {})
         handle_id = effect.handle_id
 
         if handle_id not in registry:
-            return Program.pure(
-                ContinueValue(
-                    value=None,
-                    env=ctx.env,
-                    store=store,
-                    k=ctx.delimited_k,
-                )
-            )
+            return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
         task_info = registry[handle_id]
-        return Program.pure(
-            ContinueValue(
-                value=(
-                    task_info.is_complete,
-                    task_info.is_cancelled,
-                    task_info.result,
-                    task_info.error,
-                ),
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(
+            (task_info.is_complete, task_info.is_cancelled, task_info.result, task_info.error),
+            ctx.env, store, ctx.k,
+        ))
 
     if isinstance(effect, _SchedulerCancelTask):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         handle_id = effect.handle_id
 
         if handle_id not in registry:
-            return Program.pure(
-                ContinueValue(
-                    value=False,
-                    env=ctx.env,
-                    store=store,
-                    k=ctx.delimited_k,
-                )
-            )
+            return Program.pure(CESKState.with_value(False, ctx.env, store, ctx.k))
 
         task_info = registry[handle_id]
         if task_info.is_complete:
-            return Program.pure(
-                ContinueValue(
-                    value=False,
-                    env=ctx.env,
-                    store=store,
-                    k=ctx.delimited_k,
-                )
-            )
+            return Program.pure(CESKState.with_value(False, ctx.env, store, ctx.k))
 
         task_info.is_complete = True
         task_info.is_cancelled = True
@@ -348,38 +272,17 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 )
             store[TASK_QUEUE_KEY] = queue
 
-        return Program.pure(
-            ContinueValue(
-                value=True,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(True, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerIsTaskDone):
         registry = store.get(TASK_REGISTRY_KEY, {})
         handle_id = effect.handle_id
 
         if handle_id not in registry:
-            return Program.pure(
-                ContinueValue(
-                    value=True,
-                    env=ctx.env,
-                    store=store,
-                    k=ctx.delimited_k,
-                )
-            )
+            return Program.pure(CESKState.with_value(True, ctx.env, store, ctx.k))
 
         task_info = registry[handle_id]
-        return Program.pure(
-            ContinueValue(
-                value=task_info.is_complete,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(task_info.is_complete, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerCreatePromise):
         handle_id = uuid4()
@@ -396,46 +299,18 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
 
         promise = Promise(_promise_handle=handle_id)
 
-        return Program.pure(
-            ContinueValue(
-                value=(handle_id, promise),
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value((handle_id, promise), ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerGetCurrentTaskId):
         current = store.get(CURRENT_TASK_KEY)
-        return Program.pure(
-            ContinueValue(
-                value=current,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(current, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerGetTaskStore):
         registry = store.get(TASK_REGISTRY_KEY, {})
         for task_info in registry.values():
             if task_info.task_id == effect.task_id:
-                return Program.pure(
-                    ContinueValue(
-                        value=task_info.store_snapshot,
-                        env=ctx.env,
-                        store=store,
-                        k=ctx.delimited_k,
-                    )
-                )
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+                return Program.pure(CESKState.with_value(task_info.store_snapshot, ctx.env, store, ctx.k))
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerUpdateTaskStore):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
@@ -445,28 +320,14 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 registry[handle_id] = task_info
                 break
         store[TASK_REGISTRY_KEY] = registry
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerSetTaskSuspended):
         store[TASK_SUSPENDED_KEY] = {
             "task_id": effect.task_id,
             "waiting_for": effect.waiting_for,
         }
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerAddPendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
@@ -476,38 +337,17 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             "store_snapshot": effect.store_snapshot,
         }
         store[PENDING_IO_KEY] = pending
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerGetPendingIO):
         pending = store.get(PENDING_IO_KEY, {})
-        return Program.pure(
-            ContinueValue(
-                value=pending,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(pending, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerRemovePendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         pending.pop(effect.task_id, None)
         store[PENDING_IO_KEY] = pending
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerResumePendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
@@ -525,14 +365,7 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 }
             )
             store[TASK_QUEUE_KEY] = queue
-        return Program.pure(
-            ContinueValue(
-                value=None,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        )
+        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     from doeff.cesk.errors import UnhandledEffectError
 

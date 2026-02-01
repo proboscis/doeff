@@ -6,6 +6,11 @@ on_value and on_error methods for unified continuation handling.
 Each frame type represents a computation context that:
 1. Can receive a value (on_value) to continue normal execution
 2. Can receive an error (on_error) to handle exceptions
+
+Frames return CESKState directly using utility methods:
+- CESKState.with_value(value, env, store, k)
+- CESKState.with_error(error, env, store, k)
+- CESKState.with_program(program, env, store, k)
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 from doeff.cesk.types import Environment, Store, TaskId
 
 if TYPE_CHECKING:
+    from doeff.cesk.state import CESKState
     from doeff.effects._program_types import ProgramLike
     from doeff.program import KleisliProgramCall, ProgramBase
     from doeff.types import Effect
@@ -33,6 +39,8 @@ class Frame(Protocol):
 
     Each frame type implements on_value and on_error to define
     how it handles values and errors during continuation unwinding.
+
+    Frames return CESKState directly using utility methods.
     """
 
     def on_value(
@@ -41,7 +49,7 @@ class Frame(Protocol):
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Handle a value being passed through this frame.
 
         Args:
@@ -51,7 +59,7 @@ class Frame(Protocol):
             k_rest: Remaining continuation frames
 
         Returns:
-            FrameResult indicating next state
+            CESKState for next step
         """
         ...
 
@@ -61,7 +69,7 @@ class Frame(Protocol):
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Handle an error being passed through this frame.
 
         Args:
@@ -71,74 +79,9 @@ class Frame(Protocol):
             k_rest: Remaining continuation frames
 
         Returns:
-            FrameResult indicating next state
+            CESKState for next step
         """
         ...
-
-
-# ============================================
-# Frame Result Types
-# ============================================
-
-
-@dataclass(frozen=True)
-class ContinueValue:
-    """Continue execution with a value."""
-
-    value: Any
-    env: Environment
-    store: Store | None
-    k: Kontinuation
-
-
-@dataclass(frozen=True)
-class ContinueError:
-    """Continue execution with an error."""
-
-    error: BaseException
-    env: Environment
-    store: Store | None
-    k: Kontinuation
-    captured_traceback: Any | None = None
-
-
-@dataclass(frozen=True)
-class ContinueProgram:
-    """Continue execution with a new program."""
-
-    program: ProgramLike
-    env: Environment
-    store: Store
-    k: Kontinuation
-
-
-@dataclass(frozen=True)
-class ContinueGenerator:
-    """Continue execution by sending to a generator."""
-
-    generator: Generator[Any, Any, Any]
-    send_value: Any | None
-    throw_error: BaseException | None
-    env: Environment
-    store: Store
-    k: Kontinuation
-    program_call: KleisliProgramCall | None = None
-
-
-@dataclass(frozen=True)
-class ContinueDirect:
-    """Continue with exact state - bypasses k merge in HandlerResultFrame.
-    
-    Use when handler has already computed the correct K (e.g., from a wrapped
-    escape.resume() callback) and should NOT have k_rest appended.
-    """
-    value: Any
-    env: Environment
-    store: Store | None
-    k: Kontinuation
-
-
-FrameResult: TypeAlias = ContinueValue | ContinueError | ContinueProgram | ContinueGenerator | ContinueDirect
 
 
 # ============================================
@@ -152,9 +95,12 @@ class ReturnFrame:
 
     This frame represents a suspended generator that can be resumed
     by sending it a value or throwing an exception into it.
-    
+
     Kleisli info fields (kleisli_*) are embedded here so they persist
     across multiple yields from the same @do function.
+
+    Note: step.py handles ReturnFrame directly by calling generator.send/throw,
+    so on_value/on_error are not used. They exist only for protocol compliance.
     """
 
     generator: Generator[Any, Any, Any]
@@ -163,42 +109,6 @@ class ReturnFrame:
     kleisli_function_name: str | None = None
     kleisli_filename: str | None = None
     kleisli_lineno: int | None = None
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> FrameResult:
-        """Resume generator with a value."""
-        return ContinueGenerator(
-            generator=self.generator,
-            send_value=value,
-            throw_error=None,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-            program_call=self.program_call,
-        )
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> FrameResult:
-        """Throw error into generator."""
-        return ContinueGenerator(
-            generator=self.generator,
-            send_value=None,
-            throw_error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-            program_call=self.program_call,
-        )
 
 
 @dataclass(frozen=True)
@@ -217,14 +127,10 @@ class LocalFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Restore original environment and continue with value."""
-        return ContinueValue(
-            value=value,
-            env=self.restore_env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_value(value, self.restore_env, store, k_rest)
 
     def on_error(
         self,
@@ -232,14 +138,10 @@ class LocalFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Restore original environment and propagate error."""
-        return ContinueError(
-            error=error,
-            env=self.restore_env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, self.restore_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -258,14 +160,10 @@ class InterceptFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Values pass through unchanged."""
-        return ContinueValue(
-            value=value,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_value(value, env, store, k_rest)
 
     def on_error(
         self,
@@ -273,14 +171,10 @@ class InterceptFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Errors pass through unchanged."""
-        return ContinueError(
-            error=error,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -301,8 +195,9 @@ class InterceptBypassFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
-        return ContinueValue(value=value, env=env, store=store, k=k_rest)
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+        return CESKState.with_value(value, env, store, k_rest)
 
     def on_error(
         self,
@@ -310,8 +205,9 @@ class InterceptBypassFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
-        return ContinueError(error=error, env=env, store=store, k=k_rest)
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -330,21 +226,17 @@ class ListenFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Capture log entries and wrap result with ListenResult."""
         from doeff._types_internal import ListenResult
+        from doeff.cesk.state import CESKState
         from doeff.utils import BoundedLog
 
         current_log = store.get("__log__", [])
         captured = current_log[self.log_start_index :]
         listen_result = ListenResult(value=value, log=BoundedLog(captured))
 
-        return ContinueValue(
-            value=listen_result,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
+        return CESKState.with_value(listen_result, env, store, k_rest)
 
     def on_error(
         self,
@@ -352,14 +244,10 @@ class ListenFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Errors propagate through unchanged."""
-        return ContinueError(
-            error=error,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -380,18 +268,15 @@ class GatherFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Collect result and continue with next program or return all results."""
+        from doeff.cesk.state import CESKState
+
         new_results = self.collected_results + [value]
 
         if not self.remaining_programs:
             # All programs complete, return collected results
-            return ContinueValue(
-                value=new_results,
-                env=self.saved_env,
-                store=store,
-                k=k_rest,
-            )
+            return CESKState.with_value(new_results, self.saved_env, store, k_rest)
 
         # Continue with next program
         next_prog, *rest = self.remaining_programs
@@ -401,12 +286,7 @@ class GatherFrame:
             saved_env=self.saved_env,
         )
 
-        return ContinueProgram(
-            program=next_prog,
-            env=self.saved_env,
-            store=store,
-            k=[new_frame] + k_rest,
-        )
+        return CESKState.with_program(next_prog, self.saved_env, store, [new_frame] + k_rest)
 
     def on_error(
         self,
@@ -414,14 +294,10 @@ class GatherFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Errors abort the gather and propagate."""
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, self.saved_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -440,16 +316,12 @@ class SafeFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Wrap successful value in Ok."""
         from doeff._vendor import Ok
+        from doeff.cesk.state import CESKState
 
-        return ContinueValue(
-            value=Ok(value),
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+        return CESKState.with_value(Ok(value), self.saved_env, store, k_rest)
 
     def on_error(
         self,
@@ -457,10 +329,11 @@ class SafeFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Convert error to Err result instead of propagating."""
         from doeff._types_internal import capture_traceback, get_captured_traceback
         from doeff._vendor import NOTHING, Err, Some
+        from doeff.cesk.state import CESKState
 
         # Capture traceback if not already captured
         captured = get_captured_traceback(error)
@@ -470,12 +343,7 @@ class SafeFrame:
         captured_maybe = Some(captured) if captured else NOTHING
         err_result = Err(error, captured_traceback=captured_maybe)
 
-        return ContinueValue(
-            value=err_result,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+        return CESKState.with_value(err_result, self.saved_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -494,14 +362,10 @@ class RaceFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """First value wins the race."""
-        return ContinueValue(
-            value=value,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_value(value, self.saved_env, store, k_rest)
 
     def on_error(
         self,
@@ -509,14 +373,10 @@ class RaceFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Errors propagate from the race."""
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, self.saved_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -530,19 +390,15 @@ class GatherWaiterFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
         from doeff.do import do
-        
+
         @do
         def retry_gather():
             return (yield self.gather_effect)
-        
-        return ContinueProgram(
-            program=retry_gather(),
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+
+        return CESKState.with_program(retry_gather(), self.saved_env, store, k_rest)
 
     def on_error(
         self,
@@ -550,13 +406,9 @@ class GatherWaiterFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, self.saved_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -570,19 +422,15 @@ class RaceWaiterFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
         from doeff.do import do
-        
+
         @do
         def retry_race():
             return (yield self.race_effect)
-        
-        return ContinueProgram(
-            program=retry_race(),
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+
+        return CESKState.with_program(retry_race(), self.saved_env, store, k_rest)
 
     def on_error(
         self,
@@ -590,13 +438,9 @@ class RaceWaiterFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, self.saved_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -611,15 +455,12 @@ class GraphCaptureFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+
         current_graph = store.get("__graph__", [])
         captured = current_graph[self.graph_start_index :]
-        return ContinueValue(
-            value=(value, captured),
-            env=env,
-            store=store,
-            k=k_rest,
-        )
+        return CESKState.with_value((value, captured), env, store, k_rest)
 
     def on_error(
         self,
@@ -627,13 +468,9 @@ class GraphCaptureFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
-        return ContinueError(
-            error=error,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -659,7 +496,7 @@ class AskLazyFrame:
 
     Concurrency note: Safe under current scheduler implementation which
     steps one task at a time. The _ASK_IN_PROGRESS marker is set before
-    ContinueProgram returns, so no race condition with sequential dispatch.
+    with_program returns, so no race condition with sequential dispatch.
     """
 
     ask_key: Any  # The original Ask key (any hashable)
@@ -671,19 +508,16 @@ class AskLazyFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Cache the computed value and continue with it."""
+        from doeff.cesk.state import CESKState
+
         cache = store.get("__ask_lazy_cache__", {})
         # Store (program_object, cached_value) tuple keyed by ask_key only
         new_cache = {**cache, self.ask_key: (self.program, value)}
         new_store = {**store, "__ask_lazy_cache__": new_cache}
 
-        return ContinueValue(
-            value=value,
-            env=env,
-            store=new_store,
-            k=k_rest,
-        )
+        return CESKState.with_value(value, env, new_store, k_rest)
 
     def on_error(
         self,
@@ -691,12 +525,14 @@ class AskLazyFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
         """Errors propagate up - per spec, Program failure = entire run() fails.
 
         Note: We clear the in-progress marker on error so the key can be retried
         (e.g., after a Safe boundary or Local override with different program).
         """
+        from doeff.cesk.state import CESKState
+
         cache = store.get("__ask_lazy_cache__", {})
         # Remove the in-progress entry so future attempts can retry
         if self.ask_key in cache:
@@ -705,12 +541,7 @@ class AskLazyFrame:
         else:
             new_store = store
 
-        return ContinueError(
-            error=error,
-            env=env,
-            store=new_store,
-            k=k_rest,
-        )
+        return CESKState.with_error(error, env, new_store, k_rest)
 
 
 # ============================================
@@ -724,12 +555,7 @@ Kontinuation: TypeAlias = list[Any]
 
 __all__ = [
     "AskLazyFrame",
-    "ContinueError",
-    "ContinueGenerator",
-    "ContinueProgram",
-    "ContinueValue",
     "Frame",
-    "FrameResult",
     "GatherFrame",
     "GatherWaiterFrame",
     "GraphCaptureFrame",

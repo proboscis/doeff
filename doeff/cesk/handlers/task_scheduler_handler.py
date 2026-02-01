@@ -46,8 +46,9 @@ from uuid import uuid4
 
 from doeff._types_internal import EffectBase
 from doeff._vendor import FrozenDict
-from doeff.cesk.frames import ContinueError, ContinueValue, ReturnFrame
+from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, HandlerContext, ResumeK, WithHandler
+from doeff.cesk.state import CESKState
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
     PENDING_IO_KEY,
@@ -258,12 +259,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             task_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
 
             if resume_error is not None:
-                return ContinueError(
-                    error=resume_error,
-                    env=ctx.env,
-                    store=task_store,
-                    k=next_k,
-                )
+                return CESKState.with_error(resume_error, ctx.env, task_store, next_k)
             return ResumeK(k=next_k, value=resume_value, store=task_store)
 
         if len(pending_io) > 1:
@@ -304,12 +300,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         child_k = _make_initial_k(wrapped_program, env_snapshot)
         yield _SchedulerEnqueueTask(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
 
-        return ContinueValue(
-            value=task_handle,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return task_handle
 
     if isinstance(effect, _SchedulerTaskCompleted):
         yield _SchedulerTaskComplete(
@@ -336,18 +328,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                     stored_store=ctx.store,
                 )
             if effect.error is not None:
-                return ContinueError(
-                    error=effect.error,
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=[],
-                )
-            return ContinueValue(
-                value=effect.result,
-                env=ctx.env,
-                store=ctx.store,
-                k=[],
-            )
+                return CESKState.with_error(effect.error, ctx.env, ctx.store, [])
+            return CESKState.with_value(effect.result, ctx.env, ctx.store, [])
 
         next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
         task_store = dict(next_store) if next_store is not None else {}
@@ -356,58 +338,34 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 task_store[key] = val
         task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
-            return ContinueError(
-                error=resume_error,
-                env=ctx.env,
-                store=task_store,
-                k=next_k,
-            )
+            return ResumeK(k=next_k, error=resume_error, store=task_store)
         return ResumeK(k=next_k, value=resume_value, store=task_store)
 
     if isinstance(effect, WaitEffect):
         waitable = effect.future
         if not isinstance(waitable, Waitable):
-            return ContinueError(
-                error=TypeError(f"Wait requires Waitable, got {type(waitable).__name__}"),
-                env=ctx.env,
-                store=ctx.store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                TypeError(f"Wait requires Waitable, got {type(waitable).__name__}"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         handle_id = waitable._handle
         result = yield _SchedulerGetTaskResult(handle_id=handle_id)
 
         if result is None:
-            return ContinueError(
-                error=ValueError(f"Invalid task handle: {handle_id}"),
-                env=ctx.env,
-                store=ctx.store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                ValueError(f"Invalid task handle: {handle_id}"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         is_complete, is_cancelled, task_result, task_error = result
 
         if is_complete:
             if is_cancelled:
-                return ContinueError(
-                    error=TaskCancelledError(),
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
+                return CESKState.with_error(TaskCancelledError(), ctx.env, ctx.store, ctx.k)
             if task_error is not None:
-                return ContinueError(
-                    error=task_error,
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
-            return ContinueValue(
-                value=task_result,
-                env=ctx.env,
-                store=ctx.store,
-                k=ctx.delimited_k,
-            )
+                return CESKState.with_error(task_error, ctx.env, ctx.store, ctx.k)
+            return CESKState.with_value(task_result, ctx.env, ctx.store, ctx.k)
 
         current_task_id = yield _SchedulerGetCurrentTaskId()
         yield _SchedulerRegisterWaiter(
@@ -433,11 +391,9 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                     stored_env=ctx.env,
                     stored_store=ctx.store,
                 )
-            return ContinueError(
-                error=RuntimeError("Deadlock: waiting for task but no other tasks to run"),
-                env=ctx.env,
-                store=ctx.store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                RuntimeError("Deadlock: waiting for task but no other tasks to run"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
@@ -447,62 +403,41 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 task_store[key] = val
         task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
-            return ContinueError(
-                error=resume_error,
-                env=ctx.env,
-                store=task_store,
-                k=next_k,
-            )
+            return ResumeK(k=next_k, error=resume_error, store=task_store)
         return ResumeK(k=next_k, value=resume_value, store=task_store)
 
     if isinstance(effect, TaskCancelEffect):
         handle_id = effect.task._handle
         was_cancelled = yield _SchedulerCancelTask(handle_id=handle_id)
-        return ContinueValue(
-            value=was_cancelled,
-            env=ctx.env,
-            store=ctx.store,
-            k=ctx.delimited_k,
-        )
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return was_cancelled
 
     if isinstance(effect, TaskIsDoneEffect):
         handle_id = effect.task._handle
         is_done = yield _SchedulerIsTaskDone(handle_id=handle_id)
-        return ContinueValue(
-            value=is_done,
-            env=ctx.env,
-            store=ctx.store,
-            k=ctx.delimited_k,
-        )
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return is_done
 
     if isinstance(effect, CreatePromiseEffect):
         handle_id, promise = yield _SchedulerCreatePromise()
-        return ContinueValue(
-            value=promise,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return promise
 
     if isinstance(effect, CompletePromiseEffect):
         handle_id = effect.promise.future._handle
         result = yield _SchedulerGetTaskResult(handle_id=handle_id)
 
         if result is None:
-            return ContinueError(
-                error=ValueError(f"Invalid promise handle: {handle_id}"),
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                ValueError(f"Invalid promise handle: {handle_id}"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         is_complete, _, _, _ = result
         if is_complete:
-            return ContinueError(
-                error=RuntimeError("Promise already completed"),
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                RuntimeError("Promise already completed"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         yield _SchedulerTaskComplete(
@@ -512,32 +447,24 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             error=None,
         )
 
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return None
 
     if isinstance(effect, FailPromiseEffect):
         handle_id = effect.promise.future._handle
         result = yield _SchedulerGetTaskResult(handle_id=handle_id)
 
         if result is None:
-            return ContinueError(
-                error=ValueError(f"Invalid promise handle: {handle_id}"),
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                ValueError(f"Invalid promise handle: {handle_id}"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         is_complete, _, _, _ = result
         if is_complete:
-            return ContinueError(
-                error=RuntimeError("Promise already completed"),
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                RuntimeError("Promise already completed"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         yield _SchedulerTaskComplete(
@@ -547,12 +474,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             error=effect.error,
         )
 
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return None
 
     if isinstance(effect, GatherEffect):
         import os
@@ -560,12 +483,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         futures = effect.futures
         if not futures:
-            return ContinueValue(
-                value=[],
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
-            )
+            return CESKState.with_value([], ctx.env, ctx.store, ctx.k)
 
         partial = effect._partial_results
         results: list[Any] = list(partial) if partial else [None] * len(futures)
@@ -580,22 +498,18 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 continue
 
             if not isinstance(future, Waitable):
-                return ContinueError(
-                    error=TypeError(f"Gather requires Waitable, got {type(future).__name__}"),
-                    env=ctx.env,
-                    store=None,
-                    k=ctx.delimited_k,
+                return CESKState.with_error(
+                    TypeError(f"Gather requires Waitable, got {type(future).__name__}"),
+                    ctx.env, ctx.store, ctx.k,
                 )
 
             handle_id = future._handle
             task_result = yield _SchedulerGetTaskResult(handle_id=handle_id)
 
             if task_result is None:
-                return ContinueError(
-                    error=ValueError(f"Invalid task handle: {handle_id}"),
-                    env=ctx.env,
-                    store=None,
-                    k=ctx.delimited_k,
+                return CESKState.with_error(
+                    ValueError(f"Invalid task handle: {handle_id}"),
+                    ctx.env, ctx.store, ctx.k,
                 )
 
             is_complete, is_cancelled, value, error = task_result
@@ -604,19 +518,9 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
 
             if is_complete:
                 if is_cancelled:
-                    return ContinueError(
-                        error=TaskCancelledError(),
-                        env=ctx.env,
-                        store=None,
-                        k=ctx.delimited_k,
-                    )
+                    return CESKState.with_error(TaskCancelledError(), ctx.env, ctx.store, ctx.k)
                 if error is not None:
-                    return ContinueError(
-                        error=error,
-                        env=ctx.env,
-                        store=None,
-                        k=ctx.delimited_k,
-                    )
+                    return CESKState.with_error(error, ctx.env, ctx.store, ctx.k)
                 results[i] = value
             else:
                 pending_indices.append(i)
@@ -628,12 +532,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 print(
                     f"[GatherEffect] Returning results={results}, k_len={len(ctx.delimited_k)}, k_types={[type(f).__name__ for f in ctx.delimited_k[:5]]}"
                 )
-            return ContinueValue(
-                value=results,
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
-            )
+            return CESKState.with_value(results, ctx.env, ctx.store, ctx.k)
 
         updated_effect = GatherEffect(
             futures=futures,
@@ -674,11 +573,9 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                     stored_env=ctx.env,
                     stored_store=ctx.store,
                 )
-            return ContinueError(
-                error=RuntimeError("Deadlock: waiting for tasks but no other tasks to run"),
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                RuntimeError("Deadlock: waiting for tasks but no other tasks to run"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
@@ -688,69 +585,43 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 task_store[key] = val
         task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
-            return ContinueError(
-                error=resume_error,
-                env=ctx.env,
-                store=task_store,
-                k=next_k,
-            )
+            return ResumeK(k=next_k, error=resume_error, store=task_store)
         return ResumeK(k=next_k, value=resume_value, store=task_store)
 
     if isinstance(effect, RaceEffect):
         futures = effect.futures
         if not futures:
-            return ContinueError(
-                error=ValueError("Race requires at least one future"),
-                env=ctx.env,
-                store=ctx.store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                ValueError("Race requires at least one future"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         for future in futures:
             if not isinstance(future, Task):
-                return ContinueError(
-                    error=TypeError(f"Race requires Tasks, got {type(future).__name__}"),
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
+                return CESKState.with_error(
+                    TypeError(f"Race requires Tasks, got {type(future).__name__}"),
+                    ctx.env, ctx.store, ctx.k,
                 )
 
             handle_id = future._handle
             task_result = yield _SchedulerGetTaskResult(handle_id=handle_id)
 
             if task_result is None:
-                return ContinueError(
-                    error=ValueError(f"Invalid task handle: {handle_id}"),
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
+                return CESKState.with_error(
+                    ValueError(f"Invalid task handle: {handle_id}"),
+                    ctx.env, ctx.store, ctx.k,
                 )
 
             is_complete, is_cancelled, value, error = task_result
 
             if is_complete:
                 if is_cancelled:
-                    return ContinueError(
-                        error=TaskCancelledError(),
-                        env=ctx.env,
-                        store=ctx.store,
-                        k=ctx.delimited_k,
-                    )
+                    return CESKState.with_error(TaskCancelledError(), ctx.env, ctx.store, ctx.k)
                 if error is not None:
-                    return ContinueError(
-                        error=error,
-                        env=ctx.env,
-                        store=ctx.store,
-                        k=ctx.delimited_k,
-                    )
+                    return CESKState.with_error(error, ctx.env, ctx.store, ctx.k)
                 rest = tuple(f for f in futures if f is not future)
                 race_result = RaceResult(first=future, value=value, rest=rest)
-                return ContinueValue(
-                    value=race_result,
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
+                return CESKState.with_value(race_result, ctx.env, ctx.store, ctx.k)
 
         from doeff.cesk.frames import RaceWaiterFrame
 
@@ -786,11 +657,9 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                     stored_env=ctx.env,
                     stored_store=ctx.store,
                 )
-            return ContinueError(
-                error=RuntimeError("Deadlock: racing but no other tasks to run"),
-                env=ctx.env,
-                store=ctx.store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                RuntimeError("Deadlock: racing but no other tasks to run"),
+                ctx.env, ctx.store, ctx.k,
             )
 
         next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
@@ -800,12 +669,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 task_store[key] = val
         task_store[CURRENT_TASK_KEY] = next_task_id
         if resume_error is not None:
-            return ContinueError(
-                error=resume_error,
-                env=ctx.env,
-                store=task_store,
-                k=next_k,
-            )
+            return ResumeK(k=next_k, error=resume_error, store=task_store)
         return ResumeK(k=next_k, value=resume_value, store=task_store)
 
     if isinstance(effect, _SchedulerSuspendForIO):
@@ -847,12 +711,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             task_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
 
             if resume_error is not None:
-                return ContinueError(
-                    error=resume_error,
-                    env=ctx.env,
-                    store=task_store,
-                    k=next_k,
-                )
+                return CESKState.with_error(resume_error, ctx.env, task_store, next_k)
             return ResumeK(k=next_k, value=resume_value, store=task_store)
 
         has_escape = any("escape" in info for info in new_store.get(PENDING_IO_KEY, {}).values())
@@ -868,13 +727,10 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             stored_store=new_store,
         )
 
+    # Forward unhandled effects to outer handler
     result = yield effect
-    return ContinueValue(
-        value=result,
-        env=ctx.env,
-        store=None,
-        k=ctx.delimited_k,
-    )
+    # Return plain value - HandlerResultFrame constructs CESKState with current store
+    return result
 
 
 # Backwards compatibility alias (deprecated)

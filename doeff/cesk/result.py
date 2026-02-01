@@ -19,6 +19,21 @@ T = TypeVar("T")
 
 
 @dataclass(frozen=True)
+class DirectState:
+    """Marker wrapper for CESKState that should pass through unchanged.
+
+    When a handler returns CESKState wrapped in DirectState, HandlerResultFrame
+    passes it through without modifying K. This is used for:
+    - Async escape resumption (escape's K is already complete)
+    - Any case where the handler constructs the exact machine state to jump to
+
+    For regular handler returns that need K reconstruction, return CESKState directly.
+    """
+
+    state: "CESKState"
+
+
+@dataclass(frozen=True)
 class Done:
     """Terminal: computation completed successfully.
 
