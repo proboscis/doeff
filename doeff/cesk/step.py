@@ -67,7 +67,7 @@ def _find_handler_in_k(
     to delimited_k so they're preserved for when the outer handler resumes.
     """
     import os
-    debug = os.environ.get("DOEFF_DEBUG")
+    debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
     if debug:
         print(f"[_find_handler_in_k] k len={len(k)}, start_depth={start_depth}, k_types={[type(f).__name__ for f in k[:10]]}")
     handlers_to_skip = start_depth
@@ -223,7 +223,7 @@ def step(state: CESKState) -> StepResult:
     
     if isinstance(C, Value) and not K:
         import os
-        debug = os.environ.get("DOEFF_DEBUG")
+        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         if debug:
             print(f"[step] Done: C.v type = {type(C.v).__name__}, value = {str(C.v)[:100]}")
         return Done(C.v, S)
@@ -235,7 +235,7 @@ def step(state: CESKState) -> StepResult:
         effect = C.effect
         
         import os
-        debug = os.environ.get("DOEFF_DEBUG")
+        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         if debug:
             print(f"[step] EffectControl: {type(effect).__name__}")
         
@@ -387,7 +387,13 @@ def step(state: CESKState) -> StepResult:
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
+                    K=[ReturnFrame(
+                        frame.generator, frame.saved_env,
+                        program_call=frame.program_call,
+                        kleisli_function_name=frame.kleisli_function_name,
+                        kleisli_filename=frame.kleisli_filename,
+                        kleisli_lineno=frame.kleisli_lineno,
+                    )] + K_rest,
                 )
             except StopIteration as e:
                 return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
@@ -413,7 +419,7 @@ def step(state: CESKState) -> StepResult:
         if isinstance(frame, HandlerResultFrame):
             result = frame.on_value(C.v, E, S, K_rest)
             import os
-            debug = os.environ.get("DOEFF_DEBUG")
+            debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
             if debug:
                 print(f"[step] HandlerResultFrame.on_value returned: {type(result).__name__}, value_type={type(C.v).__name__}")
             if isinstance(result, ContinueValue):
@@ -497,18 +503,17 @@ def step(state: CESKState) -> StepResult:
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(frame.generator, frame.saved_env, program_call=frame.program_call)] + K_rest,
+                    K=[ReturnFrame(
+                        frame.generator, frame.saved_env,
+                        program_call=frame.program_call,
+                        kleisli_function_name=frame.kleisli_function_name,
+                        kleisli_filename=frame.kleisli_filename,
+                        kleisli_lineno=frame.kleisli_lineno,
+                    )] + K_rest,
                 )
             except StopIteration as e:
                 return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest)
             except Exception as propagated:
-                if propagated is C.ex:
-                    return CESKState(
-                        C=Error(propagated, captured_traceback=C.captured_traceback),
-                        E=frame.saved_env,
-                        S=S,
-                        K=K_rest,
-                    )
                 captured = capture_traceback_safe(K_rest, propagated, pre_captured=pre_captured)
                 return CESKState(
                     C=Error(propagated, captured_traceback=captured),

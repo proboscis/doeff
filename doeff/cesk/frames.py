@@ -653,56 +653,6 @@ class GraphCaptureFrame:
 
 
 @dataclass(frozen=True)
-class KleisliFrame:
-    """Marks entry into a @do function for debugging.
-
-    This frame is pushed when entering a @do generator function and provides
-    tracking of the Kleisli (monadic) call stack for debugging purposes.
-
-    Attributes:
-        function_name: Name of the @do function being executed
-        filename: Source file where the function is defined
-        lineno: Line number where the function is defined
-        created_at: Timestamp when frame was created (for profiling)
-    """
-
-    function_name: str
-    filename: str
-    lineno: int
-    created_at: float
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> FrameResult:
-        """Values pass through unchanged - KleisliFrame is purely for tracking."""
-        return ContinueValue(
-            value=value,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> FrameResult:
-        """Errors pass through unchanged - KleisliFrame is purely for tracking."""
-        return ContinueError(
-            error=error,
-            env=env,
-            store=store,
-            k=k_rest,
-        )
-
-
-@dataclass(frozen=True)
 class AskLazyFrame:
     """Cache the result of lazy Ask evaluation for a Program value.
 
@@ -801,7 +751,6 @@ __all__ = [
     "GraphCaptureFrame",
     "InterceptBypassFrame",
     "InterceptFrame",
-    "KleisliFrame",
     "Kontinuation",
     "ListenFrame",
     "LocalFrame",
