@@ -112,7 +112,7 @@ class AsyncRuntime(BaseRuntime):
             
             if isinstance(result, Done):
                 import os
-                debug = os.environ.get("DOEFF_DEBUG")
+                debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
                 if debug:
                     print(f"[runtime] Done! value={result.value}")
                 return (result.value, state)
@@ -127,7 +127,7 @@ class AsyncRuntime(BaseRuntime):
             if isinstance(result, Suspended):
                 from doeff.effects.future import AllTasksSuspendedEffect
                 import os
-                debug = os.environ.get("DOEFF_DEBUG")
+                debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
                 if debug:
                     print(f"[runtime] Suspended, effect type: {type(result.effect).__name__}")
                 
@@ -147,7 +147,7 @@ class AsyncRuntime(BaseRuntime):
                     
                     tasks_only = list(pending_async.values())
                     import os
-                    debug = os.environ.get("DOEFF_DEBUG")
+                    debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
                     if debug:
                         print(f"[runtime] asyncio.wait with {len(tasks_only)} tasks, pending_async={list(pending_async.keys())}")
                     done, _ = await asyncio.wait(tasks_only, return_when=asyncio.FIRST_COMPLETED)
@@ -169,7 +169,7 @@ class AsyncRuntime(BaseRuntime):
                             task_k = task_info["k"]
                             task_store_snapshot = task_info.get("store_snapshot", {})
                             import os
-                            debug = os.environ.get("DOEFF_DEBUG")
+                            debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
                             if debug:
                                 print(f"[runtime] Resuming task {task_id} with k_len={len(task_k)}, k_types={[type(f).__name__ for f in task_k[:10]]}")
                             

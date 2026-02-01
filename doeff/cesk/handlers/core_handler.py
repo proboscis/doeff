@@ -28,6 +28,7 @@ from doeff.effects.cache import (
     CachePutEffect,
 )
 from doeff.effects.callstack import ProgramCallFrameEffect, ProgramCallStackEffect
+from doeff.effects.debug import GetDebugContextEffect
 from doeff.effects.graph import (
     GraphAnnotateEffect,
     GraphCaptureEffect,
@@ -428,6 +429,18 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         
         return ContinueValue(
             value=frames[depth],
+            env=ctx.env,
+            store=store,
+            k=ctx.delimited_k,
+        )
+    
+    if isinstance(effect, GetDebugContextEffect):
+        from doeff.cesk.debug import get_debug_context
+        
+        full_k = ctx.delimited_k + ctx.outer_k
+        debug_ctx = get_debug_context(full_k, current_effect=type(effect).__name__)
+        return ContinueValue(
+            value=debug_ctx,
             env=ctx.env,
             store=store,
             k=ctx.delimited_k,
