@@ -11,6 +11,59 @@ These are fundamentally different concepts that should not be conflated.
 
 ---
 
+## Motivation: Why Does `Suspended` (to be renamed `PythonAsyncSyntaxEscape`) Exist?
+
+At first glance, having a `Suspended` type in CESK step results looks like a code smell. Why does a pure effect interpreter need a special escape hatch?
+
+**The answer: Python's `async def` syntax.**
+
+This is NOT a design flaw. It's a necessary accommodation for Python's syntax-level async/await construct.
+
+### Key Insight
+
+```
+Almost all monads can be handlers:
+  State, Reader, Writer, Error, IO, Future, List, ...
+  → All handled INSIDE doeff. No escaping needed.
+
+Only one case requires escaping:
+  User wants to integrate with THEIR asyncio event loop.
+  → Python's `await` is SYNTAX. Cannot be hidden.
+  → Must expose async interface. Must yield control.
+```
+
+### The Python Syntax Problem
+
+```python
+# This is SYNTAX, not a function call:
+result = await some_coroutine()
+         ↑
+         Cannot be abstracted away.
+         Cannot be hidden inside a sync function.
+         Infects all callers with async.
+
+# asyncio is COOPERATIVE:
+# - Must yield control to get results
+# - Cannot busy-wait (blocks event loop)
+# - Cannot nest run_until_complete (loop already running)
+```
+
+### Conclusion
+
+`Suspended` (to be renamed `PythonAsyncSyntaxEscape`) exists **specifically for Python's async/await integration**. It is:
+
+- **NOT** a general monad escape hatch
+- **NOT** needed for State, Reader, Writer, Error, IO, etc.
+- **NOT** a design flaw
+
+It is:
+
+- **Specifically** for users who want `AsyncRunner` (opt-in loop integration)
+- **A workaround** for Python's syntax-level async/await
+- **Avoidable** by using `SyncRunner` (thread pool hides async)
+
+---
+
 ## Architecture
 
 ```
@@ -42,14 +95,15 @@ These are fundamentally different concepts that should not be conflated.
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
                                │
-                               │ EscapedEffect (currently: Suspended)
+                               │ PythonAsyncSyntaxEscape
+                               │ (only for async loop integration)
                                ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                       External Runtime                           │
 │                                                                  │
-│  User's execution context: asyncio, ray, dask, threads, etc.    │
+│  AsyncRunner: awaits in user's event loop                       │
+│  SyncRunner: runs in thread pool (hides async from user)        │
 │                                                                  │
-│  Runtime interprets the escaped effect however it wants.         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -90,20 +144,39 @@ def my_program():
 
 This decision is **outside doeff's control**. The effect escapes.
 
-### 3. EscapedEffect (Currently Named: Suspended)
+### 3. PythonAsyncSyntaxEscape (Currently Named: Suspended)
 
-When an effect escapes, `step()` returns an `EscapedEffect`:
+When an effect escapes for async integration, `step()` returns `PythonAsyncSyntaxEscape`:
 
 ```python
 @dataclass(frozen=True)
-class EscapedEffect:  # currently named: Suspended
-    payload: Any                                    # what to run externally
+class PythonAsyncSyntaxEscape:  # currently named: Suspended
+    """
+    Escape hatch for Python's async/await SYNTAX.
+    
+    This type exists because:
+    - Python's `await` is SYNTAX, not a function call
+    - Cannot be hidden inside a sync function
+    - Cooperative scheduling requires yielding control
+    
+    NOT a general monad escape. Specifically for:
+    - User chose AsyncRunner (opt-in loop integration)
+    - Effect contains an awaitable that must run in user's event loop
+    
+    Could theoretically be named FreeBind (it IS the Bind case of
+    Free monad), but that suggests generality. This is specifically
+    for Python's async/await syntax limitation.
+    
+    If user uses SyncRunner, this escapes to thread pool instead
+    of user's loop, hiding all async from the user.
+    """
+    awaitable: Any                                  # coroutine to await
     resume: Callable[[Any, Store], CESKState]       # continuation
     resume_error: Callable[[BaseException], CESKState]
     store: Store | None = None
 ```
 
-This is the **Free monad** for CESK:
+From a theoretical perspective, this is the **Free monad** Bind case:
 
 ```
 step : CESKState → Free[ExternalOp, StepResult]
@@ -117,32 +190,33 @@ The runtime is the **interpreter** for this Free monad.
 
 ---
 
-## SuspendOn vs EscapedEffect (Suspended)
+## TaskWaitingForCallback vs PythonAsyncSyntaxEscape
 
 These are **completely different** concepts that should not be conflated.
 
-### SuspendOn: Handler-Managed Async
+### TaskWaitingForCallback: Handler-Internal Scheduling
 
-Purpose: Let handlers manage their own executors (ray, dask, threads).
+Purpose: Scheduler handler tracks tasks waiting for callbacks (handler-internal, invisible to CESK).
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  SuspendOn Flow                                                  │
+│  TaskWaitingForCallback Flow (all inside scheduler handler)      │
 │                                                                  │
 │  1. Handler receives effect (e.g., RayRemoteEffect)              │
 │  2. Handler submits work to its executor (ray.remote())          │
-│  3. Handler creates a Future                                     │
+│  3. Handler creates a Future, registers callback                 │
 │  4. Handler returns Future to user                               │
 │  5. User does: yield Wait(future)                                │
-│  6. Wait effect is handled by scheduler_handler                  │
-│  7. Future resolves → program continues                          │
+│  6. Scheduler handler creates TaskWaitingForCallback             │
+│  7. Scheduler switches to next task (returns CESKState)          │
+│  8. Callback fires → scheduler wakes task                        │
 │                                                                  │
-│  Everything stays INSIDE doeff.                                  │
-│  Handler owns the executor. Future/Wait are normal effects.      │
+│  Everything stays INSIDE scheduler handler.                      │
+│  CESK only sees CESKState → CESKState → Done                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### EscapedEffect (Suspended): Effect Leaves doeff
+### PythonAsyncSyntaxEscape: Effect Leaves doeff for Async
 
 Purpose: Signal that an effect cannot be handled internally.
 
@@ -164,233 +238,1027 @@ Purpose: Signal that an effect cannot be handled internally.
 
 ### Comparison
 
-| Aspect | SuspendOn | EscapedEffect (Suspended) |
-|--------|-----------|---------------------------|
-| Purpose | Handler-managed executor | Effect escapes doeff |
-| Who owns execution | Handler | External runtime |
+| Aspect | TaskWaitingForCallback | PythonAsyncSyntaxEscape |
+|--------|------------------------|-------------------------|
+| Level | Handler-internal | CESK result |
+| Visible to CESK? | No | Yes |
+| Purpose | Track suspended tasks | Escape for Python async |
+| Who manages | Scheduler handler | Runner |
 | Stays inside doeff? | Yes | No |
-| Uses Future/Wait? | Yes | No |
-| Is Free monad? | No | Yes |
+| Python async? | No | **Yes** |
 
 ---
 
-## Current Problem: _make_suspended_from_suspend_on
+## Scheduler Handler: Internal Task Management
 
-The function `_make_suspended_from_suspend_on` in `step.py` conflates these concepts:
+### Key Insight: Scheduling is Handler-Internal
 
-```python
-# step.py (PROBLEMATIC)
-if isinstance(result, SuspendOn):
-    return _make_suspended_from_suspend_on(result)  # converts to Suspended
+The CESK machine should be **simple** - it just steps. All scheduling complexity belongs in the **scheduler handler**.
+
+```
+CESK Machine (simple):
+  step(state) → Done | Failed | CESKState | PythonAsyncSyntaxEscape
+  
+  No knowledge of:
+    - Task queues
+    - Suspended tasks  
+    - Callbacks
+    - External executors
+
+Scheduler Handler (owns scheduling):
+  - Manages ready queue, waiting set
+  - Handles Spawn, Wait, Race, Gather
+  - Registers callbacks for external executors
+  - Switches between tasks
+  - Returns CESKState for next task
 ```
 
-This is wrong because:
+### TaskWaitingForCallback (Handler-Internal, NOT CESK)
 
-1. **SuspendOn** means "handler is managing async internally"
-2. **Suspended** means "effect escapes doeff"
-3. Converting one to the other conflates their semantics
+When a task needs to wait for an external callback, the **scheduler handler** tracks this internally:
+
+```python
+@dataclass
+class TaskWaitingForCallback:
+    """
+    HANDLER-INTERNAL: Scheduler tracks tasks waiting for callbacks.
+    
+    NOT a CESK concept. NOT returned by step().
+    Only exists inside scheduler handler's internal state.
+    
+    Renamed from SuspendOn to make clear:
+    - Task: it's about a task, not CESK state
+    - Waiting: suspended, not blocking
+    - ForCallback: external executor will signal completion
+    """
+    task_id: TaskId
+    callback_id: CallbackId
+    continuation: Kontinuation
+    env: Environment
+    store: Store
+```
+
+### Scheduler Handler Flow
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Scheduler Handler (internal state)                          │
+│                                                              │
+│  ready_queue: [TaskA, TaskB, TaskC]                          │
+│  waiting: {                                                  │
+│      TaskD: TaskWaitingForCallback(..., callback_id=123),    │
+│      TaskE: TaskWaitingForCallback(..., callback_id=456),    │
+│  }                                                           │
+│  callbacks: {                                                │
+│      123: (ray_future, [TaskD]),                             │
+│      456: (dask_future, [TaskE]),                            │
+│  }                                                           │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Handler Receives Wait Effect
+
+```python
+# Inside scheduler handler:
+
+def handle_wait(self, effect: Wait, ctx: HandlerContext):
+    future = effect.future
+    
+    if future.is_done():
+        # Already complete - return value immediately
+        return ContinueValue(future.result)
+    
+    # Not done - suspend this task, switch to next
+    self.waiting[ctx.task_id] = TaskWaitingForCallback(
+        task_id=ctx.task_id,
+        callback_id=future.callback_id,
+        continuation=ctx.k,
+        env=ctx.env,
+        store=ctx.store,
+    )
+    
+    # Register to wake when future completes
+    self.callbacks[future.callback_id].append(ctx.task_id)
+    
+    # Switch to next ready task
+    next_task = self.ready_queue.pop()
+    return ContinueWithTask(next_task)  # Returns CESKState
+```
+
+### Callback Fires → Wake Task
+
+```python
+def on_callback(self, callback_id: CallbackId, result: Any):
+    # Find waiting tasks
+    for task_id in self.callbacks[callback_id]:
+        waiting = self.waiting.pop(task_id)
+        
+        # Move back to ready queue with result
+        self.ready_queue.append(ResumeTask(
+            task_id=task_id,
+            value=result,
+            continuation=waiting.continuation,
+            env=waiting.env,
+            store=waiting.store,
+        ))
+```
+
+### CESK Stays Simple
+
+```
+CESK step() only returns:
+  - Done(value)                   → finished
+  - Failed(error)                 → error
+  - CESKState                     → keep stepping (scheduler provides next task)
+  - PythonAsyncSyntaxEscape       → escape for Python async (ONLY special case)
+
+NO scheduling concepts leak to CESK level.
+TaskWaitingForCallback is INVISIBLE to CESK.
+```
+
+### TaskWaitingForCallback vs PythonAsyncSyntaxEscape
+
+| Aspect | TaskWaitingForCallback | PythonAsyncSyntaxEscape |
+|--------|------------------------|-------------------------|
+| Level | Handler-internal | CESK result |
+| Visible to CESK? | No | Yes |
+| Purpose | Track suspended tasks | Escape for Python async |
+| Who manages | Scheduler handler | Runner |
+| Completion signal | Callback | await returns |
+| Blocking? | No - other tasks continue | N/A - escapes doeff |
+
+---
+
+## Fundamental Primitives: Future/Wait/Race/Gather
+
+`TaskWaitingForCallback` enables these fundamental scheduling primitives:
+
+### The Primitives
+
+```python
+Future[T]   # Handle to a deferred computation
+Wait(f)     # Suspend current task until f resolves, return value
+Race(fs)    # Suspend until FIRST of fs resolves, return (index, value)
+Gather(fs)  # Suspend until ALL of fs resolve, return [values]
+```
+
+### Implementation (Handler-Internal)
+
+```
+Spawn(task) → Future[T]:
+  1. Scheduler creates new task, adds to ready_queue
+  2. Returns Future (just a TaskId handle)
+  3. Current task continues immediately
+  4. NO TaskWaitingForCallback needed
+
+Wait(future) → T:
+  1. Scheduler checks if future's task is done
+     - If done: return value immediately (ContinueValue)
+     - If not done:
+         a. Create TaskWaitingForCallback for current task
+         b. Store in scheduler's waiting set
+         c. Switch to next task from ready_queue
+         d. Return CESKState for next task
+  2. Other tasks continue stepping (CESK keeps going)
+  3. When future completes, callback wakes waiting task
+  4. Scheduler moves task back to ready_queue
+  5. Task resumes with value
+
+Race([f1, f2, f3]) → (int, T):
+  1. Register TaskWaitingForCallback to wake on ANY completion
+  2. Switch to next task (return CESKState)
+  3. Other tasks continue stepping
+  4. First to complete → callback wakes task
+  5. Resume with (winner_index, value)
+
+Gather([f1, f2, f3]) → [T, T, T]:
+  1. Register TaskWaitingForCallback to wake when ALL complete
+  2. Switch to next task (return CESKState)
+  3. Other tasks continue stepping
+  4. Last to complete → callback wakes task
+  5. Resume with [v1, v2, v3]
+```
+
+### Key Insight: Handler-Internal, CESK Stays Simple
+
+```
+Future/Wait/Race/Gather are HANDLER-INTERNAL.
+
+- Scheduler handler manages task queue
+- TaskWaitingForCallback tracks suspended tasks
+- Scheduler returns CESKState (next task to step)
+- CESK just keeps stepping - no scheduling knowledge
+- NO Python async escape needed
+
+CESK sees: CESKState, CESKState, CESKState, Done
+CESK doesn't know tasks are switching!
+```
+
+### When External Executor is Involved
+
+```
+RaySpawn(fn, args) → Future[T]:
+  1. Handler submits to ray.remote()
+  2. Handler registers callback for ray completion
+  3. Handler creates internal Future
+  4. Returns Future to user
+
+Wait(future) → T:
+  1. Same as before - TaskWaitingForCallback created
+  2. Scheduler switches to next task (returns CESKState)
+  3. Other tasks continue
+  4. Ray completes → callback fires → task wakes
+
+The ray part is HIDDEN inside the handler.
+User just sees Future/Wait.
+CESK just sees CESKState after CESKState.
+```
+
+---
+
+## Problem: `_make_suspended_from_suspend_on` (Current Code)
+
+The current code has a function `_make_suspended_from_suspend_on` that conflates two unrelated concepts:
+
+```python
+# step.py (CURRENT - PROBLEMATIC)
+if isinstance(result, SuspendOn):
+    return _make_suspended_from_suspend_on(result)  # → Suspended (escape)
+```
+
+**This is WRONG.** With the correct architecture:
+
+1. **TaskWaitingForCallback** (replacing `SuspendOn`)
+   - Handler-internal, invisible to CESK
+   - Scheduler manages task queue internally
+   - Returns CESKState (next task), NOT a special CESK result
+   - NO conversion to anything
+
+2. **PythonAsyncSyntaxEscape** (replacing `Suspended`)
+   - Handler returns this DIRECTLY when escape needed
+   - CESK returns it to runner
+   - NO conversion from anything
 
 ### The Fix
 
-These should be separate paths:
-
 ```python
-# Handler-managed async (SuspendOn)
-# Handler creates Future, user Waits, stays inside doeff
-# step() should NOT convert this to Suspended
+# WRONG (current): SuspendOn leaks to CESK, gets converted
+if isinstance(result, SuspendOn):
+    return _make_suspended_from_suspend_on(result)
 
-# Escaped effect
-# Effect cannot be handled, escapes to runtime
-# step() returns EscapedEffect directly (not converted from SuspendOn)
+# CORRECT: Scheduling is handler-internal
+# Scheduler handler manages TaskWaitingForCallback internally
+# Scheduler returns CESKState (next task to step)
+# CESK never sees scheduling concepts
+
+# If handler wants Python async escape:
+if isinstance(result, PythonAsyncSyntaxEscape):
+    return result  # Pass through to runner
+```
+
+### Correct Architecture
+
+```
+Scheduling (handler-internal):
+  → Scheduler uses TaskWaitingForCallback internally
+  → Scheduler switches tasks, returns CESKState
+  → CESK just steps - no scheduling knowledge
+
+Python async escape (CESK-level):
+  → Handler returns PythonAsyncSyntaxEscape DIRECTLY
+  → CESK returns it to runner
+  → Runner awaits (or thread pool)
+
+NO CONVERSION between them. They're unrelated.
 ```
 
 ---
 
-## Proposed Type Changes
+## Terminology
 
-### Current (Confusing)
+### Rename Decision
+
+We considered:
+- `Suspended` → `FreeBind` or `EscapedEffect`
+
+**Decision: Rename to `PythonAsyncSyntaxEscape`.**
+
+`FreeBind` would be theoretically accurate (it IS the Bind case of Free monad), but misleading. It suggests a general escape mechanism when really it's **specifically for Python's async/await syntax**.
+
+`PythonAsyncSyntaxEscape` makes it impossible to misunderstand:
+- `Python` - this is a Python-specific issue
+- `Async` - related to async/await
+- `Syntax` - it's a syntax-level limitation
+- `Escape` - escapes doeff's control
+
+### Types
 
 ```python
-class SuspendOn:       # overloaded meaning
-    awaitable: Any
-    stored_k: ...
-    stored_store: ...
+class TaskWaitingForCallback:
+    """
+    HANDLER-INTERNAL: Scheduler tracks suspended tasks.
+    
+    NOT a CESK concept. NOT visible to step().
+    Only exists inside scheduler handler's internal state.
+    
+    Renamed from SuspendOn to make purpose clear.
+    """
+    task_id: TaskId
+    callback_id: CallbackId
+    continuation: Kontinuation
+    env: Environment
+    store: Store
 
-class Suspended:       # unclear purpose
-    awaitable: Any
-    awaitables: dict
-    resume: Callable
-    resume_error: Callable
-```
-
-### Proposed (Clear)
-
-```python
-# For handler-managed async (stays inside doeff)
-class HandlerYield:
-    """Handler yields control temporarily, will resume via Future/Wait."""
-    future: Future
-    continuation: Continuation
-
-# For escaped effects (leaves doeff)  
-class EscapedEffect:
-    """Effect escapes doeff, runtime must handle."""
-    payload: Any                    # what to run externally
+class PythonAsyncSyntaxEscape:  # currently named: Suspended
+    """
+    Escape hatch for Python's async/await SYNTAX.
+    
+    Returned by step() when user chose AsyncRunner and an effect
+    requires awaiting in the user's event loop.
+    
+    This is NOT a general monad escape. It exists because:
+    - Python's `await` is SYNTAX, not abstractable
+    - Cooperative scheduling requires yielding control
+    - User explicitly opted into loop integration
+    
+    If user uses SyncRunner, awaitables run in thread pool
+    and user never sees async.
+    """
+    awaitable: Any                  # coroutine for user's loop
+    awaitables: dict                # multi-task: {id: awaitable}
     resume: Callable[[Any, Store], CESKState]
     resume_error: Callable[[BaseException], CESKState]
+    store: Store
+```
+
+### The Distinction
+
+| Type | Level | Purpose | Visible to CESK? |
+|------|-------|---------|------------------|
+| `TaskWaitingForCallback` | Handler-internal | Track suspended tasks | No |
+| `PythonAsyncSyntaxEscape` | CESK result | Escape for Python async | Yes |
+
+---
+
+## Runner vs Runtime (Migration in Progress)
+
+### Distinction
+
+| Concept | Handlers | Status |
+|---------|----------|--------|
+| **Runtime** | Hardcoded handlers | Legacy, being phased out |
+| **Runner** | User provides handlers | New abstraction |
+
+```python
+# OLD: Runtime has hardcoded handlers
+runtime = AsyncRuntime()  # handlers built-in
+result = await runtime.run(program)
+
+# NEW: Runner + explicit handlers
+runner = AsyncRunner()
+result = await runner.run(
+    program,
+    handlers=[core_handler, scheduler_handler, PythonAsyncLoopHandler]
+)
+```
+
+### Migration Direction
+
+We are gradually migrating from `Runtime` to `Runner + Handler`:
+- Drop hardcoded handler stacks
+- Make handler composition explicit
+- Runners become thin loops over CESK + escape handling
+
+---
+
+## Runner Difference: Only PythonAsyncSyntaxEscape Handling
+
+**SyncRunner and AsyncRunner are identical except for one thing:**
+How they handle `PythonAsyncSyntaxEscape`.
+
+```python
+class SyncRunner:
+    """
+    Handles PythonAsyncSyntaxEscape via thread pool.
+    User never sees async. Returns plain T.
+    """
+    
+    def run(self, program: Program[T], handlers: list[Handler]) -> T:
+        state = self.init(program, handlers)
+        while True:
+            match self.step(state):
+                case Done(v): return v
+                case Failed(e): raise e
+                case CESKState() as s: state = s
+                case PythonAsyncSyntaxEscape() as escape:
+                    # Thread pool with isolated event loop
+                    result = run_in_thread_with_new_loop(escape.awaitable)
+                    state = escape.resume(result, escape.store)
+
+
+class AsyncRunner:
+    """
+    Handles PythonAsyncSyntaxEscape via user's event loop.
+    User sees async. Returns async T.
+    """
+    
+    async def run(self, program: Program[T], handlers: list[Handler]) -> T:
+        state = self.init(program, handlers)
+        while True:
+            match self.step(state):
+                case Done(v): return v
+                case Failed(e): raise e
+                case CESKState() as s: state = s
+                case PythonAsyncSyntaxEscape() as escape:
+                    # Await in user's loop - THIS is why run() is async
+                    result = await escape.awaitable
+                    state = escape.resume(result, escape.store)
+```
+
+**The ONLY difference is the `PythonAsyncSyntaxEscape` case:**
+- `SyncRunner`: `run_in_thread_with_new_loop()` → sync
+- `AsyncRunner`: `await` → async
+
+Everything else (CESK machine, handlers, step function) is identical.
+Handlers are provided by user, not hardcoded.
+
+---
+
+## Handlers That Produce PythonAsyncSyntaxEscape
+
+Only specific handlers should produce `PythonAsyncSyntaxEscape`. These handlers should have explicit names indicating their purpose.
+
+### Naming Convention
+
+```python
+# BAD: Generic name, unclear purpose
+class async_effects_handler:  # What does this do? Unclear.
+    ...
+
+# GOOD: Explicit name indicating Python async integration
+class PythonAsyncLoopHandler:
+    """
+    Handler for effects that require Python async loop integration.
+    
+    Produces PythonAsyncSyntaxEscape for:
+    - FutureAwaitEffect (await a coroutine)
+    - DelayEffect (asyncio.sleep)
+    - etc.
+    
+Use with AsyncRunner for loop integration.
+Use with SyncRunner for thread pool isolation.
+    """
+    ...
+```
+
+### Effects That Produce Escapes
+
+```python
+# Effects that result in PythonAsyncSyntaxEscape:
+
+class FutureAwaitEffect:
+    """
+    Await a Python coroutine.
+    
+    Handler converts this to PythonAsyncSyntaxEscape.
+Runner then either:
+- awaits in user's loop (AsyncRunner)
+- runs in thread pool (SyncRunner)
+    """
+    awaitable: Coroutine
+
+class DelayEffect:
+    """
+    Sleep for a duration.
+    
+    Handler converts to PythonAsyncSyntaxEscape(asyncio.sleep(seconds)).
+    """
+    seconds: float
+```
+
+### Handler Produces Escape, Runner Handles It
+
+```
+User Program
+    │
+    │ yield Await(coroutine)
+    ▼
+┌─────────────────────────────────────────┐
+│  PythonAsyncLoopHandler                 │
+│                                         │
+│  Receives: Await(coroutine)             │
+│  Returns: PythonAsyncSyntaxEscape       │
+│           (DIRECTLY, no conversion)     │
+│                                         │
+└─────────────────────────────────────────┘
+    │
+    │ step() returns PythonAsyncSyntaxEscape
+    ▼
+┌─────────────────────────────────────────┐
+│  Runner                                 │
+│                                         │
+│  SyncRunner:  thread pool execution     │
+│  AsyncRunner: await in user's loop      │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+### Handler Names (Rename Plan)
+
+| Current Name | Proposed Name | Purpose |
+|--------------|---------------|---------|
+| `async_effects_handler` | `PythonAsyncLoopHandler` | Handles FutureAwait, Delay → produces escapes |
+| `queue_handler` | (keep) | Task queue management |
+| `scheduler_handler` | (keep) | Spawn/Wait scheduling |
+| `core_handler` | (keep) | Get/Put/Ask/Tell/Log |
+
+### User Composes Handler Stack
+
+With the Runner abstraction, users explicitly compose handlers:
+
+```python
+# Minimal: just core effects
+result = runner.run(program, handlers=[core_handler])
+
+# With scheduling
+result = runner.run(program, handlers=[
+    core_handler,
+    scheduler_handler,
+])
+
+# With Python async loop integration
+result = await async_runner.run(program, handlers=[
+    core_handler,
+    scheduler_handler,
+    PythonAsyncLoopHandler,  # ← produces PythonAsyncSyntaxEscape
+])
+```
+
+**Key insight:** `PythonAsyncLoopHandler` is opt-in. If you don't include it, no `PythonAsyncSyntaxEscape` is produced, and `SyncRunner` vs `AsyncRunner` behaves identically.
+
+---
+
+## Summary Table
+
+| Concept | Level | Purpose |
+|---------|-------|---------|
+| Effect | CESK | Normal program operation |
+| Handler | CESK | Catches and processes effects |
+| `TaskWaitingForCallback` | Handler-internal | Scheduler tracks suspended tasks |
+| `PythonAsyncSyntaxEscape` | CESK result | Escape for Python async syntax |
+| Runner | External | Loops over step(), handles escapes |
+
+**Key insights:**
+
+1. `PythonAsyncSyntaxEscape` (currently `Suspended`) exists specifically for Python's `async/await` syntax. It is NOT a general escape mechanism.
+
+2. `SyncRunner` vs `AsyncRunner` differ ONLY in how they handle `PythonAsyncSyntaxEscape`:
+   - `SyncRunner`: thread pool → user sees sync
+   - `AsyncRunner`: await in user's loop → user sees async
+
+3. If no handler produces `PythonAsyncSyntaxEscape`, both runners behave identically.
+
+4. We are migrating from `Runtime` (hardcoded handlers) to `Runner` (user provides handlers).
+
+**On `_make_suspended_from_suspend_on`:** This function should be REMOVED. With the correct architecture:
+- Scheduling is handler-internal (TaskWaitingForCallback, invisible to CESK)
+- Python async escape is returned directly by handler (PythonAsyncSyntaxEscape)
+- No conversion between them needed
+
+---
+
+## Correct Abstraction: Free Monad over ExternalOp
+
+### The Type Signature
+
+```
+step : CESKState → Free[ExternalOp, StepResult]
+
+where:
+  Free[F, A] = Pure A | Bind (F X) (X → Free[F, A])
+  
+run : Free[F, A] → (∀X. F X → M X) → M A
+                    └────────────┘
+                    natural transformation
+                    (interpreter)
+```
+
+### Free Monad Structure
+
+```
+data Free f a where
+  Pure :: a → Free f a
+  Bind :: f x → (x → Free f a) → Free f a
+
+In our case:
+  f = ExternalOp
+  a = StepResult
+
+step : State → Free ExternalOp StepResult
+
+  Pure(Done v)     = computation finished
+  Pure(Failed e)   = computation failed  
+  Pure(State s)    = continue stepping
+  Bind(op, cont)   = need external help, then continue
+```
+
+### Natural Transformation (Interpreter)
+
+```
+interpret : (∀x. F x → M x) → Free F a → M a
+
+The first argument is a natural transformation:
+  - Maps each operation in F to an effect in M
+  - Preserves structure (naturality)
+
+interpret nat (Pure a)       = M.pure(a)
+interpret nat (Bind op cont) = nat(op) >>= (interpret nat . cont)
+```
+
+### Concrete Interpreters
+
+```
+ExternalOp x = operation that produces x externally
+
+Async interpreter:
+  nat : ExternalOp x → Awaitable x
+  nat (AwaitOp aw) = aw
+
+IO interpreter:
+  nat : ExternalOp x → IO x  
+  nat (AwaitOp aw) = runInThread(aw)
+
+Pure interpreter:
+  nat : ExternalOp x → Identity x
+  nat _ = error "no external ops in pure mode"
 ```
 
 ---
 
-## Runtime as Free Monad Interpreter
+## Implementation: Generator as Lazy Free Monad
 
-The runtime interprets `EscapedEffect` (Free monad):
+Python generators provide a lazy representation of the Free monad.
 
-```python
-class AsyncRuntime:
-    """Interpreter: EscapedEffect → asyncio"""
-    
-    async def interpret(self, escaped: EscapedEffect) -> Any:
-        if isawaitable(escaped.payload):
-            return await escaped.payload
-        elif callable(escaped.payload):
-            return await loop.run_in_executor(None, escaped.payload)
-        elif isinstance(escaped.payload, dict):
-            # multi-task: await first completed
-            ...
+### The Correspondence
 
-class SyncRuntime:
-    """Interpreter: EscapedEffect → threads"""
-    
-    def interpret(self, escaped: EscapedEffect) -> Any:
-        if callable(escaped.payload):
-            return escaped.payload()
-        elif isawaitable(escaped.payload):
-            return run_in_thread_with_loop(escaped.payload)
+```
+@do
+def my_program():
+    x = yield Get("key")     # effect 1
+    y = yield Await(coro)    # effect 2 (escapes)
+    z = yield Put("k", x+y)  # effect 3
+    return z
+
+This IS the Free monad:
+
+Bind(Get("key"), λx →
+  Bind(Await(coro), λy →
+    Bind(Put("k", x+y), λz →
+      Pure(z))))
+
+But built LAZILY via generator protocol.
 ```
 
-Different runtimes = different interpreters for the same Free monad.
+### Generator ↔ Free Monad
+
+```
+Free Monad (eager)          Generator (lazy)
+──────────────────          ────────────────
+
+Pure(a)                     return a (StopIteration)
+
+Bind(op, cont)              yield op
+                            cont = gen.send(result)
+
+The generator IS the continuation.
+gen.send(x) resumes with x, produces next Bind or Pure.
+```
+
+### Step Returns One Level of Free
+
+```
+step(state) → Free[ExternalOp, StepResult]
+
+We don't build the whole tree.
+We return ONE level:
+
+  Pure(Done v)        → done
+  Pure(Failed e)      → failed
+  Pure(CESKState s)   → continue stepping
+  Bind(op, cont)      → need external, cont resumes generator
+
+Where cont : X → step(resumed_state)
+
+This is FREE MONAD in CPS / one-step-at-a-time form.
+```
+
+### Data Structure
+
+```python
+@dataclass
+class StepPure:
+    """Free.Pure - no external op needed for this step."""
+    result: Done | Failed | CESKState
+
+@dataclass  
+class StepBind(Generic[X]):
+    """Free.Bind - external op needed, then continue."""
+    op: ExternalOp[X]
+    cont: Generator  # suspended generator = continuation
+
+StepFree = StepPure | StepBind
+```
+
+### The Hack: Generator as Linear Continuation
+
+```
+In pure Free monad:
+  Bind(op, cont)  where cont : X → Free[F, A]
+
+With generators:
+  StepBind(op, gen)  where gen.send(x) → next StepFree
+
+The generator IS the continuation, but:
+  - It's mutable (can only be resumed once)
+  - It's lazy (next step computed on send)
+  - It carries the whole remaining computation
+
+This is the "hack" - using generator as linear continuation.
+```
+
+### Interpreter Loop
+
+```python
+def interpret(nat: Callable[[ExternalOp], M], state: CESKState) -> M[Result]:
+    """
+    nat : ExternalOp x → M x  (natural transformation)
+    
+    Loop over step(), interpreting escaped ops via nat.
+    """
+    while True:
+        free = step(state)  # → StepPure | StepBind
+        
+        match free:
+            case StepPure(Done(v)):
+                return M.pure(success(v))
+            
+            case StepPure(Failed(e)):
+                return M.pure(failure(e))
+            
+            case StepPure(CESKState() as s):
+                state = s
+                continue
+            
+            case StepBind(op, cont):
+                x = nat(op)        # M[X] - interpret external op
+                state = cont.send(x)  # resume generator
+                continue
+```
 
 ---
 
 ## Summary
 
-| Concept | Inside/Outside doeff | Purpose |
-|---------|---------------------|---------|
-| Effect | Inside | Normal program operation |
-| Handler | Inside | Catches and processes effects |
-| SuspendOn | Inside | Handler-managed async (Future/Wait) |
-| EscapedEffect | Outside | Effect leaves doeff for runtime |
-| Runtime | Outside | Interpreter for escaped effects |
+```
+Correct structure:
+  step : State → Free[ExternalOp, StepResult]
 
-The key insight: **doeff is pure**. When doeff cannot handle something, it yields control via `EscapedEffect`. The runtime (outside doeff) decides how to execute it.
+Implementation:
+  Free is represented lazily via generators
+  Bind.cont is a suspended generator, not a function
+  gen.send(x) = apply continuation
 
-`_make_suspended_from_suspend_on` violates this by conflating internal async (SuspendOn) with escaped effects (Suspended). They should be cleanly separated.
+The data structure (StepPure | StepBind) is correct.
+The continuation representation (generator) is the hack.
+
+doeff produces: Free[ExternalOp, Result]  (pure data)
+Runtime is:     interpreter for Free      (nat : F ~> M)
+```
+
+This makes doeff pure. The natural transformation (interpreter) is the only place where external effects are executed.
 
 ---
 
-## Future Direction: Parameterized CESK[M]
+## Why CESK Doesn't Need Monad Parameterization
 
-To make the effect boundary explicit in types, CESK should be parameterized by a monad `M`:
+### The Question
+
+Should CESK be parameterized by a monad M?
 
 ```
 CESK[M] where M : Monad
 
 step : CESKState → M[StepResult]
-run  : Program[T] → M[RunResult[T]]
+run  : Program[T] → M[T]
 ```
 
-### Monad Options
+### The Answer: No
 
-```python
-# M = Pure (Identity monad)
-# No escaped effects allowed. Pure computation only.
-step : CESKState → StepResult  # M[A] ≈ A
-run  : Program[T] → RunResult[T]
+Almost all monads can be implemented as **handlers** inside doeff:
 
-# M = Awaitable (Async monad)  
-# Escaped effects are awaitables for asyncio.
-step : CESKState → Awaitable[StepResult]
-run  : Program[T] → Awaitable[RunResult[T]]
+| Monad | doeff Handler | Escapes? |
+|-------|---------------|----------|
+| State | Get, Put, Modify | No |
+| Reader | Ask, Local | No |
+| Writer | Tell, Log, Listen | No |
+| Error | Safe, try/catch | No |
+| IO | Handler runs IO | No |
+| Future | Spawn, Wait (task queue) | No |
+| List | Nondeterminism handler | No |
+| ... | ... | No |
 
-# M = IO (Sync blocking monad)
-# Escaped effects are thunks that may block.
-step : CESKState → IO[StepResult]  # IO[A] ≈ () → A
-run  : Program[T] → IO[RunResult[T]]
+**All of these stay inside doeff.** Handlers process effects and return values. No escaping needed.
+
+### The Exception: Async
+
+Async is special, but **not because of semantics**:
+
+```
+Async is special because of PYTHON SYNTAX.
+
+    result = await some_coroutine()
+             ↑
+             This `await` keyword is SYNTAX-LEVEL.
+             You cannot hide it inside a function and return a plain value.
+             The async "infects" everything above it.
 ```
 
-### Type Signature
+The problem is not that async is semantically different from other monads. The problem is that Python's `async`/`await` is a syntax-level construct that cannot be abstracted over.
+
+### The Cooperative Scheduling Problem
+
+```
+asyncio is COOPERATIVE multitasking:
+
+1. Schedule awaitable
+2. YIELD control (await)  ← MANDATORY
+3. Event loop runs awaitable
+4. Event loop resumes us with result
+
+Step 2 cannot be skipped. No yield = no progress.
+
+You cannot:
+  - Busy wait (blocks loop, awaitable never runs)
+  - Nest run_until_complete (loop already running)
+  - Get result without yielding
+```
+
+### The Solution: Two Runners
+
+Since async is a **syntax issue**, not a semantic one, we don't parameterize CESK. Instead, we provide two runners:
 
 ```python
-from typing import Generic, TypeVar
-
-M = TypeVar("M")  # Monad type parameter
-T = TypeVar("T")  # Result type
-
-class CESKRunner(Generic[M]):
-    """CESK runner parameterized by effect monad M."""
+class SyncRunner:
+    """Everything handled internally. No async infection."""
     
-    def step(self, state: CESKState) -> M[StepResult]:
-        ...
+    def run(self, program: Program[T], handlers: list[Handler]) -> T:
+        """
+        All effects handled by handlers.
+        PythonAsyncSyntaxEscape? Run in thread pool.
+        User gets plain T. No async.
+        """
+        state = self.init(program, handlers)
+        while True:
+            match self.step(state):
+                case Done(v): return v
+                case Failed(e): raise e
+                case CESKState() as s: state = s
+                case PythonAsyncSyntaxEscape() as escape:
+                    # Run awaitable in thread with its own loop
+                    result = run_in_thread_with_new_loop(escape.awaitable)
+                    state = escape.resume(result, escape.store)
+
+
+class AsyncRunner:
+    """Opt-in: integrate with user's event loop."""
     
-    def run(self, program: Program[T]) -> M[RunResult[T]]:
-        ...
-
-# Concrete instances
-class PureRunner(CESKRunner[Identity]):
-    """No escaped effects. Errors on Await/Delay."""
-    pass
-
-class AsyncRunner(CESKRunner[Awaitable]):
-    """Escaped effects are awaitables."""
-    pass
-
-class SyncRunner(CESKRunner[IO]):
-    """Escaped effects run in threads."""
-    pass
+    async def run(self, program: Program[T], handlers: list[Handler]) -> T:
+        """
+        User explicitly wants their coroutines in THEIR loop.
+        Fine. Then they get async back.
+        """
+        state = self.init(program, handlers)
+        while True:
+            match self.step(state):
+                case Done(v): return v
+                case Failed(e): raise e
+                case CESKState() as s: state = s
+                case PythonAsyncSyntaxEscape() as escape:
+                    # Await in user's loop
+                    result = await escape.awaitable
+                    state = escape.resume(result, escape.store)
 ```
 
-### Result Type
+### The Key Insight
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│  MOST USERS: SyncRunner                                     │
+│                                                             │
+│  - Use handlers for everything                              │
+│  - PythonAsyncSyntaxEscape? Thread pool handles it          │
+│  - run(program, handlers) → T                               │
+│  - No async infection. Pure interface.                      │
+│                                                             │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  OPT-IN: AsyncRunner                                        │
+│                                                             │
+│  - User says: "I want my awaits in MY event loop"           │
+│  - async run(program, handlers) → T                         │
+│  - Async infection is USER'S CHOICE, not our imposition     │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Why Not CESK[M]?
+
+1. **Handlers cover almost everything**: State, Reader, Writer, Error, IO, Future, etc. are all handlers.
+
+2. **Async is syntax, not semantics**: The only reason async is different is Python's `await` keyword. This is not a monad-theoretic distinction.
+
+3. **Two runners is cleaner**: Rather than parameterizing by M, we provide:
+   - `SyncRunner`: hides all complexity, returns `T`
+   - `AsyncRunner`: exposes async for users who want loop integration
+
+4. **User's choice is explicit**: If you use `AsyncRunner`, you're explicitly opting into async. It's not forced on you.
+
+### Generator as Monad Substitute
+
+The interpreter loop cannot use a true monad because Python generators are **linear** (single-use):
+
+```
+Haskell monad:
+  (>>=) : M A → (A → M B) → M B
+  
+  The continuation (A → M B) is a pure function.
+  Can be called multiple times.
+
+Python generator:
+  gen.send(x) → next value
+  
+  The generator IS the continuation.
+  But it's mutable, single-use.
+  Can only be resumed once.
+```
+
+So instead of returning `M[Result]`, we return a generator that the runtime loops over:
 
 ```python
-@dataclass
-class RunResult(Generic[T]):
-    """Result of running a program."""
-    value: T
-    state: dict[str, Any]
-    log: list[Any]
-    # ... other metadata
-
-# With monad parameter explicit:
-# run() returns M[RunResult[T]]
-# 
-# AsyncRunner.run(prog) → Awaitable[RunResult[T]]  (use: await runner.run(prog))
-# SyncRunner.run(prog)  → IO[RunResult[T]]         (use: runner.run(prog)())
-# PureRunner.run(prog)  → RunResult[T]             (use: runner.run(prog))
+def run(program) -> Generator[ExternalOp, Any, Result]:
+    """
+    Yields: ExternalOp (requests external handling)
+    Receives: result from runtime
+    Returns: final Result
+    """
+    state = init(program)
+    while True:
+        match step(state):
+            case Done(v): return Ok(v)
+            case Failed(e): return Err(e)
+            case CESKState() as s: state = s
+            case StepBind(op, resume):
+                value = yield op  # pure yield, no await
+                state = resume(value)
 ```
 
-### Benefits
+The runtime then loops over this generator:
 
-1. **Type-level clarity**: `M` makes execution context explicit
-2. **No runtime surprises**: Can't accidentally use AsyncRunner in sync context
-3. **Principled design**: CESK is pure, M captures external effects
-4. **Extensibility**: New runners just instantiate with new M (trio, curio, ray, etc.)
+```python
+# Sync: blocks on each op
+def run_sync(gen):
+    result = None
+    while True:
+        try:
+            op = gen.send(result)
+            result = run_in_thread(op)  # blocking
+        except StopIteration as e:
+            return e.value
 
-### Migration Path
+# Async: awaits in user's loop
+async def run_async(gen):
+    result = None
+    while True:
+        try:
+            op = gen.send(result)
+            result = await op.awaitable  # async
+        except StopIteration as e:
+            return e.value
+```
+
+### Summary
 
 ```
-Current:
-  AsyncRuntime.run(prog) → Awaitable[RuntimeResult[T]]
-  SyncRuntime.run(prog)  → RuntimeResult[T]
-  
-  Problem: Suspended appears at runtime, confusing boundary
-  
-Future:
-  CESKRunner[Awaitable].run(prog) → Awaitable[RunResult[T]]
-  CESKRunner[IO].run(prog)        → IO[RunResult[T]]
-  CESKRunner[Identity].run(prog)  → RunResult[T]
-  
-  Benefit: M is explicit, no Suspended confusion
-```
+CESK is PURE. No monad parameter needed.
 
-This makes doeff's effect boundary a first-class citizen in the type system.
+All monads except Async → handlers (stay inside doeff)
+Async → special case (Python syntax issue)
+
+SyncRunner:  handlers + thread pool → returns T
+AsyncRunner: handlers + user's loop → returns async T (opt-in)
+
+The async/sync split is not about monad parameterization.
+It's about Python's syntax-level async/await construct.
+```
