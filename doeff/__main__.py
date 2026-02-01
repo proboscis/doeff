@@ -14,7 +14,6 @@ from typing import Any
 from doeff import Program, RunResult
 from doeff.analysis import EffectCallTree
 from doeff.cesk.run import sync_handlers_preset, sync_run
-from doeff.cesk.runtime import SyncRuntime  # Keep for backwards compat with custom interpreters
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
@@ -221,13 +220,9 @@ class RunCommand:
         with profile("Load and run interpreter", indent=1):
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
 
-            if isinstance(interpreter_obj, SyncRuntime):
-                result = interpreter_obj.run(program)
-                return None, result.value
-
             if not callable(interpreter_obj):
                 raise TypeError(
-                    "--interpreter must resolve to a callable or SyncRuntime instance"
+                    "--interpreter must resolve to a callable"
                 )
 
             result = _call_interpreter(interpreter_obj, program)
@@ -515,7 +510,8 @@ def handle_run_with_script(context: RunContext, script: str | None) -> int:
         "interpreter": interpreter_obj,
         "RunResult": RunResult,
         "Program": Program,
-        "SyncRuntime": SyncRuntime,
+        "sync_run": sync_run,
+        "sync_handlers_preset": sync_handlers_preset,
     }
 
     # Add any additional useful imports
@@ -737,15 +733,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Available variables in script:\n"
             "  - program: The executed Program (with envs/transforms applied)\n"
             "  - value: The final execution result\n"
-            "  - interpreter: The interpreter used (SyncRuntime or function)\n"
-            "  - Program, SyncRuntime, RunResult: Type classes\n"
+            "  - interpreter: The interpreter function\n"
+            "  - Program, RunResult: Type classes\n"
+            "  - sync_run, sync_handlers_preset: Run functions\n"
             "  - sys, json: Standard library modules\n\n"
             "Example:\n"
             "  doeff run --program myapp.program - <<'PY'\n"
             "  print(f'Result: {value}')\n"
-            "  if isinstance(interpreter, SyncRuntime):\n"
-            "      result = interpreter.run(program)\n"
-            "      print(f'Re-run: {result}')\n"
+            "  result = sync_run(program, sync_handlers_preset)\n"
+            "  print(f'Re-run: {result.value}')\n"
             "  PY"
         ),
     )

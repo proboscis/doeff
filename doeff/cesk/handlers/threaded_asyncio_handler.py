@@ -1,12 +1,11 @@
-"""Threaded asyncio handler for running async I/O in SyncRuntime.
+"""Threaded asyncio handler for running async I/O in sync_run.
 
 This handler intercepts SuspendForIOEffect and executes the awaitable
 in a background asyncio thread, enabling non-blocking I/O without
 requiring async/await in user code.
 
 Usage:
-    from doeff.cesk.runtime import SyncRuntime
-    from doeff.cesk.handlers import threaded_asyncio_handler
+    from doeff.cesk.run import sync_run, sync_handlers_preset
 
     @do
     def my_program():
@@ -14,12 +13,8 @@ Usage:
         yield Delay(1.0)  # Non-blocking sleep
         return response
 
-    # Create runtime with threaded handler
-    runtime = SyncRuntime()
-    result = runtime.run(
-        my_program(),
-        handlers=[threaded_asyncio_handler]
-    )
+    # sync_handlers_preset includes sync_await_handler which uses this
+    result = sync_run(my_program(), sync_handlers_preset)
 
 Architecture:
     The handler sits between async_effects_handler and scheduler_handler:
