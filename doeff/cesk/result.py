@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
 from doeff._vendor import Err, Ok, Result
-from doeff.cesk.state import CESKState
-from doeff.cesk.types import Store
+from doeff.cesk.state import CESKState, Error, Value
+from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
+    from doeff.cesk.frames import Kontinuation
     from doeff.cesk_traceback import CapturedTraceback
 
 T = TypeVar("T")
@@ -92,6 +93,45 @@ class PythonAsyncSyntaxEscape:
 Suspended = PythonAsyncSyntaxEscape
 
 
+def make_python_async_escape(
+    awaitable: Any,
+    stored_k: Kontinuation,
+    stored_env: Environment,
+    stored_store: Store,
+) -> PythonAsyncSyntaxEscape:
+    """Build PythonAsyncSyntaxEscape with resume callbacks.
+    
+    Handlers call this directly instead of returning SuspendOn.
+    The callbacks are built from the stored continuation data.
+    """
+    def resume(value: Any, new_store: Store) -> CESKState:
+        merged_store = dict(new_store)
+        for key, val in stored_store.items():
+            if key not in merged_store:
+                merged_store[key] = val
+        return CESKState(
+            C=Value(value),
+            E=stored_env,
+            S=merged_store,
+            K=list(stored_k),
+        )
+
+    def resume_error(error: BaseException) -> CESKState:
+        return CESKState(
+            C=Error(error),
+            E=stored_env,
+            S=stored_store,
+            K=list(stored_k),
+        )
+
+    return PythonAsyncSyntaxEscape(
+        resume=resume,
+        resume_error=resume_error,
+        awaitable=awaitable,
+        store=stored_store,
+    )
+
+
 Terminal: TypeAlias = Done | Failed
 StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape
 
@@ -139,4 +179,5 @@ __all__ = [
     "StepResult",
     "Suspended",  # Deprecated alias
     "Terminal",
+    "make_python_async_escape",
 ]

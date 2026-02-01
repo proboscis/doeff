@@ -490,7 +490,11 @@ def step(state: CESKState) -> StepResult:
                     S=result.store,
                     K=result.k,
                 )
+            if isinstance(result, PythonAsyncSyntaxEscape):
+                # New architecture: handler returned escape directly - pass through
+                return result
             if isinstance(result, SuspendOn):
+                # Legacy: convert SuspendOn to PythonAsyncSyntaxEscape
                 if debug:
                     print(f"[step] SuspendOn: awaitable={result.awaitable}, k_len={len(result.stored_k or [])}")
                 return _make_suspended_from_suspend_on(result)
