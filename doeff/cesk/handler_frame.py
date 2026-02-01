@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import (
+    ContinueDirect,
     ContinueError,
     ContinueProgram,
     ContinueValue,
     FrameResult,
     Kontinuation,
-    SuspendOn,
 )
 from doeff.cesk.result import PythonAsyncSyntaxEscape
 from doeff.cesk.types import Environment, Store
@@ -136,7 +136,39 @@ class HandlerFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> FrameResult | PythonAsyncSyntaxEscape:
+        if isinstance(value, PythonAsyncSyntaxEscape):
+            if value._is_final:
+                return value
+            
+            from doeff.effects.scheduler_internal import _AsyncEscapeIntercepted
+            
+            ctx = HandlerContext(
+                store=store,
+                env=env,
+                delimited_k=[],
+                handler_depth=0,
+                outer_k=k_rest,
+            )
+            
+            handler_program = self.handler(
+                _AsyncEscapeIntercepted(escape=value, outer_k=k_rest),
+                ctx,
+            )
+            
+            handler_result_frame = HandlerResultFrame(
+                original_effect=_AsyncEscapeIntercepted(escape=value, outer_k=k_rest),
+                handler_depth=0,
+                handled_program_k=[],
+            )
+            
+            return ContinueProgram(
+                program=handler_program,
+                env=env,
+                store=store,
+                k=[handler_result_frame, self] + k_rest,
+            )
+        
         return ContinueValue(
             value=value,
             env=self.saved_env,
@@ -183,7 +215,14 @@ class HandlerResultFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> FrameResult | PythonAsyncSyntaxEscape:
+        if isinstance(value, ContinueDirect):
+            return ContinueValue(
+                value=value.value,
+                env=value.env if value.env is not None else env,
+                store=value.store if value.store else store,
+                k=list(value.k),
+            )
         if isinstance(value, ContinueValue):
             full_k = list(value.k) + list(k_rest)
             return ContinueValue(
@@ -212,10 +251,19 @@ class HandlerResultFrame:
             )
         elif isinstance(value, PythonAsyncSyntaxEscape):
             if value.awaitables is not None:
-                # Multi-task escape: continuation already complete in pending_io
                 return value
             
-            # Single-task escape: need to extend continuation with k_rest
+            if value._is_final:
+                return value
+            
+            if value._propagating:
+                return ContinueValue(
+                    value=value,
+                    env=env,
+                    store=store,
+                    k=k_rest,
+                )
+            
             from doeff.cesk.state import CESKState
             
             original_resume = value.resume
@@ -240,22 +288,20 @@ class HandlerResultFrame:
                     K=list(state.K) + captured_k_rest,
                 )
             
-            return PythonAsyncSyntaxEscape(
+            wrapped_escape = PythonAsyncSyntaxEscape(
                 resume=wrapped_resume,
                 resume_error=wrapped_resume_error,
                 awaitable=value.awaitable,
                 awaitables=value.awaitables,
                 store=value.store,
+                _propagating=True,
             )
-        elif isinstance(value, SuspendOn):
-            # Legacy: handler returned SuspendOn - transform and pass through
-            full_k = list(self.handled_program_k) + list(k_rest)
-            result_store = value.stored_store if value.stored_store is not None else store
-            return SuspendOn(
-                awaitable=value.awaitable,
-                stored_k=full_k,
-                stored_env=env,
-                stored_store=result_store,
+            
+            return ContinueValue(
+                value=wrapped_escape,
+                env=env,
+                store=store,
+                k=k_rest,
             )
         elif isinstance(value, ResumeK):
             full_k = list(value.k) + list(k_rest)

@@ -1,12 +1,16 @@
 """Synchronous runtime with pure handler-based cooperative scheduling.
 
 This runtime implements cooperative scheduling through handlers:
-- queue_handler: Manages task queue using store primitives (outermost)
-- scheduler_handler: Handles Spawn/Wait/Gather/Race/Promise effects
+- scheduler_state_handler: Manages task queue using store primitives (outermost)
+- task_scheduler_handler: Handles Spawn/Wait/Gather/Race/Promise effects
 - core_handler: Handles basic effects (Get, Put, Ask, etc.)
 
 All task scheduling is done by handlers using ResumeK - no task tracking
 in the runtime. The runtime just steps until Done/Failed.
+
+Note: This runtime does NOT handle async effects. For async effects, use
+AsyncRuntime or add threaded_asyncio_handler + python_async_handler to
+a Runner's handler stack.
 """
 
 from __future__ import annotations
@@ -49,7 +53,13 @@ def _wrap_with_handlers(program: Program[T]) -> Program[T]:
 
 
 class SyncRuntime(BaseRuntime):
-    """Synchronous runtime with pure handler-based cooperative scheduling."""
+    """Synchronous runtime with hardcoded handler-based cooperative scheduling.
+
+    This runtime has hardcoded handlers (scheduler_state_handler,
+    task_scheduler_handler, core_handler) and does NOT support async effects.
+
+    For async effects, use AsyncRuntime or a Runner with appropriate handlers.
+    """
 
     def __init__(self, handlers: dict[type, Any] | None = None):
         super().__init__(handlers or {})
@@ -63,16 +73,16 @@ class SyncRuntime(BaseRuntime):
     ) -> RuntimeResult[T]:
         frozen_env = FrozenDict(env) if env else FrozenDict()
         final_store: dict[str, Any] = dict(store) if store else {}
-        
+
         wrapped_program = _wrap_with_handlers(program)
-        
+
         state = CESKState(
             C=ProgramControl(wrapped_program),
             E=frozen_env,
             S=final_store,
             K=[],
         )
-        
+
         try:
             value, final_state = self._run_until_done(state)
             return self._build_success_result(value, final_state, final_state.S)
@@ -95,24 +105,27 @@ class SyncRuntime(BaseRuntime):
         return result.value
 
     def _run_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
-        """Step until Done or Failed. Handlers manage all task scheduling."""
+        """Step until Done or Failed. Handlers manage all task scheduling.
+
+        SyncRuntime only expects Done, Failed, or CESKState from step().
+        """
         while True:
             result = step(state)
-            
+
             if isinstance(result, Done):
                 return (result.value, state)
-            
+
             if isinstance(result, Failed):
                 raise ExecutionError(
                     exception=result.exception,
                     final_state=state,
                     captured_traceback=result.captured_traceback,
                 )
-            
+
             if isinstance(result, CESKState):
                 state = result
                 continue
-            
+
             raise RuntimeError(f"Unexpected step result: {type(result)}")
 
 

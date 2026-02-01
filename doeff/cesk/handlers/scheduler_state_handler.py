@@ -46,7 +46,7 @@ PENDING_IO_KEY = "__scheduler_pending_io__"
 
 def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
     """Lazily initialize scheduler store keys if not present.
-    
+
     This allows handlers to manage their own store structure without
     requiring runtimes to pre-initialize handler-specific keys.
     """
@@ -74,7 +74,7 @@ class TaskInfo:
 
 def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResult]:
     """Handle scheduler state effects using store primitives.
-    
+
     This is the outermost handler in the handler stack. It manages:
     - Task queue (ready tasks waiting to run)
     - Task registry (tracking spawned tasks and their results)
@@ -82,25 +82,30 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
     """
     store = dict(ctx.store)
     _ensure_scheduler_store_initialized(store)
-    
+
     if isinstance(effect, _SchedulerEnqueueTask):
         queue = list(store.get(TASK_QUEUE_KEY, []))
-        queue.append({
-            "task_id": effect.task_id,
-            "k": effect.k,
-            "store_snapshot": effect.store_snapshot,
-            "program": effect.program,
-        })
+        queue.append(
+            {
+                "task_id": effect.task_id,
+                "k": effect.k,
+                "store_snapshot": effect.store_snapshot,
+                "program": effect.program,
+            }
+        )
         store[TASK_QUEUE_KEY] = queue
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerDequeueTask):
         import os
+
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         queue = list(store.get(TASK_QUEUE_KEY, []))
         if debug:
@@ -109,57 +114,69 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             item = queue.pop(0)
             store[TASK_QUEUE_KEY] = queue
             if debug:
-                print(f"[_SchedulerDequeueTask] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}")
-            return Program.pure(ContinueValue(
-                value=(
-                    item["task_id"],
-                    item["k"],
-                    item.get("store_snapshot"),
-                    item.get("resume_value"),
-                    item.get("resume_error"),
-                    dict(store),
-                ),
+                print(
+                    f"[_SchedulerDequeueTask] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}, resume_error={item.get('resume_error')}"
+                )
+            return Program.pure(
+                ContinueValue(
+                    value=(
+                        item["task_id"],
+                        item["k"],
+                        item.get("store_snapshot"),
+                        item.get("resume_value"),
+                        item.get("resume_error"),
+                        dict(store),
+                    ),
+                    env=ctx.env,
+                    store=store,
+                    k=ctx.delimited_k,
+                )
+            )
+        if debug:
+            print(f"[_SchedulerDequeueTask] Queue empty! Returning None")
+        return Program.pure(
+            ContinueValue(
+                value=None,
                 env=ctx.env,
                 store=store,
                 k=ctx.delimited_k,
-            ))
-        if debug:
-            print(f"[_SchedulerDequeueTask] Queue empty! Returning None")
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+            )
+        )
+
     if isinstance(effect, _SchedulerQueueEmpty):
         queue = store.get(TASK_QUEUE_KEY, [])
-        return Program.pure(ContinueValue(
-            value=len(queue) == 0,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=len(queue) == 0,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerRegisterWaiter):
         waiters = dict(store.get(WAITERS_KEY, {}))
         handle_id = effect.handle_id
         if handle_id not in waiters:
             waiters[handle_id] = []
         waiters[handle_id] = list(waiters[handle_id])
-        waiters[handle_id].append({
-            "waiter_task_id": effect.waiter_task_id,
-            "waiter_k": effect.waiter_k,
-            "waiter_store": effect.waiter_store,
-        })
+        waiters[handle_id].append(
+            {
+                "waiter_task_id": effect.waiter_task_id,
+                "waiter_k": effect.waiter_k,
+                "waiter_store": effect.waiter_store,
+            }
+        )
         store[WAITERS_KEY] = waiters
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerCreateTaskHandle):
         handle_id = uuid4()
         task_info = TaskInfo(
@@ -171,27 +188,30 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         registry[handle_id] = task_info
         store[TASK_REGISTRY_KEY] = registry
-        
+
         task_handle = Task(
             backend="thread",
             _handle=handle_id,
             _env_snapshot=effect.env_snapshot,
             _state_snapshot=effect.store_snapshot,
         )
-        return Program.pure(ContinueValue(
-            value=(handle_id, task_handle),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=(handle_id, task_handle),
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerTaskComplete):
         import os
+
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
-        
+
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         handle_id = effect.handle_id
-        
+
         if handle_id in registry:
             task_info = registry[handle_id]
             task_info.is_complete = True
@@ -201,135 +221,166 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 task_info.store_snapshot = effect.store_snapshot
             registry[handle_id] = task_info
             store[TASK_REGISTRY_KEY] = registry
-        
+
         waiters = dict(store.get(WAITERS_KEY, {}))
         if debug:
             all_waiter_task_ids = []
             if handle_id in waiters:
                 all_waiter_task_ids = [w["waiter_task_id"] for w in waiters[handle_id]]
-            print(f"[_SchedulerTaskComplete] handle={handle_id}, result={effect.result}, waiters_for_handle={handle_id in waiters}, waiter_task_ids={all_waiter_task_ids}")
+            print(
+                f"[_SchedulerTaskComplete] handle={handle_id}, result={effect.result}, error={effect.error}, waiters_for_handle={handle_id in waiters}, waiter_task_ids={all_waiter_task_ids}"
+            )
         if handle_id in waiters:
             waiting_list = waiters.pop(handle_id)
             store[WAITERS_KEY] = waiters
-            
+
             queue = list(store.get(TASK_QUEUE_KEY, []))
             existing_task_ids = {item["task_id"] for item in queue}
-            
+
             added = 0
             for waiter in waiting_list:
                 waiter_task_id = waiter["waiter_task_id"]
                 if waiter_task_id in existing_task_ids:
                     if debug:
-                        print(f"[_SchedulerTaskComplete] Skipping duplicate waiter for task_id={waiter_task_id}")
+                        print(
+                            f"[_SchedulerTaskComplete] Skipping duplicate waiter for task_id={waiter_task_id}"
+                        )
                     continue
-                queue.append({
-                    "task_id": waiter_task_id,
-                    "k": waiter["waiter_k"],
-                    "store_snapshot": waiter.get("waiter_store"),
-                    "resume_value": effect.result,
-                    "resume_error": effect.error,
-                })
+                queue.append(
+                    {
+                        "task_id": waiter_task_id,
+                        "k": waiter["waiter_k"],
+                        "store_snapshot": waiter.get("waiter_store"),
+                        "resume_value": effect.result,
+                        "resume_error": effect.error,
+                    }
+                )
                 existing_task_ids.add(waiter_task_id)
                 added += 1
             if debug:
-                print(f"[_SchedulerTaskComplete] Added {added} waiters to queue (skipped {len(waiting_list) - added}), queue_len now={len(queue)}")
+                print(
+                    f"[_SchedulerTaskComplete] Added {added} waiters to queue (skipped {len(waiting_list) - added}), queue_len now={len(queue)}"
+                )
             store[TASK_QUEUE_KEY] = queue
-        
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
-    if isinstance(effect, _SchedulerGetTaskResult):
-        registry = store.get(TASK_REGISTRY_KEY, {})
-        handle_id = effect.handle_id
-        
-        if handle_id not in registry:
-            return Program.pure(ContinueValue(
+
+        return Program.pure(
+            ContinueValue(
                 value=None,
                 env=ctx.env,
                 store=store,
                 k=ctx.delimited_k,
-            ))
-        
+            )
+        )
+
+    if isinstance(effect, _SchedulerGetTaskResult):
+        registry = store.get(TASK_REGISTRY_KEY, {})
+        handle_id = effect.handle_id
+
+        if handle_id not in registry:
+            return Program.pure(
+                ContinueValue(
+                    value=None,
+                    env=ctx.env,
+                    store=store,
+                    k=ctx.delimited_k,
+                )
+            )
+
         task_info = registry[handle_id]
-        return Program.pure(ContinueValue(
-            value=(task_info.is_complete, task_info.is_cancelled, task_info.result, task_info.error),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=(
+                    task_info.is_complete,
+                    task_info.is_cancelled,
+                    task_info.result,
+                    task_info.error,
+                ),
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerCancelTask):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         handle_id = effect.handle_id
-        
+
         if handle_id not in registry:
-            return Program.pure(ContinueValue(
-                value=False,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            ))
-        
+            return Program.pure(
+                ContinueValue(
+                    value=False,
+                    env=ctx.env,
+                    store=store,
+                    k=ctx.delimited_k,
+                )
+            )
+
         task_info = registry[handle_id]
         if task_info.is_complete:
-            return Program.pure(ContinueValue(
-                value=False,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            ))
-        
+            return Program.pure(
+                ContinueValue(
+                    value=False,
+                    env=ctx.env,
+                    store=store,
+                    k=ctx.delimited_k,
+                )
+            )
+
         task_info.is_complete = True
         task_info.is_cancelled = True
         task_info.error = TaskCancelledError()
         registry[handle_id] = task_info
         store[TASK_REGISTRY_KEY] = registry
-        
+
         waiters = dict(store.get(WAITERS_KEY, {}))
         if handle_id in waiters:
             waiting_list = waiters.pop(handle_id)
             store[WAITERS_KEY] = waiters
-            
+
             queue = list(store.get(TASK_QUEUE_KEY, []))
             for waiter in waiting_list:
-                queue.append({
-                    "task_id": waiter["waiter_task_id"],
-                    "k": waiter["waiter_k"],
-                    "store_snapshot": None,
-                })
+                queue.append(
+                    {
+                        "task_id": waiter["waiter_task_id"],
+                        "k": waiter["waiter_k"],
+                        "store_snapshot": None,
+                    }
+                )
             store[TASK_QUEUE_KEY] = queue
-        
-        return Program.pure(ContinueValue(
-            value=True,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
-    if isinstance(effect, _SchedulerIsTaskDone):
-        registry = store.get(TASK_REGISTRY_KEY, {})
-        handle_id = effect.handle_id
-        
-        if handle_id not in registry:
-            return Program.pure(ContinueValue(
+
+        return Program.pure(
+            ContinueValue(
                 value=True,
                 env=ctx.env,
                 store=store,
                 k=ctx.delimited_k,
-            ))
-        
+            )
+        )
+
+    if isinstance(effect, _SchedulerIsTaskDone):
+        registry = store.get(TASK_REGISTRY_KEY, {})
+        handle_id = effect.handle_id
+
+        if handle_id not in registry:
+            return Program.pure(
+                ContinueValue(
+                    value=True,
+                    env=ctx.env,
+                    store=store,
+                    k=ctx.delimited_k,
+                )
+            )
+
         task_info = registry[handle_id]
-        return Program.pure(ContinueValue(
-            value=task_info.is_complete,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=task_info.is_complete,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerCreatePromise):
         handle_id = uuid4()
         task_info = TaskInfo(
@@ -342,42 +393,50 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         registry[handle_id] = task_info
         store[TASK_REGISTRY_KEY] = registry
-        
+
         promise = Promise(_promise_handle=handle_id)
-        
-        return Program.pure(ContinueValue(
-            value=(handle_id, promise),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+
+        return Program.pure(
+            ContinueValue(
+                value=(handle_id, promise),
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerGetCurrentTaskId):
         current = store.get(CURRENT_TASK_KEY)
-        return Program.pure(ContinueValue(
-            value=current,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=current,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerGetTaskStore):
         registry = store.get(TASK_REGISTRY_KEY, {})
         for task_info in registry.values():
             if task_info.task_id == effect.task_id:
-                return Program.pure(ContinueValue(
-                    value=task_info.store_snapshot,
-                    env=ctx.env,
-                    store=store,
-                    k=ctx.delimited_k,
-                ))
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+                return Program.pure(
+                    ContinueValue(
+                        value=task_info.store_snapshot,
+                        env=ctx.env,
+                        store=store,
+                        k=ctx.delimited_k,
+                    )
+                )
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerUpdateTaskStore):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         for handle_id, task_info in registry.items():
@@ -386,25 +445,29 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 registry[handle_id] = task_info
                 break
         store[TASK_REGISTRY_KEY] = registry
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerSetTaskSuspended):
         store[TASK_SUSPENDED_KEY] = {
             "task_id": effect.task_id,
             "waiting_for": effect.waiting_for,
         }
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerAddPendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         pending[effect.task_id] = {
@@ -413,55 +476,66 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             "store_snapshot": effect.store_snapshot,
         }
         store[PENDING_IO_KEY] = pending
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerGetPendingIO):
         pending = store.get(PENDING_IO_KEY, {})
-        return Program.pure(ContinueValue(
-            value=pending,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=pending,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerRemovePendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         pending.pop(effect.task_id, None)
         store[PENDING_IO_KEY] = pending
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     if isinstance(effect, _SchedulerResumePendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         task_info = pending.pop(effect.task_id, None)
         store[PENDING_IO_KEY] = pending
         if task_info is not None:
             queue = list(store.get(TASK_QUEUE_KEY, []))
-            queue.append({
-                "task_id": effect.task_id,
-                "k": task_info["k"],
-                "store_snapshot": task_info["store_snapshot"],
-                "resume_value": effect.value,
-                "resume_error": effect.error,
-            })
+            queue.append(
+                {
+                    "task_id": effect.task_id,
+                    "k": task_info["k"],
+                    "store_snapshot": task_info["store_snapshot"],
+                    "resume_value": effect.value,
+                    "resume_error": effect.error,
+                }
+            )
             store[TASK_QUEUE_KEY] = queue
-        return Program.pure(ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        ))
-    
+        return Program.pure(
+            ContinueValue(
+                value=None,
+                env=ctx.env,
+                store=store,
+                k=ctx.delimited_k,
+            )
+        )
+
     from doeff.cesk.errors import UnhandledEffectError
+
     raise UnhandledEffectError(f"scheduler_state_handler: unhandled effect {type(effect).__name__}")
 
 

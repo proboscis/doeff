@@ -1,4 +1,13 @@
-"""Python async handler for async/await effects."""
+"""Python async handler for async/await effects.
+
+This handler produces PythonAsyncSyntaxEscape DIRECTLY for Python async effects.
+Per spec (SPEC-CESK-EFFECT-BOUNDARIES.md): Python async escape is SEPARATE from
+task scheduling. The scheduler intercepts escapes only when multi-task coordination
+is needed.
+
+Single-task: Escape goes directly to runner
+Multi-task: Scheduler intercepts escape, coordinates, produces multi-task escape
+"""
 
 from __future__ import annotations
 
@@ -7,40 +16,52 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue, SuspendOn
-from doeff.do import do
+from doeff.cesk.frames import ContinueValue
+from doeff.cesk.result import python_async_escape
 from doeff.program import Program
 
 if TYPE_CHECKING:
     from doeff.cesk.handler_frame import HandlerContext
 
 
-@do
 def python_async_handler(effect: EffectBase, ctx: "HandlerContext"):
-    """Handle async/await effects by converting to scheduler suspension."""
+    """Handle async/await effects by returning PythonAsyncSyntaxEscape directly.
+    
+    Per SPEC-CESK-EFFECT-BOUNDARIES.md: This handler returns PythonAsyncSyntaxEscape
+    DIRECTLY, not via _SchedulerSuspendForIO. Python async escape and task scheduling
+    are SEPARATE concerns.
+    
+    When running with multi-task scheduler:
+    - The escape bubbles up through the handler stack
+    - TaskSchedulerHandler's HandlerFrame intercepts it
+    - Scheduler coordinates multi-task async
+    
+    When running without scheduler (single-task):
+    - The escape goes directly to the runner
+    - Runner awaits and resumes
+    """
     from doeff.effects.future import FutureAwaitEffect
-    from doeff.effects.scheduler_internal import _SchedulerSuspendForIO
     from doeff.effects.time import DelayEffect, WaitUntilEffect
     
     if isinstance(effect, FutureAwaitEffect):
-        result = yield _SchedulerSuspendForIO(awaitable=effect.awaitable)
-        return ContinueValue(
-            value=result,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
+        # Return escape directly - scheduler intercepts if needed
+        return Program.pure(python_async_escape(
+            awaitable=effect.awaitable,
+            stored_k=list(ctx.delimited_k),
+            stored_env=ctx.env,
+            stored_store=dict(ctx.store),
+        ))
     
     if isinstance(effect, DelayEffect):
         async def do_delay() -> None:
             await asyncio.sleep(effect.seconds)
-        result = yield _SchedulerSuspendForIO(awaitable=do_delay())
-        return ContinueValue(
-            value=result,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
+        
+        return Program.pure(python_async_escape(
+            awaitable=do_delay(),
+            stored_k=list(ctx.delimited_k),
+            stored_env=ctx.env,
+            stored_store=dict(ctx.store),
+        ))
     
     if isinstance(effect, WaitUntilEffect):
         async def do_wait_until() -> None:
@@ -48,7 +69,20 @@ def python_async_handler(effect: EffectBase, ctx: "HandlerContext"):
             if effect.target_time > now:
                 delay_seconds = (effect.target_time - now).total_seconds()
                 await asyncio.sleep(delay_seconds)
-        result = yield _SchedulerSuspendForIO(awaitable=do_wait_until())
+        
+        return Program.pure(python_async_escape(
+            awaitable=do_wait_until(),
+            stored_k=list(ctx.delimited_k),
+            stored_env=ctx.env,
+            stored_store=dict(ctx.store),
+        ))
+    
+    # Unhandled effect - forward to outer handlers
+    from doeff.do import do
+    
+    @do
+    def forward_effect():
+        result = yield effect
         return ContinueValue(
             value=result,
             env=ctx.env,
@@ -56,13 +90,7 @@ def python_async_handler(effect: EffectBase, ctx: "HandlerContext"):
             k=ctx.delimited_k,
         )
     
-    result = yield effect
-    return ContinueValue(
-        value=result,
-        env=ctx.env,
-        store=None,
-        k=ctx.delimited_k,
-    )
+    return forward_effect()
 
 
 # Backwards compatibility alias (deprecated)
