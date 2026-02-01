@@ -28,6 +28,7 @@ from doeff.cesk.types import (
 
 if TYPE_CHECKING:
     from doeff.cesk.frames import Kontinuation
+    from doeff.cesk.handler_frame import HandlerContext
     from doeff.cesk_traceback import CapturedTraceback
     from doeff.effects._program_types import ProgramLike
     from doeff.effects.spawn import SpawnBackend
@@ -509,6 +510,103 @@ class CESKState:
         if main is not None and isinstance(main.status, Done):
             return main.status.result
         return None
+
+    # ============================================
+    # State Construction Utilities
+    # ============================================
+
+    @classmethod
+    def with_value(
+        cls,
+        value: Any,
+        env: "Environment",
+        store: "Store",
+        k: "Kontinuation",
+    ) -> "CESKState":
+        """Create state that continues with a value.
+
+        Use this in frames to construct the next state.
+
+        Example:
+            return CESKState.with_value(result, env, store, k_rest)
+        """
+        return cls(C=Value(value), E=env, S=store, K=list(k))
+
+    @classmethod
+    def with_error(
+        cls,
+        error: BaseException,
+        env: "Environment",
+        store: "Store",
+        k: "Kontinuation",
+        captured_traceback: "CapturedTraceback | None" = None,
+    ) -> "CESKState":
+        """Create state that continues with an error.
+
+        Example:
+            return CESKState.with_error(exc, env, store, k_rest)
+        """
+        return cls(C=Error(error, captured_traceback), E=env, S=store, K=list(k))
+
+    @classmethod
+    def with_program(
+        cls,
+        program: "ProgramLike",
+        env: "Environment",
+        store: "Store",
+        k: "Kontinuation",
+    ) -> "CESKState":
+        """Create state that continues with a new program.
+
+        Example:
+            return CESKState.with_program(sub_program, env, store, k_rest)
+        """
+        return cls(C=ProgramControl(program), E=env, S=store, K=list(k))
+
+    # ============================================
+    # Handler Convenience Methods
+    # ============================================
+
+    @classmethod
+    def resume_value(cls, value: Any, ctx: "HandlerContext") -> "CESKState":
+        """Resume handled program with a value.
+
+        Use this in handlers to resume execution with a computed value.
+        Uses ctx.k which is the full continuation (delimited_k + outer_k).
+
+        Example:
+            def my_handler(effect, ctx):
+                result = compute(effect)
+                return Program.pure(CESKState.resume_value(result, ctx))
+        """
+        return cls.with_value(value, ctx.env, ctx.store, ctx.k)
+
+    @classmethod
+    def resume_error(cls, error: BaseException, ctx: "HandlerContext") -> "CESKState":
+        """Resume handled program with an error.
+
+        Use this in handlers to propagate an error.
+        Uses ctx.k which is the full continuation (delimited_k + outer_k).
+
+        Example:
+            def my_handler(effect, ctx):
+                return Program.pure(CESKState.resume_error(ValueError("bad"), ctx))
+        """
+        return cls.with_error(error, ctx.env, ctx.store, ctx.k)
+
+    @classmethod
+    def resume_program(cls, program: "ProgramLike", ctx: "HandlerContext") -> "CESKState":
+        """Resume with a new program to run.
+
+        Use this in handlers to run a sub-program before resuming.
+        Uses ctx.k which is the full continuation (delimited_k + outer_k).
+
+        Example:
+            def my_handler(effect, ctx):
+                sub_program = do_something()
+                return Program.pure(CESKState.resume_program(sub_program, ctx))
+        """
+        return cls.with_program(program, ctx.env, ctx.store, ctx.k)
 
 
 __all__ = [

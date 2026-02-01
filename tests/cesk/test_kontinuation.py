@@ -3,13 +3,12 @@
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.frames import (
-    ContinueError,
-    ContinueValue,
     InterceptFrame,
     Kontinuation,
     LocalFrame,
     SafeFrame,
 )
+from doeff.cesk.state import CESKState, Error, Value
 from doeff.cesk.kontinuation import (
     apply_intercept_chain,
     continuation_depth,
@@ -83,16 +82,17 @@ class TestUnwinding:
     """Tests for unwinding operations."""
 
     def test_unwind_value_empty_k(self) -> None:
-        """unwind_value with empty k returns ContinueValue."""
+        """unwind_value with empty k returns CESKState with value."""
         env: Environment = FrozenDict()
         store: Store = {}
         k: Kontinuation = []
 
         result = unwind_value(42, env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 42
-        assert result.k == []
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 42
+        assert result.K == []
 
     def test_unwind_value_with_frame(self) -> None:
         """unwind_value processes through frame's on_value."""
@@ -105,12 +105,13 @@ class TestUnwinding:
 
         result = unwind_value(42, current_env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 42
-        assert result.env == original_env  # Restored by LocalFrame
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 42
+        assert result.E == original_env  # Restored by LocalFrame
 
     def test_unwind_error_empty_k(self) -> None:
-        """unwind_error with empty k returns ContinueError."""
+        """unwind_error with empty k returns CESKState with error."""
         env: Environment = FrozenDict()
         store: Store = {}
         k: Kontinuation = []
@@ -118,12 +119,13 @@ class TestUnwinding:
 
         result = unwind_error(error, env, store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
-        assert result.k == []
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
+        assert result.K == []
 
     def test_unwind_error_with_safe_frame(self) -> None:
-        """unwind_error with SafeFrame converts to ContinueValue(Err)."""
+        """unwind_error with SafeFrame converts to CESKState with Err value."""
         env: Environment = FrozenDict()
         store: Store = {}
         error = ValueError("test")
@@ -133,10 +135,11 @@ class TestUnwinding:
 
         result = unwind_error(error, env, store, k)
 
-        # SafeFrame converts errors to Err results
-        assert isinstance(result, ContinueValue)
-        assert result.value.is_err()
-        assert result.value.error is error
+        # SafeFrame converts errors to Err results (wrapped in Value control)
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v.is_err()
+        assert result.C.v.error is error
 
 
 class TestFrameFinding:

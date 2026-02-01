@@ -11,9 +11,6 @@ from typing import TYPE_CHECKING, Any
 from doeff._types_internal import EffectBase
 from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
 from doeff.cesk.frames import (
-    ContinueError,
-    ContinueProgram,
-    ContinueValue,
     InterceptFrame,
     ReturnFrame,
     SafeFrame,
@@ -110,13 +107,15 @@ def _check_intercept_frames(
             for transform in frame.transforms:
                 result = transform(effect)
                 if result is not effect and result is not None:
-                    k_rest = k[i + 1:]
+                    k_before = k[:i]  # Frames before InterceptFrame (e.g., original program's ReturnFrame)
+                    k_rest = k[i + 1:]  # Frames after InterceptFrame
                     if isinstance(result, ProgramBase):
+                        # Include k_before so the result goes back to the original program
                         return CESKState(
                             C=ProgramControl(result),
                             E=env,
                             S=store,
-                            K=[frame] + k_rest,
+                            K=k_before + [frame] + k_rest,
                         )
                     return CESKState(
                         C=EffectControl(result),
@@ -172,7 +171,7 @@ def step(state: CESKState) -> StepResult:
     This step function:
     1. Handles WithHandler by pushing HandlerFrame onto K
     2. Dispatches ALL effects through handlers (walks K to find HandlerFrame)
-    3. Interprets handler results (ContinueValue, ContinueError, ResumeK)
+    3. Interprets handler results (CESKState, ResumeK)
     """
     C, E, S, K = state.C, state.E, state.S, state.K
 
@@ -210,11 +209,7 @@ def step(state: CESKState) -> StepResult:
 
         from doeff.effects.pure import PureEffect
         if isinstance(effect, PureEffect):
-            value = effect.value
-            store = S
-            if (isinstance(value, ContinueValue) and value.store is not None) or (isinstance(value, ContinueError) and value.store is not None):
-                store = value.store
-            return CESKState(C=Value(value), E=E, S=store, K=K)
+            return CESKState(C=Value(effect.value), E=E, S=S, K=K)
 
         intercept_result = _check_intercept_frames(effect, E, S, K)
         if intercept_result is not None:
@@ -359,76 +354,17 @@ def step(state: CESKState) -> StepResult:
                 )
 
         if isinstance(frame, HandlerFrame):
-            result = frame.on_value(C.v, E, S, K_rest)
-            if isinstance(result, ContinueValue):
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error, captured_traceback=result.captured_traceback),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, ContinueProgram):
-                return CESKState(
-                    C=ProgramControl(result.program),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, PythonAsyncSyntaxEscape):
-                return result
-            raise InterpreterInvariantError(f"Unexpected HandlerFrame result: {type(result)}")
+            # HandlerFrame returns CESKState or PythonAsyncSyntaxEscape directly
+            return frame.on_value(C.v, E, S, K_rest)
 
         if isinstance(frame, HandlerResultFrame):
-            result = frame.on_value(C.v, E, S, K_rest)
-            import os
-            debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
-            if debug:
-                print(f"[step] HandlerResultFrame.on_value returned: {type(result).__name__}, value_type={type(C.v).__name__}")
-            if isinstance(result, ContinueValue):
-                if debug:
-                    print(f"[step] ContinueValue: k_len={len(result.k)}, value={str(result.value)[:50]}")
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, ContinueProgram):
-                return CESKState(
-                    C=ProgramControl(result.program),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, PythonAsyncSyntaxEscape):
-                # Handler returned escape directly - pass through
-                return result
-            raise InterpreterInvariantError(f"Unexpected HandlerResultFrame result: {type(result)}")
+            # HandlerResultFrame returns CESKState or PythonAsyncSyntaxEscape directly
+            return frame.on_value(C.v, E, S, K_rest)
 
         from doeff.cesk.frames import Frame
         if isinstance(frame, Frame):
-            result = frame.on_value(C.v, E, S, K_rest)
-            if isinstance(result, ContinueValue):
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error, captured_traceback=result.captured_traceback),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, ContinueProgram):
-                return CESKState(
-                    C=ProgramControl(result.program),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            raise InterpreterInvariantError(f"Unexpected Frame result: {type(result)}")
+            # Frames return CESKState directly
+            return frame.on_value(C.v, E, S, K_rest)
 
     if isinstance(C, Error) and K:
         frame = K[0]
@@ -486,57 +422,21 @@ def step(state: CESKState) -> StepResult:
                 )
 
         if isinstance(frame, HandlerFrame):
-            result = frame.on_error(C.ex, E, S, K_rest)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error, captured_traceback=result.captured_traceback),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, ContinueValue):
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            raise InterpreterInvariantError(f"Unexpected HandlerFrame error result: {type(result)}")
+            # HandlerFrame returns CESKState directly
+            return frame.on_error(C.ex, E, S, K_rest)
 
         if isinstance(frame, HandlerResultFrame):
-            result = frame.on_error(C.ex, E, S, K_rest)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, ContinueValue):
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            raise InterpreterInvariantError(f"Unexpected HandlerResultFrame error result: {type(result)}")
+            # HandlerResultFrame returns CESKState directly
+            return frame.on_error(C.ex, E, S, K_rest)
 
         if isinstance(frame, SafeFrame):
-            result = frame.on_error(C.ex, E, S, K_rest)
-            if isinstance(result, ContinueValue):
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error, captured_traceback=result.captured_traceback),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            raise InterpreterInvariantError(f"Unexpected SafeFrame error result: {type(result)}")
+            # SafeFrame returns CESKState directly
+            return frame.on_error(C.ex, E, S, K_rest)
 
         from doeff.cesk.frames import Frame
         if isinstance(frame, Frame):
-            result = frame.on_error(C.ex, E, S, K_rest)
-            if isinstance(result, ContinueError):
-                return CESKState(
-                    C=Error(result.error, captured_traceback=result.captured_traceback),
-                    E=result.env,
-                    S=result.store,
-                    K=result.k,
-                )
-            if isinstance(result, ContinueValue):
-                return CESKState(C=Value(result.value), E=result.env, S=result.store, K=result.k)
-            raise InterpreterInvariantError(f"Unexpected Frame error result: {type(result)}")
+            # Frames return CESKState directly
+            return frame.on_error(C.ex, E, S, K_rest)
 
     head_desc = type(K[0]).__name__ if K else "empty"
     raise InterpreterInvariantError(f"Unhandled state: C={type(C).__name__}, K head={head_desc}")

@@ -16,8 +16,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue
 from doeff.cesk.result import python_async_escape
+from doeff.cesk.state import CESKState
 from doeff.program import Program
 
 if TYPE_CHECKING:
@@ -79,17 +79,13 @@ def python_async_handler(effect: EffectBase, ctx: "HandlerContext"):
     
     # Unhandled effect - forward to outer handlers
     from doeff.do import do
-    
+
     @do
     def forward_effect():
         result = yield effect
-        return ContinueValue(
-            value=result,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
-    
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return result
+
     return forward_effect()
 
 

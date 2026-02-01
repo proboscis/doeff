@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
-from doeff.cesk.frames import ContinueValue
 from doeff.cesk.handler_frame import Handler, HandlerContext, WithHandler
+from doeff.cesk.state import CESKState
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
@@ -30,18 +30,18 @@ def _make_simulation_time_handler(runtime: "SimulationRuntime") -> Handler:
         if isinstance(effect, DelayEffect):
             runtime._current_time = runtime._current_time + timedelta(seconds=effect.seconds)
             new_store = {**ctx.store, "__current_time__": runtime._current_time}
-            return ContinueValue(value=None, store=new_store)
-        
+            return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
         if isinstance(effect, WaitUntilEffect):
             runtime._current_time = max(effect.target_time, runtime._current_time)
             new_store = {**ctx.store, "__current_time__": runtime._current_time}
-            return ContinueValue(value=None, store=new_store)
-        
+            return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
         if isinstance(effect, GetTimeEffect):
-            return ContinueValue(value=runtime._current_time, store=ctx.store)
-        
+            return CESKState.with_value(runtime._current_time, ctx.env, ctx.store, ctx.k)
+
         raise UnhandledEffectError(f"simulation_time_handler: unhandled effect {type(effect).__name__}")
-    
+
     return simulation_time_handler
 
 
