@@ -115,7 +115,8 @@ class PythonAsyncSyntaxEscape:
     _stored_store: Any = None
 
 
-# Backwards compatibility alias (deprecated, will be removed)
+# DEPRECATED: Use PythonAsyncSyntaxEscape instead.
+# This alias will be removed in a future version.
 Suspended = PythonAsyncSyntaxEscape
 
 
