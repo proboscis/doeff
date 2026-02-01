@@ -189,13 +189,13 @@ class RuntimeResult(Protocol[T_co]):
         ...
 
     @property
-    def state(self) -> dict[str, Any]:
-        """Final state after execution (from Put/Modify effects)."""
-        ...
+    def raw_store(self) -> dict[str, Any]:
+        """Raw store containing all state from execution.
 
-    @property
-    def log(self) -> list[Any]:
-        """Accumulated messages from Tell effects."""
+        Contains both user state (from Put/Modify effects) and handler-internal
+        state. The structure of handler-internal state (typically keys starting
+        with __) is implementation-dependent and may change between versions.
+        """
         ...
 
     @property
@@ -211,11 +211,6 @@ class RuntimeResult(Protocol[T_co]):
     @property
     def python_stack(self) -> PythonStackTrace:
         """Python source locations where effects were created."""
-        ...
-
-    @property
-    def graph(self) -> Any | None:
-        """Computation graph if capture was enabled, else None."""
         ...
 
     @property
@@ -330,13 +325,11 @@ class RuntimeResultImpl(Generic[T]):
     """Concrete implementation of RuntimeResult protocol."""
 
     _result: Result[T]
-    _state: dict[str, Any] = field(default_factory=dict)
-    _log: list[Any] = field(default_factory=list)
+    _raw_store: dict[str, Any] = field(default_factory=dict)
     _env: dict[Any, Any] = field(default_factory=dict)
     _k_stack: KStackTrace = field(default_factory=lambda: KStackTrace(frames=()))
     _effect_stack: EffectStackTrace = field(default_factory=EffectStackTrace)
     _python_stack: PythonStackTrace = field(default_factory=lambda: PythonStackTrace(frames=()))
-    _graph: Any | None = None
     _captured_traceback: Any | None = None  # CapturedTraceback
 
     @property
@@ -344,12 +337,8 @@ class RuntimeResultImpl(Generic[T]):
         return self._result
 
     @property
-    def state(self) -> dict[str, Any]:
-        return self._state
-
-    @property
-    def log(self) -> list[Any]:
-        return self._log
+    def raw_store(self) -> dict[str, Any]:
+        return self._raw_store
 
     @property
     def env(self) -> dict[Any, Any]:
@@ -366,10 +355,6 @@ class RuntimeResultImpl(Generic[T]):
     @property
     def python_stack(self) -> PythonStackTrace:
         return self._python_stack
-
-    @property
-    def graph(self) -> Any | None:
-        return self._graph
 
     @property
     def value(self) -> T:
@@ -475,26 +460,17 @@ class RuntimeResultImpl(Generic[T]):
         lines.append(thin_sep)
         lines.append(self._k_stack.format())
 
-        # State & Log
+        # Store
         lines.append("")
         lines.append(thin_sep)
-        lines.append("                              STATE & LOG")
+        lines.append("                                 STORE")
         lines.append(thin_sep)
-        lines.append("State:")
-        if self._state:
-            for k, v in list(self._state.items())[:10]:
-                if not k.startswith("__"):  # Skip internal keys
-                    lines.append(f"  {k}: {v!r}")
-        else:
-            lines.append("  <empty>")
-
-        lines.append("")
-        lines.append("Log:")
-        if self._log:
-            for i, entry in enumerate(self._log[:10]):
-                lines.append(f"  [{i}] {entry!r}")
-            if len(self._log) > 10:
-                lines.append(f"  ... and {len(self._log) - 10} more")
+        lines.append("Store:")
+        if self._raw_store:
+            for k, v in list(self._raw_store.items())[:10]:
+                lines.append(f"  {k}: {v!r}")
+            if len(self._raw_store) > 10:
+                lines.append(f"  ... and {len(self._raw_store) - 10} more")
         else:
             lines.append("  <empty>")
 
