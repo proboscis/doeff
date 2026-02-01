@@ -168,11 +168,17 @@ class ReturnFrame:
 
     This frame represents a suspended generator that can be resumed
     by sending it a value or throwing an exception into it.
+    
+    Kleisli info fields (kleisli_*) are embedded here so they persist
+    across multiple yields from the same @do function.
     """
 
     generator: Generator[Any, Any, Any]
     saved_env: Environment
     program_call: KleisliProgramCall | None = None
+    kleisli_function_name: str | None = None
+    kleisli_filename: str | None = None
+    kleisli_lineno: int | None = None
 
     def on_value(
         self,

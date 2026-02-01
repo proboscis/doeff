@@ -399,7 +399,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     
     if isinstance(effect, GatherEffect):
         import os
-        debug = os.environ.get("DOEFF_DEBUG")
+        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         futures = effect.futures
         if not futures:
             return ContinueValue(
@@ -641,7 +641,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     
     if isinstance(effect, SuspendForIOEffect):
         import os
-        debug = os.environ.get("DOEFF_DEBUG")
+        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         current_task_id = ctx.store.get(CURRENT_TASK_KEY)
         
         full_resume_k = list(ctx.delimited_k) + list(ctx.outer_k)
