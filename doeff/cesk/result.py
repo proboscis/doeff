@@ -93,7 +93,7 @@ class PythonAsyncSyntaxEscape:
 Suspended = PythonAsyncSyntaxEscape
 
 
-def make_python_async_escape(
+def python_async_escape(
     awaitable: Any,
     stored_k: Kontinuation,
     stored_env: Environment,
@@ -128,6 +128,98 @@ def make_python_async_escape(
         resume=resume,
         resume_error=resume_error,
         awaitable=awaitable,
+        store=stored_store,
+    )
+
+
+def multi_task_async_escape(
+    stored_k: Kontinuation,
+    stored_env: Environment,
+    stored_store: Store,
+) -> PythonAsyncSyntaxEscape:
+    """Build PythonAsyncSyntaxEscape for multi-task async escape.
+    
+    Used by task_scheduler_handler when all tasks are waiting on I/O.
+    The store must contain PENDING_IO_KEY with task awaitable info.
+    
+    Runtime awaits FIRST_COMPLETED from awaitables dict, then calls
+    resume((task_id, value)) to route to the correct task's continuation.
+    """
+    from doeff.cesk.handlers.scheduler_state_handler import (
+        CURRENT_TASK_KEY,
+        PENDING_IO_KEY,
+    )
+    
+    pending_io = stored_store.get(PENDING_IO_KEY, {})
+    
+    awaitables_dict = {
+        task_id: info["awaitable"]
+        for task_id, info in pending_io.items()
+    }
+    
+    def resume_multi(value: Any, new_store: Store) -> CESKState:
+        task_id, result = value
+        
+        task_info = pending_io.get(task_id)
+        if task_info is None:
+            raise RuntimeError(f"Task {task_id} not found in pending_io")
+        
+        task_k = task_info["k"]
+        task_store_snapshot = task_info.get("store_snapshot", {})
+        
+        new_pending = dict(pending_io)
+        del new_pending[task_id]
+        
+        merged_store = dict(task_store_snapshot)
+        for key, val in stored_store.items():
+            if isinstance(key, str) and key.startswith("__scheduler_"):
+                merged_store[key] = val
+        merged_store[PENDING_IO_KEY] = new_pending
+        merged_store[CURRENT_TASK_KEY] = task_id
+        
+        return CESKState(
+            C=Value(result),
+            E=stored_env,
+            S=merged_store,
+            K=task_k,
+        )
+    
+    def resume_error_multi(error_info: Any) -> CESKState:
+        task_id, error = error_info
+        
+        task_info = pending_io.get(task_id)
+        if task_info is None:
+            return CESKState(
+                C=Error(error),
+                E=stored_env,
+                S=stored_store,
+                K=list(stored_k),
+            )
+        
+        task_k = task_info["k"]
+        task_store_snapshot = task_info.get("store_snapshot", {})
+        
+        new_pending = dict(pending_io)
+        del new_pending[task_id]
+        
+        merged_store = dict(task_store_snapshot)
+        for key, val in stored_store.items():
+            if isinstance(key, str) and key.startswith("__scheduler_"):
+                merged_store[key] = val
+        merged_store[PENDING_IO_KEY] = new_pending
+        merged_store[CURRENT_TASK_KEY] = task_id
+        
+        return CESKState(
+            C=Error(error),
+            E=stored_env,
+            S=merged_store,
+            K=task_k,
+        )
+    
+    return PythonAsyncSyntaxEscape(
+        resume=resume_multi,
+        resume_error=resume_error_multi,
+        awaitables=awaitables_dict,
         store=stored_store,
     )
 
@@ -179,5 +271,6 @@ __all__ = [
     "StepResult",
     "Suspended",  # Deprecated alias
     "Terminal",
-    "make_python_async_escape",
+    "multi_task_async_escape",
+    "python_async_escape",
 ]

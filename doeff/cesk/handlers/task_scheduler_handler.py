@@ -48,6 +48,7 @@ from doeff._vendor import FrozenDict
 from doeff.do import do
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult, ReturnFrame
+from doeff.cesk.result import multi_task_async_escape
 from doeff.cesk.handler_frame import Handler, HandlerContext, ResumeK, WithHandler
 from doeff.cesk.helpers import to_generator
 from doeff.cesk.state import ProgramControl
@@ -177,9 +178,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
-                from doeff.cesk.frames import SuspendOn
-                return SuspendOn(
-                    awaitable=None,
+                return multi_task_async_escape(
                     stored_k=ctx.delimited_k,
                     stored_env=ctx.env,
                     stored_store=ctx.store,
@@ -270,9 +269,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
-                from doeff.cesk.frames import SuspendOn
-                return SuspendOn(
-                    awaitable=None,
+                return multi_task_async_escape(
                     stored_k=list(ctx.delimited_k),
                     stored_env=ctx.env,
                     stored_store=ctx.store,
@@ -501,9 +498,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
-                from doeff.cesk.frames import SuspendOn
-                return SuspendOn(
-                    awaitable=None,
+                return multi_task_async_escape(
                     stored_k=waiter_k,
                     stored_env=ctx.env,
                     stored_store=ctx.store,
@@ -608,9 +603,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
-                from doeff.cesk.frames import SuspendOn
-                return SuspendOn(
-                    awaitable=None,
+                return multi_task_async_escape(
                     stored_k=waiter_k,
                     stored_env=ctx.env,
                     stored_store=ctx.store,
@@ -636,8 +629,6 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=next_k,
             )
         return ResumeK(k=next_k, value=resume_value, store=task_store)
-    
-    from doeff.cesk.frames import SuspendOn
     
     if isinstance(effect, _SchedulerSuspendForIO):
         import os
@@ -683,8 +674,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 )
             return ResumeK(k=next_k, value=resume_value, store=task_store)
         
-        return SuspendOn(
-            awaitable=None,
+        return multi_task_async_escape(
             stored_k=ctx.delimited_k,
             stored_env=ctx.env,
             stored_store=new_store,

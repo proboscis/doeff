@@ -126,7 +126,7 @@ class AsyncRuntime(BaseRuntime):
                             except asyncio.CancelledError:
                                 raise
                             except Exception as ex:
-                                state = result.resume_error(ex)
+                                state = result.resume_error((task_id, ex))
                             break
                     else:
                         raise RuntimeError("asyncio.wait returned but no task completed")
