@@ -68,6 +68,7 @@ from doeff.cesk.result import (
     StepResult,
     Terminal,
 )
+from doeff.cesk.run import async_handlers_preset, async_run, sync_handlers_preset, sync_run
 from doeff.cesk.runner import AsyncRunner, SyncRunner
 from doeff.cesk.runtime import AsyncRuntime, BaseRuntime, SimulationRuntime, SyncRuntime
 from doeff.cesk.runtime_result import (
@@ -125,6 +126,12 @@ from doeff.cesk.types import (
 
 
 __all__ = [
+    # Function-based API (preferred)
+    "async_handlers_preset",
+    "async_run",
+    "sync_handlers_preset",
+    "sync_run",
+    # Class-based API (for backwards compat)
     "AsyncRunner",
     "AsyncRuntime",
     "AwaitExternal",
