@@ -150,22 +150,13 @@ class SyncRunner:
     ) -> RuntimeResultImpl[T]:
         store = final_store if final_store is not None else state.S
 
-        final_state = {
-            k: v for k, v in store.items()
-            if not k.startswith("__")
-        }
-        final_log = list(store.get("__log__", []))
-        final_graph = store.get("__graph__")
-
         return RuntimeResultImpl(
             _result=Ok(value),
-            _state=final_state,
-            _log=final_log,
+            _raw_store=dict(store),
             _env={},
             _k_stack=KStackTrace(frames=()),
             _effect_stack=EffectStackTrace(),
             _python_stack=PythonStackTrace(frames=()),
-            _graph=final_graph,
         )
 
     def _build_error_result(
@@ -177,26 +168,17 @@ class SyncRunner:
     ) -> RuntimeResultImpl[Any]:
         store = final_store if final_store is not None else state.S
 
-        final_state = {
-            k: v for k, v in store.items()
-            if not k.startswith("__")
-        }
-        final_log = list(store.get("__log__", []))
-        final_graph = store.get("__graph__")
-
         if captured_traceback is None:
             captured_traceback = getattr(exc, "__cesk_traceback__", None)
         python_stack, effect_stack = build_stacks_from_captured_traceback(captured_traceback)
 
         return RuntimeResultImpl(
             _result=Err(exc),  # type: ignore[arg-type]
-            _state=final_state,
-            _log=final_log,
+            _raw_store=dict(store),
             _env={},
             _k_stack=KStackTrace(frames=()),
             _effect_stack=effect_stack,
             _python_stack=python_stack,
-            _graph=final_graph,
             _captured_traceback=captured_traceback,
         )
 
