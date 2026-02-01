@@ -69,8 +69,6 @@ from doeff.cesk.result import (
     Terminal,
 )
 from doeff.cesk.run import async_handlers_preset, async_run, sync_handlers_preset, sync_run
-from doeff.cesk.runner import AsyncRunner, SyncRunner
-from doeff.cesk.runtime import AsyncRuntime, BaseRuntime, SimulationRuntime, SyncRuntime
 from doeff.cesk.runtime_result import (
     EffectCallNode,
     EffectStackTrace,
@@ -126,16 +124,13 @@ from doeff.cesk.types import (
 
 
 __all__ = [
-    # Function-based API (preferred)
+    # Function-based API
     "async_handlers_preset",
     "async_run",
     "sync_handlers_preset",
     "sync_run",
-    # Class-based API (for backwards compat)
-    "AsyncRunner",
-    "AsyncRuntime",
+    # Internal types
     "AwaitExternal",
-    "BaseRuntime",
     "Blocked",
     "CESKResult",
     "CESKState",
@@ -180,7 +175,6 @@ __all__ = [
     "RuntimeResult",
     "RuntimeResultImpl",
     "SafeFrame",
-    "SimulationRuntime",
     "SourceLocation",
     "SpawnCondition",
     "SpawnHandle",
@@ -188,8 +182,6 @@ __all__ = [
     "StepResult",
     "Store",
     "PythonAsyncSyntaxEscape",
-    "SyncRunner",
-    "SyncRuntime",
     "TaskCondition",
     "TaskDone",
     "TaskHandle",
