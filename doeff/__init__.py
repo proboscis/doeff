@@ -37,6 +37,12 @@ from doeff.cache import (
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.cesk.errors import MissingEnvKeyError
+from doeff.cesk.run import (
+    async_handlers_preset,
+    async_run,
+    sync_handlers_preset,
+    sync_run,
+)
 from doeff.cesk.runtime import (
     AsyncRuntime,
     SimulationRuntime,
@@ -219,6 +225,8 @@ __all__ = [
     "WaitUntilEffect",
     "annotate",
     "ask",
+    "async_handlers_preset",
+    "async_run",
     "atomic_get",
     "atomic_update",
     "await_",
@@ -253,6 +261,8 @@ __all__ = [
     "slog",
     "spawn",
     "step",
+    "sync_handlers_preset",
+    "sync_run",
     "tell",
     "trace_err",
     "wait",

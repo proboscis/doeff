@@ -68,8 +68,8 @@ def run_program(
     Args:
         program: Either a fully-qualified path to a Program (e.g., "myapp.program")
                  or a Program instance directly.
-        interpreter: Optional interpreter - can be a string path, SyncRuntime,
-                     or callable. If not specified, auto-discovery will be used.
+        interpreter: Optional interpreter - can be a string path or callable.
+                     If not specified, uses sync_run with default handlers.
         envs: Optional list of environments. Each item can be:
               - A string path (e.g., "myapp.env")
               - A Program[dict] that yields environment values
@@ -267,22 +267,17 @@ def _resolve_interpreter(
     interpreter: InterpreterLike,
     resolver: Any,
 ) -> tuple[Any, str]:
-    from doeff.cesk.runtime import SyncRuntime
-
     if interpreter is None:
-        return SyncRuntime(), "<default SyncRuntime>"
+        return None, "<default sync_run>"
 
     if isinstance(interpreter, str):
         return resolver.resolve(interpreter), interpreter
-
-    if isinstance(interpreter, SyncRuntime):
-        return interpreter, "<SyncRuntime instance>"
 
     if callable(interpreter):
         func_name = getattr(interpreter, "__name__", str(interpreter))
         return interpreter, f"<callable: {func_name}>"
 
-    raise TypeError(f"interpreter must be str, SyncRuntime, or callable, got {type(interpreter)}")
+    raise TypeError(f"interpreter must be str or callable, got {type(interpreter)}")
 
 
 def _apply_kleisli(
@@ -350,19 +345,18 @@ def _apply_envs(
     quiet: bool,
 ) -> tuple[Program[Any], list[str]]:
     from doeff.__main__ import RunServices
-    from doeff.cesk.runtime import SyncRuntime
+    from doeff.cesk.run import sync_handlers_preset, sync_run
     from doeff.effects import Local
 
     env_sources: list[str] = []
     merged_env: dict[str, Any] = {}
-    temp_runtime = SyncRuntime()
 
     if load_default_env:
         default_env_path = _load_default_env(quiet)
         if default_env_path:
             services = RunServices()
             env_program = services.merger.merge_envs([default_env_path])
-            env_value = temp_runtime.run(env_program)
+            env_value = sync_run(env_program, sync_handlers_preset).value
             merged_env.update(env_value)
             env_sources.append("~/.doeff.py:__default_env__")
 
@@ -370,12 +364,12 @@ def _apply_envs(
         if isinstance(env, str):
             services = RunServices()
             env_program = services.merger.merge_envs([env])
-            env_value = temp_runtime.run(env_program)
+            env_value = sync_run(env_program, sync_handlers_preset).value
             merged_env.update(env_value)
             env_sources.append(env)
 
         elif isinstance(env, Program):
-            env_value = temp_runtime.run(env)
+            env_value = sync_run(env, sync_handlers_preset).value
             if not isinstance(env_value, dict):
                 raise TypeError(f"Environment Program must yield dict, got {type(env_value)}")
             merged_env.update(env_value)
@@ -446,17 +440,18 @@ def _execute_program(
     interpreter_obj: Any,
 ) -> Any:
     from doeff.__main__ import _call_interpreter, _finalize_result
-    from doeff.cesk.runtime import SyncRuntime
+    from doeff.cesk.run import sync_handlers_preset, sync_run
 
-    if isinstance(interpreter_obj, SyncRuntime):
-        return interpreter_obj.run(program)
+    if interpreter_obj is None:
+        # Use default sync_run
+        return sync_run(program, sync_handlers_preset).value
 
     if callable(interpreter_obj):
         result = _call_interpreter(interpreter_obj, program)
         final_value, run_result = _finalize_result(result)
         return final_value
 
-    raise TypeError(f"interpreter must be callable or SyncRuntime, got {type(interpreter_obj)}")
+    raise TypeError(f"interpreter must be callable, got {type(interpreter_obj)}")
 
 
 class _QuietRunCommand:
