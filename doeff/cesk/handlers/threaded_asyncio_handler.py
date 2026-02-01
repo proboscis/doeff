@@ -76,9 +76,9 @@ def threaded_asyncio_handler(effect: EffectBase, ctx: HandlerContext):
         ContinueValue with result, ContinueError on exception,
         or forwards to outer handler for unhandled effects
     """
-    from doeff.effects.queue import SuspendForIOEffect
+    from doeff.effects.scheduler_internal import _SchedulerSuspendForIO
 
-    if isinstance(effect, SuspendForIOEffect):
+    if isinstance(effect, _SchedulerSuspendForIO):
         awaitable = effect.awaitable
         thread = get_asyncio_thread()
 
@@ -113,12 +113,12 @@ def wrap_with_threaded_async(program: Any) -> Any:
     from typing import cast
 
     from doeff.cesk.handler_frame import Handler, WithHandler
-    from doeff.cesk.handlers.async_effects_handler import async_effects_handler
+    from doeff.cesk.handlers.python_async_handler import python_async_handler
 
     return WithHandler(
         handler=cast(Handler, threaded_asyncio_handler),
         program=WithHandler(
-            handler=cast(Handler, async_effects_handler),
+            handler=cast(Handler, python_async_handler),
             program=program,
         ),
     )

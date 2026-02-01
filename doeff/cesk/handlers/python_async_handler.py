@@ -1,3 +1,5 @@
+"""Python async handler for async/await effects."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,13 +16,14 @@ if TYPE_CHECKING:
 
 
 @do
-def async_effects_handler(effect: EffectBase, ctx: "HandlerContext"):
+def python_async_handler(effect: EffectBase, ctx: "HandlerContext"):
+    """Handle async/await effects by converting to scheduler suspension."""
     from doeff.effects.future import FutureAwaitEffect
-    from doeff.effects.queue import SuspendForIOEffect
+    from doeff.effects.scheduler_internal import _SchedulerSuspendForIO
     from doeff.effects.time import DelayEffect, WaitUntilEffect
     
     if isinstance(effect, FutureAwaitEffect):
-        result = yield SuspendForIOEffect(awaitable=effect.awaitable)
+        result = yield _SchedulerSuspendForIO(awaitable=effect.awaitable)
         return ContinueValue(
             value=result,
             env=ctx.env,
@@ -31,7 +34,7 @@ def async_effects_handler(effect: EffectBase, ctx: "HandlerContext"):
     if isinstance(effect, DelayEffect):
         async def do_delay() -> None:
             await asyncio.sleep(effect.seconds)
-        result = yield SuspendForIOEffect(awaitable=do_delay())
+        result = yield _SchedulerSuspendForIO(awaitable=do_delay())
         return ContinueValue(
             value=result,
             env=ctx.env,
@@ -45,7 +48,7 @@ def async_effects_handler(effect: EffectBase, ctx: "HandlerContext"):
             if effect.target_time > now:
                 delay_seconds = (effect.target_time - now).total_seconds()
                 await asyncio.sleep(delay_seconds)
-        result = yield SuspendForIOEffect(awaitable=do_wait_until())
+        result = yield _SchedulerSuspendForIO(awaitable=do_wait_until())
         return ContinueValue(
             value=result,
             env=ctx.env,
@@ -62,6 +65,11 @@ def async_effects_handler(effect: EffectBase, ctx: "HandlerContext"):
     )
 
 
+# Backwards compatibility alias (deprecated)
+async_effects_handler = python_async_handler
+
+
 __all__ = [
     "async_effects_handler",
+    "python_async_handler",
 ]

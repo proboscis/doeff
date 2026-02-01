@@ -18,8 +18,8 @@ from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.core_handler import core_handler
-from doeff.cesk.handlers.queue_handler import queue_handler
-from doeff.cesk.handlers.scheduler_handler import scheduler_handler
+from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
+from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
 from doeff.cesk.helpers import to_generator
 from doeff.cesk.result import Done, Failed
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
@@ -37,9 +37,9 @@ T = TypeVar("T")
 def _wrap_with_handlers(program: Program[T]) -> Program[T]:
     """Wrap a program with the handler stack for cooperative scheduling."""
     return WithHandler(
-        handler=cast(Handler, queue_handler),
+        handler=cast(Handler, scheduler_state_handler),
         program=WithHandler(
-            handler=cast(Handler, scheduler_handler),
+            handler=cast(Handler, task_scheduler_handler),
             program=WithHandler(
                 handler=cast(Handler, core_handler),
                 program=program,

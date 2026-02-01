@@ -1,4 +1,4 @@
-"""Queue handler for cooperative scheduling - manages task queue using store primitives."""
+"""Scheduler state handler for cooperative scheduling - manages task queue using store primitives."""
 
 from __future__ import annotations
 
@@ -9,21 +9,25 @@ from uuid import uuid4
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import ContinueValue, FrameResult
 from doeff.cesk.handler_frame import HandlerContext
-from doeff.effects.queue import (
-    CancelTask,
-    CreatePromiseHandle,
-    CreateTaskHandle,
-    GetCurrentTaskId,
-    GetCurrentTaskStore,
-    GetTaskResult,
-    IsTaskDone,
-    QueueAdd,
-    QueueIsEmpty,
-    QueuePop,
-    RegisterWaiter,
-    SetTaskSuspended,
-    TaskComplete,
-    UpdateTaskStore,
+from doeff.effects.scheduler_internal import (
+    _SchedulerAddPendingIO,
+    _SchedulerCancelTask,
+    _SchedulerCreatePromise,
+    _SchedulerCreateTaskHandle,
+    _SchedulerDequeueTask,
+    _SchedulerEnqueueTask,
+    _SchedulerGetCurrentTaskId,
+    _SchedulerGetPendingIO,
+    _SchedulerGetTaskResult,
+    _SchedulerGetTaskStore,
+    _SchedulerIsTaskDone,
+    _SchedulerQueueEmpty,
+    _SchedulerRegisterWaiter,
+    _SchedulerRemovePendingIO,
+    _SchedulerResumePendingIO,
+    _SchedulerSetTaskSuspended,
+    _SchedulerTaskComplete,
+    _SchedulerUpdateTaskStore,
 )
 from doeff.effects.spawn import Promise, Task, TaskCancelledError
 from doeff.program import Program
@@ -53,7 +57,6 @@ def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
     if WAITERS_KEY not in store:
         store[WAITERS_KEY] = {}
     if CURRENT_TASK_KEY not in store:
-        # Initialize main task ID on first access
         store[CURRENT_TASK_KEY] = uuid4()
 
 
@@ -69,8 +72,8 @@ class TaskInfo:
     error: BaseException | None = None
 
 
-def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResult]:
-    """Handle queue effects using store primitives.
+def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResult]:
+    """Handle scheduler state effects using store primitives.
     
     This is the outermost handler in the handler stack. It manages:
     - Task queue (ready tasks waiting to run)
@@ -80,7 +83,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
     store = dict(ctx.store)
     _ensure_scheduler_store_initialized(store)
     
-    if isinstance(effect, QueueAdd):
+    if isinstance(effect, _SchedulerEnqueueTask):
         queue = list(store.get(TASK_QUEUE_KEY, []))
         queue.append({
             "task_id": effect.task_id,
@@ -96,17 +99,17 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, QueuePop):
+    if isinstance(effect, _SchedulerDequeueTask):
         import os
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         queue = list(store.get(TASK_QUEUE_KEY, []))
         if debug:
-            print(f"[QueuePop] queue_len={len(queue)}")
+            print(f"[_SchedulerDequeueTask] queue_len={len(queue)}")
         if queue:
             item = queue.pop(0)
             store[TASK_QUEUE_KEY] = queue
             if debug:
-                print(f"[QueuePop] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}")
+                print(f"[_SchedulerDequeueTask] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}")
             return Program.pure(ContinueValue(
                 value=(
                     item["task_id"],
@@ -121,7 +124,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
                 k=ctx.delimited_k,
             ))
         if debug:
-            print(f"[QueuePop] Queue empty! Returning None")
+            print(f"[_SchedulerDequeueTask] Queue empty! Returning None")
         return Program.pure(ContinueValue(
             value=None,
             env=ctx.env,
@@ -129,7 +132,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, QueueIsEmpty):
+    if isinstance(effect, _SchedulerQueueEmpty):
         queue = store.get(TASK_QUEUE_KEY, [])
         return Program.pure(ContinueValue(
             value=len(queue) == 0,
@@ -138,7 +141,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, RegisterWaiter):
+    if isinstance(effect, _SchedulerRegisterWaiter):
         waiters = dict(store.get(WAITERS_KEY, {}))
         handle_id = effect.handle_id
         if handle_id not in waiters:
@@ -157,7 +160,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, CreateTaskHandle):
+    if isinstance(effect, _SchedulerCreateTaskHandle):
         handle_id = uuid4()
         task_info = TaskInfo(
             task_id=effect.task_id,
@@ -182,7 +185,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, TaskComplete):
+    if isinstance(effect, _SchedulerTaskComplete):
         import os
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         
@@ -204,7 +207,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             all_waiter_task_ids = []
             if handle_id in waiters:
                 all_waiter_task_ids = [w["waiter_task_id"] for w in waiters[handle_id]]
-            print(f"[TaskComplete] handle={handle_id}, result={effect.result}, waiters_for_handle={handle_id in waiters}, waiter_task_ids={all_waiter_task_ids}")
+            print(f"[_SchedulerTaskComplete] handle={handle_id}, result={effect.result}, waiters_for_handle={handle_id in waiters}, waiter_task_ids={all_waiter_task_ids}")
         if handle_id in waiters:
             waiting_list = waiters.pop(handle_id)
             store[WAITERS_KEY] = waiters
@@ -217,7 +220,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
                 waiter_task_id = waiter["waiter_task_id"]
                 if waiter_task_id in existing_task_ids:
                     if debug:
-                        print(f"[TaskComplete] Skipping duplicate waiter for task_id={waiter_task_id}")
+                        print(f"[_SchedulerTaskComplete] Skipping duplicate waiter for task_id={waiter_task_id}")
                     continue
                 queue.append({
                     "task_id": waiter_task_id,
@@ -229,7 +232,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
                 existing_task_ids.add(waiter_task_id)
                 added += 1
             if debug:
-                print(f"[TaskComplete] Added {added} waiters to queue (skipped {len(waiting_list) - added}), queue_len now={len(queue)}")
+                print(f"[_SchedulerTaskComplete] Added {added} waiters to queue (skipped {len(waiting_list) - added}), queue_len now={len(queue)}")
             store[TASK_QUEUE_KEY] = queue
         
         return Program.pure(ContinueValue(
@@ -239,7 +242,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, GetTaskResult):
+    if isinstance(effect, _SchedulerGetTaskResult):
         registry = store.get(TASK_REGISTRY_KEY, {})
         handle_id = effect.handle_id
         
@@ -259,7 +262,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, CancelTask):
+    if isinstance(effect, _SchedulerCancelTask):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         handle_id = effect.handle_id
         
@@ -307,7 +310,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, IsTaskDone):
+    if isinstance(effect, _SchedulerIsTaskDone):
         registry = store.get(TASK_REGISTRY_KEY, {})
         handle_id = effect.handle_id
         
@@ -327,7 +330,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, CreatePromiseHandle):
+    if isinstance(effect, _SchedulerCreatePromise):
         handle_id = uuid4()
         task_info = TaskInfo(
             task_id=None,
@@ -349,7 +352,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, GetCurrentTaskId):
+    if isinstance(effect, _SchedulerGetCurrentTaskId):
         current = store.get(CURRENT_TASK_KEY)
         return Program.pure(ContinueValue(
             value=current,
@@ -358,7 +361,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, GetCurrentTaskStore):
+    if isinstance(effect, _SchedulerGetTaskStore):
         registry = store.get(TASK_REGISTRY_KEY, {})
         for task_info in registry.values():
             if task_info.task_id == effect.task_id:
@@ -375,7 +378,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, UpdateTaskStore):
+    if isinstance(effect, _SchedulerUpdateTaskStore):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         for handle_id, task_info in registry.items():
             if task_info.task_id == effect.task_id:
@@ -390,7 +393,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, SetTaskSuspended):
+    if isinstance(effect, _SchedulerSetTaskSuspended):
         store[TASK_SUSPENDED_KEY] = {
             "task_id": effect.task_id,
             "waiting_for": effect.waiting_for,
@@ -402,9 +405,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    from doeff.effects.queue import AddPendingIO, GetPendingIO, RemovePendingIO, ResumePendingIO
-    
-    if isinstance(effect, AddPendingIO):
+    if isinstance(effect, _SchedulerAddPendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         pending[effect.task_id] = {
             "awaitable": effect.awaitable,
@@ -419,7 +420,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, GetPendingIO):
+    if isinstance(effect, _SchedulerGetPendingIO):
         pending = store.get(PENDING_IO_KEY, {})
         return Program.pure(ContinueValue(
             value=pending,
@@ -428,7 +429,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, RemovePendingIO):
+    if isinstance(effect, _SchedulerRemovePendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         pending.pop(effect.task_id, None)
         store[PENDING_IO_KEY] = pending
@@ -439,7 +440,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
             k=ctx.delimited_k,
         ))
     
-    if isinstance(effect, ResumePendingIO):
+    if isinstance(effect, _SchedulerResumePendingIO):
         pending = dict(store.get(PENDING_IO_KEY, {}))
         task_info = pending.pop(effect.task_id, None)
         store[PENDING_IO_KEY] = pending
@@ -461,7 +462,11 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
         ))
     
     from doeff.cesk.errors import UnhandledEffectError
-    raise UnhandledEffectError(f"queue_handler: unhandled effect {type(effect).__name__}")
+    raise UnhandledEffectError(f"scheduler_state_handler: unhandled effect {type(effect).__name__}")
+
+
+# Backwards compatibility alias (deprecated)
+queue_handler = scheduler_state_handler
 
 
 __all__ = [
@@ -473,4 +478,5 @@ __all__ = [
     "TaskInfo",
     "WAITERS_KEY",
     "queue_handler",
+    "scheduler_state_handler",
 ]
