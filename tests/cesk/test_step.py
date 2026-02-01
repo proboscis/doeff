@@ -6,7 +6,7 @@ Tests for the handler-based step function that dispatches all effects through ha
 import pytest
 
 from doeff._vendor import FrozenDict
-from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape
 from doeff.cesk.state import CESKState, Error, Value
 from doeff.cesk.step import step
 from doeff.program import Program
@@ -38,4 +38,4 @@ class TestStep:
 
         result = step(state)
 
-        assert isinstance(result, (CESKState, Suspended, Done))
+        assert isinstance(result, (CESKState, PythonAsyncSyntaxEscape, Done))

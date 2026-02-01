@@ -26,7 +26,7 @@ from doeff.cesk.handler_frame import (
     WithHandler,
 )
 from doeff.cesk.helpers import to_generator
-from doeff.cesk.result import Done, Failed, StepResult, Suspended
+from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape, StepResult
 from doeff.cesk.state import (
     CESKState,
     EffectControl,
@@ -167,14 +167,14 @@ def _invoke_handler(
     )
 
 
-def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
-    """Create a Suspended result from a SuspendOn frame result.
+def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> PythonAsyncSyntaxEscape:
+    """Create a PythonAsyncSyntaxEscape result from a SuspendOn frame result.
 
     Two cases:
     1. Single awaitable: suspend_on.awaitable is set
-       -> Suspended with awaitable field, resume gets plain value
+       -> PythonAsyncSyntaxEscape with awaitable field, resume gets plain value
     2. Multi-task: suspend_on.awaitable is None, pending_io in store
-       -> Suspended with awaitables dict, resume gets (task_id, value)
+       -> PythonAsyncSyntaxEscape with awaitables dict, resume gets (task_id, value)
     """
     from doeff.cesk.handlers.scheduler_state_handler import (
         CURRENT_TASK_KEY,
@@ -228,7 +228,7 @@ def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
                 K=stored_k,
             )
 
-        return Suspended(
+        return PythonAsyncSyntaxEscape(
             resume=resume_multi,
             resume_error=resume_error_multi,
             awaitables=awaitables_dict,
@@ -255,7 +255,7 @@ def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
             K=stored_k,
         )
 
-    return Suspended(
+    return PythonAsyncSyntaxEscape(
         resume=resume_single,
         resume_error=resume_error_single,
         awaitable=suspend_on.awaitable,

@@ -10,7 +10,7 @@ from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.python_async_handler import python_async_handler
 from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
-from doeff.cesk.result import Done, Failed, Suspended
+from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
 from doeff.cesk.state import CESKState, ProgramControl
@@ -104,7 +104,7 @@ class AsyncRuntime(BaseRuntime):
                     captured_traceback=result.captured_traceback,
                 )
 
-            if isinstance(result, Suspended):
+            if isinstance(result, PythonAsyncSyntaxEscape):
                 current_store = result.store if result.store is not None else state.S
 
                 if result.awaitables:
@@ -139,7 +139,7 @@ class AsyncRuntime(BaseRuntime):
                     except Exception as ex:
                         state = result.resume_error(ex)
                 else:
-                    raise RuntimeError("Suspended with neither awaitable nor awaitables")
+                    raise RuntimeError("PythonAsyncSyntaxEscape with neither awaitable nor awaitables")
                 continue
 
             if isinstance(result, CESKState):

@@ -12,7 +12,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, TypeVar
 
 if TYPE_CHECKING:
-    from doeff.cesk.result import Suspended
+    from doeff.cesk.result import PythonAsyncSyntaxEscape
     from doeff.cesk.state import CESKState
     from doeff.cesk.types import Store, TaskId
 
@@ -68,7 +68,7 @@ class Scheduler:
 
     def __init__(self) -> None:
         self._ready: Queue[tuple[TaskId, ResumeInfo]] = Queue()
-        self._pending: dict[Any, tuple[TaskId, Suspended]] = {}
+        self._pending: dict[Any, tuple[TaskId, PythonAsyncSyntaxEscape]] = {}
         self._lock = Lock()
 
     def enqueue_ready(self, task_id: TaskId, resume_info: ResumeInfo) -> None:
@@ -78,16 +78,16 @@ class Scheduler:
         self,
         handle: Any,
         task_id: TaskId,
-        suspended: Suspended,
+        suspended: PythonAsyncSyntaxEscape,
     ) -> None:
         with self._lock:
             self._pending[handle] = (task_id, suspended)
 
-    def get_pending(self, handle: Any) -> tuple[TaskId, Suspended] | None:
+    def get_pending(self, handle: Any) -> tuple[TaskId, PythonAsyncSyntaxEscape] | None:
         with self._lock:
             return self._pending.get(handle)
 
-    def pop_pending(self, handle: Any) -> tuple[TaskId, Suspended] | None:
+    def pop_pending(self, handle: Any) -> tuple[TaskId, PythonAsyncSyntaxEscape] | None:
         with self._lock:
             return self._pending.pop(handle, None)
 
