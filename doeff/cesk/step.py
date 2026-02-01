@@ -176,7 +176,7 @@ def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
     2. Multi-task: suspend_on.awaitable is None, pending_io in store
        -> Suspended with awaitables dict, resume gets (task_id, value)
     """
-    from doeff.cesk.handlers.queue_handler import (
+    from doeff.cesk.handlers.scheduler_state_handler import (
         CURRENT_TASK_KEY,
         PENDING_IO_KEY,
     )

@@ -1,4 +1,4 @@
-"""Scheduler handler for cooperative multi-task scheduling.
+"""Task scheduler handler for cooperative multi-task scheduling.
 
 Pure handler approach: all task scheduling happens through handlers.
 No task tracking in outer runtime - just step until Done/Failed.
@@ -7,7 +7,7 @@ No task tracking in outer runtime - just step until Done/Failed.
 
 ### P2: FutureAwaitEffect and DelayEffect Handling (ISSUE-CORE-467)
 
-The scheduler_handler currently handles FutureAwaitEffect and DelayEffect directly
+The task_scheduler_handler currently handles FutureAwaitEffect and DelayEffect directly
 using blocking I/O operations (asyncio.run and time.sleep). This is intentional
 for the SyncRuntime use case but has limitations:
 
@@ -57,25 +57,26 @@ from doeff.effects.promise import (
     CreatePromiseEffect,
     FailPromiseEffect,
 )
-from doeff.cesk.handlers.queue_handler import (
+from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
     PENDING_IO_KEY,
     TASK_QUEUE_KEY,
     TASK_REGISTRY_KEY,
     WAITERS_KEY,
 )
-from doeff.effects.queue import (
-    CancelTask,
-    CreatePromiseHandle,
-    CreateTaskHandle,
-    GetCurrentTaskId,
-    GetTaskResult,
-    IsTaskDone,
-    QueueAdd,
-    QueuePop,
-    RegisterWaiter,
-    TaskComplete,
-    TaskCompletedEffect,
+from doeff.effects.scheduler_internal import (
+    _SchedulerCancelTask,
+    _SchedulerCreatePromise,
+    _SchedulerCreateTaskHandle,
+    _SchedulerDequeueTask,
+    _SchedulerEnqueueTask,
+    _SchedulerGetCurrentTaskId,
+    _SchedulerGetTaskResult,
+    _SchedulerIsTaskDone,
+    _SchedulerRegisterWaiter,
+    _SchedulerSuspendForIO,
+    _SchedulerTaskComplete,
+    _SchedulerTaskCompleted,
 )
 from doeff.effects.race import RaceEffect, RaceResult
 from doeff.effects.spawn import (
@@ -94,34 +95,34 @@ if TYPE_CHECKING:
 
 
 def _make_spawn_wrapper(program: Any, task_id: Any, handle_id: Any) -> Program[Any]:
-    """Wrap spawned program to yield TaskCompletedEffect on completion."""
+    """Wrap spawned program to yield _SchedulerTaskCompleted on completion."""
     @do
     def wrapper():
         try:
             result = yield program
-            yield TaskCompletedEffect(task_id=task_id, handle_id=handle_id, result=result)
+            yield _SchedulerTaskCompleted(task_id=task_id, handle_id=handle_id, result=result)
         except Exception as e:
-            yield TaskCompletedEffect(task_id=task_id, handle_id=handle_id, error=e)
+            yield _SchedulerTaskCompleted(task_id=task_id, handle_id=handle_id, error=e)
     return wrapper()
 
 
 def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) -> Any:
     """Wrap a spawned program with handlers and completion wrapper.
     
-    Note: We do NOT wrap with queue_handler here. The queue_handler manages
+    Note: We do NOT wrap with scheduler_state_handler here. The scheduler_state_handler manages
     global scheduler state (queue, registry, waiters) that must be shared
     across all tasks. Effects from spawned tasks bubble up to the main
-    queue_handler through the continuation stack.
+    scheduler_state_handler through the continuation stack.
     """
-    from doeff.cesk.handlers.async_effects_handler import async_effects_handler
+    from doeff.cesk.handlers.python_async_handler import python_async_handler
     from doeff.cesk.handlers.core_handler import core_handler
     
     wrapped = _make_spawn_wrapper(program, task_id, handle_id)
     
     return WithHandler(
-        handler=cast(Handler, scheduler_handler),
+        handler=cast(Handler, task_scheduler_handler),
         program=WithHandler(
-            handler=cast(Handler, async_effects_handler),
+            handler=cast(Handler, python_async_handler),
             program=WithHandler(
                 handler=cast(Handler, core_handler),
                 program=wrapped,
@@ -138,7 +139,7 @@ def _make_initial_k(program: Any, env: Any = None) -> list[Any]:
 
 
 @do  # type: ignore[reportArgumentType] - @do transforms generator to KleisliProgram
-def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
+def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     """Handle scheduling effects using ResumeK for task switching."""
     
     if isinstance(effect, SpawnEffect):
@@ -147,7 +148,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         store_snapshot = dict(ctx.store)
         store_snapshot[CURRENT_TASK_KEY] = task_id
         
-        handle_id, task_handle = yield CreateTaskHandle(
+        handle_id, task_handle = yield _SchedulerCreateTaskHandle(
             task_id=task_id,
             env_snapshot=env_snapshot,
             store_snapshot=store_snapshot,
@@ -155,7 +156,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         
         wrapped_program = _wrap_with_handlers_for_spawn(effect.program, task_id, handle_id)
         child_k = _make_initial_k(wrapped_program, env_snapshot)
-        yield QueueAdd(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
+        yield _SchedulerEnqueueTask(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
         
         return ContinueValue(
             value=task_handle,
@@ -164,15 +165,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             k=ctx.delimited_k,
         )
     
-    if isinstance(effect, TaskCompletedEffect):
-        yield TaskComplete(
+    if isinstance(effect, _SchedulerTaskCompleted):
+        yield _SchedulerTaskComplete(
             handle_id=effect.handle_id,
             task_id=effect.task_id,
             result=effect.result,
             error=effect.error,
         )
         
-        next_task = yield QueuePop()
+        next_task = yield _SchedulerDequeueTask()
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
@@ -223,7 +224,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             )
         
         handle_id = waitable._handle
-        result = yield GetTaskResult(handle_id=handle_id)
+        result = yield _SchedulerGetTaskResult(handle_id=handle_id)
         
         if result is None:
             return ContinueError(
@@ -257,15 +258,15 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=ctx.delimited_k,
             )
         
-        current_task_id = yield GetCurrentTaskId()
-        yield RegisterWaiter(
+        current_task_id = yield _SchedulerGetCurrentTaskId()
+        yield _SchedulerRegisterWaiter(
             handle_id=handle_id,
             waiter_task_id=current_task_id,
             waiter_k=list(ctx.delimited_k),
             waiter_store=dict(ctx.store),
         )
         
-        next_task = yield QueuePop()
+        next_task = yield _SchedulerDequeueTask()
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
@@ -300,7 +301,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     
     if isinstance(effect, TaskCancelEffect):
         handle_id = effect.task._handle
-        was_cancelled = yield CancelTask(handle_id=handle_id)
+        was_cancelled = yield _SchedulerCancelTask(handle_id=handle_id)
         return ContinueValue(
             value=was_cancelled,
             env=ctx.env,
@@ -310,7 +311,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     
     if isinstance(effect, TaskIsDoneEffect):
         handle_id = effect.task._handle
-        is_done = yield IsTaskDone(handle_id=handle_id)
+        is_done = yield _SchedulerIsTaskDone(handle_id=handle_id)
         return ContinueValue(
             value=is_done,
             env=ctx.env,
@@ -319,7 +320,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         )
     
     if isinstance(effect, CreatePromiseEffect):
-        handle_id, promise = yield CreatePromiseHandle()
+        handle_id, promise = yield _SchedulerCreatePromise()
         return ContinueValue(
             value=promise,
             env=ctx.env,
@@ -329,7 +330,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     
     if isinstance(effect, CompletePromiseEffect):
         handle_id = effect.promise.future._handle
-        result = yield GetTaskResult(handle_id=handle_id)
+        result = yield _SchedulerGetTaskResult(handle_id=handle_id)
         
         if result is None:
             return ContinueError(
@@ -348,7 +349,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=ctx.delimited_k,
             )
         
-        yield TaskComplete(
+        yield _SchedulerTaskComplete(
             handle_id=handle_id,
             task_id=None,
             result=effect.value,
@@ -364,7 +365,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     
     if isinstance(effect, FailPromiseEffect):
         handle_id = effect.promise.future._handle
-        result = yield GetTaskResult(handle_id=handle_id)
+        result = yield _SchedulerGetTaskResult(handle_id=handle_id)
         
         if result is None:
             return ContinueError(
@@ -383,7 +384,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 k=ctx.delimited_k,
             )
         
-        yield TaskComplete(
+        yield _SchedulerTaskComplete(
             handle_id=handle_id,
             task_id=None,
             result=None,
@@ -428,7 +429,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 )
             
             handle_id = future._handle
-            task_result = yield GetTaskResult(handle_id=handle_id)
+            task_result = yield _SchedulerGetTaskResult(handle_id=handle_id)
             
             if task_result is None:
                 return ContinueError(
@@ -486,17 +487,17 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         )
         waiter_k = [waiter_frame] + list(ctx.delimited_k)
         
-        current_task_id = yield GetCurrentTaskId()
+        current_task_id = yield _SchedulerGetCurrentTaskId()
         for i in pending_indices:
             handle_id = futures[i]._handle
-            yield RegisterWaiter(
+            yield _SchedulerRegisterWaiter(
                 handle_id=handle_id,
                 waiter_task_id=current_task_id,
                 waiter_k=waiter_k,
                 waiter_store=dict(ctx.store),
             )
         
-        next_task = yield QueuePop()
+        next_task = yield _SchedulerDequeueTask()
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
@@ -549,7 +550,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 )
             
             handle_id = future._handle
-            task_result = yield GetTaskResult(handle_id=handle_id)
+            task_result = yield _SchedulerGetTaskResult(handle_id=handle_id)
             
             if task_result is None:
                 return ContinueError(
@@ -593,17 +594,17 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         )
         waiter_k = [waiter_frame] + list(ctx.delimited_k)
         
-        current_task_id = yield GetCurrentTaskId()
+        current_task_id = yield _SchedulerGetCurrentTaskId()
         for future in futures:
             handle_id = future._handle
-            yield RegisterWaiter(
+            yield _SchedulerRegisterWaiter(
                 handle_id=handle_id,
                 waiter_task_id=current_task_id,
                 waiter_k=waiter_k,
                 waiter_store=dict(ctx.store),
             )
         
-        next_task = yield QueuePop()
+        next_task = yield _SchedulerDequeueTask()
         if next_task is None:
             pending_io = ctx.store.get(PENDING_IO_KEY, {})
             if pending_io:
@@ -636,10 +637,9 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             )
         return ResumeK(k=next_k, value=resume_value, store=task_store)
     
-    from doeff.effects.queue import SuspendForIOEffect
     from doeff.cesk.frames import SuspendOn
     
-    if isinstance(effect, SuspendForIOEffect):
+    if isinstance(effect, _SchedulerSuspendForIO):
         import os
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         current_task_id = ctx.store.get(CURRENT_TASK_KEY)
@@ -657,7 +657,7 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         
         queue = list(new_store.get(TASK_QUEUE_KEY, []))
         if debug:
-            print(f"[SuspendForIOEffect] queue_len={len(queue)}, current_task={current_task_id}")
+            print(f"[_SchedulerSuspendForIO] queue_len={len(queue)}, current_task={current_task_id}")
         if queue:
             item = queue.pop(0)
             new_store[TASK_QUEUE_KEY] = queue
@@ -699,6 +699,11 @@ def scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     )
 
 
+# Backwards compatibility alias (deprecated)
+scheduler_handler = task_scheduler_handler
+
+
 __all__ = [
     "scheduler_handler",
+    "task_scheduler_handler",
 ]
