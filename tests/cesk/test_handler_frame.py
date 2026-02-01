@@ -206,7 +206,7 @@ class TestWithHandlerEffect:
 
 class TestWithHandlerIntegration:
     def test_with_handler_creates_handler_frame_in_k(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         handled_effects: list[EffectBase] = []
 
@@ -228,15 +228,15 @@ class TestWithHandlerIntegration:
             result = yield WithHandler(handler=test_handler, program=inner_program())
             return result
 
-        runtime = SyncRuntime()
-        result = runtime.run(outer_program())
+        
+        result = sync_run(outer_program(), sync_handlers_preset)
 
         assert result.is_ok()
         assert len(handled_effects) == 1
         assert isinstance(handled_effects[0], DummyEffect)
 
     def test_handler_returns_cesk_state_resumes_program(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         def value_handler(
             effect: EffectBase, ctx: HandlerContext
@@ -256,14 +256,14 @@ class TestWithHandlerIntegration:
         def with_handler_program() -> Program[int]:
             return (yield WithHandler(handler=value_handler, program=test_program()))
 
-        runtime = SyncRuntime()
-        result = runtime.run(with_handler_program())
+        
+        result = sync_run(with_handler_program(), sync_handlers_preset)
 
         assert result.is_ok()
         assert result.value == 42
 
     def test_handler_yields_effect_bubbles_to_outer(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         outer_handled: list[EffectBase] = []
 
@@ -297,15 +297,15 @@ class TestWithHandlerIntegration:
         def full_program() -> Program[str]:
             return (yield WithHandler(handler=outer_handler, program=nested_handlers()))
 
-        runtime = SyncRuntime()
-        result = runtime.run(full_program())
+        
+        result = sync_run(full_program(), sync_handlers_preset)
 
         assert result.is_ok()
         assert len(outer_handled) == 1
         assert isinstance(outer_handled[0], AnotherDummyEffect)
 
     def test_nested_handlers_innermost_first(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         handler_order: list[str] = []
 
@@ -331,14 +331,14 @@ class TestWithHandlerIntegration:
         def with_both() -> Program[str]:
             return (yield WithHandler(handler=make_handler("outer"), program=with_inner()))
 
-        runtime = SyncRuntime()
-        result = runtime.run(with_both())
+        
+        result = sync_run(with_both(), sync_handlers_preset)
 
         assert result.is_ok()
         assert handler_order == ["inner"]
 
     def test_handler_forward_skips_self(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         handler_invocations: list[str] = []
 
@@ -370,14 +370,14 @@ class TestWithHandlerIntegration:
         def full() -> Program[str]:
             return (yield WithHandler(handler=final_handler, program=with_forwarding()))
 
-        runtime = SyncRuntime()
-        result = runtime.run(full())
+        
+        result = sync_run(full(), sync_handlers_preset)
 
         assert result.is_ok()
         assert handler_invocations == ["forwarding", "final"]
 
     def test_resume_k_switches_continuation(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         def switch_handler(
             effect: EffectBase, ctx: HandlerContext
@@ -393,14 +393,14 @@ class TestWithHandlerIntegration:
         def main() -> Program[str]:
             return (yield WithHandler(handler=switch_handler, program=program_with_more_work()))
 
-        runtime = SyncRuntime()
-        result = runtime.run(main())
+        
+        result = sync_run(main(), sync_handlers_preset)
 
         assert result.is_ok()
         assert result.value == "switched early"
 
     def test_outermost_handler_uses_primitives(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
 
         def store_handler(
             effect: EffectBase, ctx: HandlerContext
@@ -423,14 +423,13 @@ class TestWithHandlerIntegration:
         def main() -> Program[int]:
             return (yield WithHandler(handler=store_handler, program=increment_program()))
 
-        runtime = SyncRuntime()
-        result = runtime.run(main(), store={"counter": 0})
+        result = sync_run(main(), sync_handlers_preset, store={"counter": 0})
 
         assert result.is_ok()
         assert result.value == 25
 
     def test_unhandled_effect_raises_error(self) -> None:
-        from doeff.cesk import SyncRuntime
+        from doeff.cesk import sync_handlers_preset, sync_run
         from doeff.cesk.errors import UnhandledEffectError
 
         def noop_handler(
@@ -443,7 +442,5 @@ class TestWithHandlerIntegration:
             yield DummyEffect(value=1)
             return "ok"
 
-        runtime = SyncRuntime()
-
         with pytest.raises(UnhandledEffectError):
-            runtime.run(program_with_unhandled())
+            sync_run(program_with_unhandled(), sync_handlers_preset)
