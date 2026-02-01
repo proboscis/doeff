@@ -1,7 +1,6 @@
-"""Tests for AsyncRuntime - implementing AsyncRuntime for the CESK runtime system.
+"""Tests for async_run - testing async handlers for the CESK runtime system.
 
-This test file follows a test-first approach where all tests are created first
-and expected to FAIL until the AsyncRuntime implementation is complete.
+This test file tests the async_run function with async_handlers_preset.
 
 Test Matrix Phases:
 - Phase 1: Core Effects (Ask, Local, Get, Put, Modify, Tell, Listen, Pure, Safe)
@@ -19,6 +18,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from doeff import Intercept, Program, do
+from doeff.cesk.run import async_handlers_preset, async_run
 from doeff.effects import (
     IO,
     Ask,
@@ -55,49 +55,38 @@ class TestAsyncRuntimeCoreEffects:
     @pytest.mark.asyncio
     async def test_async_pure(self) -> None:
         """Test Pure effect returns pure value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-        result = await runtime.run_and_unwrap(Program.pure(42))
+        result = (await async_run(Program.pure(42), async_handlers_preset)).value
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_async_ask(self) -> None:
         """Test Ask effect reads from environment."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             value = yield Ask("config_key")
             return value
 
-        result = await runtime.run_and_unwrap(program(), env={"config_key": "config_value"})
+        result = (await async_run(program(), async_handlers_preset, env={"config_key": "config_value"})).value
         assert result == "config_value"
 
     @pytest.mark.asyncio
     async def test_async_ask_missing_key_raises(self) -> None:
         """Test Ask raises KeyError for missing key."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             value = yield Ask("missing_key")
             return value
 
-        with pytest.raises(KeyError, match="missing_key"):
-            await runtime.run_and_unwrap(program(), env={})
+        result = await async_run(program(), async_handlers_preset, env={})
+        assert result.is_err()
+        assert isinstance(result.error, KeyError)
 
     @pytest.mark.asyncio
     async def test_async_local(self) -> None:
         """Test Local effect provides scoped environment override."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner_program():
             value = yield Ask("key")
@@ -110,94 +99,77 @@ class TestAsyncRuntimeCoreEffects:
             after = yield Ask("key")
             return (outer, inner, after)
 
-        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
+        result = (await async_run(program(), async_handlers_preset, env={"key": "original"})).value
         assert result == ("original", "overridden", "original")
 
     @pytest.mark.asyncio
     async def test_async_get(self) -> None:
         """Test Get effect reads state value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             value = yield Get("counter")
             return value
 
-        result = await runtime.run_and_unwrap(program(), store={"counter": 100})
+        result = (await async_run(program(), async_handlers_preset, store={"counter": 100})).value
         assert result == 100
 
     @pytest.mark.asyncio
     async def test_async_get_missing_key(self) -> None:
         """Test Get raises KeyError for missing key (per SPEC-EFF-002)."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             value = yield Get("missing")
             return value
 
-        with pytest.raises(KeyError):
-            await runtime.run_and_unwrap(program(), store={})
+        result = await async_run(program(), async_handlers_preset, store={})
+        assert result.is_err()
+        assert isinstance(result.error, KeyError)
 
     @pytest.mark.asyncio
     async def test_async_put(self) -> None:
         """Test Put effect writes state value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Put("counter", 42)
             value = yield Get("counter")
             return value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_async_modify(self) -> None:
         """Test Modify effect updates state with function."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Put("counter", 10)
             new_value = yield Modify("counter", lambda x: x + 5)
             return new_value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 15
 
     @pytest.mark.asyncio
     async def test_async_tell(self) -> None:
         """Test Tell/Log effect appends to writer log."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Tell("message1")
             yield Tell("message2")
             return "done"
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "done"
 
     @pytest.mark.asyncio
     async def test_async_listen(self) -> None:
         """Test Listen effect captures sub-computation logs."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner_program():
             yield Tell("inner_log_1")
@@ -209,7 +181,7 @@ class TestAsyncRuntimeCoreEffects:
             listen_result = yield Listen(inner_program())
             return listen_result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.value == "inner_result"
         assert len(result.log) == 2
         assert "inner_log_1" in result.log
@@ -218,10 +190,7 @@ class TestAsyncRuntimeCoreEffects:
     @pytest.mark.asyncio
     async def test_async_safe_success(self) -> None:
         """Test Safe effect catches success as Ok Result."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner_program():
             yield Pure(None)
@@ -232,17 +201,14 @@ class TestAsyncRuntimeCoreEffects:
             result = yield Safe(inner_program())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_ok()
         assert result.value == 42
 
     @pytest.mark.asyncio
     async def test_async_safe_failure(self) -> None:
         """Test Safe effect catches exceptions as Err Result."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing_program():
             raise ValueError("test error")
@@ -252,7 +218,7 @@ class TestAsyncRuntimeCoreEffects:
             result = yield Safe(failing_program())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert str(result.error) == "test error"
@@ -269,10 +235,7 @@ class TestAsyncRuntimeAsyncEffects:
     @pytest.mark.asyncio
     async def test_async_await_coroutine(self) -> None:
         """Test Await effect awaits native coroutine."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def async_operation():
             await asyncio.sleep(0.01)
             return "async_result"
@@ -282,16 +245,13 @@ class TestAsyncRuntimeAsyncEffects:
             result = yield Await(async_operation())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "async_result"
 
     @pytest.mark.asyncio
     async def test_async_await_multiple_coroutines(self) -> None:
         """Test multiple Await effects in sequence."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def async_add(x: int) -> int:
             await asyncio.sleep(0.001)
             return x + 1
@@ -303,17 +263,12 @@ class TestAsyncRuntimeAsyncEffects:
             c = yield Await(async_add(b))
             return c
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 3
 
     @pytest.mark.asyncio
     async def test_async_gather_parallel(self) -> None:
         """Test Gather effect runs Futures in parallel."""
-        from doeff.cesk.runtime import AsyncRuntime
-        from doeff import Spawn
-
-        runtime = AsyncRuntime()
-
         execution_order: list[int] = []
 
         @do
@@ -329,32 +284,26 @@ class TestAsyncRuntimeAsyncEffects:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == [2, 4, 6]
         assert len(execution_order) == 3
 
     @pytest.mark.asyncio
     async def test_async_gather_empty(self) -> None:
         """Test Gather with no programs returns empty list."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             results = yield Gather()
             return results
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == []
 
     @pytest.mark.asyncio
     async def test_async_gather_exception(self) -> None:
         """Test Gather handles exception in parallel program."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing_task():
             raise ValueError("task failed")
@@ -370,17 +319,14 @@ class TestAsyncRuntimeAsyncEffects:
             results = yield Safe(Gather(t1, t2))
             return results
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, ValueError)
 
     @pytest.mark.asyncio
     async def test_async_delay(self) -> None:
         """Test Delay effect using asyncio.sleep."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             start = yield GetTime()
@@ -388,24 +334,21 @@ class TestAsyncRuntimeAsyncEffects:
             end = yield GetTime()
             return (start, end)
 
-        start_time, end_time = await runtime.run_and_unwrap(program())
+        start_time, end_time = (await async_run(program(), async_handlers_preset)).value
         elapsed = (end_time - start_time).total_seconds()
         assert elapsed >= 0.09  # Allow small timing variance
 
     @pytest.mark.asyncio
     async def test_async_get_time(self) -> None:
         """Test GetTime effect returns current time."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             now = yield GetTime()
             return now
 
         before = datetime.now()
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         after = datetime.now()
 
         assert before <= result <= after
@@ -413,10 +356,7 @@ class TestAsyncRuntimeAsyncEffects:
     @pytest.mark.asyncio
     async def test_async_wait_until(self) -> None:
         """Test WaitUntil effect waits until target time."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects import WaitUntil
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
@@ -426,17 +366,14 @@ class TestAsyncRuntimeAsyncEffects:
             end = yield GetTime()
             return (start, end)
 
-        start_time, end_time = await runtime.run_and_unwrap(program())
+        start_time, end_time = (await async_run(program(), async_handlers_preset)).value
         elapsed = (end_time - start_time).total_seconds()
         assert elapsed >= 0.09
 
     @pytest.mark.asyncio
     async def test_async_wait_until_past(self) -> None:
         """Test WaitUntil with past time returns immediately."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects import WaitUntil
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
@@ -446,7 +383,7 @@ class TestAsyncRuntimeAsyncEffects:
             end = yield GetTime()
             return (start, end)
 
-        start_time, end_time = await runtime.run_and_unwrap(program())
+        start_time, end_time = (await async_run(program(), async_handlers_preset)).value
         elapsed = (end_time - start_time).total_seconds()
         assert elapsed < 0.1
 
@@ -462,10 +399,7 @@ class TestAsyncRuntimeIOCacheEffects:
     @pytest.mark.asyncio
     async def test_async_io_sync(self) -> None:
         """Test IO effect runs sync function."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         def sync_operation():
             return "sync_result"
 
@@ -474,16 +408,13 @@ class TestAsyncRuntimeIOCacheEffects:
             result = yield IO(sync_operation)
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "sync_result"
 
     @pytest.mark.asyncio
     async def test_async_io_async(self) -> None:
         """Test IO effect runs async function."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def async_operation():
             await asyncio.sleep(0.001)
             return "async_io_result"
@@ -493,16 +424,13 @@ class TestAsyncRuntimeIOCacheEffects:
             result = yield Await(async_operation())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "async_io_result"
 
     @pytest.mark.asyncio
     async def test_async_io_exception(self) -> None:
         """Test IO effect propagates exceptions."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         def failing_io():
             raise RuntimeError("io failed")
 
@@ -512,46 +440,37 @@ class TestAsyncRuntimeIOCacheEffects:
             return result
 
         with pytest.raises(RuntimeError, match="io failed"):
-            await runtime.run_and_unwrap(program())
+            (await async_run(program(), async_handlers_preset)).value
 
     @pytest.mark.asyncio
     async def test_async_cache_put_and_get(self) -> None:
         """Test CachePut and CacheGet effects."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield CachePut("test_key", "test_value")
             value = yield CacheGet("test_key")
             return value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "test_value"
 
     @pytest.mark.asyncio
     async def test_async_cache_get_missing(self) -> None:
         """Test CacheGet raises KeyError for missing key."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             value = yield CacheGet("missing_key")
             return value
 
         with pytest.raises(KeyError, match="missing_key"):
-            await runtime.run_and_unwrap(program())
+            (await async_run(program(), async_handlers_preset)).value
 
     @pytest.mark.asyncio
     async def test_async_cache_delete(self) -> None:
         """Test CacheDelete effect removes cached value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield CachePut("key", "value")
@@ -559,17 +478,14 @@ class TestAsyncRuntimeIOCacheEffects:
             result = yield Safe(CacheGet("key"))
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, KeyError)
 
     @pytest.mark.asyncio
     async def test_async_cache_exists(self) -> None:
         """Test CacheExists effect checks key existence."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             exists_before = yield CacheExists("key")
@@ -579,7 +495,7 @@ class TestAsyncRuntimeIOCacheEffects:
             exists_deleted = yield CacheExists("key")
             return (exists_before, exists_after, exists_deleted)
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == (False, True, False)
 
 
@@ -594,10 +510,7 @@ class TestAsyncRuntimeControlFlow:
     @pytest.mark.asyncio
     async def test_async_nested_programs(self) -> None:
         """Test nested @do composition works correctly."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def level3():
             yield Put("level", 3)
@@ -616,17 +529,14 @@ class TestAsyncRuntimeControlFlow:
             final_level = yield Get("level")
             return f"level1 -> {result} (final: {final_level})"
 
-        result = await runtime.run_and_unwrap(level1())
+        result = (await async_run(level1(), async_handlers_preset)).value
         assert "level1 -> level2 -> level3_result" in result
         assert "final: 3" in result
 
     @pytest.mark.asyncio
     async def test_async_exception_propagation(self) -> None:
         """Test exception bubbles correctly through nested programs."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner():
             raise ValueError("inner error")
@@ -636,16 +546,15 @@ class TestAsyncRuntimeControlFlow:
             result = yield inner()
             return result
 
-        with pytest.raises(ValueError, match="inner error"):
-            await runtime.run_and_unwrap(outer())
+        result = await async_run(outer(), async_handlers_preset)
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert "inner error" in str(result.error)
 
     @pytest.mark.asyncio
     async def test_async_exception_caught_by_safe(self) -> None:
         """Test exception caught by Safe effect."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing():
             raise RuntimeError("caught error")
@@ -657,16 +566,13 @@ class TestAsyncRuntimeControlFlow:
                 return f"caught: {result.error}"
             return result.value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert "caught: caught error" in result
 
     @pytest.mark.asyncio
     async def test_async_recover_from_error(self) -> None:
         """Test recovery from errors using Safe."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def may_fail(succeed: bool):
             if succeed:
@@ -681,16 +587,13 @@ class TestAsyncRuntimeControlFlow:
                 return result2.value if result2.is_ok() else "all failed"
             return result1.value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "success"
 
     @pytest.mark.asyncio
     async def test_async_intercept_transforms_effects(self) -> None:
         """Test intercept transforms effects in sub-program."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.reader import AskEffect
-
-        runtime = AsyncRuntime()
 
         @do
         def inner_program():
@@ -707,7 +610,7 @@ class TestAsyncRuntimeControlFlow:
             result = yield Intercept(inner_program(), transform)
             return result
 
-        result = await runtime.run_and_unwrap(program(), env={"key": "original"})
+        result = (await async_run(program(), async_handlers_preset, env={"key": "original"})).value
         assert result == "intercepted_value"
 
 
@@ -722,10 +625,7 @@ class TestAsyncRuntimeIntegration:
     @pytest.mark.asyncio
     async def test_async_mixed_sync_async(self) -> None:
         """Test sync effects work correctly in async runtime."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def async_fetch():
             await asyncio.sleep(0.001)
             return 10
@@ -739,16 +639,13 @@ class TestAsyncRuntimeIntegration:
             final = yield Get("counter")
             return final * config
 
-        result = await runtime.run_and_unwrap(program(), env={"multiplier": 2})
+        result = (await async_run(program(), async_handlers_preset, env={"multiplier": 2})).value
         assert result == 20
 
     @pytest.mark.asyncio
     async def test_async_timeout(self) -> None:
         """Test timeout behavior with asyncio.wait_for pattern."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def slow_program():
             yield Delay(seconds=10.0)
@@ -756,24 +653,21 @@ class TestAsyncRuntimeIntegration:
 
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(
-                runtime.run(slow_program()),
+                async_run(slow_program(), async_handlers_preset),
                 timeout=0.1,
             )
 
     @pytest.mark.asyncio
     async def test_async_cancellation(self) -> None:
         """Test task cancellation handling."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def long_running():
             yield Delay(seconds=10.0)
             return "never reached"
 
         async def run_and_cancel():
-            task = asyncio.create_task(runtime.run(long_running()))
+            task = asyncio.create_task(async_run(long_running(), async_handlers_preset))
             await asyncio.sleep(0.01)
             task.cancel()
             return await task
@@ -784,10 +678,7 @@ class TestAsyncRuntimeIntegration:
     @pytest.mark.asyncio
     async def test_async_chained_effects(self) -> None:
         """Test complex chain of mixed effects."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def async_multiply(x: int) -> int:
             await asyncio.sleep(0.001)
             return x * 2
@@ -802,10 +693,7 @@ class TestAsyncRuntimeIntegration:
             final = yield Get("value")
             return final
 
-        result = await runtime.run_and_unwrap(
-            complex_program(),
-            env={"base": 5},
-        )
+        result = (await async_run(complex_program(), async_handlers_preset, env={"base": 5})).value
         assert result == 15
 
     @pytest.mark.asyncio
@@ -815,10 +703,7 @@ class TestAsyncRuntimeIntegration:
         Each spawned task has its own isolated state snapshot.
         State changes in one task are NOT visible to others.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def increment():
             current = yield Get("counter")
@@ -835,7 +720,7 @@ class TestAsyncRuntimeIntegration:
             final = yield Get("counter")
             return (results, final)
 
-        results, final = await runtime.run_and_unwrap(program())
+        results, final = (await async_run(program(), async_handlers_preset)).value
         assert final == 0
         assert results == [0, 0, 0]
 
@@ -846,10 +731,7 @@ class TestAsyncRuntimeIntegration:
         Three delays of 0.1s each should complete in ~0.1s total (not 0.3s)
         when run in parallel.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def delayed_task(n: int):
             yield Delay(seconds=0.1)
@@ -866,17 +748,14 @@ class TestAsyncRuntimeIntegration:
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
 
-        results, elapsed = await runtime.run_and_unwrap(program())
+        results, elapsed = (await async_run(program(), async_handlers_preset)).value
         assert sorted(results) == [1, 2, 3]
         assert elapsed < 0.5
 
     @pytest.mark.asyncio
     async def test_async_program_returns_coroutine(self) -> None:
         """Test that program returning coroutine is handled."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def coro():
             return 42
 
@@ -885,7 +764,7 @@ class TestAsyncRuntimeIntegration:
             result = yield Await(coro())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42
 
 
@@ -923,7 +802,7 @@ class TestAsyncRuntimeCustomHandlers:
             return result
 
         runtime = AsyncRuntime(handlers=custom_handlers)
-        result = await runtime.run_and_unwrap(program(), env={"key": "value"})
+        result = (await async_run(program(), async_handlers_preset, env={"key": "value"})).value
         assert result == "custom:key"
 
     @pytest.mark.asyncio
@@ -955,9 +834,9 @@ class TestAsyncRuntimeCustomHandlers:
             yield Pure(None)
             return "done"
 
-        await runtime.run_and_unwrap(program())
-        await runtime.run_and_unwrap(program())
-        await runtime.run_and_unwrap(program())
+        (await async_run(program(), async_handlers_preset)).value
+        (await async_run(program(), async_handlers_preset)).value
+        (await async_run(program(), async_handlers_preset)).value
 
         assert run_counter[0] == 3
 
@@ -973,63 +852,51 @@ class TestAsyncRuntimeAtomicEffects:
     @pytest.mark.asyncio
     async def test_async_atomic_get(self) -> None:
         """Test AtomicGet retrieves shared value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Put("counter", 42)
             value = yield AtomicGet("counter")
             return value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_async_atomic_get_with_default(self) -> None:
         """Test AtomicGet with default_factory."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             value = yield AtomicGet("missing", default_factory=lambda: 100)
             return value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 100
 
     @pytest.mark.asyncio
     async def test_async_atomic_update(self) -> None:
         """Test AtomicUpdate modifies shared value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Put("counter", 10)
             new_val = yield AtomicUpdate("counter", lambda x: x + 5)
             return new_val
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 15
 
     @pytest.mark.asyncio
     async def test_async_atomic_update_with_default(self) -> None:
         """Test AtomicUpdate with default_factory for missing key."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             new_val = yield AtomicUpdate("missing", lambda x: x + 1, default_factory=lambda: 0)
             return new_val
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 1
 
 
@@ -1044,25 +911,19 @@ class TestAsyncRuntimeGraphEffects:
     @pytest.mark.asyncio
     async def test_async_graph_step(self) -> None:
         """Test graph.step adds node and returns value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             val = yield Step("node1", {"type": "start"})
             return val
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "node1"
 
     @pytest.mark.asyncio
     async def test_async_graph_snapshot(self) -> None:
         """Test Snapshot captures current graph."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Step("node1", {"type": "a"})
@@ -1070,7 +931,7 @@ class TestAsyncRuntimeGraphEffects:
             snapshot = yield Snapshot()
             return snapshot
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert len(result) == 2
         assert result[0]["value"] == "node1"
         assert result[1]["value"] == "node2"
@@ -1078,10 +939,7 @@ class TestAsyncRuntimeGraphEffects:
     @pytest.mark.asyncio
     async def test_async_graph_annotate(self) -> None:
         """Test Annotate updates last node metadata."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             yield Step("node1", {"type": "start"})
@@ -1089,7 +947,7 @@ class TestAsyncRuntimeGraphEffects:
             snapshot = yield Snapshot()
             return snapshot
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert len(result) == 1
         assert result[0]["meta"]["type"] == "start"
         assert result[0]["meta"]["status"] == "completed"
@@ -1097,10 +955,7 @@ class TestAsyncRuntimeGraphEffects:
     @pytest.mark.asyncio
     async def test_async_graph_capture(self) -> None:
         """Test CaptureGraph captures sub-computation graph."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner():
             yield Step("inner1", {})
@@ -1112,7 +967,7 @@ class TestAsyncRuntimeGraphEffects:
             value, captured_graph = yield CaptureGraph(inner())
             return (value, len(captured_graph))
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == ("done", 2)
 
 
@@ -1127,10 +982,7 @@ class TestAsyncRuntimeCallStackEffects:
     @pytest.mark.asyncio
     async def test_async_program_call_stack(self) -> None:
         """Test ProgramCallStack returns call frames."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner():
             stack = yield ProgramCallStack()
@@ -1141,23 +993,20 @@ class TestAsyncRuntimeCallStackEffects:
             result = yield inner()
             return result
 
-        result = await runtime.run_and_unwrap(outer())
+        result = (await async_run(outer(), async_handlers_preset)).value
         assert isinstance(result, tuple)
 
     @pytest.mark.asyncio
     async def test_async_program_call_frame_depth_error(self) -> None:
         """Test ProgramCallFrame raises on invalid depth."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             frame = yield ProgramCallFrame(depth=999)
             return frame
 
         with pytest.raises(IndexError):
-            await runtime.run_and_unwrap(program())
+            (await async_run(program(), async_handlers_preset)).value
 
 
 # ============================================================================
@@ -1177,10 +1026,7 @@ class TestGatherComposition:
         
         Composition rule: Gather + Local - Children inherit env at spawn.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def child():
             value = yield Ask("parent_key")
@@ -1201,7 +1047,7 @@ class TestGatherComposition:
             )
             return results
 
-        results = await runtime.run_and_unwrap(program())
+        results = (await async_run(program(), async_handlers_preset)).value
         assert results == ["parent_value", "parent_value", "parent_value"]
 
     @pytest.mark.asyncio
@@ -1210,10 +1056,7 @@ class TestGatherComposition:
         
         Local changes in one child should not affect other children.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def child_with_local():
             result = yield Local(
@@ -1242,7 +1085,7 @@ class TestGatherComposition:
             )
             return results
 
-        results = await runtime.run_and_unwrap(program())
+        results = (await async_run(program(), async_handlers_preset)).value
         assert results == ["local_override", "parent_value", "parent_value"]
 
     @pytest.mark.asyncio
@@ -1251,10 +1094,7 @@ class TestGatherComposition:
         
         Spawned tasks have isolated state - changes are NOT visible to parent.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def child(key: str, value: int):
             yield Put(key, value)
@@ -1270,7 +1110,7 @@ class TestGatherComposition:
             initial = yield Get("initial")
             return (results, initial)
 
-        results, initial = await runtime.run_and_unwrap(program())
+        results, initial = (await async_run(program(), async_handlers_preset)).value
         assert results == ["a", "b", "c"]
         assert initial == 0
 
@@ -1280,10 +1120,7 @@ class TestGatherComposition:
         
         Composition rule: Gather + Listen - All logs from all children captured.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def logging_child(name: str):
             yield Tell(f"Message from {name}")
@@ -1301,7 +1138,7 @@ class TestGatherComposition:
             result = yield Listen(spawn_children())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.value == ["A", "B", "C"]
         assert len(result.log) == 0
 
@@ -1311,10 +1148,7 @@ class TestGatherComposition:
         
         Composition rule: Gather + Safe - First error wrapped in Err.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def success():
             return "success"
@@ -1331,7 +1165,7 @@ class TestGatherComposition:
             result = yield Safe(Gather(t1, t2, t3))
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert str(result.error) == "task failed"
@@ -1339,12 +1173,9 @@ class TestGatherComposition:
     @pytest.mark.asyncio
     async def test_nested_gather_full_parallelism(self) -> None:
         """Test nested Gather runs all leaf tasks in parallel.
-        
+
         Composition rule: Nested Gather - Full parallelism at leaf level.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
         execution_order: list[str] = []
 
         @do
@@ -1375,22 +1206,19 @@ class TestGatherComposition:
             elapsed = (end - start).total_seconds()
             return (results, elapsed)
 
-        results, elapsed = await runtime.run_and_unwrap(program())
+        results, elapsed = (await async_run(program(), async_handlers_preset)).value
         assert results == [["a", "b"], ["c", "d"]]
         assert elapsed < 0.3
 
     @pytest.mark.asyncio
     async def test_gather_intercept_does_not_apply_to_spawned_children(self) -> None:
         """Test that parent Intercept does NOT apply to spawned Gather children.
-        
+
         Spawned tasks run in isolated contexts, so parent InterceptFrame is NOT inherited.
         """
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.intercept import intercept_program_effect
         from doeff.effects.pure import Pure
         from doeff.effects.reader import AskEffect
-
-        runtime = AsyncRuntime()
 
         def transform_ask(effect):
             if isinstance(effect, AskEffect):
@@ -1416,23 +1244,19 @@ class TestGatherComposition:
             )
             return results
 
-        results = await runtime.run_and_unwrap(program(), env={"key": "actual_value"})
+        results = (await async_run(program(), async_handlers_preset, env={"key": "actual_value"})).value
         assert results == ["actual_value", "actual_value"]
 
     @pytest.mark.asyncio
     async def test_gather_plus_intercept_futures_mode_isolated(self) -> None:
         """Test that parent Intercept does NOT apply to Gather children in futures mode.
-        
+
         With future-based Gather (Spawn + Gather), children run in isolated tasks
         with fresh continuations, so InterceptFrame is NOT inherited.
         """
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.intercept import intercept_program_effect
         from doeff.effects.pure import Pure
         from doeff.effects.reader import AskEffect
-        from doeff import Spawn
-
-        runtime = AsyncRuntime()
 
         def transform_ask(effect):
             if isinstance(effect, AskEffect):
@@ -1459,31 +1283,25 @@ class TestGatherComposition:
             )
             return results
 
-        results = await runtime.run_and_unwrap(program(), env={"key": "actual_value"})
+        results = (await async_run(program(), async_handlers_preset, env={"key": "actual_value"})).value
         assert results == ["actual_value", "actual_value"]
 
     @pytest.mark.asyncio
     async def test_gather_empty_returns_empty_list(self) -> None:
         """Test Gather with no programs returns empty list immediately."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             results = yield Gather()
             return results
 
-        results = await runtime.run_and_unwrap(program())
+        results = (await async_run(program(), async_handlers_preset)).value
         assert results == []
 
     @pytest.mark.asyncio
     async def test_gather_single_future(self) -> None:
         """Test Gather with single future returns single-element list."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def single():
             return 42
@@ -1494,7 +1312,7 @@ class TestGatherComposition:
             results = yield Gather(t)
             return results
 
-        results = await runtime.run_and_unwrap(program())
+        results = (await async_run(program(), async_handlers_preset)).value
         assert results == [42]
 
     @pytest.mark.asyncio
@@ -1503,10 +1321,7 @@ class TestGatherComposition:
         
         Even if later programs complete first, results should be in input order.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def slow_task():
             yield Delay(seconds=0.1)
@@ -1524,7 +1339,7 @@ class TestGatherComposition:
             results = yield Gather(t1, t2, t3)
             return results
 
-        results = await runtime.run_and_unwrap(program())
+        results = (await async_run(program(), async_handlers_preset)).value
         assert results == ["slow", "fast", "fast"]
 
 
@@ -1534,30 +1349,24 @@ class TestRuntimeResult:
     @pytest.mark.asyncio
     async def test_run_returns_runtime_result(self) -> None:
         """Test that run() returns RuntimeResult object."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.cesk.runtime_result import RuntimeResult
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
             return (yield Pure(42))
 
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert isinstance(result, RuntimeResult)
 
     @pytest.mark.asyncio
     async def test_runtime_result_value_on_success(self) -> None:
         """Test RuntimeResult.value property on success."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
             return (yield Pure("hello"))
 
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_ok()
         assert not result.is_err()
         assert result.value == "hello"
@@ -1565,27 +1374,21 @@ class TestRuntimeResult:
     @pytest.mark.asyncio
     async def test_runtime_result_value_on_error(self) -> None:
         """Test RuntimeResult.value property raises on error."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
             raise ValueError("test error")
             return (yield Pure(42))
 
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err()
         assert not result.is_ok()
         with pytest.raises(ValueError, match="test error"):
             _ = result.value
 
     @pytest.mark.asyncio
-    async def test_runtime_result_state(self) -> None:
-        """Test RuntimeResult includes final state."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
+    async def test_runtime_result_raw_store(self) -> None:
+        """Test RuntimeResult includes final store with user state."""
 
         @do
         def program():
@@ -1593,15 +1396,18 @@ class TestRuntimeResult:
             yield Put("name", "test")
             return "done"
 
-        result = await runtime.run(program())
-        assert result.state == {"counter": 42, "name": "test"}
+        result = await async_run(program(), async_handlers_preset)
+        # User state is in raw_store (internal keys start with __)
+        assert result.raw_store["counter"] == 42
+        assert result.raw_store["name"] == "test"
 
     @pytest.mark.asyncio
-    async def test_runtime_result_log(self) -> None:
-        """Test RuntimeResult includes accumulated logs."""
-        from doeff.cesk.runtime import AsyncRuntime
+    async def test_runtime_result_state_with_tell_logs(self) -> None:
+        """Test RuntimeResult state captures Tell effect logs.
 
-        runtime = AsyncRuntime()
+        Note: Tell logs are stored in state under __writer__ key, not in a top-level .log attribute.
+        Use raw_store to access implementation details.
+        """
 
         @do
         def program():
@@ -1609,45 +1415,43 @@ class TestRuntimeResult:
             yield Tell("second message")
             return "done"
 
-        result = await runtime.run(program())
-        assert result.log == ["first message", "second message"]
+        result = await async_run(program(), async_handlers_preset)
+        # Tell logs are stored in __log__ in the raw store
+        assert "__log__" in result.raw_store
+        assert result.raw_store["__log__"] == ["first message", "second message"]
 
     @pytest.mark.asyncio
-    async def test_runtime_result_env(self) -> None:
-        """Test RuntimeResult includes initial env."""
-        from doeff.cesk.runtime import AsyncRuntime
+    async def test_runtime_result_uses_env_for_ask(self) -> None:
+        """Test that env passed to async_run is used by Ask effect.
 
-        runtime = AsyncRuntime()
+        Note: The current API doesn't preserve env in the result object,
+        but the env IS used during execution for Ask effects.
+        """
 
         @do
         def program():
             value = yield Ask("key")
             return value
 
-        result = await runtime.run(program(), env={"key": "value"})
-        assert result.env == {"key": "value"}
+        result = await async_run(program(), async_handlers_preset, env={"key": "value"})
+        # The env was correctly used during execution
+        assert result.value == "value"
 
     @pytest.mark.asyncio
     async def test_runtime_result_format_success(self) -> None:
         """Test RuntimeResult.format() on success."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
             return (yield Pure(42))
 
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         formatted = result.format()
         assert "Ok(42)" in formatted
 
     @pytest.mark.asyncio
     async def test_runtime_result_format_verbose(self) -> None:
         """Test RuntimeResult.format(verbose=True)."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
 
         @do
         def program():
@@ -1655,11 +1459,11 @@ class TestRuntimeResult:
             yield Tell("log message")
             return "done"
 
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         formatted = result.format(verbose=True)
         assert "RUNTIME RESULT" in formatted
-        assert "STATE & LOG" in formatted
-        assert "log message" in formatted
+        assert "STORE" in formatted
+        assert "x: 1" in formatted
 
 
 class TestAsyncRuntimeSchedulingErrorPropagation:
@@ -1668,10 +1472,7 @@ class TestAsyncRuntimeSchedulingErrorPropagation:
     @pytest.mark.asyncio
     async def test_spawn_two_children_one_raises_error_propagates(self) -> None:
         """Spawn 2 children with Await(), one raises ValueError, verify error propagates."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects import Wait
-
-        runtime = AsyncRuntime()
 
         async def success_task():
             await asyncio.sleep(0.1)
@@ -1699,7 +1500,7 @@ class TestAsyncRuntimeSchedulingErrorPropagation:
             result1 = yield Wait(task1)
             return (result1, result2)
 
-        result = await runtime.run(parent())
+        result = await async_run(parent(), async_handlers_preset)
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert "child task error" in str(result.error)
@@ -1707,10 +1508,7 @@ class TestAsyncRuntimeSchedulingErrorPropagation:
     @pytest.mark.asyncio
     async def test_spawn_multiple_children_all_complete_successfully(self) -> None:
         """Spawn multiple children with Await(), gather results."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def async_double(x: int):
             await asyncio.sleep(0.01)
             return x * 2
@@ -1728,16 +1526,13 @@ class TestAsyncRuntimeSchedulingErrorPropagation:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = await runtime.run_and_unwrap(parent())
+        result = (await async_run(parent(), async_handlers_preset)).value
         assert result == [20, 40, 60]
 
     @pytest.mark.asyncio
     async def test_spawn_error_in_first_child_gather_propagates(self) -> None:
         """First child fails, Gather propagates the error."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         async def fail_after_delay():
             await asyncio.sleep(0.01)
             raise ValueError("child task error")
@@ -1763,7 +1558,7 @@ class TestAsyncRuntimeSchedulingErrorPropagation:
             results = yield Gather(t1, t2)
             return results
 
-        result = await runtime.run(parent())
+        result = await async_run(parent(), async_handlers_preset)
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert "child task error" in str(result.error)
