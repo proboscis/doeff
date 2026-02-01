@@ -42,11 +42,19 @@ class Failed:
 
 
 @dataclass(frozen=True)
-class Suspended:
-    """Suspend: need external handling to continue.
+class PythonAsyncSyntaxEscape:
+    """Escape hatch for Python's async/await SYNTAX.
 
-    Continuation-based suspension for async operations. The effect is handled
-    externally, then the appropriate continuation is called with the result.
+    This type exists because Python's `await` is SYNTAX, not a function call.
+    It cannot be hidden inside a sync function. Cooperative scheduling requires
+    yielding control to the event loop.
+
+    This is NOT a general monad escape. It exists specifically for:
+    - User chose AsyncRunner (opt-in loop integration)
+    - Effect contains an awaitable that must run in user's event loop
+
+    If user uses SyncRunner, this escapes to thread pool instead of user's loop,
+    hiding all async from the user.
 
     The runtime awaits using ONE of these patterns:
     1. Single awaitable: `awaitable` field is set, await it, call resume(value)
@@ -54,8 +62,8 @@ class Suspended:
        call resume((task_id, value)) where task_id is the key that completed
 
     This design keeps the runtime GENERIC - it has no knowledge of task IDs,
-    AllTasksSuspendedEffect, or scheduling logic. All routing decisions are
-    made in the resume callback (created by handlers).
+    scheduling logic, or handler internals. All routing decisions are made
+    in the resume callback (created by handlers).
 
     Per spec: continuations take (value, new_store) to incorporate handler's
     store updates. On error, resume_error uses the original store (S) from
@@ -80,8 +88,12 @@ class Suspended:
     effect: EffectBase | None = None
 
 
+# Backwards compatibility alias (deprecated, will be removed)
+Suspended = PythonAsyncSyntaxEscape
+
+
 Terminal: TypeAlias = Done | Failed
-StepResult: TypeAlias = CESKState | Terminal | Suspended
+StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape
 
 
 @dataclass(frozen=True)
@@ -123,7 +135,8 @@ __all__ = [
     "CESKResult",
     "Done",
     "Failed",
+    "PythonAsyncSyntaxEscape",
     "StepResult",
-    "Suspended",
+    "Suspended",  # Deprecated alias
     "Terminal",
 ]
