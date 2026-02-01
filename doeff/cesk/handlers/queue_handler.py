@@ -80,7 +80,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
     
     if isinstance(effect, QueuePop):
         import os
-        debug = os.environ.get("DOEFF_DEBUG")
+        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         queue = list(store.get(TASK_QUEUE_KEY, []))
         if debug:
             print(f"[QueuePop] queue_len={len(queue)}")
@@ -166,7 +166,7 @@ def queue_handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResul
     
     if isinstance(effect, TaskComplete):
         import os
-        debug = os.environ.get("DOEFF_DEBUG")
+        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
         handle_id = effect.handle_id

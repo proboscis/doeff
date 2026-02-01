@@ -742,7 +742,7 @@ def format_traceback(tb: CapturedTraceback | None) -> str:
     if tb is None:
         return "(no captured traceback)"
 
-    debug_mode = os.environ.get("DOEFF_DEBUG")
+    debug_mode = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
     lines: list[str] = []
 
     lines.append("Effect Traceback (Kleisli call chain):")
