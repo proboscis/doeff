@@ -2,7 +2,7 @@ from typing import Any, Protocol, TypeVar
 
 import pytest
 
-from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.run import async_handlers_preset, async_run, sync_handlers_preset, sync_run
 from doeff.cesk.runtime_result import RuntimeResult
 from doeff.program import Program
 
@@ -19,15 +19,8 @@ class Interpreter(Protocol):
 
 
 class RuntimeAdapter:
-    """Adapter for using SyncRuntime with the test interpreter protocol.
-    
-    Now that SyncRuntime returns RuntimeResult directly, this adapter
-    simply delegates to the runtime.
-    """
+    """Adapter for using sync_run/async_run with the test interpreter protocol."""
     interpreter_type = "cesk"
-
-    def __init__(self) -> None:
-        self._runtime = SyncRuntime()
 
     def run(
         self,
@@ -35,7 +28,7 @@ class RuntimeAdapter:
         env: dict[Any, Any] | None = None,
         store: dict[str, Any] | None = None,
     ) -> RuntimeResult[T]:
-        return self._runtime.run(program, env=env, store=store)
+        return sync_run(program, sync_handlers_preset, env=env, store=store)
 
     async def run_async(
         self,
@@ -43,8 +36,7 @@ class RuntimeAdapter:
         env: dict[Any, Any] | None = None,
         state: dict[str, Any] | None = None,
     ) -> RuntimeResult[T]:
-        # SyncRuntime.run() is synchronous, but we can still return its result
-        return self._runtime.run(program, env=env, store=state)
+        return await async_run(program, async_handlers_preset, env=env, store=state)
 
 
 @pytest.fixture

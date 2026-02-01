@@ -3,7 +3,6 @@
 import pytest
 
 from doeff import (
-    AsyncRuntime,
     CompletePromise,
     CreatePromise,
     Delay,
@@ -18,6 +17,7 @@ from doeff import (
     Wait,
     do,
 )
+from doeff.cesk.run import async_handlers_preset, async_run
 from doeff.effects.spawn import Waitable
 from doeff.effects.spawn import TaskCancelledError
 
@@ -32,8 +32,7 @@ class TestFutureProtocol:
             task = yield Spawn(do(lambda: 42)())
             return isinstance(task, Waitable)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
     @pytest.mark.asyncio
@@ -44,8 +43,7 @@ class TestFutureProtocol:
             task = yield Spawn(do(lambda: 42)())
             return hasattr(task, "_handle")
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
 
@@ -59,8 +57,7 @@ class TestSpawnEffect:
             task = yield Spawn(do(lambda: 42)())
             return isinstance(task, Task)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
     @pytest.mark.asyncio
@@ -79,8 +76,7 @@ class TestSpawnEffect:
             is_done_after = yield task.is_done()
             return (is_done_before, is_done_after)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == (False, True)
 
     @pytest.mark.asyncio
@@ -102,8 +98,7 @@ class TestSpawnEffect:
             parent_value = yield Get("x")
             return (child_value, parent_value)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == (100, 2)
 
 
@@ -122,8 +117,7 @@ class TestWaitEffect:
             result = yield Wait(task)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == 42
 
     @pytest.mark.asyncio
@@ -139,8 +133,7 @@ class TestWaitEffect:
             result = yield Wait(task)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert "child failed" in str(result.error)
 
@@ -159,8 +152,7 @@ class TestWaitEffect:
             result = yield Wait(task)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert isinstance(result.error, TaskCancelledError)
 
@@ -182,8 +174,7 @@ class TestWaitEffect:
             r3 = yield Wait(t3)
             return [r1, r2, r3]
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == [2, 4, 6]
 
 
@@ -203,8 +194,7 @@ class TestTaskCancel:
             cancelled = yield task.cancel()
             return cancelled
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
     @pytest.mark.asyncio
@@ -221,8 +211,7 @@ class TestTaskCancel:
             cancelled = yield task.cancel()
             return cancelled
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is False
 
 
@@ -243,8 +232,7 @@ class TestTaskIsDone:
             yield task.cancel()
             return is_done
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is False
 
     @pytest.mark.asyncio
@@ -261,8 +249,7 @@ class TestTaskIsDone:
             is_done = yield task.is_done()
             return is_done
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
 
@@ -287,8 +274,7 @@ class TestRaceEffect:
             result = yield Race(t1, t2)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
 
         race_result = result.value
         assert isinstance(race_result, RaceResult)
@@ -315,8 +301,7 @@ class TestRaceEffect:
             result = yield Race(t_fast, t_slow)
             return (result.first is t_fast, result.value)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == (True, "winner")
 
     @pytest.mark.asyncio
@@ -346,8 +331,7 @@ class TestRaceEffect:
             losers = result.rest
             return (len(losers), t2 in losers, t3 in losers)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == (2, True, True)
 
     @pytest.mark.asyncio
@@ -373,8 +357,7 @@ class TestRaceEffect:
 
             return result.value
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == "fast"
 
     @pytest.mark.asyncio
@@ -396,8 +379,7 @@ class TestRaceEffect:
             result = yield Race(t1, t2)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert "fast error" in str(result.error)
 
@@ -433,8 +415,7 @@ class TestGatherEffect:
             results = yield Gather(t1, t2, t3)
             return results
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == [1, 2, 3]
 
     @pytest.mark.asyncio
@@ -456,8 +437,7 @@ class TestGatherEffect:
             results = yield Gather(t_slow, t_fast)
             return results
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == ["slow", "fast"]
 
     @pytest.mark.asyncio
@@ -479,8 +459,7 @@ class TestGatherEffect:
             results = yield Gather(t1, t2)
             return results
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert "gather failed" in str(result.error)
 
@@ -492,8 +471,7 @@ class TestGatherEffect:
             results = yield Gather()
             return results
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == []
 
     def test_gather_rejects_program_objects(self) -> None:
@@ -542,8 +520,7 @@ class TestPromiseEffects:
             promise = yield CreatePromise()
             return isinstance(promise, Promise)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
     @pytest.mark.asyncio
@@ -554,8 +531,7 @@ class TestPromiseEffects:
             promise = yield CreatePromise()
             return isinstance(promise.future, Future)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value is True
 
     @pytest.mark.asyncio
@@ -568,8 +544,7 @@ class TestPromiseEffects:
             result = yield Wait(promise.future)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == 42
 
     @pytest.mark.asyncio
@@ -582,8 +557,7 @@ class TestPromiseEffects:
             result = yield Wait(promise.future)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert "promise failed" in str(result.error)
 
@@ -602,8 +576,7 @@ class TestPromiseEffects:
             result = yield Wait(promise.future)
             return result
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == "resolved"
 
     @pytest.mark.asyncio
@@ -623,8 +596,7 @@ class TestPromiseEffects:
             r2 = yield Wait(t2)
             return (r1, r2)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == ("shared", "shared")
 
     @pytest.mark.asyncio
@@ -637,8 +609,7 @@ class TestPromiseEffects:
             yield CompletePromise(promise, "second")  # Should raise
             return "should not reach"
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert isinstance(result.error, RuntimeError)
         assert "already completed" in str(result.error).lower()
@@ -653,8 +624,7 @@ class TestPromiseEffects:
             yield FailPromise(promise, ValueError("error"))  # Should raise
             return "should not reach"
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert isinstance(result.error, RuntimeError)
         assert "already completed" in str(result.error).lower()
@@ -669,8 +639,7 @@ class TestPromiseEffects:
             yield CompletePromise(promise, "value")  # Should raise
             return "should not reach"
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert isinstance(result.error, RuntimeError)
         assert "already completed" in str(result.error).lower()
@@ -685,8 +654,7 @@ class TestPromiseEffects:
             yield FailPromise(promise, ValueError("second"))  # Should raise
             return "should not reach"
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.is_err
         assert isinstance(result.error, RuntimeError)
         assert "already completed" in str(result.error).lower()
@@ -721,8 +689,7 @@ class TestConcurrencyComposition:
                 return "timeout"
             return result.value
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(with_timeout())
+        result = await async_run(with_timeout(), async_handlers_preset)
         assert result.value == "timeout"
 
     @pytest.mark.asyncio
@@ -746,8 +713,7 @@ class TestConcurrencyComposition:
 
             return r2
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == 2
 
     @pytest.mark.asyncio
@@ -766,6 +732,5 @@ class TestConcurrencyComposition:
             results = yield Gather(t1, t2, t3)
             return "-".join(results)
 
-        runtime = AsyncRuntime()
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         assert result.value == "data_a-data_b-data_c"
