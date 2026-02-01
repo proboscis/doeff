@@ -22,7 +22,7 @@ from doeff import do
 from doeff.cesk.handlers.threaded_asyncio_handler import (
     wrap_with_threaded_async,
 )
-from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.run import sync_handlers_preset, sync_run
 from doeff.cesk.threading import AsyncioThread, get_asyncio_thread
 from doeff.effects import Await, Delay, Get, Put
 
@@ -150,26 +150,22 @@ class TestGetAsyncioThread:
 
 
 class TestThreadedAsyncioHandler:
-    """Tests for threaded_asyncio_handler with SyncRuntime."""
+    """Tests for threaded_asyncio_handler with sync_run."""
 
-    def test_delay_effect_in_sync_runtime(self) -> None:
-        runtime = SyncRuntime()
-
+    def test_delay_effect_in_sync_run(self) -> None:
         @do
         def program():
             yield Delay(0.01)
             return "delayed"
 
         start = time.time()
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         elapsed = time.time() - start
 
         assert result.value == "delayed"
         assert elapsed >= 0.01
 
-    def test_await_effect_in_sync_runtime(self) -> None:
-        runtime = SyncRuntime()
-
+    def test_await_effect_in_sync_run(self) -> None:
         async def async_func():
             await asyncio.sleep(0.01)
             return "async_result"
@@ -179,12 +175,10 @@ class TestThreadedAsyncioHandler:
             result = yield Await(async_func())
             return result
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == "async_result"
 
-    def test_multiple_delays_in_sync_runtime(self) -> None:
-        runtime = SyncRuntime()
-
+    def test_multiple_delays_in_sync_run(self) -> None:
         @do
         def program():
             yield Delay(0.01)
@@ -193,15 +187,13 @@ class TestThreadedAsyncioHandler:
             return "triple_delay"
 
         start = time.time()
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         elapsed = time.time() - start
 
         assert result.value == "triple_delay"
         assert elapsed >= 0.03
 
     def test_await_and_delay_combined(self) -> None:
-        runtime = SyncRuntime()
-
         async def fetch_data():
             await asyncio.sleep(0.01)
             return {"key": "value"}
@@ -212,12 +204,10 @@ class TestThreadedAsyncioHandler:
             yield Delay(0.01)
             return data["key"]
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == "value"
 
     def test_error_propagates_from_async_coroutine(self) -> None:
-        runtime = SyncRuntime()
-
         async def failing_async():
             await asyncio.sleep(0.01)
             raise ValueError("async failure")
@@ -227,12 +217,12 @@ class TestThreadedAsyncioHandler:
             result = yield Await(failing_async())
             return result
 
-        with pytest.raises(ValueError, match="async failure"):
-            runtime.run_and_unwrap(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
+        assert result.is_err
+        assert isinstance(result.error, ValueError)
+        assert "async failure" in str(result.error)
 
     def test_state_preserved_across_async_ops(self) -> None:
-        runtime = SyncRuntime()
-
         async def async_op():
             await asyncio.sleep(0.01)
             return "async"
@@ -247,11 +237,10 @@ class TestThreadedAsyncioHandler:
             final = yield Get("counter")
             return final
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == 3
 
     def test_concurrent_async_operations(self) -> None:
-        runtime = SyncRuntime()
         results_order = []
 
         async def slow_op(name: str, delay: float):
@@ -265,48 +254,44 @@ class TestThreadedAsyncioHandler:
             r2 = yield Await(slow_op("second", 0.01))
             return (r1, r2)
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == ("first", "second")
         assert results_order == ["first", "second"]
 
     def test_zero_delay(self) -> None:
-        runtime = SyncRuntime()
-
         @do
         def program():
             yield Delay(0.0)
             return "instant"
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == "instant"
 
     def test_exception_in_delay_context(self) -> None:
-        runtime = SyncRuntime()
-
         @do
         def program():
             yield Delay(0.01)
             raise RuntimeError("after delay")
 
-        with pytest.raises(RuntimeError, match="after delay"):
-            runtime.run_and_unwrap(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
+        assert result.is_err
+        assert isinstance(result.error, RuntimeError)
+        assert "after delay" in str(result.error)
 
 
 class TestThreadCleanup:
     """Tests for thread lifecycle and cleanup."""
 
     def test_thread_reused_across_runs(self) -> None:
-        runtime = SyncRuntime()
-
         @do
         def program():
             yield Delay(0.01)
             return "done"
 
-        runtime.run(wrap_with_threaded_async(program()))
+        sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         thread1 = get_asyncio_thread()
 
-        runtime.run(wrap_with_threaded_async(program()))
+        sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         thread2 = get_asyncio_thread()
 
         assert thread1 is thread2
@@ -340,8 +325,6 @@ class TestEdgeCases:
     """Edge cases and integration tests."""
 
     def test_awaiting_already_completed_future(self) -> None:
-        runtime = SyncRuntime()
-
         async def instant():
             return "instant"
 
@@ -350,12 +333,10 @@ class TestEdgeCases:
             result = yield Await(instant())
             return result
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == "instant"
 
     def test_nested_async_calls(self) -> None:
-        runtime = SyncRuntime()
-
         async def inner():
             await asyncio.sleep(0.01)
             return "inner"
@@ -370,12 +351,10 @@ class TestEdgeCases:
             result = yield Await(outer())
             return result
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == "outer(inner)"
 
     def test_async_generator_exhaustion(self) -> None:
-        runtime = SyncRuntime()
-
         async def async_list():
             await asyncio.sleep(0.01)
             return [1, 2, 3]
@@ -386,7 +365,7 @@ class TestEdgeCases:
             total = sum(items)
             return total
 
-        result = runtime.run(wrap_with_threaded_async(program()))
+        result = sync_run(wrap_with_threaded_async(program()), sync_handlers_preset)
         assert result.value == 6
 
     def test_cancellation_via_timeout(self) -> None:

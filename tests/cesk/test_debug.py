@@ -14,7 +14,7 @@ from doeff.cesk.debug import (
     get_debug_context,
 )
 from doeff.cesk.frames import Kontinuation
-from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.run import sync_handlers_preset, sync_run
 from doeff.effects import Get, GetDebugContext, Put
 
 
@@ -30,8 +30,7 @@ class TestKleisliFrame:
             result = yield inner_func()
             return result
 
-        runtime = SyncRuntime()
-        result = runtime.run(outer_func())
+        result = sync_run(outer_func(), sync_handlers_preset)
 
         assert result.value == 42
 
@@ -196,8 +195,7 @@ class TestGetDebugContextEffect:
             ctx = yield GetDebugContext()
             return ctx
 
-        runtime = SyncRuntime()
-        result = runtime.run(program())
+        result = sync_run(program(), sync_handlers_preset)
 
         assert isinstance(result.value, DebugContext)
         assert result.value.current_effect == "GetDebugContextEffect"
@@ -212,8 +210,7 @@ class TestGetDebugContextEffect:
         def outer():
             return (yield inner())
 
-        runtime = SyncRuntime()
-        result = runtime.run(outer())
+        result = sync_run(outer(), sync_handlers_preset)
 
         assert isinstance(result.value, DebugContext)
         assert len(result.value.k_frames) > 0
@@ -232,8 +229,7 @@ class TestGetDebugContextEffect:
         def level_1():
             return (yield level_2())
 
-        runtime = SyncRuntime()
-        result = runtime.run(level_1())
+        result = sync_run(level_1(), sync_handlers_preset)
 
         assert isinstance(result.value, DebugContext)
         formatted = result.value.format_kleisli_stack()
@@ -304,8 +300,7 @@ class TestErrorMessagesIncludeStacks:
         def outer():
             return (yield failing_inner())
 
-        runtime = SyncRuntime()
-        result = runtime.run(outer())
+        result = sync_run(outer(), sync_handlers_preset)
 
         assert result.is_err()
         assert isinstance(result.error, ValueError)
@@ -320,8 +315,7 @@ class TestErrorMessagesIncludeStacks:
         def level_1():
             return (yield level_2())
 
-        runtime = SyncRuntime()
-        result = runtime.run(level_1())
+        result = sync_run(level_1(), sync_handlers_preset)
 
         assert result.is_err()
         assert isinstance(result.error, RuntimeError)
@@ -408,8 +402,7 @@ class TestMinimalOverhead:
             value = yield Get("counter")
             return value + 1
 
-        runtime = SyncRuntime()
-        result = runtime.run(simple_program())
+        result = sync_run(simple_program(), sync_handlers_preset)
 
         assert result.value == 1
 
@@ -429,8 +422,7 @@ class TestIntegrationWithContentAssertions:
         def outermost():
             return (yield middle())
 
-        runtime = SyncRuntime()
-        result = runtime.run(outermost())
+        result = sync_run(outermost(), sync_handlers_preset)
 
         assert isinstance(result.value, DebugContext)
         ctx = result.value
@@ -457,8 +449,7 @@ class TestIntegrationWithContentAssertions:
             collected_contexts.append(ctx2)
             return "done"
 
-        runtime = SyncRuntime()
-        result = runtime.run(multi_yield_func())
+        result = sync_run(multi_yield_func(), sync_handlers_preset)
 
         assert result.value == "done"
         assert len(collected_contexts) == 2
@@ -476,8 +467,7 @@ class TestIntegrationWithContentAssertions:
         def outer_wrapper():
             return (yield inner_fail())
 
-        runtime = SyncRuntime()
-        result = runtime.run(outer_wrapper())
+        result = sync_run(outer_wrapper(), sync_handlers_preset)
 
         assert result.is_err()
         assert isinstance(result.error, ValueError)

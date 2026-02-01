@@ -16,6 +16,7 @@ Design Decisions (from spec):
 import pytest
 
 from doeff import Intercept, Program, do
+from doeff.cesk.run import async_handlers_preset, async_run
 from doeff.effects import (
     IO,
     Ask,
@@ -44,10 +45,7 @@ class TestSpawnBasic:
     @pytest.mark.asyncio
     async def test_spawn_returns_task_handle(self) -> None:
         """Test that Spawn returns a Task handle."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             return 42
@@ -57,7 +55,7 @@ class TestSpawnBasic:
             task = yield Spawn(background())
             return task
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert isinstance(result, Task)
         assert result.backend == "thread"  # Default backend
 
@@ -65,10 +63,7 @@ class TestSpawnBasic:
     @pytest.mark.asyncio
     async def test_spawn_with_preferred_backend(self) -> None:
         """Test that Spawn respects preferred_backend."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             return 42
@@ -78,17 +73,14 @@ class TestSpawnBasic:
             task = yield Spawn(background(), preferred_backend="process")
             return task
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert isinstance(result, Task)
         assert result.backend == "process"
 
     @pytest.mark.asyncio
     async def test_spawn_and_join_success(self) -> None:
         """Test spawning a task and joining to get result."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             return 42
@@ -99,16 +91,13 @@ class TestSpawnBasic:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_spawn_and_join_with_computation(self) -> None:
         """Test spawning a task that performs computation."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def compute(n: int):
             return n * n
@@ -119,16 +108,13 @@ class TestSpawnBasic:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 49
 
     @pytest.mark.asyncio
     async def test_spawn_multiple_tasks(self) -> None:
         """Test spawning multiple tasks and joining them."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def task_n(n: int):
             return n * 2
@@ -145,15 +131,12 @@ class TestSpawnBasic:
 
             return (result1, result2, result3)
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == (2, 4, 6)
 
     @pytest.mark.asyncio
     async def test_spawn_continue_while_running(self) -> None:
         """Test that parent continues executing while spawned task runs."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
         execution_order: list[str] = []
 
         @do
@@ -169,7 +152,7 @@ class TestSpawnBasic:
             yield IO(lambda: execution_order.append("parent_after_join"))
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "bg_done"
         # Parent should execute after spawn before join
         assert "parent_after_spawn" in execution_order
@@ -186,10 +169,7 @@ class TestSpawnErrorHandling:
     @pytest.mark.asyncio
     async def test_spawn_error_stored_until_join(self) -> None:
         """Test that errors are stored in Task until join is called."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing_task():
             raise ValueError("task failed")
@@ -203,7 +183,7 @@ class TestSpawnErrorHandling:
             result = yield Safe(task.join())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert str(result.error) == "task failed"
@@ -211,9 +191,6 @@ class TestSpawnErrorHandling:
     @pytest.mark.asyncio
     async def test_spawn_error_does_not_affect_parent(self) -> None:
         """Test that spawned task error doesn't immediately fail parent."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
         executed = []
 
         @do
@@ -229,17 +206,14 @@ class TestSpawnErrorHandling:
             # Don't join - error stays contained
             return "parent_success"
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "parent_success"
         assert executed == ["step1", "step2"]
 
     @pytest.mark.asyncio
     async def test_spawn_join_propagates_exception(self) -> None:
         """Test that joining a failed task propagates the exception."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing_task():
             raise RuntimeError("boom")
@@ -251,7 +225,7 @@ class TestSpawnErrorHandling:
             return result
 
         with pytest.raises(RuntimeError, match="boom"):
-            await runtime.run_and_unwrap(program())
+            (await async_run(program(), async_handlers_preset)).value
 
 
 # ============================================================================
@@ -265,10 +239,7 @@ class TestSpawnCancellation:
     @pytest.mark.asyncio
     async def test_cancel_returns_true_on_running_task(self) -> None:
         """Test that cancel() returns True for running task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def long_running():
             yield Delay(seconds=10.0)
@@ -280,16 +251,13 @@ class TestSpawnCancellation:
             cancelled = yield task.cancel()
             return cancelled
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result is True
 
     @pytest.mark.asyncio
     async def test_cancel_returns_false_on_completed_task(self) -> None:
         """Test that cancel() returns False for already completed task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def quick_task():
             return "done"
@@ -303,16 +271,13 @@ class TestSpawnCancellation:
             cancelled = yield task.cancel()
             return cancelled
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result is False
 
     @pytest.mark.asyncio
     async def test_join_cancelled_task_raises_cancelled_error(self) -> None:
         """Test that joining a cancelled task raises TaskCancelledError."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def long_running():
             yield Delay(seconds=10.0)
@@ -325,17 +290,14 @@ class TestSpawnCancellation:
             result = yield Safe(task.join())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, TaskCancelledError)
 
     @pytest.mark.asyncio
     async def test_multiple_cancel_calls(self) -> None:
         """Test that multiple cancel calls are idempotent."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def long_running():
             yield Delay(seconds=10.0)
@@ -349,7 +311,7 @@ class TestSpawnCancellation:
             c3 = yield task.cancel()  # Third cancel
             return (c1, c2, c3)
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         # First should succeed, subsequent should return False (already cancelled)
         assert result == (True, False, False)
 
@@ -365,10 +327,7 @@ class TestSpawnIsDone:
     @pytest.mark.asyncio
     async def test_is_done_false_for_running_task(self) -> None:
         """Test that is_done() returns False for running task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def long_running():
             yield Delay(seconds=10.0)
@@ -381,16 +340,13 @@ class TestSpawnIsDone:
             yield task.cancel()  # Clean up
             return done
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result is False
 
     @pytest.mark.asyncio
     async def test_is_done_true_for_completed_task(self) -> None:
         """Test that is_done() returns True for completed task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def quick_task():
             return "done"
@@ -402,16 +358,13 @@ class TestSpawnIsDone:
             done = yield task.is_done()
             return done
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result is True
 
     @pytest.mark.asyncio
     async def test_is_done_true_for_cancelled_task(self) -> None:
         """Test that is_done() returns True for cancelled task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def long_running():
             yield Delay(seconds=10.0)
@@ -424,16 +377,13 @@ class TestSpawnIsDone:
             done = yield task.is_done()
             return done
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result is True
 
     @pytest.mark.asyncio
     async def test_is_done_true_for_failed_task(self) -> None:
         """Test that is_done() returns True for failed task after it has run."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing_task():
             raise ValueError("fail")
@@ -447,7 +397,7 @@ class TestSpawnIsDone:
             done = yield task.is_done()
             return done
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result is True
 
 
@@ -462,10 +412,7 @@ class TestSpawnStoreIsolation:
     @pytest.mark.asyncio
     async def test_spawned_task_has_store_snapshot(self) -> None:
         """Test that spawned task gets snapshot of store at spawn time."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             value = yield Get("counter")
@@ -478,16 +425,13 @@ class TestSpawnStoreIsolation:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_spawned_task_changes_do_not_affect_parent(self) -> None:
         """Test that spawned task's store changes don't affect parent."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             yield Put("counter", 999)  # Child modifies
@@ -502,15 +446,12 @@ class TestSpawnStoreIsolation:
             value = yield Get("counter")
             return value
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42  # Parent's value, not child's 999
 
     @pytest.mark.asyncio
     async def test_parent_changes_after_spawn_not_seen_by_child(self) -> None:
         """Test that parent's changes after spawn aren't seen by child."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
         child_saw_value = []
 
         @do
@@ -530,7 +471,7 @@ class TestSpawnStoreIsolation:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         # Child should see value at spawn time (1), not parent's later change (100)
         assert result == 1
 
@@ -546,10 +487,7 @@ class TestSpawnEnvironment:
     @pytest.mark.asyncio
     async def test_spawned_task_inherits_environment(self) -> None:
         """Test that spawned task can access parent's environment."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             config = yield Ask("config")
@@ -561,16 +499,13 @@ class TestSpawnEnvironment:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program(), env={"config": "test_value"})
+        result = (await async_run(program(), async_handlers_preset, env={"config": "test_value"})).value
         assert result == "test_value"
 
     @pytest.mark.asyncio
     async def test_spawned_task_gets_env_snapshot(self) -> None:
         """Test that spawned task gets env snapshot at spawn time."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             value = yield Ask("key")
@@ -588,7 +523,7 @@ class TestSpawnEnvironment:
             result = yield Local({"key": "local_value"}, inner())
             return result
 
-        result = await runtime.run_and_unwrap(program(), env={"key": "outer_value"})
+        result = (await async_run(program(), async_handlers_preset, env={"key": "outer_value"})).value
         # Child should see the Local-scoped value
         assert result == "local_value"
 
@@ -604,10 +539,7 @@ class TestSpawnComposition:
     @pytest.mark.asyncio
     async def test_spawn_plus_safe(self) -> None:
         """Test Spawn with Safe error handling."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def failing():
             raise ValueError("fail")
@@ -618,17 +550,14 @@ class TestSpawnComposition:
             result = yield Safe(task.join())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         assert isinstance(result.error, ValueError)
 
     @pytest.mark.asyncio
     async def test_spawn_with_logging(self) -> None:
         """Test that spawned task's logs are isolated."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             yield Tell("child log")
@@ -646,7 +575,7 @@ class TestSpawnComposition:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(main())
+        result = (await async_run(main(), async_handlers_preset)).value
         # Child's Listen should capture child's log
         assert result.value == "done"
         assert "child log" in result.log
@@ -654,10 +583,7 @@ class TestSpawnComposition:
     @pytest.mark.asyncio
     async def test_spawn_inside_gather(self) -> None:
         """Test spawning tasks inside Gather."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def spawn_and_join(n: int):
             @do
@@ -676,16 +602,13 @@ class TestSpawnComposition:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == [2, 4, 6]
 
     @pytest.mark.asyncio
     async def test_nested_spawn(self) -> None:
         """Test spawning a task that spawns another task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner():
             return "inner_result"
@@ -702,7 +625,7 @@ class TestSpawnComposition:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "outer_got_inner_result"
 
 
@@ -717,10 +640,7 @@ class TestSpawnEdgeCases:
     @pytest.mark.asyncio
     async def test_join_same_task_multiple_times(self) -> None:
         """Test that joining the same task multiple times works."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             return 42
@@ -733,32 +653,26 @@ class TestSpawnEdgeCases:
             result3 = yield task.join()  # And again
             return (result1, result2, result3)
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == (42, 42, 42)
 
     @pytest.mark.asyncio
     async def test_spawn_pure_value(self) -> None:
         """Test spawning a program that just returns a pure value."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def program():
             task = yield Spawn(Program.pure(42))
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == 42
 
     @pytest.mark.asyncio
     async def test_spawn_with_delay(self) -> None:
         """Test spawning a task that uses Delay."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def delayed_task():
             yield Delay(seconds=0.01)
@@ -770,15 +684,12 @@ class TestSpawnEdgeCases:
             result = yield task.join()
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "delayed_result"
 
     @pytest.mark.asyncio
     async def test_fire_and_forget_pattern(self) -> None:
         """Test fire-and-forget pattern (spawn without join)."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
         side_effect_happened = []
 
         @do
@@ -792,17 +703,14 @@ class TestSpawnEdgeCases:
             # Don't join - fire and forget
             return "parent_done"
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "parent_done"
         # Note: Side effect may or may not have happened depending on scheduling
 
     @pytest.mark.asyncio
     async def test_spawn_with_intercept(self) -> None:
         """Test that intercept doesn't apply to spawned tasks (isolated)."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects.reader import AskEffect
-
-        runtime = AsyncRuntime()
 
         def transform(effect):
             if isinstance(effect, AskEffect):
@@ -826,7 +734,7 @@ class TestSpawnEdgeCases:
             return result
 
         # Spawned tasks are isolated - intercept shouldn't affect them
-        result = await runtime.run_and_unwrap(main(), env={"key": "actual_value"})
+        result = (await async_run(main(), async_handlers_preset, env={"key": "actual_value"})).value
         assert result == "actual_value"
 
 
@@ -842,10 +750,7 @@ class TestSpawnConcurrentJoin:
     @pytest.mark.asyncio
     async def test_concurrent_join_same_task(self) -> None:
         """Test that multiple tasks can join the same spawned task."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def shared_task():
             yield Delay(seconds=0.01)
@@ -865,7 +770,7 @@ class TestSpawnConcurrentJoin:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == ["shared_result", "shared_result", "shared_result"]
 
 
@@ -880,10 +785,7 @@ class TestSpawnTiming:
     @pytest.mark.asyncio
     async def test_spawn_does_not_block_parent(self) -> None:
         """Test that spawning doesn't block the parent."""
-        from doeff.cesk.runtime import AsyncRuntime
         from doeff.effects import GetTime
-
-        runtime = AsyncRuntime()
 
         @do
         def slow_task():
@@ -898,7 +800,7 @@ class TestSpawnTiming:
             elapsed = (end - start).total_seconds()
             return elapsed
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         # Parent should continue immediately, not wait 0.5s
         assert result < 0.1
 
@@ -932,10 +834,7 @@ class TestSpawnOracleReview:
         Oracle identified that cancelled tasks could be "revived" by pending
         async completions. This test verifies the fix.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def delayed_task():
             yield Delay(seconds=10.0)  # Long delay
@@ -950,7 +849,7 @@ class TestSpawnOracleReview:
             result = yield Safe(task.join())
             return (cancelled, result.is_err(), isinstance(result.error, TaskCancelledError))
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         cancelled, is_err, is_cancelled_error = result
         assert cancelled is True
         assert is_err is True
@@ -959,10 +858,7 @@ class TestSpawnOracleReview:
     @pytest.mark.asyncio
     async def test_spawned_task_delay_uses_isolated_store(self) -> None:
         """Test that Delay completion in spawned task uses isolated store."""
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background():
             yield Delay(seconds=0.01)
@@ -980,7 +876,7 @@ class TestSpawnOracleReview:
             parent_value = yield Get("key")
             return (result, parent_value)
 
-        child_result, parent_result = await runtime.run_and_unwrap(program())
+        child_result, parent_result = (await async_run(program(), async_handlers_preset)).value
         # Child should see snapshot value
         assert child_result == "snapshot_value"
         # Parent should see its own modified value
@@ -993,10 +889,7 @@ class TestSpawnOracleReview:
         Note: This is documented behavior - mutable values inside the store
         can still be shared between parent and child.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def background(shared_list):
             # Modifying a mutable object inside the store IS visible to parent
@@ -1013,7 +906,7 @@ class TestSpawnOracleReview:
             # Note: shared_list IS modified by child because it's the same object
             return shared_list
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         # This test documents that shallow copy means mutable values are shared
         assert "child_added" in result
 
@@ -1037,10 +930,7 @@ class TestSpawnDeepReview:
         
         Deep review question: Is __cesk_traceback__ preserved on error?
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def inner_failing():
             raise ValueError("inner error")
@@ -1055,7 +945,7 @@ class TestSpawnDeepReview:
             result = yield Safe(task.join())
             return result
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result.is_err()
         error = result.error
         assert isinstance(error, ValueError)
@@ -1069,10 +959,7 @@ class TestSpawnDeepReview:
         
         Deep review concern: Nested spawn should work correctly.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def grandchild():
             return "grandchild_result"
@@ -1095,7 +982,7 @@ class TestSpawnDeepReview:
             result = yield task.join()
             return f"root_got_{result}"
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "root_got_parent_got_child_got_grandchild_result"
 
     @pytest.mark.asyncio
@@ -1104,10 +991,7 @@ class TestSpawnDeepReview:
         
         Each level should get its own snapshot.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def grandchild():
             value = yield Get("level")
@@ -1130,7 +1014,7 @@ class TestSpawnDeepReview:
             parent_value = yield Get("level")
             return (parent_value, child_saw, grandchild_saw)
 
-        parent_final, child_saw, grandchild_saw = await runtime.run_and_unwrap(program())
+        parent_final, child_saw, grandchild_saw = (await async_run(program(), async_handlers_preset)).value
         # Parent sees its own value (unchanged by children)
         assert parent_final == "parent_value"
         # Child saw snapshot at child spawn time
@@ -1146,10 +1030,7 @@ class TestSpawnDeepReview:
         Current behavior: Child inherits snapshot including internal keys,
         but child's modifications don't merge back to parent.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def child():
             # Child logs
@@ -1166,15 +1047,17 @@ class TestSpawnDeepReview:
             yield Tell("parent_after_join")
             return "done"
 
-        result = await runtime.run(program())
+        result = await async_run(program(), async_handlers_preset)
         # Parent's logs should only contain parent's logs
         # Child's logs are isolated (in child's snapshot store)
-        assert "parent_before_spawn" in result.log
-        assert "parent_after_spawn" in result.log
-        assert "parent_after_join" in result.log
+        # Logs are stored in __log__ key of raw_store
+        log = result.raw_store.get("__log__", [])
+        assert "parent_before_spawn" in log
+        assert "parent_after_spawn" in log
+        assert "parent_after_join" in log
         # Child's logs should NOT appear in parent's log (isolated)
-        assert "child_log_1" not in result.log
-        assert "child_log_2" not in result.log
+        assert "child_log_1" not in log
+        assert "child_log_2" not in log
 
     @pytest.mark.skip(reason="ISSUE-CORE-468: Exceeds max steps in v2 handler architecture")
     @pytest.mark.asyncio
@@ -1183,10 +1066,7 @@ class TestSpawnDeepReview:
         
         Deep review concern: Memory leak if entries not cleaned up.
         """
-        from doeff.cesk.runtime import AsyncRuntime
-
-        runtime = AsyncRuntime()
-
+        
         @do
         def quick_task(n: int):
             return n
@@ -1200,7 +1080,7 @@ class TestSpawnDeepReview:
                 assert result == i
             return "all_done"
 
-        result = await runtime.run_and_unwrap(program())
+        result = (await async_run(program(), async_handlers_preset)).value
         assert result == "all_done"
         # If there's a memory leak, spawned_tasks dict would have 100 entries
         # After cleanup, it should be empty (though we can't directly verify this)
