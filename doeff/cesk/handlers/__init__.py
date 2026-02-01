@@ -3,7 +3,10 @@
 This module exports the new handler-based effect system:
 - Handler: Type alias for handler functions
 - HandlerContext: Context passed to handlers (from handler_frame.py)
-- The v2 handlers: core_handler, task_scheduler_handler, scheduler_state_handler, python_async_handler
+- Handlers for different runner types:
+  - SyncRunner: sync_await_handler (handles Await via background thread)
+  - AsyncRunner: python_async_handler (produces PythonAsyncSyntaxEscape)
+- Common handlers: core_handler, task_scheduler_handler, scheduler_state_handler
 
 The old v1 handler functions (handle_ask, handle_get, etc.) and default_handlers()
 have been removed. Use the v2 WithHandler-based system instead.
@@ -28,6 +31,7 @@ Handler: TypeAlias = "Callable[[Any, HandlerContext], FrameResult]"
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.python_async_handler import python_async_handler
 from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
+from doeff.cesk.handlers.sync_await_handler import sync_await_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
 from doeff.cesk.handlers.threaded_asyncio_handler import threaded_asyncio_handler
 
@@ -43,6 +47,7 @@ __all__ = [
     "core_handler",
     "python_async_handler",
     "scheduler_state_handler",
+    "sync_await_handler",
     "task_scheduler_handler",
     "threaded_asyncio_handler",
     # Backwards compatibility aliases (deprecated)
