@@ -168,11 +168,18 @@ def _invoke_handler(
 
 
 def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
+    """Create a Suspended result from a SuspendOn frame result.
+
+    Two cases:
+    1. Single awaitable: suspend_on.awaitable is set
+       -> Suspended with awaitable field, resume gets plain value
+    2. Multi-task: suspend_on.awaitable is None, pending_io in store
+       -> Suspended with awaitables dict, resume gets (task_id, value)
+    """
     from doeff.cesk.handlers.queue_handler import (
         CURRENT_TASK_KEY,
         PENDING_IO_KEY,
     )
-    from doeff.effects.future import AllTasksSuspendedEffect, FutureAwaitEffect
 
     stored_k = suspend_on.stored_k or []
     stored_env = suspend_on.stored_env or {}
@@ -180,7 +187,11 @@ def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
 
     if suspend_on.awaitable is None:
         pending_io = stored_store.get(PENDING_IO_KEY, {})
-        effect: Any = AllTasksSuspendedEffect(pending_io=pending_io, store=stored_store)
+
+        awaitables_dict = {
+            task_id: info["awaitable"]
+            for task_id, info in pending_io.items()
+        }
 
         def resume_multi(value: Any, new_store: Store) -> CESKState:
             task_id, result = value
@@ -218,11 +229,11 @@ def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
             )
 
         return Suspended(
-            effect=effect,
             resume=resume_multi,
             resume_error=resume_error_multi,
+            awaitables=awaitables_dict,
+            store=stored_store,
         )
-    effect = FutureAwaitEffect(awaitable=suspend_on.awaitable)
 
     def resume_single(value: Any, new_store: Store) -> CESKState:
         merged_store = dict(new_store)
@@ -245,9 +256,10 @@ def _make_suspended_from_suspend_on(suspend_on: SuspendOn) -> Suspended:
         )
 
     return Suspended(
-        effect=effect,
         resume=resume_single,
         resume_error=resume_error_single,
+        awaitable=suspend_on.awaitable,
+        store=stored_store,
     )
 
 
