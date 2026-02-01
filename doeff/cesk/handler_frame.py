@@ -27,6 +27,7 @@ from doeff.cesk.frames import (
     Kontinuation,
     SuspendOn,
 )
+from doeff.cesk.result import PythonAsyncSyntaxEscape
 from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
@@ -209,7 +210,11 @@ class HandlerResultFrame:
                 store=value.store if value.store else store,
                 k=full_k,
             )
+        elif isinstance(value, PythonAsyncSyntaxEscape):
+            # Handler returned escape directly - pass through (new architecture)
+            return value
         elif isinstance(value, SuspendOn):
+            # Legacy: handler returned SuspendOn - transform and pass through
             full_k = list(self.handled_program_k) + list(k_rest)
             result_store = value.stored_store if value.stored_store is not None else store
             return SuspendOn(
