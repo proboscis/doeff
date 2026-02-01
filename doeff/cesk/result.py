@@ -115,9 +115,6 @@ class PythonAsyncSyntaxEscape:
     _stored_store: Any = None
 
 
-# DEPRECATED: Use PythonAsyncSyntaxEscape instead.
-# This alias will be removed in a future version.
-Suspended = PythonAsyncSyntaxEscape
 
 
 def python_async_escape(
@@ -299,7 +296,6 @@ __all__ = [
     "Failed",
     "PythonAsyncSyntaxEscape",
     "StepResult",
-    "Suspended",  # Deprecated alias
     "Terminal",
     "multi_task_async_escape",
     "python_async_escape",
