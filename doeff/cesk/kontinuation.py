@@ -12,14 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from doeff.cesk.frames import (
-    ContinueError,
-    ContinueValue,
     Frame,
-    FrameResult,
     InterceptFrame,
     Kontinuation,
     SafeFrame,
 )
+from doeff.cesk.state import CESKState
 from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
@@ -58,11 +56,11 @@ def unwind_value(
     env: Environment,
     store: Store,
     k: Kontinuation,
-) -> FrameResult:
+) -> CESKState:
     """Unwind the continuation stack with a value.
 
     Processes the value through the topmost frame's on_value handler.
-    If the continuation is empty, returns a ContinueValue with empty k.
+    If the continuation is empty, returns a CESKState with the value and empty k.
 
     Args:
         value: The value to process
@@ -71,10 +69,10 @@ def unwind_value(
         k: Continuation stack
 
     Returns:
-        FrameResult from processing the value
+        CESKState from processing the value
     """
     if not k:
-        return ContinueValue(value=value, env=env, store=store, k=[])
+        return CESKState.with_value(value, env, store, [])
 
     frame = k[0]
     k_rest = k[1:]
@@ -88,11 +86,11 @@ def unwind_error(
     store: Store,
     k: Kontinuation,
     captured_traceback: Any | None = None,
-) -> FrameResult:
+) -> CESKState:
     """Unwind the continuation stack with an error.
 
     Processes the error through the topmost frame's on_error handler.
-    If the continuation is empty, returns a ContinueError with empty k.
+    If the continuation is empty, returns a CESKState with the error and empty k.
 
     Args:
         error: The error to process
@@ -102,16 +100,10 @@ def unwind_error(
         captured_traceback: Optional captured traceback
 
     Returns:
-        FrameResult from processing the error
+        CESKState from processing the error
     """
     if not k:
-        return ContinueError(
-            error=error,
-            env=env,
-            store=store,
-            k=[],
-            captured_traceback=captured_traceback,
-        )
+        return CESKState.with_error(error, env, store, [], captured_traceback)
 
     frame = k[0]
     k_rest = k[1:]

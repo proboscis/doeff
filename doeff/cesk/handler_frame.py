@@ -19,18 +19,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import (
-    ContinueDirect,
-    ContinueError,
-    ContinueProgram,
-    ContinueValue,
-    FrameResult,
-    Kontinuation,
-)
+from doeff.cesk.frames import Kontinuation
 from doeff.cesk.result import PythonAsyncSyntaxEscape
 from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
+    from doeff.cesk.state import CESKState
     from doeff.program import Program
 
 T = TypeVar("T")
@@ -69,6 +63,14 @@ class HandlerContext:
     handler_depth: int
     outer_k: Kontinuation = field(default_factory=list)
 
+    @property
+    def k(self) -> Kontinuation:
+        """Full continuation: delimited_k + outer_k.
+
+        Use this when constructing CESKState in handlers.
+        """
+        return list(self.delimited_k) + list(self.outer_k)
+
 
 # ============================================
 # Frame Results
@@ -84,26 +86,28 @@ class ResumeK:
     and effect forwarding.
 
     When the interpreter sees ResumeK, it replaces the current continuation
-    with the provided one and continues execution with the given value.
+    with the provided one and continues execution with the given value or error.
 
     Attributes:
         k: The continuation to switch to
         value: The value to resume with (default: None)
         env: The environment to use (default: current)
         store: The store to use (default: current)
+        error: If set, resume by throwing this error instead of sending value
     """
 
     k: Kontinuation
     value: Any = None
     env: Environment | None = None
     store: Store | None = None
+    error: BaseException | None = None
 
 
 # ============================================
 # Handler Type
 # ============================================
 
-Handler: TypeAlias = Callable[["EffectBase", HandlerContext], "Program[FrameResult | ResumeK]"]
+Handler: TypeAlias = Callable[["EffectBase", HandlerContext], "Program[CESKState | ResumeK]"]
 
 
 # ============================================
@@ -136,13 +140,15 @@ class HandlerFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult | PythonAsyncSyntaxEscape:
+    ) -> "CESKState | PythonAsyncSyntaxEscape":
+        from doeff.cesk.state import CESKState
+
         if isinstance(value, PythonAsyncSyntaxEscape):
             if value._is_final:
                 return value
-            
+
             from doeff.effects.scheduler_internal import _AsyncEscapeIntercepted
-            
+
             ctx = HandlerContext(
                 store=store,
                 env=env,
@@ -150,31 +156,23 @@ class HandlerFrame:
                 handler_depth=0,
                 outer_k=k_rest,
             )
-            
+
             handler_program = self.handler(
                 _AsyncEscapeIntercepted(escape=value, outer_k=k_rest),
                 ctx,
             )
-            
+
             handler_result_frame = HandlerResultFrame(
                 original_effect=_AsyncEscapeIntercepted(escape=value, outer_k=k_rest),
                 handler_depth=0,
                 handled_program_k=[],
             )
-            
-            return ContinueProgram(
-                program=handler_program,
-                env=env,
-                store=store,
-                k=[handler_result_frame, self] + k_rest,
+
+            return CESKState.with_program(
+                handler_program, env, store, [handler_result_frame, self] + k_rest
             )
-        
-        return ContinueValue(
-            value=value,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+
+        return CESKState.with_value(value, self.saved_env, store, k_rest)
 
     def on_error(
         self,
@@ -182,13 +180,9 @@ class HandlerFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+        return CESKState.with_error(error, self.saved_env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -196,8 +190,8 @@ class HandlerResultFrame:
     """Interprets handler program output when it completes.
 
     After a handler program finishes executing, this frame processes its
-    result (ContinueValue, ContinueError, ResumeK) and applies it to
-    resume the original program appropriately.
+    result (CESKState, ResumeK) and applies it to resume the original
+    program appropriately.
 
     Attributes:
         original_effect: The effect that triggered handler invocation
@@ -215,79 +209,60 @@ class HandlerResultFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult | PythonAsyncSyntaxEscape:
-        if isinstance(value, ContinueDirect):
-            return ContinueValue(
-                value=value.value,
-                env=value.env if value.env is not None else env,
-                store=value.store if value.store else store,
-                k=list(value.k),
+    ) -> "CESKState | PythonAsyncSyntaxEscape":
+        from doeff.cesk.result import DirectState
+        from doeff.cesk.state import CESKState
+
+        # DirectState: pass through unchanged (async escapes, direct jumps)
+        if isinstance(value, DirectState):
+            return value.state
+
+        # Handler returned CESKState directly - merge handled_program_k and k_rest into K
+        if isinstance(value, CESKState):
+            full_k = list(self.handled_program_k) + list(k_rest)
+            return CESKState(
+                C=value.C,
+                E=value.E,
+                S=value.S,
+                K=full_k,
             )
-        if isinstance(value, ContinueValue):
-            full_k = list(value.k) + list(k_rest)
-            return ContinueValue(
-                value=value.value,
-                env=value.env if value.env is not None else env,
-                store=value.store if value.store else store,
-                k=full_k,
-            )
-        elif isinstance(value, ContinueError):
-            full_k = list(value.k) + list(k_rest)
-            return ContinueError(
-                error=value.error,
-                env=value.env if value.env is not None else env,
-                store=value.store if value.store else store,
-                k=full_k,
-            )
-        elif isinstance(value, ContinueProgram):
-            # Handler wants to start a new sub-program (e.g., Safe, Local, Listen)
-            # Merge the program's k with k_rest to preserve outer continuation
-            full_k = list(value.k) + list(k_rest)
-            return ContinueProgram(
-                program=value.program,
-                env=value.env if value.env is not None else env,
-                store=value.store if value.store else store,
-                k=full_k,
-            )
-        elif isinstance(value, PythonAsyncSyntaxEscape):
+
+        if isinstance(value, PythonAsyncSyntaxEscape):
             if value.awaitables is not None:
                 return value
-            
+
             if value._is_final:
                 return value
-            
+
             if value._propagating:
-                return ContinueValue(
-                    value=value,
-                    env=env,
-                    store=store,
-                    k=k_rest,
-                )
-            
-            from doeff.cesk.state import CESKState
-            
+                return CESKState.with_value(value, env, store, k_rest)
+
             original_resume = value.resume
             original_resume_error = value.resume_error
             captured_k_rest = list(k_rest)
-            
-            def wrapped_resume(v: Any, s: Store) -> CESKState:
+
+            def wrapped_resume(v: Any, s: Store) -> Any:
+                from doeff.cesk.result import DirectState
                 state = original_resume(v, s)
-                return CESKState(
+                # Wrap in DirectState so HRF passes through unchanged
+                return DirectState(CESKState(
                     C=state.C,
                     E=state.E,
                     S=state.S,
                     K=list(state.K) + captured_k_rest,
-                )
-            
-            def wrapped_resume_error(e: BaseException) -> CESKState:
+                ))
+
+            def wrapped_resume_error(e: BaseException) -> Any:
+                from doeff.cesk.result import DirectState
                 state = original_resume_error(e)
-                return CESKState(
+                # Wrap in DirectState so HRF passes through unchanged
+                return DirectState(CESKState(
                     C=state.C,
                     E=state.E,
                     S=state.S,
                     K=list(state.K) + captured_k_rest,
-                )
-            
+                ))
+
             wrapped_escape = PythonAsyncSyntaxEscape(
                 resume=wrapped_resume,
                 resume_error=wrapped_resume_error,
@@ -296,30 +271,25 @@ class HandlerResultFrame:
                 store=value.store,
                 _propagating=True,
             )
-            
-            return ContinueValue(
-                value=wrapped_escape,
-                env=env,
-                store=store,
-                k=k_rest,
-            )
-        elif isinstance(value, ResumeK):
+
+            return CESKState.with_value(wrapped_escape, env, store, k_rest)
+
+        if isinstance(value, ResumeK):
             full_k = list(value.k) + list(k_rest)
             result_store = value.store if value.store is not None else store
-            return ContinueValue(
-                value=value.value,
-                env=value.env if value.env is not None else env,
-                store=result_store,
-                k=full_k,
+            result_env = value.env if value.env is not None else env
+            if value.error is not None:
+                return CESKState.with_error(value.error, result_env, result_store, full_k)
+            return CESKState.with_value(
+                value.value,
+                result_env,
+                result_store,
+                full_k,
             )
-        else:
-            full_k = list(self.handled_program_k) + list(k_rest)
-            return ContinueValue(
-                value=value,
-                env=env,
-                store=store,
-                k=full_k,
-            )
+
+        # Plain value from handler - use handled_program_k
+        full_k = list(self.handled_program_k) + list(k_rest)
+        return CESKState.with_value(value, env, store, full_k)
 
     def on_error(
         self,
@@ -327,14 +297,11 @@ class HandlerResultFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> FrameResult:
+    ) -> "CESKState":
+        from doeff.cesk.state import CESKState
+
         full_k = list(self.handled_program_k) + list(k_rest)
-        return ContinueError(
-            error=error,
-            env=env,
-            store=store,
-            k=full_k,
-        )
+        return CESKState.with_error(error, env, store, full_k)
 
 
 # ============================================
@@ -352,24 +319,14 @@ class WithHandler(EffectBase, Generic[T]):
 
     Example:
         @do
-        def my_handler(effect: Effect, ctx: HandlerContext) -> Program[FrameResult]:
+        def my_handler(effect: Effect, ctx: HandlerContext) -> Program[CESKState]:
             if isinstance(effect, MyEffect):
-                # Handle MyEffect
-                return Program.pure(ContinueValue(
-                    value=effect.compute(),
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                ))
+                # Handle MyEffect - return CESKState directly
+                return Program.pure(CESKState.resume_value(effect.compute(), ctx))
             else:
                 # Forward unhandled effects
                 result = yield effect
-                return ContinueValue(
-                    value=result,
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
+                return CESKState.resume_value(result, ctx)
 
         result = yield WithHandler(handler=my_handler, program=my_program())
 

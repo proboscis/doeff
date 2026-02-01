@@ -9,10 +9,6 @@ from doeff.do import do
 from doeff._types_internal import CallFrame, EffectBase, ListenResult
 from doeff._vendor import FrozenDict
 from doeff.cesk.frames import (
-    ContinueError,
-    ContinueProgram,
-    ContinueValue,
-    FrameResult,
     GraphCaptureFrame,
     ListenFrame,
     LocalFrame,
@@ -20,6 +16,7 @@ from doeff.cesk.frames import (
     SafeFrame,
 )
 from doeff.cesk.handler_frame import HandlerContext, ResumeK
+from doeff.cesk.state import CESKState
 from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 from doeff.effects.cache import (
     CacheDeleteEffect,
@@ -57,137 +54,80 @@ _ASK_IN_PROGRESS = object()
 def core_handler(effect: EffectBase, ctx: HandlerContext):
     """Forwards unhandled effects to outer handlers by yielding them."""
     store = dict(ctx.store)
-    
+
     if isinstance(effect, PureEffect):
-        return ContinueValue(
-            value=effect.value,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(effect.value, ctx.env, store, ctx.k)
+
     if isinstance(effect, AskEffect):
         key = effect.key
-        
+
         if key in ctx.env:
             env_value = ctx.env[key]
-            
+
             if isinstance(env_value, ProgramBase):
                 cache = store.get("__ask_lazy_cache__", {})
                 if key in cache:
                     cached_program, cached_value = cache[key]
                     if cached_program is env_value:
-                        return ContinueValue(
-                            value=cached_value,
-                            env=ctx.env,
-                            store=store,
-                            k=ctx.delimited_k,
-                        )
+                        return CESKState.with_value(cached_value, ctx.env, store, ctx.k)
                     if cached_value is _ASK_IN_PROGRESS:
-                        return ContinueError(
-                            error=RecursionError(f"Circular dependency detected for Ask({key!r})"),
-                            env=ctx.env,
-                            store=store,
-                            k=ctx.delimited_k,
+                        return CESKState.with_error(
+                            RecursionError(f"Circular dependency detected for Ask({key!r})"),
+                            ctx.env, store, ctx.k
                         )
-                
+
+                from doeff.cesk.frames import AskLazyFrame
+                from doeff.cesk.result import DirectState
+
                 new_cache = {**cache, key: (env_value, _ASK_IN_PROGRESS)}
                 new_store = {**store, "__ask_lazy_cache__": new_cache}
-                
-                from doeff.cesk.frames import AskLazyFrame
-                return ContinueProgram(
-                    program=env_value,
-                    env=ctx.env,
-                    store=new_store,
-                    k=[AskLazyFrame(ask_key=key, program=env_value)] + ctx.delimited_k,
-                )
-            
-            return ContinueValue(
-                value=env_value,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        
-        return ContinueError(
-            error=KeyError(key),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+
+                # Use DirectState to preserve the custom K with AskLazyFrame
+                return DirectState(CESKState.with_program(
+                    env_value, ctx.env, new_store,
+                    [AskLazyFrame(ask_key=key, program=env_value)] + list(ctx.k)
+                ))
+
+            return CESKState.with_value(env_value, ctx.env, store, ctx.k)
+
+        from doeff.cesk.errors import MissingEnvKeyError
+        return CESKState.with_error(MissingEnvKeyError(key), ctx.env, store, ctx.k)
+
     if isinstance(effect, StateGetEffect):
         key = effect.key
         if key in store:
-            return ContinueValue(
-                value=store[key],
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        return ContinueError(
-            error=KeyError(key),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+            return CESKState.with_value(store[key], ctx.env, store, ctx.k)
+        return CESKState.with_error(KeyError(key), ctx.env, store, ctx.k)
+
     if isinstance(effect, StatePutEffect):
         new_store = {**store, effect.key: effect.value}
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, StateModifyEffect):
         key = effect.key
-        if key not in store:
-            return ContinueError(
-                error=KeyError(key),
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-        old_value = store[key]
+        # For missing keys, pass None to the function
+        old_value = store.get(key, None)
         try:
             new_value = effect.func(old_value)
         except Exception as ex:
-            return ContinueError(
-                error=ex,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
+            return CESKState.with_error(ex, ctx.env, store, ctx.k)
         new_store = {**store, key: new_value}
-        return ContinueValue(
-            value=new_value,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(new_value, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, LocalEffect):
+        from doeff.cesk.result import DirectState
         overrides = effect.env_update
         new_env = FrozenDict(dict(ctx.env) | dict(overrides))
-        new_k = [LocalFrame(restore_env=ctx.env)] + ctx.delimited_k
-        return ContinueProgram(
-            program=effect.sub_program,
-            env=new_env,
-            store=store,
-            k=new_k,
-        )
-    
+        new_k = [LocalFrame(restore_env=ctx.env)] + list(ctx.k)
+        # Use DirectState to preserve the custom K with LocalFrame
+        return DirectState(CESKState.with_program(effect.sub_program, new_env, store, new_k))
+
     if isinstance(effect, ResultSafeEffect):
-        new_k = [SafeFrame(saved_env=ctx.env)] + ctx.delimited_k
-        return ContinueProgram(
-            program=effect.sub_program,
-            env=ctx.env,
-            store=store,
-            k=new_k,
-        )
-    
+        from doeff.cesk.result import DirectState
+        new_k = [SafeFrame(saved_env=ctx.env)] + list(ctx.k)
+        # Use DirectState to preserve the custom K with SafeFrame
+        return DirectState(CESKState.with_program(effect.sub_program, ctx.env, store, new_k))
+
     if isinstance(effect, WriterTellEffect):
         log = list(store.get("__log__", []))
         message = effect.message
@@ -196,111 +136,63 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         else:
             log.append(message)
         new_store = {**store, "__log__": log}
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, WriterListenEffect):
+        from doeff.cesk.result import DirectState
         current_log = store.get("__log__", [])
         log_start_index = len(current_log)
-        new_k = [ListenFrame(log_start_index=log_start_index)] + ctx.delimited_k
-        return ContinueProgram(
-            program=effect.sub_program,
-            env=ctx.env,
-            store=store,
-            k=new_k,
-        )
-    
+        new_k = [ListenFrame(log_start_index=log_start_index)] + list(ctx.k)
+        # Use DirectState to preserve the custom K with ListenFrame
+        return DirectState(CESKState.with_program(effect.sub_program, ctx.env, store, new_k))
+
     if isinstance(effect, InterceptEffect):
         from doeff.cesk.frames import InterceptFrame
-        new_k = [InterceptFrame(transforms=effect.transforms)] + ctx.delimited_k
-        return ContinueProgram(
-            program=effect.program,
-            env=ctx.env,
-            store=store,
-            k=new_k,
-        )
-    
+        from doeff.cesk.result import DirectState
+        new_k = [InterceptFrame(transforms=effect.transforms)] + list(ctx.k)
+        # Use DirectState to preserve the custom K with InterceptFrame
+        return DirectState(CESKState.with_program(effect.program, ctx.env, store, new_k))
+
     if isinstance(effect, GetTimeEffect):
         current_time = store.get("__current_time__")
         if current_time is None:
             current_time = datetime.now()
-        return ContinueValue(
-            value=current_time,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(current_time, ctx.env, store, ctx.k)
+
     if isinstance(effect, IOPerformEffect):
         try:
             result = effect.action()
-            return ContinueValue(
-                value=result,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
+            return CESKState.with_value(result, ctx.env, store, ctx.k)
         except Exception as ex:
-            return ContinueError(
-                error=ex,
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
-            )
-    
+            return CESKState.with_error(ex, ctx.env, store, ctx.k)
+
     if isinstance(effect, CacheGetEffect):
         cache = store.get("__cache_storage__", {})
         key = effect.key
         if key not in cache:
-            return ContinueError(
-                error=KeyError(f"Cache key not found: {key!r}"),
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                KeyError(f"Cache key not found: {key!r}"),
+                ctx.env, store, ctx.k
             )
-        return ContinueValue(
-            value=cache[key],
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(cache[key], ctx.env, store, ctx.k)
+
     if isinstance(effect, CachePutEffect):
         cache = store.get("__cache_storage__", {})
         new_cache = {**cache, effect.key: effect.value}
         new_store = {**store, "__cache_storage__": new_cache}
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, CacheExistsEffect):
         cache = store.get("__cache_storage__", {})
         exists = effect.key in cache
-        return ContinueValue(
-            value=exists,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(exists, ctx.env, store, ctx.k)
+
     if isinstance(effect, CacheDeleteEffect):
         cache = store.get("__cache_storage__", {})
         new_cache = {k: v for k, v in cache.items() if k != effect.key}
         new_store = {**store, "__cache_storage__": new_cache}
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, AtomicGetEffect):
         key = effect.key
         if key in store:
@@ -310,13 +202,8 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
             store = {**store, key: value}
         else:
             value = None
-        return ContinueValue(
-            value=value,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(value, ctx.env, store, ctx.k)
+
     if isinstance(effect, AtomicUpdateEffect):
         key = effect.key
         if key in store:
@@ -327,25 +214,15 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
             old_value = None
         new_value = effect.updater(old_value)
         new_store = {**store, key: new_value}
-        return ContinueValue(
-            value=new_value,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(new_value, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, GraphStepEffect):
         graph = store.get("__graph__", [])
         node = {"value": effect.value, "meta": effect.meta}
         new_graph = graph + [node]
         new_store = {**store, "__graph__": new_graph}
-        return ContinueValue(
-            value=effect.value,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(effect.value, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, GraphAnnotateEffect):
         graph = store.get("__graph__", [])
         if graph:
@@ -355,33 +232,20 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
             new_store = {**store, "__graph__": new_graph}
         else:
             new_store = store
-        return ContinueValue(
-            value=None,
-            env=ctx.env,
-            store=new_store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(None, ctx.env, new_store, ctx.k)
+
     if isinstance(effect, GraphSnapshotEffect):
         graph = store.get("__graph__", [])
-        return ContinueValue(
-            value=list(graph),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(list(graph), ctx.env, store, ctx.k)
+
     if isinstance(effect, GraphCaptureEffect):
+        from doeff.cesk.result import DirectState
         graph = store.get("__graph__", [])
         graph_start = len(graph)
-        new_k = [GraphCaptureFrame(graph_start)] + ctx.delimited_k
-        return ContinueProgram(
-            program=effect.program,
-            env=ctx.env,
-            store=store,
-            k=new_k,
-        )
-    
+        new_k = [GraphCaptureFrame(graph_start)] + list(ctx.k)
+        # Use DirectState to preserve the custom K with GraphCaptureFrame
+        return DirectState(CESKState.with_program(effect.program, ctx.env, store, new_k))
+
     if isinstance(effect, ProgramCallStackEffect):
         frames = []
         for idx, frame in enumerate(ctx.delimited_k):
@@ -396,13 +260,8 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
                     created_at=pc.created_at,
                 )
                 frames.append(call_frame)
-        return ContinueValue(
-            value=tuple(frames),
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(tuple(frames), ctx.env, store, ctx.k)
+
     if isinstance(effect, ProgramCallFrameEffect):
         frames = []
         for idx, frame in enumerate(ctx.delimited_k):
@@ -417,42 +276,27 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
                     created_at=pc.created_at,
                 )
                 frames.append(call_frame)
-        
+
         depth = effect.depth
         if depth >= len(frames):
-            return ContinueError(
-                error=IndexError(f"Call stack depth {depth} exceeds available frames ({len(frames)})"),
-                env=ctx.env,
-                store=store,
-                k=ctx.delimited_k,
+            return CESKState.with_error(
+                IndexError(f"Call stack depth {depth} exceeds available frames ({len(frames)})"),
+                ctx.env, store, ctx.k
             )
-        
-        return ContinueValue(
-            value=frames[depth],
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+
+        return CESKState.with_value(frames[depth], ctx.env, store, ctx.k)
+
     if isinstance(effect, GetDebugContextEffect):
         from doeff.cesk.debug import get_debug_context
-        
+
         full_k = ctx.delimited_k + ctx.outer_k
         debug_ctx = get_debug_context(full_k, current_effect=type(effect).__name__)
-        return ContinueValue(
-            value=debug_ctx,
-            env=ctx.env,
-            store=store,
-            k=ctx.delimited_k,
-        )
-    
+        return CESKState.with_value(debug_ctx, ctx.env, store, ctx.k)
+
+    # Forward unhandled effects to outer handlers
     result = yield effect
-    return ContinueValue(
-        value=result,
-        env=ctx.env,
-        store=None,
-        k=ctx.delimited_k,
-    )
+    # Return plain value - HandlerResultFrame constructs CESKState with current store
+    return result
 
 
 __all__ = [

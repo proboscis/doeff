@@ -38,7 +38,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueDirect, ContinueError, ContinueValue
+from doeff.cesk.state import CESKState
 from doeff.cesk.threading.asyncio_thread import get_asyncio_thread
 from doeff.do import do
 
@@ -65,7 +65,7 @@ def threaded_asyncio_handler(effect: EffectBase, ctx: HandlerContext):
     All other effects are forwarded to outer handlers.
 
     Error Handling:
-        - Exceptions from the awaitable are caught and returned as ContinueError
+        - Exceptions from the awaitable are caught and returned as error state
         - asyncio.CancelledError is re-raised as-is
         - TimeoutError from the background thread is propagated
 
@@ -79,48 +79,42 @@ def threaded_asyncio_handler(effect: EffectBase, ctx: HandlerContext):
         ctx: The handler context with store, env, and delimited_k
 
     Returns:
-        ContinueValue with result, ContinueError on exception,
-        or forwards to outer handler for unhandled effects
+        CESKState with result or error, or forwards to outer handler for unhandled effects
     """
     from doeff.effects.scheduler_internal import _AsyncEscapeIntercepted, _SchedulerSuspendForIO
     from doeff.program import Program
 
     if isinstance(effect, _AsyncEscapeIntercepted):
+        from doeff.cesk.result import DirectState
+
         escape = effect.escape
         awaitable = escape.awaitable
-        
+
         if awaitable is None:
             @do
             def forward_multi_task_escape():
                 result = yield effect
-                return ContinueValue(
-                    value=result,
-                    env=ctx.env,
-                    store=None,
-                    k=ctx.delimited_k,
-                )
-            
+                # Return plain value - HandlerResultFrame constructs CESKState with current store
+                return result
+
             return forward_multi_task_escape()
-        
+
         thread = get_asyncio_thread()
 
         try:
             result = thread.submit(awaitable)
-            resumed_state = escape.resume(result, ctx.store)
-            return Program.pure(ContinueDirect(
-                value=resumed_state.C.v,
-                env=resumed_state.E,
-                store=resumed_state.S,
-                k=list(resumed_state.K),
-            ))
+            # escape.resume may return DirectState (if wrapped by HandlerResultFrame)
+            # or CESKState (if not wrapped). Ensure we return DirectState for HRF passthrough.
+            resume_result = escape.resume(result, ctx.store)
+            if isinstance(resume_result, DirectState):
+                return Program.pure(resume_result)
+            return Program.pure(DirectState(resume_result))
         except Exception as e:
-            resumed_state = escape.resume_error(e)
-            return Program.pure(ContinueError(
-                error=resumed_state.C.ex,
-                env=resumed_state.E,
-                store=resumed_state.S,
-                k=list(resumed_state.K),
-            ))
+            # Same for error case
+            error_result = escape.resume_error(e)
+            if isinstance(error_result, DirectState):
+                return Program.pure(error_result)
+            return Program.pure(DirectState(error_result))
 
     if isinstance(effect, _SchedulerSuspendForIO):
         # Legacy support (deprecated)
@@ -129,33 +123,17 @@ def threaded_asyncio_handler(effect: EffectBase, ctx: HandlerContext):
 
         try:
             result = thread.submit(awaitable)
-            return Program.pure(ContinueValue(
-                value=result,
-                env=ctx.env,
-                store=None,  # Let outer handler manage store
-                k=ctx.delimited_k,
-            ))
+            return Program.pure(CESKState.with_value(result, ctx.env, ctx.store, ctx.k))
         except Exception as e:
-            return Program.pure(ContinueError(
-                error=e,
-                env=ctx.env,
-                store=None,
-                k=ctx.delimited_k,
-            ))
+            return Program.pure(CESKState.with_error(e, ctx.env, ctx.store, ctx.k))
 
     # Forward other effects to outer handlers
-    from doeff.do import do
-    
     @do
     def forward_effect():
         result = yield effect
-        return ContinueValue(
-            value=result,
-            env=ctx.env,
-            store=None,
-            k=ctx.delimited_k,
-        )
-    
+        # Return plain value - HandlerResultFrame constructs CESKState with current store
+        return result
+
     return forward_effect()
 
 

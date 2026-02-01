@@ -4,10 +4,6 @@ from collections.abc import Generator
 
 from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.frames import (
-    ContinueError,
-    ContinueGenerator,
-    ContinueProgram,
-    ContinueValue,
     Frame,
     GatherFrame,
     InterceptFrame,
@@ -18,75 +14,52 @@ from doeff.cesk.frames import (
     ReturnFrame,
     SafeFrame,
 )
+from doeff.cesk.state import CESKState, Error, ProgramControl, Value
 from doeff.cesk.types import Environment, Store, TaskId
 from doeff.program import Program
 
 
-class TestFrameResult:
-    """Tests for FrameResult types."""
+class TestCESKStateHelpers:
+    """Tests for CESKState helper class methods."""
 
-    def test_continue_value(self) -> None:
-        """ContinueValue holds value and continuation state."""
+    def test_with_value(self) -> None:
+        """CESKState.with_value creates state with Value control."""
         env: Environment = FrozenDict({"key": "value"})
         store: Store = {"state": 1}
         k: Kontinuation = []
 
-        result = ContinueValue(value=42, env=env, store=store, k=k)
+        state = CESKState.with_value(42, env, store, k)
 
-        assert result.value == 42
-        assert result.env == env
-        assert result.store == store
-        assert result.k == k
+        assert isinstance(state.C, Value)
+        assert state.C.v == 42
+        assert state.E == env
+        assert state.S == store
+        assert state.K == k
 
-    def test_continue_error(self) -> None:
-        """ContinueError holds error and continuation state."""
+    def test_with_error(self) -> None:
+        """CESKState.with_error creates state with Error control."""
         env: Environment = FrozenDict()
         store: Store = {}
         k: Kontinuation = []
         error = ValueError("test error")
 
-        result = ContinueError(error=error, env=env, store=store, k=k)
+        state = CESKState.with_error(error, env, store, k)
 
-        assert result.error is error
-        assert result.env == env
+        assert isinstance(state.C, Error)
+        assert state.C.ex is error
+        assert state.E == env
 
-    def test_continue_program(self) -> None:
-        """ContinueProgram holds program and continuation state."""
+    def test_with_program(self) -> None:
+        """CESKState.with_program creates state with ProgramControl."""
         env: Environment = FrozenDict()
         store: Store = {}
         k: Kontinuation = []
         program = Program.pure(42)
 
-        result = ContinueProgram(program=program, env=env, store=store, k=k)
+        state = CESKState.with_program(program, env, store, k)
 
-        assert result.program is program
-
-    def test_continue_generator(self) -> None:
-        """ContinueGenerator holds generator and resume state."""
-
-        def gen() -> Generator[int, int, int]:
-            x = yield 1
-            return x
-
-        g = gen()
-        next(g)  # Start generator
-
-        env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
-
-        result = ContinueGenerator(
-            generator=g,
-            send_value=42,
-            throw_error=None,
-            env=env,
-            store=store,
-            k=k,
-        )
-
-        assert result.generator is g
-        assert result.send_value == 42
-        assert result.throw_error is None
+        assert isinstance(state.C, ProgramControl)
+        assert state.C.program is program
 
 
 class TestLocalFrame:
@@ -102,9 +75,10 @@ class TestLocalFrame:
         frame = LocalFrame(restore_env=original_env)
         result = frame.on_value(42, current_env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 42
-        assert result.env == original_env
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 42
+        assert result.E == original_env
 
     def test_on_error_restores_env(self) -> None:
         """on_error restores original environment."""
@@ -117,9 +91,10 @@ class TestLocalFrame:
         frame = LocalFrame(restore_env=original_env)
         result = frame.on_error(error, current_env, store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
-        assert result.env == original_env
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
+        assert result.E == original_env
 
 
 class TestInterceptFrame:
@@ -134,8 +109,9 @@ class TestInterceptFrame:
         frame = InterceptFrame(transforms=())
         result = frame.on_value(42, env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 42
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 42
 
     def test_on_error_passes_through(self) -> None:
         """Errors pass through InterceptFrame unchanged."""
@@ -147,8 +123,9 @@ class TestInterceptFrame:
         frame = InterceptFrame(transforms=())
         result = frame.on_error(error, env, store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
 
 
 class TestListenFrame:
@@ -163,9 +140,10 @@ class TestListenFrame:
         frame = ListenFrame(log_start_index=1)  # Capture from index 1
         result = frame.on_value(42, env, store, k)
 
-        assert isinstance(result, ContinueValue)
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
         # Result should be ListenResult with value and captured log
-        listen_result = result.value
+        listen_result = result.C.v
         assert listen_result.value == 42
         assert list(listen_result.log) == ["entry2", "entry3"]
 
@@ -179,8 +157,9 @@ class TestListenFrame:
         frame = ListenFrame(log_start_index=0)
         result = frame.on_error(error, env, store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
 
 
 class TestGatherFrame:
@@ -203,10 +182,11 @@ class TestGatherFrame:
 
         result = frame.on_value(1, env, store, k)
 
-        assert isinstance(result, ContinueProgram)
-        assert result.program is program2
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, ProgramControl)
+        assert result.C.program is program2
         # New frame should have one less program and one more result
-        new_frame = result.k[0]
+        new_frame = result.K[0]
         assert isinstance(new_frame, GatherFrame)
         assert len(new_frame.remaining_programs) == 1
         assert new_frame.collected_results == [1]
@@ -225,8 +205,9 @@ class TestGatherFrame:
 
         result = frame.on_value(3, env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == [1, 2, 3]
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == [1, 2, 3]
 
     def test_on_error_aborts(self) -> None:
         """on_error aborts the gather."""
@@ -243,8 +224,9 @@ class TestGatherFrame:
 
         result = frame.on_error(error, env, store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
 
 
 class TestSafeFrame:
@@ -259,9 +241,10 @@ class TestSafeFrame:
         frame = SafeFrame(saved_env=env)
         result = frame.on_value(42, env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert isinstance(result.value, Ok)
-        assert result.value.value == 42
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert isinstance(result.C.v, Ok)
+        assert result.C.v.value == 42
 
     def test_on_error_wraps_in_err(self) -> None:
         """on_error converts error to Err result."""
@@ -273,9 +256,10 @@ class TestSafeFrame:
         frame = SafeFrame(saved_env=env)
         result = frame.on_error(error, env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert isinstance(result.value, Err)
-        assert result.value.error is error
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert isinstance(result.C.v, Err)
+        assert result.C.v.error is error
 
 
 class TestRaceFrame:
@@ -291,8 +275,9 @@ class TestRaceFrame:
         frame = RaceFrame(task_ids=task_ids, saved_env=env)
         result = frame.on_value(42, env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 42
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 42
 
     def test_on_error_propagates(self) -> None:
         """on_error propagates the error."""
@@ -305,15 +290,20 @@ class TestRaceFrame:
         frame = RaceFrame(task_ids=task_ids, saved_env=env)
         result = frame.on_error(error, env, store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
 
 
 class TestReturnFrame:
-    """Tests for ReturnFrame."""
+    """Tests for ReturnFrame.
 
-    def test_on_value_creates_continue_generator(self) -> None:
-        """on_value creates ContinueGenerator with send_value."""
+    Note: ReturnFrame doesn't implement on_value/on_error as step.py handles
+    ReturnFrame directly by calling generator.send/throw.
+    """
+
+    def test_return_frame_holds_generator(self) -> None:
+        """ReturnFrame holds generator and saved environment."""
 
         def gen() -> Generator[int, int, int]:
             x = yield 1
@@ -323,42 +313,11 @@ class TestReturnFrame:
         next(g)  # Start generator
 
         env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
 
         frame = ReturnFrame(generator=g, saved_env=env)
-        result = frame.on_value(42, env, store, k)
 
-        assert isinstance(result, ContinueGenerator)
-        assert result.generator is g
-        assert result.send_value == 42
-        assert result.throw_error is None
-
-    def test_on_error_creates_continue_generator_with_error(self) -> None:
-        """on_error creates ContinueGenerator with throw_error."""
-
-        def gen() -> Generator[int, int, int]:
-            try:
-                x = yield 1
-            except ValueError:
-                return -1
-            return x
-
-        g = gen()
-        next(g)  # Start generator
-
-        env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
-        error = ValueError("test")
-
-        frame = ReturnFrame(generator=g, saved_env=env)
-        result = frame.on_error(error, env, store, k)
-
-        assert isinstance(result, ContinueGenerator)
-        assert result.generator is g
-        assert result.send_value is None
-        assert result.throw_error is error
+        assert frame.generator is g
+        assert frame.saved_env == env
 
 
 class TestFrameProtocol:
@@ -398,8 +357,12 @@ class TestFrameProtocol:
         frame = RaceFrame(task_ids=(), saved_env=FrozenDict())
         assert isinstance(frame, Frame)
 
-    def test_return_frame_is_frame(self) -> None:
-        """ReturnFrame implements Frame protocol."""
+    def test_return_frame_structure(self) -> None:
+        """ReturnFrame is a data holder (not a Frame protocol implementer).
+
+        Note: ReturnFrame doesn't implement the Frame protocol because step.py
+        handles it directly without calling on_value/on_error.
+        """
 
         def gen() -> Generator[int, int, int]:
             x = yield 1
@@ -407,4 +370,6 @@ class TestFrameProtocol:
 
         g = gen()
         frame = ReturnFrame(generator=g, saved_env=FrozenDict())
-        assert isinstance(frame, Frame)
+        # ReturnFrame is a dataclass, not a Frame protocol implementer
+        assert frame.generator is g
+        assert frame.saved_env == FrozenDict()

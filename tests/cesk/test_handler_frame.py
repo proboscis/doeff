@@ -24,7 +24,7 @@ import pytest
 from doeff import do
 from doeff._types_internal import EffectBase
 from doeff._vendor import FrozenDict
-from doeff.cesk.frames import ContinueError, ContinueValue, FrameResult, Kontinuation
+from doeff.cesk.frames import Kontinuation
 from doeff.cesk.handler_frame import (
     Handler,
     HandlerContext,
@@ -33,6 +33,7 @@ from doeff.cesk.handler_frame import (
     ResumeK,
     WithHandler,
 )
+from doeff.cesk.state import CESKState, Error, Value
 from doeff.cesk.types import Environment, Store
 from doeff.program import Program
 
@@ -95,8 +96,8 @@ class TestHandlerFrame:
     def test_handler_frame_on_value_passes_through(self) -> None:
         def dummy_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
-            return Program.pure(ContinueValue(value=None, env=ctx.env, store=ctx.store, k=[]))
+        ) -> Program[CESKState]:
+            return Program.pure(CESKState.with_value(None, ctx.env, ctx.store, ctx.k))
 
         env: Environment = FrozenDict({"original": "env"})
         current_env: Environment = FrozenDict({"current": "env"})
@@ -106,15 +107,16 @@ class TestHandlerFrame:
         frame = HandlerFrame(handler=dummy_handler, saved_env=env)
         result = frame.on_value(42, current_env, store, k)
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 42
-        assert result.env == env
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 42
+        assert result.E == env
 
     def test_handler_frame_on_error_passes_through(self) -> None:
         def dummy_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
-            return Program.pure(ContinueValue(value=None, env=ctx.env, store=ctx.store, k=[]))
+        ) -> Program[CESKState]:
+            return Program.pure(CESKState.with_value(None, ctx.env, ctx.store, ctx.k))
 
         env: Environment = FrozenDict({"original": "env"})
         store: Store = {}
@@ -124,13 +126,14 @@ class TestHandlerFrame:
         frame = HandlerFrame(handler=dummy_handler, saved_env=env)
         result = frame.on_error(error, FrozenDict(), store, k)
 
-        assert isinstance(result, ContinueError)
-        assert result.error is error
-        assert result.env == env
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is error
+        assert result.E == env
 
 
 class TestHandlerResultFrame:
-    def test_on_value_with_continue_value(self) -> None:
+    def test_on_value_with_cesk_state(self) -> None:
         original_effect = DummyEffect(value=1)
         handled_k: Kontinuation = []
 
@@ -140,36 +143,15 @@ class TestHandlerResultFrame:
             handled_program_k=handled_k,
         )
 
-        handler_result = ContinueValue(
-            value=100, env=FrozenDict(), store={"new": "store"}, k=[]
-        )
+        # Handlers now return CESKState directly
+        handler_result = CESKState.with_value(100, FrozenDict(), {"new": "store"}, [])
 
         result = frame.on_value(handler_result, FrozenDict(), {}, [])
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == 100
-        assert result.k == handled_k
-
-    def test_on_value_with_continue_error(self) -> None:
-        original_effect = DummyEffect(value=1)
-        handled_k: Kontinuation = []
-        test_error = RuntimeError("handler decided to fail")
-
-        frame = HandlerResultFrame(
-            original_effect=original_effect,
-            handler_depth=0,
-            handled_program_k=handled_k,
-        )
-
-        handler_result = ContinueError(
-            error=test_error, env=FrozenDict(), store={}, k=[]
-        )
-
-        result = frame.on_value(handler_result, FrozenDict(), {}, [])
-
-        assert isinstance(result, ContinueError)
-        assert result.error is test_error
-        assert result.k == handled_k
+        # CESKState is passed through directly
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == 100
 
     def test_on_value_with_resume_k(self) -> None:
         original_effect = DummyEffect(value=1)
@@ -186,9 +168,10 @@ class TestHandlerResultFrame:
 
         result = frame.on_value(handler_result, FrozenDict(), {}, [])
 
-        assert isinstance(result, ContinueValue)
-        assert result.value == "switched"
-        assert result.k == new_k
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Value)
+        assert result.C.v == "switched"
+        assert result.K == new_k
 
     def test_on_error_propagates_handler_failure(self) -> None:
         original_effect = DummyEffect(value=1)
@@ -203,14 +186,15 @@ class TestHandlerResultFrame:
 
         result = frame.on_error(handler_error, FrozenDict(), {}, [])
 
-        assert isinstance(result, ContinueError)
-        assert result.error is handler_error
+        assert isinstance(result, CESKState)
+        assert isinstance(result.C, Error)
+        assert result.C.ex is handler_error
 
 
 class TestWithHandlerEffect:
     def test_with_handler_is_effect(self) -> None:
-        def handler(effect: EffectBase, ctx: HandlerContext) -> Program[FrameResult]:
-            return Program.pure(ContinueValue(value=None, env=ctx.env, store=ctx.store, k=[]))
+        def handler(effect: EffectBase, ctx: HandlerContext) -> Program[CESKState]:
+            return Program.pure(CESKState.with_value(None, ctx.env, ctx.store, ctx.k))
 
         program = Program.pure(42)
         effect = WithHandler(handler=handler, program=program)
@@ -228,15 +212,10 @@ class TestWithHandlerIntegration:
 
         def test_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             handled_effects.append(effect)
             return Program.pure(
-                ContinueValue(
-                    value=f"handled: {effect}",
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
+                CESKState.with_value(f"handled: {effect}", ctx.env, ctx.store, ctx.k)
             )
 
         @do
@@ -256,26 +235,17 @@ class TestWithHandlerIntegration:
         assert len(handled_effects) == 1
         assert isinstance(handled_effects[0], DummyEffect)
 
-    def test_handler_returns_continue_value_resumes_program(self) -> None:
+    def test_handler_returns_cesk_state_resumes_program(self) -> None:
         from doeff.cesk import SyncRuntime
 
         def value_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             if isinstance(effect, DummyEffect):
                 return Program.pure(
-                    ContinueValue(
-                        value=effect.value * 2,
-                        env=ctx.env,
-                        store=ctx.store,
-                        k=ctx.delimited_k,
-                    )
+                    CESKState.with_value(effect.value * 2, ctx.env, ctx.store, ctx.k)
                 )
-            return Program.pure(
-                ContinueValue(
-                    value=None, env=ctx.env, store=ctx.store, k=ctx.delimited_k
-                )
-            )
+            return Program.pure(CESKState.with_value(None, ctx.env, ctx.store, ctx.k))
 
         @do
         def test_program() -> Program[int]:
@@ -299,32 +269,20 @@ class TestWithHandlerIntegration:
 
         def outer_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             outer_handled.append(effect)
             return Program.pure(
-                ContinueValue(
-                    value="outer handled",
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
+                CESKState.with_value("outer handled", ctx.env, ctx.store, ctx.k)
             )
 
         @do
         def inner_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             if isinstance(effect, DummyEffect):
                 result = yield AnotherDummyEffect(message="from inner")
-                return ContinueValue(
-                    value=result,
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
-            return ContinueValue(
-                value=None, env=ctx.env, store=ctx.store, k=ctx.delimited_k
-            )
+                return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
+            return CESKState.with_value(None, ctx.env, ctx.store, ctx.k)
 
         @do
         def innermost() -> Program[str]:
@@ -354,15 +312,10 @@ class TestWithHandlerIntegration:
         def make_handler(name: str) -> Handler:
             def handler(
                 effect: EffectBase, ctx: HandlerContext
-            ) -> Program[FrameResult]:
+            ) -> Program[CESKState]:
                 handler_order.append(name)
                 return Program.pure(
-                    ContinueValue(
-                        value=f"handled by {name}",
-                        env=ctx.env,
-                        store=ctx.store,
-                        k=ctx.delimited_k,
-                    )
+                    CESKState.with_value(f"handled by {name}", ctx.env, ctx.store, ctx.k)
                 )
             return handler
 
@@ -392,24 +345,17 @@ class TestWithHandlerIntegration:
         @do
         def forwarding_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             handler_invocations.append("forwarding")
             result = yield effect
-            return ContinueValue(
-                value=result, env=ctx.env, store=ctx.store, k=ctx.delimited_k
-            )
+            return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
 
         def final_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             handler_invocations.append("final")
             return Program.pure(
-                ContinueValue(
-                    value="final value",
-                    env=ctx.env,
-                    store=ctx.store,
-                    k=ctx.delimited_k,
-                )
+                CESKState.with_value("final value", ctx.env, ctx.store, ctx.k)
             )
 
         @do
@@ -435,7 +381,7 @@ class TestWithHandlerIntegration:
 
         def switch_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState | ResumeK]:
             return Program.pure(ResumeK(k=[], value="switched early"))
 
         @do
@@ -458,23 +404,14 @@ class TestWithHandlerIntegration:
 
         def store_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
+        ) -> Program[CESKState]:
             if isinstance(effect, DummyEffect):
                 current = ctx.store.get("counter", 0)
-                ctx.store["counter"] = current + effect.value
+                new_store = {**ctx.store, "counter": current + effect.value}
                 return Program.pure(
-                    ContinueValue(
-                        value=ctx.store["counter"],
-                        env=ctx.env,
-                        store=ctx.store,
-                        k=ctx.delimited_k,
-                    )
+                    CESKState.with_value(new_store["counter"], ctx.env, new_store, ctx.k)
                 )
-            return Program.pure(
-                ContinueValue(
-                    value=None, env=ctx.env, store=ctx.store, k=ctx.delimited_k
-                )
-            )
+            return Program.pure(CESKState.with_value(None, ctx.env, ctx.store, ctx.k))
 
         @do
         def increment_program() -> Program[int]:
@@ -498,12 +435,8 @@ class TestWithHandlerIntegration:
 
         def noop_handler(
             effect: EffectBase, ctx: HandlerContext
-        ) -> Program[FrameResult]:
-            return Program.pure(
-                ContinueValue(
-                    value=None, env=ctx.env, store=ctx.store, k=ctx.delimited_k
-                )
-            )
+        ) -> Program[CESKState]:
+            return Program.pure(CESKState.with_value(None, ctx.env, ctx.store, ctx.k))
 
         @do
         def program_with_unhandled() -> Program[str]:
