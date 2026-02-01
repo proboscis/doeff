@@ -74,7 +74,7 @@ def step_with_match(state: "CESKState", handlers: dict[type, Any] | None = None)
         ReturnFrame, LocalFrame, InterceptFrame, ListenFrame,
         GatherFrame, SafeFrame, AskLazyFrame, GraphCaptureFrame,
     )
-    from doeff.cesk.result import Done, Failed, Suspended
+    from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape
     from doeff._vendor import Ok, Err, Some, NOTHING
     
     C, E, S, K = state.C, state.E, state.S, state.K
@@ -187,7 +187,7 @@ def _handle_effect(effect, E, S, K, handlers):
     """Handle effect dispatch with intercept support."""
     from doeff.cesk.classification import has_intercept_frame, is_effectful, is_pure_effect
     from doeff.cesk.helpers import apply_intercept_chain
-    from doeff.cesk.result import Suspended
+    from doeff.cesk.result import PythonAsyncSyntaxEscape
     from doeff.cesk.state import CESKState, Value, Error, ProgramControl
     from doeff.cesk.errors import UnhandledEffectError
     from doeff.program import ProgramBase
@@ -213,7 +213,7 @@ def _handle_effect(effect, E, S, K, handlers):
     )
     
     if has_handler:
-        return Suspended(
+        return PythonAsyncSyntaxEscape(
             effect=effect,
             resume=lambda v, new_store: CESKState(C=Value(v), E=E, S=new_store, K=K),
             resume_error=lambda ex: CESKState(C=Error(ex), E=E, S=S, K=K),
