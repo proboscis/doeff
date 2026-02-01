@@ -66,7 +66,7 @@ from doeff.cesk.result import (
     Failed,
     PythonAsyncSyntaxEscape,
     StepResult,
-    Suspended,
+    Suspended,  # DEPRECATED: Use PythonAsyncSyntaxEscape instead
     Terminal,
 )
 from doeff.cesk.runner import AsyncRunner, SyncRunner
@@ -181,7 +181,7 @@ __all__ = [
     "SpawnId",
     "StepResult",
     "Store",
-    "Suspended",
+    "Suspended",  # DEPRECATED: Use PythonAsyncSyntaxEscape
     "PythonAsyncSyntaxEscape",
     "SyncRunner",
     "SyncRuntime",
