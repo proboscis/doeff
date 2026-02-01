@@ -13,7 +13,8 @@ from typing import Any
 
 from doeff import Program, RunResult
 from doeff.analysis import EffectCallTree
-from doeff.cesk.runtime import SyncRuntime
+from doeff.cesk.run import sync_handlers_preset, sync_run
+from doeff.cesk.runtime import SyncRuntime  # Keep for backwards compat with custom interpreters
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
@@ -110,9 +111,8 @@ class ProgramBuilder:
         from doeff.effects import Local
 
         merged_env_program = self._merger.merge_envs(env_sources)
-        temp_runtime = SyncRuntime()
         try:
-            merged_env_dict = temp_runtime.run(merged_env_program).value
+            merged_env_dict = sync_run(merged_env_program, sync_handlers_preset).value
         except Exception as exc:
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
             print(repr(exc), file=sys.stderr)
@@ -442,8 +442,7 @@ def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
     from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
-        runtime = SyncRuntime()
-        result = runtime.run(value)
+        result = sync_run(value, sync_handlers_preset)
         return result.value, None
     if isinstance(value, RuntimeResult):
         return value.value, None
