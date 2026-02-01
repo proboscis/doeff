@@ -1660,3 +1660,110 @@ class TestRuntimeResult:
         assert "RUNTIME RESULT" in formatted
         assert "STATE & LOG" in formatted
         assert "log message" in formatted
+
+
+class TestAsyncRuntimeSchedulingErrorPropagation:
+    """Tests for error propagation through the new generic scheduling path."""
+
+    @pytest.mark.asyncio
+    async def test_spawn_two_children_one_raises_error_propagates(self) -> None:
+        """Spawn 2 children with Await(), one raises ValueError, verify error propagates."""
+        from doeff.cesk.runtime import AsyncRuntime
+        from doeff.effects import Wait
+
+        runtime = AsyncRuntime()
+
+        async def success_task():
+            await asyncio.sleep(0.1)
+            return "success"
+
+        async def failing_task():
+            await asyncio.sleep(0.01)
+            raise ValueError("child task error")
+
+        @do
+        def child_success():
+            result = yield Await(success_task())
+            return result
+
+        @do
+        def child_fail():
+            result = yield Await(failing_task())
+            return result
+
+        @do
+        def parent():
+            task1 = yield Spawn(child_success())
+            task2 = yield Spawn(child_fail())
+            result2 = yield Wait(task2)
+            result1 = yield Wait(task1)
+            return (result1, result2)
+
+        result = await runtime.run(parent())
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert "child task error" in str(result.error)
+
+    @pytest.mark.asyncio
+    async def test_spawn_multiple_children_all_complete_successfully(self) -> None:
+        """Spawn multiple children with Await(), gather results."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def async_double(x: int):
+            await asyncio.sleep(0.01)
+            return x * 2
+
+        @do
+        def child(n: int):
+            result = yield Await(async_double(n))
+            return result
+
+        @do
+        def parent():
+            t1 = yield Spawn(child(10))
+            t2 = yield Spawn(child(20))
+            t3 = yield Spawn(child(30))
+            results = yield Gather(t1, t2, t3)
+            return results
+
+        result = await runtime.run_and_unwrap(parent())
+        assert result == [20, 40, 60]
+
+    @pytest.mark.asyncio
+    async def test_spawn_error_in_first_child_gather_propagates(self) -> None:
+        """First child fails, Gather propagates the error."""
+        from doeff.cesk.runtime import AsyncRuntime
+
+        runtime = AsyncRuntime()
+
+        async def fail_after_delay():
+            await asyncio.sleep(0.01)
+            raise ValueError("child task error")
+
+        async def succeed_after_delay():
+            await asyncio.sleep(0.05)
+            return "delayed success"
+
+        @do
+        def child_fail():
+            result = yield Await(fail_after_delay())
+            return result
+
+        @do
+        def child_success():
+            result = yield Await(succeed_after_delay())
+            return result
+
+        @do
+        def parent():
+            t1 = yield Spawn(child_fail())
+            t2 = yield Spawn(child_success())
+            results = yield Gather(t1, t2)
+            return results
+
+        result = await runtime.run(parent())
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert "child task error" in str(result.error)

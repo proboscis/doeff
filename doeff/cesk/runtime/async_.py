@@ -89,7 +89,7 @@ class AsyncRuntime(BaseRuntime):
         return result.value
 
     async def _run_until_done(self, state: CESKState) -> tuple[Any, CESKState]:
-        pending_async: dict[Any, asyncio.Task[Any]] = {}
+        pending_tasks: dict[Any, asyncio.Task[Any]] = {}
 
         while True:
             result = step(state)
@@ -105,10 +105,41 @@ class AsyncRuntime(BaseRuntime):
                 )
 
             if isinstance(result, Suspended):
-                try:
-                    state = await self._await_and_resume(result, pending_async, state.S)
-                except asyncio.CancelledError:
-                    raise
+                current_store = result.store if result.store is not None else state.S
+
+                if result.awaitables:
+                    for task_id, awaitable in result.awaitables.items():
+                        if task_id not in pending_tasks:
+                            pending_tasks[task_id] = asyncio.create_task(awaitable)
+
+                    done, _ = await asyncio.wait(
+                        pending_tasks.values(),
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    for task_id, atask in list(pending_tasks.items()):
+                        if atask in done:
+                            del pending_tasks[task_id]
+                            try:
+                                value = atask.result()
+                                state = result.resume((task_id, value), current_store)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as ex:
+                                state = result.resume_error(ex)
+                            break
+                    else:
+                        raise RuntimeError("asyncio.wait returned but no task completed")
+                elif result.awaitable is not None:
+                    try:
+                        value = await result.awaitable
+                        state = result.resume(value, current_store)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ex:
+                        state = result.resume_error(ex)
+                else:
+                    raise RuntimeError("Suspended with neither awaitable nor awaitables")
                 continue
 
             if isinstance(result, CESKState):
@@ -116,48 +147,6 @@ class AsyncRuntime(BaseRuntime):
                 continue
 
             raise RuntimeError(f"Unexpected step result: {type(result)}")
-
-    async def _await_and_resume(
-        self,
-        suspended: Suspended,
-        pending_async: dict[Any, asyncio.Task[Any]],
-        store: dict[str, Any],
-    ) -> CESKState:
-        from doeff.effects.future import AllTasksSuspendedEffect
-
-        effect = suspended.effect
-
-        if isinstance(effect, AllTasksSuspendedEffect):
-            pending_io = effect.pending_io
-            if not pending_io:
-                raise RuntimeError("Suspended with no pending I/O")
-
-            for task_id, info in pending_io.items():
-                if task_id not in pending_async:
-                    pending_async[task_id] = asyncio.create_task(info["awaitable"])
-
-            done, _ = await asyncio.wait(pending_async.values(), return_when=asyncio.FIRST_COMPLETED)
-
-            for task_id, atask in list(pending_async.items()):
-                if atask in done:
-                    del pending_async[task_id]
-                    try:
-                        value = atask.result()
-                        return suspended.resume((task_id, value), store)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as ex:
-                        return suspended.resume_error(ex)
-
-            raise RuntimeError("asyncio.wait returned but no task completed")
-        awaitable = effect.awaitable  # type: ignore[attr-defined]
-        try:
-            value = await cast(Any, awaitable)
-            return suspended.resume(value, store)
-        except asyncio.CancelledError:
-            raise
-        except Exception as ex:
-            return suspended.resume_error(ex)
 
 
 __all__ = [
