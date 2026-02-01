@@ -3,14 +3,15 @@
 This runtime implements cooperative scheduling through handlers:
 - scheduler_state_handler: Manages task queue using store primitives (outermost)
 - task_scheduler_handler: Handles Spawn/Wait/Gather/Race/Promise effects
+- sync_await_handler: Handles async effects via background thread
 - core_handler: Handles basic effects (Get, Put, Ask, etc.)
 
 All task scheduling is done by handlers using ResumeK - no task tracking
 in the runtime. The runtime just steps until Done/Failed.
 
-Note: This runtime does NOT handle async effects. For async effects, use
-AsyncRuntime or add threaded_asyncio_handler + python_async_handler to
-a Runner's handler stack.
+Per SPEC-CESK-EFFECT-BOUNDARIES.md: SyncRuntime NEVER sees PythonAsyncSyntaxEscape.
+The sync_await_handler handles Await/Delay/WaitUntil directly by running them
+in a background asyncio thread.
 """
 
 from __future__ import annotations
@@ -19,12 +20,11 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from doeff._vendor import FrozenDict
 from doeff.cesk.errors import UnhandledEffectError
-from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
+from doeff.cesk.handlers.sync_await_handler import sync_await_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
-from doeff.cesk.helpers import to_generator
 from doeff.cesk.result import Done, Failed
 from doeff.cesk.runtime.base import BaseRuntime, ExecutionError
 from doeff.cesk.runtime_result import RuntimeResult
@@ -39,14 +39,24 @@ T = TypeVar("T")
 
 
 def _wrap_with_handlers(program: Program[T]) -> Program[T]:
-    """Wrap a program with the handler stack for cooperative scheduling."""
+    """Wrap a program with the handler stack for cooperative scheduling.
+
+    Handler stack (outermost to innermost):
+    - scheduler_state_handler: Manages task queue state in store
+    - task_scheduler_handler: Handles Spawn/Wait/Gather/Race effects
+    - sync_await_handler: Handles async effects via background thread (NO escape)
+    - core_handler: Handles basic effects (Get, Put, Ask, etc.)
+    """
     return WithHandler(
         handler=cast(Handler, scheduler_state_handler),
         program=WithHandler(
             handler=cast(Handler, task_scheduler_handler),
             program=WithHandler(
-                handler=cast(Handler, core_handler),
-                program=program,
+                handler=cast(Handler, sync_await_handler),
+                program=WithHandler(
+                    handler=cast(Handler, core_handler),
+                    program=program,
+                ),
             ),
         ),
     )
@@ -55,10 +65,14 @@ def _wrap_with_handlers(program: Program[T]) -> Program[T]:
 class SyncRuntime(BaseRuntime):
     """Synchronous runtime with hardcoded handler-based cooperative scheduling.
 
-    This runtime has hardcoded handlers (scheduler_state_handler,
-    task_scheduler_handler, core_handler) and does NOT support async effects.
+    This runtime has hardcoded handlers:
+    - scheduler_state_handler: Task queue management
+    - task_scheduler_handler: Spawn/Wait/Gather/Race
+    - sync_await_handler: Async effects via background thread
+    - core_handler: Get/Put/Ask/etc.
 
-    For async effects, use AsyncRuntime or a Runner with appropriate handlers.
+    Per spec: SyncRuntime NEVER sees PythonAsyncSyntaxEscape. Async effects
+    are handled directly by sync_await_handler using a background thread.
     """
 
     def __init__(self, handlers: dict[type, Any] | None = None):
