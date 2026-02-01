@@ -225,13 +225,12 @@ class _SchedulerTaskCompleted(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerSuspendForIO(EffectBase):
     """Signal that current task needs to suspend for async I/O.
-    
-    This is yielded by python_async_handler instead of returning SuspendOn.
+
     The task_scheduler_handler intercepts this:
     1. Stores the awaitable with the current task's continuation
     2. Switches to another task if available
-    3. If no other tasks, propagates as SuspendOn with all pending awaitables
-    
+    3. If no other tasks, propagates as PythonAsyncSyntaxEscape with all pending awaitables
+
     Attributes:
         awaitable: The async awaitable to wait for
         resume_k: The full continuation to use when resuming this task
@@ -269,6 +268,22 @@ class _SchedulerResumePendingIO(EffectBase):
     error: BaseException | None = None
 
 
+@dataclass(frozen=True, kw_only=True)
+class _AsyncEscapeIntercepted(EffectBase):
+    """Notify handler that a PythonAsyncSyntaxEscape is bubbling through.
+    
+    This effect is yielded by HandlerFrame.on_value when it sees an escape
+    value. Handlers can intercept this to coordinate multi-task async
+    (like TaskSchedulerHandler does) or pass it through for single-task.
+    
+    Attributes:
+        escape: The PythonAsyncSyntaxEscape that was intercepted
+        outer_k: The continuation beyond this handler
+    """
+    escape: Any
+    outer_k: Any
+
+
 # Backwards compatibility aliases (deprecated, will be removed in future version)
 QueueAdd = _SchedulerEnqueueTask
 QueuePop = _SchedulerDequeueTask
@@ -294,6 +309,7 @@ GetTaskResult = _SchedulerGetTaskResult
 
 __all__ = [
     # New names (preferred)
+    "_AsyncEscapeIntercepted",
     "_SchedulerAddPendingIO",
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",

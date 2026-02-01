@@ -74,6 +74,7 @@ from doeff.cesk.result import (
     Suspended,
     Terminal,
 )
+from doeff.cesk.runner import AsyncRunner, SyncRunner
 from doeff.cesk.runtime import AsyncRuntime, BaseRuntime, SimulationRuntime, SyncRuntime
 from doeff.cesk.runtime_result import (
     EffectCallNode,
@@ -130,6 +131,7 @@ from doeff.cesk.types import (
 
 
 __all__ = [
+    "AsyncRunner",
     "AsyncRuntime",
     "AwaitExternal",
     "BaseRuntime",
@@ -191,6 +193,7 @@ __all__ = [
     "Store",
     "Suspended",
     "PythonAsyncSyntaxEscape",
+    "SyncRunner",
     "SyncRuntime",
     "TaskCondition",
     "TaskDone",
