@@ -19,8 +19,7 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask, Log
-from doeff.cesk.runtime import AsyncRuntime
+from doeff import do, Ask, Log, sync_run, sync_handlers_preset
 
 @do
 def connect_to_database():
@@ -30,12 +29,10 @@ def connect_to_database():
     return f"Connected to {db_url}"
 
 # Run with environment
-import asyncio
-
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(
+def main():
+    result = sync_run(
         connect_to_database(),
+        sync_handlers_preset,
         env={
             "database_url": "postgresql://localhost/mydb",
             "timeout": 30
@@ -43,7 +40,7 @@ async def main():
     )
     print(result.value)  # "Connected to postgresql://localhost/mydb"
 
-asyncio.run(main())
+main()
 ```
 
 **Use cases:**
@@ -103,13 +100,13 @@ def with_custom_config():
     # Normal environment
     url1 = yield Ask("api_url")
     yield Log(f"Default URL: {url1}")
-    
+
     # Override for sub-program
     result = yield Local(
         {"api_url": "https://staging.example.com"},
         fetch_data()
     )
-    
+
     # Back to normal
     url2 = yield Ask("api_url")
     yield Log(f"Back to: {url2}")
@@ -131,29 +128,29 @@ def fetch_data():
 ### Reader Pattern Example
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def application():
     # Load config once
     config = yield Ask("config")
-    
+
     # Pass to all operations
     result1 = yield process_data(config["option1"])
     result2 = yield validate_data(config["option2"])
-    
+
     return {"result1": result1, "result2": result2}
 
 # Initialize with config
-import asyncio
-
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(
+def main():
+    result = sync_run(
         application(),
+        sync_handlers_preset,
         env={"config": {"option1": "value1", "option2": "value2"}}
     )
     print(result.value)
 
-asyncio.run(main())
+main()
 ```
 
 ## State Effects
@@ -225,12 +222,12 @@ def increment_counter_manual():
 def counter_operations():
     # Initialize
     yield Put("count", 0)
-    
+
     # Increment multiple times
     yield Modify("count", lambda x: x + 1)
     yield Modify("count", lambda x: x + 1)
     yield Modify("count", lambda x: x + 1)
-    
+
     # Read final value
     final = yield Get("count")
     return final  # 3
@@ -242,11 +239,11 @@ def counter_operations():
 def collect_items():
     # Initialize list
     yield Put("items", [])
-    
+
     # Add items
     yield Modify("items", lambda xs: xs + [1])
     yield Modify("items", lambda xs: xs + [2, 3])
-    
+
     # Read all
     items = yield Get("items")
     return items  # [1, 2, 3]
@@ -257,16 +254,16 @@ def collect_items():
 @do
 def state_machine():
     yield Put("state", "idle")
-    
+
     # Transition: idle -> processing
     state = yield Get("state")
     if state == "idle":
         yield Put("state", "processing")
         yield Log("Started processing")
-    
+
     # Do work
     yield process_work()
-    
+
     # Transition: processing -> complete
     yield Put("state", "complete")
     yield Log("Processing complete")
@@ -281,25 +278,24 @@ Writer effects accumulate output (logs, messages, events) throughout program exe
 `Log(message)` appends a message to the log:
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def with_logging():
     yield Log("Starting operation")
     yield Log("Processing data")
-    
+
     count = yield Get("count")
     yield Log(f"Count: {count}")
-    
+
     yield Log("Operation complete")
     return "done"
 
-import asyncio
+def main():
+    result = sync_run(with_logging(), sync_handlers_preset, store={"count": 0})
+    # Logs are in result.raw_store.get("__log__", [])
 
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(with_logging(), store={"count": 0})
-    # Logs are accumulated during execution
-
-asyncio.run(main())
+main()
 ```
 
 **Note:** `Log` and `Tell` are aliases for the same effect.
@@ -309,6 +305,8 @@ asyncio.run(main())
 `StructuredLog(**kwargs)` logs structured data:
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def structured_logging():
     yield StructuredLog(
@@ -317,24 +315,21 @@ def structured_logging():
         user_id=12345,
         ip="192.168.1.1"
     )
-    
+
     yield StructuredLog(
         level="warn",
         message="High memory usage",
         memory_mb=512,
         threshold_mb=400
     )
-    
+
     return "logged"
 
-import asyncio
+def main():
+    result = sync_run(structured_logging(), sync_handlers_preset)
+    # Structured logs in result.raw_store.get("__log__", [])
 
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(structured_logging())
-    # Structured logs are accumulated during execution
-
-asyncio.run(main())
+main()
 ```
 
 ### Listen - Capture Sub-Program Log
@@ -342,6 +337,8 @@ asyncio.run(main())
 `Listen(sub_program)` runs a sub-program and captures its log output. Per [SPEC-EFF-003](../specs/effects/SPEC-EFF-003-writer.md), logs from the inner program are **propagated to the outer scope** in addition to being captured:
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def inner_operation():
     yield Log("Inner step 1")
@@ -351,24 +348,21 @@ def inner_operation():
 @do
 def outer_operation():
     yield Log("Before inner")
-    
+
     # Capture inner logs (they're also propagated to outer)
     listen_result = yield Listen(inner_operation())
-    
+
     yield Log("After inner")
     yield Log(f"Inner returned: {listen_result.value}")
     yield Log(f"Inner logs: {listen_result.log}")
-    
+
     return listen_result.value
 
-import asyncio
+def main():
+    result = sync_run(outer_operation(), sync_handlers_preset)
+    # All logs (outer AND inner) are in result.raw_store.get("__log__", [])
 
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(outer_operation())
-    # All logs (outer AND inner) are accumulated
-
-asyncio.run(main())
+main()
 ```
 
 **ListenResult structure:**
@@ -386,14 +380,14 @@ class ListenResult(Generic[T]):
 @do
 def process_transaction(transaction_id):
     yield Log(f"[AUDIT] Starting transaction {transaction_id}")
-    
+
     yield Put("balance", 1000)
     yield Log(f"[AUDIT] Initial balance: 1000")
-    
+
     yield Modify("balance", lambda x: x - 100)
     new_balance = yield Get("balance")
     yield Log(f"[AUDIT] Debited 100, new balance: {new_balance}")
-    
+
     yield Log(f"[AUDIT] Transaction {transaction_id} complete")
     return new_balance
 ```
@@ -403,16 +397,16 @@ def process_transaction(transaction_id):
 @do
 def debug_computation():
     yield Log("[DEBUG] Computation start")
-    
+
     x = yield Get("x")
     yield Log(f"[DEBUG] x = {x}")
-    
+
     y = x * 2
     yield Log(f"[DEBUG] y = x * 2 = {y}")
-    
+
     yield Put("result", y)
     yield Log(f"[DEBUG] Stored result = {y}")
-    
+
     return y
 ```
 
@@ -428,27 +422,27 @@ def application_workflow():
     # Read config
     max_retries = yield Ask("max_retries")
     yield Log(f"Config: max_retries = {max_retries}")
-    
+
     # Initialize state
     yield Put("attempt", 0)
     yield Put("status", "pending")
-    
+
     # Process with retry logic
     for i in range(max_retries):
         attempt = yield Get("attempt")
         yield Modify("attempt", lambda x: x + 1)
         yield Log(f"Attempt {attempt + 1}/{max_retries}")
-        
+
         # Simulate work
         success = yield try_operation()
-        
+
         if success:
             yield Put("status", "success")
             yield Log("Operation succeeded")
             return "success"
         else:
             yield Log(f"Attempt {attempt + 1} failed")
-    
+
     yield Put("status", "failed")
     yield Log("All attempts failed")
     return "failed"
@@ -461,7 +455,7 @@ def application_workflow():
 def with_feature_flag():
     # Check global flag
     enabled = yield Ask("feature_enabled")
-    
+
     if enabled:
         # Run with feature-specific config
         result = yield Local(
@@ -470,7 +464,7 @@ def with_feature_flag():
         )
     else:
         result = yield process_without_feature()
-    
+
     return result
 
 @do
@@ -488,14 +482,14 @@ def process_with_feature():
 def isolated_operation():
     # Main state
     yield Put("main_counter", 0)
-    
+
     # Run isolated sub-operation
     listen_result = yield Listen(isolated_sub_operation())
-    
+
     # Sub-operation's state changes don't affect main state
     main_count = yield Get("main_counter")
     yield Log(f"Main counter unchanged: {main_count}")
-    
+
     return listen_result.value
 
 @do
@@ -543,7 +537,7 @@ def safe_increment():
     except KeyError:
         yield Put("counter", 0)
         count = 0
-    
+
     yield Put("counter", count + 1)
 ```
 

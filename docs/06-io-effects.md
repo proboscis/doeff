@@ -94,11 +94,11 @@ def run_command(cmd):
         capture_output=True,
         text=True
     ))
-    
+
     if result.returncode != 0:
         yield Log(f"Command failed: {result.stderr}")
         raise Exception(f"Command failed with code {result.returncode}")
-    
+
     return result.stdout
 ```
 
@@ -136,12 +136,12 @@ def with_logging():
 def process_items(items):
     results = []
     total = len(items)
-    
+
     for i, item in enumerate(items):
         yield IO(lambda i=i: print(f"Processing {i+1}/{total}..."))
         result = yield process_item(item)
         results.append(result)
-    
+
     yield IO(lambda: print("All items processed!"))
     return results
 ```
@@ -153,13 +153,13 @@ def process_items(items):
 def debug_program():
     x = yield Get("x")
     yield IO(lambda: print(f"DEBUG: x = {x}"))
-    
+
     y = x * 2
     yield IO(lambda: print(f"DEBUG: y = {y}"))
-    
+
     yield Put("result", y)
     yield IO(lambda: print("DEBUG: Result stored"))
-    
+
     return y
 ```
 
@@ -180,16 +180,16 @@ def debug_program():
 def good_io_usage():
     # File operations
     data = yield IO(lambda: json.load(open('config.json')))
-    
+
     # Current time
     timestamp = yield IO(lambda: datetime.now())
-    
+
     # Random values
     rand_val = yield IO(lambda: random.random())
-    
+
     # Console output
     yield IO(lambda: print(f"Loaded config at {timestamp}"))
-    
+
     return {"data": data, "time": timestamp, "random": rand_val}
 ```
 
@@ -203,10 +203,10 @@ def good_io_usage():
 def bad_io_usage():
     # Bad: pure computation doesn't need IO
     result = yield IO(lambda: 2 + 2)  # Just use: result = 4
-    
+
     # Bad: async operation should use Await
     data = yield IO(lambda: asyncio.run(fetch_data()))  # Use Await instead
-    
+
     # Bad: state access should use Get
     value = yield IO(lambda: some_global_state)  # Use Get instead
 ```
@@ -231,16 +231,18 @@ def trackable_side_effects():
 Mock IO effects in tests by providing custom handlers:
 
 ```python
-from doeff.runtimes import AsyncioRuntime
+from doeff import sync_run, sync_handlers_preset
+from doeff.program import Program
 
-# Create runtime with custom handlers for testing
-def mock_io_handler(effect, env, store):
-    # Return mocked result instead of executing IO
-    return Resume("mocked_result", store)
+# Create a mock IO handler
+def mock_io_handler(effect, k, env, store):
+    if isinstance(effect, IO):
+        return Program.pure("mocked_result")
+    return None  # Not handled
 
-# Configure runtime with custom handlers
-runtime = AsyncioRuntime(handlers={"IO": mock_io_handler})
-result = await runtime.run(my_program())
+# Prepend custom handler to preset
+handlers = [mock_io_handler, *sync_handlers_preset]
+result = sync_run(my_program(), handlers)
 ```
 
 ### Console Output vs Log
@@ -262,18 +264,18 @@ result = await runtime.run(my_program())
 def good_separation():
     # Log for internal tracking (captured in context)
     yield Log("Starting operation...")
-    
+
     # print via IO for user visibility (goes to stdout)
     yield IO(lambda: print("Processing your request..."))
-    
+
     result = yield do_work()
-    
+
     # Log the details (captured in context)
     yield Log(f"Operation completed with result: {result}")
-    
+
     # print the summary (goes to stdout)
     yield IO(lambda: print("Done!"))
-    
+
     return result
 ```
 

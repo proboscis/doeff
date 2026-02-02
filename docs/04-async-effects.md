@@ -19,8 +19,7 @@ This chapter covers effects for asynchronous operations: awaiting coroutines, ru
 
 ```python
 import asyncio
-from doeff import do, Await, Log
-from doeff.cesk.runtime import AsyncRuntime
+from doeff import do, Await, Log, async_run, async_handlers_preset
 
 async def fetch_data():
     await asyncio.sleep(0.1)
@@ -34,8 +33,7 @@ def process_user():
     return data["name"]
 
 async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(process_user())
+    result = await async_run(process_user(), async_handlers_preset)
     print(result.value)  # "Alice"
 
 asyncio.run(main())
@@ -57,10 +55,10 @@ def load_user_profile(user_id):
     # Sequential async operations
     user = yield Await(fetch_user(user_id))
     yield Log(f"Loaded user: {user['name']}")
-    
+
     posts = yield Await(fetch_posts(user_id))
     yield Log(f"Loaded {len(posts)} posts")
-    
+
     return {"user": user, "posts": posts}
 ```
 
@@ -76,7 +74,7 @@ def fetch_api_data():
         response = yield Await(
             client.get("https://api.example.com/data")
         )
-        
+
         if response.status_code == 200:
             yield Log("API request successful")
             return response.json()
@@ -113,10 +111,10 @@ def task3():
 @do
 def run_parallel_tasks():
     yield Log("Starting parallel tasks...")
-    
-    # All tasks run concurrently in AsyncRuntime
+
+    # All tasks run concurrently with async_run
     results = yield Gather(task1(), task2(), task3())
-    
+
     yield Log(f"All tasks complete: {results}")
     return results  # ["result1", "result2", "result3"]
 ```
@@ -157,7 +155,7 @@ def fetch_multiple_apis():
         fetch_from_api("https://api2.example.com/data"),
         fetch_from_api("https://api3.example.com/data")
     )
-    
+
     yield Log(f"Fetched {len(results)} responses")
     return results
 ```
@@ -165,6 +163,8 @@ def fetch_multiple_apis():
 ### Fan-Out Pattern
 
 ```python
+from doeff import async_run, async_handlers_preset
+
 @do
 def process_item(item_id):
     yield Log(f"Processing item {item_id}")
@@ -174,20 +174,19 @@ def process_item(item_id):
 @do
 def process_batch(item_ids):
     yield Log(f"Processing {len(item_ids)} items in parallel")
-    
+
     # Create Program for each item
     tasks = [process_item(item_id) for item_id in item_ids]
-    
+
     # Process all in parallel
     results = yield Gather(*tasks)
-    
+
     yield Log("All items processed")
     return results
 
 # Usage
 async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(process_batch([1, 2, 3, 4, 5]))
+    result = await async_run(process_batch([1, 2, 3, 4, 5]), async_handlers_preset)
     print(result.value)  # ["processed-1", ..., "processed-5"]
 ```
 
@@ -200,7 +199,7 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for the full sp
 ### Basic Spawn Usage
 
 ```python
-from doeff import do, Spawn, Log, Delay
+from doeff import do, Spawn, Wait, Log, Delay
 
 @do
 def background_work():
@@ -212,19 +211,19 @@ def background_work():
 @do
 def main_program():
     yield Log("Main: Starting")
-    
+
     # Spawn background task
     task = yield Spawn(background_work())
     yield Log("Main: Spawned background task")
-    
+
     # Do other work while background runs
     yield Delay(0.5)
     yield Log("Main: Did some work")
-    
+
     # Wait for background task result
-    result = yield task.join()
+    result = yield Wait(task)
     yield Log(f"Main: Background returned: {result}")
-    
+
     return result
 ```
 
@@ -242,18 +241,18 @@ def spawned_task():
 @do
 def parent_task():
     yield Put("counter", 0)
-    
+
     task = yield Spawn(spawned_task())
-    
+
     # Parent's store is unchanged
     parent_counter = yield Get("counter")  # Still 0
-    
+
     # Spawned task sees its own store
-    spawned_result = yield task.join()  # Returns 999
-    
+    spawned_result = yield Wait(task)  # Returns 999
+
     # Parent's store STILL unchanged
     final_counter = yield Get("counter")  # Still 0
-    
+
     return {"parent": final_counter, "spawned": spawned_result}
 ```
 
@@ -264,20 +263,18 @@ def parent_task():
 def task_operations_example():
     # Spawn a task
     task = yield Spawn(long_running_work())
-    
+
     # Check if done (non-blocking)
-    is_done = yield task.is_done()
+    is_done = task.is_done()
     yield Log(f"Is done: {is_done}")  # False initially
-    
+
     # Cancel the task
-    cancelled = yield task.cancel()
-    yield Log(f"Cancelled: {cancelled}")  # True if successfully cancelled
-    
-    # Join waits for completion (blocks)
-    # After cancel, this raises TaskCancelledError
-    try:
-        result = yield task.join()
-    except TaskCancelledError:
+    yield task.cancel()
+    yield Log("Requested cancellation")
+
+    # Wait raises TaskCancelledError after cancel
+    result = yield Safe(Wait(task))
+    if result.is_err():
         yield Log("Task was cancelled")
 ```
 
@@ -295,7 +292,7 @@ def send_notification():
 def main_workflow():
     # Fire and forget - we don't wait for the result
     yield Spawn(send_notification())
-    
+
     # Continue immediately
     yield Log("Workflow continues...")
     return "done"
@@ -312,10 +309,10 @@ def failing_task():
 @do
 def handle_spawn_error():
     task = yield Spawn(failing_task())
-    
-    # Wrap join in Safe to handle errors
-    result = yield Safe(task.join())
-    
+
+    # Wrap Wait in Safe to handle errors
+    result = yield Safe(Wait(task))
+
     if result.is_ok():
         return result.value
     else:
@@ -352,10 +349,9 @@ def with_delay():
     return "done"
 ```
 
-**Runtime behavior:**
-- `AsyncRuntime`: Uses `asyncio.sleep` (non-blocking)
-- `SyncRuntime`: Uses `time.sleep` (blocking)
-- `SimulationRuntime`: Advances simulated time instantly
+**Execution behavior:**
+- `async_run`: Uses `asyncio.sleep` (non-blocking)
+- `sync_run`: Uses cooperative scheduling or `time.sleep`
 
 ### GetTime - Get Current Time
 
@@ -366,13 +362,13 @@ from doeff import do, GetTime, Delay, Log
 def measure_duration():
     start = yield GetTime()
     yield Log(f"Start time: {start}")
-    
+
     yield Delay(1.0)
-    
+
     end = yield GetTime()
     duration = (end - start).total_seconds()
     yield Log(f"Duration: {duration}s")
-    
+
     return duration
 ```
 
@@ -386,32 +382,31 @@ from doeff import do, WaitUntil, GetTime, Log
 def wait_until_example():
     now = yield GetTime()
     target = now + timedelta(seconds=5)
-    
+
     yield Log(f"Current time: {now}")
     yield Log(f"Waiting until: {target}")
-    
+
     yield WaitUntil(target)
-    
+
     yield Log("Target time reached!")
     return "done"
 ```
 
-### Time Effects with SimulationRuntime
+### Time Effects with sync_run
 
-`SimulationRuntime` advances time instantly, making time-based tests fast:
+`sync_run` with cooperative scheduling handles time effects efficiently:
 
 ```python
-from doeff.cesk.runtime import SimulationRuntime
+from doeff import sync_run, sync_handlers_preset
 
 @do
 def slow_in_real_time():
     yield Delay(3600)  # 1 hour delay
     return "done"
 
-# This completes instantly with SimulationRuntime
+# With sync_run, time advances based on handler implementation
 def test_time_based_program():
-    runtime = SimulationRuntime()
-    result = runtime.run(slow_in_real_time())
+    result = sync_run(slow_in_real_time(), sync_handlers_preset)
     assert result.is_ok()
     assert result.value == "done"
 ```
@@ -448,7 +443,7 @@ def with_timeout():
     async def slow_operation():
         await asyncio.sleep(10)
         return "done"
-    
+
     try:
         # Set timeout using asyncio
         result = yield Await(
@@ -468,16 +463,16 @@ def with_timeout():
 def rate_limited_requests(urls):
     """Process URLs with rate limiting"""
     results = []
-    
+
     for i, url in enumerate(urls):
         if i > 0:
             # Wait between requests
             yield Delay(0.5)
-        
+
         yield Log(f"Fetching {url}...")
         response = yield Await(fetch_url(url))
         results.append(response)
-    
+
     yield Log(f"Completed {len(results)} requests")
     return results
 ```
@@ -490,23 +485,23 @@ def async_with_state_and_config():
     # Get config from environment
     api_url = yield Ask("api_url")
     max_concurrent = yield Ask("max_concurrent")
-    
+
     # Track progress in state
     yield Put("completed", 0)
     yield Put("total", 10)
-    
+
     # Run parallel async operations with Gather
     tasks = [fetch_item(api_url, i) for i in range(max_concurrent)]
     results = yield Gather(*tasks)
-    
+
     # Update state
     yield Modify("completed", lambda x: x + len(results))
-    
+
     # Log progress
     completed = yield Get("completed")
     total = yield Get("total")
     yield Log(f"Progress: {completed}/{total}")
-    
+
     return results
 
 @do
@@ -525,15 +520,15 @@ def safe_async_operation():
         if random.random() < 0.5:
             raise Exception("Random failure")
         return "success"
-    
+
     # Safe wrapping for async errors
     safe_result = yield Safe(Await(risky_async()))
-    
+
     if safe_result.is_ok():
         result = safe_result.value
     else:
         result = f"Failed: {safe_result.error}"
-    
+
     yield Log(f"Result: {result}")
     return result
 ```
@@ -597,12 +592,12 @@ def good_gather_usage():
 def good_spawn_usage():
     # Fire-and-forget notification
     yield Spawn(send_notification())
-    
-    # Background work with later join
+
+    # Background work with later Wait
     task = yield Spawn(expensive_computation())
     yield do_other_work()
-    result = yield task.join()
-    
+    result = yield Wait(task)
+
     return result
 ```
 
@@ -641,8 +636,7 @@ def parallel():
 ```python
 import asyncio
 import pytest
-from doeff import do, Await, Log
-from doeff.cesk.runtime import AsyncRuntime
+from doeff import do, Await, Log, async_run, async_handlers_preset
 
 @pytest.mark.asyncio
 async def test_async_program():
@@ -651,24 +645,22 @@ async def test_async_program():
         result = yield Await(asyncio.sleep(0, result="test"))
         yield Log(f"Result: {result}")
         return result
-    
-    runtime = AsyncRuntime()
-    result = await runtime.run(my_program())
-    
+
+    result = await async_run(my_program(), async_handlers_preset)
+
     assert result.is_ok()
     assert result.value == "test"
 ```
 
 ## Summary
 
-| Effect | Purpose | Runtime Support |
-|--------|---------|-----------------|
-| `Await(coro)` | Wait for async operation | AsyncRuntime only |
-| `Gather(*progs)` | Run Programs in parallel | All (parallel in Async, sequential in Sync/Sim) |
-| `Spawn(prog)` | Background task with snapshot | AsyncRuntime only |
-| `task.join()` | Wait for spawned task | AsyncRuntime only |
-| `task.cancel()` | Request cancellation | AsyncRuntime only |
-| `task.is_done()` | Check completion | AsyncRuntime only |
+| Effect | Purpose | Execution Support |
+|--------|---------|-------------------|
+| `Await(coro)` | Wait for async operation | async_run (native), sync_run (via thread) |
+| `Gather(*progs)` | Run Programs in parallel | async_run (parallel), sync_run (cooperative) |
+| `Spawn(prog)` | Background task with snapshot | async_run (native), sync_run (cooperative) |
+| `Wait(task)` | Wait for spawned task | async_run, sync_run |
+| `task.cancel()` | Request cancellation | async_run, sync_run |
 | `Delay(seconds)` | Sleep for duration | All |
 | `GetTime()` | Get current time | All |
 | `WaitUntil(time)` | Wait until specific time | All |
@@ -677,7 +669,7 @@ async def test_async_program():
 - `Await` integrates Python's async/await with doeff
 - `Gather` runs Programs in parallel (with full effect support)
 - `Spawn` creates isolated background tasks
-- Time effects behave differently per runtime
+- Time effects behave differently per execution function
 - Use `Safe` for error handling in async operations
 
 ## Next Steps

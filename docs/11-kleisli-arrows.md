@@ -51,10 +51,10 @@ def complex_calculation():
     # These are Program[int]
     a = add(5, 3)      # Program[int] with value 8
     b = multiply(2, 4) # Program[int] with value 8
-    
+
     # Automatic unwrapping: add/multiply receive unwrapped values
     result = yield add(a, b)  # add receives (8, 8)
-    
+
     return result  # 16
 ```
 
@@ -89,11 +89,11 @@ Annotate parameters as `Program[T]` to prevent unwrapping:
 def manual_control(x: int, y: Program[int]):
     # x is unwrapped automatically
     # y is NOT unwrapped - you receive the Program
-    
+
     yield Log(f"x = {x}")
     actual_y = yield y  # Manual unwrap
     yield Log(f"y = {actual_y}")
-    
+
     return x + actual_y
 
 prog_y = Program.pure(10)
@@ -109,6 +109,8 @@ KleisliProgram supports functional composition.
 Chain computations with `and_then_k` (or `>>`):
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def fetch_user(user_id: int):
     yield Log(f"Fetching user {user_id}")
@@ -123,8 +125,7 @@ def fetch_posts(user: dict):
 fetch_user_posts = fetch_user.and_then_k(lambda user: fetch_posts(user))
 # Or: fetch_user_posts = fetch_user >> fetch_posts
 
-runtime = AsyncioRuntime()
-result = await runtime.run(fetch_user_posts(123))
+result = sync_run(fetch_user_posts(123), sync_handlers_preset)
 # Result: [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
 ```
 
@@ -155,8 +156,7 @@ pipeline = (
     >> (lambda d: process_data(d))
 )
 
-runtime = AsyncioRuntime()
-result = await runtime.run(pipeline("data.json"))
+result = sync_run(pipeline("data.json"), sync_handlers_preset)
 # Result: {"result": 15}
 ```
 
@@ -172,8 +172,7 @@ def get_user():
 # Extract just the name
 get_name = get_user.fmap(lambda user: user["name"])
 
-runtime = AsyncioRuntime()
-result = await runtime.run(get_name())
+result = sync_run(get_name(), sync_handlers_preset)
 # Result: "Alice"
 ```
 
@@ -191,8 +190,7 @@ pipeline = (
     .and_then_k(lambda x: Program.pure(x + 10))  # 94
 )
 
-runtime = AsyncioRuntime()
-result = await runtime.run(pipeline())
+result = sync_run(pipeline(), sync_handlers_preset)
 # Result: 94
 ```
 
@@ -211,8 +209,7 @@ def greet(greeting: str, name: str):
 # Partially apply greeting
 say_hello = greet.partial("Hello")
 
-runtime = AsyncioRuntime()
-result = await runtime.run(say_hello("Alice"))
+result = sync_run(say_hello("Alice"), sync_handlers_preset)
 # Result: "Hello, Alice!"
 ```
 
@@ -256,12 +253,14 @@ def use_multipliers():
 KleisliProgram works as a method decorator:
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 class UserService:
     @do
     def get_user(self, user_id: int):
         yield Log(f"Fetching user {user_id}")
         return {"id": user_id, "name": f"User{user_id}"}
-    
+
     @do
     def update_user(self, user_id: int, data: dict):
         user = yield self.get_user(user_id)
@@ -270,8 +269,7 @@ class UserService:
         return updated
 
 service = UserService()
-runtime = AsyncioRuntime()
-result = await runtime.run(service.get_user(123))
+result = sync_run(service.get_user(123), sync_handlers_preset)
 ```
 
 ### Higher-Order Functions
@@ -297,29 +295,30 @@ def example():
 ### Factory Pattern
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 def create_processor(config: dict) -> KleisliProgram:
     """Factory that creates a configured KleisliProgram"""
-    
+
     @do
     def process(data: list):
         yield Log(f"Processing with config: {config}")
-        
+
         if config.get("filter"):
             data = [x for x in data if x > 0]
-        
+
         if config.get("double"):
             data = [x * 2 for x in data]
-        
+
         return data
-    
+
     return process
 
 # Create specialized processors
 positive_doubler = create_processor({"filter": True, "double": True})
 simple_filter = create_processor({"filter": True})
 
-runtime = AsyncioRuntime()
-result = await runtime.run(positive_doubler([1, -2, 3, -4, 5]))
+result = sync_run(positive_doubler([1, -2, 3, -4, 5]), sync_handlers_preset)
 # Result: [2, 6, 10]
 ```
 

@@ -38,30 +38,28 @@ uv add doeff
 Let's write a simple program that uses state management and logging:
 
 ```python
-import asyncio
 from doeff import do, Program, Put, Get, Log
-from doeff.runtimes import AsyncioRuntime
+from doeff import sync_run, sync_handlers_preset
 
 @do
 def counter_program():
     yield Put("counter", 0)
     yield Log("Counter initialized")
-    
+
     count = yield Get("counter")
     yield Log(f"Current count: {count}")
-    
+
     yield Put("counter", count + 1)
     final_count = yield Get("counter")
-    
+
     yield Log(f"Final count: {final_count}")
     return final_count
 
-async def main():
-    runtime = AsyncioRuntime()
-    result = await runtime.run(counter_program())
-    print(f"Result: {result}")
+def main():
+    result = sync_run(counter_program(), sync_handlers_preset)
+    print(f"Result: {result.value}")
 
-asyncio.run(main())
+main()
 ```
 
 Output:
@@ -79,14 +77,14 @@ Let's break down what's happening:
    - `Put("counter", value)` - Sets state
    - `Get("counter")` - Retrieves state
    - `Log(message)` - Writes to log
-4. **`AsyncioRuntime`**: Executes programs with real async I/O support
-5. **Result**: The `run()` method returns the final value directly; use `run_safe()` for Result wrapping
+4. **`sync_run`**: Executes programs with the provided handlers
+5. **Result**: Returns a `RuntimeResult` with `.value` for success or `.error` for failure
 
 ## Key Concepts
 
 ### Programs are Lazy
 
-Programs don't execute until you call `runtime.run()`:
+Programs don't execute until you call `sync_run()` or `async_run()`:
 
 ```python
 @do
@@ -98,8 +96,7 @@ def my_program():
 program = my_program()
 
 # Now it executes
-runtime = AsyncioRuntime()
-result = await runtime.run(program)
+result = sync_run(program, sync_handlers_preset)
 ```
 
 ### Programs are Reusable
@@ -118,9 +115,8 @@ prog1 = get_timestamp()
 prog2 = get_timestamp()
 
 # Each execution is independent
-runtime = AsyncioRuntime()
-result1 = await runtime.run(prog1)
-result2 = await runtime.run(prog2)
+result1 = sync_run(prog1, sync_handlers_preset)
+result2 = sync_run(prog2, sync_handlers_preset)
 ```
 
 ### Effects are Composable
@@ -151,11 +147,12 @@ def full_program():
 You can provide initial environment and store:
 
 ```python
-runtime = AsyncioRuntime()
+from doeff import sync_run, sync_handlers_preset
 
-# Pass initial environment and store to runtime.run()
-result = await runtime.run(
+# Pass initial environment and store
+result = sync_run(
     my_program(),
+    sync_handlers_preset,
     env={"database_url": "postgresql://localhost/mydb"},
     store={"user_id": 123}
 )
@@ -163,29 +160,22 @@ result = await runtime.run(
 
 ## Error Handling
 
-The `run()` method returns the value directly and raises `EffectError` on failure.
-Use `run_safe()` for a `RuntimeResult` that wraps success/failure:
+`sync_run()` and `async_run()` always return a `RuntimeResult`:
 
 ```python
-from doeff.runtimes import AsyncioRuntime, EffectError
+from doeff import sync_run, sync_handlers_preset
 
-runtime = AsyncioRuntime()
+result = sync_run(my_program(), sync_handlers_preset)
 
-# Option 1: Direct execution (raises on error)
-try:
-    result = await runtime.run(my_program())
-    print(f"Success: {result}")
-except EffectError as e:
-    print(f"Error: {e}")
-
-# Option 2: Safe execution (returns RuntimeResult)
-result = await runtime.run_safe(my_program())
-if result.is_ok:
+# Check success with methods (use parentheses!)
+if result.is_ok():
     print(f"Success: {result.value}")
 else:
     print(f"Error: {result.error}")
 
-# Option 3: Pattern matching (Python 3.10+)
+# Pattern matching (Python 3.10+)
+from doeff._vendor import Ok, Err
+
 match result.result:
     case Ok(value):
         print(f"Success: {value}")
@@ -202,16 +192,16 @@ match result.result:
 def complex_workflow():
     # Reader effect - get configuration
     db_url = yield Ask("database_url")
-    
+
     # State effect - manage local state
     yield Put("connection", f"Connected to {db_url}")
-    
+
     # Writer effect - log progress
     yield Log("Processing data...")
-    
+
     # Async effect - await async operations
     data = yield Await(fetch_data_async())
-    
+
     # Return final result
     return len(data)
 ```
@@ -222,14 +212,14 @@ def complex_workflow():
 @do
 def conditional_program():
     count = yield Get("count")
-    
+
     if count > 10:
         yield Log("Count is high")
         yield Put("status", "high")
     else:
         yield Log("Count is low")
         yield Put("status", "low")
-    
+
     return count
 ```
 
@@ -274,12 +264,11 @@ Don't reuse Program objects after running them with sub-effects:
 
 ```python
 # If you need to run a program multiple times, call the function again
-runtime = AsyncioRuntime()
 prog = my_program()
-result1 = await runtime.run(prog)
+result1 = sync_run(prog, sync_handlers_preset)
 # Don't reuse prog - create a new one
 prog2 = my_program()
-result2 = await runtime.run(prog2)
+result2 = sync_run(prog2, sync_handlers_preset)
 ```
 
 ## Next Steps
@@ -299,43 +288,38 @@ Now that you understand the basics, explore:
 from doeff import (
     do,                    # Decorator for creating programs
     Program,               # Program type
-    
+
     # State effects
     Get, Put, Modify,
-    
+
     # Reader effects
     Ask, Local,
-    
+
     # Writer effects
     Log, Tell, Listen,
-    
+
     # Async effects
-    Await, Parallel,
-    
+    Await, Gather,
+
     # Error handling
     Safe,
-    
+
     # IO effects
     IO,
-    
+
     # Result types
     Ok, Err, Result,
-)
 
-# Runtime types
-from doeff.runtimes import (
-    AsyncioRuntime,        # For async I/O (HTTP, DB, files)
-    SyncRuntime,           # For pure synchronous execution
-    SimulationRuntime,     # For testing with simulated time
+    # Execution functions
+    sync_run, async_run,
+    sync_handlers_preset, async_handlers_preset,
 )
 ```
 
 ### Basic Program Template
 
 ```python
-from doeff import do, Log
-from doeff.runtimes import AsyncioRuntime
-import asyncio
+from doeff import do, Log, sync_run, sync_handlers_preset
 
 @do
 def my_program():
@@ -343,11 +327,10 @@ def my_program():
     yield Log("Hello, doeff!")
     return "result"
 
-async def main():
-    runtime = AsyncioRuntime()
-    result = await runtime.run(my_program())
-    print(result)
+def main():
+    result = sync_run(my_program(), sync_handlers_preset)
+    print(result.value)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
 ```

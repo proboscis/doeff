@@ -14,14 +14,12 @@ This chapter covers doeff's error handling approach using the Result monad, the 
 
 ## RuntimeResult Protocol
 
-All runtimes return a `RuntimeResult[T]` from their `run()` method. This provides both the computation outcome and full debugging context.
+`sync_run()` and `async_run()` return a `RuntimeResult[T]`. This provides both the computation outcome and full debugging context.
 
 ### Basic Usage
 
 ```python
-from doeff import do, Log, Ask
-from doeff.cesk.runtime import AsyncRuntime
-import asyncio
+from doeff import do, Log, Ask, sync_run, sync_handlers_preset
 
 @do
 def my_program():
@@ -29,17 +27,20 @@ def my_program():
     config = yield Ask("config")
     return config["value"]
 
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(my_program(), env={"config": {"value": 42}})
-    
+def main():
+    result = sync_run(
+        my_program(),
+        sync_handlers_preset,
+        env={"config": {"value": 42}}
+    )
+
     # Check success with methods (not properties!)
     if result.is_ok():
         print(f"Value: {result.value}")
     else:
         print(f"Error: {result.error}")
 
-asyncio.run(main())
+main()
 ```
 
 ### RuntimeResult API
@@ -49,23 +50,20 @@ asyncio.run(main())
 result.result      # Result[T]: Ok(value) or Err(error)
 result.value       # T: Unwrap Ok value (raises if Err)
 result.error       # BaseException: Get error (raises if Ok)
+result.raw_store   # dict: Final store state
 
 # Methods - NOT properties!
 result.is_ok()     # bool: True if success
 result.is_err()    # bool: True if failure
 
-# Execution context
-result.state       # dict[str, Any]: Final state from Put/Modify
-result.log         # list[Any]: Accumulated Tell/Log messages
-result.env         # dict[Any, Any]: Final environment
+# Access logs and graph from raw_store
+logs = result.raw_store.get("__log__", [])
+graph = result.raw_store.get("__graph__")
 
 # Stack traces (for debugging)
 result.k_stack        # KStackTrace: Continuation stack
 result.effect_stack   # EffectStackTrace: Effect call tree
 result.python_stack   # PythonStackTrace: Python source locations
-
-# Optional
-result.graph       # WGraph | None: Computation graph if captured
 
 # Display
 result.format()              # str: Condensed format
@@ -90,11 +88,11 @@ if result.is_ok:   # This is WRONG - always True!
 
 ```python
 from doeff._vendor import Ok, Err
+from doeff import sync_run, sync_handlers_preset
 
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(my_program())
-    
+def main():
+    result = sync_run(my_program(), sync_handlers_preset)
+
     match result.result:
         case Ok(value):
             print(f"Success: {value}")
@@ -137,7 +135,7 @@ def risky_operation():
 @do
 def safe_operation():
     result = yield Safe(risky_operation())
-    
+
     match result:
         case Ok(value):
             yield Log(f"Success: {value}")
@@ -153,7 +151,7 @@ def safe_operation():
 @do
 def with_fallback():
     result = yield Safe(fetch_data())
-    
+
     if result.is_ok():
         return result.ok()
     else:
@@ -169,12 +167,12 @@ Transform errors while preserving the success path:
 @do
 def transform_errors():
     result = yield Safe(risky_operation())
-    
+
     if result.is_err():
         # Log and transform the error
         yield Log(f"Operation failed: {result.err()}")
         raise RuntimeError(f"Wrapped error: {result.err()}")
-    
+
     return result.ok()
 ```
 
@@ -184,18 +182,18 @@ def transform_errors():
 @do
 def multiple_safe_operations():
     results = []
-    
+
     # Try multiple operations, collect results
     for i in range(5):
         result = yield Safe(process_item(i))
         results.append(result)
-    
+
     # Count successes and failures
     successes = [r.ok() for r in results if r.is_ok()]
     failures = [r.err() for r in results if r.is_err()]
-    
+
     yield Log(f"Successes: {len(successes)}, Failures: {len(failures)}")
-    
+
     return successes
 ```
 
@@ -208,17 +206,17 @@ from doeff import do, Safe, Gather, Log
 def parallel_safe_operations():
     # Run multiple operations, some might fail
     tasks = [process_item(i) for i in range(10)]
-    
+
     # Wrap each in Safe to get Results
     safe_tasks = [Safe(task) for task in tasks]
-    
+
     # Run all in parallel using Gather
     results = yield Gather(*safe_tasks)
-    
+
     # Process results
     successes = [r.ok() for r in results if r.is_ok()]
     yield Log(f"Completed {len(successes)}/10 tasks")
-    
+
     return successes
 ```
 
@@ -229,18 +227,18 @@ def parallel_safe_operations():
 def fetch_with_fallback():
     # Try primary source
     result = yield Safe(fetch_from_primary())
-    
+
     if result.is_ok():
         return result.ok()
-    
+
     yield Log(f"Primary failed: {result.err()}, trying backup...")
-    
+
     # Try backup source
     backup_result = yield Safe(fetch_from_backup())
-    
+
     if backup_result.is_ok():
         return backup_result.ok()
-    
+
     # Both failed, use default
     yield Log("All sources failed, using default")
     return get_default_data()
@@ -254,13 +252,13 @@ Per [SPEC-EFF-004](../specs/effects/SPEC-EFF-004-control.md), the `Safe` effect 
 @do
 def demo_no_rollback():
     yield Put("counter", 0)
-    
+
     result = yield Safe(failing_with_side_effects())
-    
+
     # Even though the operation failed, counter is 10
     counter = yield Get("counter")
     yield Log(f"Counter after failure: {counter}")  # 10, not 0!
-    
+
     return result
 
 @do
@@ -280,10 +278,10 @@ doeff embraces native Python for error handling. Use `raise` to signal errors an
 def validate_input(value):
     if value < 0:
         raise ValueError("Value must be non-negative")
-    
+
     if value > 100:
         raise ValueError("Value must be <= 100")
-    
+
     yield Log(f"Valid value: {value}")
     return value
 ```
@@ -301,10 +299,10 @@ class ValidationError(Exception):
 def validate_user(user_data):
     if "email" not in user_data:
         raise ValidationError("email", "Email is required")
-    
+
     if "@" not in user_data["email"]:
         raise ValidationError("email", "Invalid email format")
-    
+
     return user_data
 ```
 
@@ -319,19 +317,19 @@ from doeff import do, Safe, Await, Log, Delay
 def retry_with_backoff(max_attempts=3, base_delay=0.1):
     """Retry an operation with exponential backoff."""
     last_error = None
-    
+
     for attempt in range(max_attempts):
         result = yield Safe(operation())
-        
+
         if result.is_ok():
             return result.ok()
-        
+
         last_error = result.err()
         if attempt < max_attempts - 1:
             delay = base_delay * (2 ** attempt)
             yield Log(f"Attempt {attempt + 1} failed, retrying in {delay}s...")
             yield Delay(delay)
-    
+
     raise Exception(f"Failed after {max_attempts} attempts: {last_error}")
 ```
 
@@ -342,7 +340,7 @@ def retry_with_backoff(max_attempts=3, base_delay=0.1):
 def with_resource_cleanup():
     yield Log("Acquiring resource...")
     yield Put("resource_acquired", True)
-    
+
     try:
         result = yield risky_operation()
         return result
@@ -361,10 +359,10 @@ def validate_process_handle(data):
     # Validation with native raise
     if not data:
         raise ValueError("Data cannot be empty")
-    
+
     # Safe processing
     result = yield Safe(process_data(data))
-    
+
     # Handle result
     match result:
         case Ok(value):
@@ -381,13 +379,13 @@ def validate_process_handle(data):
 @do
 def with_circuit_breaker(service_name):
     failures = yield Get(f"{service_name}_failures")
-    
+
     if failures >= 5:
         yield Log(f"Circuit breaker OPEN for {service_name}")
         raise Exception("Circuit breaker open")
-    
+
     result = yield Safe(call_service(service_name))
-    
+
     if result.is_err():
         yield Modify(f"{service_name}_failures", lambda x: x + 1)
         raise result.err()
@@ -403,20 +401,20 @@ def with_circuit_breaker(service_name):
 def process_batch_with_errors(items):
     results = []
     errors = []
-    
+
     for item in items:
         result = yield Safe(process_item(item))
-        
+
         if result.is_ok():
             results.append(result.ok())
         else:
             errors.append({"item": item, "error": str(result.err())})
-    
+
     yield Log(f"Processed {len(results)}/{len(items)} items")
-    
+
     if errors:
         yield Log(f"Errors: {errors}")
-    
+
     return {"successes": results, "errors": errors}
 ```
 
@@ -433,19 +431,20 @@ When errors occur, `RuntimeResult` provides three complementary stack traces for
 ### Accessing Stack Traces
 
 ```python
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(failing_program())
-    
+from doeff import sync_run, sync_handlers_preset
+
+def main():
+    result = sync_run(failing_program(), sync_handlers_preset)
+
     if result.is_err():
         # Full formatted output
         print(result.format(verbose=True))
-        
+
         # Individual stacks
         print(result.k_stack.format())
         print(result.effect_stack.format())
         print(result.python_stack.format())
-        
+
         # Quick effect path
         print(f"Effect path: {result.effect_stack.get_effect_path()}")
 ```
@@ -559,7 +558,7 @@ def with_context():
     user_id = yield Get("user_id")
     if user_id is None:
         raise ValueError("Missing user_id in state")
-    
+
     data = yield fetch_user_data(user_id)
     return data
 ```
@@ -682,17 +681,19 @@ final_result = result.ok()
 
 | Approach | Purpose | When to Use |
 |----------|---------|-------------|
-| `RuntimeResult` | Get full execution context | Always returned from `runtime.run()` |
+| `RuntimeResult` | Get full execution context | Always returned from `sync_run()`/`async_run()` |
 | `raise` | Signal error | Validation, explicit failures |
 | `Safe(prog)` | Get Result type | Need Ok/Err inspection, error recovery |
 | `try/finally` | Ensure cleanup | Resource management |
 | Manual loop + Safe | Retry logic | Transient errors, network calls |
 
 **Key Principles:**
-- All runtimes return `RuntimeResult` (not raw values)
+- `sync_run()` and `async_run()` return `RuntimeResult` (not raw values)
 - Use `is_ok()` / `is_err()` as **methods** (with parentheses!)
 - Use `result.value` to get the unwrapped value (raises on error)
 - Use `result.error` to get the exception (raises on success)
+- Use `result.raw_store` to access final store state
+- Access logs via `result.raw_store.get("__log__", [])`
 - Use `Safe` effect to catch errors and continue execution
 - Use native Python `raise` for signaling errors
 - Use `try/finally` for cleanup logic
