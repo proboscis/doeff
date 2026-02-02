@@ -29,14 +29,9 @@ from doeff.cesk.errors import (
 from doeff.cesk.frames import (
     Frame,
     GatherFrame,
-    InterceptBypassFrame,
-    InterceptFrame,
     Kontinuation,
-    ListenFrame,
-    LocalFrame,
     RaceFrame,
     ReturnFrame,
-    SafeFrame,
 )
 from doeff.cesk.handlers import Handler, HandlerContext
 from doeff.cesk.helpers import (
@@ -154,14 +149,10 @@ __all__ = [
     "Handler",
     "HandlerContext",
     "HandlerRegistryError",
-    "InterceptBypassFrame",
-    "InterceptFrame",
     "InterpreterInvariantError",
     "KFrame",
     "KStackTrace",
     "Kontinuation",
-    "ListenFrame",
-    "LocalFrame",
     "PerformIO",
     "ProgramControl",
     "PythonFrame",
@@ -174,7 +165,6 @@ __all__ = [
     "ReturnFrame",
     "RuntimeResult",
     "RuntimeResultImpl",
-    "SafeFrame",
     "SourceLocation",
     "SpawnCondition",
     "SpawnHandle",

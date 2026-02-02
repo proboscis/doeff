@@ -122,20 +122,19 @@ def extract_kleisli_stack(k: Kontinuation) -> tuple[KleisliStackEntry, ...]:
 
 
 def describe_k_frame(frame: object) -> tuple[str, str]:
-    """Return (frame_type, description) for any K frame. Centralized to avoid DRY violations."""
+    """Return (frame_type, description) for any K frame. Centralized to avoid DRY violations.
+
+    Per SPEC-CESK-003: Some Frame types have been removed (LocalFrame, SafeFrame,
+    ListenFrame, InterceptFrame, GraphCaptureFrame). These are now handled via
+    WithHandler in user-space patterns.
+    """
     from doeff.cesk.frames import (
         AskLazyFrame,
         GatherFrame,
         GatherWaiterFrame,
-        GraphCaptureFrame,
-        InterceptBypassFrame,
-        InterceptFrame,
-        ListenFrame,
-        LocalFrame,
         RaceFrame,
         RaceWaiterFrame,
         ReturnFrame,
-        SafeFrame,
     )
     from doeff.cesk.handler_frame import HandlerFrame, HandlerResultFrame
 
@@ -151,20 +150,10 @@ def describe_k_frame(frame: object) -> tuple[str, str]:
     if isinstance(frame, HandlerResultFrame):
         effect_name = type(frame.original_effect).__name__
         return ("HandlerResultFrame", f"effect={effect_name}")
-    if isinstance(frame, LocalFrame):
-        return ("LocalFrame", "env restore")
-    if isinstance(frame, SafeFrame):
-        return ("SafeFrame", "error boundary")
-    if isinstance(frame, ListenFrame):
-        return ("ListenFrame", f"log_start={frame.log_start_index}")
     if isinstance(frame, GatherFrame):
         remaining = len(frame.remaining_programs)
         collected = len(frame.collected_results)
         return ("GatherFrame", f"remaining={remaining}, collected={collected}")
-    if isinstance(frame, InterceptFrame):
-        return ("InterceptFrame", f"transforms={len(frame.transforms)}")
-    if isinstance(frame, GraphCaptureFrame):
-        return ("GraphCaptureFrame", f"start_index={frame.graph_start_index}")
     if isinstance(frame, AskLazyFrame):
         return ("AskLazyFrame", f"key={frame.ask_key!r}")
     if isinstance(frame, RaceFrame):
@@ -173,8 +162,6 @@ def describe_k_frame(frame: object) -> tuple[str, str]:
         return ("GatherWaiterFrame", "waiting")
     if isinstance(frame, RaceWaiterFrame):
         return ("RaceWaiterFrame", "waiting")
-    if isinstance(frame, InterceptBypassFrame):
-        return ("InterceptBypassFrame", "bypass")
     return (type(frame).__name__, "")
 
 

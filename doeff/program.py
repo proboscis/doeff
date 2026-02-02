@@ -67,6 +67,10 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
     stripped = annotation_text.strip()
     if not stripped:
         return False
+    # Handle quoted strings from __future__ annotations in Python 3.14+
+    if (stripped.startswith("'") and stripped.endswith("'")) or \
+       (stripped.startswith('"') and stripped.endswith('"')):
+        stripped = stripped[1:-1]
     if "|" in stripped:
         return any(_string_annotation_is_program(part) for part in stripped.split("|"))
     if stripped.startswith("Optional[") and stripped.endswith("]"):
@@ -82,6 +86,10 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
         normalized == "Program"
         or normalized.startswith("Program[")
         or normalized.startswith("doeff.program.Program")
+        or normalized == "ProgramLike"
+        or normalized.startswith("ProgramLike[")
+        or normalized == "ProgramBase"
+        or normalized.startswith("ProgramBase[")
     )
 
 
@@ -91,6 +99,10 @@ def _string_annotation_is_effect(annotation_text: str) -> bool:
     stripped = annotation_text.strip()
     if not stripped:
         return False
+    # Handle quoted strings from __future__ annotations in Python 3.14+
+    if (stripped.startswith("'") and stripped.endswith("'")) or \
+       (stripped.startswith('"') and stripped.endswith('"')):
+        stripped = stripped[1:-1]
     if "|" in stripped:
         return any(_string_annotation_is_effect(part) for part in stripped.split("|"))
     if stripped.startswith("Optional[") and stripped.endswith("]"):

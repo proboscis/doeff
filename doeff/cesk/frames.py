@@ -3,6 +3,11 @@
 This module provides Frame types that implement the Frame protocol with
 on_value and on_error methods for unified continuation handling.
 
+Per SPEC-CESK-003 (Minimal Frame Architecture):
+- Only ReturnFrame and scheduler-specific frames are kept here
+- User-facing patterns (Local, Safe, Listen, Intercept) are implemented
+  via WithHandler in doeff.cesk.handlers.patterns
+
 Each frame type represents a computation context that:
 1. Can receive a value (on_value) to continue normal execution
 2. Can receive an error (on_error) to handle exceptions
@@ -15,7 +20,7 @@ Frames return CESKState directly using utility methods:
 
 from __future__ import annotations
 
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias, runtime_checkable
 
@@ -25,7 +30,6 @@ if TYPE_CHECKING:
     from doeff.cesk.state import CESKState
     from doeff.effects._program_types import ProgramLike
     from doeff.program import KleisliProgramCall, ProgramBase
-    from doeff.types import Effect
 
 
 # ============================================
@@ -85,7 +89,7 @@ class Frame(Protocol):
 
 
 # ============================================
-# Concrete Frame Types
+# Core Frame Types
 # ============================================
 
 
@@ -111,143 +115,9 @@ class ReturnFrame:
     kleisli_lineno: int | None = None
 
 
-@dataclass(frozen=True)
-class LocalFrame:
-    """Restore environment after scoped execution.
-
-    This frame captures the original environment before entering
-    a local scope, and restores it when the scope completes.
-    """
-
-    restore_env: Environment
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Restore original environment and continue with value."""
-        from doeff.cesk.state import CESKState
-        return CESKState.with_value(value, self.restore_env, store, k_rest)
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Restore original environment and propagate error."""
-        from doeff.cesk.state import CESKState
-        return CESKState.with_error(error, self.restore_env, store, k_rest)
-
-
-@dataclass(frozen=True)
-class InterceptFrame:
-    """Transform effects passing through.
-
-    This frame applies transformation functions to effects that
-    pass through it, allowing effect interception and modification.
-    """
-
-    transforms: tuple[Callable[[Effect], Effect | ProgramBase | None], ...]
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Values pass through unchanged."""
-        from doeff.cesk.state import CESKState
-        return CESKState.with_value(value, env, store, k_rest)
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Errors pass through unchanged."""
-        from doeff.cesk.state import CESKState
-        return CESKState.with_error(error, env, store, k_rest)
-
-
-@dataclass(frozen=True)
-class InterceptBypassFrame:
-    """Bypass a specific InterceptFrame for a specific effect object.
-
-    When an intercept transform returns a Program, this frame tracks both the
-    InterceptFrame to bypass AND the effect object ID that triggered it.
-    Only that exact effect (by object identity) is bypassed when re-yielded.
-    """
-
-    bypassed_frame: InterceptFrame
-    bypassed_effect_id: int
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        from doeff.cesk.state import CESKState
-        return CESKState.with_value(value, env, store, k_rest)
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        from doeff.cesk.state import CESKState
-        return CESKState.with_error(error, env, store, k_rest)
-
-
-@dataclass(frozen=True)
-class ListenFrame:
-    """Capture log output from sub-computation.
-
-    This frame records the starting index of the log, so that
-    log entries produced during the sub-computation can be captured.
-    """
-
-    log_start_index: int
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Capture log entries and wrap result with ListenResult."""
-        from doeff._types_internal import ListenResult
-        from doeff.cesk.state import CESKState
-        from doeff.utils import BoundedLog
-
-        current_log = store.get("__log__", [])
-        captured = current_log[self.log_start_index :]
-        listen_result = ListenResult(value=value, log=BoundedLog(captured))
-
-        return CESKState.with_value(listen_result, env, store, k_rest)
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Errors propagate through unchanged."""
-        from doeff.cesk.state import CESKState
-        return CESKState.with_error(error, env, store, k_rest)
+# ============================================
+# Scheduler Frame Types
+# ============================================
 
 
 @dataclass(frozen=True)
@@ -301,52 +171,6 @@ class GatherFrame:
 
 
 @dataclass(frozen=True)
-class SafeFrame:
-    """Safe boundary - captures K stack on error, returns Result.
-
-    This frame provides error isolation, converting exceptions
-    into Result.Err values instead of propagating them.
-    """
-
-    saved_env: Environment
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Wrap successful value in Ok."""
-        from doeff._vendor import Ok
-        from doeff.cesk.state import CESKState
-
-        return CESKState.with_value(Ok(value), self.saved_env, store, k_rest)
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        """Convert error to Err result instead of propagating."""
-        from doeff._types_internal import capture_traceback, get_captured_traceback
-        from doeff._vendor import NOTHING, Err, Some
-        from doeff.cesk.state import CESKState
-
-        # Capture traceback if not already captured
-        captured = get_captured_traceback(error)
-        if captured is None:
-            captured = capture_traceback(error)
-
-        captured_maybe = Some(captured) if captured else NOTHING
-        err_result = Err(error, captured_traceback=captured_maybe)
-
-        return CESKState.with_value(err_result, self.saved_env, store, k_rest)
-
-
-@dataclass(frozen=True)
 class RaceFrame:
     """Race frame for handling first-to-complete semantics.
 
@@ -381,6 +205,8 @@ class RaceFrame:
 
 @dataclass(frozen=True)
 class GatherWaiterFrame:
+    """Frame for waiting on gather completion in multi-task scheduler."""
+
     gather_effect: Any
     saved_env: Environment
 
@@ -413,6 +239,8 @@ class GatherWaiterFrame:
 
 @dataclass(frozen=True)
 class RaceWaiterFrame:
+    """Frame for waiting on race completion in multi-task scheduler."""
+
     race_effect: Any
     saved_env: Environment
 
@@ -441,36 +269,6 @@ class RaceWaiterFrame:
     ) -> "CESKState":
         from doeff.cesk.state import CESKState
         return CESKState.with_error(error, self.saved_env, store, k_rest)
-
-
-@dataclass(frozen=True)
-class GraphCaptureFrame:
-    """Capture graph nodes produced by sub-computation."""
-
-    graph_start_index: int
-
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        from doeff.cesk.state import CESKState
-
-        current_graph = store.get("__graph__", [])
-        captured = current_graph[self.graph_start_index :]
-        return CESKState.with_value((value, captured), env, store, k_rest)
-
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> "CESKState":
-        from doeff.cesk.state import CESKState
-        return CESKState.with_error(error, env, store, k_rest)
 
 
 @dataclass(frozen=True)
@@ -558,14 +356,8 @@ __all__ = [
     "Frame",
     "GatherFrame",
     "GatherWaiterFrame",
-    "GraphCaptureFrame",
-    "InterceptBypassFrame",
-    "InterceptFrame",
     "Kontinuation",
-    "ListenFrame",
-    "LocalFrame",
     "RaceFrame",
     "RaceWaiterFrame",
     "ReturnFrame",
-    "SafeFrame",
 ]
