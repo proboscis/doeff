@@ -10,11 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from doeff._types_internal import EffectBase
 from doeff.cesk.errors import InterpreterInvariantError, UnhandledEffectError
-from doeff.cesk.frames import (
-    InterceptFrame,
-    ReturnFrame,
-    SafeFrame,
-)
+from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import (
     HandlerContext,
     HandlerFrame,
@@ -37,15 +33,27 @@ if TYPE_CHECKING:
 
 def _get_current_handler_depth(k: list[Any]) -> int:
     """Get the number of handlers to skip when dispatching an effect.
-    
+
     If we're inside a handler's program (marked by HandlerResultFrame), we need to skip
-    past that handler to find the next outer handler. We skip 1 handler (the one
-    associated with the HandlerResultFrame).
+    past that handler to find the next outer handler. However, if there are HandlerFrames
+    BEFORE the HandlerResultFrame, those are nested handlers that should NOT be skipped.
+
+    The logic: count consecutive HandlerResultFrames at the start of K, stopping when
+    we hit a HandlerFrame. Each HandlerResultFrame indicates a handler we're currently
+    executing inside of and should skip when forwarding effects.
+
+    If we encounter a HandlerFrame first, it means we're inside that handler's sub-program,
+    and effects should go to that handler (no skip needed).
     """
+    depth = 0
     for frame in k:
+        if isinstance(frame, HandlerFrame):
+            # Found a HandlerFrame - stop counting, skip 'depth' handlers
+            return depth
         if isinstance(frame, HandlerResultFrame):
-            return 1
-    return 0
+            # Found a HandlerResultFrame - increment depth, keep looking
+            depth += 1
+    return depth
 
 
 def _find_handler_in_k(
@@ -76,56 +84,15 @@ def _find_handler_in_k(
                 current_depth += 1
                 delimited_k.append(frame)
                 if debug:
-                    print(f"[_find_handler_in_k] skipped HandlerFrame at {i}")
+                    handler_name = getattr(frame.handler, "__name__", str(frame.handler)[:50])
+                    print(f"[_find_handler_in_k] skipped HandlerFrame at {i}, handler={handler_name}")
             else:
                 if debug:
-                    print(f"[_find_handler_in_k] found target HandlerFrame at {i}, delimited_k len={len(delimited_k)}")
+                    handler_name = getattr(frame.handler, "__name__", str(frame.handler)[:50])
+                    print(f"[_find_handler_in_k] found target HandlerFrame at {i}, handler={handler_name}, delimited_k len={len(delimited_k)}")
                 return (frame, current_depth, delimited_k, i)
         else:
             delimited_k.append(frame)
-
-    return None
-
-
-def _check_intercept_frames(
-    effect: EffectBase,
-    env: Environment,
-    store: Store,
-    k: list[Any],
-) -> CESKState | None:
-    """Check for InterceptFrame in K and apply transforms if found.
-    
-    Returns a new CESKState if the effect was intercepted, None otherwise.
-    """
-    from doeff.cesk.frames import InterceptBypassFrame
-    from doeff.program import ProgramBase
-
-    for i, frame in enumerate(k):
-        if isinstance(frame, HandlerFrame):
-            break
-        if isinstance(frame, InterceptFrame):
-            for transform in frame.transforms:
-                result = transform(effect)
-                if result is not effect and result is not None:
-                    k_before = k[:i]  # Frames before InterceptFrame (e.g., original program's ReturnFrame)
-                    k_rest = k[i + 1:]  # Frames after InterceptFrame
-                    if isinstance(result, ProgramBase):
-                        # Include k_before so the result goes back to the original program
-                        return CESKState(
-                            C=ProgramControl(result),
-                            E=env,
-                            S=store,
-                            K=k_before + [frame] + k_rest,
-                        )
-                    return CESKState(
-                        C=EffectControl(result),
-                        E=env,
-                        S=store,
-                        K=k[:i + 1] + k_rest,
-                    )
-        if isinstance(frame, InterceptBypassFrame):
-            if frame.effect_id == id(effect) and frame.intercept_frame in k[i + 1:]:
-                continue
 
     return None
 
@@ -210,10 +177,6 @@ def step(state: CESKState) -> StepResult:
         from doeff.effects.pure import PureEffect
         if isinstance(effect, PureEffect):
             return CESKState(C=Value(effect.value), E=E, S=S, K=K)
-
-        intercept_result = _check_intercept_frames(effect, E, S, K)
-        if intercept_result is not None:
-            return intercept_result
 
         handler_search_depth = _get_current_handler_depth(K)
         handler_info = _find_handler_in_k(K, handler_search_depth)
@@ -427,10 +390,6 @@ def step(state: CESKState) -> StepResult:
 
         if isinstance(frame, HandlerResultFrame):
             # HandlerResultFrame returns CESKState directly
-            return frame.on_error(C.ex, E, S, K_rest)
-
-        if isinstance(frame, SafeFrame):
-            # SafeFrame returns CESKState directly
             return frame.on_error(C.ex, E, S, K_rest)
 
         from doeff.cesk.frames import Frame
