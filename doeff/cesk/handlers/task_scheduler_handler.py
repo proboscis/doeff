@@ -48,9 +48,10 @@ from doeff._types_internal import EffectBase
 from doeff._vendor import FrozenDict
 from doeff.cesk.frames import ReturnFrame
 from doeff.cesk.handler_frame import Handler, HandlerContext, ResumeK, WithHandler
-from doeff.cesk.state import CESKState
+from doeff.cesk.state import CESKState, Value
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
+    EXTERNAL_PROMISE_REGISTRY_KEY,
     PENDING_IO_KEY,
     TASK_QUEUE_KEY,
     TASK_REGISTRY_KEY,
@@ -119,14 +120,14 @@ def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) ->
     scheduler_state_handler through the continuation stack.
     """
     from doeff.cesk.handlers.core_handler import core_handler
-    from doeff.cesk.handlers.python_async_handler import python_async_handler
+    from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
 
     wrapped = _make_spawn_wrapper(program, task_id, handle_id)
 
     return WithHandler(
         handler=cast(Handler, task_scheduler_handler),
         program=WithHandler(
-            handler=cast(Handler, python_async_handler),
+            handler=cast(Handler, python_async_syntax_escape_handler),
             program=WithHandler(
                 handler=cast(Handler, core_handler),
                 program=wrapped,
@@ -390,6 +391,16 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                     stored_k=list(ctx.delimited_k),
                     stored_env=ctx.env,
                     stored_store=ctx.store,
+                )
+            # Check if we're waiting on an external promise
+            external_registry = ctx.store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+            if external_registry and handle_id in external_registry.values():
+                # Waiting for external completion - signal runner to block-wait
+                # Use full continuation (ctx.k) to preserve handler frames
+                from doeff.cesk.result import WaitingForExternalCompletion
+
+                return WaitingForExternalCompletion(
+                    state=CESKState(C=Value(None), E=ctx.env, S=ctx.store, K=list(ctx.k))
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: waiting for task but no other tasks to run"),

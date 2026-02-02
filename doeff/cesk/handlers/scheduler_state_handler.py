@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import queue
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from doeff._types_internal import EffectBase
 from doeff.cesk.handler_frame import HandlerContext
 from doeff.cesk.state import CESKState
+from doeff.effects.external_promise import (
+    CreateExternalPromiseEffect,
+    ExternalPromise,
+)
 from doeff.effects.scheduler_internal import (
     _SchedulerAddPendingIO,
     _SchedulerCancelTask,
@@ -41,7 +46,9 @@ TASK_REGISTRY_KEY = "__scheduler_tasks__"
 WAITERS_KEY = "__scheduler_waiters__"
 CURRENT_TASK_KEY = "__scheduler_current_task__"
 TASK_SUSPENDED_KEY = "__scheduler_task_suspended__"
-PENDING_IO_KEY = "__scheduler_pending_io__"
+PENDING_IO_KEY = "__scheduler_pending_io__"  # Deprecated - will be removed
+EXTERNAL_COMPLETION_QUEUE_KEY = "__scheduler_external_queue__"
+EXTERNAL_PROMISE_REGISTRY_KEY = "__scheduler_external_promises__"
 
 
 def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
@@ -58,6 +65,10 @@ def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
         store[WAITERS_KEY] = {}
     if CURRENT_TASK_KEY not in store:
         store[CURRENT_TASK_KEY] = uuid4()
+    if EXTERNAL_COMPLETION_QUEUE_KEY not in store:
+        store[EXTERNAL_COMPLETION_QUEUE_KEY] = queue.Queue()
+    if EXTERNAL_PROMISE_REGISTRY_KEY not in store:
+        store[EXTERNAL_PROMISE_REGISTRY_KEY] = {}
 
 
 @dataclass
@@ -301,6 +312,40 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
 
         return Program.pure(CESKState.with_value((handle_id, promise), ctx.env, store, ctx.k))
 
+    if isinstance(effect, CreateExternalPromiseEffect):
+        # Create handle (same as regular promise)
+        handle_id = uuid4()
+        task_info = TaskInfo(
+            task_id=None,
+            handle_id=handle_id,
+            env_snapshot={},
+            store_snapshot={},
+            is_complete=False,
+        )
+        registry = dict(store.get(TASK_REGISTRY_KEY, {}))
+        registry[handle_id] = task_info
+        store[TASK_REGISTRY_KEY] = registry
+
+        # Create unique promise ID
+        promise_id = uuid4()
+
+        # Register in external promise registry (maps promise_id -> handle_id)
+        external_registry = dict(store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {}))
+        external_registry[promise_id] = handle_id
+        store[EXTERNAL_PROMISE_REGISTRY_KEY] = external_registry
+
+        # Get the completion queue
+        completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+
+        # Create ExternalPromise with queue reference
+        external_promise = ExternalPromise(
+            _handle=handle_id,
+            _completion_queue=completion_queue,
+            _id=promise_id,
+        )
+
+        return Program.pure(CESKState.with_value(external_promise, ctx.env, store, ctx.k))
+
     if isinstance(effect, _SchedulerGetCurrentTaskId):
         current = store.get(CURRENT_TASK_KEY)
         return Program.pure(CESKState.with_value(current, ctx.env, store, ctx.k))
@@ -372,18 +417,91 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
     raise UnhandledEffectError(f"scheduler_state_handler: unhandled effect {type(effect).__name__}")
 
 
+def process_external_completions(store: dict[str, Any]) -> int:
+    """Process any pending external promise completions.
+
+    Checks the external completion queue (non-blocking) and wakes up
+    waiters for any completed external promises.
+
+    This should be called during the step loop to handle completions
+    from external code (threads, asyncio, etc.).
+
+    Args:
+        store: The CESK store containing scheduler state
+
+    Returns:
+        Number of completions processed
+    """
+    _ensure_scheduler_store_initialized(store)
+
+    completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+    external_registry = store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+    task_registry = dict(store.get(TASK_REGISTRY_KEY, {}))
+    waiters = dict(store.get(WAITERS_KEY, {}))
+    task_queue = list(store.get(TASK_QUEUE_KEY, []))
+
+    processed = 0
+
+    while not completion_queue.empty():
+        try:
+            promise_id, value, error = completion_queue.get_nowait()
+        except queue.Empty:
+            break
+
+        # Look up the handle_id for this promise
+        handle_id = external_registry.get(promise_id)
+        if handle_id is None:
+            # Unknown promise ID - skip
+            continue
+
+        # Mark the promise as complete in the registry
+        task_info = task_registry.get(handle_id)
+        if task_info is not None and not task_info.is_complete:
+            task_info.is_complete = True
+            task_info.result = value
+            task_info.error = error
+            task_registry[handle_id] = task_info
+
+            # Wake up any waiters
+            waiting_list = waiters.pop(handle_id, [])
+            for waiter in waiting_list:
+                task_queue.append({
+                    "task_id": waiter["waiter_task_id"],
+                    "k": waiter["waiter_k"],
+                    "store_snapshot": waiter.get("waiter_store"),
+                    "resume_value": value,
+                    "resume_error": error,
+                })
+
+            processed += 1
+
+        # Remove from external registry (one-time use)
+        external_registry.pop(promise_id, None)
+
+    # Update store
+    store[TASK_REGISTRY_KEY] = task_registry
+    store[WAITERS_KEY] = waiters
+    store[TASK_QUEUE_KEY] = task_queue
+    store[EXTERNAL_PROMISE_REGISTRY_KEY] = external_registry
+
+    return processed
+
+
 # Backwards compatibility alias (deprecated)
 queue_handler = scheduler_state_handler
 
 
 __all__ = [
     "CURRENT_TASK_KEY",
+    "EXTERNAL_COMPLETION_QUEUE_KEY",
+    "EXTERNAL_PROMISE_REGISTRY_KEY",
     "PENDING_IO_KEY",
     "TASK_QUEUE_KEY",
     "TASK_REGISTRY_KEY",
     "TASK_SUSPENDED_KEY",
     "TaskInfo",
     "WAITERS_KEY",
+    "process_external_completions",
     "queue_handler",
     "scheduler_state_handler",
 ]
