@@ -13,7 +13,7 @@ class TestGetSemantics:
     """Tests for Get effect behavior."""
 
     @pytest.mark.asyncio
-    async def test_get_returns_stored_value(self, interpreter) -> None:
+    async def test_get_returns_stored_value(self, parameterized_interpreter) -> None:
         """Get returns the value stored for a key."""
 
         @do
@@ -22,13 +22,13 @@ class TestGetSemantics:
             value = yield Get("key")
             return value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == 42
 
     @pytest.mark.asyncio
-    async def test_get_missing_key_raises_keyerror(self, interpreter) -> None:
+    async def test_get_missing_key_raises_keyerror(self, parameterized_interpreter) -> None:
         """Get raises KeyError for missing keys (consistent with Ask).
 
         See SPEC-EFF-002-state.md D1.
@@ -39,13 +39,13 @@ class TestGetSemantics:
             value = yield Get("nonexistent")
             return value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_err()
         assert isinstance(result.error, KeyError)
 
     @pytest.mark.asyncio
-    async def test_get_missing_key_with_safe(self, interpreter) -> None:
+    async def test_get_missing_key_with_safe(self, parameterized_interpreter) -> None:
         """Use Safe to handle potentially missing keys."""
 
         @do
@@ -55,7 +55,7 @@ class TestGetSemantics:
                 return 0
             return result.value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == 0
@@ -65,7 +65,7 @@ class TestPutSemantics:
     """Tests for Put effect behavior."""
 
     @pytest.mark.asyncio
-    async def test_put_stores_value(self, interpreter) -> None:
+    async def test_put_stores_value(self, parameterized_interpreter) -> None:
         """Put stores a value that can be retrieved with Get."""
 
         @do
@@ -74,13 +74,13 @@ class TestPutSemantics:
             value = yield Get("greeting")
             return value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == "hello"
 
     @pytest.mark.asyncio
-    async def test_put_overwrites_existing(self, interpreter) -> None:
+    async def test_put_overwrites_existing(self, parameterized_interpreter) -> None:
         """Put overwrites any existing value for the key."""
 
         @do
@@ -90,13 +90,13 @@ class TestPutSemantics:
             value = yield Get("x")
             return value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == 2
 
     @pytest.mark.asyncio
-    async def test_put_returns_none(self, interpreter) -> None:
+    async def test_put_returns_none(self, parameterized_interpreter) -> None:
         """Put returns None."""
 
         @do
@@ -104,7 +104,7 @@ class TestPutSemantics:
             put_result = yield Put("key", "value")
             return put_result
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value is None
@@ -114,7 +114,7 @@ class TestModifySemantics:
     """Tests for Modify effect behavior."""
 
     @pytest.mark.asyncio
-    async def test_modify_transforms_value(self, interpreter) -> None:
+    async def test_modify_transforms_value(self, parameterized_interpreter) -> None:
         """Modify applies a function to transform the value."""
 
         @do
@@ -123,13 +123,13 @@ class TestModifySemantics:
             new_value = yield Modify("counter", lambda x: x + 5)
             return new_value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == 15
 
     @pytest.mark.asyncio
-    async def test_modify_returns_new_value(self, interpreter) -> None:
+    async def test_modify_returns_new_value(self, parameterized_interpreter) -> None:
         """Modify returns the transformed value."""
 
         @do
@@ -139,7 +139,7 @@ class TestModifySemantics:
             stored = yield Get("x")
             return (returned, stored)
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         returned, stored = result.value
@@ -147,7 +147,7 @@ class TestModifySemantics:
         assert stored == 10
 
     @pytest.mark.asyncio
-    async def test_modify_missing_key_receives_none(self, interpreter) -> None:
+    async def test_modify_missing_key_receives_none(self, parameterized_interpreter) -> None:
         """Modify receives None for missing keys."""
 
         @do
@@ -155,13 +155,13 @@ class TestModifySemantics:
             new_value = yield Modify("missing", lambda x: 42 if x is None else x)
             return new_value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == 42
 
     @pytest.mark.asyncio
-    async def test_modify_atomic_on_error(self, interpreter) -> None:
+    async def test_modify_atomic_on_error(self, parameterized_interpreter) -> None:
         """Modify is atomic: if func raises, store is unchanged.
 
         See SPEC-EFF-002-state.md Composition Rules: Modify atomicity.
@@ -181,7 +181,7 @@ class TestModifySemantics:
             final_value = yield Get("value")
             return final_value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         # Value should be unchanged because the transform raised
@@ -192,7 +192,7 @@ class TestPutGetComposition:
     """Tests for Put + Get composition rules."""
 
     @pytest.mark.asyncio
-    async def test_put_get_immediate_visibility(self, interpreter) -> None:
+    async def test_put_get_immediate_visibility(self, parameterized_interpreter) -> None:
         """Put changes are immediately visible to subsequent Get.
 
         See SPEC-EFF-002-state.md Composition Rules: Put + Get.
@@ -208,7 +208,7 @@ class TestPutGetComposition:
             third = yield Get("x")
             return (first, second, third)
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         assert result.value == (1, 2, 3)
@@ -218,7 +218,7 @@ class TestSafeStateComposition:
     """Tests for Safe + State composition rules."""
 
     @pytest.mark.asyncio
-    async def test_safe_preserves_state_changes(self, interpreter) -> None:
+    async def test_safe_preserves_state_changes(self, parameterized_interpreter) -> None:
         """State changes persist even when Safe catches an error.
 
         See SPEC-EFF-002-state.md Composition Rules: Safe + Put.
@@ -237,14 +237,14 @@ class TestSafeStateComposition:
             final_value = yield Get("modified")
             return final_value
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         # State change persisted through the error
         assert result.value is True
 
     @pytest.mark.asyncio
-    async def test_safe_state_no_rollback(self, interpreter) -> None:
+    async def test_safe_state_no_rollback(self, parameterized_interpreter) -> None:
         """Multiple state changes persist even when Safe catches error.
 
         This confirms there is NO transaction rollback semantics.
@@ -270,7 +270,7 @@ class TestSafeStateComposition:
             s3 = yield Get("step3")
             return (s1, s2, s3)
 
-        result = await interpreter.run_async(program())
+        result = await parameterized_interpreter.run_async(program())
 
         assert result.is_ok
         # All state changes before the error persisted
