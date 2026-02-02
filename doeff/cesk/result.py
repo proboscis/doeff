@@ -36,7 +36,7 @@ You cannot hide `await` inside a sync function - it must bubble up.
 
 RESTRICTIONS:
 - ONLY python_async_syntax_escape_handler may produce this
-- ONLY for Await/Delay/WaitUntil effects
+- ONLY for Await effect (Delay/WaitUntil should use Await internally)
 - ONLY when user explicitly chose async_run
 
 DO NOT use this for:
@@ -144,10 +144,11 @@ class PythonAsyncSyntaxEscape:
 
     ALLOWED PRODUCER
     ----------------
-    python_async_syntax_escape_handler ONLY, for these effects ONLY:
+    python_async_syntax_escape_handler ONLY, for this effect ONLY:
     - FutureAwaitEffect (yield Await(coroutine))
-    - DelayEffect (yield Delay(seconds))
-    - WaitUntilEffect (yield WaitUntil(datetime))
+
+    Other time-based effects (Delay, WaitUntil) should be implemented via Await,
+    not handled directly by the escape handler.
 
     HOW IT WORKS
     ------------
