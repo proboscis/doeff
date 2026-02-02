@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar
 from doeff._types_internal import EffectBase, ListenResult
 from doeff._vendor import NOTHING, Err, Ok, Some
 from doeff.cesk.handler_frame import HandlerContext, WithHandler
+from doeff.cesk.state import CESKState
 from doeff.do import do
 from doeff.program import Program
 
@@ -159,7 +160,12 @@ def with_intercept(
 
     def intercept_handler(effect: EffectBase, ctx: HandlerContext) -> Program[Any]:
         for transform in transforms:
-            transformed = transform(effect)
+            try:
+                transformed = transform(effect)
+            except Exception as ex:
+                # Transform raised an exception - return error state
+                return Program.pure(CESKState.with_error(ex, ctx.env, ctx.store, ctx.k))
+
             if transformed is not effect and transformed is not None:
                 if isinstance(transformed, ProgramBase):
                     # Execute the program and return its result
