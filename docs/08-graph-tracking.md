@@ -11,13 +11,13 @@ doeff can track program execution as a graph for visualization and debugging.
 def with_steps():
     yield Step("initialize", "Setup phase")
     yield Put("ready", True)
-    
+
     yield Step("process", "Processing data")
     result = yield process_data()
-    
+
     yield Step("finalize", "Cleanup")
     yield cleanup()
-    
+
     return result
 ```
 
@@ -38,11 +38,11 @@ def with_annotations():
 @do
 def with_snapshot():
     yield Step("start")
-    
+
     # Capture graph at this point
     graph = yield Snapshot()
     yield Log(f"Graph has {len(graph.steps)} steps")
-    
+
     yield Step("continue")
     return "done"
 ```
@@ -50,6 +50,8 @@ def with_snapshot():
 ### CaptureGraph - Get Final Graph
 
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def traced_program():
     yield Step("step1")
@@ -57,9 +59,8 @@ def traced_program():
     yield Step("step3")
     return "result"
 
-runtime = AsyncioRuntime()
-result = await runtime.run(traced_program())
-# Graph is tracked during execution
+result = sync_run(traced_program(), sync_handlers_preset)
+# Graph is tracked during execution in result.raw_store.get("__graph__")
 ```
 
 ## Visualization
@@ -67,25 +68,26 @@ result = await runtime.run(traced_program())
 ### Export to HTML
 
 ```python
-from doeff import graph_to_html, write_graph_html
-from doeff.runtimes import AsyncioRuntime
+from doeff import graph_to_html, write_graph_html, sync_run, sync_handlers_preset
 
 # Run program with graph tracking
-runtime = AsyncioRuntime()
-result = await runtime.run(my_program())
+result = sync_run(my_program(), sync_handlers_preset)
 
-# Graph visualization is available through the runtime's observability features
+# Get graph from raw_store
+graph = result.raw_store.get("__graph__")
+if graph:
+    html = await graph_to_html(graph)
 ```
 
-### Async Visualization
+### Getting the Graph
 
 ```python
-from doeff import graph_to_html_async
-from doeff.runtimes import AsyncioRuntime
+from doeff import sync_run, sync_handlers_preset
 
-runtime = AsyncioRuntime()
-result = await runtime.run(my_program())
-# Use observability callbacks for graph tracking
+result = sync_run(my_program(), sync_handlers_preset)
+
+# Access graph from raw_store
+graph = result.raw_store.get("__graph__")
 ```
 
 ## Use Cases
@@ -98,11 +100,11 @@ def complex_workflow():
     yield Step("load_config")
     config = yield load_config()
     yield Annotate({"config_keys": list(config.keys())})
-    
+
     yield Step("validate_inputs")
     valid = yield validate(config)
     yield Annotate({"validation_passed": valid})
-    
+
     if valid:
         yield Step("process_data")
         result = yield process(config)
@@ -110,7 +112,7 @@ def complex_workflow():
     else:
         yield Step("error_handling")
         result = []
-    
+
     yield Step("complete")
     return result
 ```
@@ -121,13 +123,13 @@ def complex_workflow():
 @do
 def timed_operations():
     import time
-    
+
     yield Step("operation_a")
     start = yield IO(lambda: time.time())
     yield expensive_a()
     duration_a = yield IO(lambda: time.time() - start)
     yield Annotate({"duration_a": duration_a})
-    
+
     yield Step("operation_b")
     start = yield IO(lambda: time.time())
     yield expensive_b()
@@ -162,7 +164,7 @@ class WStep:
 def well_traced():
     yield Step("phase1")
     yield do_phase1()
-    
+
     yield Step("phase2")
     yield do_phase2()
 

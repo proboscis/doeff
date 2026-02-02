@@ -81,32 +81,27 @@ doeff is a pragmatic effects system for Python that provides:
 
 ```python
 from doeff import do, Put, Get, Log, Await
-from doeff.runtimes import AsyncioRuntime
-import asyncio
+from doeff import sync_run, sync_handlers_preset
 
 @do
 def example_workflow():
     # State management
     yield Put("counter", 0)
-    
+
     # Logging
     yield Log("Starting computation")
-    
-    # Async operations
-    data = yield Await(fetch_data())
-    
+
     # State updates
-    yield Put("result", len(data))
+    yield Put("result", 42)
     count = yield Get("result")
-    
+
     return count
 
-async def main():
-    runtime = AsyncioRuntime()
-    result = await runtime.run(example_workflow())
+def main():
+    result = sync_run(example_workflow(), sync_handlers_preset)
     print(f"Result: {result.value}")
 
-asyncio.run(main())
+main()
 ```
 
 ## Learning Path
@@ -167,7 +162,7 @@ asyncio.run(main())
 | **Reader** | Ask, Local | [03](03-basic-effects.md#reader-effects) |
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate | [03](03-basic-effects.md#state-effects), [09](09-advanced-effects.md#atomic-effects) |
 | **Writer** | Log, Tell, Listen, StructuredLog | [03](03-basic-effects.md#writer-effects) |
-| **Future** | Await, Parallel | [04](04-async-effects.md) |
+| **Future** | Await, Gather | [04](04-async-effects.md) |
 | **Result** | Safe | [05](05-error-handling.md) |
 | **IO** | IO | [06](06-io-effects.md) |
 | **Cache** | CacheGet, CachePut | [07](07-cache-system.md) |
@@ -207,7 +202,7 @@ def robust_fetch(url):
 @do
 def process_batch(items):
     tasks = [process_item(item) for item in items]
-    results = yield Parallel(*tasks)
+    results = yield Gather(*tasks)
     return {"processed": len(results), "results": results}
 ```
 

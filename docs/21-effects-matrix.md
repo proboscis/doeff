@@ -174,35 +174,39 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 
 ## Handler Registration
 
-All supported handlers are registered via `default_handlers()` in `doeff/cesk/handlers/__init__.py`:
+Default handlers are available via preset lists:
 
 ```python
-from doeff.cesk.handlers import default_handlers
+from doeff import sync_handlers_preset, async_handlers_preset
 
-handlers = default_handlers()
-# Returns dict mapping effect types to handler functions
+# Use presets directly with sync_run/async_run
+result = sync_run(my_program(), sync_handlers_preset)
 ```
 
-Custom handlers can be passed to runtimes:
+Custom handlers can be prepended to presets:
 
 ```python
-from doeff.cesk.runtime import AsyncRuntime
+from doeff import sync_run, sync_handlers_preset
 
-custom_handlers = default_handlers()
-custom_handlers[MyEffect] = my_handler
+# Custom handler function
+def my_handler(effect, k, env, store):
+    if isinstance(effect, MyEffect):
+        return Program.pure(handle_my_effect(effect))
+    return None  # Not handled
 
-runtime = AsyncRuntime(handlers=custom_handlers)
+# Prepend custom handler to preset
+handlers = [my_handler, *sync_handlers_preset]
+result = sync_run(my_program(), handlers)
 ```
 
 ## RuntimeResult
 
-All runtimes return `RuntimeResult[T]` from their `run()` method:
+Both `sync_run()` and `async_run()` return `RuntimeResult[T]`:
 
 ```python
-from doeff.cesk.runtime import AsyncRuntime
+from doeff import sync_run, sync_handlers_preset
 
-runtime = AsyncRuntime()
-result = await runtime.run(my_program())
+result = sync_run(my_program(), sync_handlers_preset)
 
 if result.is_ok():
     print(f"Success: {result.value}")

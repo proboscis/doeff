@@ -33,6 +33,8 @@ A Program wraps a **generator function** that:
 
 **Lazy Evaluation**
 ```python
+from doeff import sync_run, sync_handlers_preset
+
 @do
 def expensive_computation():
     yield Log("This doesn't execute yet")
@@ -42,8 +44,7 @@ def expensive_computation():
 program = expensive_computation()
 
 # Execution happens here
-runtime = AsyncioRuntime()
-result = await runtime.run(program)
+result = sync_run(program, sync_handlers_preset)
 ```
 
 **Reusability**
@@ -54,10 +55,9 @@ def get_timestamp():
     return yield IO(lambda: time.time())
 
 # Unlike generators, this works:
-runtime = AsyncioRuntime()
 prog = get_timestamp()
-result1 = await runtime.run(prog)  # 1234567890.123
-result2 = await runtime.run(prog)  # 1234567890.456
+result1 = sync_run(prog, sync_handlers_preset)  # 1234567890.123
+result2 = sync_run(prog, sync_handlers_preset)  # 1234567890.456
 ```
 
 ### Creating Programs
@@ -99,7 +99,7 @@ Effects are the vocabulary of doeff programs. An effect represents a request for
 @dataclass(frozen=True)
 class EffectBase(Effect):
     created_at: EffectCreationContext | None = None
-    
+
     def intercept(self, transform):
         """Allow effect transformations"""
         ...
@@ -114,7 +114,7 @@ doeff provides effects for:
 | **Reader** | `Ask`, `Local` | Read-only environment access |
 | **State** | `Get`, `Put`, `Modify` | Mutable state management |
 | **Writer** | `Log`, `Tell`, `Listen` | Accumulate output/logs |
-| **Future** | `Await`, `Parallel` | Async operations |
+| **Future** | `Await`, `Gather` | Async operations |
 | **Result** | `Safe` | Error handling |
 | **IO** | `IO` | Side effects |
 | **Cache** | `CacheGet`, `CachePut` | Caching with policies |
@@ -125,7 +125,7 @@ doeff provides effects for:
 
 1. **Creation**: Effect is instantiated with parameters
 2. **Yielding**: Effect is yielded in a `@do` function
-3. **Interpretation**: Runtime handles the effect
+3. **Interpretation**: Handler processes the effect
 4. **Resolution**: Effect produces a value
 5. **Continuation**: Value is sent back to the generator
 
@@ -137,13 +137,13 @@ You can create custom effects by extending `EffectBase`:
 @dataclass(frozen=True)
 class CustomEffect(EffectBase):
     message: str
-    
+
     def intercept(self, transform):
         result = transform(self)
         return result if isinstance(result, Program) else Program.pure(result)
 ```
 
-Then add a handler to the runtime.
+Then add a handler to the handlers list.
 
 ## The @do Decorator
 
@@ -237,7 +237,7 @@ def my_program():
 
 1. **Generator Protocol**: `yield` suspends execution and produces a value
 2. **Effect Yielding**: The yielded value is an Effect instance
-3. **Interpreter Loop**: ProgramInterpreter processes each effect
+3. **Interpreter Loop**: CESK machine processes each effect
 4. **Value Sending**: Result is sent back via `.send(value)`
 5. **Continuation**: Generator resumes with the value
 
@@ -269,24 +269,27 @@ except StopIteration as e:
 
 ## Execution Model
 
-### Runtime
+### Running Programs
 
-The runtime executes programs by processing effects:
+Programs are executed using `sync_run` or `async_run`:
 
 ```python
-from doeff.runtimes import AsyncioRuntime
+from doeff import sync_run, async_run, sync_handlers_preset, async_handlers_preset
 
-# Create runtime for async execution
-runtime = AsyncioRuntime()
-
-# Or configure with custom handlers
-runtime = AsyncioRuntime(handlers=my_handlers)
-
-# Execute program
-result = await runtime.run(
+# Synchronous execution
+result = sync_run(
     program,
+    sync_handlers_preset,
     env={"key": "value"},  # Optional environment
     store={"state": 123}   # Optional initial store
+)
+
+# Async execution
+result = await async_run(
+    program,
+    async_handlers_preset,
+    env={"key": "value"},
+    store={"state": 123}
 )
 ```
 
@@ -304,7 +307,7 @@ result = await runtime.run(
 
 ### Environment and Store
 
-The runtime uses environment and store for execution:
+The execution uses environment and store:
 
 ```python
 # Environment: Read-only configuration (Ask/Local effects)
@@ -313,8 +316,8 @@ env = {"database_url": "postgres://...", "api_key": "..."}
 # Store: Mutable state (Get/Put/Modify effects)
 store = {"counter": 0, "status": "ready"}
 
-# Pass to runtime
-result = await runtime.run(program, env=env, store=store)
+# Pass to execution function
+result = sync_run(program, sync_handlers_preset, env=env, store=store)
 ```
 
 ### RuntimeResult
@@ -324,24 +327,28 @@ Contains execution outcome:
 ```python
 @dataclass
 class RuntimeResult(Generic[T]):
-    result: Result[T]            # Ok(value) or Err(error)
-    captured_traceback: Any      # Traceback for debugging
-    
+    result: Result[T]       # Ok(value) or Err(error)
+    raw_store: dict         # Final store state
+
     @property
     def value(self) -> T:
         """Extract value (raises if Err)"""
-    
-    @property
+
     def is_ok(self) -> bool:
         """Check if succeeded"""
-    
-    @property
+
     def is_err(self) -> bool:
         """Check if failed"""
-    
+
     @property
     def error(self) -> BaseException:
         """Extract error (raises if Ok)"""
+```
+
+Access logs and graph from raw_store:
+```python
+logs = result.raw_store.get("__log__", [])
+graph = result.raw_store.get("__graph__")
 ```
 
 ### Stack Safety
@@ -494,9 +501,10 @@ from doeff import (
     Result,          # Ok[T] | Err[E]
     Ok,              # Success value
     Err,             # Error value
-)
-from doeff.runtimes import (
-    AsyncioRuntime,  # Runtime for async I/O
+
+    # Execution
+    sync_run, async_run,
+    sync_handlers_preset, async_handlers_preset,
     RuntimeResult,   # Result container
 )
 ```
@@ -528,10 +536,9 @@ def create_program() -> Program[int]:
         return value
     return Program(gen)
 
-# Runtime execution
-async def execute(prog: Program[T]) -> RuntimeResult[T]:
-    runtime = AsyncioRuntime()
-    return await runtime.run(prog)
+# Execution
+def execute(prog: Program[T]) -> RuntimeResult[T]:
+    return sync_run(prog, sync_handlers_preset)
 ```
 
 ### Generic Programs
@@ -557,13 +564,13 @@ result = identity("hello")  # Program[str]
 - **Effect**: Request for an operation (Reader, State, Writer, etc.)
 - **@do**: Converts generator functions to Programs with monadic operations
 - **Generator**: Python's coroutine mechanism enables do-notation syntax
-- **AsyncioRuntime**: Executes programs by handling effects with real async I/O
+- **sync_run/async_run**: Execute programs with provided handlers
 - **Environment/Store**: Tracks environment and mutable state during execution
-- **RuntimeResult[T]**: Contains final value and result
+- **RuntimeResult[T]**: Contains final value and raw_store
 - **Monadic Ops**: map, flat_map, sequence, pure enable composition
 
 ## Next Steps
 
 - **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer in detail
-- **[Async Effects](04-async-effects.md)** - Future, Await, Parallel
+- **[Async Effects](04-async-effects.md)** - Future, Await, Gather
 - **[Error Handling](05-error-handling.md)** - Result monad and error effects

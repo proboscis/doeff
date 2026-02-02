@@ -319,11 +319,12 @@ handlers = default_handlers()
 # Register your custom handler
 handlers[MyCustomEffect] = handle_my_custom_effect
 
-# Pass to runtime
-from doeff.cesk.runtime import SyncRuntime
+# Use custom handlers with sync_run
+from doeff import sync_run
 
-runtime = SyncRuntime(handlers=handlers)
-result = runtime.run(my_program())
+# Create handler preset with custom handler
+custom_preset = list(handlers.values())
+result = sync_run(my_program(), custom_preset)
 ```
 
 ### Handler Registry Structure
