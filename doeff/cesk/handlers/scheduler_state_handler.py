@@ -15,21 +15,17 @@ from doeff.effects.external_promise import (
     ExternalPromise,
 )
 from doeff.effects.scheduler_internal import (
-    _SchedulerAddPendingIO,
     _SchedulerCancelTask,
     _SchedulerCreatePromise,
     _SchedulerCreateTaskHandle,
     _SchedulerDequeueTask,
     _SchedulerEnqueueTask,
     _SchedulerGetCurrentTaskId,
-    _SchedulerGetPendingIO,
     _SchedulerGetTaskResult,
     _SchedulerGetTaskStore,
     _SchedulerIsTaskDone,
     _SchedulerQueueEmpty,
     _SchedulerRegisterWaiter,
-    _SchedulerRemovePendingIO,
-    _SchedulerResumePendingIO,
     _SchedulerSetTaskSuspended,
     _SchedulerTaskComplete,
     _SchedulerUpdateTaskStore,
@@ -372,44 +368,6 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             "task_id": effect.task_id,
             "waiting_for": effect.waiting_for,
         }
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
-
-    if isinstance(effect, _SchedulerAddPendingIO):
-        pending = dict(store.get(PENDING_IO_KEY, {}))
-        pending[effect.task_id] = {
-            "awaitable": effect.awaitable,
-            "k": effect.k,
-            "store_snapshot": effect.store_snapshot,
-        }
-        store[PENDING_IO_KEY] = pending
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
-
-    if isinstance(effect, _SchedulerGetPendingIO):
-        pending = store.get(PENDING_IO_KEY, {})
-        return Program.pure(CESKState.with_value(pending, ctx.env, store, ctx.k))
-
-    if isinstance(effect, _SchedulerRemovePendingIO):
-        pending = dict(store.get(PENDING_IO_KEY, {}))
-        pending.pop(effect.task_id, None)
-        store[PENDING_IO_KEY] = pending
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
-
-    if isinstance(effect, _SchedulerResumePendingIO):
-        pending = dict(store.get(PENDING_IO_KEY, {}))
-        task_info = pending.pop(effect.task_id, None)
-        store[PENDING_IO_KEY] = pending
-        if task_info is not None:
-            queue = list(store.get(TASK_QUEUE_KEY, []))
-            queue.append(
-                {
-                    "task_id": effect.task_id,
-                    "k": task_info["k"],
-                    "store_snapshot": task_info["store_snapshot"],
-                    "resume_value": effect.value,
-                    "resume_error": effect.error,
-                }
-            )
-            store[TASK_QUEUE_KEY] = queue
         return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     from doeff.cesk.errors import UnhandledEffectError
