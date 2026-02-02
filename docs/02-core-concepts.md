@@ -325,7 +325,6 @@ result = sync_run(program, sync_handlers_preset, env=env, store=store)
 Contains execution outcome:
 
 ```python
-@dataclass
 class RuntimeResult(Generic[T]):
     result: Result[T]       # Ok(value) or Err(error)
     raw_store: dict         # Final store state
@@ -334,15 +333,23 @@ class RuntimeResult(Generic[T]):
     def value(self) -> T:
         """Extract value (raises if Err)"""
 
+    @property
+    def error(self) -> BaseException:
+        """Extract error (raises if Ok)"""
+
     def is_ok(self) -> bool:
         """Check if succeeded"""
 
     def is_err(self) -> bool:
         """Check if failed"""
 
-    @property
-    def error(self) -> BaseException:
-        """Extract error (raises if Ok)"""
+    # Stack traces for debugging (available on error)
+    k_stack: KStackTrace           # CESK continuation stack
+    effect_stack: EffectStackTrace # Effect call tree
+    python_stack: PythonStackTrace # Python source locations
+
+    def format(self, *, verbose: bool = False) -> str:
+        """Format result for display"""
 ```
 
 Access logs and graph from raw_store:

@@ -124,8 +124,7 @@ print(failure.err())  # Exception("error")
 ### Basic Safe Usage
 
 ```python
-from doeff import do, Safe, Log
-from doeff._vendor import Ok, Err
+from doeff import do, Safe, Log, Ok, Err
 
 @do
 def risky_operation():

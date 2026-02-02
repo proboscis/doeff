@@ -252,11 +252,11 @@ def task_operations_example():
     # Spawn a task
     task = yield Spawn(long_running_work())
 
-    # Check if done (non-blocking)
-    is_done = task.is_done()
+    # Check if done (returns Effect, must yield)
+    is_done = yield task.is_done()
     yield Log(f"Is done: {is_done}")  # False initially
 
-    # Cancel the task
+    # Cancel the task (returns Effect, must yield)
     yield task.cancel()
     yield Log("Requested cancellation")
 
