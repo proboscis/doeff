@@ -47,7 +47,7 @@ from uuid import uuid4
 from doeff._types_internal import EffectBase
 from doeff._vendor import FrozenDict
 from doeff.cesk.frames import ReturnFrame
-from doeff.cesk.handler_frame import Handler, HandlerContext, ResumeK, WithHandler
+from doeff.cesk.handler_frame import Handler, HandlerContext, HandlerFrame, ResumeK, WithHandler
 from doeff.cesk.state import CESKState, Value
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
@@ -111,29 +111,15 @@ def _make_spawn_wrapper(program: Any, task_id: Any, handle_id: Any) -> Program[A
     return wrapper()
 
 
-def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any) -> Any:
-    """Wrap a spawned program with handlers and completion wrapper.
+def _wrap_with_handlers_for_spawn(program: Any, task_id: Any, handle_id: Any, store: dict[str, Any]) -> Any:
+    """Wrap a spawned program with completion wrapper only.
 
-    Note: We do NOT wrap with scheduler_state_handler here. The scheduler_state_handler manages
-    global scheduler state (queue, registry, waiters) that must be shared
-    across all tasks. Effects from spawned tasks bubble up to the main
-    scheduler_state_handler through the continuation stack.
+    Spawned tasks inherit parent's handlers via k_rest when ResumeK is processed.
+    We only add the completion wrapper to yield _SchedulerTaskCompleted.
+
+    NO handler wrapping is done here - child effects bubble up to parent's handlers.
     """
-    from doeff.cesk.handlers.core_handler import core_handler
-    from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
-
-    wrapped = _make_spawn_wrapper(program, task_id, handle_id)
-
-    return WithHandler(
-        handler=cast(Handler, task_scheduler_handler),
-        program=WithHandler(
-            handler=cast(Handler, python_async_syntax_escape_handler),
-            program=WithHandler(
-                handler=cast(Handler, core_handler),
-                program=wrapped,
-            ),
-        ),
-    )
+    return _make_spawn_wrapper(program, task_id, handle_id)
 
 
 def _make_initial_k(program: Any, env: Any = None) -> list[Any]:
@@ -141,6 +127,15 @@ def _make_initial_k(program: Any, env: Any = None) -> list[Any]:
     gen = to_generator(program)
     saved_env = FrozenDict(env) if env else FrozenDict()
     return [ReturnFrame(gen, saved_env)]
+
+
+def _extract_handler_frames(k: list[Any]) -> list[Any]:
+    """Extract HandlerFrame elements from a continuation.
+
+    This is a simple list filter - used as fallback when ctx.inherited_handlers
+    is not available (e.g., in GatherEffect inline spawn).
+    """
+    return [frame for frame in k if isinstance(frame, HandlerFrame)]
 
 
 def _build_multi_task_escape_from_pending(
@@ -167,7 +162,10 @@ def _build_multi_task_escape_from_pending(
         del new_pending[task_id]
 
         merged_store = dict(task_store_snapshot)
-        for key, val in stored_store.items():
+        # CRITICAL: Use new_store (passed from driver) for scheduler keys, not stored_store.
+        # new_store contains the latest scheduler state including waiter registrations
+        # that happened while other tasks were awaiting I/O. stored_store is stale.
+        for key, val in new_store.items():
             if isinstance(key, str) and key.startswith("__scheduler_"):
                 merged_store[key] = val
         merged_store[PENDING_IO_KEY] = new_pending
@@ -297,8 +295,15 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             store_snapshot=store_snapshot,
         )
 
-        wrapped_program = _wrap_with_handlers_for_spawn(effect.program, task_id, handle_id)
-        child_k = _make_initial_k(wrapped_program, env_snapshot)
+        wrapped_program = _wrap_with_handlers_for_spawn(effect.program, task_id, handle_id, ctx.store)
+        base_k = _make_initial_k(wrapped_program, env_snapshot)
+        # Inherit parent's handler frames so child effects go through same handlers
+        # ctx.inherited_handlers is a simple list copy from the original K
+        import os
+        if os.environ.get("DOEFF_DEBUG"):
+            handler_names = [getattr(h.handler, "__name__", "?") for h in ctx.inherited_handlers]
+            print(f"[SpawnEffect] inherited_handlers len={len(ctx.inherited_handlers)}, names={handler_names}")
+        child_k = base_k + list(ctx.inherited_handlers)
         yield _SchedulerEnqueueTask(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
 
         # Return plain value - HandlerResultFrame constructs CESKState with current store
@@ -312,27 +317,30 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             error=effect.error,
         )
 
-        next_task = yield _SchedulerDequeueTask()
-        if next_task is None:
-            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+        dequeue_result = yield _SchedulerDequeueTask()
+        # dequeue_result is (None, current_store) when empty, or full tuple when task available
+        if dequeue_result[0] is None:
+            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            current_store = dequeue_result[1]
+            pending_io = current_store.get(PENDING_IO_KEY, {})
             if pending_io:
                 has_escape = any("escape" in info for info in pending_io.values())
                 if has_escape:
                     return _build_multi_task_escape_from_pending(
                         pending_io=pending_io,
                         stored_env=ctx.env,
-                        stored_store=ctx.store,
+                        stored_store=current_store,
                     )
                 return multi_task_async_escape(
                     stored_k=ctx.delimited_k,
                     stored_env=ctx.env,
-                    stored_store=ctx.store,
+                    stored_store=current_store,
                 )
             if effect.error is not None:
-                return CESKState.with_error(effect.error, ctx.env, ctx.store, [])
-            return CESKState.with_value(effect.result, ctx.env, ctx.store, [])
+                return CESKState.with_error(effect.error, ctx.env, current_store, [])
+            return CESKState.with_value(effect.result, ctx.env, current_store, [])
 
-        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = dequeue_result
         task_store = dict(next_store) if next_store is not None else {}
         for key, val in current_store.items():
             if isinstance(key, str) and key.startswith("__scheduler_"):
@@ -372,42 +380,45 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         yield _SchedulerRegisterWaiter(
             handle_id=handle_id,
             waiter_task_id=current_task_id,
-            waiter_k=list(ctx.delimited_k),
+            waiter_k=list(ctx.k),  # Full continuation including handlers
             waiter_store=dict(ctx.store),
         )
 
-        next_task = yield _SchedulerDequeueTask()
-        if next_task is None:
-            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+        dequeue_result = yield _SchedulerDequeueTask()
+        # dequeue_result is (None, current_store) when empty, or full tuple when task available
+        if dequeue_result[0] is None:
+            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            current_store = dequeue_result[1]
+            pending_io = current_store.get(PENDING_IO_KEY, {})
             if pending_io:
                 has_escape = any("escape" in info for info in pending_io.values())
                 if has_escape:
                     return _build_multi_task_escape_from_pending(
                         pending_io=pending_io,
                         stored_env=ctx.env,
-                        stored_store=ctx.store,
+                        stored_store=current_store,
                     )
                 return multi_task_async_escape(
                     stored_k=list(ctx.delimited_k),
                     stored_env=ctx.env,
-                    stored_store=ctx.store,
+                    stored_store=current_store,
                 )
             # Check if we're waiting on an external promise
-            external_registry = ctx.store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+            external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
             if external_registry and handle_id in external_registry.values():
                 # Waiting for external completion - signal runner to block-wait
                 # Use full continuation (ctx.k) to preserve handler frames
                 from doeff.cesk.result import WaitingForExternalCompletion
 
                 return WaitingForExternalCompletion(
-                    state=CESKState(C=Value(None), E=ctx.env, S=ctx.store, K=list(ctx.k))
+                    state=CESKState(C=Value(None), E=ctx.env, S=current_store, K=list(ctx.k))
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: waiting for task but no other tasks to run"),
-                ctx.env, ctx.store, ctx.k,
+                ctx.env, current_store, ctx.k,
             )
 
-        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = dequeue_result
         task_store = dict(next_store) if next_store is not None else {}
         for key, val in current_store.items():
             if isinstance(key, str) and key.startswith("__scheduler_"):
@@ -515,8 +526,10 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                     store_snapshot=store_snapshot,
                 )
 
-                wrapped_program = _wrap_with_handlers_for_spawn(item, task_id, handle_id)
-                child_k = _make_initial_k(wrapped_program, env_snapshot)
+                wrapped_program = _wrap_with_handlers_for_spawn(item, task_id, handle_id, ctx.store)
+                base_k = _make_initial_k(wrapped_program, env_snapshot)
+                # Inherit parent's handler frames (same as SpawnEffect)
+                child_k = base_k + list(ctx.inherited_handlers)
                 yield _SchedulerEnqueueTask(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
 
                 waitables.append(task_handle)
@@ -583,7 +596,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             gather_effect=updated_effect,
             saved_env=ctx.env,
         )
-        waiter_k = [waiter_frame] + list(ctx.delimited_k)
+        # Full continuation: waiter_frame + delimited_k + outer_k (includes handlers)
+        waiter_k = [waiter_frame] + list(ctx.delimited_k) + list(ctx.outer_k)
 
         current_task_id = yield _SchedulerGetCurrentTaskId()
         for i in pending_indices:
@@ -595,28 +609,31 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 waiter_store=dict(ctx.store),
             )
 
-        next_task = yield _SchedulerDequeueTask()
-        if next_task is None:
-            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+        dequeue_result = yield _SchedulerDequeueTask()
+        # dequeue_result is (None, current_store) when empty, or full tuple when task available
+        if dequeue_result[0] is None:
+            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            current_store = dequeue_result[1]
+            pending_io = current_store.get(PENDING_IO_KEY, {})
             if pending_io:
                 has_escape = any("escape" in info for info in pending_io.values())
                 if has_escape:
                     return _build_multi_task_escape_from_pending(
                         pending_io=pending_io,
                         stored_env=ctx.env,
-                        stored_store=ctx.store,
+                        stored_store=current_store,
                     )
                 return multi_task_async_escape(
                     stored_k=waiter_k,
                     stored_env=ctx.env,
-                    stored_store=ctx.store,
+                    stored_store=current_store,
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: waiting for tasks but no other tasks to run"),
-                ctx.env, ctx.store, ctx.k,
+                ctx.env, current_store, ctx.k,
             )
 
-        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = dequeue_result
         task_store = dict(next_store) if next_store is not None else {}
         for key, val in current_store.items():
             if isinstance(key, str) and key.startswith("__scheduler_"):
@@ -667,7 +684,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             race_effect=effect,
             saved_env=ctx.env,
         )
-        waiter_k = [waiter_frame] + list(ctx.delimited_k)
+        # Full continuation: waiter_frame + delimited_k + outer_k (includes handlers)
+        waiter_k = [waiter_frame] + list(ctx.delimited_k) + list(ctx.outer_k)
 
         current_task_id = yield _SchedulerGetCurrentTaskId()
         for future in futures:
@@ -679,28 +697,31 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 waiter_store=dict(ctx.store),
             )
 
-        next_task = yield _SchedulerDequeueTask()
-        if next_task is None:
-            pending_io = ctx.store.get(PENDING_IO_KEY, {})
+        dequeue_result = yield _SchedulerDequeueTask()
+        # dequeue_result is (None, current_store) when empty, or full tuple when task available
+        if dequeue_result[0] is None:
+            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            current_store = dequeue_result[1]
+            pending_io = current_store.get(PENDING_IO_KEY, {})
             if pending_io:
                 has_escape = any("escape" in info for info in pending_io.values())
                 if has_escape:
                     return _build_multi_task_escape_from_pending(
                         pending_io=pending_io,
                         stored_env=ctx.env,
-                        stored_store=ctx.store,
+                        stored_store=current_store,
                     )
                 return multi_task_async_escape(
                     stored_k=waiter_k,
                     stored_env=ctx.env,
-                    stored_store=ctx.store,
+                    stored_store=current_store,
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: racing but no other tasks to run"),
-                ctx.env, ctx.store, ctx.k,
+                ctx.env, current_store, ctx.k,
             )
 
-        next_task_id, next_k, next_store, resume_value, resume_error, current_store = next_task
+        next_task_id, next_k, next_store, resume_value, resume_error, current_store = dequeue_result
         task_store = dict(next_store) if next_store is not None else {}
         for key, val in current_store.items():
             if isinstance(key, str) and key.startswith("__scheduler_"):

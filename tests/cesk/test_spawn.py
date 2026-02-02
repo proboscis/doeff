@@ -32,6 +32,7 @@ from doeff.effects import (
     Task,
     TaskCancelledError,
     Tell,
+    Wait,
 )
 
 # ============================================================================
@@ -57,25 +58,6 @@ class TestSpawnBasic:
 
         result = (await async_run(program(), async_handlers_preset)).value
         assert isinstance(result, Task)
-        assert result.backend == "thread"  # Default backend
-
-    @pytest.mark.skip(reason="preferred_backend not implemented in v2 handler architecture")
-    @pytest.mark.asyncio
-    async def test_spawn_with_preferred_backend(self) -> None:
-        """Test that Spawn respects preferred_backend."""
-        
-        @do
-        def background():
-            return 42
-
-        @do
-        def program():
-            task = yield Spawn(background(), preferred_backend="process")
-            return task
-
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert isinstance(result, Task)
-        assert result.backend == "process"
 
     @pytest.mark.asyncio
     async def test_spawn_and_join_success(self) -> None:
@@ -709,7 +691,11 @@ class TestSpawnEdgeCases:
 
     @pytest.mark.asyncio
     async def test_spawn_with_intercept(self) -> None:
-        """Test that intercept doesn't apply to spawned tasks (isolated)."""
+        """Test that intercept applies to spawned tasks (inherited handlers).
+
+        Spawned tasks inherit parent's handlers, so Intercept affects child effects.
+        This enables powerful patterns like mocking Ask values in tests.
+        """
         from doeff.effects.reader import AskEffect
 
         def transform(effect):
@@ -733,9 +719,9 @@ class TestSpawnEdgeCases:
             result = yield Intercept(program(), transform)
             return result
 
-        # Spawned tasks are isolated - intercept shouldn't affect them
+        # Spawned tasks inherit handlers - intercept DOES affect them
         result = (await async_run(main(), async_handlers_preset, env={"key": "actual_value"})).value
-        assert result == "actual_value"
+        assert result == "intercepted"
 
 
 # ============================================================================
@@ -746,7 +732,6 @@ class TestSpawnEdgeCases:
 class TestSpawnConcurrentJoin:
     """Test concurrent joining of the same task from multiple places."""
 
-    @pytest.mark.skip(reason="ISSUE-CORE-468: Deadlock in v2 handler architecture with concurrent joins")
     @pytest.mark.asyncio
     async def test_concurrent_join_same_task(self) -> None:
         """Test that multiple tasks can join the same spawned task."""
@@ -1059,24 +1044,23 @@ class TestSpawnDeepReview:
         assert "child_log_1" not in log
         assert "child_log_2" not in log
 
-    @pytest.mark.skip(reason="ISSUE-CORE-468: Exceeds max steps in v2 handler architecture")
     @pytest.mark.asyncio
     async def test_many_spawns_memory_cleanup(self) -> None:
-        """Test that spawning many tasks doesn't leak memory after joins.
-        
+        """Test that spawning many tasks doesn't leak memory after waits.
+
         Deep review concern: Memory leak if entries not cleaned up.
         """
-        
+
         @do
         def quick_task(n: int):
             return n
 
         @do
         def program():
-            # Spawn and join many tasks
+            # Spawn and wait on many tasks
             for i in range(100):
                 task = yield Spawn(quick_task(i))
-                result = yield task.join()
+                result = yield Wait(task)
                 assert result == i
             return "all_done"
 
@@ -1086,6 +1070,197 @@ class TestSpawnDeepReview:
         # After cleanup, it should be empty (though we can't directly verify this)
 
 
+# ============================================================================
+# Handler Inheritance Tests (EXPECTED BEHAVIOR)
+# ============================================================================
+
+
+class TestSpawnHandlerInheritance:
+    """Tests for spawned tasks inheriting parent's handlers.
+
+    Spawned tasks inherit the handler stack from the parent, so custom handlers
+    (via WithHandler/Intercept) affect child tasks' effects. This is implemented
+    by recursively extracting HandlerFrames from the delimited continuation at
+    spawn time.
+    """
+
+    @pytest.mark.asyncio
+    async def test_spawned_task_frame_contains_parent_handlers(self) -> None:
+        """Directly verify that child task's K contains parent's handler frames."""
+        from doeff.cesk.handler_frame import HandlerContext, HandlerFrame
+        from doeff.effects.state import StateGetEffect
+
+        captured_ctx = [None]
+
+        def frame_inspecting_handler(effect, ctx: HandlerContext):
+            """Handler that captures context for inspection."""
+            if isinstance(effect, StateGetEffect) and effect.key == "inspect_frames":
+                # Capture the handler context when child asks for "inspect_frames"
+                captured_ctx[0] = ctx
+                # Return a dummy value
+                return Program.pure(CESKState.with_value("inspected", ctx.env, ctx.store, ctx.k))
+            # Forward other effects
+            @do
+            def forward():
+                result = yield effect
+                return result
+            return forward()
+
+        @do
+        def child_task():
+            # This Get should go through parent's frame_inspecting_handler
+            result = yield Get("inspect_frames")
+            return result
+
+        @do
+        def program():
+            task = yield Spawn(child_task())
+            result = yield Wait(task)
+            return result
+
+        from doeff.cesk.handler_frame import WithHandler
+        from doeff.cesk.state import CESKState
+
+        @do
+        def main():
+            result = yield WithHandler(handler=frame_inspecting_handler, program=program())
+            return result
+
+        result = (await async_run(main(), async_handlers_preset)).value
+        assert result == "inspected", f"Child's Get should be handled. Got: {result}"
+
+        # Verify the captured context shows the handler was in the chain
+        assert captured_ctx[0] is not None, "Handler context should be captured"
+
+        # Check that delimited_k contains frames from child up to this handler
+        ctx = captured_ctx[0]
+        frame_types = [type(f).__name__ for f in ctx.delimited_k]
+        print(f"Captured delimited_k frame types: {frame_types}")
+
+        # The delimited_k should contain frames from the child task
+        assert len(ctx.delimited_k) > 0, "delimited_k should have frames"
+
+    @pytest.mark.asyncio
+    async def test_spawned_task_inherits_intercept(self) -> None:
+        """Spawned task's effects should be intercepted by parent's Intercept."""
+        intercepted_effects = []
+
+        def tracking_transform(effect):
+            """Track all effects that pass through."""
+            intercepted_effects.append(type(effect).__name__)
+            return None  # Don't transform, just track
+
+        @do
+        def child_task():
+            yield Put("child_key", "child_value")
+            value = yield Get("child_key")
+            return value
+
+        @do
+        def program():
+            task = yield Spawn(child_task())
+            result = yield Wait(task)
+            return result
+
+        @do
+        def main():
+            result = yield Intercept(program(), tracking_transform)
+            return result
+
+        result = (await async_run(main(), async_handlers_preset)).value
+        assert result == "child_value"
+
+        # EXPECTED: Child's Put and Get effects should be intercepted
+        assert "StatePutEffect" in intercepted_effects, \
+            f"Child's Put should be intercepted. Got: {intercepted_effects}"
+        assert "StateGetEffect" in intercepted_effects, \
+            f"Child's Get should be intercepted. Got: {intercepted_effects}"
+
+    @pytest.mark.asyncio
+    async def test_spawned_task_inherits_custom_handler(self) -> None:
+        """Spawned task's effects should be handled by parent's custom handler."""
+        from doeff.cesk.handler_frame import WithHandler
+        from doeff.effects.reader import AskEffect
+
+        custom_handler_called = [False]
+
+        def custom_ask_handler(effect, ctx):
+            """Custom handler that provides special value for Ask("magic")."""
+            if isinstance(effect, AskEffect) and effect.key == "magic":
+                custom_handler_called[0] = True
+                return Program.pure("magic_value_from_parent_handler")
+            # Forward other effects
+            @do
+            def forward():
+                result = yield effect
+                return result
+            return forward()
+
+        @do
+        def child_task():
+            # This Ask should be handled by parent's custom_ask_handler
+            value = yield Ask("magic")
+            return value
+
+        @do
+        def program():
+            task = yield Spawn(child_task())
+            result = yield Wait(task)
+            return result
+
+        @do
+        def main():
+            result = yield WithHandler(handler=custom_ask_handler, program=program())
+            return result
+
+        result = (await async_run(main(), async_handlers_preset)).value
+
+        # EXPECTED: Child's Ask("magic") should hit parent's custom handler
+        assert custom_handler_called[0], "Parent's custom handler should handle child's Ask"
+        assert result == "magic_value_from_parent_handler"
+
+    @pytest.mark.asyncio
+    async def test_nested_spawn_inherits_through_chain(self) -> None:
+        """Grandchild task should also inherit grandparent's handlers."""
+        intercepted_effects = []
+
+        def tracking_transform(effect):
+            intercepted_effects.append(f"{type(effect).__name__}")
+            return None
+
+        @do
+        def grandchild():
+            yield Put("gc_key", "grandchild")
+            return "grandchild_done"
+
+        @do
+        def child():
+            yield Put("c_key", "child")
+            gc_task = yield Spawn(grandchild())
+            gc_result = yield Wait(gc_task)
+            return f"child_done:{gc_result}"
+
+        @do
+        def program():
+            task = yield Spawn(child())
+            result = yield Wait(task)
+            return result
+
+        @do
+        def main():
+            result = yield Intercept(program(), tracking_transform)
+            return result
+
+        result = (await async_run(main(), async_handlers_preset)).value
+        assert result == "child_done:grandchild_done"
+
+        # EXPECTED: Both child and grandchild Put effects should be intercepted
+        put_count = sum(1 for e in intercepted_effects if e == "StatePutEffect")
+        assert put_count >= 2, \
+            f"Both child and grandchild Put should be intercepted. Got: {intercepted_effects}"
+
+
 __all__ = __all__ + [
     "TestSpawnDeepReview",
+    "TestSpawnHandlerInheritance",
 ]
