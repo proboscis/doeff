@@ -342,6 +342,47 @@ class AskLazyFrame:
         return CESKState.with_error(error, env, new_store, k_rest)
 
 
+@dataclass(frozen=True)
+class LocalRestoreFrame:
+    """Restore the original environment after Local scope completes.
+
+    When a Local effect runs its sub_program with a modified environment,
+    this frame is pushed to restore the original environment when the
+    sub_program completes (whether successfully or with an error).
+
+    This ensures:
+    1. Nested Local properly inherits outer Local's environment
+    2. Spawned children capture the correct (modified) environment at spawn time
+    3. Environment is properly restored after Local scope exits
+    """
+
+    saved_env: Environment  # The environment to restore after Local scope
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,  # Current env (the Local-modified one) - ignored
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> "CESKState":
+        """Restore saved environment and continue with the value."""
+        from doeff.cesk.state import CESKState
+
+        return CESKState.with_value(value, self.saved_env, store, k_rest)
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,  # Current env (the Local-modified one) - ignored
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> "CESKState":
+        """Restore saved environment and propagate the error."""
+        from doeff.cesk.state import CESKState
+
+        return CESKState.with_error(error, self.saved_env, store, k_rest)
+
+
 # ============================================
 # Kontinuation Type
 # ============================================

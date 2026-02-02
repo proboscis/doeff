@@ -119,9 +119,20 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         return CESKState.with_value(new_value, ctx.env, new_store, ctx.k)
 
     if isinstance(effect, LocalEffect):
-        # Use user-space pattern instead of LocalFrame
-        result = yield with_local(dict(effect.env_update), effect.sub_program)
-        return result  # Plain value - HandlerResultFrame constructs CESKState
+        # Merge current environment with the update (Local overrides take precedence)
+        from doeff.cesk.frames import LocalRestoreFrame
+        from doeff.cesk.result import DirectState
+
+        merged_env = FrozenDict({**ctx.env, **effect.env_update})
+
+        # Push LocalRestoreFrame to restore original env after sub_program completes
+        local_frame = LocalRestoreFrame(saved_env=ctx.env)
+
+        # Return DirectState to preserve our custom K with LocalRestoreFrame
+        return DirectState(CESKState.with_program(
+            effect.sub_program, merged_env, store,
+            [local_frame] + list(ctx.k)
+        ))
 
     if isinstance(effect, ResultSafeEffect):
         # Use user-space pattern instead of SafeFrame
