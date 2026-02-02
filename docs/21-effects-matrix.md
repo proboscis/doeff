@@ -6,9 +6,9 @@ This document provides a comprehensive overview of all effects defined in doeff,
 
 | Status | Meaning |
 |--------|---------|
-| Supported | Handler registered in `default_handlers()`, tested |
-| Intercepted | Runtime intercepts effect directly (async handling) |
-| Sequential | Runs sequentially in sync runtimes |
+| Supported | Handler in `sync_handlers_preset`/`async_handlers_preset`, tested |
+| Intercepted | Runner intercepts effect directly (async handling) |
+| Sequential | Runs sequentially in sync_run |
 
 ## Core Effects (Reader/State/Writer)
 
@@ -24,14 +24,21 @@ This document provides a comprehensive overview of all effects defined in doeff,
 
 ### Ask Lazy Program Evaluation
 
-When you pass a `Program` as the default value to `Ask`, it is evaluated lazily only if the key is missing. The result is cached for subsequent accesses within the same execution:
+When an environment value is a `Program`, it is evaluated lazily on first `Ask` access. The result is cached for subsequent accesses within the same execution:
 
 ```python
 @do
-def with_lazy_default():
-    # expensive_computation() only runs if "config" is missing
-    config = yield Ask("config", default=expensive_computation())
+def use_config():
+    # If env["config"] is a Program, it runs lazily here
+    config = yield Ask("config")
     return config
+
+# Pass a Program as env value - evaluated lazily on first Ask
+result = sync_run(
+    use_config(),
+    sync_handlers_preset,
+    env={"config": expensive_computation()}  # Program, not value
+)
 ```
 
 See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
@@ -152,25 +159,24 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 | `GraphSnapshotEffect` | `Snapshot()` | `graph.py` | Supported | Supported | Supported | Yes |
 | `GraphCaptureEffect` | `CaptureGraph(program)` | `graph.py` | Supported | Supported | Supported | Yes |
 
-## Runtime Comparison
+## Execution Function Comparison
 
-| Runtime | Location | Status | Time Handling | Concurrency |
-|---------|----------|--------|---------------|-------------|
-| `AsyncRuntime` | `cesk/runtime/async_.py` | **Primary** | Real async (`asyncio.sleep`) | Parallel (asyncio) |
-| `SyncRuntime` | `cesk/runtime/sync.py` | Active | Real blocking + timer threads | Cooperative scheduler |
-| `SimulationRuntime` | `cesk/runtime/simulation.py` | Active | Simulated (instant) | Cooperative scheduler |
+| Function | Time Handling | Concurrency |
+|----------|---------------|-------------|
+| `async_run` | Real async (`asyncio.sleep`) | Parallel (asyncio) |
+| `sync_run` | Real blocking + timer threads | Cooperative scheduler |
 
-### Runtime Selection Guide
+### Selection Guide
 
-| Use Case | Recommended Runtime |
-|----------|---------------------|
-| Production async code | `AsyncRuntime` |
-| True parallel I/O | `AsyncRuntime` |
-| Python coroutine interop (`Await`) | `AsyncRuntime` |
-| Scripts, CLI tools | `SyncRuntime` |
-| Concurrent tasks without asyncio | `SyncRuntime` |
-| Testing with controlled time | `SimulationRuntime` |
-| Deterministic concurrent testing | `SyncRuntime` or `SimulationRuntime` |
+| Use Case | Recommended |
+|----------|-------------|
+| Production async code | `async_run` |
+| True parallel I/O | `async_run` |
+| Python coroutine interop (`Await`) | `async_run` |
+| Scripts, CLI tools | `sync_run` |
+| Concurrent tasks without asyncio | `sync_run` |
+| Testing with controlled time | `sync_run` with `__current_time__` in store |
+| Deterministic concurrent testing | `sync_run` |
 
 ## Handler Registration
 
@@ -186,13 +192,17 @@ result = sync_run(my_program(), sync_handlers_preset)
 Custom handlers can be prepended to presets:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import do, sync_run, sync_handlers_preset
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
-# Custom handler function
-def my_handler(effect, k, env, store):
+@do
+def my_handler(effect, ctx: HandlerContext):
     if isinstance(effect, MyEffect):
-        return Program.pure(handle_my_effect(effect))
-    return None  # Not handled
+        return CESKState.with_value(handle_my_effect(effect), ctx.env, ctx.store, ctx.k)
+    # Forward unhandled effects
+    result = yield effect
+    return result
 
 # Prepend custom handler to preset
 handlers = [my_handler, *sync_handlers_preset]
