@@ -22,11 +22,13 @@ If you think you need a new handler that produces PythonAsyncSyntaxEscape:
     # RIGHT - block directly
     result = blocking_call()  # next(gen) blocks until this returns
 
-EFFECTS HANDLED
----------------
+EFFECT HANDLED
+--------------
 - FutureAwaitEffect: yield Await(coroutine)
-- DelayEffect: yield Delay(seconds)
-- WaitUntilEffect: yield WaitUntil(datetime)
+
+Other time-based effects (Delay, WaitUntil) should be implemented via Await,
+not handled directly here. The current implementation handles them for backwards
+compatibility but this should be migrated.
 
 For sync_run, use threaded_asyncio_handler instead, which handles these effects
 by running them in a background asyncio thread (no escape needed).
@@ -53,17 +55,18 @@ if TYPE_CHECKING:
 
 
 def python_async_syntax_escape_handler(effect: EffectBase, ctx: "HandlerContext"):
-    """Convert async effects to PythonAsyncSyntaxEscape for async_run.
+    """Convert Await effect to PythonAsyncSyntaxEscape for async_run.
 
     !! SOLE PRODUCER OF PythonAsyncSyntaxEscape !!
 
     This is the ONLY handler that may produce PythonAsyncSyntaxEscape.
     Do not create additional handlers that produce this type.
 
-    Handled effects:
+    Handled effect:
     - FutureAwaitEffect → escape with awaitable
-    - DelayEffect → escape with asyncio.sleep coroutine
-    - WaitUntilEffect → escape with sleep until target time
+
+    Note: DelayEffect and WaitUntilEffect are handled here for backwards
+    compatibility, but should be migrated to use Await internally.
 
     All other effects are forwarded to outer handlers.
 
