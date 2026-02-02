@@ -314,10 +314,20 @@ def _sync_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
                 "Deadlock: waiting for external promise but no completion received"
             )
 
+        if isinstance(result, PythonAsyncSyntaxEscape):
+            raise TypeError(
+                "sync_run received PythonAsyncSyntaxEscape, which requires async/await. "
+                "This typically means python_async_syntax_escape_handler is in your handler stack, "
+                "but it is only compatible with async_run.\n\n"
+                "To fix this, either:\n"
+                "  1. Use async_run instead of sync_run\n"
+                "  2. Use sync_handlers_preset (which includes sync_await_handler)\n"
+                "  3. Replace python_async_syntax_escape_handler with sync_await_handler"
+            )
+
         raise RuntimeError(
             f"Unexpected step result: {type(result).__name__}. "
-            f"sync_run only handles Done, Failed, and CESKState. "
-            f"For async effects, use handlers that handle Await directly."
+            f"sync_run only handles Done, Failed, and CESKState."
         )
 
 
