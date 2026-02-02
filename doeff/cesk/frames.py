@@ -383,6 +383,51 @@ class LocalRestoreFrame:
         return CESKState.with_error(error, self.saved_env, store, k_rest)
 
 
+@dataclass(frozen=True)
+class ListenCaptureFrame:
+    """Capture log entries from a Listen scope.
+
+    When a Listen effect runs its sub_program, this frame is pushed to
+    track the starting position in __log__. When the sub_program completes,
+    the new log entries are extracted and wrapped in a ListenResult.
+
+    On error, the error propagates without capturing logs (per spec).
+    """
+
+    log_start_index: int  # Position in __log__ when Listen started
+
+    def on_value(
+        self,
+        value: Any,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> "CESKState":
+        """Extract captured logs and wrap in ListenResult."""
+        from doeff._types_internal import ListenResult
+        from doeff.cesk.state import CESKState
+        from doeff.utils import BoundedLog
+
+        # Get logs added since Listen started
+        full_log = store.get("__log__", [])
+        captured = full_log[self.log_start_index:]
+
+        result = ListenResult(value=value, log=BoundedLog(captured))
+        return CESKState.with_value(result, env, store, k_rest)
+
+    def on_error(
+        self,
+        error: BaseException,
+        env: Environment,
+        store: Store,
+        k_rest: Kontinuation,
+    ) -> "CESKState":
+        """On error, propagate without capturing logs."""
+        from doeff.cesk.state import CESKState
+
+        return CESKState.with_error(error, env, store, k_rest)
+
+
 # ============================================
 # Kontinuation Type
 # ============================================
@@ -398,6 +443,8 @@ __all__ = [
     "GatherFrame",
     "GatherWaiterFrame",
     "Kontinuation",
+    "ListenCaptureFrame",
+    "LocalRestoreFrame",
     "RaceFrame",
     "RaceWaiterFrame",
     "ReturnFrame",
