@@ -240,35 +240,6 @@ class _SchedulerSuspendForIO(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _SchedulerAddPendingIO(EffectBase):
-    """Add a task to the pending I/O list."""
-    task_id: Any
-    awaitable: Any
-    k: Any
-    store_snapshot: dict[str, Any]
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerGetPendingIO(EffectBase):
-    """Get all pending I/O tasks. Returns dict[task_id, (awaitable, k, store)]."""
-    pass
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerRemovePendingIO(EffectBase):
-    """Remove a task from pending I/O after completion."""
-    task_id: Any
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerResumePendingIO(EffectBase):
-    """Resume a pending I/O task with a value or error."""
-    task_id: Any
-    value: Any = None
-    error: BaseException | None = None
-
-
-@dataclass(frozen=True, kw_only=True)
 class _AsyncEscapeIntercepted(EffectBase):
     """Notify handler that a PythonAsyncSyntaxEscape is bubbling through.
     
@@ -300,52 +271,40 @@ UpdateTaskStore = _SchedulerUpdateTaskStore
 SetTaskSuspended = _SchedulerSetTaskSuspended
 TaskCompletedEffect = _SchedulerTaskCompleted
 SuspendForIOEffect = _SchedulerSuspendForIO
-AddPendingIO = _SchedulerAddPendingIO
-GetPendingIO = _SchedulerGetPendingIO
-RemovePendingIO = _SchedulerRemovePendingIO
-ResumePendingIO = _SchedulerResumePendingIO
 GetTaskResult = _SchedulerGetTaskResult
 
 
 __all__ = [
     # New names (preferred)
     "_AsyncEscapeIntercepted",
-    "_SchedulerAddPendingIO",
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
     "_SchedulerCreateTaskHandle",
     "_SchedulerDequeueTask",
     "_SchedulerEnqueueTask",
     "_SchedulerGetCurrentTaskId",
-    "_SchedulerGetPendingIO",
     "_SchedulerGetTaskResult",
     "_SchedulerGetTaskStore",
     "_SchedulerIsTaskDone",
     "_SchedulerQueueEmpty",
     "_SchedulerRegisterWaiter",
-    "_SchedulerRemovePendingIO",
-    "_SchedulerResumePendingIO",
     "_SchedulerSetTaskSuspended",
     "_SchedulerSuspendForIO",
     "_SchedulerTaskComplete",
     "_SchedulerTaskCompleted",
     "_SchedulerUpdateTaskStore",
     # Backwards compatibility aliases (deprecated)
-    "AddPendingIO",
     "CancelTask",
     "CreatePromiseHandle",
     "CreateTaskHandle",
     "GetCurrentTaskId",
     "GetCurrentTaskStore",
-    "GetPendingIO",
     "GetTaskResult",
     "IsTaskDone",
     "QueueAdd",
     "QueueIsEmpty",
     "QueuePop",
     "RegisterWaiter",
-    "RemovePendingIO",
-    "ResumePendingIO",
     "SetTaskSuspended",
     "SuspendForIOEffect",
     "TaskComplete",
