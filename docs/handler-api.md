@@ -6,17 +6,13 @@ This document provides comprehensive documentation for implementing custom effec
 
 - [Overview](#overview)
 - [Handler Signature](#handler-signature)
-- [FrameResult Types](#frameresult-types)
-- [Request Types](#request-types)
-- [State Types](#state-types)
-  - [TaskState](#taskstate)
-  - [Store](#store)
-  - [Environment](#environment)
+- [HandlerContext](#handlercontext)
+- [Return Values](#return-values)
 - [Registering Custom Handlers](#registering-custom-handlers)
 - [Examples](#examples)
   - [Simple Sync Handler](#simple-sync-handler)
   - [State-Modifying Handler](#state-modifying-handler)
-  - [Sub-program Handler](#sub-program-handler)
+  - [Forwarding Unhandled Effects](#forwarding-unhandled-effects)
   - [Error-Producing Handler](#error-producing-handler)
 - [Migration Guide](#migration-guide)
 - [Best Practices](#best-practices)
@@ -25,28 +21,24 @@ This document provides comprehensive documentation for implementing custom effec
 
 ## Overview
 
-Effect handlers in doeff are functions that process specific effect types and return a `FrameResult` indicating how execution should continue. Handlers are registered by effect type and invoked by the CESK interpreter when that effect is encountered.
+Effect handlers in doeff are `@do` functions that process effects and return `CESKState` or plain values. Handlers are stacked from outermost to innermost, with effects bubbling up through the handler stack.
 
 ```python
-from doeff.cesk import default_handlers, ContinueValue
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
+from doeff import do
+from doeff._types_internal import EffectBase
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
-def handle_my_effect(
-    effect: MyEffect,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
-    # Process the effect
-    result = do_something(effect.data)
-    
-    # Return continuation
-    return ContinueValue(
-        value=result,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
-    )
+@do
+def my_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, MyEffect):
+        # Handle the effect - return CESKState
+        result = do_something(effect.data)
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
+
+    # Forward unhandled effects to outer handlers
+    result = yield effect
+    return result
 ```
 
 ---
@@ -56,291 +48,176 @@ def handle_my_effect(
 Every effect handler follows this signature:
 
 ```python
-def handle_xxx(
-    effect: EffectType,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult
+from doeff import do
+from doeff._types_internal import EffectBase
+from doeff.cesk.handler_frame import HandlerContext
+
+@do
+def my_handler(
+    effect: EffectBase,
+    ctx: HandlerContext,
+):
+    # Handle or forward the effect
+    ...
 ```
 
 ### Parameters
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `effect` | `EffectType` | The effect instance being handled |
-| `task_state` | `TaskState` | Current task's execution state (env, kontinuation, control, status) |
-| `store` | `Store` | Shared mutable state dictionary across all tasks |
+| `effect` | `EffectBase` | The effect instance being handled |
+| `ctx` | `HandlerContext` | Context with store, env, and continuations |
 
 ### Return Value
 
-Handlers must return a `FrameResult` - one of:
+Handlers return one of:
 
-- `ContinueValue` - Continue with a computed value
-- `ContinueError` - Propagate an error
-- `ContinueProgram` - Evaluate a sub-program
-- `ContinueGenerator` - Resume a suspended generator
-
----
-
-## FrameResult Types
-
-Import from `doeff.cesk.frames`:
-
-```python
-from doeff.cesk.frames import (
-    FrameResult,
-    ContinueValue,
-    ContinueError,
-    ContinueProgram,
-    ContinueGenerator,
-)
-```
-
-### ContinueValue
-
-Return an immediate value and continue execution.
-
-```python
-@dataclass(frozen=True)
-class ContinueValue:
-    value: Any           # The result value
-    env: Environment     # Environment to use (usually task_state.env)
-    store: Store         # Updated store (can be modified)
-    k: Kontinuation      # Continuation stack (usually task_state.kontinuation)
-```
-
-**Usage:**
-```python
-def handle_get_config(effect: GetConfigEffect, task_state: TaskState, store: Store) -> FrameResult:
-    config_value = store.get("config", {}).get(effect.key)
-    return ContinueValue(
-        value=config_value,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
-    )
-```
-
-### ContinueError
-
-Propagate an error through the continuation stack.
-
-```python
-@dataclass(frozen=True)
-class ContinueError:
-    error: BaseException         # The exception to propagate
-    env: Environment             # Environment to use
-    store: Store                 # Store at error point
-    k: Kontinuation              # Continuation stack
-    captured_traceback: Any | None = None  # Optional traceback capture
-```
-
-**Usage:**
-```python
-def handle_require(effect: RequireEffect, task_state: TaskState, store: Store) -> FrameResult:
-    if effect.key not in store:
-        return ContinueError(
-            error=KeyError(f"Required key not found: {effect.key!r}"),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
-        )
-    return ContinueValue(
-        value=store[effect.key],
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
-    )
-```
-
-### ContinueProgram
-
-Schedule a sub-program for evaluation. The result of the sub-program will be the handler's result.
-
-```python
-@dataclass(frozen=True)
-class ContinueProgram:
-    program: ProgramLike   # The program to evaluate
-    env: Environment       # Environment for the program
-    store: Store           # Store to use
-    k: Kontinuation        # Continuation stack (can add frames)
-```
-
-**Usage:**
-```python
-def handle_local(effect: LocalEffect, task_state: TaskState, store: Store) -> FrameResult:
-    # Create new environment with updates
-    new_env = task_state.env | FrozenDict(effect.env_update)
-    
-    # Push frame to restore original env after sub-program completes
-    return ContinueProgram(
-        program=effect.sub_program,
-        env=new_env,
-        store=store,
-        k=[LocalFrame(task_state.env)] + task_state.kontinuation,
-    )
-```
-
-### ContinueGenerator
-
-Resume a suspended generator (internal use, typically for ReturnFrame).
-
-```python
-@dataclass(frozen=True)
-class ContinueGenerator:
-    generator: Generator[Any, Any, Any]  # The generator to resume
-    send_value: Any | None               # Value to send (if not throwing)
-    throw_error: BaseException | None    # Error to throw (if not sending)
-    env: Environment                     # Environment to use
-    store: Store                         # Store to use
-    k: Kontinuation                      # Continuation stack
-    program_call: KleisliProgramCall | None = None  # Optional call info
-```
+- `CESKState` - Direct state with value, error, or program
+- Plain value - Automatically wrapped by the handler result frame
+- `ResumeK` - Switch to a different continuation (advanced)
 
 ---
 
-## Request Types
+## HandlerContext
 
-Request types are used when an effect requires runtime-level coordination (async I/O, task spawning, etc.). Import from `doeff.cesk.state`:
-
-```python
-from doeff.cesk.state import (
-    Request,
-    CreateTask,
-    CreateFuture,
-    ResolveFuture,
-    PerformIO,
-    AwaitExternal,
-    CreateSpawn,
-)
-```
-
-| Type | Description | Usage |
-|------|-------------|-------|
-| `PerformIO` | Execute a synchronous side-effectful action | `PerformIO(action=lambda: read_file())` |
-| `AwaitExternal` | Wait for an external awaitable (asyncio integration) | `AwaitExternal(awaitable=coro)` |
-| `CreateTask` | Spawn a new concurrent task from a program | `CreateTask(program=sub_program)` |
-| `CreateFuture` | Create a new unresolved future | `CreateFuture()` |
-| `ResolveFuture` | Resolve a future with a value | `ResolveFuture(future_id=fid, value=42)` |
-| `CreateSpawn` | Spawn a program on an external backend | `CreateSpawn(program=p, backend=backend)` |
-
-### Note on Request Handling
-
-Most effects return `FrameResult` directly. Request types are typically handled by the **runtime** (AsyncRuntime, SyncRuntime), not by effect handlers. If your handler needs async coordination, the runtime intercepts specific effect types before handler dispatch.
-
----
-
-## State Types
-
-### TaskState
-
-Per-task CESK execution state. Import from `doeff.cesk.state`:
+`HandlerContext` provides access to execution state:
 
 ```python
-from doeff.cesk.state import TaskState
+from doeff.cesk.handler_frame import HandlerContext
 
 @dataclass
-class TaskState:
-    control: Control           # Current computation state
-    env: Environment           # Immutable reader context (FrozenDict)
-    kontinuation: Kontinuation # Call stack (list of Frames)
-    status: TaskStatus         # Ready, Blocked, Requesting, or Done
+class HandlerContext:
+    store: Store           # Current store (mutable state dict)
+    env: Environment       # Current environment (FrozenDict)
+    delimited_k: Kontinuation  # Continuation up to this handler
+    handler_depth: int     # Depth in handler stack (0 = outermost)
+    outer_k: Kontinuation  # Continuation beyond this handler
+
+    @property
+    def k(self) -> Kontinuation:
+        """Full continuation: delimited_k + outer_k."""
+        return list(self.delimited_k) + list(self.outer_k)
 ```
 
-**Key Properties:**
+### Key Properties
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `control` | `Control` | Current state: `Value`, `Error`, `EffectControl`, or `ProgramControl` |
-| `env` | `Environment` | Immutable key-value bindings (provided via `Ask` effect) |
-| `kontinuation` | `Kontinuation` | Stack of continuation frames |
-| `status` | `TaskStatus` | Task execution status |
+| `store` | `dict[str, Any]` | Shared mutable state across all tasks |
+| `env` | `FrozenDict` | Immutable environment (reader context) |
+| `k` | `list[Frame]` | Full continuation stack |
+| `delimited_k` | `list[Frame]` | Continuation up to this handler only |
+| `handler_depth` | `int` | Nesting depth (0 = outermost handler) |
 
-**TaskStatus Types:**
-
-```python
-from doeff.cesk.state import Ready, Blocked, Requesting, Done as TaskDone
-
-Ready(resume_value=None)     # Task ready to run
-Blocked(condition=...)       # Waiting for condition (TimeCondition, FutureCondition, etc.)
-Requesting(request=...)      # Needs runtime operation
-TaskDone(result=Ok(value))   # Completed successfully
-TaskDone(result=Err(error))  # Completed with error
-```
-
-### Store
-
-Shared mutable state dictionary across all tasks. Type alias for `dict[str, Any]`:
-
-```python
-from doeff.cesk.types import Store
-
-store: Store = {}
-```
-
-**Reserved Keys:**
+### Reserved Store Keys
 
 | Key | Description |
 |-----|-------------|
-| `__log__` | Accumulated `Tell` messages (list) |
-| `__memo__` | Memoization cache |
+| `__log__` | Accumulated `Tell`/`Log` messages (list) |
 | `__cache_storage__` | Cache effect storage |
-| `__dispatcher__` | Event dispatcher |
-| `__current_time__` | Simulated current time (SimulationRuntime) |
+| `__current_time__` | Simulated current time |
 | `__graph__` | Graph tracking data |
 | `__ask_lazy_cache__` | Lazy `Ask` evaluation cache |
 
-### Environment
+---
 
-Immutable mapping for reader-style context. Type alias for `FrozenDict[Any, Any]`:
+## Return Values
+
+### CESKState
+
+The primary way to return from a handler:
 
 ```python
-from doeff.cesk.types import Environment, empty_environment
-from doeff._vendor import FrozenDict
+from doeff.cesk.state import CESKState
 
-env: Environment = FrozenDict({"db": database, "config": config})
+# Return a value
+return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
 
-# Extend environment (returns new FrozenDict)
-new_env = env | FrozenDict({"extra": value})
+# Return an error
+return CESKState.with_error(exception, ctx.env, ctx.store, ctx.k)
+
+# Return a program to evaluate
+return CESKState.with_program(sub_program, ctx.env, ctx.store, ctx.k)
+```
+
+### Plain Values
+
+When you return a plain value (not `CESKState`), the handler result frame automatically wraps it:
+
+```python
+@do
+def my_handler(effect, ctx):
+    if isinstance(effect, MyEffect):
+        return CESKState.with_value(42, ctx.env, ctx.store, ctx.k)
+
+    # Forward and return plain value
+    result = yield effect
+    return result  # Plain value - automatically handled
+```
+
+### ResumeK (Advanced)
+
+For advanced control flow, use `ResumeK` to switch continuations:
+
+```python
+from doeff.cesk.handler_frame import ResumeK
+
+return ResumeK(
+    k=different_continuation,
+    value=some_value,
+    env=ctx.env,
+    store=ctx.store,
+)
 ```
 
 ---
 
 ## Registering Custom Handlers
 
-Extend the default handler registry with your custom handlers:
+Custom handlers are added to the handler list when calling `sync_run` or `async_run`. Handlers are stacked from outermost to innermost:
 
 ```python
-from doeff.cesk.handlers import default_handlers
+from doeff import sync_run, sync_handlers_preset, do
+from doeff._types_internal import EffectBase
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
-# Get the default handler mapping
-handlers = default_handlers()
+@do
+def my_custom_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, MyCustomEffect):
+        result = handle_my_effect(effect)
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
 
-# Register your custom handler
-handlers[MyCustomEffect] = handle_my_custom_effect
+    # Forward unhandled effects
+    result = yield effect
+    return result
 
-# Use custom handlers with sync_run
-from doeff import sync_run
-
-# Create handler preset with custom handler
-custom_preset = list(handlers.values())
-result = sync_run(my_program(), custom_preset)
+# Prepend custom handler to preset (outermost handlers first)
+handlers = [my_custom_handler, *sync_handlers_preset]
+result = sync_run(my_program(), handlers)
 ```
 
-### Handler Registry Structure
+### Handler Preset Structure
 
-The handler registry is a `dict[type, Handler]` mapping effect types to handler functions:
+The default presets include these handlers (outermost to innermost):
 
 ```python
-{
-    PureEffect: handle_pure,
-    AskEffect: handle_ask,
-    StateGetEffect: handle_state_get,
-    StatePutEffect: handle_state_put,
-    # ... your handlers
-    MyCustomEffect: handle_my_custom,
-}
+sync_handlers_preset = [
+    scheduler_state_handler,   # Task queue management
+    task_scheduler_handler,    # Spawn/Wait/Gather/Race
+    sync_await_handler,        # Await via background thread
+    core_handler,              # Get/Put/Ask/Log/etc.
+]
+
+async_handlers_preset = [
+    scheduler_state_handler,
+    task_scheduler_handler,
+    python_async_syntax_escape_handler,  # Async escape for await
+    core_handler,
+]
 ```
+
+Custom handlers should typically be prepended to handle specific effects before the defaults.
 
 ---
 
@@ -352,10 +229,10 @@ A handler that returns an immediate value without modifying state:
 
 ```python
 from dataclasses import dataclass
+from doeff import do
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
 
 @dataclass(frozen=True)
@@ -364,19 +241,16 @@ class GetEnvVar(EffectBase):
     name: str
 
 
-def handle_get_env_var(
-    effect: GetEnvVar,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
-    import os
-    value = os.environ.get(effect.name)
-    return ContinueValue(
-        value=value,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
-    )
+@do
+def env_var_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, GetEnvVar):
+        import os
+        value = os.environ.get(effect.name)
+        return CESKState.with_value(value, ctx.env, ctx.store, ctx.k)
+
+    # Forward unhandled effects
+    result = yield effect
+    return result
 ```
 
 ### State-Modifying Handler
@@ -385,10 +259,10 @@ A handler that updates the shared store:
 
 ```python
 from dataclasses import dataclass
+from doeff import do
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
 
 @dataclass(frozen=True)
@@ -398,104 +272,45 @@ class IncrementCounter(EffectBase):
     amount: int = 1
 
 
-def handle_increment_counter(
-    effect: IncrementCounter,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
-    counters = store.get("__counters__", {})
-    current = counters.get(effect.name, 0)
-    new_value = current + effect.amount
-    
-    # Create new store with updated counters
-    new_counters = {**counters, effect.name: new_value}
-    new_store = {**store, "__counters__": new_counters}
-    
-    return ContinueValue(
-        value=new_value,
-        env=task_state.env,
-        store=new_store,
-        k=task_state.kontinuation,
-    )
+@do
+def counter_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, IncrementCounter):
+        counters = ctx.store.get("__counters__", {})
+        current = counters.get(effect.name, 0)
+        new_value = current + effect.amount
+
+        # Create new store with updated counters
+        new_counters = {**counters, effect.name: new_value}
+        new_store = {**ctx.store, "__counters__": new_counters}
+
+        return CESKState.with_value(new_value, ctx.env, new_store, ctx.k)
+
+    # Forward unhandled effects
+    result = yield effect
+    return result
 ```
 
-### Sub-program Handler
+### Forwarding Unhandled Effects
 
-A handler that executes a sub-program and transforms its result:
+A key pattern is forwarding effects your handler doesn't handle:
 
 ```python
-from dataclasses import dataclass
-from typing import Callable, Any
-from doeff._types_internal import EffectBase
-from doeff.cesk.frames import (
-    ContinueProgram,
-    ContinueValue,
-    FrameResult,
-    Frame,
-    Kontinuation,
-)
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store, Environment
-from doeff.effects._program_types import ProgramLike
+@do
+def my_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, MyEffect):
+        # Handle this effect type
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
 
+    if isinstance(effect, AnotherEffect):
+        # Handle this effect type too
+        return CESKState.with_value(other_result, ctx.env, ctx.store, ctx.k)
 
-@dataclass(frozen=True)
-class WithTimeout(EffectBase):
-    """Run a sub-program with a timeout wrapper."""
-    program: ProgramLike
-    timeout_seconds: float
-
-
-@dataclass(frozen=True)
-class TimeoutFrame:
-    """Frame to track timeout context."""
-    timeout_seconds: float
-    saved_env: Environment
-    
-    def on_value(
-        self,
-        value: Any,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> FrameResult:
-        # Sub-program completed, wrap result
-        return ContinueValue(
-            value={"status": "completed", "value": value},
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
-    
-    def on_error(
-        self,
-        error: BaseException,
-        env: Environment,
-        store: Store,
-        k_rest: Kontinuation,
-    ) -> FrameResult:
-        from doeff.cesk.frames import ContinueError
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
-
-
-def handle_with_timeout(
-    effect: WithTimeout,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
-    # Push a timeout tracking frame and execute sub-program
-    return ContinueProgram(
-        program=effect.program,
-        env=task_state.env,
-        store=store,
-        k=[TimeoutFrame(effect.timeout_seconds, task_state.env)] + task_state.kontinuation,
-    )
+    # IMPORTANT: Forward all other effects to outer handlers
+    result = yield effect
+    return result
 ```
+
+If you don't forward unhandled effects, they will cause `UnhandledEffectError`.
 
 ### Error-Producing Handler
 
@@ -503,10 +318,10 @@ A handler that may produce errors:
 
 ```python
 from dataclasses import dataclass
+from doeff import do
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue, ContinueError, FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
 
 @dataclass(frozen=True)
@@ -516,111 +331,42 @@ class DivideEffect(EffectBase):
     denominator: float
 
 
-def handle_divide(
-    effect: DivideEffect,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
-    if effect.denominator == 0:
-        return ContinueError(
-            error=ZeroDivisionError("Cannot divide by zero"),
-            env=task_state.env,
-            store=store,
-            k=task_state.kontinuation,
-        )
-    
-    result = effect.numerator / effect.denominator
-    return ContinueValue(
-        value=result,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
-    )
+@do
+def divide_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, DivideEffect):
+        if effect.denominator == 0:
+            return CESKState.with_error(
+                ZeroDivisionError("Cannot divide by zero"),
+                ctx.env, ctx.store, ctx.k
+            )
+
+        result = effect.numerator / effect.denominator
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
+
+    # Forward unhandled effects
+    result = yield effect
+    return result
 ```
 
 ---
 
 ## Migration Guide
 
-### Handler Signature Changes
+### Handler Signature Changes (v1 → v2)
 
-The handler signature was simplified to use `TaskState` instead of separate parameters:
+The handler system has been completely redesigned:
 
-| Old Signature | New Signature |
-|---------------|---------------|
-| `def handler(effect, env, store, k, scheduler)` | `def handler(effect, task_state, store)` |
+| v1 (deprecated) | v2 (current) |
+|-----------------|--------------|
+| `def handler(effect, task_state, store)` | `@do def handler(effect, ctx: HandlerContext)` |
+| Return `ContinueValue`, `ContinueError`, etc. | Return `CESKState` or plain value |
+| `default_handlers()` dict | Handler list with presets |
 
-**Before (deprecated):**
-```python
-def my_handler(effect, env, store, k, scheduler):
-    return Resume(value, store)
-```
-
-**After:**
+**v1 (deprecated):**
 ```python
 from doeff.cesk.frames import ContinueValue
 
 def my_handler(effect, task_state, store):
-    return ContinueValue(
-        value=value,
-        env=task_state.env,
-        store=store,
-        k=task_state.kontinuation,
-    )
-```
-
-### FrameResult Type Changes
-
-| Old Type | New Type |
-|----------|----------|
-| `Resume(value, store)` | `ContinueValue(value, env, store, k)` |
-| `Schedule(program, env, store, k)` | `ContinueProgram(program, env, store, k)` |
-| `AwaitPayload(coro)` | Use `PerformIO` or `AwaitExternal` request |
-| `HandlerResult` | `FrameResult` |
-
-### Import Changes
-
-| Old Import | New Import |
-|------------|------------|
-| `from doeff.runtime import ...` | `from doeff.cesk import ...` |
-| `from doeff.interpreter import ...` | `from doeff.cesk import ...` |
-| `from doeff.handler_result import Resume` | `from doeff.cesk.frames import ContinueValue` |
-
-### Complete Migration Example
-
-**Before:**
-```python
-from doeff.runtime import Resume, HandlerResult
-from doeff.types import EffectBase
-
-class MyEffect(EffectBase):
-    value: int
-
-def handle_my_effect(effect, env, store, k, scheduler) -> HandlerResult:
-    result = effect.value * 2
-    return Resume(result, store)
-```
-
-**After:**
-```python
-from dataclasses import dataclass
-from doeff._types_internal import EffectBase
-from doeff.cesk.frames import ContinueValue, FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
-
-
-@dataclass(frozen=True)
-class MyEffect(EffectBase):
-    value: int
-
-
-def handle_my_effect(
-    effect: MyEffect,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
-    result = effect.value * 2
     return ContinueValue(
         value=result,
         env=task_state.env,
@@ -629,130 +375,205 @@ def handle_my_effect(
     )
 ```
 
-### Migration Checklist
-
-- [ ] Update imports from `doeff.runtime` to `doeff.cesk`
-- [ ] Change handler signature from `(effect, env, store, k, scheduler)` to `(effect, task_state, store)`
-- [ ] Replace `Resume(value, store)` with `ContinueValue(value, env, store, k)`
-- [ ] Replace `Schedule(...)` with `ContinueProgram(...)`
-- [ ] Access `env` via `task_state.env` instead of parameter
-- [ ] Access `k` (kontinuation) via `task_state.kontinuation` instead of parameter
-- [ ] Update effect base class import to `from doeff._types_internal import EffectBase`
-- [ ] Register handlers using `default_handlers()` dictionary
-- [ ] Test handlers with the new runtime classes (SyncRuntime, AsyncRuntime, SimulationRuntime)
-
----
-
-## Best Practices
-
-### 1. Keep Handlers Pure When Possible
-
-Handlers should ideally be deterministic functions of their inputs. Side effects should be modeled as effects themselves:
-
+**v2 (current):**
 ```python
-# Good: Return computed value
-def handle_add(effect, task_state, store):
+from doeff import do
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
+
+@do
+def my_handler(effect, ctx: HandlerContext):
+    if isinstance(effect, MyEffect):
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
+
+    # Forward unhandled effects
+    result = yield effect
+    return result
+```
+
+### Return Type Changes
+
+| v1 Type | v2 Equivalent |
+|---------|---------------|
+| `ContinueValue(value, env, store, k)` | `CESKState.with_value(value, env, store, k)` |
+| `ContinueError(error, env, store, k)` | `CESKState.with_error(error, env, store, k)` |
+| `ContinueProgram(prog, env, store, k)` | `CESKState.with_program(prog, env, store, k)` |
+
+### Import Changes
+
+| Old Import | New Import |
+|------------|------------|
+| `from doeff.cesk.handlers import default_handlers` | Use `sync_handlers_preset` or `async_handlers_preset` |
+| `from doeff.cesk.state import TaskState` | `from doeff.cesk.handler_frame import HandlerContext` |
+| `from doeff.cesk.frames import ContinueValue` | `from doeff.cesk.state import CESKState` |
+
+### Complete Migration Example
+
+**v1 (deprecated):**
+```python
+from dataclasses import dataclass
+from doeff._types_internal import EffectBase
+from doeff.cesk.frames import ContinueValue
+from doeff.cesk.handlers import default_handlers
+from doeff.cesk.runtime import SyncRuntime
+
+@dataclass(frozen=True)
+class MyEffect(EffectBase):
+    value: int
+
+def handle_my_effect(effect, task_state, store):
+    result = effect.value * 2
     return ContinueValue(
-        value=effect.a + effect.b,
+        value=result,
         env=task_state.env,
         store=store,
         k=task_state.kontinuation,
     )
 
-# Avoid: Side effects in handler
-def handle_add_bad(effect, task_state, store):
-    print(f"Adding {effect.a} + {effect.b}")  # Side effect!
-    return ContinueValue(...)
+handlers = default_handlers()
+handlers[MyEffect] = handle_my_effect
+
+runtime = SyncRuntime(handlers=handlers)
+result = runtime.run(my_program())
 ```
 
-### 2. Don't Mutate Store In-Place
+**v2 (current):**
+```python
+from dataclasses import dataclass
+from doeff import do, sync_run, sync_handlers_preset
+from doeff._types_internal import EffectBase
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
-Always create a new store dictionary when modifying:
+@dataclass(frozen=True)
+class MyEffect(EffectBase):
+    value: int
+
+@do
+def my_effect_handler(effect, ctx: HandlerContext):
+    if isinstance(effect, MyEffect):
+        result = effect.value * 2
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
+
+    # Forward unhandled effects
+    result = yield effect
+    return result
+
+# Prepend custom handler to preset
+handlers = [my_effect_handler, *sync_handlers_preset]
+result = sync_run(my_program(), handlers)
+```
+
+### Migration Checklist
+
+- [ ] Add `@do` decorator to handler functions
+- [ ] Change signature from `(effect, task_state, store)` to `(effect, ctx: HandlerContext)`
+- [ ] Replace `ContinueValue(...)` with `CESKState.with_value(...)`
+- [ ] Replace `ContinueError(...)` with `CESKState.with_error(...)`
+- [ ] Access `env` via `ctx.env`, `store` via `ctx.store`, `k` via `ctx.k`
+- [ ] Add effect forwarding: `result = yield effect; return result`
+- [ ] Replace `default_handlers()` with `sync_handlers_preset` or `async_handlers_preset`
+- [ ] Replace `SyncRuntime(handlers=h).run(p)` with `sync_run(p, handlers)`
+- [ ] Replace `AsyncRuntime(handlers=h).run(p)` with `await async_run(p, handlers)`
+
+---
+
+## Best Practices
+
+### 1. Always Forward Unhandled Effects
+
+Every handler must forward effects it doesn't handle, or they'll cause `UnhandledEffectError`:
+
+```python
+@do
+def my_handler(effect, ctx):
+    if isinstance(effect, MyEffect):
+        # Handle this specific effect
+        return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
+
+    # CRITICAL: Forward all other effects
+    result = yield effect
+    return result
+```
+
+### 2. Keep Handlers Pure When Possible
+
+Handlers should ideally be deterministic functions of their inputs. Side effects should be modeled as effects themselves:
+
+```python
+# Good: Return computed value
+@do
+def handle_add(effect, ctx):
+    if isinstance(effect, AddEffect):
+        return CESKState.with_value(
+            effect.a + effect.b,
+            ctx.env, ctx.store, ctx.k
+        )
+    result = yield effect
+    return result
+
+# Avoid: Side effects in handler
+@do
+def handle_add_bad(effect, ctx):
+    if isinstance(effect, AddEffect):
+        print(f"Adding {effect.a} + {effect.b}")  # Side effect!
+        ...
+```
+
+### 3. Don't Mutate Store In-Place
+
+Create a new store dictionary when modifying:
 
 ```python
 # Good: Create new store
-new_store = {**store, "key": new_value}
-return ContinueValue(..., store=new_store, ...)
+new_store = {**ctx.store, "key": new_value}
+return CESKState.with_value(result, ctx.env, new_store, ctx.k)
 
-# Bad: Mutate in place
-store["key"] = new_value  # Don't do this!
-return ContinueValue(..., store=store, ...)
+# Avoid: Mutate in place (can cause subtle bugs)
+ctx.store["key"] = new_value  # Don't do this!
 ```
 
-### 3. Preserve Environment Unless Intentionally Changing Scope
+### 4. Preserve Environment Unless Intentionally Changing Scope
 
-Most handlers should pass through `task_state.env` unchanged:
+Most handlers should pass through `ctx.env` unchanged:
 
 ```python
-return ContinueValue(
-    value=result,
-    env=task_state.env,  # Preserve environment
-    store=store,
-    k=task_state.kontinuation,
-)
+return CESKState.with_value(result, ctx.env, ctx.store, ctx.k)
 ```
 
-Only modify `env` for scoping effects like `Local`:
-
-```python
-new_env = task_state.env | FrozenDict({"new_binding": value})
-return ContinueProgram(
-    program=sub_program,
-    env=new_env,  # Modified environment for sub-program
-    ...
-)
-```
-
-### 4. Use Custom Frames for Complex Control Flow
-
-When your handler needs to intercept the result of a sub-program, define a custom Frame:
-
-```python
-@dataclass(frozen=True)
-class MyCustomFrame:
-    saved_env: Environment
-    
-    def on_value(self, value, env, store, k_rest) -> FrameResult:
-        # Transform or wrap the sub-program's result
-        return ContinueValue(
-            value=transform(value),
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
-    
-    def on_error(self, error, env, store, k_rest) -> FrameResult:
-        # Handle or propagate errors
-        return ContinueError(
-            error=error,
-            env=self.saved_env,
-            store=store,
-            k=k_rest,
-        )
-```
+Only modify `env` for scoping effects like `Local`.
 
 ### 5. Type Your Handlers
 
-Use proper type annotations for better IDE support and documentation:
+Use proper type annotations for better IDE support:
 
 ```python
-from doeff.cesk.frames import FrameResult
-from doeff.cesk.state import TaskState
-from doeff.cesk.types import Store
+from doeff import do
+from doeff._types_internal import EffectBase
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.state import CESKState
 
-def handle_my_effect(
-    effect: MyEffect,
-    task_state: TaskState,
-    store: Store,
-) -> FrameResult:
+@do
+def my_handler(effect: EffectBase, ctx: HandlerContext):
     ...
 ```
+
+### 6. Handler Order Matters
+
+Handlers are stacked outermost to innermost. Effects bubble from inner to outer until handled:
+
+```python
+# Effect flow: core_handler → ... → scheduler_handler → your_handler
+handlers = [your_handler, *sync_handlers_preset]
+```
+
+Put your custom handler first if you want it to intercept effects before the defaults.
 
 ---
 
 ## See Also
 
-- [Runtime Variants](20-runtime-scheduler.md) - SyncRuntime, AsyncRuntime, SimulationRuntime
+- [Runtime and Execution Model](20-runtime-scheduler.md) - sync_run, async_run, handler presets
 - [Effects Matrix](21-effects-matrix.md) - Complete effect support reference
 - [Error Handling](05-error-handling.md) - Safe effect and error propagation
 - [Core Concepts](02-core-concepts.md) - Programs and Effects overview

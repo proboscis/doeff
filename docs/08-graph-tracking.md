@@ -68,7 +68,7 @@ result = sync_run(traced_program(), sync_handlers_preset)
 ### Export to HTML
 
 ```python
-from doeff import graph_to_html, write_graph_html, sync_run, sync_handlers_preset
+from doeff import graph_to_html, sync_run, sync_handlers_preset
 
 # Run program with graph tracking
 result = sync_run(my_program(), sync_handlers_preset)
@@ -76,7 +76,9 @@ result = sync_run(my_program(), sync_handlers_preset)
 # Get graph from raw_store
 graph = result.raw_store.get("__graph__")
 if graph:
-    html = await graph_to_html(graph)
+    # graph_to_html is a @do function, run it to get HTML
+    html_result = sync_run(graph_to_html(graph), sync_handlers_preset)
+    html = html_result.value
 ```
 
 ### Getting the Graph
