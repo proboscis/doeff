@@ -193,7 +193,7 @@ def initialize_state():
 
 ### Modify - Transform State
 
-`Modify(key, func)` applies a function to current state:
+`Modify(key, func)` applies a function to current state and returns the new value:
 
 ```python
 @do
@@ -203,6 +203,8 @@ def increment_counter():
     yield Log(f"Counter now: {new_value}")
     return new_value
 ```
+
+**Returns:** The new (transformed) value after applying the function.
 
 **Equivalent to:**
 ```python

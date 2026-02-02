@@ -163,7 +163,7 @@ def background_work():
     other_result = yield quick_operation()
     
     # Wait for background task to complete
-    background_result = yield task.join()
+    background_result = yield Wait(task)
     
     return (other_result, background_result)
 ```
@@ -179,7 +179,7 @@ def spawn_with_backend():
         preferred_backend="process"  # "thread", "process", or "ray"
     )
     
-    result = yield task.join()
+    result = yield Wait(task)
     return result
 ```
 
@@ -198,7 +198,7 @@ def distributed_spawn():
         memory=8 * 1024 * 1024 * 1024  # 8GB
     )
     
-    result = yield task.join()
+    result = yield Wait(task)
     return result
 ```
 
@@ -213,9 +213,9 @@ def parallel_background_work():
     task3 = yield Spawn(computation_3())
     
     # Wait for all to complete
-    result1 = yield task1.join()
-    result2 = yield task2.join()
-    result3 = yield task3.join()
+    result1 = yield Wait(task1)
+    result2 = yield Wait(task2)
+    result3 = yield Wait(task3)
     
     return [result1, result2, result3]
 ```
@@ -236,7 +236,7 @@ def comparison():
     # Spawn: non-blocking, can do work in between
     task = yield Spawn(slow_prog())
     yield do_other_work()  # Runs while task executes
-    result = yield task.join()  # Now wait for it
+    result = yield Wait(task)  # Now wait for it
 ```
 
 ## Combining Advanced Effects
