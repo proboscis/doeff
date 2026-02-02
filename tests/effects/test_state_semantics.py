@@ -280,20 +280,18 @@ class TestSafeStateComposition:
 class TestGatherStateComposition:
     """Tests for Gather + State composition rules.
 
-    Note: These tests use AsyncRuntime directly for true parallel behavior.
+    Per SPEC-EFF-002-state.md: Spawned tasks get isolated store snapshots.
     """
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="AsyncRuntime removed - needs migration to async_run API")
-    async def test_gather_shared_store_semantics(self) -> None:
-        """All Gather branches share the same store.
+    async def test_gather_isolated_store_semantics(self) -> None:
+        """Each Gather branch has isolated store snapshot.
 
         See SPEC-EFF-002-state.md Composition Rules: Gather + Put.
+        Spawned tasks receive a snapshot of the store at spawn time.
         """
-        from doeff import Gather
-        from doeff.cesk.runtime.async_ import AsyncRuntime
-
-        runtime = AsyncRuntime()
+        from doeff.cesk.run import async_handlers_preset, async_run
+        from doeff.effects import Gather
 
         @do
         def increment() -> Program[int]:
@@ -311,19 +309,19 @@ class TestGatherStateComposition:
             final = yield Get("counter")
             return (results, final)
 
-        results, final = await runtime.run_and_unwrap(program())
+        result = await async_run(program(), async_handlers_preset)
+        results, final = result.value
 
-        assert final == 0
+        # Each task sees isolated snapshot: counter=0
         assert results == [0, 0, 0]
+        # Parent store unchanged (isolated from children)
+        assert final == 0
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="AsyncRuntime removed - needs migration to async_run API")
-    async def test_gather_state_visible_across_branches(self) -> None:
-        """State changes in one Gather branch are visible to others."""
-        from doeff import Delay, Gather
-        from doeff.cesk.runtime.async_ import AsyncRuntime
-
-        runtime = AsyncRuntime()
+    async def test_gather_state_isolated_across_branches(self) -> None:
+        """State changes in one Gather branch are NOT visible to others (isolated)."""
+        from doeff.cesk.run import async_handlers_preset, async_run
+        from doeff.effects import Delay, Gather
 
         @do
         def writer() -> Program[str]:
@@ -345,7 +343,10 @@ class TestGatherStateComposition:
             final = yield Get("message")
             return (results, final)
 
-        results, final = await runtime.run_and_unwrap(program())
+        result = await async_run(program(), async_handlers_preset)
+        results, final = result.value
 
-        assert final == "initial"
+        # Reader sees its own snapshot ("initial"), not writer's changes
         assert results == ["writer done", "initial"]
+        # Parent store unchanged
+        assert final == "initial"
