@@ -2,7 +2,7 @@
 # ===========================
 # Centralized commands for development, testing, and linting.
 
-.PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-doeff lint-packages \
+.PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
         test test-unit test-e2e test-packages test-all format check pre-commit-install clean
 
 # Default target
@@ -19,6 +19,7 @@ help:
 	@echo "  make lint-ruff         Run ruff linter"
 	@echo "  make lint-pyright      Run pyright type checker"
 	@echo "  make lint-semgrep      Run semgrep architectural rules"
+	@echo "  make lint-semgrep-docs Check docs for deprecated API patterns"
 	@echo "  make lint-doeff        Run doeff-linter (Rust-based)"
 	@echo "  make lint-packages     Run lint in all subpackages with Makefiles"
 	@echo ""
@@ -71,6 +72,16 @@ lint-semgrep:
 	@echo "Running semgrep architectural rules..."
 	@if command -v semgrep >/dev/null 2>&1; then \
 		semgrep --config .semgrep.yaml doeff/ packages/ --error; \
+	else \
+		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
+		exit 1; \
+	fi
+
+# Semgrep: Check docs for deprecated Runtime/Runner API usage
+lint-semgrep-docs:
+	@echo "Running semgrep on documentation..."
+	@if command -v semgrep >/dev/null 2>&1; then \
+		semgrep --config .semgrep.yaml docs/ README.md --error; \
 	else \
 		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
 		exit 1; \
