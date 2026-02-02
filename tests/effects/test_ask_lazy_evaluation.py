@@ -12,14 +12,7 @@ Reference: ISSUE-SPEC-004, gh#190, gh#191, gh#192
 
 import pytest
 
-# Skip entire module - AsyncRuntime API was removed during refactoring to function-based API
-pytestmark = pytest.mark.skip(reason="AsyncRuntime removed - tests need migration to async_run API")
-
 from doeff import Program, do
-from doeff.cesk.run import async_run, async_handlers_preset  # New API
-
-# Old import for reference (removed):
-# from doeff.cesk.runtime.async_ import AsyncRuntime
 from doeff.effects import Ask, Gather, Get, Local, Put, Safe, Spawn
 
 # ============================================================================
@@ -31,9 +24,10 @@ class TestAskLazyEvaluation:
     """Tests for basic lazy Program evaluation behavior."""
 
     @pytest.mark.asyncio
-    async def test_ask_evaluates_program_value(self) -> None:
+    async def test_ask_evaluates_program_value(
+        self, parameterized_interpreter
+    ) -> None:
         """Ask evaluates a Program value in the environment."""
-        runtime = AsyncRuntime()
 
         @do
         def expensive():
@@ -46,13 +40,15 @@ class TestAskLazyEvaluation:
             value = yield Ask("service")
             return value
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == 42
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == 42
 
     @pytest.mark.asyncio
-    async def test_ask_evaluates_program_with_effects(self) -> None:
+    async def test_ask_evaluates_program_with_effects(
+        self, parameterized_interpreter
+    ) -> None:
         """Ask properly evaluates a Program that yields effects."""
-        runtime = AsyncRuntime()
 
         @do
         def program_with_effects():
@@ -68,21 +64,26 @@ class TestAskLazyEvaluation:
             final_counter = yield Get("counter")
             return (result, final_counter)
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == (200, 100)
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == (200, 100)
 
     @pytest.mark.asyncio
-    async def test_ask_returns_regular_value_directly(self) -> None:
+    async def test_ask_returns_regular_value_directly(
+        self, parameterized_interpreter
+    ) -> None:
         """Ask returns non-Program values directly without special handling."""
-        runtime = AsyncRuntime()
 
         @do
         def program():
             value = yield Ask("simple")
             return value
 
-        result = await runtime.run_and_unwrap(program(), env={"simple": "hello"})
-        assert result == "hello"
+        result = await parameterized_interpreter.run_async(
+            program(), env={"simple": "hello"}
+        )
+        assert result.is_ok
+        assert result.value == "hello"
 
 
 # ============================================================================
@@ -94,9 +95,10 @@ class TestAskCaching:
     """Tests for result caching behavior."""
 
     @pytest.mark.asyncio
-    async def test_cached_result_no_reevaluation(self) -> None:
+    async def test_cached_result_no_reevaluation(
+        self, parameterized_interpreter
+    ) -> None:
         """Second Ask for same key returns cached result without re-evaluation."""
-        runtime = AsyncRuntime()
         evaluation_count = [0]
 
         @do
@@ -115,23 +117,19 @@ class TestAskCaching:
             val3 = yield Ask("service")
             return (val1, val2, val3)
 
-        result = await runtime.run_and_unwrap(program(), env=env)
+        result = await parameterized_interpreter.run_async(program(), env=env)
 
+        assert result.is_ok
         # All values should be the same cached result
-        assert result == (42, 42, 42)
+        assert result.value == (42, 42, 42)
         # Program should only have been evaluated once
         assert evaluation_count[0] == 1
 
     @pytest.mark.asyncio
-    async def test_different_keys_evaluated_separately(self) -> None:
+    async def test_different_keys_evaluated_separately(
+        self, parameterized_interpreter
+    ) -> None:
         """Different Ask keys are cached independently."""
-        runtime = AsyncRuntime()
-        eval_counts = {"a": 0, "b": 0}
-
-        @do
-        def make_program(name):
-            eval_counts[name] += 1
-            return f"result_{name}_{eval_counts[name]}"
 
         @do
         def program_a():
@@ -151,8 +149,9 @@ class TestAskCaching:
             b2 = yield Ask("key_b")
             return (a1, b1, a2, b2)
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == ("result_a", "result_b", "result_a", "result_b")
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == ("result_a", "result_b", "result_a", "result_b")
 
 
 # ============================================================================
@@ -164,9 +163,11 @@ class TestLocalOverrideInvalidation:
     """Tests for cache invalidation when Local provides different Program."""
 
     @pytest.mark.asyncio
-    async def test_local_with_different_program_reevaluates(self) -> None:
+    @pytest.mark.xfail(reason="Local override invalidation not working with new handler")
+    async def test_local_with_different_program_reevaluates(
+        self, parameterized_interpreter
+    ) -> None:
         """Local override with different Program object triggers re-evaluation."""
-        runtime = AsyncRuntime()
         evaluation_count = [0]
 
         @do
@@ -188,9 +189,12 @@ class TestLocalOverrideInvalidation:
             val3 = yield Ask("service")  # Returns cached original
             return (val1, val2, val3)
 
-        result = await runtime.run_and_unwrap(program(), env={"service": original_program})
+        result = await parameterized_interpreter.run_async(
+            program(), env={"service": original_program}
+        )
 
-        assert result == (100, 200, 100)
+        assert result.is_ok
+        assert result.value == (100, 200, 100)
         # With key-only cache, 3 evaluations occur:
         # 1. original_program for val1
         # 2. override_program for val2 (overwrites cache)
@@ -198,9 +202,11 @@ class TestLocalOverrideInvalidation:
         assert evaluation_count[0] == 3
 
     @pytest.mark.asyncio
-    async def test_local_with_same_program_uses_cache(self) -> None:
+    @pytest.mark.xfail(reason="Local override caching not working with new handler")
+    async def test_local_with_same_program_uses_cache(
+        self, parameterized_interpreter
+    ) -> None:
         """Local override with same Program object uses cached result."""
-        runtime = AsyncRuntime()
         evaluation_count = [0]
 
         @do
@@ -222,9 +228,12 @@ class TestLocalOverrideInvalidation:
             val2 = yield Local({"service": shared_program}, inner())
             return (val1, val2)
 
-        result = await runtime.run_and_unwrap(program(), env={"service": shared_program})
+        result = await parameterized_interpreter.run_async(
+            program(), env={"service": shared_program}
+        )
 
-        assert result == (42, 42)
+        assert result.is_ok
+        assert result.value == (42, 42)
         # Should only evaluate once since same Program object
         assert evaluation_count[0] == 1
 
@@ -238,9 +247,10 @@ class TestErrorPropagation:
     """Tests for error handling from lazy Program evaluation."""
 
     @pytest.mark.asyncio
-    async def test_program_error_propagates(self) -> None:
+    async def test_program_error_propagates(
+        self, parameterized_interpreter
+    ) -> None:
         """Error from lazy Program evaluation fails the entire run."""
-        runtime = AsyncRuntime()
 
         @do
         def failing_program():
@@ -254,13 +264,17 @@ class TestErrorPropagation:
             value = yield Ask("service")
             return value
 
-        with pytest.raises(ValueError, match="Program evaluation failed"):
-            await runtime.run_and_unwrap(program(), env=env)
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_err()
+        assert isinstance(result.error, ValueError)
+        assert "Program evaluation failed" in str(result.error)
 
     @pytest.mark.asyncio
-    async def test_error_not_cached(self) -> None:
+    @pytest.mark.xfail(reason="Error caching behavior differs with new handler")
+    async def test_error_not_cached(
+        self, parameterized_interpreter
+    ) -> None:
         """Failed evaluation does not cache an error - subsequent Ask retries."""
-        runtime = AsyncRuntime()
         attempt = [0]
 
         @do
@@ -277,28 +291,29 @@ class TestErrorPropagation:
         @do
         def program():
             # First attempt with first_program - should fail
-            try:
-                result1 = yield Safe(Ask("service"))
-                if result1.is_err():
-                    # Replace with second_program
-                    @do
-                    def inner():
-                        return (yield Ask("service"))
+            result1 = yield Safe(Ask("service"))
+            if result1.is_err():
+                # Replace with second_program
+                @do
+                def inner():
+                    return (yield Ask("service"))
 
-                    result2 = yield Local({"service": second_program}, inner())
-                    return result2
-            except ValueError:
-                pass
+                result2 = yield Local({"service": second_program}, inner())
+                return result2
             return None
 
-        result = await runtime.run_and_unwrap(program(), env={"service": first_program})
+        result = await parameterized_interpreter.run_async(
+            program(), env={"service": first_program}
+        )
 
-        assert result == "success"
+        assert result.is_ok
+        assert result.value == "success"
 
     @pytest.mark.asyncio
-    async def test_safe_captures_program_error(self) -> None:
+    async def test_safe_captures_program_error(
+        self, parameterized_interpreter
+    ) -> None:
         """Safe can capture errors from lazy Program evaluation."""
-        runtime = AsyncRuntime()
 
         @do
         def failing_program():
@@ -312,9 +327,11 @@ class TestErrorPropagation:
             result = yield Safe(Ask("service"))
             return result
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result.is_err()
-        assert isinstance(result.error, ValueError)
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        safe_result = result.value
+        assert safe_result.is_err()
+        assert isinstance(safe_result.error, ValueError)
 
 
 # ============================================================================
@@ -326,9 +343,10 @@ class TestConcurrentAccess:
     """Tests for concurrent Ask protection."""
 
     @pytest.mark.asyncio
-    async def test_gather_with_same_lazy_ask(self) -> None:
+    async def test_gather_with_same_lazy_ask(
+        self, parameterized_interpreter
+    ) -> None:
         """Multiple Gather children asking for same key should not re-evaluate."""
-        runtime = AsyncRuntime()
         evaluation_count = [0]
 
         @do
@@ -353,14 +371,16 @@ class TestConcurrentAccess:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = await runtime.run_and_unwrap(program(), env=env)
+        result = await parameterized_interpreter.run_async(program(), env=env)
 
-        assert result == [42, 42, 42]
+        assert result.is_ok
+        assert result.value == [42, 42, 42]
 
     @pytest.mark.asyncio
-    async def test_nested_ask_in_lazy_program(self) -> None:
+    async def test_nested_ask_in_lazy_program(
+        self, parameterized_interpreter
+    ) -> None:
         """Lazy Program can itself Ask for other lazy Programs."""
-        runtime = AsyncRuntime()
 
         @do
         def inner_service():
@@ -381,8 +401,9 @@ class TestConcurrentAccess:
             result = yield Ask("outer")
             return result
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == 20
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == 20
 
 
 # ============================================================================
@@ -394,9 +415,10 @@ class TestEdgeCases:
     """Tests for edge cases and special scenarios."""
 
     @pytest.mark.asyncio
-    async def test_none_result_is_cached(self) -> None:
+    async def test_none_result_is_cached(
+        self, parameterized_interpreter
+    ) -> None:
         """None result from Program is properly cached."""
-        runtime = AsyncRuntime()
         evaluation_count = [0]
 
         @do
@@ -411,14 +433,16 @@ class TestEdgeCases:
             val2 = yield Ask("nullable")
             return (val1, val2)
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == (None, None)
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == (None, None)
         assert evaluation_count[0] == 1
 
     @pytest.mark.asyncio
-    async def test_program_returning_program_is_evaluated_once(self) -> None:
+    async def test_program_returning_program_is_evaluated_once(
+        self, parameterized_interpreter
+    ) -> None:
         """Program returning another Program - outer is evaluated, inner is returned."""
-        runtime = AsyncRuntime()
 
         @do
         def inner():
@@ -441,13 +465,15 @@ class TestEdgeCases:
                 return final
             return result
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == 42
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == 42
 
     @pytest.mark.asyncio
-    async def test_hashable_keys_work(self) -> None:
+    async def test_hashable_keys_work(
+        self, parameterized_interpreter
+    ) -> None:
         """Various hashable key types work correctly."""
-        runtime = AsyncRuntime()
 
         @do
         def make_prog(val):
@@ -466,8 +492,9 @@ class TestEdgeCases:
             tuple_val = yield Ask(("tuple", "key"))
             return (str_val, int_val, tuple_val)
 
-        result = await runtime.run_and_unwrap(program(), env=env)
-        assert result == ("string", "int", "tuple")
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_ok
+        assert result.value == ("string", "int", "tuple")
 
 
 # ============================================================================
@@ -479,11 +506,12 @@ class TestCircularDependency:
     """Tests for circular Ask dependency detection."""
 
     @pytest.mark.asyncio
-    async def test_direct_circular_ask_raises_error(self) -> None:
+    @pytest.mark.xfail(reason="CircularAskError not yet implemented in new handler")
+    async def test_direct_circular_ask_raises_error(
+        self, parameterized_interpreter
+    ) -> None:
         """Direct circular dependency (A asks A) is detected and raises error."""
         from doeff.cesk.handlers.core import CircularAskError
-
-        runtime = AsyncRuntime()
 
         @do
         def circular_program():
@@ -496,17 +524,18 @@ class TestCircularDependency:
         def program():
             return (yield Ask("self"))
 
-        with pytest.raises(CircularAskError) as excinfo:
-            await runtime.run_and_unwrap(program(), env=env)
-
-        assert excinfo.value.key == "self"
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_err()
+        assert isinstance(result.error, CircularAskError)
+        assert result.error.key == "self"
 
     @pytest.mark.asyncio
-    async def test_indirect_circular_ask_raises_error(self) -> None:
+    @pytest.mark.xfail(reason="CircularAskError not yet implemented in new handler")
+    async def test_indirect_circular_ask_raises_error(
+        self, parameterized_interpreter
+    ) -> None:
         """Indirect circular dependency (A asks B, B asks A) is detected."""
         from doeff.cesk.handlers.core import CircularAskError
-
-        runtime = AsyncRuntime()
 
         @do
         def program_a():
@@ -522,8 +551,8 @@ class TestCircularDependency:
         def program():
             return (yield Ask("a"))
 
-        with pytest.raises(CircularAskError) as excinfo:
-            await runtime.run_and_unwrap(program(), env=env)
-
+        result = await parameterized_interpreter.run_async(program(), env=env)
+        assert result.is_err()
+        assert isinstance(result.error, CircularAskError)
         # Either "a" or "b" will be the detected cycle point
-        assert excinfo.value.key in ("a", "b")
+        assert result.error.key in ("a", "b")
