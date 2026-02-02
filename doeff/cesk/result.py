@@ -125,7 +125,7 @@ def python_async_escape(
 ) -> PythonAsyncSyntaxEscape:
     """Build PythonAsyncSyntaxEscape with resume callbacks.
 
-    Used by python_async_handler for AsyncRunner.
+    Used by python_async_syntax_escape_handler for async_run.
     The callbacks are built from the stored continuation data.
     """
     def resume(value: Any, new_store: Store) -> CESKState:
@@ -251,8 +251,28 @@ def multi_task_async_escape(
     )
 
 
+@dataclass(frozen=True)
+class WaitingForExternalCompletion:
+    """Signal that execution is blocked waiting for external completion.
+
+    This result type is returned when:
+    - A task is waiting on an external promise (Wait effect)
+    - There are no other tasks to run
+    - But there's an external promise that may be completed by external code
+
+    The runner should:
+    1. Block-wait on the external completion queue
+    2. Process completions (wake up waiters)
+    3. Retry stepping with the stored state
+
+    This prevents false deadlock detection when external promises are pending.
+    """
+
+    state: "CESKState"
+
+
 Terminal: TypeAlias = Done | Failed
-StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape
+StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape | WaitingForExternalCompletion
 
 
 @dataclass(frozen=True)
@@ -292,11 +312,13 @@ class CESKResult(Generic[T]):
 
 __all__ = [
     "CESKResult",
+    "DirectState",
     "Done",
     "Failed",
     "PythonAsyncSyntaxEscape",
     "StepResult",
     "Terminal",
+    "WaitingForExternalCompletion",
     "multi_task_async_escape",
     "python_async_escape",
 ]
