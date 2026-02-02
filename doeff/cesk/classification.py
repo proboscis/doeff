@@ -68,8 +68,8 @@ def is_pure_effect(effect: EffectBase) -> bool:
 
 def is_effectful(effect: EffectBase) -> bool:
     from doeff.effects import (
-        FutureAwaitEffect,
         IOPerformEffect,
+        PythonAsyncioAwaitEffect,
         SpawnEffect,
         WaitEffect,
     )
@@ -78,7 +78,7 @@ def is_effectful(effect: EffectBase) -> bool:
         effect,
         (
             IOPerformEffect,
-            FutureAwaitEffect,
+            PythonAsyncioAwaitEffect,
             SpawnEffect,
             WaitEffect,
         ),

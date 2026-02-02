@@ -24,7 +24,7 @@ If you think you need a new handler that produces PythonAsyncSyntaxEscape:
 
 EFFECT HANDLED
 --------------
-- FutureAwaitEffect: yield Await(coroutine)
+- PythonAsyncioAwaitEffect: yield Await(coroutine)
 
 Other time-based effects (Delay, WaitUntil) should be implemented via Await,
 not handled directly here. The current implementation handles them for backwards
@@ -63,7 +63,7 @@ def python_async_syntax_escape_handler(effect: EffectBase, ctx: "HandlerContext"
     Do not create additional handlers that produce this type.
 
     Handled effect:
-    - FutureAwaitEffect → escape with awaitable
+    - PythonAsyncioAwaitEffect → escape with awaitable
 
     Note: DelayEffect and WaitUntilEffect are handled here for backwards
     compatibility, but should be migrated to use Await internally.
@@ -72,10 +72,10 @@ def python_async_syntax_escape_handler(effect: EffectBase, ctx: "HandlerContext"
 
     For sync_run, use threaded_asyncio_handler instead (no escape needed).
     """
-    from doeff.effects.future import FutureAwaitEffect
+    from doeff.effects.future import PythonAsyncioAwaitEffect
     from doeff.effects.time import DelayEffect, WaitUntilEffect
 
-    if isinstance(effect, FutureAwaitEffect):
+    if isinstance(effect, PythonAsyncioAwaitEffect):
         return Program.pure(python_async_escape(
             awaitable=effect.awaitable,
             stored_k=list(ctx.delimited_k),

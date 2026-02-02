@@ -232,16 +232,47 @@ rules:
     pattern: $TASK.join()
     message: |
       MIGRATION: task.join() is deprecated. Use Wait(task) instead.
-      
+
       OLD: result = yield task.join()
       NEW: result = yield Wait(task)
-      
+
       See SPEC-EFF-005 for details.
     languages: [python]
     severity: WARNING
     metadata:
       category: concurrency-migration
       spec: SPEC-EFF-005
+
+  # ---------------------------------------------------------------------------
+  # DEPRECATED EFFECT NAMES
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-no-future-await-effect
+    patterns:
+      - pattern-either:
+          - pattern: FutureAwaitEffect
+          - pattern: from doeff.effects.future import FutureAwaitEffect
+          - pattern: from doeff.effects import FutureAwaitEffect
+    paths:
+      exclude:
+        # Allow in the definition file where the alias is defined
+        - "**/doeff/effects/future.py"
+        - "**/doeff/effects/__init__.py"
+    message: |
+      DEPRECATED: FutureAwaitEffect is renamed to PythonAsyncioAwaitEffect.
+
+      This effect is specifically for Python asyncio awaitables, not a generic
+      "future" abstraction. Use the new name for clarity:
+
+      OLD: from doeff.effects import FutureAwaitEffect
+      NEW: from doeff.effects import PythonAsyncioAwaitEffect
+
+      Or just use the public API: yield Await(coroutine)
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: deprecated-names
+      rationale: "FutureAwaitEffect is misleading - it's Python asyncio specific"
 
   # ---------------------------------------------------------------------------
   # TESTING PATTERNS
