@@ -318,15 +318,16 @@ yield Log("Processing data")
 
 ---
 
-### Tell(messages)
+### Tell(message)
 
-Add multiple log entries.
+Add a log entry. Alias: `Log(message)`.
 
 ```python
-yield Tell(["Step 1", "Step 2", "Step 3"])
+yield Tell("Processing started")
+yield Log("Step 1 complete")  # Log is alias for Tell
 ```
 
-**Parameters:** `messages: list[str]` - List of log messages
+**Parameters:** `message: object` - Message to log (string or any object)
 
 **Returns:** None
 

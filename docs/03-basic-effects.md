@@ -49,42 +49,48 @@ main()
 - Feature flags
 - Application settings
 
-### Ask with Default Values
+### Ask with Missing Keys
 
-`Ask(key, default=value)` returns a default if the key is missing:
+If a key is not in the environment, `Ask` raises `MissingEnvKeyError`:
 
 ```python
 @do
-def with_default():
-    # Returns 30 if "timeout" is not in environment
-    timeout = yield Ask("timeout", default=30)
+def requires_config():
+    # Raises MissingEnvKeyError if "timeout" not in env
+    timeout = yield Ask("timeout")
     return timeout
+
+# Provide required keys via env parameter
+result = sync_run(requires_config(), sync_handlers_preset, env={"timeout": 30})
 ```
 
-### Ask with Lazy Program Evaluation
+### Lazy Program Evaluation in Environment
 
-When you pass a `Program` as the default value to `Ask`, it is evaluated lazily **only if the key is missing**. The result is cached for subsequent accesses:
+When an environment value is a `Program`, it is evaluated lazily on first access. The result is cached for subsequent `Ask` calls with the same key:
 
 ```python
 @do
 def expensive_computation():
-    yield Log("Computing expensive default...")
+    yield Log("Computing config...")
     yield Delay(1.0)  # Simulate expensive work
     return {"setting": "computed_value"}
 
 @do
-def with_lazy_default():
-    # expensive_computation() only runs if "config" is missing from env
-    # If it runs, the result is cached for any subsequent Ask("config")
-    config = yield Ask("config", default=expensive_computation())
+def use_config():
+    # If env["config"] is a Program, it runs lazily here
+    config = yield Ask("config")
     return config
 
-# With env={"config": "provided"} -> expensive_computation never runs
-# With env={} -> expensive_computation runs once, result is cached
+# Pass a Program as the env value - evaluated lazily on first Ask
+result = sync_run(
+    use_config(),
+    sync_handlers_preset,
+    env={"config": expensive_computation()}  # Program, not value
+)
 ```
 
 This is useful for:
-- Expensive default computations that should only run when needed
+- Expensive computations that should only run when needed
 - Deferred initialization of complex configurations
 - Lazy loading of resources
 
@@ -169,9 +175,16 @@ def read_counter():
     return count
 ```
 
-**Returns:**
-- The value if key exists
-- Raises `KeyError` if key doesn't exist
+**Returns:** The value if key exists.
+
+**Raises:** `KeyError` if key doesn't exist. Use `Safe` to handle missing keys:
+
+```python
+@do
+def safe_read():
+    result = yield Safe(Get("maybe_missing"))
+    return result.ok() if result.is_ok() else "default"
+```
 
 ### Put - Write State
 
@@ -205,6 +218,8 @@ def increment_counter():
 ```
 
 **Returns:** The new (transformed) value after applying the function.
+
+**Note:** If the key doesn't exist, `Modify` passes `None` to the function (unlike `Get` which raises `KeyError`).
 
 **Equivalent to:**
 ```python
