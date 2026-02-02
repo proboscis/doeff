@@ -175,7 +175,6 @@ class TestListenCaptureLaw:
     """Tests for Law 3: Log/Tell operations captured on success only."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Listen + Local combination behavior differs in new handler")
     async def test_listen_captures_logs_from_local(
         self, parameterized_interpreter
     ) -> None:
