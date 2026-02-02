@@ -47,7 +47,7 @@ def threaded_asyncio_handler(effect: EffectBase, ctx: HandlerContext):
     This handler intercepts _AsyncEscapeIntercepted and executes the awaitable
     in a dedicated background thread running an asyncio event loop.
 
-    Per SPEC-CESK-EFFECT-BOUNDARIES.md: python_async_handler returns
+    Per SPEC-CESK-EFFECT-BOUNDARIES.md: python_async_syntax_escape_handler returns
     PythonAsyncSyntaxEscape directly. When that escape bubbles through
     handlers, HandlerFrame.on_value invokes the handler with
     _AsyncEscapeIntercepted. This handler intercepts that, runs the
@@ -137,12 +137,12 @@ def wrap_with_threaded_async(program: Any) -> Any:
     from typing import cast
 
     from doeff.cesk.handler_frame import Handler, WithHandler
-    from doeff.cesk.handlers.python_async_handler import python_async_handler
+    from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
 
     return WithHandler(
         handler=cast(Handler, threaded_asyncio_handler),
         program=WithHandler(
-            handler=cast(Handler, python_async_handler),
+            handler=cast(Handler, python_async_syntax_escape_handler),
             program=program,
         ),
     )
