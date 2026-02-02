@@ -217,9 +217,9 @@ config = yield Ask("database_url")
 
 **Parameters:** `key: str` - Environment variable name
 
-**Returns:** Value from ExecutionContext.env
+**Returns:** Value from environment
 
-**Raises:** KeyError if key not in environment
+**Raises:** `MissingEnvKeyError` if key not in environment
 
 **See:** [Basic Effects](03-basic-effects.md#reader-effects)
 
@@ -256,7 +256,9 @@ count = yield Get("counter")
 
 **Parameters:** `key: str` - State key
 
-**Returns:** Value from ExecutionContext.state, or None if not found
+**Returns:** Value from store
+
+**Raises:** `KeyError` if key not found
 
 **See:** [Basic Effects](03-basic-effects.md#state-effects)
 
@@ -547,30 +549,20 @@ result, graph = yield CaptureGraph(sub_program())
 
 ## Advanced Effects
 
-### Spawn(program, preferred_backend=None, **kwargs)
+### Spawn(program)
 
 Spawn a Program in the background and return a Task handle.
 
 ```python
-task = yield Spawn(worker(), preferred_backend="ray", num_cpus=1)
+task = yield Spawn(worker())
 result = yield Wait(task)
 ```
 
 **Parameters:**
 
 - **`program: Program[T]`** - Program to execute
-- **`preferred_backend: Literal["thread", "process", "ray"] | None`** - Backend hint
-- **`**kwargs`** - Backend options (Ray: `num_cpus`, `num_gpus`, `memory`,
-  `resources`, `placement_group`, `placement_group_bundle_index`,
-  `placement_group_capture_child_tasks`, `runtime_env`, `scheduling_strategy`)
 
 **Returns:** `Task[T]` - use `Wait(task)` to get result
-
-**Notes:**
-
-- Ray tasks use cloudpickle serialization and inherit context from the spawn site.
-- Configure Ray via runtime options (`spawn_ray_address`,
-  `spawn_ray_init_kwargs`, `spawn_ray_runtime_env`).
 
 **See:** [Advanced Effects](09-advanced-effects.md)
 
