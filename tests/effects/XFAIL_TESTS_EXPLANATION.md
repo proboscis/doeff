@@ -165,7 +165,7 @@ The interaction between Listen and Local has different semantics in the new hand
 
 ---
 
-## 4. Delay Effect in Sync Mode
+## 4. Delay Effect in Sync Mode (Expected Behavior)
 
 **Files:** `test_effect_combinations.py`
 
@@ -173,7 +173,7 @@ The interaction between Listen and Local has different semantics in the new hand
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  sync_run Mode                                              │
+│  sync_run with async_handlers_preset (WRONG!)               │
 │                                                             │
 │  yield Delay(seconds=0.05)                                 │
 │       │                                                     │
@@ -184,23 +184,41 @@ The interaction between Listen and Local has different semantics in the new hand
 │       return PythonAsyncSyntaxEscape(awaitable=do_delay()) │
 │       │                                                     │
 │       ▼                                                     │
-│  sync_run: Doesn't know how to handle Delay directly!      │
-│            ⚠️ Coroutine never awaited warning              │
+│  sync_run: TypeError!                                       │
+│  "sync_run received PythonAsyncSyntaxEscape..."            │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Root Cause
+### This is Expected Behavior
 
-The `Delay` effect is implemented using `python_async_syntax_escape_handler` which creates an async coroutine. In sync mode, this coroutine should be handled by `sync_await_handler` (running in a thread pool), but the handler stack isn't properly configured for this.
+`python_async_syntax_escape_handler` produces `PythonAsyncSyntaxEscape` which requires
+Python's `await` syntax. This handler is **only compatible with `async_run`**.
 
-### Workaround
+```
+Handler Compatibility:
+┌──────────────────────────────────────┬──────────┬───────────┐
+│ Handler                              │ sync_run │ async_run │
+├──────────────────────────────────────┼──────────┼───────────┤
+│ python_async_syntax_escape_handler   │    ✗     │     ✓     │
+│ sync_await_handler                   │    ✓     │     ✗     │
+└──────────────────────────────────────┴──────────┴───────────┘
+```
 
-Use `yield Await(asyncio.sleep(seconds))` directly instead of `yield Delay(seconds)` when working with async code.
+### Correct Usage
+
+```python
+# For sync_run: use sync_handlers_preset
+result = sync_run(program(), sync_handlers_preset)
+
+# For async_run: use async_handlers_preset
+result = await async_run(program(), async_handlers_preset)
+```
 
 ### Tests Affected
 
-- `test_async_gather_parallel_execution[sync]` (test_effect_combinations.py)
+- `test_async_gather_parallel_execution[sync]` - Test incorrectly uses parameterized
+  interpreter which may use wrong handler preset for the mode.
 
 ---
 
