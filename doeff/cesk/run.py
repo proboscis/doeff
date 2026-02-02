@@ -327,117 +327,134 @@ async def _async_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
 
     pending_tasks: dict[Any, asyncio.Task[Any]] = {}
 
-    while True:
-        result = step(state)
+    def _cancel_pending_tasks() -> None:
+        """Cancel all pending asyncio tasks to avoid 'coroutine never awaited' warnings."""
+        for task in pending_tasks.values():
+            if not task.done():
+                task.cancel()
 
-        if isinstance(result, Done):
-            return (result.value, state)
+    try:
+        while True:
+            result = step(state)
 
-        if isinstance(result, Failed):
-            raise _ExecutionError(
-                exception=result.exception,
-                final_state=state,
-                captured_traceback=result.captured_traceback,
-            )
+            if isinstance(result, Done):
+                _cancel_pending_tasks()
+                return (result.value, state)
 
-        if isinstance(result, PythonAsyncSyntaxEscape):
-            current_store = result.store if result.store is not None else state.S
-
-            if result.awaitables:
-                # Multi-task case: await first completion
-                for task_id, awaitable in result.awaitables.items():
-                    if task_id not in pending_tasks:
-                        pending_tasks[task_id] = asyncio.create_task(awaitable)
-
-                done, _ = await asyncio.wait(
-                    pending_tasks.values(),
-                    return_when=asyncio.FIRST_COMPLETED,
+            if isinstance(result, Failed):
+                _cancel_pending_tasks()
+                raise _ExecutionError(
+                    exception=result.exception,
+                    final_state=state,
+                    captured_traceback=result.captured_traceback,
                 )
 
-                for task_id, atask in list(pending_tasks.items()):
-                    if atask in done:
-                        del pending_tasks[task_id]
-                        try:
-                            value = atask.result()
-                            resume_result = result.resume((task_id, value), current_store)
-                            state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
-                        except asyncio.CancelledError:
-                            raise
-                        except Exception as ex:
-                            error_result = result.resume_error((task_id, ex))
-                            state = error_result.state if isinstance(error_result, DirectState) else error_result
-                        break
-                else:
-                    raise RuntimeError("asyncio.wait returned but no task completed")
-            elif result.awaitable is not None:
-                # Single awaitable case
-                try:
-                    value = await result.awaitable
-                    resume_result = result.resume(value, current_store)
-                    state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
-                except asyncio.CancelledError:
-                    raise
-                except Exception as ex:
-                    error_result = result.resume_error(ex)
-                    state = error_result.state if isinstance(error_result, DirectState) else error_result
-            else:
-                raise RuntimeError("PythonAsyncSyntaxEscape with neither awaitable nor awaitables")
-            continue
+            if isinstance(result, PythonAsyncSyntaxEscape):
+                current_store = result.store if result.store is not None else state.S
 
-        if isinstance(result, CESKState):
-            state = result
-            continue
+                if result.awaitables:
+                    # Multi-task case: await first completion
+                    for task_id, awaitable in result.awaitables.items():
+                        if task_id not in pending_tasks:
+                            pending_tasks[task_id] = asyncio.create_task(awaitable)
 
-        if isinstance(result, WaitingForExternalCompletion):
-            # In async context, poll for external completion with asyncio.sleep
-            completion_queue = state.S.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-            if completion_queue is not None:
-                # Poll loop with async sleep to not block event loop
-                max_attempts = 3000  # 30 seconds total
-                for _ in range(max_attempts):
-                    if not completion_queue.empty():
-                        completion = completion_queue.get_nowait()
-                        completion_queue.put(completion)
-                        process_external_completions(state.S)
-
-                        # Get the resume value/error from the queue
-                        task_queue = state.S.get(TASK_QUEUE_KEY, [])
-                        if task_queue:
-                            item = task_queue.pop(0)
-                            state.S[TASK_QUEUE_KEY] = task_queue
-
-                            resume_value = item.get("resume_value")
-                            resume_error = item.get("resume_error")
-
-                            # Resume with the full continuation (from WaitingForExternalCompletion.state)
-                            # and the result value/error from the queue
-                            if resume_error is not None:
-                                state = CESKState(
-                                    C=Error(resume_error),
-                                    E=result.state.E,
-                                    S=state.S,  # Current store with updated scheduler state
-                                    K=result.state.K,  # Full continuation including handler frames
-                                )
-                            else:
-                                state = CESKState(
-                                    C=Value(resume_value),
-                                    E=result.state.E,
-                                    S=state.S,
-                                    K=result.state.K,
-                                )
-                            break
-                    await asyncio.sleep(0.01)
-                else:
-                    raise RuntimeError(
-                        "Timeout: waiting for external promise but no completion received"
+                    done, _ = await asyncio.wait(
+                        pending_tasks.values(),
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
+
+                    for task_id, atask in list(pending_tasks.items()):
+                        if atask in done:
+                            del pending_tasks[task_id]
+                            try:
+                                value = atask.result()
+                                resume_result = result.resume((task_id, value), current_store)
+                                state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as ex:
+                                error_result = result.resume_error((task_id, ex))
+                                state = error_result.state if isinstance(error_result, DirectState) else error_result
+                            break
+                    else:
+                        _cancel_pending_tasks()
+                        raise RuntimeError("asyncio.wait returned but no task completed")
+                elif result.awaitable is not None:
+                    # Single awaitable case
+                    try:
+                        value = await result.awaitable
+                        resume_result = result.resume(value, current_store)
+                        state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as ex:
+                        error_result = result.resume_error(ex)
+                        state = error_result.state if isinstance(error_result, DirectState) else error_result
+                else:
+                    _cancel_pending_tasks()
+                    raise RuntimeError("PythonAsyncSyntaxEscape with neither awaitable nor awaitables")
                 continue
 
-            raise RuntimeError(
-                "Deadlock: waiting for external promise but no completion queue"
-            )
+            if isinstance(result, CESKState):
+                state = result
+                continue
 
-        raise RuntimeError(f"Unexpected step result: {type(result)}")
+            if isinstance(result, WaitingForExternalCompletion):
+                # In async context, poll for external completion with asyncio.sleep
+                completion_queue = state.S.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+                if completion_queue is not None:
+                    # Poll loop with async sleep to not block event loop
+                    max_attempts = 3000  # 30 seconds total
+                    for _ in range(max_attempts):
+                        if not completion_queue.empty():
+                            completion = completion_queue.get_nowait()
+                            completion_queue.put(completion)
+                            process_external_completions(state.S)
+
+                            # Get the resume value/error from the queue
+                            task_queue = state.S.get(TASK_QUEUE_KEY, [])
+                            if task_queue:
+                                item = task_queue.pop(0)
+                                state.S[TASK_QUEUE_KEY] = task_queue
+
+                                resume_value = item.get("resume_value")
+                                resume_error = item.get("resume_error")
+
+                                # Resume with the full continuation (from WaitingForExternalCompletion.state)
+                                # and the result value/error from the queue
+                                if resume_error is not None:
+                                    state = CESKState(
+                                        C=Error(resume_error),
+                                        E=result.state.E,
+                                        S=state.S,  # Current store with updated scheduler state
+                                        K=result.state.K,  # Full continuation including handler frames
+                                    )
+                                else:
+                                    state = CESKState(
+                                        C=Value(resume_value),
+                                        E=result.state.E,
+                                        S=state.S,
+                                        K=result.state.K,
+                                    )
+                                break
+                        await asyncio.sleep(0.01)
+                    else:
+                        _cancel_pending_tasks()
+                        raise RuntimeError(
+                            "Timeout: waiting for external promise but no completion received"
+                        )
+                    continue
+
+                _cancel_pending_tasks()
+                raise RuntimeError(
+                    "Deadlock: waiting for external promise but no completion queue"
+                )
+
+            _cancel_pending_tasks()
+            raise RuntimeError(f"Unexpected step result: {type(result)}")
+    except Exception:
+        _cancel_pending_tasks()
+        raise
 
 
 class _ExecutionError(Exception):
