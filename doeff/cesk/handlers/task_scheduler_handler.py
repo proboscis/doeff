@@ -69,6 +69,7 @@ from doeff.effects.promise import (
 from doeff.effects.race import RaceEffect, RaceResult
 from doeff.effects.scheduler_internal import (
     _AsyncEscapeIntercepted,
+    _BlockForExternalCompletion,
     _SchedulerCancelTask,
     _SchedulerCreatePromise,
     _SchedulerCreateTaskHandle,
@@ -406,12 +407,39 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             # Check if we're waiting on an external promise
             external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
             if external_registry and handle_id in external_registry.values():
-                # Waiting for external completion - signal runner to block-wait
-                # Use full continuation (ctx.k) to preserve handler frames
-                from doeff.cesk.result import WaitingForExternalCompletion
+                # Block for external completion - handler owns blocking
+                # This is the only place doeff truly blocks: when no tasks are
+                # runnable and we're waiting on external I/O.
+                completion = yield _BlockForExternalCompletion()
+                promise_id, value, error = completion
 
-                return WaitingForExternalCompletion(
-                    state=CESKState(C=Value(None), E=ctx.env, S=current_store, K=list(ctx.k))
+                # Look up handle_id for this promise and mark complete
+                completed_handle_id = external_registry.get(promise_id)
+                if completed_handle_id is not None:
+                    yield _SchedulerTaskComplete(
+                        handle_id=completed_handle_id,
+                        task_id=None,
+                        result=value,
+                        error=error,
+                    )
+
+                # Now waiter should be in queue - dequeue and resume
+                dequeue_result = yield _SchedulerDequeueTask()
+                if dequeue_result[0] is not None:
+                    next_task_id, next_k, next_store, resume_value, resume_error, sched_store = dequeue_result
+                    task_store = dict(next_store) if next_store is not None else {}
+                    for key, val in sched_store.items():
+                        if isinstance(key, str) and key.startswith("__scheduler_"):
+                            task_store[key] = val
+                    task_store[CURRENT_TASK_KEY] = next_task_id
+                    if resume_error is not None:
+                        return ResumeK(k=next_k, error=resume_error, store=task_store)
+                    return ResumeK(k=next_k, value=resume_value, store=task_store)
+
+                # Still no tasks? Shouldn't happen but handle gracefully
+                return CESKState.with_error(
+                    RuntimeError("Deadlock: external completion processed but no tasks to run"),
+                    ctx.env, current_store, ctx.k,
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: waiting for task but no other tasks to run"),

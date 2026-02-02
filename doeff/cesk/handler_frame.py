@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import Kontinuation
-from doeff.cesk.result import PythonAsyncSyntaxEscape, WaitingForExternalCompletion
+from doeff.cesk.result import PythonAsyncSyntaxEscape
 from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
@@ -214,17 +214,13 @@ class HandlerResultFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> "CESKState | PythonAsyncSyntaxEscape | WaitingForExternalCompletion":
+    ) -> "CESKState | PythonAsyncSyntaxEscape":
         from doeff.cesk.result import DirectState
         from doeff.cesk.state import CESKState
 
         # DirectState: pass through unchanged (async escapes, direct jumps)
         if isinstance(value, DirectState):
             return value.state
-
-        # WaitingForExternalCompletion: pass through to runner
-        if isinstance(value, WaitingForExternalCompletion):
-            return value
 
         # Handler returned CESKState directly - merge handled_program_k and k_rest into K
         if isinstance(value, CESKState):

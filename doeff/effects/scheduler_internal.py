@@ -242,17 +242,34 @@ class _SchedulerSuspendForIO(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class _AsyncEscapeIntercepted(EffectBase):
     """Notify handler that a PythonAsyncSyntaxEscape is bubbling through.
-    
+
     This effect is yielded by HandlerFrame.on_value when it sees an escape
     value. Handlers can intercept this to coordinate multi-task async
     (like TaskSchedulerHandler does) or pass it through for single-task.
-    
+
     Attributes:
         escape: The PythonAsyncSyntaxEscape that was intercepted
         outer_k: The continuation beyond this handler
     """
     escape: Any
     outer_k: Any
+
+
+@dataclass(frozen=True, kw_only=True)
+class _BlockForExternalCompletion(EffectBase):
+    """Block until an external promise completion arrives.
+
+    This effect is used by task_scheduler_handler when:
+    - No runnable tasks in queue
+    - Tasks are waiting on external promises
+
+    The handler (scheduler_state_handler) blocks on completion_queue.get()
+    until an external promise is completed. This keeps blocking logic
+    inside the handler rather than leaking to the run loop.
+
+    Returns a tuple of (promise_id, value, error) when a completion arrives.
+    """
+    pass
 
 
 # Backwards compatibility aliases (deprecated, will be removed in future version)
@@ -277,6 +294,7 @@ GetTaskResult = _SchedulerGetTaskResult
 __all__ = [
     # New names (preferred)
     "_AsyncEscapeIntercepted",
+    "_BlockForExternalCompletion",
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
     "_SchedulerCreateTaskHandle",
