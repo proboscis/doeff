@@ -452,14 +452,10 @@ class TestGatherStoreSharingLaw:
     """Tests for Law 8: Gather store sharing (runtime-dependent)."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Delay effect doesn't work correctly in sync mode",
-        strict=False,  # Allow to pass in async mode
-    )
     async def test_async_gather_parallel_execution(
         self, parameterized_interpreter
     ) -> None:
-        """Law 8b: AsyncRuntime Gather executes in parallel."""
+        """Law 8b: Gather executes spawned tasks in parallel."""
 
         @do
         def delayed_task(n: int):
