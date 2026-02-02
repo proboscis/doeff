@@ -163,7 +163,6 @@ class TestLocalOverrideInvalidation:
     """Tests for cache invalidation when Local provides different Program."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Local override invalidation not working with new handler")
     async def test_local_with_different_program_reevaluates(
         self, parameterized_interpreter
     ) -> None:
@@ -202,7 +201,6 @@ class TestLocalOverrideInvalidation:
         assert evaluation_count[0] == 3
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Local override caching not working with new handler")
     async def test_local_with_same_program_uses_cache(
         self, parameterized_interpreter
     ) -> None:

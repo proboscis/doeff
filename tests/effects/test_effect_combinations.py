@@ -404,7 +404,6 @@ class TestGatherEnvironmentInheritanceLaw:
     """Tests for Law 7: Gather children inherit parent's environment."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Spawned children inside Local don't see Local override")
     async def test_gather_children_inherit_local_env(
         self, parameterized_interpreter
     ) -> None:
@@ -590,7 +589,6 @@ class TestEffectCombinationIntegration:
         assert branch_b_result == ("b", [3, 4])
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Local override not visible inside Listen in new handler")
     async def test_complex_safe_local_listen_combination(
         self, parameterized_interpreter
     ) -> None:

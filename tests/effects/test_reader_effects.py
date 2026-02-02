@@ -314,7 +314,6 @@ class TestLocalLocalComposition:
         assert after_outer == "original"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Behavioral difference: nested Local doesn't inherit outer Local env for unmodified keys")
     async def test_nested_local_different_keys(
         self, parameterized_interpreter
     ) -> None:
@@ -557,7 +556,6 @@ class TestLocalGatherComposition:
         assert result.value == ["shared_value", "shared_value", "shared_value"]
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Behavioral difference: spawned children inside Local don't see Local override")
     async def test_gather_children_inherit_local_override(
         self, parameterized_interpreter
     ) -> None:
