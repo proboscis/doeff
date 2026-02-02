@@ -145,7 +145,7 @@ class PythonAsyncSyntaxEscape:
     ALLOWED PRODUCER
     ----------------
     python_async_syntax_escape_handler ONLY, for this effect ONLY:
-    - FutureAwaitEffect (yield Await(coroutine))
+    - PythonAsyncioAwaitEffect (yield Await(coroutine))
 
     Other time-based effects (Delay, WaitUntil) should be implemented via Await,
     not handled directly by the escape handler.
