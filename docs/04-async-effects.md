@@ -119,23 +119,11 @@ def run_parallel_tasks():
     return results  # ["result1", "result2", "result3"]
 ```
 
-### Gather vs Parallel
-
-| Feature | `Gather(*programs)` | `Parallel(*awaitables)` |
-|---------|---------------------|------------------------|
-| Input | `Program` objects | Python awaitables |
-| Effects | Full effect support | No effect support |
-| Use case | Parallel Programs | Parallel coroutines |
-
 **When to use Gather:**
 - Running multiple doeff Programs in parallel
 - When inner tasks need state, logging, or other effects
 - Primary parallel execution mechanism
-
-**When to use Parallel:**
-- Running raw Python async coroutines
-- Integration with external async libraries
-- When you don't need effects in the parallel tasks
+- For raw async coroutines, wrap them with `Await` effect
 
 ### Parallel API Requests with Gather
 

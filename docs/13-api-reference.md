@@ -81,42 +81,60 @@ class ExecutionContext:
 
 ---
 
-### RunResult[T]
+### RuntimeResult[T]
 
-Result of Program execution with full context.
+Result of Program execution returned by `sync_run()` and `async_run()`.
 
 ```python
-@dataclass
-class RunResult[T]:
-    result: Result[T]
-    state: dict[str, Any]
-    log: list[LogEntry]
-    graph: WGraph
-    
+class RuntimeResult[T](Protocol):
+    result: Result[T]      # Ok(value) or Err(error)
+    raw_store: dict        # Final store state
+    env: dict              # Final environment
+
+    # Stack traces for debugging
+    k_stack: KStackTrace
+    effect_stack: EffectStackTrace
+    python_stack: PythonStackTrace
+
     @property
-    def value(self) -> T  # Unwraps result or raises
-    
+    def value(self) -> T        # Unwraps Ok or raises
+
     @property
-    def is_ok(self) -> bool
-    
-    @property
-    def is_err(self) -> bool
+    def error(self) -> BaseException  # Get error or raises
+
+    def is_ok(self) -> bool     # True if result is Ok
+    def is_err(self) -> bool    # True if result is Err
+    def format(self, *, verbose: bool = False) -> str
 ```
 
-**Fields:**
+**Core Properties:**
 
-- **`result`** - Ok(value) or Err(error)
-- **`state`** - Final state after execution
-- **`log`** - All log entries
-- **`graph`** - Full execution graph
+- **`result`** - `Ok(value)` or `Err(error)`
+- **`value`** - Unwraps Ok value (raises if Err)
+- **`error`** - Gets the exception (raises if Ok)
+- **`raw_store`** - Final store state dictionary
 
-**Properties:**
+**Methods (NOT properties!):**
 
-- **`value`** - Unwraps Ok value or raises error
-- **`is_ok`** - True if result is Ok
-- **`is_err`** - True if result is Err
+- **`is_ok()`** - Returns True if result is Ok
+- **`is_err()`** - Returns True if result is Err
+- **`format(verbose=False)`** - Format result for display
 
-**See:** [Core Concepts](02-core-concepts.md#runresult)
+**Accessing logs and graph:**
+
+```python
+result = sync_run(my_program(), sync_handlers_preset)
+logs = result.raw_store.get("__log__", [])
+graph = result.raw_store.get("__graph__")
+```
+
+**Stack traces (for debugging errors):**
+
+- **`k_stack`** - CESK continuation stack snapshot
+- **`effect_stack`** - Effect call tree
+- **`python_stack`** - Python source locations
+
+**See:** [Error Handling](05-error-handling.md#runtimeresult-protocol)
 
 ---
 
@@ -367,26 +385,6 @@ result = yield Await(async_function())
 **Returns:** Result of awaitable
 
 **See:** [Async Effects](04-async-effects.md#await)
-
----
-
-### Parallel(*awaitables)
-
-Run async operations concurrently.
-
-```python
-results = yield Parallel(
-    async_func1(),
-    async_func2(),
-    async_func3()
-)
-```
-
-**Parameters:** `*awaitables: Awaitable[T]` - Multiple async operations
-
-**Returns:** `list[T]` - Results in order
-
-**See:** [Async Effects](04-async-effects.md#parallel)
 
 ---
 
@@ -925,7 +923,7 @@ await write_graph_html(result.graph, "output.html")
 | **Reader** | Ask, Local |
 | **State** | Get, Put, Modify, AtomicGet, AtomicUpdate |
 | **Writer** | Log, Tell, Listen, StructuredLog |
-| **Async** | Await, Parallel |
+| **Async** | Await, Gather, Spawn, Wait |
 | **Error** | Safe |
 | **IO** | IO |
 | **Cache** | CacheGet, CachePut |
@@ -946,7 +944,7 @@ from doeff import async_run, async_handlers_preset
 from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen
 
 # Async
-from doeff import Await, Parallel
+from doeff import Await, Gather, Spawn, Wait
 
 # Error Handling
 from doeff import Safe

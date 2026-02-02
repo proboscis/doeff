@@ -408,17 +408,18 @@ Group operations for efficiency:
 @do
 def batch_processor(items, batch_size=100):
     results = []
-    
+
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
         yield Log(f"Processing batch {i//batch_size + 1}")
-        
-        batch_results = yield Parallel(*[
+
+        # Use Gather to run Programs in parallel
+        batch_results = yield Gather(*[
             process_item(item) for item in batch
         ])
-        
+
         results.extend(batch_results)
-    
+
     return results
 ```
 
