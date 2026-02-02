@@ -504,7 +504,6 @@ class TestCircularDependency:
     """Tests for circular Ask dependency detection."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="CircularAskError not yet implemented in new handler")
     async def test_direct_circular_ask_raises_error(
         self, parameterized_interpreter
     ) -> None:
@@ -528,7 +527,6 @@ class TestCircularDependency:
         assert result.error.key == "self"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="CircularAskError not yet implemented in new handler")
     async def test_indirect_circular_ask_raises_error(
         self, parameterized_interpreter
     ) -> None:

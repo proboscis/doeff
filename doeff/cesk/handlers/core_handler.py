@@ -51,6 +51,23 @@ if TYPE_CHECKING:
     pass
 
 
+class CircularAskError(Exception):
+    """Raised when a circular dependency is detected in lazy Ask evaluation.
+
+    This occurs when evaluating a Program value for Ask("key") requires
+    asking for the same key (directly or indirectly), creating a cycle.
+
+    Attributes:
+        key: The Ask key where the cycle was detected.
+    """
+
+    def __init__(self, key: Any, message: str | None = None):
+        self.key = key
+        if message is None:
+            message = f"Circular dependency detected for Ask({key!r})"
+        super().__init__(message)
+
+
 _ASK_IN_PROGRESS = object()
 
 
@@ -72,13 +89,15 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
                 cache = store.get("__ask_lazy_cache__", {})
                 if key in cache:
                     cached_program, cached_value = cache[key]
-                    if cached_program is env_value:
-                        return CESKState.with_value(cached_value, ctx.env, store, ctx.k)
+                    # Check for cycle FIRST - if in progress, we have a circular dependency
                     if cached_value is _ASK_IN_PROGRESS:
                         return CESKState.with_error(
-                            RecursionError(f"Circular dependency detected for Ask({key!r})"),
+                            CircularAskError(key),
                             ctx.env, store, ctx.k
                         )
+                    # Same program with completed value - return cached result
+                    if cached_program is env_value:
+                        return CESKState.with_value(cached_value, ctx.env, store, ctx.k)
 
                 from doeff.cesk.frames import AskLazyFrame
                 from doeff.cesk.result import DirectState
@@ -335,5 +354,6 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
 
 
 __all__ = [
+    "CircularAskError",
     "core_handler",
 ]
