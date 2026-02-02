@@ -479,23 +479,21 @@ async def test_user_workflow():
 Verify effects were executed:
 
 ```python
-@pytest.mark.asyncio
-async def test_effects_executed():
+def test_effects_executed():
     @do
     def program():
         yield Put("key", "value")
         yield Log("Logged message")
         yield Step("step1")
         return "result"
-    
-    from doeff.runtimes import AsyncioRuntime
-    
+
+    from doeff import sync_run, sync_handlers_preset
+
     # Run with result
-    runtime = AsyncioRuntime()
-    result = await runtime.run(program())
-    
+    result = sync_run(program(), sync_handlers_preset)
+
     # Verify result
-    assert result.is_ok
+    assert result.is_ok()
     assert result.value == "result"
 ```
 
@@ -503,21 +501,19 @@ async def test_effects_executed():
 
 ```python
 from hypothesis import given, strategies as st
-from doeff.runtimes import AsyncioRuntime
+from doeff import sync_run, sync_handlers_preset
 
 @given(st.integers(min_value=0, max_value=1000))
-@pytest.mark.asyncio
-async def test_counter_properties(initial_value):
+def test_counter_properties(initial_value):
     @do
     def counter_program():
         yield Put("counter", initial_value)
         yield Modify("counter", lambda x: x + 1)
         result = yield Get("counter")
         return result
-    
-    runtime = AsyncioRuntime()
-    result = await runtime.run(counter_program())
-    
+
+    result = sync_run(counter_program(), sync_handlers_preset)
+
     # Property: counter should always increment by 1
     assert result.value == initial_value + 1
 ```
