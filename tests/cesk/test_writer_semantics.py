@@ -326,19 +326,14 @@ class TestListenPlusSafe:
 class TestListenPlusGather:
     """Test Listen + Gather composition."""
 
-    @pytest.mark.skip(
-        reason="Gather now requires Futures from Spawn, SyncRuntime doesn't support Spawn yet. "
-        "NOTE: SyncRuntime could implement Spawn/Gather via cooperative scheduling in the future."
-    )
-    def test_listen_gather_sync_sequential_logs(self) -> None:
-        pass
-
     @pytest.mark.asyncio
-    async def test_listen_gather_async_logs_not_captured(self) -> None:
-        """In AsyncRuntime with Spawn+Gather, logs are NOT captured due to isolated state."""
-        from doeff.cesk.run import async_handlers_preset, async_run
+    async def test_listen_gather_logs_not_captured(
+        self, parameterized_interpreter
+    ) -> None:
+        """With Spawn+Gather, logs are NOT captured due to isolated state.
 
-        
+        Works with both sync_run and async_run via parameterized_interpreter.
+        """
 
         @do
         def task(name: str):
@@ -352,22 +347,23 @@ class TestListenPlusGather:
             result = yield Listen(Gather(t1, t2))
             return result
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert sorted(result.value) == ["X", "Y"]
-        assert len(result.log) == 0
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
+        assert sorted(result.value.value) == ["X", "Y"]
+        # Logs are NOT captured because spawned tasks have isolated state
+        assert len(result.value.log) == 0
 
-    def test_listen_empty_gather(self) -> None:
+    @pytest.mark.asyncio
+    async def test_listen_empty_gather(self, parameterized_interpreter) -> None:
         """Listen with empty Gather produces empty log."""
-        from doeff.cesk.run import sync_handlers_preset, sync_run
-
-        
 
         @do
         def program():
             result = yield Listen(Gather())
             return result
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = await parameterized_interpreter.run_async(program())
+        assert result.is_ok
         listen_result = result.value
         assert listen_result.value == []
         assert list(listen_result.log) == []
