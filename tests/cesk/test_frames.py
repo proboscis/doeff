@@ -1,18 +1,19 @@
-"""Tests for CESK frames module."""
+"""Tests for CESK frames module.
+
+Per SPEC-CESK-003: Tests for deprecated Frame types (LocalFrame, SafeFrame,
+ListenFrame, InterceptFrame) have been removed. These patterns are now
+implemented in user-space via WithHandler in doeff.cesk.handlers.patterns.
+"""
 
 from collections.abc import Generator
 
-from doeff._vendor import Err, FrozenDict, Ok
+from doeff._vendor import FrozenDict
 from doeff.cesk.frames import (
     Frame,
     GatherFrame,
-    InterceptFrame,
     Kontinuation,
-    ListenFrame,
-    LocalFrame,
     RaceFrame,
     ReturnFrame,
-    SafeFrame,
 )
 from doeff.cesk.state import CESKState, Error, ProgramControl, Value
 from doeff.cesk.types import Environment, Store, TaskId
@@ -60,106 +61,6 @@ class TestCESKStateHelpers:
 
         assert isinstance(state.C, ProgramControl)
         assert state.C.program is program
-
-
-class TestLocalFrame:
-    """Tests for LocalFrame."""
-
-    def test_on_value_restores_env(self) -> None:
-        """on_value restores original environment."""
-        original_env: Environment = FrozenDict({"original": "env"})
-        current_env: Environment = FrozenDict({"current": "env"})
-        store: Store = {}
-        k: Kontinuation = []
-
-        frame = LocalFrame(restore_env=original_env)
-        result = frame.on_value(42, current_env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert result.C.v == 42
-        assert result.E == original_env
-
-    def test_on_error_restores_env(self) -> None:
-        """on_error restores original environment."""
-        original_env: Environment = FrozenDict({"original": "env"})
-        current_env: Environment = FrozenDict({"current": "env"})
-        store: Store = {}
-        k: Kontinuation = []
-        error = ValueError("test")
-
-        frame = LocalFrame(restore_env=original_env)
-        result = frame.on_error(error, current_env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Error)
-        assert result.C.ex is error
-        assert result.E == original_env
-
-
-class TestInterceptFrame:
-    """Tests for InterceptFrame."""
-
-    def test_on_value_passes_through(self) -> None:
-        """Values pass through InterceptFrame unchanged."""
-        env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
-
-        frame = InterceptFrame(transforms=())
-        result = frame.on_value(42, env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert result.C.v == 42
-
-    def test_on_error_passes_through(self) -> None:
-        """Errors pass through InterceptFrame unchanged."""
-        env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
-        error = ValueError("test")
-
-        frame = InterceptFrame(transforms=())
-        result = frame.on_error(error, env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Error)
-        assert result.C.ex is error
-
-
-class TestListenFrame:
-    """Tests for ListenFrame."""
-
-    def test_on_value_captures_log(self) -> None:
-        """on_value captures log entries from sub-computation."""
-        env: Environment = FrozenDict()
-        store: Store = {"__log__": ["entry1", "entry2", "entry3"]}
-        k: Kontinuation = []
-
-        frame = ListenFrame(log_start_index=1)  # Capture from index 1
-        result = frame.on_value(42, env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        # Result should be ListenResult with value and captured log
-        listen_result = result.C.v
-        assert listen_result.value == 42
-        assert list(listen_result.log) == ["entry2", "entry3"]
-
-    def test_on_error_passes_through(self) -> None:
-        """Errors pass through ListenFrame unchanged."""
-        env: Environment = FrozenDict()
-        store: Store = {"__log__": ["entry1", "entry2"]}
-        k: Kontinuation = []
-        error = ValueError("test")
-
-        frame = ListenFrame(log_start_index=0)
-        result = frame.on_error(error, env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Error)
-        assert result.C.ex is error
 
 
 class TestGatherFrame:
@@ -229,39 +130,6 @@ class TestGatherFrame:
         assert result.C.ex is error
 
 
-class TestSafeFrame:
-    """Tests for SafeFrame."""
-
-    def test_on_value_wraps_in_ok(self) -> None:
-        """on_value wraps successful value in Ok."""
-        env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
-
-        frame = SafeFrame(saved_env=env)
-        result = frame.on_value(42, env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert isinstance(result.C.v, Ok)
-        assert result.C.v.value == 42
-
-    def test_on_error_wraps_in_err(self) -> None:
-        """on_error converts error to Err result."""
-        env: Environment = FrozenDict()
-        store: Store = {}
-        k: Kontinuation = []
-        error = ValueError("test error")
-
-        frame = SafeFrame(saved_env=env)
-        result = frame.on_error(error, env, store, k)
-
-        assert isinstance(result, CESKState)
-        assert isinstance(result.C, Value)
-        assert isinstance(result.C.v, Err)
-        assert result.C.v.error is error
-
-
 class TestRaceFrame:
     """Tests for RaceFrame."""
 
@@ -323,21 +191,6 @@ class TestReturnFrame:
 class TestFrameProtocol:
     """Tests that frame types implement the Frame protocol."""
 
-    def test_local_frame_is_frame(self) -> None:
-        """LocalFrame implements Frame protocol."""
-        frame = LocalFrame(restore_env=FrozenDict())
-        assert isinstance(frame, Frame)
-
-    def test_intercept_frame_is_frame(self) -> None:
-        """InterceptFrame implements Frame protocol."""
-        frame = InterceptFrame(transforms=())
-        assert isinstance(frame, Frame)
-
-    def test_listen_frame_is_frame(self) -> None:
-        """ListenFrame implements Frame protocol."""
-        frame = ListenFrame(log_start_index=0)
-        assert isinstance(frame, Frame)
-
     def test_gather_frame_is_frame(self) -> None:
         """GatherFrame implements Frame protocol."""
         frame = GatherFrame(
@@ -345,11 +198,6 @@ class TestFrameProtocol:
             collected_results=[],
             saved_env=FrozenDict(),
         )
-        assert isinstance(frame, Frame)
-
-    def test_safe_frame_is_frame(self) -> None:
-        """SafeFrame implements Frame protocol."""
-        frame = SafeFrame(saved_env=FrozenDict())
         assert isinstance(frame, Frame)
 
     def test_race_frame_is_frame(self) -> None:
