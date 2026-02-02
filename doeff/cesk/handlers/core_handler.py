@@ -169,9 +169,22 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         return CESKState.with_value(None, ctx.env, new_store, ctx.k)
 
     if isinstance(effect, WriterListenEffect):
-        # Use user-space pattern instead of ListenFrame
-        result = yield with_listen(effect.sub_program)
-        return result  # Plain value (ListenResult) - HandlerResultFrame constructs CESKState
+        # Use ListenCaptureFrame to track log entries during sub_program execution
+        from doeff.cesk.frames import ListenCaptureFrame
+        from doeff.cesk.result import DirectState
+
+        # Record current log position
+        current_log = store.get("__log__", [])
+        log_start_index = len(current_log)
+
+        # Push ListenCaptureFrame to extract captured logs when sub_program completes
+        listen_frame = ListenCaptureFrame(log_start_index=log_start_index)
+
+        # Return DirectState to preserve our custom K with ListenCaptureFrame
+        return DirectState(CESKState.with_program(
+            effect.sub_program, ctx.env, store,
+            [listen_frame] + list(ctx.k)
+        ))
 
     if isinstance(effect, InterceptEffect):
         # Use user-space pattern instead of InterceptFrame
