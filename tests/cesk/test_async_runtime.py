@@ -774,71 +774,61 @@ class TestAsyncRuntimeIntegration:
 
 
 class TestAsyncRuntimeCustomHandlers:
-    """Test custom handler integration with AsyncRuntime."""
+    """Test custom effect interception using Intercept pattern."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Legacy dict-based handler API replaced by handler stack in CESK v2. Use WithHandler for custom handlers.")
-    async def test_custom_ask_handler(self) -> None:
-        """Test custom Ask handler overrides default."""
-        from doeff.cesk.frames import ContinueValue
-        from doeff.cesk.handlers import default_handlers
-        from doeff.cesk.runtime import AsyncRuntime
+    async def test_intercept_ask_effect(self) -> None:
+        """Test intercepting Ask effect with custom transform."""
+        from doeff.effects.intercept import Intercept
         from doeff.effects.reader import AskEffect
 
-        def custom_ask_handler(effect, ctx):
-            return ContinueValue(
-                value=f"custom:{effect.key}",
-                env=ctx.task_state.env,
-                store=ctx.store,
-                k=ctx.task_state.kontinuation,
-            )
-
-        custom_handlers = default_handlers()
-        custom_handlers[AskEffect] = custom_ask_handler
+        def custom_ask_transform(effect):
+            if isinstance(effect, AskEffect):
+                return Program.pure(f"custom:{effect.key}")
+            return None
 
         @do
-        def program():
+        def inner():
             result = yield Ask("key")
             return result
 
-        runtime = AsyncRuntime(handlers=custom_handlers)
+        @do
+        def program():
+            result = yield Intercept(inner(), custom_ask_transform)
+            return result
+
         result = (await async_run(program(), async_handlers_preset, env={"key": "value"})).value
         assert result == "custom:key"
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Legacy dict-based handler API replaced by handler stack in CESK v2. Use WithHandler for custom handlers.")
-    async def test_handlers_shared_across_runs(self) -> None:
-        """Test handlers are shared across multiple runs."""
-        from doeff.cesk.frames import ContinueValue
-        from doeff.cesk.handlers import default_handlers
-        from doeff.cesk.runtime import AsyncRuntime
-        from doeff.effects.pure import PureEffect
+    async def test_intercept_with_side_effects(self) -> None:
+        """Test that intercept transforms can have side effects."""
+        from doeff.effects.intercept import Intercept
+        from doeff.effects.state import StateGetEffect
 
-        run_counter = [0]
+        call_counter = [0]
 
-        def counting_pure_handler(effect, ctx):
-            run_counter[0] += 1
-            return ContinueValue(
-                value=effect.value,
-                env=ctx.task_state.env,
-                store=ctx.store,
-                k=ctx.task_state.kontinuation,
-            )
+        def counting_transform(effect):
+            if isinstance(effect, StateGetEffect):
+                call_counter[0] += 1
+            return None  # Pass through to default handler
 
-        custom_handlers = default_handlers()
-        custom_handlers[PureEffect] = counting_pure_handler
-        runtime = AsyncRuntime(handlers=custom_handlers)
+        @do
+        def inner():
+            yield Put("key", 1)
+            yield Get("key")
+            yield Get("key")
+            yield Get("key")
+            return "done"
 
         @do
         def program():
-            yield Pure(None)
-            return "done"
+            result = yield Intercept(inner(), counting_transform)
+            return result
 
-        (await async_run(program(), async_handlers_preset)).value
-        (await async_run(program(), async_handlers_preset)).value
-        (await async_run(program(), async_handlers_preset)).value
-
-        assert run_counter[0] == 3
+        result = (await async_run(program(), async_handlers_preset)).value
+        assert result == "done"
+        assert call_counter[0] == 3
 
 
 # ============================================================================
