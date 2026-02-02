@@ -15,7 +15,6 @@ from doeff.effects.external_promise import (
     ExternalPromise,
 )
 from doeff.effects.scheduler_internal import (
-    _BlockForExternalCompletion,
     _SchedulerCancelTask,
     _SchedulerCreatePromise,
     _SchedulerCreateTaskHandle,
@@ -373,25 +372,6 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             "waiting_for": effect.waiting_for,
         }
         return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
-
-    if isinstance(effect, _BlockForExternalCompletion):
-        # Block on completion queue until an external promise completes.
-        # This is a blocking call - the CESK machine will not proceed until
-        # an external completion arrives (from threads, asyncio, etc.).
-        completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-        if completion_queue is None:
-            from doeff.cesk.errors import InterpreterInvariantError
-            raise InterpreterInvariantError(
-                "_BlockForExternalCompletion: no completion queue in store"
-            )
-
-        # Blocking get - waits until an item is available
-        # This is intentional: when no doeff tasks are runnable, we block
-        # for external completion. Only external code can unblock us.
-        completion = completion_queue.get()  # blocks here!
-
-        # Return the completion tuple (promise_id, value, error)
-        return Program.pure(CESKState.with_value(completion, ctx.env, store, ctx.k))
 
     from doeff.cesk.errors import UnhandledEffectError
 
