@@ -303,3 +303,83 @@ rules:
     severity: WARNING
     metadata:
       category: type-safety
+
+  # ---------------------------------------------------------------------------
+  # DOCUMENTATION - DEPRECATED API USAGE PATTERNS
+  # ---------------------------------------------------------------------------
+  # These rules detect USAGE of deprecated Runtime/Runner classes in docs.
+  # The old class-based API was replaced with function-based sync_run/async_run.
+  #
+  # Excluded paths:
+  # - docs/proposals/: Historical proposal documents
+  # - docs/20-runtime-scheduler.md: Contains migration guide with "Before" examples
+
+  - id: docs-no-runtime-instantiation
+    pattern-regex: '(SyncRuntime|AsyncRuntime|AsyncioRuntime|SimulationRuntime)\s*\('
+    paths:
+      include:
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/proposals/**"
+        - "/docs/20-runtime-scheduler.md"
+    message: |
+      DEPRECATED: Runtime class instantiation detected.
+      Use function-based API:
+        sync_run(program, sync_handlers_preset)
+        await async_run(program, async_handlers_preset)
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: docs-deprecation
+
+  - id: docs-no-runner-instantiation
+    pattern-regex: '(SyncRunner|AsyncRunner)\s*\('
+    paths:
+      include:
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/proposals/**"
+        - "/docs/20-runtime-scheduler.md"
+    message: |
+      DEPRECATED: Runner class instantiation detected.
+      Use function-based API:
+        sync_run(program, sync_handlers_preset)
+        await async_run(program, async_handlers_preset)
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: docs-deprecation
+
+  - id: docs-no-runtime-run-method
+    pattern-regex: 'runtime\.run\s*\('
+    paths:
+      include:
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/proposals/**"
+        - "/docs/20-runtime-scheduler.md"
+    message: |
+      DEPRECATED: runtime.run() method call detected.
+      Use function-based API:
+        sync_run(program, sync_handlers_preset)
+        await async_run(program, async_handlers_preset)
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: docs-deprecation
+
+  - id: docs-no-runtime-import
+    pattern-regex: 'from doeff\.(cesk\.runtime|cesk\.runner|runtimes) import'
+    paths:
+      include:
+        - "/docs/**/*.md"
+      exclude:
+        - "/docs/proposals/**"
+        - "/docs/20-runtime-scheduler.md"
+    message: |
+      DEPRECATED: Import from removed runtime/runner modules.
+      Use: from doeff import sync_run, async_run, sync_handlers_preset, async_handlers_preset
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: docs-deprecation
