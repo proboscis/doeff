@@ -294,7 +294,7 @@ yield Modify("counter", lambda x: x + 1)
 - **`key: str`** - State key
 - **`f: Callable[[T], T]`** - Transformation function
 
-**Returns:** None
+**Returns:** The new (transformed) value
 
 **See:** [Basic Effects](03-basic-effects.md#modify)
 
@@ -552,7 +552,7 @@ Spawn a Program in the background and return a Task handle.
 
 ```python
 task = yield Spawn(worker(), preferred_backend="ray", num_cpus=1)
-result = yield task.join()
+result = yield Wait(task)
 ```
 
 **Parameters:**
@@ -563,7 +563,7 @@ result = yield task.join()
   `resources`, `placement_group`, `placement_group_bundle_index`,
   `placement_group_capture_child_tasks`, `runtime_env`, `scheduling_strategy`)
 
-**Returns:** `Task[T]` with `join()` method
+**Returns:** `Task[T]` - use `Wait(task)` to get result
 
 **Notes:**
 
