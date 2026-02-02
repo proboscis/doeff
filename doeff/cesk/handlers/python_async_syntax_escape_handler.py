@@ -1,15 +1,41 @@
 """Handler that produces PythonAsyncSyntaxEscape for async_run.
 
-This handler is EXCLUSIVE to async_run. It converts async effects (Await, Delay,
-WaitUntil) into PythonAsyncSyntaxEscape, signaling the async runtime to escape
-from the CESK machine and use Python's native async/await.
+!! THIS IS THE ONLY HANDLER THAT MAY PRODUCE PythonAsyncSyntaxEscape !!
 
-For sync_run, use threaded_asyncio_handler instead, which handles async effects
+This handler exists because Python's `await` is SYNTAX, not a function call.
+When users explicitly choose async_run and do `yield Await(coroutine)`, we must
+escape from the CESK machine to execute the await in Python's async runtime.
+
+EXCLUSIVITY
+-----------
+This handler is the SOLE producer of PythonAsyncSyntaxEscape. No other handler
+may produce this type. This is an architectural constraint, not a guideline.
+
+If you think you need a new handler that produces PythonAsyncSyntaxEscape:
+1. You are wrong
+2. Rethink your approach
+3. If blocking is needed, do it directly in the handler's generator:
+
+    # WRONG - don't create new escape producers
+    return Program.pure(PythonAsyncSyntaxEscape(...))
+
+    # RIGHT - block directly
+    result = blocking_call()  # next(gen) blocks until this returns
+
+EFFECTS HANDLED
+---------------
+- FutureAwaitEffect: yield Await(coroutine)
+- DelayEffect: yield Delay(seconds)
+- WaitUntilEffect: yield WaitUntil(datetime)
+
+For sync_run, use threaded_asyncio_handler instead, which handles these effects
 by running them in a background asyncio thread (no escape needed).
 
-Per SPEC-CESK-EFFECT-BOUNDARIES.md: Python async escape is SEPARATE from
-task scheduling. The scheduler intercepts escapes only when multi-task
-coordination is needed.
+WHY NOT JUST BLOCK?
+-------------------
+Unlike custom blocking (queue.get(), etc.), Python's await MUST propagate up
+to an async function. You cannot await inside a sync generator. This escape
+is the bridge between doeff's sync CESK machine and Python's async runtime.
 """
 
 from __future__ import annotations
@@ -29,19 +55,19 @@ if TYPE_CHECKING:
 def python_async_syntax_escape_handler(effect: EffectBase, ctx: "HandlerContext"):
     """Convert async effects to PythonAsyncSyntaxEscape for async_run.
 
-    This handler is for async_run ONLY. It produces PythonAsyncSyntaxEscape
-    which tells the async runtime to escape and await the coroutine directly.
+    !! SOLE PRODUCER OF PythonAsyncSyntaxEscape !!
 
-    For sync_run, use threaded_asyncio_handler instead.
+    This is the ONLY handler that may produce PythonAsyncSyntaxEscape.
+    Do not create additional handlers that produce this type.
 
-    When running with multi-task scheduler:
-    - The escape bubbles up through the handler stack
-    - TaskSchedulerHandler's HandlerFrame intercepts it
-    - Scheduler coordinates multi-task async
+    Handled effects:
+    - FutureAwaitEffect → escape with awaitable
+    - DelayEffect → escape with asyncio.sleep coroutine
+    - WaitUntilEffect → escape with sleep until target time
 
-    When running without scheduler (single-task):
-    - The escape goes directly to the runner
-    - Runner awaits and resumes
+    All other effects are forwarded to outer handlers.
+
+    For sync_run, use threaded_asyncio_handler instead (no escape needed).
     """
     from doeff.effects.future import FutureAwaitEffect
     from doeff.effects.time import DelayEffect, WaitUntilEffect
