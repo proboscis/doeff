@@ -605,8 +605,7 @@ def well_logged_operation():
 
 | Effect | Purpose | Example |
 |--------|---------|---------|
-| `Ask(key)` | Read environment | Config, settings |
-| `Ask(key, default=prog)` | Read with lazy default | Deferred initialization |
+| `Ask(key)` | Read environment | Config, settings (Programs in env are lazily evaluated) |
 | `Local(env, prog)` | Scoped environment | Testing, overrides |
 | `Get(key)` | Read state | Counters, flags |
 | `Put(key, val)` | Write state | Initialize, update |

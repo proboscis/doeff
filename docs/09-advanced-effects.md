@@ -168,40 +168,6 @@ def background_work():
     return (other_result, background_result)
 ```
 
-### Spawn with Backend Options
-
-```python
-@do
-def spawn_with_backend():
-    # Specify preferred backend
-    task = yield Spawn(
-        heavy_computation(),
-        preferred_backend="process"  # "thread", "process", or "ray"
-    )
-    
-    result = yield Wait(task)
-    return result
-```
-
-### Spawn with Ray
-
-For distributed computation, use Ray backend with resource hints:
-
-```python
-@do
-def distributed_spawn():
-    task = yield Spawn(
-        ml_training_job(),
-        preferred_backend="ray",
-        num_cpus=4,
-        num_gpus=1,
-        memory=8 * 1024 * 1024 * 1024  # 8GB
-    )
-    
-    result = yield Wait(task)
-    return result
-```
-
 ### Multiple Background Tasks
 
 ```python
@@ -275,7 +241,7 @@ If you need the active interpreter instance (for example, to pass it into an
 external framework callback), ask for the special key `__interpreter__`:
 
 ```python
-interp = yield ask("__interpreter__")
+interp = yield Ask("__interpreter__")
 # interp is the ProgramInterpreter currently running this Program.
 ```
 

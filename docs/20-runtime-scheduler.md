@@ -118,21 +118,20 @@ result = sync_run(parallel_work(), sync_handlers_preset)
 
 **How it works:**
 
+The `task_scheduler_handler` manages cooperative concurrency:
+
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                  SyncRuntime Scheduler                   │
+│              task_scheduler_handler                      │
 │                                                          │
 │   Task Queue: [main] ──Spawn──> [main, task1, task2]    │
 │                                                          │
-│   Loop:                                                  │
-│   1. Pick next ready task                               │
-│   2. Run until yield (effect)                           │
-│   3. Handle effect:                                     │
+│   Effect handling:                                       │
 │      - Spawn → enqueue new task, return handle          │
 │      - Wait  → block task until target completes        │
 │      - Gather → block until all targets complete        │
-│      - Other → process normally                         │
-│   4. Repeat until all tasks done                        │
+│                                                          │
+│   sync_run steps the CESK machine until completion      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -140,17 +139,17 @@ This is **cooperative concurrency** (not parallelism):
 - Single-threaded task execution, no race conditions
 - Deterministic execution order (for pure compute)
 - Tasks yield control at every `yield` statement
-- No asyncio, no kernel I/O multiplexing—pure Python scheduling
+- Scheduling logic is in handlers, stepping logic in `sync_run`/`async_run`
 
 #### Delay with Timer Thread
 
 `Delay` uses a background timer thread so other tasks can run while waiting:
 
 ```
-Main Thread (Scheduler)              Timer Thread
-───────────────────────              ────────────
+Main Thread (stepper)                Timer Thread
+─────────────────────                ────────────
 task1: yield Delay(2.0)
-   ├──► mark task1 "blocked"
+   ├──► handler marks task1 "blocked"
    ├──► submit timer ──────────────► time.sleep(2.0)
    ▼
 task2: running...                         │
@@ -161,13 +160,13 @@ task3: running...                         │
 task1: ready, resumes
 ```
 
-- Timer threads handle `Delay` without blocking the scheduler
+- Timer threads handle `Delay` without blocking the stepper
 - Task execution remains single-threaded (no races in user code)
 - Only timing is offloaded to threads
 
 **Limitations:**
 
-- `Await` - Not supported (requires asyncio event loop). Use `AsyncRuntime` for Python coroutines.
+- `Await` - Not supported (requires asyncio event loop). Use `async_run` for Python coroutines.
 - No true CPU parallelism (tasks run sequentially on main thread)
 
 ### Time Effects in sync_run

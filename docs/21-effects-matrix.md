@@ -1,26 +1,29 @@
 # Effects, Handlers, and Runtime Support Matrix
 
-This document provides a comprehensive overview of all effects defined in doeff, their handler implementations, runtime support, and test coverage status.
+This document provides a comprehensive overview of all effects defined in doeff, their handler implementations, and behavior with different handler presets.
+
+**Architecture Note:** `sync_run` and `async_run` are steppers that step through the CESK machine. The actual effect handling and scheduling is done by handlers. The columns below show behavior when using the corresponding handler preset.
 
 ## Quick Reference
 
 | Status | Meaning |
 |--------|---------|
-| Supported | Handler in `sync_handlers_preset`/`async_handlers_preset`, tested |
-| Intercepted | Runner intercepts effect directly (async handling) |
-| Sequential | Runs sequentially in sync_run |
+| Supported | Handler processes effect normally |
+| Cooperative | `task_scheduler_handler` manages via cooperative scheduling |
+| Thread-based | `sync_await_handler` runs awaitable in background thread |
+| Async | Handler produces async escape for `async_run` to await |
 
 ## Core Effects (Reader/State/Writer)
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `AskEffect` | `Ask(key)` | `core.py` | Supported | Supported | Supported | Yes |
-| `LocalEffect` | `Local(env, program)` | `control.py` | Supported | Supported | Supported | Yes |
-| `StateGetEffect` | `Get(key)` | `core.py` | Supported | Supported | Supported | Yes |
-| `StatePutEffect` | `Put(key, value)` | `core.py` | Supported | Supported | Supported | Yes |
-| `StateModifyEffect` | `Modify(key, func)` | `core.py` | Supported | Supported | Supported | Yes |
-| `WriterTellEffect` | `Tell(msg)` / `Log(msg)` | `control.py` | Supported | Supported | Supported | Yes |
-| `WriterListenEffect` | `Listen(program)` | `control.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `AskEffect` | `Ask(key)` | `core_handler` | Supported | Supported | Yes |
+| `LocalEffect` | `Local(env, program)` | `core_handler` | Supported | Supported | Yes |
+| `StateGetEffect` | `Get(key)` | `core_handler` | Supported | Supported | Yes |
+| `StatePutEffect` | `Put(key, value)` | `core_handler` | Supported | Supported | Yes |
+| `StateModifyEffect` | `Modify(key, func)` | `core_handler` | Supported | Supported | Yes |
+| `WriterTellEffect` | `Tell(msg)` / `Log(msg)` | `core_handler` | Supported | Supported | Yes |
+| `WriterListenEffect` | `Listen(program)` | `core_handler` | Supported | Supported | Yes |
 
 ### Ask Lazy Program Evaluation
 
@@ -45,60 +48,59 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ## Control Flow Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `PureEffect` | `Pure(value)` | `core.py` | Supported | Supported | Supported | Yes |
-| `ResultSafeEffect` | `Safe(program)` | `control.py` | Supported | Supported | Supported | Yes |
-| `InterceptEffect` | `intercept_program_effect()` | `control.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `PureEffect` | `Pure(value)` | `core_handler` | Supported | Supported | Yes |
+| `ResultSafeEffect` | `Safe(program)` | `core_handler` | Supported | Supported | Yes |
+| `InterceptEffect` | `intercept_program_effect()` | `core_handler` | Supported | Supported | Yes |
 
 ## IO Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `IOPerformEffect` | `IO(action)` | `io.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `IOPerformEffect` | `IO(action)` | `core_handler` | Supported | Supported | Yes |
 
 ## Cache Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `CacheGetEffect` | `CacheGet(key)` | `io.py` | Supported | Supported | Supported | Yes |
-| `CachePutEffect` | `CachePut(key, value)` | `io.py` | Supported | Supported | Supported | Yes |
-| `CacheExistsEffect` | `CacheExists(key)` | `io.py` | Supported | Supported | Supported | Yes |
-| `CacheDeleteEffect` | `CacheDelete(key)` | `io.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `CacheGetEffect` | `CacheGet(key)` | `core_handler` | Supported | Supported | Yes |
+| `CachePutEffect` | `CachePut(key, value)` | `core_handler` | Supported | Supported | Yes |
+| `CacheExistsEffect` | `CacheExists(key)` | `core_handler` | Supported | Supported | Yes |
+| `CacheDeleteEffect` | `CacheDelete(key)` | `core_handler` | Supported | Supported | Yes |
 
 ## Time Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `DelayEffect` | `Delay(seconds)` | `time.py` | Supported (real sleep) | Supported (sim time) | Intercepted (async sleep) | Yes |
-| `GetTimeEffect` | `GetTime()` | `time.py` | Supported | Supported | Supported | Yes |
-| `WaitUntilEffect` | `WaitUntil(datetime)` | `time.py` | Supported (real wait) | Supported (sim time) | Intercepted (async wait) | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `DelayEffect` | `Delay(seconds)` | `core_handler` | Real `time.sleep` | Async `asyncio.sleep` | Yes |
+| `GetTimeEffect` | `GetTime()` | `core_handler` | Supported | Supported | Yes |
+| `WaitUntilEffect` | `WaitUntil(datetime)` | `core_handler` | Real wait | Async wait | Yes |
 
 ### Time Effect Handling Note
 
-- **SyncRuntime**: Uses real wall-clock time (`time.sleep`)
-- **SimulationRuntime**: Intercepts time effects and advances simulated time instantly
-- **AsyncRuntime**: Intercepts time effects for `asyncio.sleep` integration
+- **sync_handlers_preset**: `core_handler` uses real wall-clock time
+- **async_handlers_preset**: Handler produces async escape, `async_run` awaits it
 
 ## Concurrency Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `SpawnEffect` | `Spawn(program)` | Runtime | Cooperative | Cooperative | Intercepted (asyncio) | Yes |
-| `WaitEffect` | `Wait(future)` | Runtime | Cooperative | Cooperative | Intercepted | Yes |
-| `GatherEffect` | `Gather(*futures)` | Runtime | Cooperative | Cooperative | Intercepted (parallel) | Yes |
-| `RaceEffect` | `Race(*futures)` | Runtime | Cooperative | Cooperative | Intercepted | Yes |
-| `TaskCancelEffect` | `task.cancel()` | Runtime | Cooperative | Cooperative | Intercepted | Yes |
-| `FutureAwaitEffect` | `Await(awaitable)` | Runtime | Not Supported | Not Supported | Intercepted | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `SpawnEffect` | `Spawn(program)` | `task_scheduler_handler` | Cooperative | asyncio.create_task | Yes |
+| `WaitEffect` | `Wait(future)` | `task_scheduler_handler` | Cooperative | Async | Yes |
+| `GatherEffect` | `Gather(*futures)` | `task_scheduler_handler` | Cooperative | Parallel | Yes |
+| `RaceEffect` | `Race(*futures)` | `task_scheduler_handler` | Cooperative | Parallel | Yes |
+| `TaskCancelEffect` | `task.cancel()` | `task_scheduler_handler` | Cooperative | Async | Yes |
+| `FutureAwaitEffect` | `Await(awaitable)` | `sync_await_handler` / `python_async_syntax_escape_handler` | Thread-based | Async | Yes |
 
-### Cooperative Scheduling (SyncRuntime / SimulationRuntime)
+### Cooperative Scheduling (task_scheduler_handler)
 
-Both `SyncRuntime` and `SimulationRuntime` implement concurrency via **cooperative scheduling**:
+The `task_scheduler_handler` implements concurrency via **cooperative scheduling**:
 
 - **Single-threaded**: All task code runs on one thread (no races in user code)
 - **Interleaved execution**: Tasks yield control at every `yield` statement
 - **Deterministic**: Execution order is reproducible for pure compute
-- **Timer threads**: `Delay` uses background threads for timing (SyncRuntime only)
+- **Timer threads**: `Delay` uses background threads for timing
 
 ### Spawn/Wait/Gather Usage
 
@@ -128,43 +130,45 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 
 ### Concurrency Model Comparison
 
-| Aspect | AsyncRuntime | SyncRuntime / SimulationRuntime |
-|--------|--------------|----------------------------------|
-| `Spawn` | asyncio.create_task | Enqueue to task scheduler |
+| Aspect | async_handlers_preset | sync_handlers_preset |
+|--------|----------------------|----------------------|
+| `Spawn` | asyncio.create_task | Enqueue to `task_scheduler_handler` |
 | `Gather` | asyncio.gather (true parallel) | Cooperative interleaving |
 | Parallelism | Yes (kernel I/O multiplexing) | No (single-threaded) |
 | Deterministic | No | Yes |
-| `Await` support | Yes | No |
+| `Await` support | Direct await | Thread-based via `sync_await_handler` |
 
 ## Atomic Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `AtomicGetEffect` | `AtomicGet(key)` | `atomic.py` | Supported | Supported | Supported | Yes |
-| `AtomicUpdateEffect` | `AtomicUpdate(key, updater)` | `atomic.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `AtomicGetEffect` | `AtomicGet(key)` | `core_handler` | Supported | Supported | Yes |
+| `AtomicUpdateEffect` | `AtomicUpdate(key, updater)` | `core_handler` | Supported | Supported | Yes |
 
 ## Debug/Introspection Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `ProgramCallFrameEffect` | `ProgramCallFrame(depth)` | `callstack.py` | Supported | Supported | Supported | Yes |
-| `ProgramCallStackEffect` | `ProgramCallStack()` | `callstack.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `ProgramCallFrameEffect` | `ProgramCallFrame(depth)` | `core_handler` | Supported | Supported | Yes |
+| `ProgramCallStackEffect` | `ProgramCallStack()` | `core_handler` | Supported | Supported | Yes |
 
 ## Graph Effects
 
-| Effect | Constructor | Handler | SyncRuntime | SimulationRuntime | AsyncRuntime | Tested |
-|--------|-------------|---------|-------------|-------------------|--------------|--------|
-| `GraphStepEffect` | `Step(value, meta)` | `graph.py` | Supported | Supported | Supported | Yes |
-| `GraphAnnotateEffect` | `Annotate(meta)` | `graph.py` | Supported | Supported | Supported | Yes |
-| `GraphSnapshotEffect` | `Snapshot()` | `graph.py` | Supported | Supported | Supported | Yes |
-| `GraphCaptureEffect` | `CaptureGraph(program)` | `graph.py` | Supported | Supported | Supported | Yes |
+| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+|--------|-------------|---------|----------------------|------------------------|--------|
+| `GraphStepEffect` | `Step(value, meta)` | `core_handler` | Supported | Supported | Yes |
+| `GraphAnnotateEffect` | `Annotate(meta)` | `core_handler` | Supported | Supported | Yes |
+| `GraphSnapshotEffect` | `Snapshot()` | `core_handler` | Supported | Supported | Yes |
+| `GraphCaptureEffect` | `CaptureGraph(program)` | `core_handler` | Supported | Supported | Yes |
 
-## Execution Function Comparison
+## Stepper and Handler Preset Overview
 
-| Function | Time Handling | Concurrency |
-|----------|---------------|-------------|
-| `async_run` | Real async (`asyncio.sleep`) | Parallel (asyncio) |
-| `sync_run` | Real blocking + timer threads | Cooperative scheduler |
+| Stepper | Handler Preset | Key Handlers |
+|---------|----------------|--------------|
+| `sync_run` | `sync_handlers_preset` | `core_handler`, `task_scheduler_handler`, `sync_await_handler` |
+| `async_run` | `async_handlers_preset` | `core_handler`, `task_scheduler_handler`, `python_async_syntax_escape_handler` |
+
+**Note:** The steppers (`sync_run`, `async_run`) just step through the CESK machine. All effect handling and scheduling logic is in the handlers.
 
 ### Selection Guide
 
