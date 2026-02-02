@@ -268,7 +268,6 @@ class TestErrorPropagation:
         assert "Program evaluation failed" in str(result.error)
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="Error caching behavior differs with new handler")
     async def test_error_not_cached(
         self, parameterized_interpreter
     ) -> None:

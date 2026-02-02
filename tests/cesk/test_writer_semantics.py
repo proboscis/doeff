@@ -207,10 +207,6 @@ class TestListenPlusLog:
 class TestListenPlusLocal:
     """Test Listen + Local composition."""
 
-    @pytest.mark.xfail(
-        reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. "
-               "Effects may bypass intermediate handlers, breaking expected composition semantics."
-    )
     def test_listen_captures_logs_within_local(self) -> None:
         """Logs within Local scope are captured by Listen."""
         from doeff.cesk.run import sync_handlers_preset, sync_run
@@ -233,10 +229,6 @@ class TestListenPlusLocal:
         assert listen_result.value == "local_value"
         assert list(listen_result.log) == ["key is local_value"]
 
-    @pytest.mark.xfail(
-        reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. "
-               "Effects may bypass intermediate handlers, breaking expected composition semantics."
-    )
     def test_listen_around_local_captures_all(self) -> None:
         """Listen wrapping Local captures all logs from within."""
         from doeff.cesk.run import sync_handlers_preset, sync_run
@@ -261,7 +253,6 @@ class TestListenPlusLocal:
 class TestListenPlusSafe:
     """Test Listen + Safe composition."""
 
-    @pytest.mark.xfail(reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. Effects may bypass intermediate handlers, breaking expected composition semantics.")
     def test_listen_plus_safe_success(self) -> None:
         """Listen + Safe captures logs on successful execution."""
         from doeff.cesk.run import sync_handlers_preset, sync_run
@@ -284,7 +275,6 @@ class TestListenPlusSafe:
         assert listen_result.value.unwrap() == 42
         assert list(listen_result.log) == ["processing"]
 
-    @pytest.mark.xfail(reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. Effects may bypass intermediate handlers, breaking expected composition semantics.")
     def test_listen_plus_safe_error_preserves_logs(self) -> None:
         """Listen + Safe preserves logs even when Safe catches an error."""
         from doeff.cesk.run import sync_handlers_preset, sync_run
@@ -386,7 +376,6 @@ class TestListenPlusGather:
 class TestNestedListen:
     """Test nested Listen (Listen + Listen) composition."""
 
-    @pytest.mark.xfail(reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. Effects may bypass intermediate handlers, breaking expected composition semantics.")
     def test_nested_listen_inner_captures_inner_logs(self) -> None:
         """Inner Listen captures only its scope logs."""
         from doeff.cesk.run import sync_handlers_preset, sync_run
@@ -421,7 +410,6 @@ class TestNestedListen:
         # Inner ListenResult only contains inner logs
         assert list(inner_listen_result.log) == ["inner1", "inner2"]
 
-    @pytest.mark.xfail(reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. Effects may bypass intermediate handlers, breaking expected composition semantics.")
     def test_triple_nested_listen(self) -> None:
         """Three levels of nested Listen work correctly."""
         from doeff.cesk.run import sync_handlers_preset, sync_run
@@ -627,7 +615,6 @@ class TestAsyncWriterSemantics:
         assert list(result.log) == ["async_log"]
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. Effects may bypass intermediate handlers, breaking expected composition semantics.")
     async def test_async_listen_plus_safe(self) -> None:
         """Listen + Safe works in AsyncRuntime."""
         from doeff.cesk.run import async_handlers_preset, async_run
@@ -649,7 +636,6 @@ class TestAsyncWriterSemantics:
         assert list(result.log) == ["before_fail"]
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(reason="SPEC-CESK-003: Handler-based patterns create nested contexts when forwarding. Effects may bypass intermediate handlers, breaking expected composition semantics.")
     async def test_async_nested_listen(self) -> None:
         """Nested Listen works in AsyncRuntime."""
         from doeff.cesk.run import async_handlers_preset, async_run
