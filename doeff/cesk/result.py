@@ -1,4 +1,52 @@
-"""CESK machine step results and public result types."""
+"""CESK machine step results and public result types.
+
+Architecture Notes
+==================
+
+doeff is a COOPERATIVE SCHEDULING system with its own execution model.
+It does NOT "support" asyncio - Python async is a WORKAROUND for users
+who want `async def` syntax, not a core feature.
+
+StepResult Types
+----------------
+
+The step() function returns one of these types:
+
+- CESKState: Continue stepping (normal case)
+- Done: Computation finished successfully
+- Failed: Computation failed with exception
+- PythonAsyncSyntaxEscape: SPECIAL - escape to Python async (see below)
+
+Blocking Behavior
+-----------------
+
+When a handler has no work and is waiting for external I/O:
+- The handler's generator does blocking I/O directly (e.g., queue.get())
+- CESK stepping blocks at next(gen) until I/O completes
+- This is correct - doeff blocks when there's nothing to do
+
+DO NOT add more escape types. If blocking is needed, do it in the handler.
+The run loop should remain simple: step until Done/Failed.
+
+PythonAsyncSyntaxEscape
+-----------------------
+
+This escape exists ONLY because Python's `await` is SYNTAX, not a function.
+You cannot hide `await` inside a sync function - it must bubble up.
+
+RESTRICTIONS:
+- ONLY python_async_syntax_escape_handler may produce this
+- ONLY for Await/Delay/WaitUntil effects
+- ONLY when user explicitly chose async_run
+
+DO NOT use this for:
+- Custom blocking (use direct blocking in handler instead)
+- Task coordination (use effects and handlers)
+- Any other "escape hatch" purposes
+
+This is NOT a general monad escape pattern. Adding more escape types
+or using this for other purposes violates the architecture.
+"""
 
 from __future__ import annotations
 
@@ -61,17 +109,48 @@ class Failed:
 class PythonAsyncSyntaxEscape:
     """Escape hatch for Python's async/await SYNTAX.
 
-    This type exists because Python's `await` is SYNTAX, not a function call.
-    It cannot be hidden inside a sync function. Cooperative scheduling requires
-    yielding control to the event loop.
+    !! RESTRICTED USE - READ CAREFULLY !!
 
-    This is NOT a general monad escape. It exists specifically for:
-    - User chose AsyncRunner (opt-in loop integration)
-    - Effect contains an awaitable that must run in user's event loop
+    This type is produced by ONE handler only: python_async_syntax_escape_handler.
+    No other handler may produce this type. This is not a guideline - it is a
+    hard architectural constraint.
 
-    If user uses SyncRunner, this escapes to thread pool instead of user's loop,
-    hiding all async from the user.
+    WHY THIS EXISTS
+    ---------------
+    Python's `await` is SYNTAX, not a function call. You cannot write:
 
+        def sync_function():
+            result = await some_coroutine()  # SyntaxError!
+
+    When a user explicitly chooses async_run and their code does `yield Await(coro)`,
+    we must escape from the CESK machine to Python's async runtime to execute the
+    await. This is the ONLY purpose of this type.
+
+    WHAT THIS IS NOT
+    ----------------
+    - NOT a general "escape hatch" for handlers
+    - NOT for custom blocking (do blocking I/O in handler's generator directly)
+    - NOT for task coordination (use effects and handlers)
+    - NOT for "optimizations" or "special cases"
+
+    If you think you need to produce this type from a new handler, you are wrong.
+    Rethink your approach. The handler's generator can do blocking I/O directly:
+
+        # WRONG - don't create escape types
+        return PythonAsyncSyntaxEscape(awaitable=queue.get(), ...)
+
+        # RIGHT - block directly in handler
+        result = queue.get()  # next(gen) blocks here
+
+    ALLOWED PRODUCER
+    ----------------
+    python_async_syntax_escape_handler ONLY, for these effects ONLY:
+    - FutureAwaitEffect (yield Await(coroutine))
+    - DelayEffect (yield Delay(seconds))
+    - WaitUntilEffect (yield WaitUntil(datetime))
+
+    HOW IT WORKS
+    ------------
     The runtime awaits using ONE of these patterns:
     1. Single awaitable: `awaitable` field is set, await it, call resume(value)
     2. Multiple awaitables: `awaitables` dict is set, await first completion,
@@ -80,10 +159,6 @@ class PythonAsyncSyntaxEscape:
     This design keeps the runtime GENERIC - it has no knowledge of task IDs,
     scheduling logic, or handler internals. All routing decisions are made
     in the resume callback (created by handlers).
-
-    Per spec: continuations take (value, new_store) to incorporate handler's
-    store updates. On error, resume_error uses the original store (S) from
-    before the effect - effectful handlers should NOT mutate S in-place.
     """
 
     # Resume callbacks
@@ -252,6 +327,16 @@ def multi_task_async_escape(
 
 
 Terminal: TypeAlias = Done | Failed
+
+# StepResult: What step() can return
+#
+# - CESKState: Keep stepping (normal case, vast majority of steps)
+# - Done: Computation finished successfully
+# - Failed: Computation failed with exception
+# - PythonAsyncSyntaxEscape: ONLY from python_async_syntax_escape_handler
+#
+# DO NOT ADD MORE TYPES HERE. If you need blocking, do it in the handler's
+# generator. The run loop should remain: step until Done/Failed.
 StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape
 
 
