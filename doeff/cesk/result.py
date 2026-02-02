@@ -251,28 +251,8 @@ def multi_task_async_escape(
     )
 
 
-@dataclass(frozen=True)
-class WaitingForExternalCompletion:
-    """Signal that execution is blocked waiting for external completion.
-
-    This result type is returned when:
-    - A task is waiting on an external promise (Wait effect)
-    - There are no other tasks to run
-    - But there's an external promise that may be completed by external code
-
-    The runner should:
-    1. Block-wait on the external completion queue
-    2. Process completions (wake up waiters)
-    3. Retry stepping with the stored state
-
-    This prevents false deadlock detection when external promises are pending.
-    """
-
-    state: "CESKState"
-
-
 Terminal: TypeAlias = Done | Failed
-StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape | WaitingForExternalCompletion
+StepResult: TypeAlias = CESKState | Terminal | PythonAsyncSyntaxEscape
 
 
 @dataclass(frozen=True)
@@ -318,7 +298,6 @@ __all__ = [
     "PythonAsyncSyntaxEscape",
     "StepResult",
     "Terminal",
-    "WaitingForExternalCompletion",
     "multi_task_async_escape",
     "python_async_escape",
 ]
