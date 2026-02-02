@@ -18,7 +18,7 @@ from doeff.cesk.handler_frame import (
     WithHandler,
 )
 from doeff.cesk.helpers import to_generator
-from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape, StepResult, WaitingForExternalCompletion
+from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape, StepResult
 from doeff.cesk.state import (
     CESKState,
     EffectControl,

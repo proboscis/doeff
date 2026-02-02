@@ -35,13 +35,14 @@ from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
     EXTERNAL_COMPLETION_QUEUE_KEY,
     EXTERNAL_PROMISE_REGISTRY_KEY,
+    SPAWN_ASYNC_HANDLER_KEY,
     TASK_QUEUE_KEY,
     process_external_completions,
     scheduler_state_handler,
 )
 from doeff.cesk.handlers.sync_await_handler import sync_await_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
-from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape, WaitingForExternalCompletion
+from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape
 from doeff.cesk.runtime_result import (
     EffectStackTrace,
     KStackTrace,
@@ -127,6 +128,9 @@ def sync_run(
     frozen_env: Environment = FrozenDict(env) if env else FrozenDict()
     final_store: Store = dict(store) if store else {}
 
+    # Set the async handler for spawned tasks (sync_run uses sync_await_handler)
+    final_store[SPAWN_ASYNC_HANDLER_KEY] = sync_await_handler
+
     wrapped = _wrap_with_handlers(program, handlers)
 
     state = CESKState(
@@ -175,6 +179,9 @@ async def async_run(
     """
     frozen_env: Environment = FrozenDict(env) if env else FrozenDict()
     final_store: Store = dict(store) if store else {}
+
+    # Set the async handler for spawned tasks (async_run uses python_async_syntax_escape_handler)
+    final_store[SPAWN_ASYNC_HANDLER_KEY] = python_async_syntax_escape_handler
 
     wrapped = _wrap_with_handlers(program, handlers)
 
@@ -267,52 +274,6 @@ def _sync_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
         if isinstance(result, CESKState):
             state = result
             continue
-
-        if isinstance(result, WaitingForExternalCompletion):
-            # Block-wait for external completion
-            completion_queue = state.S.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-            if completion_queue is not None:
-                try:
-                    # Block until external completion arrives (with timeout)
-                    completion = completion_queue.get(timeout=30.0)
-                    # Put back for process_external_completions to handle
-                    completion_queue.put(completion)
-                    # Process completions (this wakes up waiters and adds them to queue)
-                    process_external_completions(state.S)
-
-                    # Get the resume value/error from the queue
-                    task_queue = state.S.get(TASK_QUEUE_KEY, [])
-                    if task_queue:
-                        item = task_queue.pop(0)
-                        state.S[TASK_QUEUE_KEY] = task_queue
-
-                        resume_value = item.get("resume_value")
-                        resume_error = item.get("resume_error")
-
-                        # Resume with the full continuation (from WaitingForExternalCompletion.state)
-                        # and the result value/error from the queue
-                        if resume_error is not None:
-                            state = CESKState(
-                                C=Error(resume_error),
-                                E=result.state.E,
-                                S=state.S,  # Current store with updated scheduler state
-                                K=result.state.K,  # Full continuation including handler frames
-                            )
-                        else:
-                            state = CESKState(
-                                C=Value(resume_value),
-                                E=result.state.E,
-                                S=state.S,
-                                K=result.state.K,
-                            )
-                        continue
-                except Exception:
-                    # Timeout or error - fall through to raise
-                    pass
-
-            raise RuntimeError(
-                "Deadlock: waiting for external promise but no completion received"
-            )
 
         if isinstance(result, PythonAsyncSyntaxEscape):
             raise TypeError(
@@ -408,57 +369,6 @@ async def _async_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
             if isinstance(result, CESKState):
                 state = result
                 continue
-
-            if isinstance(result, WaitingForExternalCompletion):
-                # In async context, poll for external completion with asyncio.sleep
-                completion_queue = state.S.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-                if completion_queue is not None:
-                    # Poll loop with async sleep to not block event loop
-                    max_attempts = 3000  # 30 seconds total
-                    for _ in range(max_attempts):
-                        if not completion_queue.empty():
-                            completion = completion_queue.get_nowait()
-                            completion_queue.put(completion)
-                            process_external_completions(state.S)
-
-                            # Get the resume value/error from the queue
-                            task_queue = state.S.get(TASK_QUEUE_KEY, [])
-                            if task_queue:
-                                item = task_queue.pop(0)
-                                state.S[TASK_QUEUE_KEY] = task_queue
-
-                                resume_value = item.get("resume_value")
-                                resume_error = item.get("resume_error")
-
-                                # Resume with the full continuation (from WaitingForExternalCompletion.state)
-                                # and the result value/error from the queue
-                                if resume_error is not None:
-                                    state = CESKState(
-                                        C=Error(resume_error),
-                                        E=result.state.E,
-                                        S=state.S,  # Current store with updated scheduler state
-                                        K=result.state.K,  # Full continuation including handler frames
-                                    )
-                                else:
-                                    state = CESKState(
-                                        C=Value(resume_value),
-                                        E=result.state.E,
-                                        S=state.S,
-                                        K=result.state.K,
-                                    )
-                                break
-                        await asyncio.sleep(0.01)
-                    else:
-                        _cancel_pending_tasks()
-                        raise RuntimeError(
-                            "Timeout: waiting for external promise but no completion received"
-                        )
-                    continue
-
-                _cancel_pending_tasks()
-                raise RuntimeError(
-                    "Deadlock: waiting for external promise but no completion queue"
-                )
 
             _cancel_pending_tasks()
             raise RuntimeError(f"Unexpected step result: {type(result)}")

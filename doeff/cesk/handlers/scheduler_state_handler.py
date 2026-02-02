@@ -15,6 +15,7 @@ from doeff.effects.external_promise import (
     ExternalPromise,
 )
 from doeff.effects.scheduler_internal import (
+    _BlockForExternalCompletion,
     _SchedulerCancelTask,
     _SchedulerCreatePromise,
     _SchedulerCreateTaskHandle,
@@ -45,6 +46,7 @@ TASK_SUSPENDED_KEY = "__scheduler_task_suspended__"
 PENDING_IO_KEY = "__scheduler_pending_io__"  # Deprecated - will be removed
 EXTERNAL_COMPLETION_QUEUE_KEY = "__scheduler_external_queue__"
 EXTERNAL_PROMISE_REGISTRY_KEY = "__scheduler_external_promises__"
+SPAWN_ASYNC_HANDLER_KEY = "__scheduler_spawn_async_handler__"
 
 
 def _ensure_scheduler_store_initialized(store: dict[str, Any]) -> None:
@@ -129,8 +131,10 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 ctx.env, store, ctx.k,
             ))
         if debug:
-            print(f"[_SchedulerDequeueTask] Queue empty! Returning None")
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
+            print(f"[_SchedulerDequeueTask] Queue empty! Returning (None, store)")
+        # Return (None, current_store) so handlers can access updated scheduler state
+        # even when there's no task to dequeue
+        return Program.pure(CESKState.with_value((None, dict(store)), ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerQueueEmpty):
         queue = store.get(TASK_QUEUE_KEY, [])
@@ -369,6 +373,25 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             "waiting_for": effect.waiting_for,
         }
         return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
+
+    if isinstance(effect, _BlockForExternalCompletion):
+        # Block on completion queue until an external promise completes.
+        # This is a blocking call - the CESK machine will not proceed until
+        # an external completion arrives (from threads, asyncio, etc.).
+        completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+        if completion_queue is None:
+            from doeff.cesk.errors import InterpreterInvariantError
+            raise InterpreterInvariantError(
+                "_BlockForExternalCompletion: no completion queue in store"
+            )
+
+        # Blocking get - waits until an item is available
+        # This is intentional: when no doeff tasks are runnable, we block
+        # for external completion. Only external code can unblock us.
+        completion = completion_queue.get()  # blocks here!
+
+        # Return the completion tuple (promise_id, value, error)
+        return Program.pure(CESKState.with_value(completion, ctx.env, store, ctx.k))
 
     from doeff.cesk.errors import UnhandledEffectError
 
