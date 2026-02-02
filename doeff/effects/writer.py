@@ -38,6 +38,10 @@ def Tell(message: object) -> Effect:
     return create_effect_with_trace(WriterTellEffect(message=message), skip_frames=3)
 
 
+# Log is an alias for Tell - commonly used in documentation
+Log = Tell
+
+
 def Listen(sub_program: ProgramLike) -> Effect:
     return create_effect_with_trace(WriterListenEffect(sub_program=sub_program), skip_frames=3)
 
@@ -54,6 +58,7 @@ def StructuredLog(**entries: object) -> Effect:
 
 __all__ = [
     "Listen",
+    "Log",
     "StructuredLog",
     "Tell",
     "WriterListenEffect",

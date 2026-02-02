@@ -60,6 +60,11 @@ from .promise import (
     FailPromise,
     FailPromiseEffect,
 )
+from .external_promise import (
+    CreateExternalPromise,
+    CreateExternalPromiseEffect,
+    ExternalPromise,
+)
 from .pure import Pure, PureEffect
 from .reader import Ask, AskEffect, Local, LocalEffect, ask, local
 from .result import (
@@ -103,6 +108,7 @@ from .time import (
 )
 from .writer import (
     Listen,
+    Log,
     StructuredLog,
     Tell,
     WriterListenEffect,
@@ -142,8 +148,11 @@ __all__ = [
     "CompletePromiseEffect",
     "CreatePromise",
     "CreatePromiseEffect",
+    "CreateExternalPromise",
+    "CreateExternalPromiseEffect",
     "Delay",
     "DelayEffect",
+    "ExternalPromise",
     "FailPromise",
     "FailPromiseEffect",
     "Future",
@@ -163,6 +172,7 @@ __all__ = [
     "Intercept",
     "InterceptEffect",
     "Listen",
+    "Log",
     "Local",
     "LocalEffect",
     "Modify",
