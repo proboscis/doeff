@@ -322,10 +322,10 @@ result = sync_run(program, sync_handlers_preset, env=env, store=store)
 
 ### RuntimeResult
 
-Contains execution outcome:
+Contains execution outcome. `RuntimeResult` is a Protocol—the concrete implementation is `RuntimeResultImpl`:
 
 ```python
-class RuntimeResult(Generic[T]):
+class RuntimeResult(Protocol[T]):
     result: Result[T]       # Ok(value) or Err(error)
     raw_store: dict         # Final store state
 
