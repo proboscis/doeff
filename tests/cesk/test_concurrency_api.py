@@ -474,20 +474,25 @@ class TestGatherEffect:
         result = await async_run(program(), async_handlers_preset)
         assert result.value == []
 
-    def test_gather_rejects_program_objects(self) -> None:
-        """Gather only accepts Future objects, not Programs."""
+    def test_gather_accepts_program_objects(self) -> None:
+        """Gather now accepts both Waitable and Program objects.
+
+        This was changed to support auto-unwrapping of Program arguments
+        in KleisliProgramCall.to_generator().
+        """
         @do
         def child():
             return 42
 
-        with pytest.raises(TypeError) as exc_info:
-            Gather(child(), child())
+        # Should not raise - Gather now accepts Programs
+        effect = Gather(child(), child())
+        assert len(effect.items) == 2
 
-        assert "Future" in str(exc_info.value)
-        assert "Program" in str(exc_info.value)
+    def test_gather_accepts_mixed_future_and_program(self) -> None:
+        """Gather accepts mixing Future and Program objects.
 
-    def test_gather_rejects_mixed_future_and_program(self) -> None:
-        """Gather rejects mixing Future and Program objects."""
+        The handler will convert Programs to Tasks as needed.
+        """
         from doeff.effects.spawn import Task
 
         @do
@@ -497,17 +502,16 @@ class TestGatherEffect:
         # Create a Task (which implements Future protocol) for testing
         mock_task: Task[int] = Task(backend="thread", _handle="test-handle")
 
-        with pytest.raises(TypeError) as exc_info:
-            Gather(mock_task, child())
+        # Should not raise - Gather now accepts both
+        effect = Gather(mock_task, child())
+        assert len(effect.items) == 2
 
-        assert "Future" in str(exc_info.value) or "Program" in str(exc_info.value)
-
-    def test_gather_rejects_non_future_types(self) -> None:
-        """Gather rejects arbitrary types that are not Future."""
+    def test_gather_rejects_non_waitable_non_program_types(self) -> None:
+        """Gather rejects types that are neither Waitable nor Program."""
         with pytest.raises(TypeError) as exc_info:
             Gather(1, 2, 3)  # type: ignore
 
-        assert "Future" in str(exc_info.value)
+        assert "Waitable or Program" in str(exc_info.value)
 
 
 class TestPromiseEffects:
