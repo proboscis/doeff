@@ -11,13 +11,28 @@ from .base import Effect, EffectBase, create_effect_with_trace
 
 
 @dataclass(frozen=True)
-class FutureAwaitEffect(EffectBase):
-    """Awaits the given awaitable and yields its resolved value."""
+class PythonAsyncioAwaitEffect(EffectBase):
+    """Await a Python asyncio awaitable.
+
+    This effect is specifically for Python's asyncio awaitables (coroutines,
+    Tasks, Futures). It is NOT a generic "future" abstraction.
+
+    Handled by:
+    - python_async_syntax_escape_handler (async_run): produces PythonAsyncSyntaxEscape
+    - sync_await_handler (sync_run): runs in background thread
+
+    Usage:
+        result = yield Await(some_coroutine())
+    """
 
     awaitable: Awaitable[Any]
 
     def __post_init__(self) -> None:
         ensure_awaitable(self.awaitable, name="awaitable")
+
+
+# Backwards compatibility alias (deprecated)
+FutureAwaitEffect = PythonAsyncioAwaitEffect
 
 
 @dataclass(frozen=True)
@@ -35,17 +50,19 @@ class AllTasksSuspendedEffect(EffectBase):
 # See the doeff documentation for examples of concurrent execution patterns
 
 
-def await_(awaitable: Awaitable[Any]) -> FutureAwaitEffect:
-    return create_effect_with_trace(FutureAwaitEffect(awaitable=awaitable))
+def await_(awaitable: Awaitable[Any]) -> PythonAsyncioAwaitEffect:
+    return create_effect_with_trace(PythonAsyncioAwaitEffect(awaitable=awaitable))
 
 
 def Await(awaitable: Awaitable[Any]) -> Effect:
-    return create_effect_with_trace(FutureAwaitEffect(awaitable=awaitable), skip_frames=3)
+    return create_effect_with_trace(PythonAsyncioAwaitEffect(awaitable=awaitable), skip_frames=3)
 
 
 __all__ = [
     "AllTasksSuspendedEffect",
     "Await",
-    "FutureAwaitEffect",
+    "PythonAsyncioAwaitEffect",
     "await_",
+    # Deprecated alias
+    "FutureAwaitEffect",
 ]

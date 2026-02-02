@@ -34,7 +34,7 @@ from .debug import (
     GetDebugContext,
     GetDebugContextEffect,
 )
-from .future import Await, FutureAwaitEffect, await_
+from .future import Await, FutureAwaitEffect, PythonAsyncioAwaitEffect, await_
 from .gather import Gather, GatherEffect, gather
 from .race import Race, RaceEffect, RaceResult, race
 from .wait import Wait, WaitEffect, wait
@@ -183,6 +183,7 @@ __all__ = [
     "Pure",
     "PureEffect",
     "Put",
+    "PythonAsyncioAwaitEffect",
     "Race",
     "RaceEffect",
     "RaceResult",

@@ -41,7 +41,7 @@ def sync_await_handler(effect: EffectBase, ctx: "HandlerContext"):
     result directly. No PythonAsyncSyntaxEscape is ever produced.
 
     Effects Handled:
-        - FutureAwaitEffect: Runs the awaitable in background thread
+        - PythonAsyncioAwaitEffect: Runs the awaitable in background thread
         - DelayEffect: Sleeps in background thread
         - WaitUntilEffect: Waits until target time in background thread
 
@@ -64,10 +64,10 @@ def sync_await_handler(effect: EffectBase, ctx: "HandlerContext"):
     Returns:
         CESKState with result or error, or forwards to outer handler for unhandled effects
     """
-    from doeff.effects.future import FutureAwaitEffect
+    from doeff.effects.future import PythonAsyncioAwaitEffect
     from doeff.effects.time import DelayEffect, WaitUntilEffect
 
-    if isinstance(effect, FutureAwaitEffect):
+    if isinstance(effect, PythonAsyncioAwaitEffect):
         thread = get_asyncio_thread()
         try:
             result = thread.submit(effect.awaitable)

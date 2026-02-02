@@ -5,10 +5,10 @@ No task tracking in outer runtime - just step until Done/Failed.
 
 ## Architecture Notes
 
-### P2: FutureAwaitEffect and DelayEffect Handling (ISSUE-CORE-467)
+### P2: PythonAsyncioAwaitEffect and DelayEffect Handling (ISSUE-CORE-467)
 
-The task_scheduler_handler currently handles FutureAwaitEffect and DelayEffect directly
-using blocking I/O operations (asyncio.run and time.sleep). This is intentional
+The task_scheduler_handler currently handles PythonAsyncioAwaitEffect and DelayEffect
+directly using blocking I/O operations (asyncio.run and time.sleep). This is intentional
 for the SyncRuntime use case but has limitations:
 
 - **Trade-off**: Simplifies the synchronous runtime at the cost of blocking
@@ -28,7 +28,7 @@ For production async workloads, use AsyncRuntime instead.
 Several imports are performed inside function bodies to avoid circular imports:
 - GatherWaiterFrame (line ~397)
 - RaceWaiterFrame (line ~491)
-- FutureAwaitEffect, DelayEffect (line ~529-530)
+- PythonAsyncioAwaitEffect, DelayEffect (line ~529-530)
 
 This is a documented design choice:
 - Frame types depend on effect types
