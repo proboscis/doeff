@@ -105,6 +105,7 @@ def _invoke_handler(
     env: Environment,
     store: Store,
     k_after_handler: list[Any],
+    inherited_handlers: list[Any],
 ) -> CESKState:
     ctx = HandlerContext(
         store=store,
@@ -112,6 +113,7 @@ def _invoke_handler(
         delimited_k=delimited_k,
         handler_depth=handler_depth,
         outer_k=[handler_frame] + k_after_handler,
+        inherited_handlers=inherited_handlers,
     )
 
     handler_program = handler_frame.handler(effect, ctx)
@@ -120,6 +122,7 @@ def _invoke_handler(
         original_effect=effect,
         handler_depth=handler_depth,
         handled_program_k=delimited_k,
+        inherited_handlers=inherited_handlers,
     )
 
     new_k = [handler_result_frame] + [handler_frame] + k_after_handler
@@ -195,6 +198,35 @@ def step(state: CESKState) -> StepResult:
         handler_frame, handler_depth, delimited_k, handler_idx = handler_info
         k_after_handler = K[handler_idx + 1:]
 
+        # Get inherited_handlers for spawn inheritance
+        # We need to capture:
+        # 1. HandlerFrames added AFTER the first HRF (dynamically via WithHandler)
+        # 2. Original handlers from HRF.inherited_handlers
+        #
+        # Why not just extract from K? During effect forwarding, inner handlers
+        # are moved to delimited_k (stored in HRFs), not in K. So K only has
+        # outer handlers. HRF.inherited_handlers preserves the full set.
+        inherited_handlers = []
+        frames_before_hrf: list[Any] = []
+        found_hrf = False
+
+        for frame in K:
+            if isinstance(frame, HandlerResultFrame):
+                # Found HRF - use its inherited_handlers as base
+                inherited_handlers = list(frame.inherited_handlers)
+                found_hrf = True
+                break
+            elif isinstance(frame, HandlerFrame):
+                # HandlerFrame before HRF = dynamically added, should be inherited
+                frames_before_hrf.append(frame)
+
+        if found_hrf:
+            # Prepend dynamically-added handlers to the base inherited_handlers
+            inherited_handlers = frames_before_hrf + inherited_handlers
+        else:
+            # No HRF found - truly first effect, extract from original K
+            inherited_handlers = [f for f in K if isinstance(f, HandlerFrame)]
+
         return _invoke_handler(
             handler_frame=handler_frame,
             handler_depth=handler_depth,
@@ -203,6 +235,7 @@ def step(state: CESKState) -> StepResult:
             env=E,
             store=S,
             k_after_handler=k_after_handler,
+            inherited_handlers=inherited_handlers,
         )
 
     if isinstance(C, ProgramControl):

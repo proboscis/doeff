@@ -1201,10 +1201,10 @@ class TestGatherComposition:
         assert elapsed < 0.3
 
     @pytest.mark.asyncio
-    async def test_gather_intercept_does_not_apply_to_spawned_children(self) -> None:
-        """Test that parent Intercept does NOT apply to spawned Gather children.
+    async def test_gather_intercept_applies_to_spawned_children(self) -> None:
+        """Test that parent Intercept DOES apply to spawned Gather children.
 
-        Spawned tasks run in isolated contexts, so parent InterceptFrame is NOT inherited.
+        Spawned tasks inherit the parent's handler stack, including Intercept handlers.
         """
         from doeff.effects.intercept import intercept_program_effect
         from doeff.effects.pure import Pure
@@ -1235,14 +1235,15 @@ class TestGatherComposition:
             return results
 
         results = (await async_run(program(), async_handlers_preset, env={"key": "actual_value"})).value
-        assert results == ["actual_value", "actual_value"]
+        # Spawned children inherit parent's Intercept, so Ask gets intercepted
+        assert results == ["intercepted", "intercepted"]
 
     @pytest.mark.asyncio
-    async def test_gather_plus_intercept_futures_mode_isolated(self) -> None:
-        """Test that parent Intercept does NOT apply to Gather children in futures mode.
+    async def test_gather_plus_intercept_futures_mode_inherited(self) -> None:
+        """Test that parent Intercept DOES apply to Gather children in futures mode.
 
-        With future-based Gather (Spawn + Gather), children run in isolated tasks
-        with fresh continuations, so InterceptFrame is NOT inherited.
+        With future-based Gather (Spawn + Gather), children inherit parent's handlers,
+        so InterceptFrame IS inherited and transforms effects in child tasks.
         """
         from doeff.effects.intercept import intercept_program_effect
         from doeff.effects.pure import Pure
@@ -1274,7 +1275,8 @@ class TestGatherComposition:
             return results
 
         results = (await async_run(program(), async_handlers_preset, env={"key": "actual_value"})).value
-        assert results == ["actual_value", "actual_value"]
+        # Spawned children inherit parent's Intercept, so Ask gets intercepted
+        assert results == ["intercepted", "intercepted"]
 
     @pytest.mark.asyncio
     async def test_gather_empty_returns_empty_list(self) -> None:
