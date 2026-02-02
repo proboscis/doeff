@@ -87,8 +87,7 @@ if result.is_ok:   # This is WRONG - always True!
 ### Pattern Matching
 
 ```python
-from doeff._vendor import Ok, Err
-from doeff import sync_run, sync_handlers_preset
+from doeff import Ok, Err, sync_run, sync_handlers_preset
 
 def main():
     result = sync_run(my_program(), sync_handlers_preset)
@@ -105,7 +104,7 @@ def main():
 doeff uses the `Result[T]` type internally to represent success or failure:
 
 ```python
-from doeff._vendor import Ok, Err, Result
+from doeff import Ok, Err, Result
 
 # Success
 success: Result[int] = Ok(42)

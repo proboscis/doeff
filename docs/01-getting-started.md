@@ -174,7 +174,7 @@ else:
     print(f"Error: {result.error}")
 
 # Pattern matching (Python 3.10+)
-from doeff._vendor import Ok, Err
+from doeff import Ok, Err
 
 match result.result:
     case Ok(value):
