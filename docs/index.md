@@ -18,7 +18,7 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 ### Effect Types
 
 3. **[Basic Effects](03-basic-effects.md)** - Reader, State, Writer effects
-4. **[Async Effects](04-async-effects.md)** - Future, Await, Parallel for async operations
+4. **[Async Effects](04-async-effects.md)** - Gather, Spawn, Await for async operations
 5. **[Error Handling](05-error-handling.md)** - Result, Safe for error handling
 6. **[IO Effects](06-io-effects.md)** - IO for side effects
 7. **[Cache System](07-cache-system.md)** - Cache effects with policies and handlers

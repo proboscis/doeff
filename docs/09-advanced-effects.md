@@ -44,27 +44,24 @@ def parallel_dict():
     return results
 ```
 
-### Gather vs Parallel
+### Using Gather with Async Operations
 
-| Effect | Purpose | Input Type |
-|--------|---------|------------|
-| `Parallel(*awaitables)` | Parallel async operations | `Awaitable` |
-| `Gather(*programs)` | Parallel Programs | `Program` |
+To run async operations in parallel, wrap them with `Await`:
 
 ```python
 @do
-def comparison():
-    # Parallel: for async functions
-    async_results = yield Parallel(
-        async_func1(),
-        async_func2()
+def parallel_async():
+    # Create Programs that wrap async functions
+    @do
+    def fetch_data(url):
+        return (yield Await(http_get(url)))
+
+    # Run multiple Programs in parallel
+    results = yield Gather(
+        fetch_data("https://api1.example.com"),
+        fetch_data("https://api2.example.com")
     )
-    
-    # Gather: for Programs
-    program_results = yield Gather(
-        program1(),
-        program2()
-    )
+    return results
 ```
 
 ## Atomic Effects
@@ -318,6 +315,6 @@ interpreter responds to this key directly.
 
 ## Next Steps
 
-- **[Async Effects](04-async-effects.md)** - Parallel with Await/Parallel
+- **[Async Effects](04-async-effects.md)** - Async operations with Await and Gather
 - **[Cache System](07-cache-system.md)** - Persistent caching
 - **[Patterns](12-patterns.md)** - Advanced patterns and best practices
