@@ -237,7 +237,7 @@ class TestHandlerPresets:
     def test_presets_are_different(self) -> None:
         """sync and async presets have different handlers for async effects."""
         # The third handler (index 2) should be different:
-        # sync uses sync_await_handler, async uses python_async_handler
+        # sync uses sync_await_handler, async uses python_async_syntax_escape_handler
         assert sync_handlers_preset[2] is not async_handlers_preset[2]
 
     def test_sync_preset_contains_sync_await_handler(self) -> None:
@@ -245,7 +245,7 @@ class TestHandlerPresets:
         from doeff.cesk.handlers.sync_await_handler import sync_await_handler
         assert sync_await_handler in sync_handlers_preset
 
-    def test_async_preset_contains_python_async_handler(self) -> None:
-        """async_handlers_preset contains python_async_handler."""
-        from doeff.cesk.handlers.python_async_handler import python_async_handler
-        assert python_async_handler in async_handlers_preset
+    def test_async_preset_contains_python_async_syntax_escape_handler(self) -> None:
+        """async_handlers_preset contains python_async_syntax_escape_handler."""
+        from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
+        assert python_async_syntax_escape_handler in async_handlers_preset
