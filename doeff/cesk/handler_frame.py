@@ -48,6 +48,7 @@ class HandlerContext:
     - Capture the delimited continuation up to the handler
     - Know their depth in the handler stack for forwarding
     - Access the outer continuation (beyond the handler) for full task suspension
+    - Access inherited handlers for spawning child tasks
 
     Attributes:
         store: The current store (mutable state)
@@ -55,6 +56,7 @@ class HandlerContext:
         delimited_k: The continuation from the effect site up to this handler
         handler_depth: The depth of this handler in the handler stack (0 = outermost)
         outer_k: The continuation beyond this handler (for full task suspension)
+        inherited_handlers: All handler frames from the original K (for spawn inheritance)
     """
 
     store: Store
@@ -62,6 +64,7 @@ class HandlerContext:
     delimited_k: Kontinuation
     handler_depth: int
     outer_k: Kontinuation = field(default_factory=list)
+    inherited_handlers: Kontinuation = field(default_factory=list)
 
     @property
     def k(self) -> Kontinuation:
@@ -197,11 +200,13 @@ class HandlerResultFrame:
         original_effect: The effect that triggered handler invocation
         handler_depth: Depth of the handler that produced this frame
         handled_program_k: The continuation of the program being handled
+        inherited_handlers: Handler frames to inherit when spawning (preserved across forwarding)
     """
 
     original_effect: EffectBase
     handler_depth: int
     handled_program_k: Kontinuation
+    inherited_handlers: Kontinuation = field(default_factory=list)
 
     def on_value(
         self,
@@ -279,16 +284,20 @@ class HandlerResultFrame:
             return CESKState.with_value(wrapped_escape, env, store, k_rest)
 
         if isinstance(value, ResumeK):
-            full_k = list(value.k) + list(k_rest)
+            # ResumeK switches to a different continuation (e.g., task switching).
+            # The value.k IS the complete continuation to use - don't add k_rest.
+            # k_rest belongs to the CURRENT context, not the TARGET context.
+            # Adding it would pollute the target continuation with handlers from
+            # the current context, causing exponential handler growth in spawn/wait.
             result_store = value.store if value.store is not None else store
             result_env = value.env if value.env is not None else env
             if value.error is not None:
-                return CESKState.with_error(value.error, result_env, result_store, full_k)
+                return CESKState.with_error(value.error, result_env, result_store, list(value.k))
             return CESKState.with_value(
                 value.value,
                 result_env,
                 result_store,
-                full_k,
+                list(value.k),
             )
 
         # Plain value from handler - use handled_program_k
