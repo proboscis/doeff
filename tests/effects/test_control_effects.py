@@ -411,14 +411,10 @@ class TestInterceptErrorHandling:
     """Tests for error handling in Intercept."""
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="sync_run raises RuntimeError directly instead of returning error result",
-        strict=False,  # Allow it to pass in async mode
-    )
     async def test_intercept_transform_exception_propagates(
         self, parameterized_interpreter
     ) -> None:
-        """Exception in transform propagates normally."""
+        """Exception in transform propagates as error result."""
 
         def bad_transform(e):
             raise RuntimeError("transform error")
