@@ -110,35 +110,24 @@ StepResult = CESKState | Done | Failed | PythonAsyncSyntaxEscape
 
 ### 2. Update task_scheduler_handler
 
-When `_SchedulerDequeueTask` returns no runnable task but external promises exist:
+When queue is empty but external promises exist, block directly in the handler:
 
 ```python
-# Current (wrong):
-if next_task is None:
-    pending_io = ctx.store.get(PENDING_IO_KEY, {})
-    if pending_io:
-        # ...
-        return WaitingForExternalCompletion(state=...)
+# task_scheduler_handler (simplified)
+if queue_empty and waiting_on_external:
+    # Direct blocking - no intermediate effect needed
+    # Handler's generator does blocking I/O directly
+    completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+    promise_id, value, error = completion_queue.get()  # BLOCKS HERE
 
-# Target (correct):
-if next_task is None:
-    pending_io = ctx.store.get(PENDING_IO_KEY, {})
-    if pending_io:
-        # Block on queue until completion arrives
-        @do
-        def wait_and_resume():
-            completion = yield _BlockForExternalCompletion()
-            # Process completion, wake waiter, continue scheduling
-            ...
-        return wait_and_resume()
+    # Process completion and continue scheduling
+    yield _SchedulerTaskComplete(handle_id=..., result=value, error=error)
+    # ... dequeue and resume waiter
 ```
 
-### 3. Add Internal Blocking Effect
-
-Create `_BlockForExternalCompletion` effect (internal to scheduler):
-- Handled by `scheduler_state_handler`
-- Blocks on `completion_queue.get()`
-- Returns completion item when available
+Key insight: Python generators can do blocking I/O. When CESK steps the handler
+and calls `next(gen)`, if the generator executes `queue.get()`, the `next()`
+call blocks until an item is available. No special effect needed.
 
 ## Success Criteria
 
