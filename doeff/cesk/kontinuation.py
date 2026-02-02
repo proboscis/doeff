@@ -5,6 +5,9 @@ This module provides helper functions for manipulating the continuation stack (K
 - throw: Throw an error into a continuation
 - push_frame: Push a frame onto the continuation
 - unwind: Process a value/error through the continuation stack
+
+Per SPEC-CESK-003: InterceptFrame and SafeFrame have been removed.
+Intercept-related functions are kept for backwards compatibility but do minimal work.
 """
 
 from __future__ import annotations
@@ -13,9 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from doeff.cesk.frames import (
     Frame,
-    InterceptFrame,
     Kontinuation,
-    SafeFrame,
 )
 from doeff.cesk.state import CESKState
 from doeff.cesk.types import Environment, Store
@@ -144,69 +145,46 @@ def has_frame(k: Kontinuation, frame_type: type) -> bool:
 def find_intercept_frame_index(k: Kontinuation) -> int:
     """Find the index of the first InterceptFrame in the continuation.
 
-    Args:
-        k: The continuation stack to search
-
-    Returns:
-        Index of the first InterceptFrame, or -1 if none found
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns -1 for backwards compatibility.
     """
-    idx, _ = find_frame(k, InterceptFrame)
-    return idx
+    return -1
 
 
 def has_intercept_frame(k: Kontinuation) -> bool:
     """Check if the continuation contains an InterceptFrame.
 
-    Args:
-        k: The continuation stack to search
-
-    Returns:
-        True if an InterceptFrame exists
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns False for backwards compatibility.
     """
-    return has_frame(k, InterceptFrame)
+    return False
 
 
 def find_safe_frame_index(k: Kontinuation) -> int:
     """Find the index of the first SafeFrame in the continuation.
 
-    Args:
-        k: The continuation stack to search
-
-    Returns:
-        Index of the first SafeFrame, or -1 if none found
+    DEPRECATED: SafeFrame has been removed per SPEC-CESK-003.
+    Always returns -1 for backwards compatibility.
     """
-    idx, _ = find_frame(k, SafeFrame)
-    return idx
+    return -1
 
 
 def has_safe_frame(k: Kontinuation) -> bool:
     """Check if the continuation contains a SafeFrame.
 
-    Args:
-        k: The continuation stack to search
-
-    Returns:
-        True if a SafeFrame exists
+    DEPRECATED: SafeFrame has been removed per SPEC-CESK-003.
+    Always returns False for backwards compatibility.
     """
-    return has_frame(k, SafeFrame)
+    return False
 
 
 def get_intercept_transforms(k: Kontinuation) -> list[Any]:
     """Get all intercept transforms from the continuation stack.
 
-    Collects transforms from all InterceptFrames in order (outer to inner).
-
-    Args:
-        k: The continuation stack to search
-
-    Returns:
-        List of transform functions
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns empty list for backwards compatibility.
     """
-    transforms = []
-    for frame in k:
-        if isinstance(frame, InterceptFrame):
-            transforms.extend(frame.transforms)
-    return transforms
+    return []
 
 
 def apply_intercept_chain(
@@ -215,40 +193,10 @@ def apply_intercept_chain(
 ) -> Any:
     """Apply all intercept transforms to an effect.
 
-    Applies transforms from InterceptFrames in order (outer to inner).
-    If any transform returns None, the original effect is returned.
-    If any transform returns a Program, that program is returned.
-
-    Args:
-        k: The continuation stack
-        effect: The effect to transform
-
-    Returns:
-        The transformed effect, a Program, or the original effect
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns the original effect for backwards compatibility.
     """
-    from doeff.program import ProgramBase
-
-    current = effect
-
-    for frame in k:
-        if not isinstance(frame, InterceptFrame):
-            continue
-
-        for transform in frame.transforms:
-            result = transform(current)
-
-            if result is None:
-                # Transform declined to handle this effect
-                continue
-
-            if isinstance(result, ProgramBase):
-                # Transform returned a program replacement
-                return result
-
-            # Transform returned a modified effect
-            current = result
-
-    return current
+    return effect
 
 
 def continuation_depth(k: Kontinuation) -> int:

@@ -1,11 +1,15 @@
-"""Helper functions for the CESK machine."""
+"""Helper functions for the CESK machine.
+
+Per SPEC-CESK-003: InterceptFrame has been removed. The intercept-related
+functions are kept for backwards compatibility but do minimal work.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Any
 
-from doeff.cesk.frames import InterceptBypassFrame, InterceptFrame, Kontinuation
+from doeff.cesk.frames import Kontinuation
 from doeff.cesk.types import Store
 
 if TYPE_CHECKING:
@@ -27,33 +31,13 @@ def apply_transforms(
 
 def apply_intercept_chain(
     K: Kontinuation, effect: Effect
-) -> tuple[Effect | ProgramBase, InterceptFrame | None]:
+) -> tuple[Effect | ProgramBase, Any]:
     """Apply intercept transforms from continuation frames to an effect.
-    
-    Returns (result, returning_frame) where returning_frame is the InterceptFrame
-    that returned a Program, or None if result is an Effect.
+
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns (effect, None) for backwards compatibility.
     """
-    from doeff._types_internal import EffectBase
-
-    bypass_map: dict[int, int] = {}
-    for frame in K:
-        if isinstance(frame, InterceptBypassFrame):
-            bypass_map[id(frame.bypassed_frame)] = frame.bypassed_effect_id
-
-    effect_id = id(effect)
-    current: Effect | ProgramBase = effect
-    for frame in K:
-        if isinstance(frame, InterceptFrame):
-            if id(frame) in bypass_map and effect_id == bypass_map[id(frame)]:
-                continue
-            for transform in frame.transforms:
-                result = transform(current)  # type: ignore[arg-type]
-                if result is not None:
-                    current = result
-                    if not isinstance(result, EffectBase):
-                        return current, frame
-                    break
-    return current, None
+    return effect, None
 
 
 def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store | None = None) -> Store:

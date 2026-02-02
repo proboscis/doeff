@@ -480,28 +480,54 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
     if isinstance(effect, GatherEffect):
         import os
 
+        from doeff.program import ProgramBase
+
         debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
-        futures = effect.futures
-        if not futures:
+        items = effect.items
+        if not items:
             return CESKState.with_value([], ctx.env, ctx.store, ctx.k)
 
+        # Convert Programs to Tasks by spawning them (inline spawn logic)
+        waitables: list[Any] = []
+        for item in items:
+            if isinstance(item, ProgramBase):
+                # Inline spawn logic - cannot yield SpawnEffect because it would
+                # go to outer handler (scheduler_state_handler) which doesn't handle it
+                task_id = uuid4()
+                env_snapshot = dict(ctx.env)
+                store_snapshot = dict(ctx.store)
+                store_snapshot[CURRENT_TASK_KEY] = task_id
+
+                handle_id, task_handle = yield _SchedulerCreateTaskHandle(
+                    task_id=task_id,
+                    env_snapshot=env_snapshot,
+                    store_snapshot=store_snapshot,
+                )
+
+                wrapped_program = _wrap_with_handlers_for_spawn(item, task_id, handle_id)
+                child_k = _make_initial_k(wrapped_program, env_snapshot)
+                yield _SchedulerEnqueueTask(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
+
+                waitables.append(task_handle)
+            elif isinstance(item, Waitable):
+                waitables.append(item)
+            else:
+                return CESKState.with_error(
+                    TypeError(f"Gather requires Waitable or Program, got {type(item).__name__}"),
+                    ctx.env, ctx.store, ctx.k,
+                )
+
         partial = effect._partial_results
-        results: list[Any] = list(partial) if partial else [None] * len(futures)
+        results: list[Any] = list(partial) if partial else [None] * len(waitables)
         pending_indices: list[int] = []
         if debug:
             print(
                 f"[GatherEffect] partial={partial}, results={results}, delimited_k_len={len(ctx.delimited_k)}, outer_k_len={len(ctx.outer_k)}, delimited_k_types={[type(f).__name__ for f in ctx.delimited_k[:10]]}"
             )
 
-        for i, future in enumerate(futures):
+        for i, future in enumerate(waitables):
             if partial and partial[i] is not None:
                 continue
-
-            if not isinstance(future, Waitable):
-                return CESKState.with_error(
-                    TypeError(f"Gather requires Waitable, got {type(future).__name__}"),
-                    ctx.env, ctx.store, ctx.k,
-                )
 
             handle_id = future._handle
             task_result = yield _SchedulerGetTaskResult(handle_id=handle_id)
@@ -534,8 +560,9 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 )
             return CESKState.with_value(results, ctx.env, ctx.store, ctx.k)
 
+        # Create updated effect with waitables (all now Tasks/Futures)
         updated_effect = GatherEffect(
-            futures=futures,
+            items=tuple(waitables),
             _partial_results=tuple(results),
         )
 
@@ -549,7 +576,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
 
         current_task_id = yield _SchedulerGetCurrentTaskId()
         for i in pending_indices:
-            handle_id = futures[i]._handle
+            handle_id = waitables[i]._handle
             yield _SchedulerRegisterWaiter(
                 handle_id=handle_id,
                 waiter_task_id=current_task_id,

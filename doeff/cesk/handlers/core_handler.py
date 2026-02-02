@@ -1,4 +1,8 @@
-"""Core effect handler for basic effects in the new handler system."""
+"""Core effect handler for basic effects in the new handler system.
+
+Per SPEC-CESK-003: This handler uses user-space patterns (with_local, with_safe,
+with_listen, with_intercept, with_graph_capture) instead of specialized Frames.
+"""
 
 from __future__ import annotations
 
@@ -6,16 +10,17 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from doeff.do import do
-from doeff._types_internal import CallFrame, EffectBase, ListenResult
+from doeff._types_internal import CallFrame, EffectBase
 from doeff._vendor import FrozenDict
-from doeff.cesk.frames import (
-    GraphCaptureFrame,
-    ListenFrame,
-    LocalFrame,
-    ReturnFrame,
-    SafeFrame,
+from doeff.cesk.frames import ReturnFrame
+from doeff.cesk.handler_frame import HandlerContext
+from doeff.cesk.handlers.patterns import (
+    with_graph_capture,
+    with_intercept,
+    with_listen,
+    with_local,
+    with_safe,
 )
-from doeff.cesk.handler_frame import HandlerContext, ResumeK
 from doeff.cesk.state import CESKState
 from doeff.effects.atomic import AtomicGetEffect, AtomicUpdateEffect
 from doeff.effects.cache import (
@@ -41,7 +46,6 @@ from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffec
 from doeff.effects.time import GetTimeEffect
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
 from doeff.program import Program, ProgramBase
-from doeff.utils import BoundedLog
 
 if TYPE_CHECKING:
     pass
@@ -115,18 +119,14 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         return CESKState.with_value(new_value, ctx.env, new_store, ctx.k)
 
     if isinstance(effect, LocalEffect):
-        from doeff.cesk.result import DirectState
-        overrides = effect.env_update
-        new_env = FrozenDict(dict(ctx.env) | dict(overrides))
-        new_k = [LocalFrame(restore_env=ctx.env)] + list(ctx.k)
-        # Use DirectState to preserve the custom K with LocalFrame
-        return DirectState(CESKState.with_program(effect.sub_program, new_env, store, new_k))
+        # Use user-space pattern instead of LocalFrame
+        result = yield with_local(dict(effect.env_update), effect.sub_program)
+        return result  # Plain value - HandlerResultFrame constructs CESKState
 
     if isinstance(effect, ResultSafeEffect):
-        from doeff.cesk.result import DirectState
-        new_k = [SafeFrame(saved_env=ctx.env)] + list(ctx.k)
-        # Use DirectState to preserve the custom K with SafeFrame
-        return DirectState(CESKState.with_program(effect.sub_program, ctx.env, store, new_k))
+        # Use user-space pattern instead of SafeFrame
+        result = yield with_safe(effect.sub_program)
+        return result  # Plain value (Ok or Err) - HandlerResultFrame constructs CESKState
 
     if isinstance(effect, WriterTellEffect):
         log = list(store.get("__log__", []))
@@ -139,19 +139,14 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         return CESKState.with_value(None, ctx.env, new_store, ctx.k)
 
     if isinstance(effect, WriterListenEffect):
-        from doeff.cesk.result import DirectState
-        current_log = store.get("__log__", [])
-        log_start_index = len(current_log)
-        new_k = [ListenFrame(log_start_index=log_start_index)] + list(ctx.k)
-        # Use DirectState to preserve the custom K with ListenFrame
-        return DirectState(CESKState.with_program(effect.sub_program, ctx.env, store, new_k))
+        # Use user-space pattern instead of ListenFrame
+        result = yield with_listen(effect.sub_program)
+        return result  # Plain value (ListenResult) - HandlerResultFrame constructs CESKState
 
     if isinstance(effect, InterceptEffect):
-        from doeff.cesk.frames import InterceptFrame
-        from doeff.cesk.result import DirectState
-        new_k = [InterceptFrame(transforms=effect.transforms)] + list(ctx.k)
-        # Use DirectState to preserve the custom K with InterceptFrame
-        return DirectState(CESKState.with_program(effect.program, ctx.env, store, new_k))
+        # Use user-space pattern instead of InterceptFrame
+        result = yield with_intercept(effect.transforms, effect.program)
+        return result  # Plain value - HandlerResultFrame constructs CESKState
 
     if isinstance(effect, GetTimeEffect):
         current_time = store.get("__current_time__")
@@ -239,12 +234,9 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         return CESKState.with_value(list(graph), ctx.env, store, ctx.k)
 
     if isinstance(effect, GraphCaptureEffect):
-        from doeff.cesk.result import DirectState
-        graph = store.get("__graph__", [])
-        graph_start = len(graph)
-        new_k = [GraphCaptureFrame(graph_start)] + list(ctx.k)
-        # Use DirectState to preserve the custom K with GraphCaptureFrame
-        return DirectState(CESKState.with_program(effect.program, ctx.env, store, new_k))
+        # Use user-space pattern instead of GraphCaptureFrame
+        result = yield with_graph_capture(effect.program)
+        return result  # Plain value (value, graph) - HandlerResultFrame constructs CESKState
 
     if isinstance(effect, ProgramCallStackEffect):
         frames = []
@@ -292,6 +284,38 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         full_k = ctx.delimited_k + ctx.outer_k
         debug_ctx = get_debug_context(full_k, current_effect=type(effect).__name__)
         return CESKState.with_value(debug_ctx, ctx.env, store, ctx.k)
+
+    # Handle GatherEffect when items are Programs (sequential execution)
+    from doeff.effects.gather import GatherEffect
+    from doeff.effects.spawn import Waitable
+
+    if isinstance(effect, GatherEffect):
+        items = effect.items
+        if not items:
+            return CESKState.with_value([], ctx.env, store, ctx.k)
+
+        # Check if all items are Programs (sequential execution case)
+        all_programs = all(isinstance(item, ProgramBase) for item in items)
+        if all_programs:
+            # Use GatherFrame for sequential execution
+            from doeff.cesk.frames import GatherFrame
+            from doeff.cesk.result import DirectState
+
+            first_prog, *rest = items
+            gather_frame = GatherFrame(
+                remaining_programs=rest,
+                collected_results=[],
+                saved_env=ctx.env,
+            )
+            # Return DirectState to preserve our custom K with GatherFrame
+            return DirectState(CESKState.with_program(
+                first_prog, ctx.env, store,
+                [gather_frame] + list(ctx.k)
+            ))
+
+        # Mixed or all-Waitable items → forward to outer handler (task_scheduler)
+        result = yield effect
+        return result
 
     # Forward unhandled effects to outer handlers
     result = yield effect

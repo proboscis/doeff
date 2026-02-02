@@ -1,9 +1,13 @@
-"""Effect classification functions for the CESK machine."""
+"""Effect classification functions for the CESK machine.
+
+Per SPEC-CESK-003: InterceptFrame has been removed. The intercept-related
+functions now always return False/-1 for backwards compatibility.
+"""
 
 from __future__ import annotations
 
 from doeff._types_internal import EffectBase
-from doeff.cesk.frames import InterceptFrame, Kontinuation
+from doeff.cesk.frames import Kontinuation
 
 
 def is_control_flow_effect(effect: EffectBase) -> bool:
@@ -82,14 +86,21 @@ def is_effectful(effect: EffectBase) -> bool:
 
 
 def has_intercept_frame(K: Kontinuation) -> bool:
-    return any(isinstance(f, InterceptFrame) for f in K)
+    """Check if K contains an InterceptFrame.
+
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns False for backwards compatibility.
+    """
+    return False
 
 
 def find_intercept_frame_index(K: Kontinuation) -> int:
-    for i, f in enumerate(K):
-        if isinstance(f, InterceptFrame):
-            return i
-    raise ValueError("No InterceptFrame found")
+    """Find the index of InterceptFrame in K.
+
+    DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
+    Always returns -1 for backwards compatibility.
+    """
+    return -1
 
 
 __all__ = [
