@@ -69,7 +69,6 @@ from doeff.effects.promise import (
 from doeff.effects.race import RaceEffect, RaceResult
 from doeff.effects.scheduler_internal import (
     _AsyncEscapeIntercepted,
-    _BlockForExternalCompletion,
     _SchedulerCancelTask,
     _SchedulerCreatePromise,
     _SchedulerCreateTaskHandle,
@@ -407,11 +406,19 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             # Check if we're waiting on an external promise
             external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
             if external_registry and handle_id in external_registry.values():
-                # Block for external completion - handler owns blocking
+                # Block for external completion - direct blocking in handler
                 # This is the only place doeff truly blocks: when no tasks are
                 # runnable and we're waiting on external I/O.
-                completion = yield _BlockForExternalCompletion()
-                promise_id, value, error = completion
+                from doeff.cesk.handlers.scheduler_state_handler import EXTERNAL_COMPLETION_QUEUE_KEY
+                completion_queue = current_store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+                if completion_queue is None:
+                    return CESKState.with_error(
+                        RuntimeError("No completion queue for external promise"),
+                        ctx.env, current_store, ctx.k,
+                    )
+
+                # Direct blocking - CESK stepping stops here until queue has item
+                promise_id, value, error = completion_queue.get()
 
                 # Look up handle_id for this promise and mark complete
                 completed_handle_id = external_registry.get(promise_id)
