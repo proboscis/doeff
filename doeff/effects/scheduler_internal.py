@@ -255,23 +255,6 @@ class _AsyncEscapeIntercepted(EffectBase):
     outer_k: Any
 
 
-@dataclass(frozen=True, kw_only=True)
-class _BlockForExternalCompletion(EffectBase):
-    """Block until an external promise completion arrives.
-
-    This effect is used by task_scheduler_handler when:
-    - No runnable tasks in queue
-    - Tasks are waiting on external promises
-
-    The handler (scheduler_state_handler) blocks on completion_queue.get()
-    until an external promise is completed. This keeps blocking logic
-    inside the handler rather than leaking to the run loop.
-
-    Returns a tuple of (promise_id, value, error) when a completion arrives.
-    """
-    pass
-
-
 # Backwards compatibility aliases (deprecated, will be removed in future version)
 QueueAdd = _SchedulerEnqueueTask
 QueuePop = _SchedulerDequeueTask
@@ -294,7 +277,6 @@ GetTaskResult = _SchedulerGetTaskResult
 __all__ = [
     # New names (preferred)
     "_AsyncEscapeIntercepted",
-    "_BlockForExternalCompletion",
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
     "_SchedulerCreateTaskHandle",
