@@ -9,13 +9,15 @@ Reference: gh#180, specs/effects/SPEC-EFF-100-combinations.md
 
 import pytest
 
+import asyncio
+import time
+
 from doeff import Program, do
 from doeff.effects import (
     Ask,
-    Delay,
+    Await,
     Gather,
     Get,
-    GetTime,
     Listen,
     Local,
     Modify,
@@ -459,25 +461,26 @@ class TestGatherStoreSharingLaw:
 
         @do
         def delayed_task(n: int):
-            yield Delay(seconds=0.05)
+            yield Await(asyncio.sleep(0.05))
             return n
 
         @do
         def program():
-            start = yield GetTime()
             t1 = yield Spawn(delayed_task(1))
             t2 = yield Spawn(delayed_task(2))
             t3 = yield Spawn(delayed_task(3))
             results = yield Gather(t1, t2, t3)
-            end = yield GetTime()
-            elapsed = (end - start).total_seconds()
-            return (results, elapsed)
+            return results
 
+        start = time.time()
         result = await parameterized_interpreter.run_async(program())
+        elapsed = time.time() - start
+        
         assert result.is_ok
-        results, elapsed = result.value
+        results = result.value
 
         assert results == [1, 2, 3]
+        # If executed in parallel, all should complete in ~0.05s, not 0.15s
         assert elapsed < 0.2
 
 

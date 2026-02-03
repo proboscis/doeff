@@ -13,7 +13,6 @@ from doeff.cesk.run import (
 from doeff.do import do
 from doeff.effects.future import Await
 from doeff.effects.state import Get, Put
-from doeff.effects.time import Delay
 
 
 class TestSyncRun:
@@ -44,11 +43,11 @@ class TestSyncRun:
         assert result.is_ok
         assert result.value == 100
 
-    def test_sync_run_with_delay(self) -> None:
-        """sync_run handles Delay effect via background thread."""
+    def test_sync_run_with_sleep(self) -> None:
+        """sync_run handles Await(asyncio.sleep) via background thread."""
         @do
         def program():
-            yield Delay(0.01)
+            yield Await(asyncio.sleep(0.01))
             return "delayed"
 
         result = sync_run(program(), sync_handlers_preset)
@@ -146,11 +145,11 @@ class TestAsyncRun:
         assert result.value == 200
 
     @pytest.mark.asyncio
-    async def test_async_run_with_delay(self) -> None:
-        """async_run handles Delay effect."""
+    async def test_async_run_with_sleep(self) -> None:
+        """async_run handles Await(asyncio.sleep)."""
         @do
         def program():
-            yield Delay(0.01)
+            yield Await(asyncio.sleep(0.01))
             return "delayed"
 
         result = await async_run(program(), async_handlers_preset)
