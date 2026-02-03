@@ -178,8 +178,39 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         dequeue_result = yield _SchedulerDequeueTask()
         # dequeue_result is (None, current_store) when empty, or full tuple when task available
         if dequeue_result[0] is None:
-            # Queue is empty - task completed with no other tasks to run
             current_store = dequeue_result[1]
+            external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+            waiters = current_store.get(WAITERS_KEY, {})
+            
+            # Other tasks may be waiting on external I/O - don't terminate early
+            if external_registry and waiters:
+                from doeff.cesk.handlers.scheduler_state_handler import EXTERNAL_COMPLETION_QUEUE_KEY
+
+                completion_queue = current_store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+                if completion_queue is not None:
+                    promise_id, value, error = yield WaitForExternalCompletion(queue=completion_queue)
+
+                    completed_handle_id = external_registry.get(promise_id)
+                    if completed_handle_id is not None:
+                        yield _SchedulerTaskComplete(
+                            handle_id=completed_handle_id,
+                            task_id=None,
+                            result=value,
+                            error=error,
+                        )
+
+                    dequeue_result = yield _SchedulerDequeueTask()
+                    if dequeue_result[0] is not None:
+                        next_task_id, next_k, next_store, resume_value, resume_error, sched_store = dequeue_result
+                        task_store = dict(next_store) if next_store is not None else {}
+                        for key, val in sched_store.items():
+                            if isinstance(key, str) and key.startswith("__scheduler_"):
+                                task_store[key] = val
+                        task_store[CURRENT_TASK_KEY] = next_task_id
+                        if resume_error is not None:
+                            return ResumeK(k=next_k, error=resume_error, store=task_store)
+                        return ResumeK(k=next_k, value=resume_value, store=task_store)
+            
             if effect.error is not None:
                 return CESKState.with_error(effect.error, ctx.env, current_store, [])
             return CESKState.with_value(effect.result, ctx.env, current_store, [])
@@ -247,12 +278,11 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                         return CESKState.with_error(task_error_now, ctx.env, current_store, ctx.k)
                     return CESKState.with_value(task_result_now, ctx.env, current_store, ctx.k)
 
-            # Check if we're waiting on an external promise
             external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
-            if external_registry and handle_id in external_registry.values():
-                # Waiting for external promise completion - yield to external wait handler
-                # Per SPEC-CESK-004: scheduler yields WaitForExternalCompletion,
-                # sync_external_wait_handler or async_external_wait_handler handles it
+            waiters = current_store.get(WAITERS_KEY, {})
+            
+            # Wait for ANY pending external I/O - it may transitively unblock our target
+            if external_registry and waiters:
                 from doeff.cesk.handlers.scheduler_state_handler import EXTERNAL_COMPLETION_QUEUE_KEY
 
                 completion_queue = current_store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
@@ -262,10 +292,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                         ctx.env, current_store, ctx.k,
                     )
 
-                # Yield to external wait handler (sync or async)
                 promise_id, value, error = yield WaitForExternalCompletion(queue=completion_queue)
 
-                # Look up handle_id for this promise and mark complete
                 completed_handle_id = external_registry.get(promise_id)
                 if completed_handle_id is not None:
                     yield _SchedulerTaskComplete(
@@ -275,7 +303,6 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                         error=error,
                     )
 
-                # Now waiter should be in queue - dequeue and resume
                 dequeue_result = yield _SchedulerDequeueTask()
                 if dequeue_result[0] is not None:
                     next_task_id, next_k, next_store, resume_value, resume_error, sched_store = dequeue_result
@@ -288,7 +315,6 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                         return ResumeK(k=next_k, error=resume_error, store=task_store)
                     return ResumeK(k=next_k, value=resume_value, store=task_store)
 
-                # Still no tasks? Shouldn't happen but handle gracefully
                 return CESKState.with_error(
                     RuntimeError("Deadlock: external completion processed but no tasks to run"),
                     ctx.env, current_store, ctx.k,
