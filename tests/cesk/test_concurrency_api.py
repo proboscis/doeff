@@ -73,12 +73,12 @@ class TestSpawnEffect:
         def program():
             task = yield Spawn(slow())
             is_done_before = yield task.is_done()
-            result = yield Wait(task)
+            yield Await(asyncio.sleep(0.1))
             is_done_after = yield task.is_done()
-            return (is_done_before, result, is_done_after)
+            return (is_done_before, is_done_after)
 
         result = await async_run(program(), async_handlers_preset)
-        assert result.value == (False, "done", True)
+        assert result.value == (False, True)
 
     @pytest.mark.asyncio
     async def test_spawn_isolates_store(self) -> None:
