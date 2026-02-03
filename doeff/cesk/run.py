@@ -36,10 +36,8 @@ from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
     EXTERNAL_COMPLETION_QUEUE_KEY,
-    EXTERNAL_PROMISE_REGISTRY_KEY,
     SPAWN_ASYNC_HANDLER_KEY,
     TASK_QUEUE_KEY,
-    process_external_completions,
     scheduler_state_handler,
 )
 from doeff.cesk.handlers.sync_await_handler import sync_await_handler
@@ -253,36 +251,12 @@ def _sync_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
     PythonAsyncSyntaxEscape should NEVER reach here.
     """
     while True:
-        # Process any pending external promise completions
-        process_external_completions(state.S)
-
         result = step(state)
 
         if isinstance(result, Done):
             return (result.value, state)
 
         if isinstance(result, Failed):
-            # Check if this is a deadlock that might be resolved by external completion
-            is_deadlock = (
-                isinstance(result.exception, RuntimeError)
-                and "Deadlock" in str(result.exception)
-            )
-            if is_deadlock:
-                # Check if there are pending external promises
-                external_registry = state.S.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
-                completion_queue = state.S.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-
-                if external_registry and completion_queue is not None:
-                    # Wait for external completion (blocking)
-                    try:
-                        promise_id, value, error = completion_queue.get(timeout=30.0)
-                        completion_queue.put((promise_id, value, error))  # Put back for process_external_completions
-                        # Process and retry
-                        process_external_completions(state.S)
-                        continue
-                    except Exception:
-                        pass  # Timeout or error - fall through to raise
-
             raise _ExecutionError(
                 exception=result.exception,
                 final_state=state,
@@ -323,11 +297,6 @@ async def _async_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
     step_count = 0
     while True:
         step_count += 1
-        # Process any pending external promise completions
-        # This is critical for async_run - when asyncio tasks complete, they put
-        # results in the completion queue which must be processed to wake waiters
-        process_external_completions(state.S)
-
         result = step(state)
         if debug and step_count % 100 == 0:
             print(f"[async_run] step {step_count}: result type = {type(result).__name__}")
