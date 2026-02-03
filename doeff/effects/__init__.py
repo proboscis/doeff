@@ -51,7 +51,6 @@ from .graph import (
 )
 from .graph import capture as capture_graph
 from .intercept import Intercept, InterceptEffect, intercept_program_effect
-from .io import IO, IOPerformEffect, perform, run
 from .promise import (
     CompletePromise,
     CompletePromiseEffect,
@@ -108,7 +107,6 @@ from .writer import (
     tell,
 )
 
-io = IO
 step = Step
 annotate = Annotate
 snapshot = Snapshot
@@ -116,7 +114,6 @@ capture = capture_graph
 
 
 __all__ = [
-    "IO",
     "Annotate",
     "Ask",
     "AskEffect",
@@ -140,7 +137,6 @@ __all__ = [
     "CreatePromiseEffect",
     "CreateExternalPromise",
     "CreateExternalPromiseEffect",
-
     "ExternalPromise",
     "FailPromise",
     "FailPromiseEffect",
@@ -151,12 +147,10 @@ __all__ = [
     "Get",
     "GetDebugContext",
     "GetDebugContextEffect",
-
     "GraphAnnotateEffect",
     "GraphCaptureEffect",
     "GraphSnapshotEffect",
     "GraphStepEffect",
-    "IOPerformEffect",
     "Intercept",
     "InterceptEffect",
     "Listen",
@@ -193,7 +187,6 @@ __all__ = [
     "Tell",
     "Wait",
     "WaitEffect",
-
     "WriterListenEffect",
     "WriterTellEffect",
     "annotate",
@@ -211,13 +204,10 @@ __all__ = [
     "get",
     "graph",
     "intercept_program_effect",
-    "io",
     "listen",
     "local",
-    "perform",
     "put",
     "race",
-    "run",
     "safe",
     "slog",
     "snapshot",

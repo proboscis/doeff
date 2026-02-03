@@ -22,13 +22,8 @@ from doeff.effects.scheduler_internal import (
     _SchedulerEnqueueTask,
     _SchedulerGetCurrentTaskId,
     _SchedulerGetTaskResult,
-    _SchedulerGetTaskStore,
-    _SchedulerIsTaskDone,
-    _SchedulerQueueEmpty,
     _SchedulerRegisterWaiter,
-    _SchedulerSetTaskSuspended,
     _SchedulerTaskComplete,
-    _SchedulerUpdateTaskStore,
 )
 from doeff.effects.spawn import Promise, Task, TaskCancelledError
 from doeff.program import Program
@@ -108,24 +103,24 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
         if queue:
             item = queue.pop(0)
             store[TASK_QUEUE_KEY] = queue
-            return Program.pure(CESKState.with_value(
-                (
-                    item["task_id"],
-                    item["k"],
-                    item.get("store_snapshot"),
-                    item.get("resume_value"),
-                    item.get("resume_error"),
-                    dict(store),
-                ),
-                ctx.env, store, ctx.k,
-            ))
+            return Program.pure(
+                CESKState.with_value(
+                    (
+                        item["task_id"],
+                        item["k"],
+                        item.get("store_snapshot"),
+                        item.get("resume_value"),
+                        item.get("resume_error"),
+                        dict(store),
+                    ),
+                    ctx.env,
+                    store,
+                    ctx.k,
+                )
+            )
         # Return (None, current_store) so handlers can access updated scheduler state
         # even when there's no task to dequeue
         return Program.pure(CESKState.with_value((None, dict(store)), ctx.env, store, ctx.k))
-
-    if isinstance(effect, _SchedulerQueueEmpty):
-        queue = store.get(TASK_QUEUE_KEY, [])
-        return Program.pure(CESKState.with_value(len(queue) == 0, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerRegisterWaiter):
         waiters = dict(store.get(WAITERS_KEY, {}))
@@ -232,10 +227,14 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
         task_info = registry[handle_id]
-        return Program.pure(CESKState.with_value(
-            (task_info.is_complete, task_info.is_cancelled, task_info.result, task_info.error),
-            ctx.env, store, ctx.k,
-        ))
+        return Program.pure(
+            CESKState.with_value(
+                (task_info.is_complete, task_info.is_cancelled, task_info.result, task_info.error),
+                ctx.env,
+                store,
+                ctx.k,
+            )
+        )
 
     if isinstance(effect, _SchedulerCancelTask):
         registry = dict(store.get(TASK_REGISTRY_KEY, {}))
@@ -271,16 +270,6 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
             store[TASK_QUEUE_KEY] = queue
 
         return Program.pure(CESKState.with_value(True, ctx.env, store, ctx.k))
-
-    if isinstance(effect, _SchedulerIsTaskDone):
-        registry = store.get(TASK_REGISTRY_KEY, {})
-        handle_id = effect.handle_id
-
-        if handle_id not in registry:
-            return Program.pure(CESKState.with_value(True, ctx.env, store, ctx.k))
-
-        task_info = registry[handle_id]
-        return Program.pure(CESKState.with_value(task_info.is_complete, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerCreatePromise):
         handle_id = uuid4()
@@ -337,33 +326,16 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
         current = store.get(CURRENT_TASK_KEY)
         return Program.pure(CESKState.with_value(current, ctx.env, store, ctx.k))
 
-    if isinstance(effect, _SchedulerGetTaskStore):
-        registry = store.get(TASK_REGISTRY_KEY, {})
-        for task_info in registry.values():
-            if task_info.task_id == effect.task_id:
-                return Program.pure(CESKState.with_value(task_info.store_snapshot, ctx.env, store, ctx.k))
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
+    # Forward unhandled effects to outer handlers (if any)
+    # Let step.py raise UnhandledEffectError if no handler exists
+    from doeff.do import do
 
-    if isinstance(effect, _SchedulerUpdateTaskStore):
-        registry = dict(store.get(TASK_REGISTRY_KEY, {}))
-        for handle_id, task_info in registry.items():
-            if task_info.task_id == effect.task_id:
-                task_info.store_snapshot = effect.store
-                registry[handle_id] = task_info
-                break
-        store[TASK_REGISTRY_KEY] = registry
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
+    @do
+    def forward():
+        result = yield effect
+        return result
 
-    if isinstance(effect, _SchedulerSetTaskSuspended):
-        store[TASK_SUSPENDED_KEY] = {
-            "task_id": effect.task_id,
-            "waiting_for": effect.waiting_for,
-        }
-        return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
-
-    from doeff.cesk.errors import UnhandledEffectError
-
-    raise UnhandledEffectError(f"scheduler_state_handler: unhandled effect {type(effect).__name__}")
+    return forward()
 
 
 def process_external_completions(store: dict[str, Any]) -> int:
@@ -417,13 +389,15 @@ def process_external_completions(store: dict[str, Any]) -> int:
             # Wake up any waiters
             waiting_list = waiters.pop(handle_id, [])
             for waiter in waiting_list:
-                task_queue.append({
-                    "task_id": waiter["waiter_task_id"],
-                    "k": waiter["waiter_k"],
-                    "store_snapshot": waiter.get("waiter_store"),
-                    "resume_value": value,
-                    "resume_error": error,
-                })
+                task_queue.append(
+                    {
+                        "task_id": waiter["waiter_task_id"],
+                        "k": waiter["waiter_k"],
+                        "store_snapshot": waiter.get("waiter_store"),
+                        "resume_value": value,
+                        "resume_error": error,
+                    }
+                )
 
             processed += 1
 

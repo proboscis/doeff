@@ -25,15 +25,16 @@ T = TypeVar("T")
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerEnqueueTask(EffectBase):
     """Add a task to the queue.
-    
+
     Used by task_scheduler_handler to enqueue tasks for cooperative scheduling.
-    
+
     Attributes:
         task_id: Unique identifier for the task
         k: The continuation to add to the queue (legacy, use program instead)
         store_snapshot: Isolated store for spawned tasks (None for main task)
         program: The program to run (preferred over k)
     """
+
     task_id: Any
     k: Kontinuation
     store_snapshot: dict[str, Any] | None = None
@@ -43,34 +44,27 @@ class _SchedulerEnqueueTask(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerDequeueTask(EffectBase):
     """Pop next continuation from the task queue.
-    
+
     Returns a tuple of (task_id, k, store_snapshot) or None if queue is empty.
     """
-    pass
 
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerQueueEmpty(EffectBase):
-    """Check if the task queue is empty.
-    
-    Returns True if no tasks are waiting to run.
-    """
     pass
 
 
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerRegisterWaiter(EffectBase):
     """Register a continuation to wake when a task/promise completes.
-    
+
     When the specified task completes (success or failure), the waiter
     continuation will be added back to the ready queue.
-    
+
     Attributes:
         handle_id: The handle ID to wait on (Task or Promise handle)
         waiter_task_id: The task ID of the waiting task
         waiter_k: The continuation to resume when complete
         waiter_store: The waiter's store at suspension time (for isolation)
     """
+
     handle_id: Any
     waiter_task_id: Any
     waiter_k: Kontinuation
@@ -80,9 +74,9 @@ class _SchedulerRegisterWaiter(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerTaskComplete(EffectBase):
     """Mark a task as complete with a result.
-    
+
     This triggers wake-up of any registered waiters.
-    
+
     Attributes:
         handle_id: The task's handle ID
         task_id: The internal task ID
@@ -90,6 +84,7 @@ class _SchedulerTaskComplete(EffectBase):
         error: The task's exception (None on success)
         store_snapshot: The task's final store (for isolated tasks)
     """
+
     handle_id: Any
     task_id: Any
     result: Any = None
@@ -100,26 +95,28 @@ class _SchedulerTaskComplete(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerGetTaskResult(EffectBase):
     """Get the result of a completed task.
-    
+
     Attributes:
         handle_id: The task's handle ID
-        
+
     Returns a tuple of (is_complete, result, error) or None if task not found.
     """
+
     handle_id: Any
 
 
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerCreateTaskHandle(EffectBase):
     """Create a new task handle for tracking a spawned task.
-    
+
     Attributes:
         task_id: The internal task ID
         env_snapshot: The environment snapshot
         store_snapshot: The store snapshot
-        
+
     Returns a new Task handle.
     """
+
     task_id: Any
     env_snapshot: dict[Any, Any]
     store_snapshot: dict[str, Any]
@@ -128,94 +125,51 @@ class _SchedulerCreateTaskHandle(EffectBase):
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerCancelTask(EffectBase):
     """Request cancellation of a task.
-    
+
     Attributes:
         handle_id: The task's handle ID
-        
+
     Returns True if task was cancelled, False if already complete or not found.
     """
-    handle_id: Any
 
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerIsTaskDone(EffectBase):
-    """Check if a task is complete.
-    
-    Attributes:
-        handle_id: The task's handle ID
-        
-    Returns True if task is complete (success, failure, or cancelled).
-    """
     handle_id: Any
 
 
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerCreatePromise(EffectBase):
     """Create a new promise handle.
-    
+
     Returns a tuple of (handle_id, Promise).
     """
+
     pass
 
 
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerGetCurrentTaskId(EffectBase):
     """Get the current task's ID.
-    
+
     Returns the task_id of the currently executing task.
     """
+
     pass
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerGetTaskStore(EffectBase):
-    """Get the current task's isolated store (for spawned tasks).
-    
-    Returns the store snapshot if this is a spawned task, None for main task.
-    """
-    task_id: Any
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerUpdateTaskStore(EffectBase):
-    """Update a spawned task's isolated store.
-    
-    Attributes:
-        task_id: The task's ID
-        store: The new store snapshot
-    """
-    task_id: Any
-    store: dict[str, Any]
-
-
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerSetTaskSuspended(EffectBase):
-    """Signal that current task should suspend (waiting for another task).
-    
-    The outer scheduler loop will check for this and switch to another task.
-    
-    Attributes:
-        task_id: The task that is suspending
-        waiting_for: The handle_id of the task/promise being waited on
-    """
-    task_id: Any
-    waiting_for: Any
 
 
 @dataclass(frozen=True, kw_only=True)
 class _SchedulerTaskCompleted(EffectBase):
     """Spawned task completed - handler intercepts to switch to next task.
-    
+
     Spawned programs are wrapped to yield this effect instead of returning.
     The task_scheduler_handler intercepts this, records the result, wakes waiters,
     and uses ResumeK to switch to the next task.
-    
+
     Attributes:
         task_id: The task that completed
         handle_id: The task's handle for waiter lookup
         result: The task's return value
         error: The task's exception (None on success)
     """
+
     task_id: Any
     handle_id: Any
     result: Any = None
@@ -239,29 +193,24 @@ class WaitForExternalCompletion(EffectBase):
     Attributes:
         queue: The external completion queue (queue.Queue)
     """
+
     queue: Any  # queue.Queue - can't import due to circular deps
 
 
 # Backwards compatibility aliases (deprecated, will be removed in future version)
 QueueAdd = _SchedulerEnqueueTask
 QueuePop = _SchedulerDequeueTask
-QueueIsEmpty = _SchedulerQueueEmpty
 RegisterWaiter = _SchedulerRegisterWaiter
 TaskComplete = _SchedulerTaskComplete
 CreateTaskHandle = _SchedulerCreateTaskHandle
 CancelTask = _SchedulerCancelTask
-IsTaskDone = _SchedulerIsTaskDone
 CreatePromiseHandle = _SchedulerCreatePromise
 GetCurrentTaskId = _SchedulerGetCurrentTaskId
-GetCurrentTaskStore = _SchedulerGetTaskStore
-UpdateTaskStore = _SchedulerUpdateTaskStore
-SetTaskSuspended = _SchedulerSetTaskSuspended
 TaskCompletedEffect = _SchedulerTaskCompleted
 GetTaskResult = _SchedulerGetTaskResult
 
 
 __all__ = [
-    # New names (preferred)
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
     "_SchedulerCreateTaskHandle",
@@ -269,29 +218,19 @@ __all__ = [
     "_SchedulerEnqueueTask",
     "_SchedulerGetCurrentTaskId",
     "_SchedulerGetTaskResult",
-    "_SchedulerGetTaskStore",
-    "_SchedulerIsTaskDone",
-    "_SchedulerQueueEmpty",
     "_SchedulerRegisterWaiter",
-    "_SchedulerSetTaskSuspended",
     "_SchedulerTaskComplete",
     "_SchedulerTaskCompleted",
-    "_SchedulerUpdateTaskStore",
     "WaitForExternalCompletion",
     # Backwards compatibility aliases (deprecated)
     "CancelTask",
     "CreatePromiseHandle",
     "CreateTaskHandle",
     "GetCurrentTaskId",
-    "GetCurrentTaskStore",
     "GetTaskResult",
-    "IsTaskDone",
     "QueueAdd",
-    "QueueIsEmpty",
     "QueuePop",
     "RegisterWaiter",
-    "SetTaskSuspended",
     "TaskComplete",
     "TaskCompletedEffect",
-    "UpdateTaskStore",
 ]

@@ -45,7 +45,6 @@ from doeff.cesk.run import (
 )
 from doeff.do import do
 from doeff.effects import (
-    IO,
     Annotate,
     Ask,
     Promise,
@@ -90,7 +89,6 @@ from doeff.effects import (
     cache_put,
     capture_graph,
     get,
-    io,
     listen,
     local,
     modify,
@@ -144,7 +142,6 @@ capture = capture_graph
 __all__ = [
     "CACHE_PATH_ENV_KEY",
     "DEFAULT_REPR_LIMIT",
-    "IO",
     "NOTHING",
     "REPR_LIMIT_KEY",
     "Annotate",
@@ -231,7 +228,6 @@ __all__ = [
     "get",
     "graph_to_html",
     "graph_to_html_async",
-    "io",
     "listen",
     "local",
     "modify",

@@ -20,7 +20,6 @@ import pytest
 from doeff import Intercept, Program, do
 from doeff.cesk.run import async_handlers_preset, async_run
 from doeff.effects import (
-    IO,
     Ask,
     Await,
     CacheDelete,
@@ -267,11 +266,9 @@ class TestAsyncRuntimeAsyncEffects:
     @pytest.mark.asyncio
     async def test_async_gather_parallel(self) -> None:
         """Test Gather effect runs Futures in parallel."""
-        execution_order: list[int] = []
 
         @do
         def task(n: int):
-            yield IO(lambda n=n: execution_order.append(n))
             return n * 2
 
         @do
@@ -282,9 +279,8 @@ class TestAsyncRuntimeAsyncEffects:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert result == [2, 4, 6]
-        assert len(execution_order) == 3
+        run_result = await async_run(program(), async_handlers_preset)
+        assert run_result.value == [2, 4, 6]
 
     @pytest.mark.asyncio
     async def test_async_gather_empty(self) -> None:
@@ -324,35 +320,20 @@ class TestAsyncRuntimeAsyncEffects:
 
 
 # ============================================================================
-# Phase 3: IO & Cache Effects Tests
+# Phase 3: Cache Effects Tests
 # ============================================================================
 
 
-class TestAsyncRuntimeIOCacheEffects:
-    """Phase 3: IO and Cache effects in AsyncRuntime."""
+class TestAsyncRuntimeCacheEffects:
+    """Phase 3: Cache effects in AsyncRuntime."""
 
     @pytest.mark.asyncio
-    async def test_async_io_sync(self) -> None:
-        """Test IO effect runs sync function."""
-        
-        def sync_operation():
-            return "sync_result"
-
-        @do
-        def program():
-            result = yield IO(sync_operation)
-            return result
-
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert result == "sync_result"
-
-    @pytest.mark.asyncio
-    async def test_async_io_async(self) -> None:
-        """Test IO effect runs async function."""
+    async def test_async_await_coroutine(self) -> None:
+        """Test Await effect with coroutine."""
         
         async def async_operation():
             await asyncio.sleep(0.001)
-            return "async_io_result"
+            return "async_result"
 
         @do
         def program():
@@ -360,22 +341,7 @@ class TestAsyncRuntimeIOCacheEffects:
             return result
 
         result = (await async_run(program(), async_handlers_preset)).value
-        assert result == "async_io_result"
-
-    @pytest.mark.asyncio
-    async def test_async_io_exception(self) -> None:
-        """Test IO effect propagates exceptions."""
-        
-        def failing_io():
-            raise RuntimeError("io failed")
-
-        @do
-        def program():
-            result = yield IO(failing_io)
-            return result
-
-        with pytest.raises(RuntimeError, match="io failed"):
-            (await async_run(program(), async_handlers_preset)).value
+        assert result == "async_result"
 
     @pytest.mark.asyncio
     async def test_async_cache_put_and_get(self) -> None:
@@ -1100,12 +1066,11 @@ class TestGatherComposition:
 
         Composition rule: Nested Gather - Full parallelism at leaf level.
         """
-        execution_order: list[str] = []
 
         @do
         def leaf_task(name: str):
             yield Await(asyncio.sleep(0.05))
-            yield IO(lambda n=name: execution_order.append(n))
+            yield Tell(f"executed_{name}")
             return name
 
         @do
@@ -1128,9 +1093,9 @@ class TestGatherComposition:
             return results
 
         start = datetime.now()
-        results = (await async_run(program(), async_handlers_preset)).value
+        run_result = await async_run(program(), async_handlers_preset)
         elapsed = (datetime.now() - start).total_seconds()
-        assert results == [["a", "b"], ["c", "d"]]
+        assert run_result.value == [["a", "b"], ["c", "d"]]
         assert elapsed < 0.3
 
     @pytest.mark.asyncio
