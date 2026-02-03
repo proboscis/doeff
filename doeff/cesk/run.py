@@ -31,7 +31,10 @@ from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.handler_frame import Handler, WithHandler
 from doeff.cesk.handlers.async_external_wait_handler import async_external_wait_handler
+from doeff.cesk.handlers.atomic_handler import atomic_handler
+from doeff.cesk.handlers.cache_handler import cache_handler
 from doeff.cesk.handlers.core_handler import core_handler
+from doeff.cesk.handlers.graph_handler import graph_handler
 from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
@@ -40,9 +43,11 @@ from doeff.cesk.handlers.scheduler_state_handler import (
     TASK_QUEUE_KEY,
     scheduler_state_handler,
 )
+from doeff.cesk.handlers.state_handler import state_handler
 from doeff.cesk.handlers.sync_await_handler import sync_await_handler
 from doeff.cesk.handlers.sync_external_wait_handler import sync_external_wait_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
+from doeff.cesk.handlers.writer_handler import writer_handler
 from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape
 from doeff.cesk.runtime_result import (
     EffectStackTrace,
@@ -71,34 +76,26 @@ sync_handlers_preset: list[Handler] = [
     cast(Handler, sync_external_wait_handler),
     cast(Handler, task_scheduler_handler),
     cast(Handler, sync_await_handler),
+    cast(Handler, state_handler),
+    cast(Handler, writer_handler),
+    cast(Handler, cache_handler),
+    cast(Handler, graph_handler),
+    cast(Handler, atomic_handler),
     cast(Handler, core_handler),
 ]
-"""Handler preset for sync_run.
-
-Includes (outermost to innermost):
-- scheduler_state_handler: Task queue management
-- sync_external_wait_handler: Blocks on external completion queue (handles WaitForExternalCompletion)
-- task_scheduler_handler: Spawn/Wait/Gather/Race (yields WaitForExternalCompletion)
-- sync_await_handler: Async effects via background thread
-- core_handler: Get/Put/Ask/etc.
-"""
 
 async_handlers_preset: list[Handler] = [
     cast(Handler, scheduler_state_handler),
     cast(Handler, async_external_wait_handler),
     cast(Handler, task_scheduler_handler),
     cast(Handler, python_async_syntax_escape_handler),
+    cast(Handler, state_handler),
+    cast(Handler, writer_handler),
+    cast(Handler, cache_handler),
+    cast(Handler, graph_handler),
+    cast(Handler, atomic_handler),
     cast(Handler, core_handler),
 ]
-"""Handler preset for async_run.
-
-Includes (outermost to innermost):
-- scheduler_state_handler: Task queue management
-- async_external_wait_handler: Waits via run_in_executor escape (handles WaitForExternalCompletion)
-- task_scheduler_handler: Spawn/Wait/Gather/Race (yields WaitForExternalCompletion)
-- python_async_syntax_escape_handler: Produces PythonAsyncSyntaxEscape for await
-- core_handler: Get/Put/Ask/etc.
-"""
 
 
 # =============================================================================
