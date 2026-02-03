@@ -165,6 +165,27 @@ def step(state: CESKState) -> StepResult:
         if debug:
             print(f"[step] EffectControl: {type(effect).__name__}")
 
+        # PythonAsyncSyntaxEscape: wrap action to return CESKState, then return to async_run
+        # See SPEC-CESK-005: this effect escapes to async_run for asyncio context
+        # Handler's action returns a VALUE, we wrap it to return CESKState
+        # async_run just does: state = await escape.action()
+        if isinstance(effect, PythonAsyncSyntaxEscape):
+            original_action = effect.action
+            # Capture current state components for the wrapped action
+            captured_E, captured_S, captured_K = E, S, K
+
+            async def wrapped_action():
+                result = original_action()
+                # Handle both coroutines and regular callables
+                import asyncio
+                if asyncio.iscoroutine(result):
+                    value = await result
+                else:
+                    value = result
+                return CESKState(C=Value(value), E=captured_E, S=captured_S, K=captured_K)
+
+            return PythonAsyncSyntaxEscape(action=wrapped_action)
+
         if isinstance(effect, WithHandler):
             handler_frame = HandlerFrame(
                 handler=effect.handler,
@@ -350,11 +371,11 @@ def step(state: CESKState) -> StepResult:
                 )
 
         if isinstance(frame, HandlerFrame):
-            # HandlerFrame returns CESKState or PythonAsyncSyntaxEscape directly
+            # HandlerFrame returns CESKState directly
             return frame.on_value(C.v, E, S, K_rest)
 
         if isinstance(frame, HandlerResultFrame):
-            # HandlerResultFrame returns CESKState or PythonAsyncSyntaxEscape directly
+            # HandlerResultFrame returns CESKState directly
             return frame.on_value(C.v, E, S, K_rest)
 
         from doeff.cesk.frames import Frame

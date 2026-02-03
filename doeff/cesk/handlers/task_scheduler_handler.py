@@ -58,7 +58,6 @@ from doeff.cesk.handlers.scheduler_state_handler import (
     WAITERS_KEY,
 )
 from doeff.cesk.helpers import to_generator
-from doeff.cesk.result import multi_task_async_escape
 from doeff.do import do
 from doeff.effects.gather import GatherEffect
 from doeff.effects.promise import (
@@ -68,7 +67,7 @@ from doeff.effects.promise import (
 )
 from doeff.effects.race import RaceEffect, RaceResult
 from doeff.effects.scheduler_internal import (
-    _AsyncEscapeIntercepted,
+    WaitForExternalCompletion,
     _SchedulerCancelTask,
     _SchedulerCreatePromise,
     _SchedulerCreateTaskHandle,
@@ -138,150 +137,15 @@ def _extract_handler_frames(k: list[Any]) -> list[Any]:
     return [frame for frame in k if isinstance(frame, HandlerFrame)]
 
 
-def _build_multi_task_escape_from_pending(
-    pending_io: dict[Any, Any],
-    stored_env: Any,
-    stored_store: dict[str, Any],
-) -> Any:
-    """Build PythonAsyncSyntaxEscape for multi-task case using stored escapes."""
-    from doeff.cesk.result import PythonAsyncSyntaxEscape
-    from doeff.cesk.state import CESKState, Error
-
-    awaitables_dict = {task_id: info["awaitable"] for task_id, info in pending_io.items()}
-
-    def resume_multi(value: Any, new_store: dict[str, Any]) -> CESKState:
-        task_id, result = value
-        task_info = pending_io.get(task_id)
-        if task_info is None:
-            raise RuntimeError(f"Task {task_id} not found in pending_io")
-
-        escape = task_info["escape"]
-        task_store_snapshot = task_info.get("store_snapshot", {})
-
-        new_pending = dict(pending_io)
-        del new_pending[task_id]
-
-        merged_store = dict(task_store_snapshot)
-        # CRITICAL: Use new_store (passed from driver) for scheduler keys, not stored_store.
-        # new_store contains the latest scheduler state including waiter registrations
-        # that happened while other tasks were awaiting I/O. stored_store is stale.
-        for key, val in new_store.items():
-            if isinstance(key, str) and key.startswith("__scheduler_"):
-                merged_store[key] = val
-        merged_store[PENDING_IO_KEY] = new_pending
-        merged_store[CURRENT_TASK_KEY] = task_id
-
-        return escape.resume(result, merged_store)
-
-    def resume_error_multi(error_info: Any) -> CESKState:
-        task_id, error = error_info
-        task_info = pending_io.get(task_id)
-        if task_info is None:
-            return CESKState(
-                C=Error(error),
-                E=stored_env,
-                S=stored_store,
-                K=[],
-            )
-
-        escape = task_info["escape"]
-        task_store_snapshot = task_info.get("store_snapshot", {})
-
-        new_pending = dict(pending_io)
-        del new_pending[task_id]
-
-        merged_store = dict(task_store_snapshot)
-        for key, val in stored_store.items():
-            if isinstance(key, str) and key.startswith("__scheduler_"):
-                merged_store[key] = val
-        merged_store[PENDING_IO_KEY] = new_pending
-        merged_store[CURRENT_TASK_KEY] = task_id
-
-        # CRITICAL: Do NOT call escape.resume_error(error) here!
-        # The escape's resume_error uses its stored_store snapshot from escape creation,
-        # which has STALE scheduler state (e.g., tasks in queue that are now in pending_io).
-        # Instead, construct CESKState directly with the correct merged_store.
-        stored_k = escape._stored_k if escape._stored_k is not None else []
-        return CESKState(
-            C=Error(error),
-            E=stored_env,
-            S=merged_store,
-            K=list(stored_k),
-        )
-
-    return PythonAsyncSyntaxEscape(
-        resume=resume_multi,
-        resume_error=resume_error_multi,
-        awaitables=awaitables_dict,
-        store=stored_store,
-    )
-
-
 @do  # type: ignore[reportArgumentType] - @do transforms generator to KleisliProgram
 def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
-    """Handle scheduling effects using ResumeK for task switching."""
+    """Handle scheduling effects using ResumeK for task switching.
 
-    if isinstance(effect, _AsyncEscapeIntercepted):
-        escape = effect.escape
-        current_task_id = ctx.store.get(CURRENT_TASK_KEY)
-
-        new_store = dict(ctx.store)
-        pending_io = dict(new_store.get(PENDING_IO_KEY, {}))
-
-        stored_k = escape._stored_k if escape._stored_k is not None else []
-        stored_store = escape._stored_store if escape._stored_store is not None else dict(ctx.store)
-
-        pending_io[current_task_id] = {
-            "awaitable": escape.awaitable,
-            "escape": escape,
-            "k": list(stored_k),
-            "store_snapshot": dict(stored_store),
-        }
-        new_store[PENDING_IO_KEY] = pending_io
-
-        queue = list(new_store.get(TASK_QUEUE_KEY, []))
-
-        if queue:
-            item = queue.pop(0)
-            new_store[TASK_QUEUE_KEY] = queue
-            next_task_id = item["task_id"]
-            next_k = item["k"]
-            next_store_snapshot = item.get("store_snapshot")
-            resume_value = item.get("resume_value")
-            resume_error = item.get("resume_error")
-
-            task_store = dict(next_store_snapshot) if next_store_snapshot else dict(new_store)
-            task_store[CURRENT_TASK_KEY] = next_task_id
-            task_store[PENDING_IO_KEY] = new_store[PENDING_IO_KEY]
-            task_store[TASK_QUEUE_KEY] = new_store[TASK_QUEUE_KEY]
-            task_store[TASK_REGISTRY_KEY] = new_store.get(TASK_REGISTRY_KEY, {})
-            task_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
-
-            if resume_error is not None:
-                return CESKState.with_error(resume_error, ctx.env, task_store, next_k)
-            return ResumeK(k=next_k, value=resume_value, store=task_store)
-
-        if len(pending_io) > 1:
-            return _build_multi_task_escape_from_pending(
-                pending_io=pending_io,
-                stored_env=ctx.env,
-                stored_store=new_store,
-            )
-
-        from doeff.cesk.result import PythonAsyncSyntaxEscape
-
-        return PythonAsyncSyntaxEscape(
-            resume=escape.resume,
-            resume_error=escape.resume_error,
-            awaitable=escape.awaitable,
-            awaitables=escape.awaitables,
-            store=escape.store,
-            _propagating=True,
-            _is_final=True,
-            _stored_k=escape._stored_k,
-            _stored_env=escape._stored_env,
-            _stored_store=escape._stored_store,
-        )
+    Note: This handler is transparent to PythonAsyncSyntaxEscape.
+    Async escapes pass through unchanged. Task coordination for async I/O
+    is handled via ExternalPromise + Wait, not via escape interception.
+    See SPEC-CESK-005-simplify-async-escape.md.
+    """
 
     if isinstance(effect, SpawnEffect):
         task_id = uuid4()
@@ -299,10 +163,6 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         base_k = _make_initial_k(wrapped_program, env_snapshot)
         # Inherit parent's handler frames so child effects go through same handlers
         # ctx.inherited_handlers is a simple list copy from the original K
-        import os
-        if os.environ.get("DOEFF_DEBUG"):
-            handler_names = [getattr(h.handler, "__name__", "?") for h in ctx.inherited_handlers]
-            print(f"[SpawnEffect] inherited_handlers len={len(ctx.inherited_handlers)}, names={handler_names}")
         child_k = base_k + list(ctx.inherited_handlers)
         yield _SchedulerEnqueueTask(task_id=task_id, k=child_k, store_snapshot=store_snapshot)
 
@@ -320,22 +180,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         dequeue_result = yield _SchedulerDequeueTask()
         # dequeue_result is (None, current_store) when empty, or full tuple when task available
         if dequeue_result[0] is None:
-            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            # Queue is empty - task completed with no other tasks to run
             current_store = dequeue_result[1]
-            pending_io = current_store.get(PENDING_IO_KEY, {})
-            if pending_io:
-                has_escape = any("escape" in info for info in pending_io.values())
-                if has_escape:
-                    return _build_multi_task_escape_from_pending(
-                        pending_io=pending_io,
-                        stored_env=ctx.env,
-                        stored_store=current_store,
-                    )
-                return multi_task_async_escape(
-                    stored_k=ctx.delimited_k,
-                    stored_env=ctx.env,
-                    stored_store=current_store,
-                )
             if effect.error is not None:
                 return CESKState.with_error(effect.error, ctx.env, current_store, [])
             return CESKState.with_value(effect.result, ctx.env, current_store, [])
@@ -389,27 +235,28 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         if dequeue_result[0] is None:
             # Queue is empty - use current_store from dequeue result (has latest scheduler state)
             current_store = dequeue_result[1]
-            pending_io = current_store.get(PENDING_IO_KEY, {})
-            if pending_io:
-                has_escape = any("escape" in info for info in pending_io.values())
-                if has_escape:
-                    return _build_multi_task_escape_from_pending(
-                        pending_io=pending_io,
-                        stored_env=ctx.env,
-                        stored_store=current_store,
-                    )
-                return multi_task_async_escape(
-                    stored_k=list(ctx.delimited_k),
-                    stored_env=ctx.env,
-                    stored_store=current_store,
-                )
+
+            # IMPORTANT: Re-check if task is complete. The completion might have been processed
+            # by process_external_completions() between our _SchedulerGetTaskResult call and now.
+            # This handles the race condition where the completion arrives mid-handler-execution.
+            recheck_result = yield _SchedulerGetTaskResult(handle_id=handle_id)
+            if recheck_result is not None:
+                is_complete_now, is_cancelled_now, task_result_now, task_error_now = recheck_result
+                if is_complete_now:
+                    if is_cancelled_now:
+                        return CESKState.with_error(TaskCancelledError(), ctx.env, current_store, ctx.k)
+                    if task_error_now is not None:
+                        return CESKState.with_error(task_error_now, ctx.env, current_store, ctx.k)
+                    return CESKState.with_value(task_result_now, ctx.env, current_store, ctx.k)
+
             # Check if we're waiting on an external promise
             external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
             if external_registry and handle_id in external_registry.values():
-                # Block for external completion - direct blocking in handler
-                # This is the only place doeff truly blocks: when no tasks are
-                # runnable and we're waiting on external I/O.
+                # Waiting for external promise completion - yield to external wait handler
+                # Per SPEC-CESK-004: scheduler yields WaitForExternalCompletion,
+                # sync_external_wait_handler or async_external_wait_handler handles it
                 from doeff.cesk.handlers.scheduler_state_handler import EXTERNAL_COMPLETION_QUEUE_KEY
+
                 completion_queue = current_store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
                 if completion_queue is None:
                     return CESKState.with_error(
@@ -417,8 +264,8 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                         ctx.env, current_store, ctx.k,
                     )
 
-                # Direct blocking - CESK stepping stops here until queue has item
-                promise_id, value, error = completion_queue.get()
+                # Yield to external wait handler (sync or async)
+                promise_id, value, error = yield WaitForExternalCompletion(queue=completion_queue)
 
                 # Look up handle_id for this promise and mark complete
                 completed_handle_id = external_registry.get(promise_id)
@@ -547,7 +394,13 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         # Convert Programs to Tasks by spawning them (inline spawn logic)
         waitables: list[Any] = []
         for item in items:
-            if isinstance(item, ProgramBase):
+            # SpawnEffect: extract program and spawn it
+            # (SpawnEffect inherits from EffectBase which inherits from ProgramBase,
+            #  but we want to spawn its inner program, not the SpawnEffect itself)
+            if isinstance(item, SpawnEffect):
+                item = item.program  # Extract inner program
+
+            if isinstance(item, ProgramBase) and not isinstance(item, SpawnEffect):
                 # Inline spawn logic - cannot yield SpawnEffect because it would
                 # go to outer handler (scheduler_state_handler) which doesn't handle it
                 task_id = uuid4()
@@ -647,21 +500,53 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         dequeue_result = yield _SchedulerDequeueTask()
         # dequeue_result is (None, current_store) when empty, or full tuple when task available
         if dequeue_result[0] is None:
-            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            # Queue is empty - check if waiting for external promises
             current_store = dequeue_result[1]
-            pending_io = current_store.get(PENDING_IO_KEY, {})
-            if pending_io:
-                has_escape = any("escape" in info for info in pending_io.values())
-                if has_escape:
-                    return _build_multi_task_escape_from_pending(
-                        pending_io=pending_io,
-                        stored_env=ctx.env,
-                        stored_store=current_store,
+            external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+            if debug:
+                print(f"[GatherEffect] Queue empty, external_registry keys={list(external_registry.keys())}, current_store scheduler keys={[k for k in current_store.keys() if isinstance(k, str) and k.startswith('__scheduler')]}")
+            if external_registry:
+                # Waiting for external promise - yield to external wait handler
+                # Per SPEC-CESK-004: scheduler yields WaitForExternalCompletion
+                from doeff.cesk.handlers.scheduler_state_handler import EXTERNAL_COMPLETION_QUEUE_KEY
+
+                completion_queue = current_store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+                if completion_queue is None:
+                    return CESKState.with_error(
+                        RuntimeError("No completion queue for external promise"),
+                        ctx.env, current_store, ctx.k,
                     )
-                return multi_task_async_escape(
-                    stored_k=waiter_k,
-                    stored_env=ctx.env,
-                    stored_store=current_store,
+
+                # Yield to external wait handler (sync or async)
+                promise_id, value, error = yield WaitForExternalCompletion(queue=completion_queue)
+
+                # Look up handle_id for this promise and mark complete
+                completed_handle_id = external_registry.get(promise_id)
+                if completed_handle_id is not None:
+                    yield _SchedulerTaskComplete(
+                        handle_id=completed_handle_id,
+                        task_id=None,
+                        result=value,
+                        error=error,
+                    )
+
+                # Now waiter should be in queue - dequeue and resume
+                dequeue_result = yield _SchedulerDequeueTask()
+                if dequeue_result[0] is not None:
+                    next_task_id, next_k, next_store, resume_value, resume_error, sched_store = dequeue_result
+                    task_store = dict(next_store) if next_store is not None else {}
+                    for key, val in sched_store.items():
+                        if isinstance(key, str) and key.startswith("__scheduler_"):
+                            task_store[key] = val
+                    task_store[CURRENT_TASK_KEY] = next_task_id
+                    if resume_error is not None:
+                        return ResumeK(k=next_k, error=resume_error, store=task_store)
+                    return ResumeK(k=next_k, value=resume_value, store=task_store)
+
+                # Still no tasks? Shouldn't happen but handle gracefully
+                return CESKState.with_error(
+                    RuntimeError("Deadlock: external completion processed but no tasks to run"),
+                    ctx.env, current_store, ctx.k,
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: waiting for tasks but no other tasks to run"),
@@ -735,21 +620,51 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         dequeue_result = yield _SchedulerDequeueTask()
         # dequeue_result is (None, current_store) when empty, or full tuple when task available
         if dequeue_result[0] is None:
-            # Queue is empty - use current_store from dequeue result (has latest scheduler state)
+            # Queue is empty - check if waiting for external promises
             current_store = dequeue_result[1]
-            pending_io = current_store.get(PENDING_IO_KEY, {})
-            if pending_io:
-                has_escape = any("escape" in info for info in pending_io.values())
-                if has_escape:
-                    return _build_multi_task_escape_from_pending(
-                        pending_io=pending_io,
-                        stored_env=ctx.env,
-                        stored_store=current_store,
+            external_registry = current_store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+            if external_registry:
+                # Waiting for external promise - yield to external wait handler
+                # Per SPEC-CESK-004: scheduler yields WaitForExternalCompletion
+                from doeff.cesk.handlers.scheduler_state_handler import EXTERNAL_COMPLETION_QUEUE_KEY
+
+                completion_queue = current_store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
+                if completion_queue is None:
+                    return CESKState.with_error(
+                        RuntimeError("No completion queue for external promise"),
+                        ctx.env, current_store, ctx.k,
                     )
-                return multi_task_async_escape(
-                    stored_k=waiter_k,
-                    stored_env=ctx.env,
-                    stored_store=current_store,
+
+                # Yield to external wait handler (sync or async)
+                promise_id, value, error = yield WaitForExternalCompletion(queue=completion_queue)
+
+                # Look up handle_id for this promise and mark complete
+                completed_handle_id = external_registry.get(promise_id)
+                if completed_handle_id is not None:
+                    yield _SchedulerTaskComplete(
+                        handle_id=completed_handle_id,
+                        task_id=None,
+                        result=value,
+                        error=error,
+                    )
+
+                # Now waiter should be in queue - dequeue and resume
+                dequeue_result = yield _SchedulerDequeueTask()
+                if dequeue_result[0] is not None:
+                    next_task_id, next_k, next_store, resume_value, resume_error, sched_store = dequeue_result
+                    task_store = dict(next_store) if next_store is not None else {}
+                    for key, val in sched_store.items():
+                        if isinstance(key, str) and key.startswith("__scheduler_"):
+                            task_store[key] = val
+                    task_store[CURRENT_TASK_KEY] = next_task_id
+                    if resume_error is not None:
+                        return ResumeK(k=next_k, error=resume_error, store=task_store)
+                    return ResumeK(k=next_k, value=resume_value, store=task_store)
+
+                # Still no tasks? Shouldn't happen but handle gracefully
+                return CESKState.with_error(
+                    RuntimeError("Deadlock: external completion processed but no tasks to run"),
+                    ctx.env, current_store, ctx.k,
                 )
             return CESKState.with_error(
                 RuntimeError("Deadlock: racing but no other tasks to run"),
@@ -808,17 +723,11 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
                 return CESKState.with_error(resume_error, ctx.env, task_store, next_k)
             return ResumeK(k=next_k, value=resume_value, store=task_store)
 
-        has_escape = any("escape" in info for info in new_store.get(PENDING_IO_KEY, {}).values())
-        if has_escape:
-            return _build_multi_task_escape_from_pending(
-                pending_io=new_store.get(PENDING_IO_KEY, {}),
-                stored_env=ctx.env,
-                stored_store=new_store,
-            )
-        return multi_task_async_escape(
-            stored_k=ctx.delimited_k,
-            stored_env=ctx.env,
-            stored_store=new_store,
+        # No tasks in queue - this is a deadlock in the new architecture
+        # (Await should use ExternalPromise, not _SchedulerSuspendForIO)
+        return CESKState.with_error(
+            RuntimeError("Deadlock: suspended for I/O but no other tasks to run"),
+            ctx.env, new_store, ctx.k,
         )
 
     # Forward unhandled effects to outer handler
