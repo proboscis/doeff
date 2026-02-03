@@ -226,12 +226,12 @@ class TestHandlerPresets:
     def test_sync_handlers_preset_is_list(self) -> None:
         """sync_handlers_preset is a list of handlers."""
         assert isinstance(sync_handlers_preset, list)
-        assert len(sync_handlers_preset) == 5
+        assert len(sync_handlers_preset) == 10
 
     def test_async_handlers_preset_is_list(self) -> None:
         """async_handlers_preset is a list of handlers."""
         assert isinstance(async_handlers_preset, list)
-        assert len(async_handlers_preset) == 5
+        assert len(async_handlers_preset) == 10
 
     def test_presets_are_different(self) -> None:
         """sync and async presets have different handlers for external wait and async effects."""
