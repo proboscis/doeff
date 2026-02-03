@@ -42,7 +42,6 @@ TASK_REGISTRY_KEY = "__scheduler_tasks__"
 WAITERS_KEY = "__scheduler_waiters__"
 CURRENT_TASK_KEY = "__scheduler_current_task__"
 TASK_SUSPENDED_KEY = "__scheduler_task_suspended__"
-PENDING_IO_KEY = "__scheduler_pending_io__"  # Deprecated - will be removed
 EXTERNAL_COMPLETION_QUEUE_KEY = "__scheduler_external_queue__"
 EXTERNAL_PROMISE_REGISTRY_KEY = "__scheduler_external_promises__"
 SPAWN_ASYNC_HANDLER_KEY = "__scheduler_spawn_async_handler__"
@@ -448,7 +447,6 @@ __all__ = [
     "CURRENT_TASK_KEY",
     "EXTERNAL_COMPLETION_QUEUE_KEY",
     "EXTERNAL_PROMISE_REGISTRY_KEY",
-    "PENDING_IO_KEY",
     "TASK_QUEUE_KEY",
     "TASK_REGISTRY_KEY",
     "TASK_SUSPENDED_KEY",

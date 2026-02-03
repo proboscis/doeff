@@ -1,11 +1,13 @@
 """Tests for SPEC-EFF-005 concurrency API: Future, Promise, Wait, Race, Gather."""
 
+import asyncio
+
 import pytest
 
 from doeff import (
+    Await,
     CompletePromise,
     CreatePromise,
-    Delay,
     FailPromise,
     Future,
     Gather,
@@ -18,8 +20,7 @@ from doeff import (
     do,
 )
 from doeff.cesk.run import async_handlers_preset, async_run
-from doeff.effects.spawn import Waitable
-from doeff.effects.spawn import TaskCancelledError
+from doeff.effects.spawn import TaskCancelledError, Waitable
 
 
 class TestFutureProtocol:
@@ -65,14 +66,14 @@ class TestSpawnEffect:
         """Spawned task runs while parent continues."""
         @do
         def slow():
-            yield Delay(0.05)
+            yield Await(asyncio.sleep(0.05))
             return "done"
 
         @do
         def program():
             task = yield Spawn(slow())
             is_done_before = yield task.is_done()
-            yield Delay(0.1)
+            yield Await(asyncio.sleep(0.1))
             is_done_after = yield task.is_done()
             return (is_done_before, is_done_after)
 
@@ -142,7 +143,7 @@ class TestWaitEffect:
         """Wait on cancelled task raises TaskCancelledError."""
         @do
         def slow_child():
-            yield Delay(10.0)
+            yield Await(asyncio.sleep(10.0))
             return "never"
 
         @do
@@ -185,7 +186,7 @@ class TestTaskCancel:
         """Cancel returns True when task is running."""
         @do
         def slow():
-            yield Delay(10.0)
+            yield Await(asyncio.sleep(10.0))
             return "done"
 
         @do
@@ -222,7 +223,7 @@ class TestTaskIsDone:
         """is_done returns False while task is running."""
         @do
         def slow():
-            yield Delay(10.0)
+            yield Await(asyncio.sleep(10.0))
             return "done"
 
         @do
@@ -264,7 +265,7 @@ class TestRaceEffect:
 
         @do
         def slow():
-            yield Delay(1.0)
+            yield Await(asyncio.sleep(1.0))
             return "slow"
 
         @do
@@ -291,7 +292,7 @@ class TestRaceEffect:
 
         @do
         def slow():
-            yield Delay(1.0)
+            yield Await(asyncio.sleep(1.0))
             return "loser"
 
         @do
@@ -313,12 +314,12 @@ class TestRaceEffect:
 
         @do
         def slow1():
-            yield Delay(1.0)
+            yield Await(asyncio.sleep(1.0))
             return "slow1"
 
         @do
         def slow2():
-            yield Delay(2.0)
+            yield Await(asyncio.sleep(2.0))
             return "slow2"
 
         @do
@@ -343,7 +344,7 @@ class TestRaceEffect:
 
         @do
         def slow():
-            yield Delay(10.0)
+            yield Await(asyncio.sleep(10.0))
             return "slow"
 
         @do
@@ -369,7 +370,7 @@ class TestRaceEffect:
 
         @do
         def slow():
-            yield Delay(1.0)
+            yield Await(asyncio.sleep(1.0))
             return "slow"
 
         @do
@@ -423,7 +424,7 @@ class TestGatherEffect:
         """Gather returns results in input order, not completion order."""
         @do
         def slow():
-            yield Delay(0.1)
+            yield Await(asyncio.sleep(0.1))
             return "slow"
 
         @do
@@ -449,7 +450,7 @@ class TestGatherEffect:
 
         @do
         def slow():
-            yield Delay(1.0)
+            yield Await(asyncio.sleep(1.0))
             return "slow"
 
         @do
@@ -570,7 +571,7 @@ class TestPromiseEffects:
         """Wait on Promise.future blocks until CompletePromise."""
         @do
         def completer(promise: Promise):
-            yield Delay(0.05)
+            yield Await(asyncio.sleep(0.05))
             yield CompletePromise(promise, "resolved")
 
         @do
@@ -671,12 +672,12 @@ class TestConcurrencyComposition:
         """Race can implement timeout pattern."""
         @do
         def slow_work():
-            yield Delay(10.0)
+            yield Await(asyncio.sleep(10.0))
             return "completed"
 
         @do
         def timeout(seconds: float):
-            yield Delay(seconds)
+            yield Await(asyncio.sleep(seconds))
             return None
 
         @do

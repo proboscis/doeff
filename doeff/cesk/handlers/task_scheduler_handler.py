@@ -52,7 +52,6 @@ from doeff.cesk.state import CESKState, Value
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
     EXTERNAL_PROMISE_REGISTRY_KEY,
-    PENDING_IO_KEY,
     TASK_QUEUE_KEY,
     TASK_REGISTRY_KEY,
     WAITERS_KEY,
@@ -77,7 +76,6 @@ from doeff.effects.scheduler_internal import (
     _SchedulerGetTaskResult,
     _SchedulerIsTaskDone,
     _SchedulerRegisterWaiter,
-    _SchedulerSuspendForIO,
     _SchedulerTaskComplete,
     _SchedulerTaskCompleted,
 )
@@ -680,55 +678,6 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
         if resume_error is not None:
             return ResumeK(k=next_k, error=resume_error, store=task_store)
         return ResumeK(k=next_k, value=resume_value, store=task_store)
-
-    if isinstance(effect, _SchedulerSuspendForIO):
-        import os
-
-        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
-        current_task_id = ctx.store.get(CURRENT_TASK_KEY)
-
-        full_resume_k = list(ctx.delimited_k) + list(ctx.outer_k)
-
-        new_store = dict(ctx.store)
-        pending_io = dict(new_store.get(PENDING_IO_KEY, {}))
-        pending_io[current_task_id] = {
-            "awaitable": effect.awaitable,
-            "k": full_resume_k,
-            "store_snapshot": dict(ctx.store),
-        }
-        new_store[PENDING_IO_KEY] = pending_io
-
-        queue = list(new_store.get(TASK_QUEUE_KEY, []))
-        if debug:
-            print(
-                f"[_SchedulerSuspendForIO] queue_len={len(queue)}, current_task={current_task_id}"
-            )
-        if queue:
-            item = queue.pop(0)
-            new_store[TASK_QUEUE_KEY] = queue
-            next_task_id = item["task_id"]
-            next_k = item["k"]
-            next_store_snapshot = item.get("store_snapshot")
-            resume_value = item.get("resume_value")
-            resume_error = item.get("resume_error")
-
-            task_store = dict(next_store_snapshot) if next_store_snapshot else dict(new_store)
-            task_store[CURRENT_TASK_KEY] = next_task_id
-            task_store[PENDING_IO_KEY] = new_store[PENDING_IO_KEY]
-            task_store[TASK_QUEUE_KEY] = new_store[TASK_QUEUE_KEY]
-            task_store[TASK_REGISTRY_KEY] = new_store.get(TASK_REGISTRY_KEY, {})
-            task_store[WAITERS_KEY] = new_store.get(WAITERS_KEY, {})
-
-            if resume_error is not None:
-                return CESKState.with_error(resume_error, ctx.env, task_store, next_k)
-            return ResumeK(k=next_k, value=resume_value, store=task_store)
-
-        # No tasks in queue - this is a deadlock in the new architecture
-        # (Await should use ExternalPromise, not _SchedulerSuspendForIO)
-        return CESKState.with_error(
-            RuntimeError("Deadlock: suspended for I/O but no other tasks to run"),
-            ctx.env, new_store, ctx.k,
-        )
 
     # Forward unhandled effects to outer handler
     result = yield effect

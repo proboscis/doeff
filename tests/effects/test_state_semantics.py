@@ -320,8 +320,10 @@ class TestGatherStateComposition:
     @pytest.mark.asyncio
     async def test_gather_state_isolated_across_branches(self) -> None:
         """State changes in one Gather branch are NOT visible to others (isolated)."""
+        import asyncio
+
         from doeff.cesk.run import async_handlers_preset, async_run
-        from doeff.effects import Delay, Gather
+        from doeff.effects import Await, Gather
 
         @do
         def writer() -> Program[str]:
@@ -330,7 +332,7 @@ class TestGatherStateComposition:
 
         @do
         def reader() -> Program[str]:
-            yield Delay(seconds=0.01)
+            yield Await(asyncio.sleep(0.01))
             message = yield Get("message")
             return message
 

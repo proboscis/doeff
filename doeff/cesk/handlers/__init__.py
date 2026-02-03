@@ -21,11 +21,9 @@ from doeff.cesk.handler_frame import HandlerContext
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from doeff.cesk.frames import FrameResult
-
 # Handler type alias for v2 handler functions
 # Handlers take (effect, context) and return a FrameResult
-Handler: TypeAlias = "Callable[[Any, HandlerContext], FrameResult]"
+Handler: TypeAlias = "Callable[[Any, HandlerContext], Any]"
 
 # Import v2 handlers (new names)
 from doeff.cesk.handlers.async_external_wait_handler import async_external_wait_handler
@@ -35,7 +33,6 @@ from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
 from doeff.cesk.handlers.sync_await_handler import sync_await_handler
 from doeff.cesk.handlers.sync_external_wait_handler import sync_external_wait_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
-from doeff.cesk.handlers.threaded_asyncio_handler import threaded_asyncio_handler
 
 # Backwards compatibility aliases (deprecated)
 python_async_handler = python_async_syntax_escape_handler
@@ -54,7 +51,6 @@ __all__ = [
     "sync_await_handler",
     "sync_external_wait_handler",
     "task_scheduler_handler",
-    "threaded_asyncio_handler",
     # Backwards compatibility aliases (deprecated)
     "async_effects_handler",
     "python_async_handler",
