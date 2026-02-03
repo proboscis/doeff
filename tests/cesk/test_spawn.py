@@ -21,7 +21,6 @@ import pytest
 from doeff import Intercept, Program, do
 from doeff.cesk.run import async_handlers_preset, async_run
 from doeff.effects import (
-    IO,
     Ask,
     Await,
     Gather,
@@ -122,25 +121,24 @@ class TestSpawnBasic:
     @pytest.mark.asyncio
     async def test_spawn_continue_while_running(self) -> None:
         """Test that parent continues executing while spawned task runs."""
-        execution_order: list[str] = []
 
         @do
         def background():
-            yield IO(lambda: execution_order.append("background"))
+            yield Tell("background")
             return "bg_done"
 
         @do
         def program():
             task = yield Spawn(background())
-            yield IO(lambda: execution_order.append("parent_after_spawn"))
+            yield Tell("parent_after_spawn")
             result = yield task.join()
-            yield IO(lambda: execution_order.append("parent_after_join"))
+            yield Tell("parent_after_join")
             return result
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert result == "bg_done"
-        # Parent should execute after spawn before join
-        assert "parent_after_spawn" in execution_order
+        run_result = await async_run(program(), async_handlers_preset)
+        assert run_result.value == "bg_done"
+        log = run_result.raw_store.get("__log__", [])
+        assert "parent_after_spawn" in log
 
 
 # ============================================================================
@@ -185,15 +183,14 @@ class TestSpawnErrorHandling:
         @do
         def program():
             task = yield Spawn(failing_task())
-            # These should still execute
-            yield IO(lambda: executed.append("step1"))
-            yield IO(lambda: executed.append("step2"))
-            # Don't join - error stays contained
+            yield Tell("step1")
+            yield Tell("step2")
             return "parent_success"
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert result == "parent_success"
-        assert executed == ["step1", "step2"]
+        run_result = await async_run(program(), async_handlers_preset)
+        assert run_result.value == "parent_success"
+        log = run_result.raw_store.get("__log__", [])
+        assert log == ["step1", "step2"]
 
     @pytest.mark.asyncio
     async def test_spawn_join_propagates_exception(self) -> None:
@@ -441,24 +438,21 @@ class TestSpawnStoreIsolation:
 
         @do
         def background():
-            # Small delay to ensure parent runs first
             yield Await(asyncio.sleep(0.01))
             value = yield Get("counter")
-            yield IO(lambda v=value: child_saw_value.append(v))
+            yield Tell(f"child_saw_{value}")
             return value
 
         @do
         def program():
             yield Put("counter", 1)
             task = yield Spawn(background())
-            # Parent changes after spawn
             yield Put("counter", 100)
             result = yield task.join()
             return result
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        # Child should see value at spawn time (1), not parent's later change (100)
-        assert result == 1
+        run_result = await async_run(program(), async_handlers_preset)
+        assert run_result.value == 1
 
 
 # ============================================================================
@@ -675,22 +669,19 @@ class TestSpawnEdgeCases:
     @pytest.mark.asyncio
     async def test_fire_and_forget_pattern(self) -> None:
         """Test fire-and-forget pattern (spawn without join)."""
-        side_effect_happened = []
 
         @do
         def background():
-            yield IO(lambda: side_effect_happened.append(True))
+            yield Tell("side_effect")
             return "done"
 
         @do
         def program():
             _ = yield Spawn(background())
-            # Don't join - fire and forget
             return "parent_done"
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        assert result == "parent_done"
-        # Note: Side effect may or may not have happened depending on scheduling
+        run_result = await async_run(program(), async_handlers_preset)
+        assert run_result.value == "parent_done"
 
     @pytest.mark.asyncio
     async def test_spawn_with_intercept(self) -> None:
@@ -782,17 +773,17 @@ class TestSpawnTiming:
 
         @do
         def program():
-            _ = yield Spawn(slow_task())  # Should not block
-            yield IO(lambda: spawn_completed.append(True))
+            _ = yield Spawn(slow_task())
+            yield Tell("spawn_completed")
             return "parent_done"
 
         start = time.time()
-        result = (await async_run(program(), async_handlers_preset)).value
+        run_result = await async_run(program(), async_handlers_preset)
         elapsed = time.time() - start
         
-        # Parent should continue immediately, not wait 0.5s
-        assert result == "parent_done"
-        assert spawn_completed == [True]
+        assert run_result.value == "parent_done"
+        log = run_result.raw_store.get("__log__", [])
+        assert "spawn_completed" in log
         assert elapsed < 0.1
 
 
@@ -880,26 +871,23 @@ class TestSpawnOracleReview:
         Note: This is documented behavior - mutable values inside the store
         can still be shared between parent and child.
         """
+        shared_list = ["initial"]
         
         @do
-        def background(shared_list):
-            # Modifying a mutable object inside the store IS visible to parent
-            # because shallow copy only copies the dict, not its values
-            yield IO(lambda: shared_list.append("child_added"))
+        def background():
+            shared_list.append("child_added")
+            yield Tell("child_modified")
             return "done"
 
         @do
         def program():
-            shared_list = ["initial"]
             yield Put("shared", shared_list)
-            task = yield Spawn(background(shared_list))
+            task = yield Spawn(background())
             _ = yield task.join()
-            # Note: shared_list IS modified by child because it's the same object
             return shared_list
 
-        result = (await async_run(program(), async_handlers_preset)).value
-        # This test documents that shallow copy means mutable values are shared
-        assert "child_added" in result
+        run_result = await async_run(program(), async_handlers_preset)
+        assert "child_added" in run_result.value
 
 
 __all__ = __all__ + [

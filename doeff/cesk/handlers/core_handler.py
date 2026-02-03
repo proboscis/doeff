@@ -37,7 +37,6 @@ from doeff.effects.graph import (
     GraphStepEffect,
 )
 from doeff.effects.intercept import InterceptEffect
-from doeff.effects.io import IOPerformEffect
 from doeff.effects.pure import PureEffect
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import ResultSafeEffect
@@ -186,16 +185,8 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         ))
 
     if isinstance(effect, InterceptEffect):
-        # Use user-space pattern instead of InterceptFrame
         result = yield with_intercept(effect.transforms, effect.program)
-        return result  # Plain value - HandlerResultFrame constructs CESKState
-
-    if isinstance(effect, IOPerformEffect):
-        try:
-            result = effect.action()
-            return CESKState.with_value(result, ctx.env, store, ctx.k)
-        except Exception as ex:
-            return CESKState.with_error(ex, ctx.env, store, ctx.k)
+        return result
 
     if isinstance(effect, CacheGetEffect):
         cache = store.get("__cache_storage__", {})
