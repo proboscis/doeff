@@ -105,19 +105,10 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
         return Program.pure(CESKState.with_value(None, ctx.env, store, ctx.k))
 
     if isinstance(effect, _SchedulerDequeueTask):
-        import os
-
-        debug = os.environ.get("DOEFF_DEBUG", "").lower() in ("1", "true", "yes")
         queue = list(store.get(TASK_QUEUE_KEY, []))
-        if debug:
-            print(f"[_SchedulerDequeueTask] queue_len={len(queue)}")
         if queue:
             item = queue.pop(0)
             store[TASK_QUEUE_KEY] = queue
-            if debug:
-                print(
-                    f"[_SchedulerDequeueTask] Returning task_id={item['task_id']}, resume_value={item.get('resume_value')}, resume_error={item.get('resume_error')}"
-                )
             return Program.pure(CESKState.with_value(
                 (
                     item["task_id"],
@@ -129,8 +120,6 @@ def scheduler_state_handler(effect: EffectBase, ctx: HandlerContext) -> Program[
                 ),
                 ctx.env, store, ctx.k,
             ))
-        if debug:
-            print(f"[_SchedulerDequeueTask] Queue empty! Returning (None, store)")
         # Return (None, current_store) so handlers can access updated scheduler state
         # even when there's no task to dequeue
         return Program.pure(CESKState.with_value((None, dict(store)), ctx.env, store, ctx.k))
@@ -396,7 +385,10 @@ def process_external_completions(store: dict[str, Any]) -> int:
     _ensure_scheduler_store_initialized(store)
 
     completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-    external_registry = store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {})
+    # IMPORTANT: Copy the registry before modifying to avoid aliasing issues.
+    # Multiple stores may share the same registry dict reference (shallow copies),
+    # so we need to copy before .pop() to avoid affecting other stores.
+    external_registry = dict(store.get(EXTERNAL_PROMISE_REGISTRY_KEY, {}))
     task_registry = dict(store.get(TASK_REGISTRY_KEY, {}))
     waiters = dict(store.get(WAITERS_KEY, {}))
     task_queue = list(store.get(TASK_QUEUE_KEY, []))

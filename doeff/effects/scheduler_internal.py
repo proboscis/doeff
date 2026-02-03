@@ -240,19 +240,23 @@ class _SchedulerSuspendForIO(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _AsyncEscapeIntercepted(EffectBase):
-    """Notify handler that a PythonAsyncSyntaxEscape is bubbling through.
+class WaitForExternalCompletion(EffectBase):
+    """Request blocking wait for external completion queue.
 
-    This effect is yielded by HandlerFrame.on_value when it sees an escape
-    value. Handlers can intercept this to coordinate multi-task async
-    (like TaskSchedulerHandler does) or pass it through for single-task.
+    Yielded by task_scheduler_handler when:
+    - Task queue is empty (no runnable doeff tasks)
+    - External promises are pending (asyncio tasks running)
+
+    Handled by:
+    - sync_external_wait_handler: blocking queue.get()
+    - async_external_wait_handler: PythonAsyncSyntaxEscape with run_in_executor
+
+    See SPEC-CESK-004-handler-owned-blocking.md for architecture.
 
     Attributes:
-        escape: The PythonAsyncSyntaxEscape that was intercepted
-        outer_k: The continuation beyond this handler
+        queue: The external completion queue (queue.Queue)
     """
-    escape: Any
-    outer_k: Any
+    queue: Any  # queue.Queue - can't import due to circular deps
 
 
 # Backwards compatibility aliases (deprecated, will be removed in future version)
@@ -276,7 +280,6 @@ GetTaskResult = _SchedulerGetTaskResult
 
 __all__ = [
     # New names (preferred)
-    "_AsyncEscapeIntercepted",
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
     "_SchedulerCreateTaskHandle",
@@ -293,6 +296,7 @@ __all__ = [
     "_SchedulerTaskComplete",
     "_SchedulerTaskCompleted",
     "_SchedulerUpdateTaskStore",
+    "WaitForExternalCompletion",
     # Backwards compatibility aliases (deprecated)
     "CancelTask",
     "CreatePromiseHandle",

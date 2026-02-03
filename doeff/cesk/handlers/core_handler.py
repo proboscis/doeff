@@ -330,7 +330,7 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
 
     # Handle GatherEffect when items are Programs (sequential execution)
     from doeff.effects.gather import GatherEffect
-    from doeff.effects.spawn import Waitable
+    from doeff.effects.spawn import SpawnEffect, Waitable
 
     if isinstance(effect, GatherEffect):
         items = effect.items
@@ -338,7 +338,12 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
             return CESKState.with_value([], ctx.env, store, ctx.k)
 
         # Check if all items are Programs (sequential execution case)
-        all_programs = all(isinstance(item, ProgramBase) for item in items)
+        # Note: SpawnEffect is a ProgramBase but should NOT be handled here -
+        # it needs concurrent spawning via task_scheduler_handler
+        all_programs = all(
+            isinstance(item, ProgramBase) and not isinstance(item, SpawnEffect)
+            for item in items
+        )
         if all_programs:
             # Use GatherFrame for sequential execution
             from doeff.cesk.frames import GatherFrame

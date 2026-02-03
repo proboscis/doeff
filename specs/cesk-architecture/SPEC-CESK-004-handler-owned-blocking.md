@@ -4,7 +4,9 @@
 
 ## Summary
 
-Remove `WaitingForExternalCompletion` from `StepResult`. The task scheduler handler should own its blocking behavior when waiting for external completion, rather than delegating to the run loop.
+Remove `WaitingForExternalCompletion` from `StepResult`. Blocking for external completion is handled through a **layered handler architecture** where:
+1. `task_scheduler_handler` yields `WaitForExternalCompletion` effect (agnostic to blocking mechanism)
+2. A dedicated handler converts this to the appropriate blocking mechanism (sync or async)
 
 ## Problem Statement
 
@@ -39,36 +41,89 @@ doeff has its own cooperative scheduling world. It does NOT "support" asyncio - 
 
 ### 2. PythonAsyncSyntaxEscape is Exclusive
 
-`PythonAsyncSyntaxEscape` is produced by ONE handler only: `python_async_syntax_escape_handler`. It converts `Await` effect to `PythonAsyncSyntaxEscape` for use with `async_run`. No other handler should produce this.
+`PythonAsyncSyntaxEscape` is produced by specific handlers only:
+- `python_async_syntax_escape_handler`: Converts `Await`/`Delay` effects to escapes
+- `async_external_wait_handler`: Converts `WaitForExternalCompletion` to escape
 
-### 3. Handler Programs Block
+No other handlers should produce this type.
 
-When a handler returns a Program, stepping that Program should block (not proceed) until external promises resolve. The handler owns this blocking:
+### 3. Layered Handler Architecture
 
-```python
-@do
-def wait_for_completion():
-    # Blocking I/O inside generator - next() won't return until queue has item
-    item = completion_queue.get()  # blocks here!
-    # process item
-    return result
+The scheduler should be **agnostic** to the blocking mechanism. It yields an effect (`WaitForExternalCompletion`) and a handler below it converts that to the appropriate mechanism:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  task_scheduler_handler (agnostic)                      │
+│                                                         │
+│  if queue_empty and external_promises_pending:          │
+│      yield WaitForExternalCompletion(queue)             │
+│      # continues after wait resolved                    │
+└───────────────────────┬─────────────────────────────────┘
+                        │
+        ┌───────────────┴───────────────┐
+        │                               │
+   sync_run                        async_run
+        │                               │
+        ▼                               ▼
+┌───────────────────┐         ┌───────────────────────────┐
+│ sync_external_    │         │ async_external_           │
+│ wait_handler      │         │ wait_handler              │
+│                   │         │                           │
+│ return queue.get()│         │ yield PythonAsyncSyntax   │
+│ (blocks thread)   │         │ Escape(run_in_executor(   │
+│                   │         │   None, queue.get))       │
+└───────────────────┘         └───────────────────────────┘
 ```
 
-When CESK steps this:
-1. Calls `next(gen)`
-2. Generator blocks on `queue.get()`
-3. `next()` doesn't return until queue has item
-4. CESK stepping is blocked
+### 4. Why Different Blocking Mechanisms?
 
-### 4. Blocking is Last Resort
+**The Problem with Direct Blocking in async_run:**
 
-The handler should only block when there is NO other work in the doeff world:
+In `sync_run`, external I/O runs in background threads. Blocking on `queue.get()` works because the background thread can complete and call `queue.put()`.
+
+In `async_run`, asyncio tasks run in the **same thread** as the CESK stepper:
+
+```
+sync_run (works):                    async_run (broken if direct block):
+┌────────────────┬────────────┐      ┌─────────────────────────────────┐
+│ Main Thread    │ Background │      │ Single Thread                   │
+│                │ Thread     │      │                                 │
+│ queue.get() ←──┼── put()   │      │ queue.get() ← BLOCKS THREAD    │
+│ (blocks)       │ (completes)│      │      ↑                          │
+└────────────────┴────────────┘      │      X asyncio.Task can't run   │
+                                     │        (same thread blocked!)   │
+                                     └─────────────────────────────────┘
+```
+
+**Solution: `run_in_executor` for async:**
+
+```python
+# async_external_wait_handler
+async def wait_for_completion():
+    loop = asyncio.get_event_loop()
+    # Blocking queue.get() runs in thread pool
+    item = await loop.run_in_executor(None, queue.get)
+    return item
+
+yield PythonAsyncSyntaxEscape(action=wait_for_completion)
+```
+
+This way:
+- The blocking `get()` runs in a thread pool worker
+- Main event loop is free to run asyncio tasks
+- When completion arrives, executor thread returns
+- No polling, no CPU waste
+
+### 5. Blocking is Last Resort
+
+The scheduler should only yield `WaitForExternalCompletion` when there is NO other work:
 
 ```
 task_scheduler_handler scheduling loop:
   1. Runnable tasks exist? → run one (yield ResumeK)
   2. No runnable tasks, tasks waiting on external?
-     → block on queue.get()  # only when nothing else to do
+     → yield WaitForExternalCompletion(queue)
+     → handler below handles blocking appropriately
      → process completion, wake waiter
      → goto 1
   3. No tasks at all? → done or deadlock
@@ -76,17 +131,33 @@ task_scheduler_handler scheduling loop:
 
 ## Target Architecture
 
-```
-Target (correct):
-  run.py
-    └── only steps, no queue knowledge
-    └── only knows: Done | Failed | CESKState | PythonAsyncSyntaxEscape
+### Handler Presets
 
-  task_scheduler_handler
-    └── owns completion queue
-    └── exhausts all runnable work
-    └── blocks internally on queue.get() when stuck
-    └── resumes when external completes
+```python
+sync_handlers_preset = [
+    scheduler_state_handler,
+    task_scheduler_handler,
+    sync_external_wait_handler,   # blocks with queue.get()
+    sync_await_handler,
+    core_handler,
+]
+
+async_handlers_preset = [
+    scheduler_state_handler,
+    task_scheduler_handler,
+    async_external_wait_handler,  # escapes with run_in_executor
+    python_async_syntax_escape_handler,
+    core_handler,
+]
+```
+
+### New Effect
+
+```python
+@dataclass(frozen=True)
+class WaitForExternalCompletion(EffectBase):
+    """Scheduler requests blocking wait for external completion queue."""
+    queue: queue.Queue
 ```
 
 ### StepResult After Refactor
@@ -99,43 +170,164 @@ StepResult = CESKState | Done | Failed | PythonAsyncSyntaxEscape | WaitingForExt
 StepResult = CESKState | Done | Failed | PythonAsyncSyntaxEscape
 ```
 
+## Example Flow: `yield Await(coro)` in async_run
+
+```
+Handler stack (outer → inner):
+  scheduler_state → task_scheduler → async_external_wait → python_async_escape → core
+
+Step 1: yield Await(coro)
+─────────────────────────
+         │
+         ▼ (handled by python_async_syntax_escape_handler)
+
+   promise = yield CreateExternalPromise()
+   yield PythonAsyncSyntaxEscape(action=create_task(fire_task))
+         │
+         ▼ async_run executes action, starts asyncio.Task
+
+   result = yield Wait(promise.future)  ←── continues
+
+Step 2: yield Wait(promise.future)
+──────────────────────────────────
+         │
+         ▼ (handled by task_scheduler_handler)
+
+   - Promise not complete yet
+   - Register as waiter
+   - Dequeue next task → queue empty
+   - External promises pending
+
+   yield WaitForExternalCompletion(queue)  ←── continues
+
+Step 3: yield WaitForExternalCompletion(queue)
+──────────────────────────────────────────────
+         │
+         ▼ (handled by async_external_wait_handler)
+
+   yield PythonAsyncSyntaxEscape(
+       action=lambda: loop.run_in_executor(None, queue.get)
+   )
+         │
+         ▼ async_run executes action
+         │
+         │  Meanwhile, asyncio.Task from Step 1:
+         │    - await coro completes
+         │    - promise.complete(result)
+         │    - queue.put((id, result, None))
+         │
+         ▼  executor's queue.get() returns
+
+   async_external_wait_handler returns item
+
+Step 4: Completion processed
+────────────────────────────
+   - task_scheduler_handler processes completion
+   - Wakes waiter
+   - Wait returns result
+   - python_async_syntax_escape_handler returns to caller
+```
+
 ## Implementation
 
 ### 1. Remove WaitingForExternalCompletion
 
 - Delete from `doeff/cesk/result.py`
 - Remove from `StepResult` type alias
-- Remove handling in `doeff/cesk/run.py` (both sync and async)
-- Remove pass-through in `doeff/cesk/handler_frame.py`
+- Remove handling in `doeff/cesk/run.py`
 
-### 2. Update task_scheduler_handler
-
-When queue is empty but external promises exist, block directly in the handler:
+### 2. Add WaitForExternalCompletion Effect
 
 ```python
-# task_scheduler_handler (simplified)
-if queue_empty and waiting_on_external:
-    # Direct blocking - no intermediate effect needed
-    # Handler's generator does blocking I/O directly
-    completion_queue = store.get(EXTERNAL_COMPLETION_QUEUE_KEY)
-    promise_id, value, error = completion_queue.get()  # BLOCKS HERE
-
-    # Process completion and continue scheduling
-    yield _SchedulerTaskComplete(handle_id=..., result=value, error=error)
-    # ... dequeue and resume waiter
+# doeff/effects/scheduler_internal.py
+@dataclass(frozen=True)
+class WaitForExternalCompletion(EffectBase):
+    """Request blocking wait for external completion queue."""
+    queue: queue.Queue
 ```
 
-Key insight: Python generators can do blocking I/O. When CESK steps the handler
-and calls `next(gen)`, if the generator executes `queue.get()`, the `next()`
-call blocks until an item is available. No special effect needed.
+### 3. Update task_scheduler_handler
+
+Replace direct blocking with effect:
+
+```python
+# When queue empty but external promises pending:
+yield WaitForExternalCompletion(completion_queue)
+# After handler below resolves, continue processing
+```
+
+### 4. Add sync_external_wait_handler
+
+```python
+@do
+def sync_external_wait_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, WaitForExternalCompletion):
+        # Direct blocking - sync context can block thread
+        item = effect.queue.get()
+        return item
+
+    # Forward other effects
+    result = yield effect
+    return result
+```
+
+### 5. Add async_external_wait_handler
+
+```python
+@do
+def async_external_wait_handler(effect: EffectBase, ctx: HandlerContext):
+    if isinstance(effect, WaitForExternalCompletion):
+        q = effect.queue
+
+        async def wait_async():
+            loop = asyncio.get_event_loop()
+            # Returns VALUE (step() wraps to return CESKState)
+            return await loop.run_in_executor(None, q.get)
+
+        # step() wraps action to return CESKState
+        # async_run awaits and gets CESKState directly
+        # Handler receives the value via yield
+        item = yield PythonAsyncSyntaxEscape(action=wait_async)
+        return item
+
+    # Forward other effects
+    result = yield effect
+    return result
+```
+
+**Note**: The handler's action returns a **value**. step() wraps it to return
+**CESKState** (see SPEC-CESK-005). async_run just does `state = await result.action()`.
+
+### 6. Update Handler Presets
+
+```python
+# doeff/cesk/run.py
+sync_handlers_preset = [
+    scheduler_state_handler,
+    task_scheduler_handler,
+    sync_external_wait_handler,
+    sync_await_handler,
+    core_handler,
+]
+
+async_handlers_preset = [
+    scheduler_state_handler,
+    task_scheduler_handler,
+    async_external_wait_handler,
+    python_async_syntax_escape_handler,
+    core_handler,
+]
+```
 
 ## Success Criteria
 
 1. `WaitingForExternalCompletion` removed from codebase
 2. `run.py` has no queue-related code
-3. `task_scheduler_handler` blocks internally when waiting for external
-4. All existing tests pass
-5. No behavior change from user perspective
+3. `task_scheduler_handler` yields `WaitForExternalCompletion` (agnostic to mechanism)
+4. `sync_external_wait_handler` blocks directly
+5. `async_external_wait_handler` uses `run_in_executor` via escape
+6. All existing tests pass
+7. No behavior change from user perspective
 
 ## Migration Notes
 
@@ -146,3 +338,4 @@ This is an internal refactor. User-facing API and behavior should not change.
 - Current implementation: `doeff/cesk/handlers/task_scheduler_handler.py`
 - Run loop: `doeff/cesk/run.py`
 - Result types: `doeff/cesk/result.py`
+- Async escape spec: `SPEC-CESK-005-simplify-async-escape.md`

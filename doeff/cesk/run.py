@@ -24,11 +24,13 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import queue
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from doeff._vendor import Err, FrozenDict, Ok
 from doeff.cesk.errors import UnhandledEffectError
 from doeff.cesk.handler_frame import Handler, WithHandler
+from doeff.cesk.handlers.async_external_wait_handler import async_external_wait_handler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
 from doeff.cesk.handlers.scheduler_state_handler import (
@@ -41,6 +43,7 @@ from doeff.cesk.handlers.scheduler_state_handler import (
     scheduler_state_handler,
 )
 from doeff.cesk.handlers.sync_await_handler import sync_await_handler
+from doeff.cesk.handlers.sync_external_wait_handler import sync_external_wait_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
 from doeff.cesk.result import Done, Failed, PythonAsyncSyntaxEscape
 from doeff.cesk.runtime_result import (
@@ -51,7 +54,7 @@ from doeff.cesk.runtime_result import (
     RuntimeResultImpl,
     build_stacks_from_captured_traceback,
 )
-from doeff.cesk.state import CESKState, Error, ProgramControl, Value
+from doeff.cesk.state import CESKState, Error, ProgramControl
 from doeff.cesk.step import step
 from doeff.program import Program
 
@@ -67,6 +70,7 @@ T = TypeVar("T")
 
 sync_handlers_preset: list[Handler] = [
     cast(Handler, scheduler_state_handler),
+    cast(Handler, sync_external_wait_handler),
     cast(Handler, task_scheduler_handler),
     cast(Handler, sync_await_handler),
     cast(Handler, core_handler),
@@ -75,13 +79,15 @@ sync_handlers_preset: list[Handler] = [
 
 Includes (outermost to innermost):
 - scheduler_state_handler: Task queue management
-- task_scheduler_handler: Spawn/Wait/Gather/Race
+- sync_external_wait_handler: Blocks on external completion queue (handles WaitForExternalCompletion)
+- task_scheduler_handler: Spawn/Wait/Gather/Race (yields WaitForExternalCompletion)
 - sync_await_handler: Async effects via background thread
 - core_handler: Get/Put/Ask/etc.
 """
 
 async_handlers_preset: list[Handler] = [
     cast(Handler, scheduler_state_handler),
+    cast(Handler, async_external_wait_handler),
     cast(Handler, task_scheduler_handler),
     cast(Handler, python_async_syntax_escape_handler),
     cast(Handler, core_handler),
@@ -90,7 +96,8 @@ async_handlers_preset: list[Handler] = [
 
 Includes (outermost to innermost):
 - scheduler_state_handler: Task queue management
-- task_scheduler_handler: Spawn/Wait/Gather/Race
+- async_external_wait_handler: Waits via run_in_executor escape (handles WaitForExternalCompletion)
+- task_scheduler_handler: Spawn/Wait/Gather/Race (yields WaitForExternalCompletion)
 - python_async_syntax_escape_handler: Produces PythonAsyncSyntaxEscape for await
 - core_handler: Get/Put/Ask/etc.
 """
@@ -130,6 +137,11 @@ def sync_run(
 
     # Set the async handler for spawned tasks (sync_run uses sync_await_handler)
     final_store[SPAWN_ASYNC_HANDLER_KEY] = sync_await_handler
+
+    # Initialize the external completion queue ONCE at the start.
+    # This ensures all stores share the same queue reference.
+    if EXTERNAL_COMPLETION_QUEUE_KEY not in final_store:
+        final_store[EXTERNAL_COMPLETION_QUEUE_KEY] = queue.Queue()
 
     wrapped = _wrap_with_handlers(program, handlers)
 
@@ -182,6 +194,12 @@ async def async_run(
 
     # Set the async handler for spawned tasks (async_run uses python_async_syntax_escape_handler)
     final_store[SPAWN_ASYNC_HANDLER_KEY] = python_async_syntax_escape_handler
+
+    # Initialize the external completion queue ONCE at the start.
+    # This ensures all stores share the same queue reference.
+    # The queue is thread-safe and can receive completions from asyncio tasks.
+    if EXTERNAL_COMPLETION_QUEUE_KEY not in final_store:
+        final_store[EXTERNAL_COMPLETION_QUEUE_KEY] = queue.Queue()
 
     wrapped = _wrap_with_handlers(program, handlers)
 
@@ -293,88 +311,57 @@ def _sync_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
 
 
 async def _async_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
-    """Step until Done or Failed, handling PythonAsyncSyntaxEscape via await."""
-    from doeff.cesk.result import DirectState
+    """Step until Done or Failed, handling PythonAsyncSyntaxEscape via action execution.
 
-    pending_tasks: dict[Any, asyncio.Task[Any]] = {}
+    Per SPEC-CESK-005:
+    - PythonAsyncSyntaxEscape.action returns CESKState (step() wraps handler's action)
+    - async_run just awaits the action and uses the returned state
+    - All coordination is handled by the scheduler via ExternalPromise + Wait
+    """
+    import os
+    debug = os.environ.get("DOEFF_ASYNC_DEBUG", "").lower() in ("1", "true", "yes")
+    step_count = 0
+    while True:
+        step_count += 1
+        # Process any pending external promise completions
+        # This is critical for async_run - when asyncio tasks complete, they put
+        # results in the completion queue which must be processed to wake waiters
+        process_external_completions(state.S)
 
-    def _cancel_pending_tasks() -> None:
-        """Cancel all pending asyncio tasks to avoid 'coroutine never awaited' warnings."""
-        for task in pending_tasks.values():
-            if not task.done():
-                task.cancel()
+        result = step(state)
+        if debug and step_count % 100 == 0:
+            print(f"[async_run] step {step_count}: result type = {type(result).__name__}")
 
-    try:
-        while True:
-            result = step(state)
+        if isinstance(result, Done):
+            return (result.value, state)
 
-            if isinstance(result, Done):
-                _cancel_pending_tasks()
-                return (result.value, state)
+        if isinstance(result, Failed):
+            raise _ExecutionError(
+                exception=result.exception,
+                final_state=state,
+                captured_traceback=result.captured_traceback,
+            )
 
-            if isinstance(result, Failed):
-                _cancel_pending_tasks()
-                raise _ExecutionError(
-                    exception=result.exception,
-                    final_state=state,
-                    captured_traceback=result.captured_traceback,
-                )
+        if isinstance(result, PythonAsyncSyntaxEscape):
+            # Action returns CESKState directly (step() wraps handler's value-returning action)
+            # This is the simple, clean interface per SPEC-CESK-005
+            if debug:
+                print(f"[async_run] step {step_count}: awaiting PythonAsyncSyntaxEscape action")
+            state = await result.action()
+            if debug:
+                print(f"[async_run] step {step_count}: escape action completed")
 
-            if isinstance(result, PythonAsyncSyntaxEscape):
-                current_store = result.store if result.store is not None else state.S
+            # Yield to event loop to let asyncio tasks progress
+            await asyncio.sleep(0)
+            continue
 
-                if result.awaitables:
-                    # Multi-task case: await first completion
-                    for task_id, awaitable in result.awaitables.items():
-                        if task_id not in pending_tasks:
-                            pending_tasks[task_id] = asyncio.create_task(awaitable)
+        if isinstance(result, CESKState):
+            state = result
+            # Yield to event loop to let background tasks progress
+            await asyncio.sleep(0)
+            continue
 
-                    done, _ = await asyncio.wait(
-                        pending_tasks.values(),
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-
-                    for task_id, atask in list(pending_tasks.items()):
-                        if atask in done:
-                            del pending_tasks[task_id]
-                            try:
-                                value = atask.result()
-                                resume_result = result.resume((task_id, value), current_store)
-                                state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
-                            except asyncio.CancelledError:
-                                raise
-                            except Exception as ex:
-                                error_result = result.resume_error((task_id, ex))
-                                state = error_result.state if isinstance(error_result, DirectState) else error_result
-                            break
-                    else:
-                        _cancel_pending_tasks()
-                        raise RuntimeError("asyncio.wait returned but no task completed")
-                elif result.awaitable is not None:
-                    # Single awaitable case
-                    try:
-                        value = await result.awaitable
-                        resume_result = result.resume(value, current_store)
-                        state = resume_result.state if isinstance(resume_result, DirectState) else resume_result
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as ex:
-                        error_result = result.resume_error(ex)
-                        state = error_result.state if isinstance(error_result, DirectState) else error_result
-                else:
-                    _cancel_pending_tasks()
-                    raise RuntimeError("PythonAsyncSyntaxEscape with neither awaitable nor awaitables")
-                continue
-
-            if isinstance(result, CESKState):
-                state = result
-                continue
-
-            _cancel_pending_tasks()
-            raise RuntimeError(f"Unexpected step result: {type(result)}")
-    except Exception:
-        _cancel_pending_tasks()
-        raise
+        raise RuntimeError(f"Unexpected step result: {type(result)}")
 
 
 class _ExecutionError(Exception):

@@ -56,11 +56,10 @@ from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
 from doeff._vendor import Err, Ok, Result
-from doeff.cesk.state import CESKState, Error, Value
-from doeff.cesk.types import Environment, Store
+from doeff.cesk.state import CESKState
+from doeff.cesk.types import Store
 
 if TYPE_CHECKING:
-    from doeff.cesk.frames import Kontinuation
     from doeff.cesk_traceback import CapturedTraceback
 
 T = TypeVar("T")
@@ -106,225 +105,51 @@ class Failed:
 
 
 @dataclass(frozen=True)
-class PythonAsyncSyntaxEscape:
-    """Escape hatch for Python's async/await SYNTAX.
+class PythonAsyncSyntaxEscape(EffectBase):
+    """Minimal escape: run an async action in async_run's context.
 
     !! RESTRICTED USE - READ CAREFULLY !!
 
-    This type is produced by ONE handler only: python_async_syntax_escape_handler.
-    No other handler may produce this type. This is not a guideline - it is a
-    hard architectural constraint.
-
     WHY THIS EXISTS
     ---------------
-    Python's `await` is SYNTAX, not a function call. You cannot write:
+    asyncio.create_task() and other asyncio operations require a running event
+    loop. The handler runs during step(), which is inside async_run, but we need
+    to ensure asyncio context explicitly. This escape signals async_run to execute
+    an async action.
 
-        def sync_function():
-            result = await some_coroutine()  # SyntaxError!
+    HOW IT WORKS (per SPEC-CESK-005)
+    --------------------------------
+    1. Handler yields PythonAsyncSyntaxEscape(action=some_async_fn)
+       - Handler's action returns a VALUE
+    2. step() wraps the action to return CESKState (capturing current E, S, K)
+    3. async_run receives escape, executes: state = await escape.action()
+    4. async_run continues stepping with the returned CESKState
+    5. The value from action is sent back to handler via C=Value(value)
 
-    When a user explicitly chooses async_run and their code does `yield Await(coro)`,
-    we must escape from the CESK machine to Python's async runtime to execute the
-    await. This is the ONLY purpose of this type.
+    This design separates concerns:
+    - Handler: business logic (what async operation to perform)
+    - step(): state management (how to construct CESKState)
+    - async_run: execution (just await and continue)
 
     WHAT THIS IS NOT
     ----------------
-    - NOT a general "escape hatch" for handlers
-    - NOT for custom blocking (do blocking I/O in handler's generator directly)
-    - NOT for task coordination (use effects and handlers)
-    - NOT for "optimizations" or "special cases"
+    - NOT for storing continuations (scheduler handles via Wait/Promise)
+    - NOT for multi-task coordination (scheduler handles)
 
-    If you think you need to produce this type from a new handler, you are wrong.
-    Rethink your approach. The handler's generator can do blocking I/O directly:
+    ALLOWED PRODUCERS
+    -----------------
+    - python_async_syntax_escape_handler: for Await/Delay effects
+    - async_external_wait_handler: for WaitForExternalCompletion effect
 
-        # WRONG - don't create escape types
-        return PythonAsyncSyntaxEscape(awaitable=queue.get(), ...)
-
-        # RIGHT - block directly in handler
-        result = queue.get()  # next(gen) blocks here
-
-    ALLOWED PRODUCER
-    ----------------
-    python_async_syntax_escape_handler ONLY, for this effect ONLY:
-    - PythonAsyncioAwaitEffect (yield Await(coroutine))
-
-    Other time-based effects (Delay, WaitUntil) should be implemented via Await,
-    not handled directly by the escape handler.
-
-    HOW IT WORKS
-    ------------
-    The runtime awaits using ONE of these patterns:
-    1. Single awaitable: `awaitable` field is set, await it, call resume(value)
-    2. Multiple awaitables: `awaitables` dict is set, await first completion,
-       call resume((task_id, value)) where task_id is the key that completed
-
-    This design keeps the runtime GENERIC - it has no knowledge of task IDs,
-    scheduling logic, or handler internals. All routing decisions are made
-    in the resume callback (created by handlers).
+    See SPEC-CESK-005-simplify-async-escape.md for full architecture.
     """
 
-    # Resume callbacks
-    resume: Callable[[Any, Store], CESKState]
-    resume_error: Callable[[BaseException], CESKState]
-
-    # Single awaitable (simple case: Await, Delay, etc.)
-    awaitable: Any | None = None
-
-    # Multiple awaitables (multi-task case: dict[task_id, Awaitable])
-    # Runtime awaits FIRST_COMPLETED, returns (task_id, value) to resume
-    awaitables: dict[Any, Any] | None = None
-
-    # Store to pass to resume (handlers may need current store for merging)
-    store: Store | None = None
-
-    # Legacy: effect field kept for compatibility but not used by runtime
-    effect: EffectBase | None = None
-    
-    # Marker: True when escape has been wrapped and is propagating through handler stack
-    _propagating: bool = False
-    
-    # Marker: True when escape should exit handler stack immediately (single-task case)
-    _is_final: bool = False
-    
-    # Stored continuation data (for scheduler interception)
-    _stored_k: Any = None
-    _stored_env: Any = None
-    _stored_store: Any = None
+    # The async action to execute. Returns CESKState (step() wraps handler's
+    # value-returning action to return state). async_run just does:
+    #   state = await escape.action()
+    action: Callable[[], Any]  # Awaitable[CESKState] after step() wraps it
 
 
-
-
-def python_async_escape(
-    awaitable: Any,
-    stored_k: Kontinuation,
-    stored_env: Environment,
-    stored_store: Store,
-) -> PythonAsyncSyntaxEscape:
-    """Build PythonAsyncSyntaxEscape with resume callbacks.
-
-    Used by python_async_syntax_escape_handler for async_run.
-    The callbacks are built from the stored continuation data.
-    """
-    def resume(value: Any, new_store: Store) -> CESKState:
-        merged_store = dict(new_store)
-        for key, val in stored_store.items():
-            if key not in merged_store:
-                merged_store[key] = val
-        return CESKState(
-            C=Value(value),
-            E=stored_env,
-            S=merged_store,
-            K=list(stored_k),
-        )
-
-    def resume_error(error: BaseException) -> CESKState:
-        return CESKState(
-            C=Error(error),
-            E=stored_env,
-            S=stored_store,
-            K=list(stored_k),
-        )
-
-    return PythonAsyncSyntaxEscape(
-        resume=resume,
-        resume_error=resume_error,
-        awaitable=awaitable,
-        store=stored_store,
-        _stored_k=stored_k,
-        _stored_env=stored_env,
-        _stored_store=stored_store,
-    )
-
-
-def multi_task_async_escape(
-    stored_k: Kontinuation,
-    stored_env: Environment,
-    stored_store: Store,
-) -> PythonAsyncSyntaxEscape:
-    """Build PythonAsyncSyntaxEscape for multi-task async escape.
-    
-    Used by task_scheduler_handler when all tasks are waiting on I/O.
-    The store must contain PENDING_IO_KEY with task awaitable info.
-    
-    Runtime awaits FIRST_COMPLETED from awaitables dict, then calls
-    resume((task_id, value)) to route to the correct task's continuation.
-    """
-    from doeff.cesk.handlers.scheduler_state_handler import (
-        CURRENT_TASK_KEY,
-        PENDING_IO_KEY,
-    )
-    
-    pending_io = stored_store.get(PENDING_IO_KEY, {})
-    
-    awaitables_dict = {
-        task_id: info["awaitable"]
-        for task_id, info in pending_io.items()
-    }
-    
-    def resume_multi(value: Any, new_store: Store) -> CESKState:
-        task_id, result = value
-        
-        task_info = pending_io.get(task_id)
-        if task_info is None:
-            raise RuntimeError(f"Task {task_id} not found in pending_io")
-        
-        task_k = task_info["k"]
-        task_store_snapshot = task_info.get("store_snapshot", {})
-        
-        new_pending = dict(pending_io)
-        del new_pending[task_id]
-        
-        merged_store = dict(task_store_snapshot)
-        for key, val in stored_store.items():
-            if isinstance(key, str) and key.startswith("__scheduler_"):
-                merged_store[key] = val
-        merged_store[PENDING_IO_KEY] = new_pending
-        merged_store[CURRENT_TASK_KEY] = task_id
-        
-        return CESKState(
-            C=Value(result),
-            E=stored_env,
-            S=merged_store,
-            K=task_k,
-        )
-    
-    def resume_error_multi(error_info: Any) -> CESKState:
-        task_id, error = error_info
-        
-        task_info = pending_io.get(task_id)
-        if task_info is None:
-            return CESKState(
-                C=Error(error),
-                E=stored_env,
-                S=stored_store,
-                K=list(stored_k),
-            )
-        
-        task_k = task_info["k"]
-        task_store_snapshot = task_info.get("store_snapshot", {})
-        
-        new_pending = dict(pending_io)
-        del new_pending[task_id]
-        
-        merged_store = dict(task_store_snapshot)
-        for key, val in stored_store.items():
-            if isinstance(key, str) and key.startswith("__scheduler_"):
-                merged_store[key] = val
-        merged_store[PENDING_IO_KEY] = new_pending
-        merged_store[CURRENT_TASK_KEY] = task_id
-        
-        return CESKState(
-            C=Error(error),
-            E=stored_env,
-            S=merged_store,
-            K=task_k,
-        )
-    
-    return PythonAsyncSyntaxEscape(
-        resume=resume_multi,
-        resume_error=resume_error_multi,
-        awaitables=awaitables_dict,
-        store=stored_store,
-    )
 
 
 Terminal: TypeAlias = Done | Failed
@@ -384,6 +209,4 @@ __all__ = [
     "PythonAsyncSyntaxEscape",
     "StepResult",
     "Terminal",
-    "multi_task_async_escape",
-    "python_async_escape",
 ]
