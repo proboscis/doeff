@@ -6,7 +6,6 @@ with_listen, with_intercept, with_graph_capture) instead of specialized Frames.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from doeff.do import do
@@ -43,7 +42,7 @@ from doeff.effects.pure import PureEffect
 from doeff.effects.reader import AskEffect, LocalEffect
 from doeff.effects.result import ResultSafeEffect
 from doeff.effects.state import StateGetEffect, StateModifyEffect, StatePutEffect
-from doeff.effects.time import GetTimeEffect
+
 from doeff.effects.writer import WriterListenEffect, WriterTellEffect
 from doeff.program import Program, ProgramBase
 
@@ -190,12 +189,6 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         # Use user-space pattern instead of InterceptFrame
         result = yield with_intercept(effect.transforms, effect.program)
         return result  # Plain value - HandlerResultFrame constructs CESKState
-
-    if isinstance(effect, GetTimeEffect):
-        current_time = store.get("__current_time__")
-        if current_time is None:
-            current_time = datetime.now()
-        return CESKState.with_value(current_time, ctx.env, store, ctx.k)
 
     if isinstance(effect, IOPerformEffect):
         try:

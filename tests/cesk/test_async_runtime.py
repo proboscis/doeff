@@ -4,7 +4,7 @@ This test file tests the async_run function with async_handlers_preset.
 
 Test Matrix Phases:
 - Phase 1: Core Effects (Ask, Local, Get, Put, Modify, Tell, Listen, Pure, Safe)
-- Phase 2: Async-Specific Effects (Await, Gather, Delay, GetTime)
+- Phase 2: Async-Specific Effects (Await, Gather)
 - Phase 3: IO & Cache Effects (IO sync/async, CacheGet, CachePut, CacheDelete)
 - Phase 4: Control Flow & Error Handling (Intercept, nested programs, exception propagation)
 - Phase 5: Integration & Edge Cases (mixed sync/async, cancellation, timeout, concurrent state)
@@ -27,10 +27,8 @@ from doeff.effects import (
     CacheExists,
     CacheGet,
     CachePut,
-    Delay,
     Gather,
     Get,
-    GetTime,
     Listen,
     Local,
     Modify,
@@ -323,69 +321,6 @@ class TestAsyncRuntimeAsyncEffects:
         assert result.is_err()
         assert isinstance(result.error, ValueError)
 
-    @pytest.mark.asyncio
-    async def test_async_delay(self) -> None:
-        """Test Delay effect using asyncio.sleep."""
-        
-        @do
-        def program():
-            start = yield GetTime()
-            yield Delay(seconds=0.1)
-            end = yield GetTime()
-            return (start, end)
-
-        start_time, end_time = (await async_run(program(), async_handlers_preset)).value
-        elapsed = (end_time - start_time).total_seconds()
-        assert elapsed >= 0.09  # Allow small timing variance
-
-    @pytest.mark.asyncio
-    async def test_async_get_time(self) -> None:
-        """Test GetTime effect returns current time."""
-        
-        @do
-        def program():
-            now = yield GetTime()
-            return now
-
-        before = datetime.now()
-        result = (await async_run(program(), async_handlers_preset)).value
-        after = datetime.now()
-
-        assert before <= result <= after
-
-    @pytest.mark.asyncio
-    async def test_async_wait_until(self) -> None:
-        """Test WaitUntil effect waits until target time."""
-        from doeff.effects import WaitUntil
-
-        @do
-        def program():
-            start = yield GetTime()
-            target = start + timedelta(milliseconds=100)
-            yield WaitUntil(target)
-            end = yield GetTime()
-            return (start, end)
-
-        start_time, end_time = (await async_run(program(), async_handlers_preset)).value
-        elapsed = (end_time - start_time).total_seconds()
-        assert elapsed >= 0.09
-
-    @pytest.mark.asyncio
-    async def test_async_wait_until_past(self) -> None:
-        """Test WaitUntil with past time returns immediately."""
-        from doeff.effects import WaitUntil
-
-        @do
-        def program():
-            start = yield GetTime()
-            past_time = start - timedelta(seconds=10)
-            yield WaitUntil(past_time)
-            end = yield GetTime()
-            return (start, end)
-
-        start_time, end_time = (await async_run(program(), async_handlers_preset)).value
-        elapsed = (end_time - start_time).total_seconds()
-        assert elapsed < 0.1
 
 
 # ============================================================================
@@ -648,7 +583,7 @@ class TestAsyncRuntimeIntegration:
         
         @do
         def slow_program():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "completed"
 
         with pytest.raises(asyncio.TimeoutError):
@@ -663,7 +598,7 @@ class TestAsyncRuntimeIntegration:
         
         @do
         def long_running():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "never reached"
 
         async def run_and_cancel():
@@ -728,27 +663,26 @@ class TestAsyncRuntimeIntegration:
     async def test_async_gather_true_parallelism(self) -> None:
         """Test Gather executes programs truly in parallel.
         
-        Three delays of 0.1s each should complete in ~0.1s total (not 0.3s)
+        Three sleeps of 0.1s each should complete in ~0.1s total (not 0.3s)
         when run in parallel.
         """
         
         @do
         def delayed_task(n: int):
-            yield Delay(seconds=0.1)
+            yield Await(asyncio.sleep(0.1))
             return n
 
         @do
         def program():
-            start = yield GetTime()
             t1 = yield Spawn(delayed_task(1))
             t2 = yield Spawn(delayed_task(2))
             t3 = yield Spawn(delayed_task(3))
             results = yield Gather(t1, t2, t3)
-            end = yield GetTime()
-            elapsed = (end - start).total_seconds()
-            return (results, elapsed)
+            return results
 
-        results, elapsed = (await async_run(program(), async_handlers_preset)).value
+        start = datetime.now()
+        results = (await async_run(program(), async_handlers_preset)).value
+        elapsed = (datetime.now() - start).total_seconds()
         assert sorted(results) == [1, 2, 3]
         assert elapsed < 0.5
 
@@ -1170,7 +1104,7 @@ class TestGatherComposition:
 
         @do
         def leaf_task(name: str):
-            yield Delay(seconds=0.05)
+            yield Await(asyncio.sleep(0.05))
             yield IO(lambda n=name: execution_order.append(n))
             return name
 
@@ -1188,15 +1122,14 @@ class TestGatherComposition:
 
         @do
         def program():
-            start = yield GetTime()
             g1 = yield Spawn(inner_gather_1())
             g2 = yield Spawn(inner_gather_2())
             results = yield Gather(g1, g2)
-            end = yield GetTime()
-            elapsed = (end - start).total_seconds()
-            return (results, elapsed)
+            return results
 
-        results, elapsed = (await async_run(program(), async_handlers_preset)).value
+        start = datetime.now()
+        results = (await async_run(program(), async_handlers_preset)).value
+        elapsed = (datetime.now() - start).total_seconds()
         assert results == [["a", "b"], ["c", "d"]]
         assert elapsed < 0.3
 
@@ -1316,7 +1249,7 @@ class TestGatherComposition:
         
         @do
         def slow_task():
-            yield Delay(seconds=0.1)
+            yield Await(asyncio.sleep(0.1))
             return "slow"
 
         @do

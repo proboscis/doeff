@@ -223,23 +223,6 @@ class _SchedulerTaskCompleted(EffectBase):
 
 
 @dataclass(frozen=True, kw_only=True)
-class _SchedulerSuspendForIO(EffectBase):
-    """Signal that current task needs to suspend for async I/O.
-
-    The task_scheduler_handler intercepts this:
-    1. Stores the awaitable with the current task's continuation
-    2. Switches to another task if available
-    3. If no other tasks, propagates as PythonAsyncSyntaxEscape with all pending awaitables
-
-    Attributes:
-        awaitable: The async awaitable to wait for
-        resume_k: The full continuation to use when resuming this task
-    """
-    awaitable: Any
-    resume_k: Any = None
-
-
-@dataclass(frozen=True, kw_only=True)
 class WaitForExternalCompletion(EffectBase):
     """Request blocking wait for external completion queue.
 
@@ -274,7 +257,6 @@ GetCurrentTaskStore = _SchedulerGetTaskStore
 UpdateTaskStore = _SchedulerUpdateTaskStore
 SetTaskSuspended = _SchedulerSetTaskSuspended
 TaskCompletedEffect = _SchedulerTaskCompleted
-SuspendForIOEffect = _SchedulerSuspendForIO
 GetTaskResult = _SchedulerGetTaskResult
 
 
@@ -292,7 +274,6 @@ __all__ = [
     "_SchedulerQueueEmpty",
     "_SchedulerRegisterWaiter",
     "_SchedulerSetTaskSuspended",
-    "_SchedulerSuspendForIO",
     "_SchedulerTaskComplete",
     "_SchedulerTaskCompleted",
     "_SchedulerUpdateTaskStore",
@@ -310,7 +291,6 @@ __all__ = [
     "QueuePop",
     "RegisterWaiter",
     "SetTaskSuspended",
-    "SuspendForIOEffect",
     "TaskComplete",
     "TaskCompletedEffect",
     "UpdateTaskStore",

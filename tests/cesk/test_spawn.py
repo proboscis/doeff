@@ -13,6 +13,9 @@ Design Decisions (from spec):
 """
 
 
+import asyncio
+import time
+
 import pytest
 
 from doeff import Intercept, Program, do
@@ -20,7 +23,7 @@ from doeff.cesk.run import async_handlers_preset, async_run
 from doeff.effects import (
     IO,
     Ask,
-    Delay,
+    Await,
     Gather,
     Get,
     Listen,
@@ -224,7 +227,7 @@ class TestSpawnCancellation:
         
         @do
         def long_running():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "done"
 
         @do
@@ -262,7 +265,7 @@ class TestSpawnCancellation:
         
         @do
         def long_running():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "never reached"
 
         @do
@@ -282,7 +285,7 @@ class TestSpawnCancellation:
         
         @do
         def long_running():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "done"
 
         @do
@@ -312,7 +315,7 @@ class TestSpawnIsDone:
         
         @do
         def long_running():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "done"
 
         @do
@@ -349,7 +352,7 @@ class TestSpawnIsDone:
         
         @do
         def long_running():
-            yield Delay(seconds=10.0)
+            yield Await(asyncio.sleep(10.0))
             return "done"
 
         @do
@@ -439,7 +442,7 @@ class TestSpawnStoreIsolation:
         @do
         def background():
             # Small delay to ensure parent runs first
-            yield Delay(seconds=0.01)
+            yield Await(asyncio.sleep(0.01))
             value = yield Get("counter")
             yield IO(lambda v=value: child_saw_value.append(v))
             return value
@@ -653,11 +656,11 @@ class TestSpawnEdgeCases:
 
     @pytest.mark.asyncio
     async def test_spawn_with_delay(self) -> None:
-        """Test spawning a task that uses Delay."""
+        """Test spawning a task that uses asyncio.sleep via Await."""
         
         @do
         def delayed_task():
-            yield Delay(seconds=0.01)
+            yield Await(asyncio.sleep(0.01))
             return "delayed_result"
 
         @do
@@ -738,7 +741,7 @@ class TestSpawnConcurrentJoin:
         
         @do
         def shared_task():
-            yield Delay(seconds=0.01)
+            yield Await(asyncio.sleep(0.01))
             return "shared_result"
 
         @do
@@ -770,24 +773,27 @@ class TestSpawnTiming:
     @pytest.mark.asyncio
     async def test_spawn_does_not_block_parent(self) -> None:
         """Test that spawning doesn't block the parent."""
-        from doeff.effects import GetTime
+        spawn_completed = []
 
         @do
         def slow_task():
-            yield Delay(seconds=0.5)
+            yield Await(asyncio.sleep(0.5))
             return "slow"
 
         @do
         def program():
-            start = yield GetTime()
             _ = yield Spawn(slow_task())  # Should not block
-            end = yield GetTime()
-            elapsed = (end - start).total_seconds()
-            return elapsed
+            yield IO(lambda: spawn_completed.append(True))
+            return "parent_done"
 
+        start = time.time()
         result = (await async_run(program(), async_handlers_preset)).value
+        elapsed = time.time() - start
+        
         # Parent should continue immediately, not wait 0.5s
-        assert result < 0.1
+        assert result == "parent_done"
+        assert spawn_completed == [True]
+        assert elapsed < 0.1
 
 
 __all__ = [
@@ -814,7 +820,7 @@ class TestSpawnOracleReview:
 
     @pytest.mark.asyncio
     async def test_cancel_task_with_pending_delay(self) -> None:
-        """Test that cancelling a task with pending Delay works correctly.
+        """Test that cancelling a task with pending async sleep works correctly.
         
         Oracle identified that cancelled tasks could be "revived" by pending
         async completions. This test verifies the fix.
@@ -822,13 +828,13 @@ class TestSpawnOracleReview:
         
         @do
         def delayed_task():
-            yield Delay(seconds=10.0)  # Long delay
+            yield Await(asyncio.sleep(10.0))  # Long delay
             return "should_not_reach"
 
         @do
         def program():
             task = yield Spawn(delayed_task())
-            # Cancel immediately while Delay is pending
+            # Cancel immediately while async sleep is pending
             cancelled = yield task.cancel()
             # Join should raise CancelledError, not hang or return value
             result = yield Safe(task.join())
@@ -842,11 +848,11 @@ class TestSpawnOracleReview:
 
     @pytest.mark.asyncio
     async def test_spawned_task_delay_uses_isolated_store(self) -> None:
-        """Test that Delay completion in spawned task uses isolated store."""
+        """Test that async sleep completion in spawned task uses isolated store."""
         
         @do
         def background():
-            yield Delay(seconds=0.01)
+            yield Await(asyncio.sleep(0.01))
             # After delay, read from store
             value = yield Get("key")
             return value
