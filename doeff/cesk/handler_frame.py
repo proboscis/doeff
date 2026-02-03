@@ -20,7 +20,6 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, TypeAlias, TypeVar
 
 from doeff._types_internal import EffectBase
 from doeff.cesk.frames import Kontinuation
-from doeff.cesk.result import PythonAsyncSyntaxEscape
 from doeff.cesk.types import Environment, Store
 
 if TYPE_CHECKING:
@@ -143,37 +142,8 @@ class HandlerFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> "CESKState | PythonAsyncSyntaxEscape":
+    ) -> "CESKState":
         from doeff.cesk.state import CESKState
-
-        if isinstance(value, PythonAsyncSyntaxEscape):
-            if value._is_final:
-                return value
-
-            from doeff.effects.scheduler_internal import _AsyncEscapeIntercepted
-
-            ctx = HandlerContext(
-                store=store,
-                env=env,
-                delimited_k=[],
-                handler_depth=0,
-                outer_k=k_rest,
-            )
-
-            handler_program = self.handler(
-                _AsyncEscapeIntercepted(escape=value, outer_k=k_rest),
-                ctx,
-            )
-
-            handler_result_frame = HandlerResultFrame(
-                original_effect=_AsyncEscapeIntercepted(escape=value, outer_k=k_rest),
-                handler_depth=0,
-                handled_program_k=[],
-            )
-
-            return CESKState.with_program(
-                handler_program, env, store, [handler_result_frame, self] + k_rest
-            )
 
         return CESKState.with_value(value, self.saved_env, store, k_rest)
 
@@ -214,11 +184,11 @@ class HandlerResultFrame:
         env: Environment,
         store: Store,
         k_rest: Kontinuation,
-    ) -> "CESKState | PythonAsyncSyntaxEscape":
+    ) -> "CESKState":
         from doeff.cesk.result import DirectState
         from doeff.cesk.state import CESKState
 
-        # DirectState: pass through unchanged (async escapes, direct jumps)
+        # DirectState: pass through unchanged (direct jumps)
         if isinstance(value, DirectState):
             return value.state
 
@@ -231,53 +201,6 @@ class HandlerResultFrame:
                 S=value.S,
                 K=full_k,
             )
-
-        if isinstance(value, PythonAsyncSyntaxEscape):
-            if value.awaitables is not None:
-                return value
-
-            if value._is_final:
-                return value
-
-            if value._propagating:
-                return CESKState.with_value(value, env, store, k_rest)
-
-            original_resume = value.resume
-            original_resume_error = value.resume_error
-            captured_k_rest = list(k_rest)
-
-            def wrapped_resume(v: Any, s: Store) -> Any:
-                from doeff.cesk.result import DirectState
-                state = original_resume(v, s)
-                # Wrap in DirectState so HRF passes through unchanged
-                return DirectState(CESKState(
-                    C=state.C,
-                    E=state.E,
-                    S=state.S,
-                    K=list(state.K) + captured_k_rest,
-                ))
-
-            def wrapped_resume_error(e: BaseException) -> Any:
-                from doeff.cesk.result import DirectState
-                state = original_resume_error(e)
-                # Wrap in DirectState so HRF passes through unchanged
-                return DirectState(CESKState(
-                    C=state.C,
-                    E=state.E,
-                    S=state.S,
-                    K=list(state.K) + captured_k_rest,
-                ))
-
-            wrapped_escape = PythonAsyncSyntaxEscape(
-                resume=wrapped_resume,
-                resume_error=wrapped_resume_error,
-                awaitable=value.awaitable,
-                awaitables=value.awaitables,
-                store=value.store,
-                _propagating=True,
-            )
-
-            return CESKState.with_value(wrapped_escape, env, store, k_rest)
 
         if isinstance(value, ResumeK):
             # ResumeK switches to a different continuation (e.g., task switching).

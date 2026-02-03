@@ -28,10 +28,12 @@ if TYPE_CHECKING:
 Handler: TypeAlias = "Callable[[Any, HandlerContext], FrameResult]"
 
 # Import v2 handlers (new names)
+from doeff.cesk.handlers.async_external_wait_handler import async_external_wait_handler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
 from doeff.cesk.handlers.scheduler_state_handler import scheduler_state_handler
 from doeff.cesk.handlers.sync_await_handler import sync_await_handler
+from doeff.cesk.handlers.sync_external_wait_handler import sync_external_wait_handler
 from doeff.cesk.handlers.task_scheduler_handler import task_scheduler_handler
 from doeff.cesk.handlers.threaded_asyncio_handler import threaded_asyncio_handler
 
@@ -45,10 +47,12 @@ __all__ = [
     "Handler",
     "HandlerContext",
     # New names (preferred)
+    "async_external_wait_handler",
     "core_handler",
     "python_async_syntax_escape_handler",
     "scheduler_state_handler",
     "sync_await_handler",
+    "sync_external_wait_handler",
     "task_scheduler_handler",
     "threaded_asyncio_handler",
     # Backwards compatibility aliases (deprecated)

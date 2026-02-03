@@ -53,23 +53,37 @@ Task A: yield Await(coro_a)
 │       except BaseException as e:    │
 │           promise.fail(e)           │
 │                                     │
-│   return PythonAsyncSyntaxEscape(   │
+│   yield PythonAsyncSyntaxEscape(    │
 │       action=lambda: asyncio.create_task(fire_task())
 │   )                                 │
-│   # Handler yields escape, async_run executes action
+│   # Handler yields escape (returns value, e.g., Task object)
+│   # step() wraps action to return CESKState
+│   # async_run awaits and gets new state directly
 │   # Then handler continues:         │
 │   result = yield Wait(promise.future)
 │   return result                     │
 └─────────────────────────────────────┘
            │
            ▼
+       step():
+           # Sees escape effect, wraps action to return CESKState
+           return PythonAsyncSyntaxEscape(
+               action=lambda: wrap_with_state(original_action)
+           )
+           │
+           ▼
        async_run:
            result = step(...)
            if isinstance(result, PythonAsyncSyntaxEscape):
-               await result.action()  # Fire and forget
-               continue               # Resume stepping immediately
-           await asyncio.sleep(0)     # Yield to event loop
+               state = await result.action()  # Returns CESKState directly
+               continue
+           await asyncio.sleep(0)
 ```
+
+**Key design**:
+- Handler's action returns a **value**
+- step() wraps it to return **CESKState** (capturing E, S, K)
+- async_run just awaits and uses the state directly (no state construction logic)
 
 ### Simplified PythonAsyncSyntaxEscape
 
@@ -82,15 +96,19 @@ class PythonAsyncSyntaxEscape:
     event loop. The handler runs during step(), which is inside async_run,
     but we need to ensure asyncio context explicitly.
 
-    The action should be fire-and-forget (e.g., create_task with callback).
-    async_run executes the action and immediately continues stepping.
+    The action returns a CESKState to resume with. This is constructed by
+    step() which wraps the handler's value-returning action with state context.
 
-    SOLE PRODUCER: python_async_syntax_escape_handler only.
+    PRODUCERS: python_async_syntax_escape_handler, async_external_wait_handler
     """
-    action: Callable[[], Awaitable[None]]
+    action: Callable[[], Awaitable[CESKState]]
 ```
 
-That's it. No resume, no K, no store, no multi-task handling.
+That's it. No resume callbacks, no store fields, no multi-task handling.
+
+**Key insight**: Handlers create actions that return **values**. step() wraps these
+to return **CESKState**, capturing the current E, S, K. async_run just awaits and
+uses the returned state directly.
 
 ### Handler Changes
 
@@ -135,8 +153,9 @@ async def async_run(program, handlers):
         result = step(state)
 
         if isinstance(result, PythonAsyncSyntaxEscape):
-            await result.action()  # Execute async action
-            continue               # Resume stepping (no state change)
+            # Action returns CESKState directly (step() wraps handler's action)
+            state = await result.action()
+            continue
 
         if isinstance(result, Done):
             return result.value
@@ -147,6 +166,29 @@ async def async_run(program, handlers):
         await asyncio.sleep(0)  # Yield to let asyncio tasks progress
         state = result  # CESKState
 ```
+
+async_run is now minimal - it just awaits the action and uses the returned state.
+The complexity of constructing CESKState is handled by step().
+
+### step() Changes
+
+When step() encounters a PythonAsyncSyntaxEscape effect, it wraps the action
+to return CESKState:
+
+```python
+# In step.py
+if isinstance(effect, PythonAsyncSyntaxEscape):
+    original_action = effect.action
+
+    async def wrapped_action():
+        value = await original_action()
+        return CESKState(C=Value(value), E=state.E, S=state.S, K=state.K)
+
+    return PythonAsyncSyntaxEscape(action=wrapped_action)
+```
+
+This keeps state construction logic in step() where it belongs, and makes
+async_run trivially simple.
 
 ### task_scheduler_handler Changes
 
@@ -175,24 +217,38 @@ The scheduler coordinates via its normal mechanisms:
 
 1. **doeff/cesk/result.py**
    - Simplify `PythonAsyncSyntaxEscape` to single `action` field
+   - Action signature: `Callable[[], Awaitable[CESKState]]`
    - Remove `python_async_escape` factory
    - Remove `multi_task_async_escape` factory
 
-2. **doeff/cesk/handlers/python_async_syntax_escape_handler.py**
+2. **doeff/cesk/step.py**
+   - Wrap PythonAsyncSyntaxEscape action to return CESKState
+   - Capture current E, S, K in wrapped action
+
+3. **doeff/cesk/handlers/python_async_syntax_escape_handler.py**
    - Convert to `@do` function
    - Use `CreateExternalPromise` + `Wait` pattern
    - Yield simplified escape for `asyncio.create_task`
+   - Action returns value (step() wraps to return CESKState)
 
-3. **doeff/cesk/handlers/task_scheduler_handler.py**
+4. **doeff/cesk/handlers/task_scheduler_handler.py**
    - Remove `_AsyncEscapeIntercepted` handling
    - Remove `_build_multi_task_escape_from_pending`
    - Remove all `PythonAsyncSyntaxEscape` imports/usage
+   - Yield `WaitForExternalCompletion` when queue empty (per SPEC-CESK-004)
 
-4. **doeff/cesk/run.py** (async_run)
-   - Simplify escape handling to just `await result.action()`
+5. **doeff/cesk/run.py** (async_run)
+   - Simplify escape handling to just `state = await result.action()`
 
-5. **doeff/effects/scheduler_internal.py**
+6. **doeff/effects/scheduler_internal.py**
    - Remove `_AsyncEscapeIntercepted` effect
+   - Add `WaitForExternalCompletion` effect
+
+7. **NEW: doeff/cesk/handlers/sync_external_wait_handler.py**
+   - Handle `WaitForExternalCompletion` with blocking `queue.get()`
+
+8. **NEW: doeff/cesk/handlers/async_external_wait_handler.py**
+   - Handle `WaitForExternalCompletion` with `run_in_executor` escape
 
 ### Backwards Compatibility
 
@@ -204,8 +260,8 @@ The public API (`yield Await(coro)`) remains unchanged.
 
 ## Open Questions
 
-1. Should `PythonAsyncSyntaxEscape` be renamed to `AsyncAction` for clarity?
-2. Should the escape yield mechanism be different (effect vs direct return)?
+1. ~~Should `PythonAsyncSyntaxEscape` be renamed to `AsyncAction` for clarity?~~ **Resolved: No.** The verbose name is intentional - it signals this is a special escape mechanism for Python's async syntax, not a general-purpose action.
+2. ~~Should the escape yield mechanism be different (effect vs direct return)?~~ **Resolved: No.** Keep the current yield-based mechanism.
 
 ## References
 

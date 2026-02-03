@@ -227,18 +227,19 @@ class TestHandlerPresets:
     def test_sync_handlers_preset_is_list(self) -> None:
         """sync_handlers_preset is a list of handlers."""
         assert isinstance(sync_handlers_preset, list)
-        assert len(sync_handlers_preset) == 4
+        assert len(sync_handlers_preset) == 5
 
     def test_async_handlers_preset_is_list(self) -> None:
         """async_handlers_preset is a list of handlers."""
         assert isinstance(async_handlers_preset, list)
-        assert len(async_handlers_preset) == 4
+        assert len(async_handlers_preset) == 5
 
     def test_presets_are_different(self) -> None:
-        """sync and async presets have different handlers for async effects."""
-        # The third handler (index 2) should be different:
-        # sync uses sync_await_handler, async uses python_async_syntax_escape_handler
-        assert sync_handlers_preset[2] is not async_handlers_preset[2]
+        """sync and async presets have different handlers for external wait and async effects."""
+        # Index 1: sync uses sync_external_wait_handler, async uses async_external_wait_handler
+        # Index 3: sync uses sync_await_handler, async uses python_async_syntax_escape_handler
+        assert sync_handlers_preset[1] is not async_handlers_preset[1]
+        assert sync_handlers_preset[3] is not async_handlers_preset[3]
 
     def test_sync_preset_contains_sync_await_handler(self) -> None:
         """sync_handlers_preset contains sync_await_handler."""
