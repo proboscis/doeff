@@ -18,6 +18,7 @@ from doeff.cesk_v3.level2_algebraic_effects.frames import (
     WithHandlerFrame,
 )
 from doeff.cesk_v3.level2_algebraic_effects.handlers import (
+    handle_async_escape,
     handle_create_continuation,
     handle_forward,
     handle_get_continuation,
@@ -33,6 +34,7 @@ from doeff.cesk_v3.level2_algebraic_effects.primitives import (
     Forward,
     GetContinuation,
     GetHandlers,
+    PythonAsyncSyntaxEscape,
     Resume,
     ResumeContinuation,
     WithHandler,
@@ -40,8 +42,11 @@ from doeff.cesk_v3.level2_algebraic_effects.primitives import (
 from doeff.program import ProgramBase
 
 
-def level2_step(state: CESKState) -> CESKState | Done | Failed:
+def level2_step(state: CESKState) -> CESKState | Done | Failed | PythonAsyncSyntaxEscape:
     C, E, S, K = state.C, state.E, state.S, state.K
+
+    if isinstance(C, ProgramControl) and isinstance(C.program, WithHandler):
+        return handle_with_handler(C.program, state)
 
     if isinstance(C, Value) and K and isinstance(K[0], WithHandlerFrame):
         return CESKState(C=C, E=E, S=S, K=K[1:])
@@ -92,6 +97,9 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
 
         if isinstance(yielded, CreateContinuation):
             return handle_create_continuation(yielded, state)
+
+        if isinstance(yielded, PythonAsyncSyntaxEscape):
+            return handle_async_escape(yielded, state)
 
         if isinstance(yielded, ProgramBase):
             return CESKState(C=ProgramControl(yielded), E=E, S=S, K=K)
