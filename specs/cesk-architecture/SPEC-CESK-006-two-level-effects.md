@@ -416,6 +416,80 @@ class Forward(ControlPrimitive):
     But Forward makes the intent explicit and could be optimized.
     """
     effect: EffectBase
+
+
+# --- Scheduling Primitives (Continuation Capture) ---
+
+@dataclass(frozen=True)
+class Continuation:
+    """A captured continuation that can be resumed later.
+    
+    Continuations are first-class values that represent "the rest of the computation."
+    They can be stored, passed around, and resumed with ResumeContinuation.
+    
+    Attributes:
+        cont_id: Unique identifier for one-shot tracking
+        frames: The captured continuation frames
+    
+    One-shot invariant: Each continuation can only be resumed once.
+    Attempting to resume a continuation twice raises RuntimeError.
+    """
+    cont_id: int
+    frames: tuple[Frame, ...]
+
+
+@dataclass(frozen=True)
+class GetContinuation(ControlPrimitive):
+    """Capture the current continuation as a first-class value.
+    
+    Returns a Continuation object to the handler. The DispatchingFrame
+    is NOT consumed - handler can still Resume/Forward after capturing.
+    
+    This enables scheduler patterns where:
+    1. Handler captures continuation (GetContinuation)
+    2. Handler stores continuation for later (e.g., in a queue)
+    3. Handler can Resume current computation OR switch to another
+    
+    Unlike Resume, GetContinuation does NOT immediately resume anything.
+    It just returns the capability to resume later.
+    
+    Example:
+        @do
+        def scheduler_handler(effect):
+            if isinstance(effect, Yield):
+                k = yield GetContinuation()  # Capture current task
+                queue.append(k)               # Store for later
+                next_k = queue.pop(0)         # Get next task
+                return (yield ResumeContinuation(next_k, None))
+            return (yield Forward(effect))
+    """
+    pass
+
+
+@dataclass(frozen=True)
+class ResumeContinuation(ControlPrimitive):
+    """Resume a previously captured continuation with a value.
+    
+    Unlike Resume (which resumes the current dispatch's continuation),
+    ResumeContinuation can resume ANY captured continuation.
+    
+    This is the key primitive for cooperative scheduling:
+    - Resume(v) = resume current DF's continuation immediately
+    - ResumeContinuation(k, v) = resume ANY continuation k
+    
+    When ResumeContinuation is executed:
+    1. The current computation is abandoned (current K is dropped)
+    2. The captured continuation k becomes the new K
+    3. Execution continues with value v
+    
+    One-shot invariant: The continuation must not have been resumed before.
+    
+    Attributes:
+        continuation: The captured Continuation to resume
+        value: The value to send to the resumed continuation
+    """
+    continuation: Continuation
+    value: Any
 ```
 
 ### Handler API Summary
@@ -424,6 +498,8 @@ class Forward(ControlPrimitive):
 |-------|---------|
 | `Resume(value)` | Resume user continuation with value. Handler receives user's final result. |
 | `Forward(effect)` | Forward to outer handlers. Handler receives outer's result, then typically Resumes. |
+| `GetContinuation()` | Capture current continuation as first-class value. DF is NOT consumed. |
+| `ResumeContinuation(k, v)` | Resume ANY captured continuation k with value v. Current computation abandoned. |
 | `yield effect` | Also forwards (creates new DispatchingFrame). Works but more frames. |
 | `return value` | **Implicit abandonment.** User continuation is dropped. Value flows past WHF. |
 
@@ -1346,6 +1422,300 @@ Use `Forward` for explicit forwarding. Use re-yield only when you want to treat 
 
 ---
 
+## Scheduling Primitives: GetContinuation and ResumeContinuation
+
+### Overview
+
+The scheduling primitives enable **cooperative scheduling** patterns similar to OCaml5's effect handlers and Koka's evidence passing. They allow handlers to:
+
+1. Capture the current continuation as a first-class value
+2. Store continuations for later resumption
+3. Switch between different captured continuations
+
+This enables patterns like:
+- Cooperative multitasking (yield/resume)
+- Async/await semantics
+- Coroutine-based concurrency
+- Custom schedulers
+
+### Key Design Decisions
+
+**GetContinuation does NOT consume DF**: Unlike `Resume`, which consumes the `DispatchingFrame` and resumes the continuation immediately, `GetContinuation` merely returns a captured continuation as a value. The handler can still `Resume`, `Forward`, or do other operations after capturing.
+
+**Resume vs ResumeContinuation are SEPARATE**:
+- `Resume(v)` = Resume the *current dispatch's* continuation (the common case)
+- `ResumeContinuation(k, v)` = Resume *any* captured continuation (scheduling case)
+
+**Scheduler is NOT a coroutine**: The scheduler pattern works via "state + fresh handler invocations":
+- Each `Yield` effect → fresh handler invocation
+- Queue state persists in closure or external store
+- No "re-entering the same generator"
+
+### Continuation Type
+
+```python
+@dataclass(frozen=True)
+class Continuation:
+    """Captured continuation that can be resumed later."""
+    cont_id: int                    # One-shot tracking (unique ID)
+    frames: tuple[Frame, ...]       # The captured continuation frames
+```
+
+The `cont_id` enables **one-shot enforcement**: each continuation can only be resumed once. The VM tracks which `cont_id`s have been consumed.
+
+### GetContinuation Semantics
+
+When a handler yields `GetContinuation()`:
+
+1. **Capture**: Build continuation from current K (frames between DF and WHF)
+2. **Return**: Send `Continuation` object back to handler generator
+3. **Preserve DF**: The `DispatchingFrame` remains in K (not consumed)
+
+```
+Before GetContinuation:
+K = [handler_gen, DF(started=True), user_gen, nested_gen, WHF(handler), ...]
+
+After GetContinuation (k returned to handler_gen):
+K = [handler_gen, DF(started=True), user_gen, nested_gen, WHF(handler), ...]
+    ↑ unchanged! DF still present
+
+k.frames = (user_gen, nested_gen)  # Captured from between DF and WHF
+```
+
+### ResumeContinuation Semantics
+
+When a handler yields `ResumeContinuation(k, value)`:
+
+1. **Validate**: Check `k.cont_id` hasn't been consumed (one-shot)
+2. **Mark consumed**: Record `k.cont_id` as used
+3. **Context switch**: Replace current K with `k.frames + remaining K after WHF`
+4. **Send value**: Set `C = Value(value)` to resume the continuation
+
+```
+Before ResumeContinuation(k, 42):
+K = [handler_gen, DF, user_gen, WHF(handler), outer_gen, WHF(outer)]
+k.frames = (other_user_gen, other_nested_gen)
+
+After ResumeContinuation:
+K = [other_user_gen, other_nested_gen, handler_gen, WHF(handler), outer_gen, WHF(outer)]
+    ↑ k.frames inserted              ↑ handler_gen preserved for final result
+C = Value(42)  # Flows into other_user_gen
+```
+
+**KEY**: The handler generator is preserved so it receives the final result when the resumed continuation completes.
+
+### One-Shot Continuation Tracking
+
+The VM maintains a set of consumed continuation IDs (in Store or global state):
+
+```python
+# In Store or VM state
+consumed_continuations: set[int] = set()
+
+def handle_resume_continuation(rc: ResumeContinuation, state: CESKState) -> CESKState:
+    if rc.continuation.cont_id in state.S.get('_consumed_conts', set()):
+        raise RuntimeError(f"Continuation {rc.continuation.cont_id} already consumed")
+    
+    # Mark as consumed
+    new_consumed = state.S.get('_consumed_conts', set()) | {rc.continuation.cont_id}
+    new_store = {**state.S, '_consumed_conts': new_consumed}
+    
+    # ... perform context switch ...
+```
+
+### Example: Simple Cooperative Scheduler
+
+```python
+from dataclasses import dataclass
+from typing import Any
+
+@dataclass(frozen=True)
+class Yield(EffectBase):
+    """Yield control to scheduler."""
+    pass
+
+# Task queue (external state, not in K)
+task_queue: list[Continuation] = []
+cont_id_counter = 0
+
+@do
+def scheduler_handler(effect):
+    """Handler that implements cooperative scheduling."""
+    global cont_id_counter
+    
+    if isinstance(effect, Yield):
+        # 1. Capture current task's continuation
+        k = yield GetContinuation()
+        task_queue.append(k)
+        
+        # 2. Get next task from queue
+        if task_queue:
+            next_k = task_queue.pop(0)
+            # 3. Switch to next task
+            return (yield ResumeContinuation(next_k, None))
+        else:
+            # No more tasks - resume current (k is still valid)
+            return (yield Resume(None))
+    
+    # Forward unknown effects
+    return (yield Forward(effect))
+
+@do
+def task_a():
+    print("A: start")
+    yield Yield()
+    print("A: after yield 1")
+    yield Yield()
+    print("A: done")
+    return "A"
+
+@do
+def task_b():
+    print("B: start")
+    yield Yield()
+    print("B: done")
+    return "B"
+
+@do
+def main():
+    # Run both tasks with scheduler
+    a_result = yield WithHandler(scheduler_handler, task_a())
+    # Note: task_b would need to be spawned differently for true concurrency
+    b_result = yield WithHandler(scheduler_handler, task_b())
+    return (a_result, b_result)
+```
+
+### Example Trace: GetContinuation + ResumeContinuation
+
+```python
+@do
+def user():
+    print("user: before yield")
+    result = yield Yield()
+    print(f"user: after yield, got {result}")
+    return result + 1
+
+@do
+def scheduler(effect):
+    if isinstance(effect, Yield):
+        k = yield GetContinuation()   # Capture
+        print(f"scheduler: captured continuation {k.cont_id}")
+        # Immediately resume the same continuation (simple case)
+        return (yield ResumeContinuation(k, 42))
+    return (yield Forward(effect))
+
+# Run
+result = run(WithHandler(scheduler, user()))
+# Output:
+# user: before yield
+# scheduler: captured continuation 1
+# user: after yield, got 42
+# Result: 43
+```
+
+### Step-by-step Trace:
+
+```
+1. Setup: WithHandler processed
+   K = [WHF(scheduler)]
+   C = ProgramControl(user())
+
+2. user starts, yields Yield()
+   K = [user_gen, WHF(scheduler)]
+   C = EffectYield(Yield())
+
+3. start_dispatch
+   DF = DispatchingFrame(Yield(), idx=0, handlers=[scheduler], started=False)
+   K = [DF, user_gen, WHF(scheduler)]
+   C = Value(None)
+
+4. DF processing: start scheduler
+   K = [DF(started=True), user_gen, WHF(scheduler)]
+   C = ProgramControl(scheduler(Yield()))
+
+5. scheduler starts, yields GetContinuation()
+   K = [sched_gen, DF(started=True), user_gen, WHF(scheduler)]
+   C = EffectYield(GetContinuation())
+
+6. handle_get_continuation
+   - Find DF at idx=1
+   - Find WHF(scheduler) in K
+   - Capture frames between DF and WHF: (user_gen,)
+   - Create Continuation(cont_id=1, frames=(user_gen,))
+   - Send Continuation to sched_gen
+   
+   K = [sched_gen, DF(started=True), user_gen, WHF(scheduler)]  # Unchanged!
+   C = Value(Continuation(1, (user_gen,)))
+
+7. Value → sched_gen
+   sched_gen receives Continuation, yields ResumeContinuation(k, 42)
+   K = [sched_gen, DF(started=True), user_gen, WHF(scheduler)]
+   C = EffectYield(ResumeContinuation(Continuation(1, (user_gen,)), 42))
+
+8. handle_resume_continuation
+   - Validate cont_id=1 not consumed (OK)
+   - Mark cont_id=1 as consumed
+   - Find target WHF for this handler (WHF(scheduler))
+   - Replace continuation: insert k.frames, preserve sched_gen
+   
+   K = [user_gen, sched_gen, WHF(scheduler)]
+       ↑ k.frames  ↑ preserved handler gen
+   C = Value(42)
+
+9. Value(42) → user_gen
+   user receives 42, returns 43
+   K = [sched_gen, WHF(scheduler)]
+   C = Value(43)
+
+10. Value(43) → sched_gen
+    scheduler returns 43
+    K = [WHF(scheduler)]
+    C = Value(43)
+
+11. Value(43), K[0]=WHF(scheduler)
+    Scope ends
+    K = []
+    C = Value(43)
+
+12. Done(43)
+```
+
+### ADR-10: GetContinuation Preserves DF
+
+**Decision**: `GetContinuation` returns a continuation value but does NOT consume the `DispatchingFrame`.
+
+**Rationale**:
+- Handler may want to capture AND then Resume normally
+- Handler may capture multiple times before deciding what to do
+- Separates "capture capability" from "use capability"
+- Matches OCaml5's `Obj.get_continuation` semantics
+
+**Example where this matters**:
+```python
+@do
+def handler(effect):
+    k = yield GetContinuation()  # Capture
+    if should_defer(effect):
+        defer_queue.append(k)
+        return (yield ResumeContinuation(other_k, None))
+    else:
+        return (yield Resume(compute(effect)))  # Normal resume
+```
+
+### ADR-11: One-Shot Continuation Enforcement
+
+**Decision**: Continuations are one-shot. Resuming the same continuation twice raises `RuntimeError`.
+
+**Rationale**:
+- Python generators are inherently one-shot
+- Matches OCaml5 and Koka default behavior
+- Multi-shot would require generator cloning (complex, expensive)
+- One-shot is sufficient for most scheduling patterns
+
+**Future extension**: If multi-shot is needed, could add explicit `Continuation.clone()` that deep-copies generators (if supported by Python).
+
+---
+
 ## Module Organization
 
 ```
@@ -1363,11 +1733,13 @@ doeff/cesk_v3/
 ├── level2_algebraic_effects/
 │   ├── __init__.py
 │   ├── frames.py                # WithHandlerFrame, DispatchingFrame
-│   ├── primitives.py            # ControlPrimitive, WithHandler, Resume, Forward
+│   ├── primitives.py            # ControlPrimitive, WithHandler, Resume, Forward,
+│   │                            # GetContinuation, ResumeContinuation, Continuation
 │   ├── step.py                  # level2_step()
 │   ├── dispatch.py              # start_dispatch(), collect_available_handlers()
 │   └── handlers.py              # handle_resume(), handle_forward(), handle_with_handler(),
-│                                # handle_implicit_abandonment()
+│                                # handle_implicit_abandonment(), handle_get_continuation(),
+│                                # handle_resume_continuation()
 │
 └── run.py                       # Main loop: run()
 ```
@@ -1426,6 +1798,8 @@ doeff/cesk_v3/
 |-------|--------|
 | `Resume(value)` | Resume user continuation, handler receives user's result |
 | `Forward(effect)` | Delegate to outer handlers (explicit) |
+| `GetContinuation()` | Capture current continuation. DF preserved. |
+| `ResumeContinuation(k, v)` | Context switch to captured continuation k |
 | `yield effect` | Also forwards (via nested DF), works but more frames |
 | `return value` | Implicit abandonment - user continuation dropped |
 
@@ -1476,6 +1850,20 @@ doeff/cesk_v3/
 - Integration tests for nested handlers
 - Forwarding tests (Forward and re-yield)
 - Implicit abandonment tests
+
+### Phase 8: Scheduling Primitives
+- `Continuation` dataclass with one-shot tracking
+- `GetContinuation` primitive - capture continuation without consuming DF
+- `ResumeContinuation` primitive - context switch to captured continuation
+- `handle_get_continuation()` - capture frames between DF and WHF
+- `handle_resume_continuation()` - validate one-shot, perform context switch
+- One-shot enforcement via consumed continuation tracking in Store
+
+### Phase 9: Scheduling Tests
+- Simple GetContinuation + ResumeContinuation roundtrip
+- One-shot violation detection
+- Cooperative scheduler example (Yield effect)
+- Multiple task interleaving
 
 ---
 

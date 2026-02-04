@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from typing import Any
 
 from doeff.cesk_v3.errors import UnhandledEffectError
@@ -9,7 +10,17 @@ from doeff.cesk_v3.level2_algebraic_effects.frames import (
     DispatchingFrame,
     WithHandlerFrame,
 )
-from doeff.cesk_v3.level2_algebraic_effects.primitives import Forward, Resume, WithHandler
+from doeff.cesk_v3.level2_algebraic_effects.primitives import (
+    Continuation,
+    Forward,
+    GetContinuation,
+    Resume,
+    ResumeContinuation,
+    WithHandler,
+)
+
+CONSUMED_CONTINUATIONS_KEY = "_cesk_consumed_continuations"
+_continuation_id_counter = itertools.count(1)
 
 
 def handle_with_handler(wh: WithHandler[Any], state: CESKState) -> CESKState:
@@ -127,3 +138,95 @@ def handle_implicit_abandonment(handler_result: Any, state: CESKState) -> CESKSt
     new_k = list(user_continuation[whf_idx + 1 :])
 
     return CESKState(C=Value(handler_result), E=E, S=S, K=new_k)
+
+
+def handle_get_continuation(gc: GetContinuation, state: CESKState) -> CESKState:
+    C, E, S, K = state.C, state.E, state.S, state.K
+
+    if len(K) < 2:
+        raise RuntimeError("GetContinuation without proper K structure")
+
+    handler_frame = K[0]
+    if not isinstance(handler_frame, ReturnFrame):
+        raise RuntimeError(f"Expected handler ReturnFrame, got {type(handler_frame)}")
+
+    df_idx = None
+    for i, frame in enumerate(K[1:], start=1):
+        if isinstance(frame, DispatchingFrame):
+            df_idx = i
+            break
+
+    if df_idx is None:
+        raise RuntimeError("GetContinuation without DispatchingFrame")
+
+    df = K[df_idx]
+    assert isinstance(df, DispatchingFrame)
+    user_continuation = K[df_idx + 1 :]
+    target_handler = df.handlers[df.handler_idx]
+
+    whf_idx = None
+    for i, frame in enumerate(user_continuation):
+        if isinstance(frame, WithHandlerFrame) and frame.handler is target_handler:
+            whf_idx = i
+            break
+
+    if whf_idx is None:
+        raise RuntimeError("GetContinuation: cannot find handler's WithHandlerFrame")
+
+    captured_frames = tuple(user_continuation[:whf_idx])
+    cont_id = next(_continuation_id_counter)
+    continuation = Continuation(cont_id=cont_id, frames=captured_frames)
+
+    return CESKState(C=Value(continuation), E=E, S=S, K=K)
+
+
+def handle_resume_continuation(rc: ResumeContinuation, state: CESKState) -> CESKState:
+    C, E, S, K = state.C, state.E, state.S, state.K
+
+    consumed: set[int] = S.get(CONSUMED_CONTINUATIONS_KEY, set())
+    if rc.continuation.cont_id in consumed:
+        raise RuntimeError(
+            f"Continuation {rc.continuation.cont_id} already consumed (one-shot violation)"
+        )
+
+    new_consumed = consumed | {rc.continuation.cont_id}
+    new_store = {**S, CONSUMED_CONTINUATIONS_KEY: new_consumed}
+
+    if len(K) < 2:
+        raise RuntimeError("ResumeContinuation without proper K structure")
+
+    handler_frame = K[0]
+    if not isinstance(handler_frame, ReturnFrame):
+        raise RuntimeError(f"Expected handler ReturnFrame, got {type(handler_frame)}")
+
+    df_idx = None
+    for i, frame in enumerate(K[1:], start=1):
+        if isinstance(frame, DispatchingFrame):
+            df_idx = i
+            break
+
+    if df_idx is None:
+        raise RuntimeError("ResumeContinuation without DispatchingFrame")
+
+    df = K[df_idx]
+    assert isinstance(df, DispatchingFrame)
+    handler_gen = K[0]
+    user_continuation = K[df_idx + 1 :]
+    target_handler = df.handlers[df.handler_idx]
+
+    whf_idx = None
+    for i, frame in enumerate(user_continuation):
+        if isinstance(frame, WithHandlerFrame) and frame.handler is target_handler:
+            whf_idx = i
+            break
+
+    if whf_idx is None:
+        raise RuntimeError("ResumeContinuation: cannot find handler's WithHandlerFrame")
+
+    new_k = (
+        list(rc.continuation.frames)
+        + [handler_gen]
+        + list(user_continuation[whf_idx:])
+    )
+
+    return CESKState(C=Value(rc.value), E=E, S=new_store, K=new_k)

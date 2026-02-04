@@ -58,7 +58,7 @@ from doeff.cesk.runtime_result import (
     build_stacks_from_captured_traceback,
 )
 from doeff.cesk.state import CESKState, Error, ProgramControl
-from doeff.cesk.step import step
+from doeff.cesk.step_v2 import step
 from doeff.program import Program
 
 if TYPE_CHECKING:
@@ -309,15 +309,23 @@ async def _async_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
             )
 
         if isinstance(result, PythonAsyncSyntaxEscape):
-            # Action returns CESKState directly (step() wraps handler's value-returning action)
-            # This is the simple, clean interface per SPEC-CESK-005
             if debug:
                 print(f"[async_run] step {step_count}: awaiting PythonAsyncSyntaxEscape action")
-            state = await result.action()
+            # Preserve H from before escape - escape doesn't capture H to avoid staleness
+            preserved_H = state.H
+            returned_state = await result.action()
+            # Restore H to the returned state (escape returns state without H)
+            state = CESKState(
+                C=returned_state.C,
+                E=returned_state.E,
+                S=returned_state.S,
+                K=returned_state.K,
+                H=preserved_H,
+                active_handler=returned_state.active_handler,
+            )
             if debug:
                 print(f"[async_run] step {step_count}: escape action completed")
 
-            # Yield to event loop to let asyncio tasks progress
             await asyncio.sleep(0)
             continue
 
