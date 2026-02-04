@@ -1,28 +1,25 @@
 from __future__ import annotations
 
-from typing import Any, Generator, cast
-from collections.abc import Generator as GeneratorABC
+from typing import TYPE_CHECKING, Any, Generator
 
+from doeff.cesk_v3.level1_cesk.frames import ReturnFrame
 from doeff.cesk_v3.level1_cesk.state import (
     CESKState,
+    Done,
+    EffectYield,
+    Error,
+    Failed,
     ProgramControl,
     Value,
-    Error,
-    EffectYield,
-    Done,
-    Failed,
 )
-from doeff.cesk_v3.level1_cesk.frames import ReturnFrame
+
+if TYPE_CHECKING:
+    from doeff.program import Program
 
 
-def _to_generator(program: Any) -> Generator[Any, Any, Any]:
-    if isinstance(program, GeneratorABC):
-        return cast(Generator[Any, Any, Any], program)
-    if callable(program):
-        result = program()
-        if isinstance(result, GeneratorABC):
-            return cast(Generator[Any, Any, Any], result)
-        raise TypeError(f"Callable did not return a generator, got {type(result).__name__}")
+def to_generator(program: Program[Any]) -> Generator[Any, Any, Any]:
+    if hasattr(program, "__iter__"):
+        return iter(program)  # type: ignore
     raise TypeError(f"Cannot convert {type(program).__name__} to generator")
 
 
@@ -30,14 +27,11 @@ def cesk_step(state: CESKState) -> CESKState | Done | Failed:
     C, E, S, K = state.C, state.E, state.S, state.K
 
     if isinstance(C, ProgramControl):
-        gen = _to_generator(C.program)
+        gen = to_generator(C.program)
         try:
             yielded = next(gen)
             return CESKState(
-                C=EffectYield(yielded),
-                E=E,
-                S=S,
-                K=[ReturnFrame(gen)] + K,
+                C=EffectYield(yielded), E=E, S=S, K=[ReturnFrame(gen)] + K
             )
         except StopIteration as e:
             return CESKState(C=Value(e.value), E=E, S=S, K=K)
@@ -46,7 +40,6 @@ def cesk_step(state: CESKState) -> CESKState | Done | Failed:
 
     if isinstance(C, Value) and K:
         frame = K[0]
-        rest_k = K[1:]
         assert isinstance(frame, ReturnFrame), (
             f"Level 1 only handles ReturnFrame, got {type(frame).__name__}"
         )
@@ -54,23 +47,22 @@ def cesk_step(state: CESKState) -> CESKState | Done | Failed:
             yielded = frame.generator.send(C.value)
             return CESKState(C=EffectYield(yielded), E=E, S=S, K=K)
         except StopIteration as e:
-            return CESKState(C=Value(e.value), E=E, S=S, K=rest_k)
+            return CESKState(C=Value(e.value), E=E, S=S, K=K[1:])
         except Exception as e:
-            return CESKState(C=Error(e), E=E, S=S, K=rest_k)
+            return CESKState(C=Error(e), E=E, S=S, K=K[1:])
 
     if isinstance(C, Error) and K:
         frame = K[0]
-        rest_k = K[1:]
         assert isinstance(frame, ReturnFrame), (
             f"Level 1 only handles ReturnFrame, got {type(frame).__name__}"
         )
         try:
-            yielded = frame.generator.throw(C.error)
+            yielded = frame.generator.throw(type(C.error), C.error)
             return CESKState(C=EffectYield(yielded), E=E, S=S, K=K)
         except StopIteration as e:
-            return CESKState(C=Value(e.value), E=E, S=S, K=rest_k)
+            return CESKState(C=Value(e.value), E=E, S=S, K=K[1:])
         except Exception as e:
-            return CESKState(C=Error(e), E=E, S=S, K=rest_k)
+            return CESKState(C=Error(e), E=E, S=S, K=K[1:])
 
     if isinstance(C, Value) and not K:
         return Done(C.value)
