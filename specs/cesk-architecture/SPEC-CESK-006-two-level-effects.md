@@ -1,17 +1,18 @@
 # SPEC-CESK-006: Layered Interpreter Architecture for Algebraic Effects
 
-## Status: Draft
+## Status: Draft (v2 - Unified K Architecture)
 
 ## Summary
 
-This spec defines the **layered interpreter architecture** for doeff's algebraic effects system. The system consists of three interpreter layers that share CESK state but have distinct responsibilities:
+This spec defines the **layered interpreter architecture** for doeff's algebraic effects system. The key insight is that **all control state lives in K** - handlers, dispatch progress, and continuations are unified in a single continuation stack.
 
 ```
 0. Python (CPython)
-   └── 1. GeneratorCESK Interpreter (cesk_step)
-         └── 2. Algebraic Effects Interpreter (algebraic_effects_step)
-               └── 3. User Effects Dispatcher (user_effects_step)
+   └── 1. Pure CESK Machine (cesk_step)
+         └── 2. Algebraic Effects Machine (level2_step)
 ```
+
+**Key design principle**: Handler dispatch is a VM operation, not external logic. The `DispatchingFrame` makes dispatch state capturable and restorable.
 
 ## Background: Koka and OCaml5
 
@@ -39,214 +40,164 @@ Koka uses **evidence-passing + yielding flag** (no stack switching):
 
 ### Key Insight
 
-Both languages have **layered interpretation**:
-1. Base runtime (bytecode VM / C runtime)
-2. Effect machinery (perform/resume primitives)
-3. User effect dispatch (handler lookup and invocation)
+Both languages have **layered interpretation** where dispatch state is part of the machine, not external logic.
 
 ---
 
 ## Architectural Decisions
 
-This section documents key architectural decisions, their rationale, and alternatives considered.
+### ADR-1: Unified K Architecture (No Separate H Stack)
 
-### ADR-1: H Stack in S (CESK+H via Store)
-
-**Decision**: Store the handler stack (`AlgebraicEffectsState`) in Level 1's Store under a reserved key (`__doeff_internal_ae__`), rather than adding H as a fifth component to CESK.
+**Decision**: All handler and dispatch state lives in K. No separate handler stack in Store.
 
 **Rationale**:
-- Level 1 remains pure CESK with no knowledge of effects
-- Clean separation: Level 1 manages control flow, Level 2 manages effect semantics
-- Store is already the mechanism for "state that persists across steps"
+- Handlers are tracked via `WithHandlerFrame` in K
+- Dispatch state is tracked via `DispatchingFrame` in K
+- Capturing K naturally captures handler context
+- No synchronization needed between K and H
 
-**Alternatives considered**:
-- CESK+H (explicit H component): Would require modifying Level 1's state signature
-- H in Environment: Environment is for lexical bindings, not runtime state
+**Previous approach (rejected)**:
+- Separate `handler_stack` in `AlgebraicEffectsState` in Store
+- Required manual synchronization with WHFs in K
+- K capture didn't naturally include handler context
 
-### ADR-2: Two Frame Types (ReturnFrame + WithHandlerFrame)
+### ADR-2: Three Frame Types
 
-**Decision**: K contains two frame types:
+**Decision**: K contains three frame types:
 - `ReturnFrame`: Holds suspended generator (Level 1 processes)
-- `WithHandlerFrame`: Marks handler scope boundary (Level 2 intercepts)
+- `WithHandlerFrame`: Marks handler scope + holds handler function (Level 2 processes)
+- `DispatchingFrame`: Tracks dispatch progress (Level 2 processes)
 
 **Rationale**:
-- WHF serves as a "bookmark" that says "when value reaches here, pop handler"
-- Level 2 intercepts WHF before Level 1 sees it, maintaining layering
-- Each WithHandler creates paired (HandlerEntry, WHF) that get popped together
+- `ReturnFrame` = "where does this value go?"
+- `WithHandlerFrame` = "what handler is installed here?"
+- `DispatchingFrame` = "what dispatch is in progress?"
 
-**Alternatives considered**:
-- Callback on ReturnFrame: Timing mismatch - WHF needed before generator exists
-- Unified Frame with flags: Adds complexity, mixes concerns
-- Track handler depth separately: Breaks during dispatch when K is cleared
+### ADR-3: DispatchingFrame for Dispatch State
 
-### ADR-3: Per-Handler captured_k (Two-Stack Model)
-
-**Decision**: Each `HandlerEntry` maintains its own `captured_k`, not a global field in `AlgebraicEffectsState`.
+**Decision**: Effect dispatch is a VM operation with its own frame type.
 
 **Rationale**:
-- Enables nested handler dispatch (handler yielding WithHandler)
-- Without per-handler storage, nested dispatch overwrites original continuation
-- Mirrors Koka's evidence vector model where each prompt has its own state
+- Dispatch logic was previously in `translate_user_effect()` - Python code outside the VM
+- When handler forwarded, we couldn't "return to" dispatch logic
+- With `DispatchingFrame`, dispatch state is in K, capturable and restorable
+- Forwarding naturally works: push new `DispatchingFrame`, old handler frame preserved
 
 **Problem solved**:
 ```python
-# Without per-handler captured_k:
-1. User yields MyEffect → captured_k = [user_gen]
-2. outer_handler yields WithHandler(inner, nested())
-3. nested() yields InnerEffect → captured_k = [nested_gen, ...] OVERWRITES!
-4. outer_handler yields Resume → captured_k is wrong!
+# Old approach: dispatch logic outside VM
+def translate_user_effect(effect, state):
+    handler = find_handler(state)  # Python code, not in K!
+    return invoke_handler(handler, effect, state)
+# If handler forwards, we can't "continue" this function
 
-# With per-handler captured_k:
-- handler_stack[outer_idx].captured_k = [user_gen] (preserved)
-- handler_stack[inner_idx].captured_k = [nested_gen, ...]
+# New approach: dispatch logic inside VM
+# Push DispatchingFrame, VM handles dispatch step by step
+# Forwarding = push new DispatchingFrame, state preserved in K
 ```
 
-### ADR-4: Push/Pop at END for Index Stability
+### ADR-4: Handler Snapshot in DispatchingFrame
 
-**Decision**: Push and pop handlers at the END of `handler_stack` tuple, not the front.
+**Decision**: `DispatchingFrame` holds a snapshot of available handlers at dispatch time.
 
 **Rationale**:
-- `active_handler_index` remains valid when nested handlers are pushed
-- Existing handler indices don't shift during nested dispatch
+- If handler installs nested handler (WithHandler), live handlers change
+- But current dispatch should NOT see newly installed handlers
+- Snapshot preserves "what handlers were available when this dispatch started"
+- Matches Koka's evidence vector model
 
-**Problem solved**:
-```python
-# Push at FRONT (broken):
-handler_stack = [outer]  # outer at index 0
-active_handler_index = 0
-# After nested push:
-handler_stack = [inner, outer]  # outer shifted to index 1!
-active_handler_index = 0  # Now points to inner, WRONG!
+### ADR-5: Busy Boundary for Nested Dispatch
 
-# Push at END (fixed):
-handler_stack = [outer]  # outer at index 0
-active_handler_index = 0
-# After nested push:
-handler_stack = [outer, inner]  # outer still at index 0!
-active_handler_index = 0  # Still correct!
+**Decision**: When collecting available handlers, a DispatchingFrame creates a "busy boundary" that excludes handlers at or after its `handler_idx`.
+
+**Rationale**:
+- Handler H at `handler_idx` is "busy" handling an effect
+- Handlers in the "busy section" (idx and beyond) cannot handle nested effects
+- Only handlers BEFORE the busy boundary (`handlers[:idx]`) are available
+- Plus any WHFs newly installed ABOVE the parent DF in K
+
+**Algorithm**:
+```
+collect_available_handlers(K):
+    handlers = []
+    for frame in K:
+        if WHF: handlers.append(frame.handler)
+        if DispatchingFrame:
+            # Found busy boundary
+            parent_available = frame.handlers[:frame.handler_idx]
+            return parent_available + handlers  # parent's available + newly installed
+    return handlers  # No parent DF, all collected WHFs are available
 ```
 
-**Implication**: Search for handlers from END (innermost first), not front.
+**Visual**:
+```
+K = [inner_gen, DF(handlers=[A,B,C], idx=2), user_gen, WHF(C), WHF(B), WHF(A)]
+                    ↑ busy boundary at idx=2
+                    
+Available for nested dispatch:
+- handlers[:2] = [A, B]  (before busy boundary)
+- C is busy, not available
+- Any WHF above DF (newly installed) would also be available
+```
 
-### ADR-5: Explicit Resume (No Tail-Resume Default)
+**Key insight**: This is about "busy boundary", not "outer vs inner". The boundary is determined by where dispatch is currently happening, not by nesting depth.
 
-**Decision**: Handlers must explicitly call `Resume(value)` to resume the captured continuation. Handler returning without Resume is either an error or requires explicit `Abort`.
+### ADR-6: Resume-Only Handler API (No Abort)
+
+**Decision**: Handlers yield `Resume(value)` to continue user, or `Forward(effect)` to delegate. No explicit `Abort`.
 
 **Rationale**:
-- Explicit is better than implicit for control flow
-- Allows handlers to transform user's final result (Resume returns user's result)
-- Matches the mental model: "handler receives effect, decides what to do"
+- Simpler API: Resume or Forward, that's it
+- Implicit abandonment if handler returns without Resume
+- Forgetting Resume is usually a bug; well-defined behavior (abandonment) makes debugging easier
+- Abort semantics are rare in practice; can be added later if needed
 
-**Alternatives considered**:
-- Tail-resume default: Handler return implicitly resumes with return value
-  - Simpler for common case, but less explicit
-  - Can't transform user's result
-  - Adopted by some implementations (e.g., existing `step_v2.py`)
+**Handler returning without Resume**:
+- User continuation is dropped (implicit abandonment)
+- Handler's return value becomes the WithHandler scope's result
+- Generators in abandoned continuation are closed
 
-### ADR-6: One-Shot Continuations
+### ADR-7: One-Shot Continuations
 
-**Decision**: Each continuation can only be resumed ONCE. Tracked via `consumed_continuations: frozenset[int]`.
+**Decision**: Each continuation can only be resumed ONCE.
 
 **Rationale**:
 - Python generators are inherently one-shot
 - Matches Koka/OCaml5 default behavior
-- Multi-shot would require copying generator state (complex, expensive)
+- Can add safeguards later if needed
 
-**Enforcement**:
-- Runtime: `Resume` raises `RuntimeError` if continuation already consumed
-- Semgrep: Warn on multiple `Resume` calls in same handler (heuristic)
+### ADR-8: K Never Cleared (VM Completeness)
 
-### ADR-7: Handlers Remain Installed After Resume
-
-**Decision**: After `Resume(value)`, the handler remains installed and continues to handle subsequent effects from user code until the `WithHandler` scope ends.
+**Decision**: K should NEVER be set to `[]` except naturally reaching empty K at completion.
 
 **Rationale**:
-- Most common use case (state, logging, etc.)
-- Simpler mental model - handler monitors entire computation
-- Matches intuition: "handle all Get/Put effects in this block"
+- Clearing K is a code smell indicating logic that should be in the VM but isn't
+- If we can't find an expected frame (WHF, DF), that's a VM invariant violation → raise error
+- All control flow must be expressible through K manipulation
+- This ensures the VM is "complete" - all state is capturable and restorable
 
-**Implication**: When user code yields another effect after being resumed, the same handler stack is active.
+**Invariant violations**:
+- Can't find handler's WHF during Resume → bug in K arrangement
+- Can't find DF during Forward → called outside dispatch context
+- Missing frames → VM logic error, not "clear and continue"
 
-**Terminology note**: This is called "deep handlers" in academic literature (vs "shallow" where handler is removed after each resume). We use deep semantics without requiring users to know the terminology.
+### ADR-9: Forward vs Re-yield
 
-### ADR-8: WithHandlerFrame for Scope Tracking
-
-**Decision**: Keep `WithHandlerFrame` as a distinct frame type rather than eliminating it via callbacks.
-
-**Rationale**:
-- Clean conceptual separation: ReturnFrame = execution, WHF = scope boundary
-- WHF is created when WithHandler is translated, before program's generator exists
-- Callback approach has timing mismatch issues
-
-**How it works**:
-1. `WithHandler(h, p)` translated → push HandlerEntry, push WHF to K
-2. Program runs, may yield effects
-3. Program completes → Value flows through K
-4. Value reaches WHF → Level 2 intercepts, pops handler, continues
-
-### ADR-9: Abort Primitive for Intentional Non-Resume
-
-**Decision**: Introduce `Abort` control primitive for handlers that intentionally abandon the user's continuation.
+**Decision**: Both `Forward(effect)` and `yield effect` work for forwarding. Forward is preferred.
 
 **Rationale**:
-- Handler must either `Resume` or `Abort` - no implicit behavior
-- `Abort` makes abandonment explicit and intentional
-- Handler returning without Resume/Abort is an error
+- `Forward(effect)`: Explicit intent, could be optimized (fewer frames)
+- `yield effect`: Works via `collect_available_handlers()` seeing parent DF, creates nested DFs
+- Semantically equivalent, Forward is clearer
 
-**Control primitives**:
-```python
-Resume(value)  # Resume user continuation with value
-Abort(value)   # Abandon user continuation, return value from WithHandler
-```
+**Current implementation**: Forward creates new DF with outer handlers. Re-yield also creates new DF via normal dispatch. Both correct, Forward is self-documenting.
 
-### ADR-10: Handler Exception Goes to User
-
-**Decision**: If handler raises an exception, resume the captured continuation with that error (user code receives the exception).
+**Decision**: Each continuation can only be resumed ONCE.
 
 **Rationale**:
-- Handler exception = "I can't handle this effect properly"
-- User code should have the opportunity to catch/handle
-- Matches intuition: effect failed, error propagates to caller
-
-**Implementation**:
-```python
-def invoke_handler(handler, effect, state):
-    try:
-        return run_handler(handler, effect, state)
-    except Exception as e:
-        # Resume user continuation with the error
-        captured_k = get_captured_k_for_active_handler(state)
-        return CESKState(C=Error(e), ..., K=list(captured_k))
-```
-
-### ADR-11: Warn and Clean Abandoned Continuations
-
-**Decision**: If a continuation is abandoned (neither resumed nor explicitly aborted), emit a warning and clean up. This shouldn't happen often.
-
-**Rationale**:
-- Abandoned continuations indicate bugs (forgot to Resume/Abort)
-- Warning helps developers find issues
-- Cleanup prevents memory leaks
-- Not a hard error because it may happen during exception unwinding
-
-**Implementation**:
-- Track continuations that were captured but never consumed
-- On handler scope end (WHF processed), check if captured_k was used
-- If not: `warnings.warn()` and call `.close()` on generators in captured_k
-
-### ADR-12: Rewrite of step.py (v1)
-
-**Decision**: This spec defines a rewrite of `doeff/cesk/step.py` (v1) with proper layered algebraic effects architecture.
-
-**Current state**:
-- `step.py` (v1) = current implementation, being rewritten per this spec
-- `step_v2.py` = WIP experiment, incorrect, will be removed
-
-**Implementation path**:
-1. Implement new layered architecture per this spec (Level 1, 2, 3)
-2. Rewrite handlers to use new control primitives (Resume, Abort, etc.)
-3. Remove `step_v2.py` (incorrect WIP)
-4. Replace `step.py` with new implementation
+- Python generators are inherently one-shot
+- Matches Koka/OCaml5 default behavior
+- Can add safeguards later if needed
 
 ---
 
@@ -264,10 +215,13 @@ def invoke_handler(handler, effect, state):
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Level 2: Algebraic Effects (level2_step) - WRAPS Level 1            │
+│ Level 2: Algebraic Effects Machine (level2_step) - WRAPS Level 1    │
 │                                                                     │
-│   PRE-STEP:                                                         │
-│     - Handles WithHandlerFrame (C=Value, K[0]=WHF → pop handler)    │
+│   Handles:                                                          │
+│     - WithHandlerFrame (C=Value, K[0]=WHF → scope ends)             │
+│     - DispatchingFrame (C=Value, K[0]=DF → try handler)             │
+│     - Resume/Abort (control primitives)                             │
+│     - EffectYield (push DispatchingFrame, start dispatch)           │
 │                                                                     │
 │   ┌───────────────────────────────────────────────────────────────┐ │
 │   │ Level 1: Pure CESK Machine (cesk_step)                        │ │
@@ -277,39 +231,24 @@ def invoke_handler(handler, effect, state):
 │   │   Produces: Value, EffectYield, Error, Done, Failed           │ │
 │   └───────────────────────────────────────────────────────────────┘ │
 │                                                                     │
-│   POST-STEP:                                                        │
-│     - Translates ControlPrimitive → CESK state change               │
-│     - Passes EffectBase → Level 3                                   │
-│                                                                     │
-│   State: AlgebraicEffectsState in S["__doeff_internal_ae__"]        │
-│   Owns: WithHandlerFrame                                            │
-│   INVARIANT: ControlPrimitive NEVER reaches Level 3                 │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              │ EffectBase
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│ Level 3: User Effects (Translation Layer)                           │
-│                                                                     │
-│   Translates user effects into handler invocation.                  │
-│   Finds handler in AlgebraicEffectsState.handler_stack              │
-│   Handler uses Level 2 primitives to respond.                       │
+│   INVARIANT: Level 1 only sees ReturnFrame at K[0]                  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Key insight**: Level 2 WRAPS Level 1. It intercepts WithHandlerFrame before Level 1 sees it,
-and translates ControlPrimitive after Level 1 produces it. Level 1 only ever sees ReturnFrame.
+**Key insight**: Level 2 WRAPS Level 1. It intercepts WHF and DispatchingFrame before Level 1 sees them. Level 1 only ever processes ReturnFrame.
+
+**No Level 3**: User effect dispatch is handled by Level 2 via DispatchingFrame. No separate translation layer needed.
 
 ### CESK State
 
 ```python
-@dataclass
+@dataclass(frozen=True)
 class CESKState:
     """CESK machine state."""
-    C: Control              # Current control (Value, Program, Error)
+    C: Control              # Current control (Value, ProgramControl, Error, EffectYield)
     E: Environment          # Current environment (immutable)
-    S: Store                # Store (generic key-value, used by all layers)
-    K: Kontinuation         # Continuation stack (ReturnFrame | WithHandlerFrame)
+    S: Store                # Store (user state only, no internal handler state)
+    K: Kontinuation         # Continuation stack (all frame types)
 ```
 
 ### Frame Types
@@ -326,626 +265,201 @@ class ReturnFrame:
 
 @dataclass(frozen=True)
 class WithHandlerFrame:
-    """Marks handler scope boundary.
+    """Marks handler scope boundary AND holds the handler.
     
-    Handled by Level 2 (algebraic effects layer).
-    When a Value reaches this frame, the handler is popped.
+    Handled by Level 2.
+    When a Value reaches this frame, the handler scope ends.
     """
-    pass  # Just a marker, no data needed
+    handler: Handler  # The handler function for this scope
 
 
-# K can contain both frame types
-Kontinuation = list[ReturnFrame | WithHandlerFrame]
+@dataclass(frozen=True)
+class DispatchingFrame:
+    """Tracks effect dispatch progress.
+    
+    Handled by Level 2.
+    Holds snapshot of available handlers at dispatch start.
+    """
+    effect: EffectBase              # The effect being dispatched
+    handler_idx: int                # Current handler index being tried
+    handlers: tuple[Handler, ...]   # Snapshot of available handlers
+    handler_started: bool = False   # Whether handler has been invoked
+
+
+# Type alias
+Handler = Callable[[EffectBase], Program[Any]]
+
+# K can contain all three frame types
+Frame = ReturnFrame | WithHandlerFrame | DispatchingFrame
+Kontinuation = list[Frame]
 ```
 
-**Frame ownership:**
+### Frame Ownership
 
 | Frame Type | Owned By | When Processed |
 |------------|----------|----------------|
 | `ReturnFrame` | Level 1 | Value → send to generator |
-| `WithHandlerFrame` | Level 2 | Value → pop handler, continue |
+| `WithHandlerFrame` | Level 2 | Value → scope ends, pop WHF |
+| `DispatchingFrame` | Level 2 | Value → start/continue handler dispatch |
 
-### Two-Stack Architecture
+### Unified K Architecture
 
-Level 2 maintains its own stack-based state machine on top of Level 1's continuation stack:
+All state is in K. No separate handler stack.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ Level 2: Algebraic Effects State Machine (H in S)               │
-│                                                                 │
-│   handler_stack: [..., HandlerEntry_1, HandlerEntry_0]          │
-│                            │               │                    │
-│                            ▼               ▼                    │
-│                       captured_k_1    captured_k_0              │
-│                       (outer)         (innermost)               │
-│                                                                 │
-│   Push/pop at END for stable indices during nested dispatch     │
-│   Search from END (innermost first) for effect dispatch         │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ coordinates with
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│ Level 1: CESK State Machine                                     │
-│                                                                 │
-│   K: [ReturnFrame, WHF, ReturnFrame, WHF, ReturnFrame, ...]     │
-│        └─────────────────────────────────────────────────┘      │
-│                    control flow stack                           │
-│                                                                 │
-│   WHF marks handler scope boundaries (for popping)              │
-└─────────────────────────────────────────────────────────────────┘
+K = [handler_gen, DispatchingFrame(e, 1, [h0,h1]), user_gen, WHF(h1), WHF(h0)]
+     ↑            ↑                                ↑         ↑        ↑
+     │            │                                │         │        └─ h0 installed (outermost)
+     │            │                                │         └─ h1 installed (innermost)
+     │            │                                └─ user code suspended
+     │            └─ dispatch in progress: trying h1 (idx=1)
+     └─ h1's handler generator running
 ```
 
-**Key insight**:
-- **Level 1 K**: "Where does this value go?" (pure control flow)
-- **Level 2 handler_stack**: "Who handles effects and what continuations are they holding?"
-- **H is stored in S**: `S["__doeff_internal_ae__"]` keeps Level 1 pure CESK
+**To find available handlers**: Walk K, collect handlers from `WithHandlerFrame`s.
 
-**Index stability** (push/pop at END):
-- `handler_stack[-1]` = innermost (most recently installed)
-- `handler_stack[0]` = outermost
-- When nested handler is pushed, existing indices don't shift
-- `active_handler_index` remains valid across nested pushes
+**To find dispatch context**: Look for `DispatchingFrame` in K.
 
-**Why per-handler captured_k?**
+**Handler scope ends**: When Value reaches WHF, pop it.
 
-When a handler installs a nested handler (via `WithHandler`), the nested handler may dispatch effects that capture NEW continuations. If we used a single global `captured_k`, the nested dispatch would overwrite the original handler's continuation. Per-handler storage (like Koka's evidence vectors) ensures each handler invocation maintains its own captured continuation.
-
-### Stack Interaction Table
-
-| Event | Level 2 (handler_stack) | Level 1 (K) |
-|-------|-------------------------|-------------|
-| `WithHandler(h, p)` | Push `HandlerEntry(h)` at END | Push `WithHandlerFrame` at front |
-| Effect dispatched to handler[i] | `handler_stack[i].captured_k = K` | `K = []` (handler starts fresh) |
-| `Resume(value)` | Use `handler_stack[active].captured_k` | `K = captured_k + handler_k` |
-| Handler scope ends (Value at WHF) | Pop from END | Pop `WithHandlerFrame` from front |
-
-**Why push/pop at END?**
-
-Index stability during nested handler dispatch:
-```
-Before nested WithHandler:
-  handler_stack = [outer]  # outer at index 0
-  active_handler_index = 0
-
-After nested WithHandler (push at END):
-  handler_stack = [outer, inner]  # outer still at index 0!
-  active_handler_index = 0  # Still correct!
-
-If we pushed at FRONT (broken):
-  handler_stack = [inner, outer]  # outer shifted to index 1!
-  active_handler_index = 0  # Now points to inner, wrong!
-```
-
-### Level 2 State Storage
-
-Level 2 stores its state IN Level 1's Store using a **single reserved key** containing an immutable dataclass.
-
-**Reserved Store Key**:
-
-```python
-DOEFF_INTERNAL_AE = "__doeff_internal_ae__"
-```
-
-**HandlerEntry and AlgebraicEffectsState** (`doeff.cesk.level2_algebraic_effects.state`):
-
-```python
-# Type alias for handlers
-# Handler is a function: effect -> Program that uses Level 2 primitives
-Handler = Callable[[EffectBase], Program[Any]]
-
-
-@dataclass(frozen=True)
-class HandlerEntry:
-    """Entry in Level 2 handler stack.
-    
-    Each handler invocation maintains its own captured continuation,
-    mirroring Koka's evidence vector model where each prompt has its own state.
-    """
-    handler: Handler
-    
-    # Captured continuation for THIS handler's effect dispatch
-    # Set when effect is dispatched to this handler, used by Resume
-    captured_k: tuple[Frame, ...] | None = None
-    
-    # ID for one-shot tracking
-    captured_k_id: int | None = None
-    
-    def with_captured(
-        self, k: tuple[Frame, ...], k_id: int
-    ) -> "HandlerEntry":
-        """Return new entry with captured continuation."""
-        return replace(self, captured_k=k, captured_k_id=k_id)
-    
-    def clear_captured(self) -> "HandlerEntry":
-        """Return new entry with cleared continuation."""
-        return replace(self, captured_k=None, captured_k_id=None)
-
-
-@dataclass(frozen=True)
-class AlgebraicEffectsState:
-    """Immutable state for Level 2 algebraic effects.
-    
-    Stored in S[DOEFF_INTERNAL_AE].
-    All fields are immutable (frozen dataclass + immutable collections).
-    
-    This is Level 2's stack-based state machine, running on top of Level 1's
-    CESK machine. The handler_stack parallels WithHandlerFrames in K.
-    
-    IMPORTANT: Push/pop at END to keep indices stable during nested handler dispatch.
-    - handler_stack[-1] = innermost (most recently installed)
-    - handler_stack[0] = outermost
-    - Effect dispatch searches from END (innermost first)
-    - active_handler_index remains stable when nested handlers are pushed
-    """
-    # Handler stack - innermost handler LAST (index -1 = most recently installed)
-    # Push/pop at END for stable indices during nested dispatch
-    # Each entry contains the handler AND its captured continuation
-    handler_stack: tuple[HandlerEntry, ...] = ()
-    
-    # Continuation registry - maps handle ID to captured K
-    # Used for explicit continuation handles (GetContinuation/Resume with k=handle)
-    continuation_registry: MappingProxyType[int, Kontinuation] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    
-    # Counter for generating unique continuation handle IDs
-    next_continuation_id: int = 0
-    
-    # Active handler index in handler_stack (-1 = no handler active)
-    # Used for effect forwarding to find next handler
-    # Stable across nested handler pushes (because we push at END)
-    active_handler_index: int = -1
-    
-    # Set of continuation IDs that have been consumed (one-shot enforcement)
-    # Once a continuation ID is in this set, Resume will reject it
-    consumed_continuations: frozenset[int] = frozenset()
-    
-    # --- Immutable update methods ---
-    
-    def push_handler(self, handler: Handler) -> "AlgebraicEffectsState":
-        """Push a new handler onto the stack (at END for stable indices)."""
-        entry = HandlerEntry(handler=handler)
-        return replace(self, handler_stack=self.handler_stack + (entry,))
-    
-    def pop_handler(self) -> "AlgebraicEffectsState":
-        """Pop the innermost handler from the stack (from END)."""
-        return replace(self, handler_stack=self.handler_stack[:-1])
-    
-    def innermost_handler_index(self) -> int:
-        """Get index of innermost handler (-1 if empty)."""
-        return len(self.handler_stack) - 1 if self.handler_stack else -1
-    
-    def capture_continuation_at(
-        self, index: int, k: tuple[Frame, ...], k_id: int
-    ) -> "AlgebraicEffectsState":
-        """Capture a continuation for handler at given index."""
-        entry = self.handler_stack[index]
-        new_entry = entry.with_captured(k, k_id)
-        new_stack = (
-            self.handler_stack[:index] 
-            + (new_entry,) 
-            + self.handler_stack[index + 1:]
-        )
-        return replace(
-            self,
-            handler_stack=new_stack,
-            next_continuation_id=k_id + 1,
-            active_handler_index=index,
-        )
-    
-    def get_captured_at(self, index: int) -> tuple[tuple[Frame, ...] | None, int | None]:
-        """Get captured continuation for handler at index."""
-        entry = self.handler_stack[index]
-        return entry.captured_k, entry.captured_k_id
-    
-    def clear_captured_at(self, index: int) -> "AlgebraicEffectsState":
-        """Clear captured continuation for handler at index."""
-        entry = self.handler_stack[index]
-        new_entry = entry.clear_captured()
-        new_stack = (
-            self.handler_stack[:index] 
-            + (new_entry,) 
-            + self.handler_stack[index + 1:]
-        )
-        return replace(self, handler_stack=new_stack)
-    
-    def mark_consumed(self, k_id: int) -> "AlgebraicEffectsState":
-        """Mark a continuation as consumed (one-shot enforcement)."""
-        return replace(
-            self,
-            consumed_continuations=self.consumed_continuations | {k_id},
-        )
-    
-    def is_consumed(self, k_id: int) -> bool:
-        """Check if a continuation has been consumed."""
-        return k_id in self.consumed_continuations
-    
-    def store_continuation(
-        self, k_id: int, k: Kontinuation
-    ) -> "AlgebraicEffectsState":
-        """Store a continuation in the registry (for GetContinuation)."""
-        new_registry = MappingProxyType({**self.continuation_registry, k_id: k})
-        return replace(self, continuation_registry=new_registry)
-    
-    def get_continuation(self, k_id: int) -> Kontinuation | None:
-        """Get a continuation from the registry."""
-        return self.continuation_registry.get(k_id)
-
-
-def get_ae_state(S: Store) -> AlgebraicEffectsState:
-    """Get Level 2 state from Store, creating default if missing."""
-    return S.get(DOEFF_INTERNAL_AE, AlgebraicEffectsState())
-
-
-def set_ae_state(S: Store, ae: AlgebraicEffectsState) -> Store:
-    """Return new Store with updated Level 2 state."""
-    return {**S, DOEFF_INTERNAL_AE: ae}
-```
-
-**Benefits of Single Dataclass**:
-
-| Aspect | Multiple Keys | Single Dataclass |
-|--------|---------------|------------------|
-| Type safety | Dict with Any values | Typed fields |
-| Immutability | Manual dict spread | `@dataclass(frozen=True)` + `replace()` |
-| Encapsulation | Keys scattered in S | Single namespace |
-| Semgrep rule | Match pattern per key | Single key to block |
-| Update methods | Inline dict manipulation | Semantic methods |
-| Default values | Repeated `.get(..., default)` | Field defaults |
-
-**Semgrep Rule** (to be added to `.semgrep.yaml`):
-
-```yaml
-rules:
-  - id: no-direct-access-to-algebraic-effects-internal-state
-    pattern-either:
-      - pattern: $S["__doeff_internal_ae__"]
-      - pattern: $S.get("__doeff_internal_ae__")
-      - pattern: $S.get("__doeff_internal_ae__", $DEFAULT)
-      - pattern: |
-          "__doeff_internal_ae__"
-    paths:
-      exclude:
-        - doeff/cesk/level2_algebraic_effects/**/*.py
-        - doeff/cesk/level3_user_effects/**/*.py
-        - doeff/cesk/run.py
-        - doeff/cesk/translate.py
-        - tests/cesk/test_*.py
-    message: |
-      Direct access to algebraic effects internal state is forbidden.
-      Use control primitives (Resume, GetContinuation, etc.) instead.
-    severity: ERROR
-```
-
-### Main Loop
-
-```python
-def run(program: Program[T]) -> T:
-    """Main interpreter loop.
-    
-    Level 2 step wraps Level 1 and handles:
-    - WithHandlerFrame completion (pre-step)
-    - ControlPrimitive translation (post-step)
-    
-    Main loop handles Level 3 user effects.
-    """
-    state = initial_state(program)
-    
-    while True:
-        # Level 2 step (wraps Level 1, handles WithHandlerFrame + ControlPrimitive)
-        result = level2_step(state)
-        
-        if isinstance(result, Done):
-            return result.value
-        if isinstance(result, Failed):
-            raise result.error
-        
-        # Level 3: User effects (only EffectBase reaches here)
-        if isinstance(result.C, EffectYield):
-            yielded = result.C.yielded
-            if isinstance(yielded, EffectBase):
-                result = translate_user_effect(yielded, result)
-            else:
-                raise TypeError(f"Unknown yield type: {type(yielded)}")
-        
-        state = result
-```
+**Dispatch completes**: When Resume processed, pop DispatchingFrame, arrange K.
 
 ---
 
-## Module Organization
-
-Classes and functions are organized by level to make responsibilities clear:
-
-```
-doeff/cesk/
-├── level1_cesk/                    # Level 1: Pure CESK Machine
-│   ├── __init__.py
-│   ├── state.py                    # CESKState, Control, Value, Error
-│   ├── frames.py                   # ReturnFrame (the ONLY frame type)
-│   ├── step.py                     # cesk_step() - the only stepper
-│   └── types.py                    # Kontinuation, Environment, Store
-│
-├── level2_algebraic_effects/       # Level 2: Algebraic Effects
-│   ├── __init__.py
-│   ├── state.py                    # AlgebraicEffectsState dataclass, DOEFF_INTERNAL key
-│   ├── control_primitives.py       # ControlPrimitive base, WithHandler, Resume, etc.
-│   ├── continuation_handle.py      # ContinuationHandle (opaque)
-│   ├── handler.py                  # Handler type alias
-│   └── translate.py                # translate_control_primitive()
-│
-├── level3_user_effects/            # Level 3: User Effects
-│   ├── __init__.py
-│   ├── effect_base.py              # EffectBase (user effects inherit from this)
-│   ├── dispatch.py                 # translate_user_effect(), find_handler()
-│   └── handler_protocol.py         # Handler signature/protocol
-│
-├── run.py                          # Main loop: run(), orchestrates all levels
-└── translate.py                    # translate_yield() - dispatches to L2/L3
-```
-
-### Naming Convention
-
-| Level | Module Prefix | Class/Function Examples |
-|-------|---------------|-------------------------|
-| Level 1 | `level1_cesk` | `CESKState`, `ReturnFrame`, `cesk_step` |
-| Level 2 | `level2_algebraic_effects` | `ControlPrimitive`, `WithHandler`, `Resume`, `ContinuationHandle` |
-| Level 3 | `level3_user_effects` | `EffectBase`, `Get`, `Put`, `Spawn` |
-
-### Import Examples
+## Control Types
 
 ```python
-# Level 1 - Pure CESK
-from doeff.cesk.level1_cesk import CESKState, cesk_step, ReturnFrame
-
-# Level 2 - Algebraic Effects
-from doeff.cesk.level2_algebraic_effects import (
-    ControlPrimitive,
-    WithHandler,
-    Resume,
-    GetContinuation,
-    ContinuationHandle,
-)
-
-# Level 3 - User Effects
-from doeff.cesk.level3_user_effects import EffectBase
-
-# User-defined effects (Level 3)
-from doeff.effects import Get, Put, Ask, Spawn
-```
-
----
-
-## Level 1: CESK Machine
-
-**Module**: `doeff.cesk.level1_cesk`
-
-Level 1 is the pure CESK machine. It knows nothing about effects or handlers - 
-it only steps generators and manages the continuation stack.
-
-### Classes (`doeff.cesk.level1_cesk.state`)
-
-```python
-@dataclass
-class CESKState:
-    """Pure CESK machine state."""
-    C: Control      # ProgramControl | Value | Error | EffectYield
-    E: Environment  # Immutable bindings (dict-like)
-    S: Store        # Generic key-value storage (dict)
-    K: Kontinuation # List[ReturnFrame] - the ONLY frame type
-
-
-@dataclass
+@dataclass(frozen=True)
 class ProgramControl:
     """Control: a program to execute."""
     program: Program
 
 
-@dataclass
+@dataclass(frozen=True)
 class Value:
     """Control: a computed value."""
     value: Any
 
 
-@dataclass
+@dataclass(frozen=True)
 class Error:
     """Control: an exception was raised."""
     error: BaseException
 
 
-@dataclass
+@dataclass(frozen=True)
 class EffectYield:
-    """Control: generator yielded something (for translation layer)."""
+    """Control: generator yielded something."""
     yielded: Any
+
+
+@dataclass(frozen=True)
+class Done:
+    """Terminal: computation completed successfully."""
+    value: Any
+
+
+@dataclass(frozen=True)
+class Failed:
+    """Terminal: computation failed with exception."""
+    error: BaseException
 ```
 
-### Frames (`doeff.cesk.level1_cesk.frames`)
+---
+
+## Control Primitives
+
+Control primitives are yielded by handlers to control execution flow.
 
 ```python
-@dataclass
-class ReturnFrame:
-    """The ONLY frame type in Level 1.
+class ControlPrimitive:
+    """Base class for Level 2 control primitives.
     
-    Holds a suspended generator waiting for a value.
+    These are NOT effects. They are instructions to Level 2.
+    They NEVER go through handler dispatch.
     """
-    generator: Generator
+    pass
 
 
-# K = List[ReturnFrame]  -- ONLY ReturnFrame, nothing else
-Kontinuation = list[ReturnFrame]
+@dataclass(frozen=True)
+class WithHandler(ControlPrimitive, Generic[T]):
+    """Install a handler for a scoped computation."""
+    handler: Handler
+    program: Program[T]
 
 
-def assert_valid_k(k: Kontinuation) -> None:
-    """Runtime assertion: K must only contain ReturnFrame."""
-    for frame in k:
-        assert isinstance(frame, ReturnFrame), \
-            f"INVARIANT VIOLATION: K contains {type(frame).__name__}, expected ReturnFrame"
-```
-
-### K Invariant Enforcement
-
-**INVARIANT**: K contains ONLY `ReturnFrame`. No exceptions.
-
-#### Runtime Assertions
-
-```python
-# In cesk_step, after any K modification:
-def cesk_step(state: CESKState) -> CESKState | Done | Failed:
-    ...
-    new_state = CESKState(C=..., E=..., S=..., K=new_k)
-    assert_valid_k(new_state.K)  # Enforce invariant
-    return new_state
-
-# In translate_control_primitive (Resume):
-def translate_resume(value, state):
-    captured_k = ...
-    handler_k = state.K
-    new_k = captured_k + handler_k
-    assert_valid_k(new_k)  # Enforce invariant
-    ...
-
-# In translate_user_effect:
-def translate_user_effect(effect, state):
-    captured_k = state.K
-    assert_valid_k(captured_k)  # Enforce before capturing
-    ...
-```
-
-#### Semgrep Rules
-
-```yaml
-# .semgrep.yaml
-rules:
-  - id: k-only-contains-return-frame
-    patterns:
-      - pattern-either:
-          # Forbid pushing non-ReturnFrame to K
-          - pattern: $K.append($FRAME)
-          - pattern: $K.insert($IDX, $FRAME)
-          - pattern: [$FRAME] + $K
-          - pattern: $K + [$FRAME]
-      - pattern-not: $K.append(ReturnFrame($GEN))
-      - pattern-not: [$FRAME, ...] + $K  # Allow list concatenation for Resume
-    paths:
-      include:
-        - doeff/cesk/**/*.py
-    message: |
-      K must only contain ReturnFrame. Do not push other frame types.
-      If you need handler state, use Level 2 store keys instead.
-    severity: ERROR
-
-  - id: no-handler-frame-class
-    pattern-either:
-      - pattern: class HandlerFrame
-      - pattern: class HandlerResultFrame
-      - pattern: |
-          @dataclass
-          class $NAME(...):
-              ...
-          # with "Frame" in name but not ReturnFrame
-    paths:
-      include:
-        - doeff/cesk/**/*.py
-      exclude:
-        - doeff/cesk/level1_cesk/frames.py  # Only ReturnFrame allowed here
-    message: |
-      Only ReturnFrame is allowed in Level 1. Handler state belongs in Level 2 store.
-    severity: ERROR
-```
-
-### K Design Decision
-
-**K contains ONLY `ReturnFrame`s.** No handler frames, no result frames.
-
-| Frame Type | In K? | Where Instead? |
-|------------|-------|----------------|
-| `ReturnFrame` | YES | - |
-| `HandlerFrame` | NO | `AlgebraicEffectsState.handler_stack` in `__doeff_internal_ae__` |
-| `HandlerResultFrame` | NO | Removed - handled by `Resume` primitive |
-
-**Rationale:**
-
-1. **Purity**: Level 1 CESK knows nothing about effects/handlers
-2. **Simplicity**: K is just a call stack of suspended generators
-3. **Clean capture**: When capturing K for a handler, we get exactly the user's continuation
-4. **No interleaving**: Handler state and continuation state are separate
-
-**Handler execution flow (two-stack model):**
-
-```
-User code running:     K = [ReturnFrame(user_gen)]
-                       handler_stack = [HandlerEntry(state_handler)]
-                            │
-                            ▼ yield Get("key")
-                            
-Level 3 captures K:    handler_stack[0].captured_k = [ReturnFrame(user_gen)]
-                       K = []  (cleared for handler)
-
-Handler starts:        K = [ReturnFrame(handler_gen)]
-                            │
-                            ▼ handler runs
-                            
-Handler running:       K = [ReturnFrame(handler_gen)]
-                            │
-                            ▼ yield Resume(value)
-                            
-Level 2 restores K:    K = [ReturnFrame(user_gen), ReturnFrame(handler_gen)]
-                           (captured_k + handler_k concatenation)
-                       C = Value(value)
-                            │
-                            ▼
-User code receives value, continues, returns result
-                            │
-                            ▼
-Handler receives result (from K concatenation)
-```
-
-### Level 2 Step Function (`doeff.cesk.level2_algebraic_effects.step`)
-
-Level 2 wraps Level 1, handling WithHandlerFrame before delegating to pure CESK:
-
-```python
-def level2_step(state: CESKState) -> CESKState | Done | Failed:
-    """Level 2 step: wraps Level 1, handles WithHandlerFrame and ControlPrimitive.
+@dataclass(frozen=True)
+class Resume(ControlPrimitive):
+    """Resume the captured continuation with a value.
     
-    PRE-STEP: Handle WithHandlerFrame completion
-    DELEGATE: Level 1 pure CESK step
-    POST-STEP: Translate ControlPrimitive yields
+    Pops the DispatchingFrame and arranges K so:
+    - Value goes to user continuation
+    - Handler receives user's return value
     """
-    C, E, S, K = state.C, state.E, state.S, state.K
+    value: Any
+
+
+@dataclass(frozen=True)
+class Forward(ControlPrimitive):
+    """Forward an effect to outer handlers.
     
-    # PRE-STEP: Check for handler completion (Value at WithHandlerFrame)
-    if isinstance(C, Value) and K and isinstance(K[0], WithHandlerFrame):
-        # Handler scope completed - pop handler, continue with value
-        ae = get_ae_state(S)
-        new_ae = ae.pop_handler()
-        return CESKState(
-            C=C,
-            E=E,
-            S=set_ae_state(S, new_ae),
-            K=K[1:],  # Remove WithHandlerFrame
-        )
+    Explicit forwarding primitive. Creates a new DispatchingFrame
+    with only outer handlers (handlers[:current_idx]).
     
-    # DELEGATE: Level 1 pure CESK step
-    result = cesk_step(state)
+    When outer handler resumes, the value is automatically passed
+    back to this handler, which can then Resume with it.
     
-    # POST-STEP: Translate control primitives
-    if isinstance(result, CESKState) and isinstance(result.C, EffectYield):
-        yielded = result.C.yielded
-        if isinstance(yielded, ControlPrimitive):
-            return translate_control_primitive(yielded, result)
+    Semantically equivalent to:
+        result = yield effect  # re-yield (also works, more frames)
+        return (yield Resume(result))
     
-    return result
+    But Forward makes the intent explicit and could be optimized.
+    """
+    effect: EffectBase
 ```
 
-### Level 1 Step Function (`doeff.cesk.level1_cesk.step`)
+### Handler API Summary
+
+| Yield | Meaning |
+|-------|---------|
+| `Resume(value)` | Resume user continuation with value. Handler receives user's final result. |
+| `Forward(effect)` | Forward to outer handlers. Handler receives outer's result, then typically Resumes. |
+| `yield effect` | Also forwards (creates new DispatchingFrame). Works but more frames. |
+| `return value` | **Implicit abandonment.** User continuation is dropped. Value flows past WHF. |
+
+### Implicit Abandonment (No Abort)
+
+There is no explicit `Abort` primitive. If a handler returns without yielding `Resume`, the user continuation is implicitly abandoned:
+
+1. Handler generator completes (StopIteration)
+2. `DispatchingFrame` detects `handler_started=True` + handler returned
+3. User continuation (between DF and WHF) is dropped
+4. Handler's return value becomes the result of the WithHandler scope
+
+This is intentional: forgetting to Resume is usually a bug, but the behavior is well-defined.
+
+### Error Handling
+
+Errors raised in handler code propagate normally through K:
+- Error → throw into ReturnFrame generators
+- Error reaches WHF → scope ends with error, propagates outward
+- Error with empty K → Failed(error)
+
+No special error handling in dispatch logic. The VM's normal error propagation applies.
+
+---
+
+## Level 1: Pure CESK Machine
+
+**Module**: `doeff.cesk_v3.level1_cesk`
+
+Level 1 is the pure CESK machine. It knows nothing about effects or handlers - it only steps generators and manages ReturnFrame.
 
 ```python
 def cesk_step(state: CESKState) -> CESKState | Done | Failed:
     """Pure CESK stepper. Only handles ReturnFrame.
     
-    Level 2 intercepts WithHandlerFrame before this is called.
+    Level 2 intercepts WHF and DispatchingFrame before this is called.
     """
     C, E, S, K = state.C, state.E, state.S, state.K
     
@@ -962,29 +476,29 @@ def cesk_step(state: CESKState) -> CESKState | Done | Failed:
     
     # Value: send to continuation (must be ReturnFrame)
     if isinstance(C, Value) and K:
-        frame, *rest_k = K
+        frame = K[0]
         assert isinstance(frame, ReturnFrame), \
             f"Level 1 only handles ReturnFrame, got {type(frame).__name__}"
         try:
             yielded = frame.generator.send(C.value)
             return CESKState(C=EffectYield(yielded), E=E, S=S, K=K)
         except StopIteration as e:
-            return CESKState(C=Value(e.value), E=E, S=S, K=rest_k)
+            return CESKState(C=Value(e.value), E=E, S=S, K=K[1:])
         except Exception as e:
-            return CESKState(C=Error(e), E=E, S=S, K=rest_k)
+            return CESKState(C=Error(e), E=E, S=S, K=K[1:])
     
     # Error: throw into continuation (must be ReturnFrame)
     if isinstance(C, Error) and K:
-        frame, *rest_k = K
+        frame = K[0]
         assert isinstance(frame, ReturnFrame), \
             f"Level 1 only handles ReturnFrame, got {type(frame).__name__}"
         try:
             yielded = frame.generator.throw(type(C.error), C.error)
             return CESKState(C=EffectYield(yielded), E=E, S=S, K=K)
         except StopIteration as e:
-            return CESKState(C=Value(e.value), E=E, S=S, K=rest_k)
+            return CESKState(C=Value(e.value), E=E, S=S, K=K[1:])
         except Exception as e:
-            return CESKState(C=Error(e), E=E, S=S, K=rest_k)
+            return CESKState(C=Error(e), E=E, S=S, K=K[1:])
     
     # Terminal: value with empty K
     if isinstance(C, Value) and not K:
@@ -994,794 +508,871 @@ def cesk_step(state: CESKState) -> CESKState | Done | Failed:
     if isinstance(C, Error) and not K:
         return Failed(C.error)
     
-    # EffectYield: return for translation layer
+    # EffectYield: return for Level 2 to handle
     return state
 ```
 
 ---
 
-## Level 2: Algebraic Effects (Translation Layer)
+## Level 2: Algebraic Effects Machine
 
-**Module**: `doeff.cesk.level2_algebraic_effects`
+**Module**: `doeff.cesk_v3.level2_algebraic_effects`
 
-Level 2 is NOT a stepper - it's a translation layer that interprets control 
-primitives yielded by Level 1 and produces new CESK states.
+Level 2 wraps Level 1, handling WithHandlerFrame, DispatchingFrame, and control primitives.
 
-**INVARIANT**: Control primitives NEVER reach Level 3 handlers.
-
-### Control Primitives (`doeff.cesk.level2_algebraic_effects.control_primitives`)
+### Main Step Function
 
 ```python
-class ControlPrimitive:
-    """Base class for Level 2 control primitives.
+def level2_step(state: CESKState) -> CESKState | Done | Failed:
+    """Level 2 step: wraps Level 1, handles effect machinery.
     
-    These are NOT effects. They are instructions to the Level 2 translator.
-    They NEVER go through user handler dispatch.
+    Processing order:
+    1. Check for WithHandlerFrame at K[0] (scope end)
+    2. Check for DispatchingFrame at K[0] (dispatch logic)
+    3. Check for EffectYield (start dispatch or control primitive)
+    4. Delegate to Level 1 for ReturnFrame
     
-    Enforced by: semgrep rule, runtime assertion in Level 3
+    INVARIANTS:
+    - K is never cleared. If we can't find expected frames, raise error.
+    - EffectYield MUST be consumed and converted to another Control type.
+      Level 2 must NEVER return a state with C=EffectYield.
+      (Prevents infinite loops where EffectYield bounces between levels)
     """
-    pass
-
-
-@dataclass(frozen=True)
-class WithHandler(ControlPrimitive, Generic[T]):
-    """Install a handler for a scoped computation."""
-    handler: Handler
-    program: Program[T]
-
-
-@dataclass(frozen=True)
-class Resume(ControlPrimitive):
-    """Resume a continuation with a value.
+    C, E, S, K = state.C, state.E, state.S, state.K
     
-    k=None: resume implicit current continuation (common case)
-    k=handle: resume stored continuation (async pattern)
+    # === WithHandlerFrame: scope ends ===
+    if isinstance(C, Value) and K and isinstance(K[0], WithHandlerFrame):
+        # Handler scope completed - pop WHF, continue with value
+        return CESKState(C=C, E=E, S=S, K=K[1:])
     
-    Returns: The final result of the resumed computation.
-    
-    IMPORTANT: Resume concatenates captured_k + handler_k, so when
-    the resumed code completes, its result flows back to the handler.
-    This allows handlers to transform user results:
-    
-        @do
-        def double_handler(effect):
-            if isinstance(effect, Get):
-                value = yield AskStore()[effect.key]
-                user_result = yield Resume(value)  # User's final result!
-                return user_result * 2             # Transform it
-    """
-    value: Any
-    k: ContinuationHandle | None = None
-
-
-@dataclass(frozen=True)
-class Abort(ControlPrimitive):
-    """Abandon the captured continuation and return a value from WithHandler.
-    
-    Use when handler intentionally does NOT want to resume user code.
-    The captured continuation is cleaned up (generators closed).
-    
-    Example:
-        @do
-        def early_exit_handler(effect):
-            if isinstance(effect, Exit):
-                return (yield Abort(effect.value))  # Don't resume user
-            result = yield Resume(handle_normally(effect))
-            return result
-    """
-    value: Any
-
-
-@dataclass(frozen=True)
-class GetContinuation(ControlPrimitive):
-    """Capture current continuation as an opaque handle.
-    
-    For async patterns where continuation must be stored and resumed later.
-    """
-    pass
-```
-
-### Continuation Handle (`doeff.cesk.level2_algebraic_effects.continuation_handle`)
-
-```python
-@dataclass(frozen=True)
-class ContinuationHandle:
-    """Opaque handle to a captured continuation.
-    
-    Cannot be inspected or manipulated.
-    Can only be passed to Resume(value, k=handle).
-    """
-    _id: int  # Internal ID, interpreter maintains registry
-
-
-# Context access primitives
-@dataclass(frozen=True)
-class AskStore(ControlPrimitive):
-    """Get current store (immutable snapshot)."""
-    pass
-
-
-@dataclass(frozen=True)
-class ModifyStore(ControlPrimitive):
-    """Atomically update store."""
-    updates: Mapping[str, Any]
-
-
-@dataclass(frozen=True)
-class AskEnv(ControlPrimitive):
-    """Get current environment."""
-    pass
-```
-
-### Design Decision: No Explicit ResumeError
-
-**Decision**: We do NOT have an explicit `ResumeError` primitive.
-
-**Rationale**: Handler exceptions automatically resume the continuation with the error.
-
-```python
-# Instead of:
-yield ResumeError(KeyError("missing"), k)
-
-# Handlers just raise naturally:
-@do
-def state_handler(effect):
-    if isinstance(effect, Get):
-        store = yield AskStore()
-        if effect.key not in store:
-            raise KeyError(effect.key)  # Interpreter catches, resumes with error
-        result = yield Resume(store[effect.key])
-        return result
-```
-
-**Implementation**: The interpreter wraps handler execution in try/except:
-```python
-def invoke_handler(handler, effect, captured_k, state):
-    try:
-        result = run_handler(handler, effect, state)
-        return process_handler_result(result, state)
-    except Exception as e:
-        # Auto-resume continuation with error
-        return resume_continuation_with_error(captured_k, e, state)
-```
-
-**Future**: If explicit `ResumeError` is needed, it can be added later.
-
-### Design Decision: One-Shot Continuations
-
-**INVARIANT**: Each continuation can only be resumed ONCE.
-
-**Rationale**: Python generators are inherently one-shot. Once a generator receives a value via `send()`, that moment in execution is gone forever. Attempting to resume the same continuation twice would corrupt the program state.
-
-This matches Koka and OCaml5's default behavior (both use linear/one-shot continuations by default).
-
-**Tracking via AlgebraicEffectsState**:
-
-The `consumed_continuations: frozenset[int]` field in `AlgebraicEffectsState` tracks which continuation IDs have been resumed.
-
-**Runtime Enforcement**:
-
-```python
-def check_one_shot(ae: AlgebraicEffectsState, k_id: int) -> None:
-    """Raise if continuation already consumed."""
-    if ae.is_consumed(k_id):
-        raise RuntimeError(
-            f"INVARIANT VIOLATION: Continuation {k_id} already resumed. "
-            "Continuations are one-shot and cannot be resumed multiple times."
-        )
-
-# In Resume translation (using per-handler captured_k):
-case Resume(value, k):
-    if k is None:
-        # Implicit continuation - get from active handler's slot
-        handler_idx = ae.active_handler_index
-        captured_k, k_id = ae.get_captured_at(handler_idx)
-        if k_id is not None:
-            check_one_shot(ae, k_id)
-            new_ae = ae.clear_captured_at(handler_idx).mark_consumed(k_id)
-        ...
-    else:
-        # Explicit continuation handle
-        check_one_shot(ae, k._id)
-        new_ae = ae.mark_consumed(k._id)
-        ...
-```
-
-**Semgrep Rule** (warning for potential violations):
-
-```yaml
-rules:
-  - id: potential-multi-resume-in-handler
-    patterns:
-      - pattern-inside: |
-          @do
-          def $HANDLER($EFFECT):
-              ...
-      - pattern: yield Resume($VALUE)
-    options:
-      # Count occurrences - warn if more than 1
-      # Note: This is a heuristic. Multiple Resume in different branches is OK.
-      # Multiple Resume in same execution path is the actual violation.
-    message: |
-      Handler contains Resume. Ensure each continuation is only resumed ONCE.
-      Multiple Resume calls to the same continuation will raise RuntimeError.
-      
-      OK patterns (different branches):
-        if isinstance(effect, Get):
-            yield Resume(value1)
-        elif isinstance(effect, Put):
-            yield Resume(value2)
-      
-      VIOLATION (same continuation resumed twice):
-        result1 = yield Resume(value)
-        result2 = yield Resume(value)  # ERROR: already consumed!
-    severity: INFO
-    metadata:
-      category: correctness
-      subcategory: one-shot-continuation
-
-  - id: definite-multi-resume-violation
-    patterns:
-      - pattern-inside: |
-          @do
-          def $HANDLER($EFFECT):
-              ...
-      - pattern: |
-          $VAR1 = yield Resume($VALUE1)
-          ...
-          $VAR2 = yield Resume($VALUE2)
-    paths:
-      include:
-        - doeff/cesk/**/*.py
-    message: |
-      VIOLATION: Multiple Resume calls in sequence without branching.
-      This will cause RuntimeError at runtime - continuations are one-shot.
-      
-      If you need to transform the result, use a single Resume:
-        result = yield Resume(value)
-        return transform(result)
-      
-      NOT:
-        result1 = yield Resume(value)
-        result2 = yield Resume(value)  # CRASH!
-    severity: ERROR
-```
-
-**What This Catches**:
-
-| Pattern | Caught By | Severity |
-|---------|-----------|----------|
-| Sequential `yield Resume(...)` calls | Semgrep (definite) | ERROR |
-| Multiple `yield Resume(...)` in handler | Semgrep (potential) | INFO |
-| Runtime double-resume attempt | Runtime assertion | RuntimeError |
-
-**Note**: Semgrep cannot catch all violations statically (e.g., Resume in a loop, Resume of stored handle). The runtime check is the authoritative enforcement.
-
-### Level 2 Translation Implementation
-
-```python
-from doeff.cesk.level2_algebraic_effects.state import (
-    DOEFF_INTERNAL_AE,
-    AlgebraicEffectsState,
-    get_ae_state,
-    set_ae_state,
-)
-
-
-def translate_control_primitive(prim: ControlPrimitive, state: CESKState) -> CESKState:
-    """Translate Level 2 control primitive to CESK state change.
-    
-    Reads/writes Level 2 state via AlgebraicEffectsState dataclass.
-    Uses per-handler captured_k (two-stack model).
-    """
-    S = state.S
-    ae = get_ae_state(S)
-    
-    match prim:
-        case WithHandler(handler, program):
-            # Push handler onto stack and add WithHandlerFrame to K
-            # Handler is just the function - Python closures handle lexical scoping
-            new_ae = ae.push_handler(handler)
+    # === DispatchingFrame: dispatch logic ===
+    if isinstance(C, Value) and K and isinstance(K[0], DispatchingFrame):
+        df = K[0]
+        
+        if not df.handler_started:
+            # --- First time: start the handler ---
+            if df.handler_idx < 0:
+                raise UnhandledEffectError(f"No handler for {type(df.effect).__name__}")
+            
+            handler = df.handlers[df.handler_idx]
+            handler_program = handler(df.effect)
+            
+            # Update DF to mark handler as started
+            new_df = replace(df, handler_started=True)
             
             return CESKState(
-                C=ProgramControl(program),
-                E=state.E,
-                S=set_ae_state(S, new_ae),
-                K=[WithHandlerFrame()] + state.K,  # Handler scope boundary
+                C=ProgramControl(handler_program),
+                E=E,
+                S=S,
+                K=[new_df] + K[1:],  # Replace DF with updated version
             )
+        else:
+            # --- Handler returned without Resume: implicit abandonment ---
+            # Handler completed but didn't yield Resume.
+            # User continuation is abandoned. Value flows past WHF.
+            return handle_implicit_abandonment(C.value, state)
+    
+    # === EffectYield: check what was yielded ===
+    if isinstance(C, EffectYield):
+        yielded = C.yielded
         
-        case Resume(value, k):
-            if k is None:
-                # Implicit k - use captured continuation from ACTIVE handler
-                handler_idx = ae.active_handler_index
-                if handler_idx < 0:
-                    raise RuntimeError("Resume without active handler")
-                
-                captured_k, k_id = ae.get_captured_at(handler_idx)
-                if captured_k is None:
-                    raise RuntimeError("Resume without captured continuation")
-                
-                # ONE-SHOT ENFORCEMENT
-                if k_id is not None and ae.is_consumed(k_id):
-                    raise RuntimeError(
-                        f"INVARIANT VIOLATION: Continuation {k_id} already resumed. "
-                        "Continuations are one-shot and cannot be resumed multiple times."
-                    )
-                
-                # Mark consumed and clear captured at this handler
-                new_ae = ae.clear_captured_at(handler_idx)
-                if k_id is not None:
-                    new_ae = new_ae.mark_consumed(k_id)
-            else:
-                # Explicit k - lookup from registry
-                captured_k = ae.get_continuation(k._id)
-                if captured_k is None:
-                    raise RuntimeError(f"Unknown continuation handle: {k._id}")
-                
-                # ONE-SHOT ENFORCEMENT
-                if ae.is_consumed(k._id):
-                    raise RuntimeError(
-                        f"INVARIANT VIOLATION: Continuation {k._id} already resumed. "
-                        "Continuations are one-shot and cannot be resumed multiple times."
-                    )
-                
-                # Mark consumed
-                new_ae = ae.mark_consumed(k._id)
-            
-            # KEY: Concatenate captured_k + handler_k
-            # This ensures when resumed code completes, result flows back to handler
-            new_k = list(captured_k) + list(state.K)
-            
-            return CESKState(
-                C=Value(value),
-                E=state.E,
-                S=set_ae_state(S, new_ae),
-                K=new_k,
-            )
+        # --- Control Primitives ---
+        if isinstance(yielded, WithHandler):
+            return handle_with_handler(yielded, state)
         
-        case Abort(value):
-            # Abandon the captured continuation - DO NOT resume user code
-            handler_idx = ae.active_handler_index
-            if handler_idx < 0:
-                raise RuntimeError("Abort without active handler")
-            
-            captured_k, k_id = ae.get_captured_at(handler_idx)
-            
-            # Clean up abandoned continuation (close generators)
-            if captured_k:
-                for frame in captured_k:
-                    if isinstance(frame, ReturnFrame) and frame.generator:
-                        try:
-                            frame.generator.close()
-                        except Exception:
-                            pass  # Best effort cleanup
-                warnings.warn(
-                    f"Continuation {k_id} abandoned via Abort. "
-                    "User code will not be resumed.",
-                    stacklevel=2,
-                )
-            
-            # Mark consumed (even though not resumed, it's "used up")
-            new_ae = ae.clear_captured_at(handler_idx)
-            if k_id is not None:
-                new_ae = new_ae.mark_consumed(k_id)
-            
-            # Continue with handler's K (skip captured_k entirely)
-            # Value flows to next frame in handler's continuation
-            return CESKState(
-                C=Value(value),
-                E=state.E,
-                S=set_ae_state(S, new_ae),
-                K=state.K,  # Handler's K only, NOT captured_k + handler_k
-            )
+        if isinstance(yielded, Resume):
+            return handle_resume(yielded, state)
         
-        case GetContinuation():
-            # Get captured continuation from ACTIVE handler
-            handler_idx = ae.active_handler_index
-            if handler_idx < 0:
-                raise RuntimeError("GetContinuation without active handler")
-            
-            captured_k, _ = ae.get_captured_at(handler_idx)
-            if captured_k is None:
-                raise RuntimeError("GetContinuation without captured continuation")
-            
-            # Store continuation in registry with new ID
-            k_id = ae.next_continuation_id
-            new_ae = ae.store_continuation(k_id, captured_k)
-            new_ae = replace(new_ae, next_continuation_id=k_id + 1)
-            
-            return CESKState(
-                C=Value(ContinuationHandle(_id=k_id)),
-                E=state.E,
-                S=set_ae_state(S, new_ae),
-                K=state.K,
-            )
+        if isinstance(yielded, Forward):
+            return handle_forward(yielded, state)
         
-        case AskStore():
-            # Return the user-visible portion of the store
-            # (filter out __doeff_internal_* keys)
-            user_store = {k: v for k, v in S.items() 
-                         if not k.startswith("__doeff_internal_")}
-            return state.with_value(user_store)
+        # --- User Effect: start dispatch ---
+        if isinstance(yielded, EffectBase):
+            return start_dispatch(yielded, state)
         
-        case ModifyStore(updates):
-            # Only allow modifying user keys (not internal)
-            for key in updates:
-                if key.startswith("__doeff_internal_"):
-                    raise RuntimeError(f"Cannot modify internal key: {key}")
-            new_S = {**S, **updates}
-            return CESKState(
-                C=Value(None),
-                E=state.E,
-                S=new_S,
-                K=state.K,
-            )
-        
-        case AskEnv():
-            return state.with_value(state.E)
+        raise TypeError(f"Unknown yield type: {type(yielded)}")
+    
+    # === Delegate to Level 1 ===
+    return cesk_step(state)
 ```
 
----
-
-## Level 3: User Effects (Translation Layer)
-
-**Module**: `doeff.cesk.level3_user_effects`
-
-Level 3 is NOT a stepper - it's a translation layer that dispatches user effects
-to handlers and produces new CESK states.
-
-### Effect Base Class (`doeff.cesk.level3_user_effects.effect_base`)
+### WithHandler Translation
 
 ```python
-class EffectBase:
-    """Base class for user-defined effects (Level 3).
+def handle_with_handler(wh: WithHandler, state: CESKState) -> CESKState:
+    """Install handler and start scoped computation."""
+    C, E, S, K = state.C, state.E, state.S, state.K
     
-    These go through Level 3 handler dispatch.
-    Handlers receive them and use Level 2 primitives to respond.
-    
-    NOT a ControlPrimitive - these ARE dispatched to handlers.
-    """
-    pass
+    # Push WithHandlerFrame (holds the handler)
+    # Start the scoped program
+    return CESKState(
+        C=ProgramControl(wh.program),
+        E=E,
+        S=S,
+        K=[WithHandlerFrame(handler=wh.handler)] + K,
+    )
 ```
 
-### Translation Function (`doeff.cesk.level3_user_effects.translate`)
+### Start Dispatch
 
 ```python
-def translate_user_effect(effect: EffectBase, state: CESKState) -> CESKState:
-    """Translate user effect to handler invocation.
+def start_dispatch(effect: EffectBase, state: CESKState) -> CESKState:
+    """Start dispatching an effect by pushing DispatchingFrame."""
+    C, E, S, K = state.C, state.E, state.S, state.K
     
-    PRECONDITION: effect is NOT a ControlPrimitive (Level 2 intercepted those)
+    # Build available handlers from K
+    handlers = collect_available_handlers(K)
     
-    Uses the two-stack model: captures K into the handler's own captured_k slot,
-    not a global field. This allows nested handlers to each maintain their own
-    captured continuation (like Koka's evidence vectors).
-    
-    Search order: innermost first (highest index), moving outward.
-    - handler_stack[-1] = innermost
-    - handler_stack[0] = outermost
-    """
-    # INVARIANT: Control primitives must never reach here
-    assert not isinstance(effect, ControlPrimitive), \
-        f"BUG: Control primitive {effect} leaked to Level 3"
-    
-    S = state.S
-    ae = get_ae_state(S)
-    
-    # Find handler - search from innermost (END) to outermost
-    # If handler is active (forwarding), search from active_handler_index - 1 (outward)
-    # Otherwise start from innermost (len - 1)
-    if ae.active_handler_index >= 0:
-        # Forwarding: search outward from current handler
-        start_idx = ae.active_handler_index - 1
-    else:
-        # Fresh dispatch: start from innermost
-        start_idx = len(ae.handler_stack) - 1
-    
-    if start_idx < 0:
+    if not handlers:
         raise UnhandledEffectError(f"No handler for {type(effect).__name__}")
     
-    handler_idx = start_idx
-    entry = ae.handler_stack[handler_idx]
-    
-    # Capture continuation INTO THIS HANDLER'S SLOT (two-stack model)
-    # Each handler maintains its own captured_k, enabling nested handler dispatch
-    new_ae = ae.capture_continuation_at(
-        index=handler_idx,
-        k=tuple(state.K),  # Immutable copy
-        k_id=ae.next_continuation_id,
+    # Push DispatchingFrame, start from innermost handler
+    df = DispatchingFrame(
+        effect=effect,
+        handler_idx=len(handlers) - 1,  # Innermost first
+        handlers=tuple(handlers),
     )
     
-    # Create handler program by invoking handler function
-    handler_program = entry.handler(effect)
+    # Set C=Value to trigger DispatchingFrame processing on next step
+    return CESKState(
+        C=Value(None),  # Dummy value to trigger dispatch
+        E=E,
+        S=S,
+        K=[df] + K,
+    )
+
+
+def collect_available_handlers(K: Kontinuation) -> list[Handler]:
+    """Walk K to find available handlers, respecting busy boundaries.
+    
+    Returns handlers in order: [outermost, ..., innermost]
+    
+    BUSY BOUNDARY RULE (ADR-5):
+    - If DispatchingFrame found in K, it creates a "busy boundary"
+    - Handlers at or after handler_idx are "busy" (unavailable)
+    - Only handlers[:handler_idx] from parent DF are available
+    - Plus any WHFs installed ABOVE the parent DF (newly installed)
+    
+    Example:
+        K = [new_whf, parent_DF(handlers=[A,B,C], idx=2), ...]
+        → parent_available = [A, B]  (C is busy at idx=2)
+        → newly_installed = [new_whf.handler]
+        → return [A, B, new_whf.handler]
+    """
+    handlers = []  # Collects newly installed WHFs above parent DF
+    
+    for frame in K:
+        if isinstance(frame, WithHandlerFrame):
+            handlers.append(frame.handler)
+        elif isinstance(frame, DispatchingFrame):
+            # Found busy boundary
+            # parent_available = handlers before the busy index
+            parent_available = list(frame.handlers[:frame.handler_idx])
+            # Return: parent's available + newly installed (above parent DF)
+            return parent_available + handlers
+    
+    # No parent DF found - all collected WHFs are available
+    return handlers
+```
+
+### Resume Translation
+
+```python
+def handle_resume(resume: Resume, state: CESKState) -> CESKState:
+    """Resume the captured continuation with a value.
+    
+    Finds DispatchingFrame in K, pops it, and arranges K so:
+    - Value flows to user continuation
+    - Handler generator receives user's return value
+    
+    KEY INSIGHT: We must find the WHF that corresponds to THIS handler
+    (not just the first WHF). In nested handler scenarios, inner handlers
+    have WHFs before the outer handler's WHF.
+    """
+    C, E, S, K = state.C, state.E, state.S, state.K
+    
+    # K[0] should be the handler's ReturnFrame
+    if len(K) < 2:
+        raise RuntimeError("Resume without proper K structure")
+    
+    handler_frame = K[0]
+    if not isinstance(handler_frame, ReturnFrame):
+        raise RuntimeError(f"Expected handler ReturnFrame, got {type(handler_frame)}")
+    
+    # Find DispatchingFrame
+    df_idx = None
+    for i, frame in enumerate(K[1:], start=1):
+        if isinstance(frame, DispatchingFrame):
+            df_idx = i
+            break
+    
+    if df_idx is None:
+        raise RuntimeError("Resume without DispatchingFrame")
+    
+    df = K[df_idx]
+    handler_gen = K[0]
+    
+    # User continuation is everything after DispatchingFrame
+    user_continuation = K[df_idx + 1:]
+    
+    # Find the WHF that corresponds to THIS handler
+    # The handler identity is preserved: DF.handlers are collected from WHFs,
+    # so they are the same object references.
+    target_handler = df.handlers[df.handler_idx]
+    
+    whf_idx = None
+    for i, frame in enumerate(user_continuation):
+        if isinstance(frame, WithHandlerFrame) and frame.handler is target_handler:
+            whf_idx = i
+            break
+    
+    if whf_idx is None:
+        raise RuntimeError("Resume: cannot find handler's WithHandlerFrame")
+    
+    # Arrange new K:
+    # - user frames (everything before handler's WHF, includes nested handlers/DFs)
+    # - handler_gen (so handler receives final result from its scope)
+    # - handler's WHF and everything after
+    new_k = (
+        list(user_continuation[:whf_idx]) +
+        [handler_gen] +
+        list(user_continuation[whf_idx:])
+    )
     
     return CESKState(
-        C=ProgramControl(handler_program),
-        E=state.E,  # Handler runs in current E; uses AskEnv() if needed
-        S=set_ae_state(S, new_ae),
-        K=[],  # Handler starts with empty K
+        C=Value(resume.value),
+        E=E,
+        S=S,
+        K=new_k,
     )
 ```
 
-### Resume Semantics: K Concatenation
+**Why identity comparison works:** When `WithHandler` is processed, we create `WithHandlerFrame(handler=wh.handler)`. Later, `collect_available_handlers()` collects these exact handler objects from WHFs. So `DF.handlers[i]` is the same object as some `WHF.handler` in K.
 
-**Key insight**: `Resume(value)` concatenates `captured_k + handler_k`.
+**Handler identity requirement:** This design requires that handler functions are stable objects. Do NOT create handlers inline with lambdas inside loops. Instead, define handlers as named functions or store them in variables before use.
 
-```
-Before Resume:
-  captured_k = [ReturnFrame(user_gen)]     # User's continuation
-  handler_k  = [ReturnFrame(handler_gen)]  # Handler's continuation
+```python
+# GOOD: handler is a stable object
+@do
+def my_handler(effect): ...
+result = run(WithHandler(my_handler, program))
 
-After Resume:
-  K = [ReturnFrame(user_gen), ReturnFrame(handler_gen)]
-  C = Value(value)
-```
-
-**Flow:**
-```
-1. User: x = yield Get("key")
-   K = [user_gen]
-   
-2. Handler catches, K captured:
-   captured_k = [user_gen]
-   K = [handler_gen]
-   
-3. Handler: result = yield Resume(42)
-   K = [user_gen] + [handler_gen] = [user_gen, handler_gen]
-   C = Value(42)
-   
-4. User receives 42, continues, returns 100:
-   K = [handler_gen]  (user_gen popped)
-   C = Value(100)
-   
-5. Handler receives 100 (as `result`):
-   result = 100
-   Handler returns result * 2 = 200
-   
-6. K = []
-   C = Value(200)
-   
-7. Done! WithHandler result is 200
+# BAD: lambda created fresh each time, identity comparison may fail
+result = run(WithHandler(lambda e: do_something(e), program))
 ```
 
-**This enables:**
-- Handlers can transform user's final result
-- Handlers can log/trace before and after
-- Handlers can wrap user computation with setup/teardown
+### Implicit Abandonment (Handler Returns Without Resume)
 
-### Effect Forwarding
+```python
+def handle_implicit_abandonment(handler_result: Any, state: CESKState) -> CESKState:
+    """Handle case where handler returned without yielding Resume.
+    
+    The user continuation is abandoned. Handler's result flows past the WHF.
+    
+    INVARIANT: K is never cleared. If WHF not found, that's a bug.
+    """
+    C, E, S, K = state.C, state.E, state.S, state.K
+    
+    # K[0] should be the DispatchingFrame (handler_started=True)
+    if not isinstance(K[0], DispatchingFrame):
+        raise RuntimeError("Implicit abandonment without DispatchingFrame at K[0]")
+    
+    df = K[0]
+    user_continuation = K[1:]  # Everything after DF
+    
+    # Find the WHF that corresponds to THIS handler
+    target_handler = df.handlers[df.handler_idx]
+    
+    whf_idx = None
+    for i, frame in enumerate(user_continuation):
+        if isinstance(frame, WithHandlerFrame) and frame.handler is target_handler:
+            whf_idx = i
+            break
+    
+    if whf_idx is None:
+        raise RuntimeError(
+            "Implicit abandonment: cannot find handler's WithHandlerFrame. "
+            "This is a VM invariant violation."
+        )
+    
+    # Clean up generators in abandoned frames (user continuation up to WHF)
+    for frame in user_continuation[:whf_idx]:
+        if isinstance(frame, ReturnFrame):
+            try:
+                frame.generator.close()
+            except Exception:
+                pass
+    
+    # Continue AFTER the WHF (scope ends, WHF is consumed)
+    # K = [frames after WHF...]
+    new_k = list(user_continuation[whf_idx + 1:])
+    
+    return CESKState(
+        C=Value(handler_result),
+        E=E,
+        S=S,
+        K=new_k,
+    )
+```
 
-When handler doesn't handle an effect, it re-yields to forward to outer handlers:
+### Forward Translation
+
+```python
+def handle_forward(forward: Forward, state: CESKState) -> CESKState:
+    """Forward an effect to outer handlers.
+    
+    Creates a new DispatchingFrame with only outer handlers.
+    When outer handler resumes, value flows back to this handler.
+    
+    This is semantically equivalent to re-yielding the effect,
+    but makes the intent explicit.
+    """
+    C, E, S, K = state.C, state.E, state.S, state.K
+    
+    # Find current DispatchingFrame to get outer handlers
+    df_idx = None
+    for i, frame in enumerate(K):
+        if isinstance(frame, DispatchingFrame):
+            df_idx = i
+            break
+    
+    if df_idx is None:
+        raise RuntimeError("Forward without active dispatch context")
+    
+    current_df = K[df_idx]
+    
+    # Outer handlers = handlers before current index
+    outer_handlers = current_df.handlers[:current_df.handler_idx]
+    
+    if not outer_handlers:
+        raise UnhandledEffectError(
+            f"Forward: no outer handler for {type(forward.effect).__name__}"
+        )
+    
+    # Create new DispatchingFrame for forwarded effect
+    new_df = DispatchingFrame(
+        effect=forward.effect,
+        handler_idx=len(outer_handlers) - 1,  # Start from innermost outer
+        handlers=outer_handlers,
+        handler_started=False,
+    )
+    
+    # Push new DF, keep rest of K intact
+    # Value(None) triggers dispatch processing
+    return CESKState(
+        C=Value(None),
+        E=E,
+        S=S,
+        K=[new_df] + K,
+    )
+```
+
+### Forwarding via Re-yield (Alternative)
+
+Handlers can also forward by simply yielding the effect:
 
 ```python
 @do
 def my_handler(effect):
-    if isinstance(effect, MyEffect):
-        result = yield Resume(42)
-        return result
-    else:
-        # Forward to outer handler by re-yielding
+    if not can_handle(effect):
+        # Re-yield forwards to outer handlers
         outer_result = yield effect
-        result = yield Resume(outer_result)
-        return result
+        return (yield Resume(outer_result))
+    ...
 ```
 
-**Key mechanism: `active_handler_index`**
+This also works because `start_dispatch` → `collect_available_handlers()` finds the parent `DispatchingFrame` and only returns `handlers[:handler_idx]`.
 
-The `AlgebraicEffectsState.active_handler_index` tracks which handler is currently executing.
-When a handler yields an effect, Level 3 searches from `active_handler_index + 1`, preventing:
-- Infinite recursion (handler calling itself)
-- Inner handlers being invoked (only outer handlers searched)
+**Trade-off:**
+- `Forward(effect)`: Explicit, single frame, self-documenting
+- `yield effect`: Implicit, creates additional DispatchingFrame, but natural Python syntax
 
-**Flow for forwarding `yield effect`:**
-1. Handler[0] running, `active_handler_index = 0`
-2. Handler yields `effect` (an EffectBase)
-3. Level 3 searches from index 1 (outer handlers only)
-4. Handler[0]'s K is captured (so result flows back)
-5. Handler[1] handles effect, yields `Resume(value)`
-6. Result flows back to Handler[0]
-7. Handler[0] receives result, yields `Resume(result)` to user
-8. User receives value
-
-**Important**: Search always starts from `active_handler_index + 1` for effects yielded by handlers.
-
-### Design Decision: No Explicit Forward Primitive (For Now)
-
-**Current approach**: Handlers re-yield effects to forward them:
-
-```python
-@do
-def my_handler(effect):
-    if isinstance(effect, MyEffect):
-        result = yield Resume(42)
-        return result
-    else:
-        # Forward by re-yielding
-        outer_result = yield effect
-        result = yield Resume(outer_result)
-        return result
-```
-
-**How it works**:
-- `active_handler_index` tracks which handler is currently running
-- When handler yields an effect, Level 3 searches from `active_handler_index + 1`
-- Handler's K is captured, result flows back to handler
-- Handler then resumes to user
-
-**Alternative considered: Explicit `Forward` primitive**
-
-```python
-@dataclass(frozen=True)
-class Forward(ControlPrimitive):
-    """Forward effect to outer handler (transparent pass-through)."""
-    effect: EffectBase
-```
-
-Usage would be:
-```python
-yield Forward(effect)  # Terminal - handler abandoned, result goes directly to user
-# unreachable
-```
-
-**Koka/OCaml5 semantics**: Forward is transparent - forwarding handler's K is NOT captured, 
-result flows directly from outer handler to original user. Forwarding handler is abandoned.
-
-**Comparison**:
-
-| Aspect | Re-yield (current) | Forward primitive |
-|--------|-------------------|-------------------|
-| Handler gets result back | Yes | No (abandoned) |
-| Can transform/log forwarded result | Yes | No |
-| Extra Resume hop | Yes | No |
-| Matches Koka/OCaml5 | Partial | Yes |
-| Implementation complexity | Simpler | More complex |
-
-**Decision**: Use re-yield for now. It's simpler and more flexible (handlers can intercept).
-Forward primitive can be added later if transparent pass-through semantics are needed
-for performance or Koka/OCaml5 compatibility.
-
-### Handler Invocation with Error Handling
-
-```python
-def invoke_handler_with_error_handling(
-    handler: Handler, 
-    effect: EffectBase,
-    state: CESKState,
-) -> CESKState:
-    """Invoke handler, catching exceptions to auto-resume with error.
-    
-    If handler raises, we resume the captured continuation with the error.
-    This implements the "no explicit ResumeError" design decision.
-    Uses per-handler captured_k from the two-stack model.
-    """
-    ae = get_ae_state(state.S)
-    handler_idx = ae.active_handler_index
-    
-    try:
-        handler_program = handler(effect)
-        return CESKState(
-            C=ProgramControl(handler_program),
-            E=state.E,
-            S=state.S,
-            K=[],
-        )
-    except Exception as e:
-        # Handler raised - auto-resume continuation with error
-        # Get captured_k from the active handler's slot
-        captured_k, _ = ae.get_captured_at(handler_idx)
-        return CESKState(
-            C=Error(e),
-            E=state.E,
-            S=state.S,
-            K=list(captured_k) if captured_k else [],
-        )
-```
-
-### Example User Effects (`doeff.effects.*`)
-
-```python
-# doeff/effects/state.py
-@dataclass(frozen=True)
-class Get(EffectBase):
-    """Read from state. Level 3 effect."""
-    key: str
-
-@dataclass(frozen=True)
-class Put(EffectBase):
-    """Write to state. Level 3 effect."""
-    key: str
-    value: Any
-
-
-# doeff/effects/reader.py
-@dataclass(frozen=True)
-class Ask(EffectBase):
-    """Read from environment. Level 3 effect."""
-    key: str
-
-
-# doeff/effects/spawn.py
-@dataclass(frozen=True)
-class Spawn(EffectBase):
-    """Spawn a new task. Level 3 effect."""
-    program: Program[Any]
-```
+Both are semantically correct.
 
 ---
 
-## Handler Example
-
-Handlers receive Level 3 effects and use Level 2 primitives to respond:
+## Main Run Loop
 
 ```python
-# doeff/cesk/handlers/state_handler.py
-from doeff.cesk.level2_algebraic_effects import Resume, AskStore, ModifyStore
-from doeff.cesk.level3_user_effects import EffectBase
-from doeff.effects.state import Get, Put
-
-@do
-def state_handler(effect: EffectBase):
-    """Handler for Get/Put effects.
-    
-    Receives: Level 3 effects (Get, Put)
-    Uses: Level 2 primitives (AskStore, ModifyStore, Resume)
-    """
-    if isinstance(effect, Get):
-        store = yield AskStore()                    # Level 2
-        if effect.key not in store:
-            raise KeyError(effect.key)              # Auto-resume with error
-        result = yield Resume(store[effect.key])   # Level 2
-        return result
-    
-    if isinstance(effect, Put):
-        yield ModifyStore({effect.key: effect.value})  # Level 2
-        result = yield Resume(None)                     # Level 2
-        return result
-    
-    # Forward unhandled effects to outer handler
-    outer_result = yield effect                    # Level 3 (recursive)
-    result = yield Resume(outer_result)            # Level 2
-    return result
-```
-
----
-
-## Main Run Loop (`doeff.cesk.run`)
-
-The main loop orchestrates all levels:
-
-```python
-from doeff.cesk.level1_cesk import cesk_step, CESKState, Done, Failed, EffectYield
-from doeff.cesk.level2_algebraic_effects import ControlPrimitive, translate_control_primitive
-from doeff.cesk.level3_user_effects import EffectBase, translate_user_effect
-
-
 def run(program: Program[T]) -> T:
-    """Main interpreter loop.
-    
-    Level 2: level2_step wraps Level 1, handles WithHandlerFrame + ControlPrimitive
-    Level 3: translate_user_effect for user effects
-    """
-    state = initial_state(program)
+    """Main interpreter loop."""
+    state = CESKState(
+        C=ProgramControl(program),
+        E={},
+        S={},
+        K=[],
+    )
     
     while True:
-        # Level 2 step (wraps Level 1)
         result = level2_step(state)
         
-        # Terminal states
         if isinstance(result, Done):
             return result.value
         if isinstance(result, Failed):
             raise result.error
         
-        # Level 3: User effects
-        if isinstance(result.C, EffectYield):
-            yielded = result.C.yielded
-            if isinstance(yielded, EffectBase):
-                result = translate_user_effect(yielded, result)
-            else:
-                raise TypeError(f"Unknown yield type: {type(yielded)}")
-        
         state = result
+```
+
+---
+
+## Example Trace
+
+```python
+@do
+def user():
+    result = yield MyEffect()
+    return result + 1
+
+@do
+def my_handler(effect):
+    if isinstance(effect, MyEffect):
+        user_result = yield Resume(42)
+        return user_result
+    # Forward unknown effects
+    outer_result = yield effect
+    return (yield Resume(outer_result))
+
+# Run with handler
+result = run(WithHandler(my_handler, user()))
+```
+
+### Step-by-step:
+
+```
+1. C=ProgramControl(WithHandler(...)), K=[]
+   → handle_with_handler
+   → K=[WHF(my_handler)], C=ProgramControl(user())
+
+2. C=ProgramControl(user()), K=[WHF(my_handler)]
+   → cesk_step starts user generator
+   → K=[user_gen, WHF(my_handler)], C=EffectYield(MyEffect())
+
+3. C=EffectYield(MyEffect()), K=[user_gen, WHF(my_handler)]
+   → start_dispatch
+   → handlers=[my_handler]
+   → K=[DF(MyEffect, idx=0, handlers=[my_handler], started=False), user_gen, WHF(my_handler)]
+   → C=Value(None)
+
+4. C=Value(None), K=[DF(started=False), user_gen, WHF(my_handler)]
+   → K[0] is DispatchingFrame with started=False
+   → Start handler, update DF to started=True
+   → K=[DF(started=True), user_gen, WHF(my_handler)]
+   → C=ProgramControl(my_handler(MyEffect()))
+
+5. C=ProgramControl(my_handler(...)), K=[DF(started=True), ...]
+   → cesk_step starts handler generator
+   → K=[handler_gen, DF(started=True), user_gen, WHF(my_handler)]
+   → C=EffectYield(Resume(42))
+
+6. C=EffectYield(Resume(42)), K=[handler_gen, DF, user_gen, WHF]
+   → handle_resume
+   → Find DF at idx=1, target_handler=my_handler
+   → user_continuation = [user_gen, WHF(my_handler)]
+   → Find WHF(my_handler) at idx=1
+   → new_k = [user_gen] + [handler_gen] + [WHF(my_handler)]
+   → K=[user_gen, handler_gen, WHF(my_handler)]
+   → C=Value(42)
+
+7. Value(42) → user_gen
+   → user receives 42, returns 43
+   → K=[handler_gen, WHF(my_handler)]
+   → C=Value(43)
+
+8. Value(43) → handler_gen
+   → handler receives 43 (from user_result = yield Resume(42))
+   → handler returns 43
+   → K=[WHF(my_handler)]
+   → C=Value(43)
+
+9. Value(43), K=[WHF(my_handler)]
+   → WHF at K[0], scope ends
+   → K=[]
+   → C=Value(43)
+
+10. C=Value(43), K=[]
+    → Done(43)
+
+Result: 43
+```
+
+### Abbreviations in trace:
+- `DF` = DispatchingFrame
+- `WHF` = WithHandlerFrame
+- `started` = handler_started flag
+
+---
+
+## Example Trace: Nested Forwarding
+
+This trace demonstrates the key scenario: inner handler forwards to outer, both resume.
+
+```python
+@do
+def user():
+    result = yield SomeEffect()
+    return result + 1
+
+@do
+def inner_handler(effect):
+    # Forward to outer, then resume with outer's result
+    outer_result = yield Forward(effect)
+    return (yield Resume(outer_result))
+
+@do
+def outer_handler(effect):
+    return (yield Resume(42))
+
+# Run: with_handler(outer, with_handler(inner, user()))
+```
+
+### Step-by-step:
+
+```
+1. Setup: after both WithHandlers processed
+   K = [WHF(inner), WHF(outer)]
+   C = ProgramControl(user())
+
+2. User starts, yields SomeEffect
+   K = [user_gen, WHF(inner), WHF(outer)]
+   C = EffectYield(SomeEffect())
+
+3. start_dispatch
+   handlers = [outer, inner]  (collected from WHFs)
+   DF1 = DF(SomeEffect, idx=1, handlers=[outer,inner], started=False)
+   K = [DF1, user_gen, WHF(inner), WHF(outer)]
+   C = Value(None)
+
+4. DF processing: start inner_handler
+   DF1.started = True
+   K = [DF1(started=True), user_gen, WHF(inner), WHF(outer)]
+   C = ProgramControl(inner_handler(SomeEffect()))
+
+5. inner_handler starts, yields Forward(SomeEffect)
+   K = [inner_gen, DF1(started=True), user_gen, WHF(inner), WHF(outer)]
+   C = EffectYield(Forward(SomeEffect()))
+
+6. handle_forward
+   Find DF1 at idx=1
+   outer_handlers = DF1.handlers[:1] = [outer]
+   DF2 = DF(SomeEffect, idx=0, handlers=[outer], started=False)
+   K = [DF2, inner_gen, DF1, user_gen, WHF(inner), WHF(outer)]
+   C = Value(None)
+
+7. DF processing: start outer_handler
+   DF2.started = True
+   K = [DF2(started=True), inner_gen, DF1, user_gen, WHF(inner), WHF(outer)]
+   C = ProgramControl(outer_handler(SomeEffect()))
+
+8. outer_handler starts, yields Resume(42)
+   K = [outer_gen, DF2(started=True), inner_gen, DF1, user_gen, WHF(inner), WHF(outer)]
+   C = EffectYield(Resume(42))
+
+9. handle_resume for DF2
+   handler_gen = outer_gen
+   df_idx = 1 (DF2)
+   target_handler = DF2.handlers[0] = outer
+   user_continuation = K[2:] = [inner_gen, DF1, user_gen, WHF(inner), WHF(outer)]
+   Find WHF where handler is outer: WHF(outer) at idx=4
+   
+   new_k = [inner_gen, DF1, user_gen, WHF(inner)] + [outer_gen] + [WHF(outer)]
+   K = [inner_gen, DF1, user_gen, WHF(inner), outer_gen, WHF(outer)]
+   C = Value(42)
+
+10. Value(42) → inner_gen
+    inner_handler receives 42 (from outer_result = yield Forward(...))
+    inner_handler yields Resume(42)
+    K = [inner_gen, DF1, user_gen, WHF(inner), outer_gen, WHF(outer)]
+    C = EffectYield(Resume(42))
+
+11. handle_resume for DF1
+    handler_gen = inner_gen (K[0])
+    df_idx = 1 (DF1)
+    target_handler = DF1.handlers[1] = inner
+    user_continuation = K[2:] = [user_gen, WHF(inner), outer_gen, WHF(outer)]
+    Find WHF where handler is inner: WHF(inner) at idx=1
+    
+    new_k = [user_gen] + [inner_gen] + [WHF(inner), outer_gen, WHF(outer)]
+    K = [user_gen, inner_gen, WHF(inner), outer_gen, WHF(outer)]
+    C = Value(42)
+
+12. Value(42) → user_gen
+    user receives 42, returns 43
+    K = [inner_gen, WHF(inner), outer_gen, WHF(outer)]
+    C = Value(43)
+
+13. Value(43) → inner_gen
+    inner_handler returns 43
+    K = [WHF(inner), outer_gen, WHF(outer)]
+    C = Value(43)
+
+14. Value(43), K[0]=WHF(inner)
+    Scope ends, pop WHF
+    K = [outer_gen, WHF(outer)]
+    C = Value(43)
+
+15. Value(43) → outer_gen
+    outer_handler returns 43
+    K = [WHF(outer)]
+    C = Value(43)
+
+16. Value(43), K[0]=WHF(outer)
+    Scope ends, pop WHF
+    K = []
+    C = Value(43)
+
+17. Done(43)
+```
+
+**Key observations:**
+1. Each Resume finds its handler's WHF by identity comparison
+2. DF1 and DF2 are separate frames - nested dispatch creates nested DFs
+3. When outer resumes, inner_gen + DF1 are preserved in K
+4. Each handler receives its caller's result, not the original user's result
+5. K is never cleared - frames flow naturally through the stack
+
+---
+
+## Detailed Trace: Re-yield Forwarding
+
+This trace shows forwarding via re-yielding the effect directly (`yield effect`).
+
+```python
+@do
+def user():
+    result = yield SomeEffect()
+    return result + 1
+
+@do
+def inner_handler(effect):
+    # Re-yield the effect directly (not Forward)
+    outer_result = yield effect  # <-- creates new DispatchingFrame via start_dispatch
+    return (yield Resume(outer_result))
+
+@do
+def outer_handler(effect):
+    return (yield Resume(42))
+
+# Run: with_handler(outer, with_handler(inner, user()))
+```
+
+### Steps 1-6: Setup and User Effect (same for both methods)
+
+```
+Step 1-3: Setup
+C = ProgramControl(user())
+K = [WHF(inner), WHF(outer)]
+
+Step 4: User yields effect
+C = EffectYield(SomeEffect())
+K = [user_gen, WHF(inner), WHF(outer)]
+
+Step 5: start_dispatch
+- collect_available_handlers(K) → [outer, inner]
+- DF1 = DispatchingFrame(SomeEffect(), idx=1, handlers=(outer,inner), started=False)
+C = Value(None)
+K = [DF1(idx=1, started=False), user_gen, WHF(inner), WHF(outer)]
+
+Step 6: Start inner_handler
+C = ProgramControl(inner_handler(SomeEffect()))
+K = [DF1(idx=1, started=True), user_gen, WHF(inner), WHF(outer)]
+```
+
+### Step 7-8: Inner Re-yields Effect (KEY STEP)
+
+```
+Step 7: inner_handler yields raw effect
+C = EffectYield(SomeEffect())  ← Raw effect, not Forward
+K = [inner_gen, DF1(idx=1, started=True), user_gen, WHF(inner), WHF(outer)]
+
+Step 8: start_dispatch (for re-yielded effect)
+- SomeEffect is EffectBase, so start_dispatch is called
+- collect_available_handlers(K):
+    Walk K:
+    - inner_gen: ReturnFrame, skip
+    - DF1: DispatchingFrame found!
+      parent_available = DF1.handlers[:DF1.handler_idx]
+      parent_available = (outer, inner)[:1] = (outer,)
+      STOP walking, return (outer,)
+  
+- handlers = (outer,)  ← Only outer available!
+- DF2 = DispatchingFrame(SomeEffect(), idx=0, handlers=(outer,), started=False)
+
+C = Value(None)
+K = [DF2(idx=0, started=False), inner_gen, DF1(idx=1, started=True), user_gen, WHF(inner), WHF(outer)]
+     ↑ NEW DF                    ↑ waiting for outer's result
+```
+
+### Steps 9-17: Outer Handles, Both Resume (same for both methods)
+
+```
+Step 9-10: Start outer_handler, yields Resume(42)
+C = EffectYield(Resume(42))
+K = [outer_gen, DF2, inner_gen, DF1, user_gen, WHF(inner), WHF(outer)]
+
+Step 11: handle_resume for DF2
+- target_handler = outer
+- Find WHF(outer) in user_continuation
+- Insert outer_gen before WHF(outer)
+C = Value(42)
+K = [inner_gen, DF1, user_gen, WHF(inner), outer_gen, WHF(outer)]
+
+Step 12: inner_gen receives 42, yields Resume(42)
+C = EffectYield(Resume(42))
+K = [inner_gen, DF1, user_gen, WHF(inner), outer_gen, WHF(outer)]
+
+Step 13: handle_resume for DF1
+- target_handler = inner
+- Find WHF(inner) in user_continuation
+- Insert inner_gen before WHF(inner)
+C = Value(42)
+K = [user_gen, inner_gen, WHF(inner), outer_gen, WHF(outer)]
+
+Step 14-17: Completion
+- user returns 43
+- inner returns 43, WHF(inner) pops
+- outer returns 43, WHF(outer) pops
+- Done(43)
+```
+
+---
+
+## Detailed Trace: Forward Primitive
+
+This trace shows forwarding via the explicit `Forward` primitive.
+
+```python
+@do
+def user():
+    result = yield SomeEffect()
+    return result + 1
+
+@do
+def inner_handler(effect):
+    # Use Forward primitive (explicit)
+    outer_result = yield Forward(effect)  # <-- Forward primitive
+    return (yield Resume(outer_result))
+
+@do
+def outer_handler(effect):
+    return (yield Resume(42))
+
+# Run: with_handler(outer, with_handler(inner, user()))
+```
+
+### Steps 1-6: Setup and User Effect (identical)
+
+```
+Step 1-6: (identical to re-yield case)
+C = ProgramControl(inner_handler(SomeEffect()))
+K = [DF1(idx=1, started=True), user_gen, WHF(inner), WHF(outer)]
+```
+
+### Step 7-8: Inner Yields Forward (KEY DIFFERENCE)
+
+```
+Step 7: inner_handler yields Forward primitive
+C = EffectYield(Forward(SomeEffect()))  ← Forward primitive, not raw effect
+K = [inner_gen, DF1(idx=1, started=True), user_gen, WHF(inner), WHF(outer)]
+
+Step 8: handle_forward (NOT start_dispatch!)
+- Forward is ControlPrimitive, handled directly by Level 2
+- No K-walk needed, directly access parent DF
+
+def handle_forward(forward, state):
+    # Find current DispatchingFrame in K
+    df_idx = 1  # DF1 at index 1
+    current_df = K[df_idx]  # DF1
+    
+    # Outer handlers = handlers[:current_idx]
+    outer_handlers = current_df.handlers[:current_df.handler_idx]
+    # (outer, inner)[:1] = (outer,)
+    
+    # Create new DF directly
+    DF2 = DispatchingFrame(
+        effect=forward.effect,
+        handler_idx=0,
+        handlers=(outer,),
+        handler_started=False
+    )
+    return CESKState(C=Value(None), K=[DF2] + K, ...)
+
+C = Value(None)
+K = [DF2(idx=0, started=False), inner_gen, DF1(idx=1, started=True), user_gen, WHF(inner), WHF(outer)]
+     ↑ NEW DF                    ↑ waiting for outer's result
+```
+
+### Steps 9-17: (identical to re-yield)
+
+```
+Step 9-17: (identical to re-yield case)
+- outer handles, resumes with 42
+- inner receives 42, resumes user with 42
+- user returns 43
+- Done(43)
+```
+
+---
+
+## Comparison: Re-yield vs Forward at Step 8
+
+| Aspect | Re-yield (`yield effect`) | Forward (`yield Forward(effect)`) |
+|--------|---------------------------|-----------------------------------|
+| Yielded value | `EffectYield(SomeEffect())` | `EffectYield(Forward(SomeEffect()))` |
+| Detection | `isinstance(yielded, EffectBase)` | `isinstance(yielded, Forward)` |
+| Handler | `start_dispatch()` | `handle_forward()` |
+| Find outer handlers | `collect_available_handlers(K)` walks K | Direct: `DF.handlers[:idx]` |
+| Creates | DF2 with `handlers=(outer,)` | DF2 with `handlers=(outer,)` |
+| **Result** | **Identical K structure** | **Identical K structure** |
+
+### Why Forward Exists
+
+1. **Clarity**: `yield Forward(effect)` explicitly communicates forwarding intent
+2. **Efficiency**: Skips `collect_available_handlers` K-walk (minor optimization)
+3. **Better errors**: Forward validates it's inside a handler context
+
+```python
+# handle_forward can give a clear error:
+if df_idx is None:
+    raise RuntimeError("Forward called outside of handler context")
+
+# vs start_dispatch which would give:
+raise UnhandledEffectError("No handler for SomeEffect")  # Less clear
+```
+
+### Recommendation
+
+Use `Forward` for explicit forwarding. Use re-yield only when you want to treat the effect as a "new" effect that happens to be the same.
+
+---
+
+## Module Organization
+
+```
+doeff/cesk_v3/
+├── __init__.py
+├── errors.py                    # UnhandledEffectError
+│
+├── level1_cesk/
+│   ├── __init__.py
+│   ├── state.py                 # CESKState, Control types (Value, Error, etc.)
+│   ├── frames.py                # ReturnFrame only
+│   ├── step.py                  # cesk_step()
+│   └── types.py                 # Environment, Store type aliases
+│
+├── level2_algebraic_effects/
+│   ├── __init__.py
+│   ├── frames.py                # WithHandlerFrame, DispatchingFrame
+│   ├── primitives.py            # ControlPrimitive, WithHandler, Resume, Forward
+│   ├── step.py                  # level2_step()
+│   ├── dispatch.py              # start_dispatch(), collect_available_handlers()
+│   └── handlers.py              # handle_resume(), handle_forward(), handle_with_handler(),
+│                                # handle_implicit_abandonment()
+│
+└── run.py                       # Main loop: run()
+```
+
+**Note**: No `level3_user_effects/` - user effect dispatch is handled by Level 2 via DispatchingFrame.
 
 ---
 
@@ -1795,456 +1386,101 @@ def run(program: Program[T]) -> T:
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Level 1: CESK Machine (cesk_step) - THE ONLY STEPPER               │
-│  Module: doeff.cesk.level1_cesk                                     │
-│  State: C, E, S, K (pure, no effect knowledge)                      │
+│  Level 1: CESK Machine (cesk_step)                                  │
+│  Module: doeff.cesk_v3.level1_cesk                                  │
+│  State: C, E, S, K                                                  │
 │  Frames: ReturnFrame only                                           │
 │  Produces: Value, EffectYield, Error, Done, Failed                  │
 └─────────────────────────────────────────────────────────────────────┘
                               │
-                              │ EffectYield
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Level 2: Algebraic Effects (TRANSLATION LAYER)                     │
-│  Module: doeff.cesk.level2_algebraic_effects                        │
-│  Function: translate_control_primitive()                            │
-│  State: AlgebraicEffectsState in S["__doeff_internal_ae__"]         │
+│  Level 2: Algebraic Effects Machine (level2_step)                   │
+│  Module: doeff.cesk_v3.level2_algebraic_effects                     │
+│  Frames: WithHandlerFrame, DispatchingFrame                         │
+│  Handles: WithHandler, Resume, Forward, EffectBase dispatch         │
 │                                                                     │
-│  INTERCEPTS: ControlPrimitive (WithHandler, Resume, GetCont...)     │
-│  PASSES: EffectBase to Level 3                                      │
-│                                                                     │
-│  INVARIANT: ControlPrimitive NEVER reaches Level 3                  │
-└─────────────────────────────────────────────────────────────────────┘
-                              │
-                              │ EffectBase
-                              ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  Level 3: User Effects (TRANSLATION LAYER)                          │
-│  Module: doeff.cesk.level3_user_effects                             │
-│  Function: translate_user_effect()                                  │
-│                                                                     │
-│  - Finds handler in AlgebraicEffectsState.handler_stack             │
-│  - Invokes handler with effect                                      │
-│  - Handler uses Level 2 primitives to respond                       │
+│  KEY INSIGHT: All state in K. No separate H stack.                  │
+│  - WHF holds handler function                                       │
+│  - DispatchingFrame tracks dispatch progress + handler_started      │
+│  - Forwarding = Forward primitive or re-yield (both work)           │
+│  - Implicit abandonment if handler returns without Resume           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key Architecture Points:**
 
-1. **Level 2 wraps Level 1**: `level2_step()` handles WithHandlerFrame before/ControlPrimitive after `cesk_step()`
-2. **Two frame types in K**: `ReturnFrame` (Level 1) and `WithHandlerFrame` (Level 2)
-3. **Shared Store**: Level 2 stores `AlgebraicEffectsState` in Level 1's Store under single key
-4. **Immutable State**: `AlgebraicEffectsState` is a frozen dataclass with update methods
-5. **Handler = Function**: Handler is `Callable[[EffectBase], Program[Any]]`, Python closures handle scoping
-6. **Two-Stack Model**: Level 2 maintains `handler_stack` parallel to K's `WithHandlerFrame`s
-7. **Per-Handler captured_k**: Each `HandlerEntry` holds its own captured continuation, enabling nested handler dispatch
+1. **Unified K**: All handler and dispatch state lives in K
+2. **Three frame types**: ReturnFrame, WithHandlerFrame, DispatchingFrame
+3. **WHF holds handler**: Not just a marker, contains the handler function
+4. **DispatchingFrame**: Makes dispatch a VM operation, state is capturable
+5. **handler_started flag**: Distinguishes initial dispatch from handler completion
+6. **Handler snapshot**: DispatchingFrame freezes available handlers at dispatch start
+7. **Busy boundary**: Nested dispatch uses `handlers[:idx]` from parent DF (see ADR-5)
+8. **No Level 3**: User effect dispatch is Level 2's DispatchingFrame logic
+9. **K never cleared**: Invariant violation → raise, never `K=[]`
 
-**Frame Ownership:**
+**Handler API:**
 
-| Frame Type | Owned By | Handles |
-|------------|----------|---------|
-| `ReturnFrame` | Level 1 (`cesk_step`) | Send value to generator |
-| `WithHandlerFrame` | Level 2 (`level2_step`) | Pop handler on completion |
+| Yield | Effect |
+|-------|--------|
+| `Resume(value)` | Resume user continuation, handler receives user's result |
+| `Forward(effect)` | Delegate to outer handlers (explicit) |
+| `yield effect` | Also forwards (via nested DF), works but more frames |
+| `return value` | Implicit abandonment - user continuation dropped |
 
-**Invariants (enforced by runtime assertions + semgrep):**
+**Invariants:**
 
-1. **Level 1 never processes WHF at K[0]** - Level 2 intercepts WithHandlerFrame before Level 1 sees it
-2. **ControlPrimitive never reaches Level 3** - intercepted by Level 2
-3. **Internal store key is private** - user code cannot access `__doeff_internal_ae__`
-4. **One-shot continuations** - each continuation can only be resumed ONCE
-5. **Paired push/pop** - Each WithHandler creates (HandlerEntry, WHF) pair, popped together
-6. **Index stability** - Push/pop at END keeps `active_handler_index` valid across nested handlers
+1. Level 1 only sees ReturnFrame at K[0]
+2. ControlPrimitive never goes through dispatch (handled directly by Level 2)
+3. WHF and DispatchingFrame are always intercepted by Level 2
+4. K is never set to `[]` except naturally at computation end
+5. **EffectYield consumption**: Level 2 MUST consume EffectYield and convert to another Control type. Level 2 must NEVER return a state with `C=EffectYield`. (Prevents infinite loops)
 
 ---
 
 ## Implementation Plan
 
-See **[ISSUE-CESK-006-implementation.md](../../issues/ISSUE-CESK-006-implementation.md)** for the detailed phased implementation plan.
+### Phase 1: Foundation
+- Module structure
+- Frame types (ReturnFrame, WithHandlerFrame, DispatchingFrame with handler_started)
+- Control types (Value, Error, EffectYield, etc.)
+- ControlPrimitive types (WithHandler, Resume, Forward)
 
-### Phase Overview
+### Phase 2: Level 1
+- `cesk_step()` - pure CESK, only ReturnFrame
 
-| Phase | Focus | Key Deliverable |
-|-------|-------|-----------------|
-| 1 | Foundation | Module structure, all types |
-| 2 | Level 1 | `cesk_step()` - pure CESK |
-| 3 | Level 2 (install) | `level2_step()`, WithHandler |
-| 4 | Level 2 (resume) | Resume, Abort, one-shot |
-| 5 | Level 3 | `translate_user_effect()` |
-| 6 | Integration | `run()`, basic handlers |
-| 7 | Edge cases | Nested handlers, errors |
-| 8 | Migration | Handler migration, cleanup |
-| 9 | Polish | Semgrep, docs |
+### Phase 3: Level 2 Core
+- `level2_step()` - wraps Level 1
+- `handle_with_handler()` - push WHF, start program
+- WHF processing - scope end
 
-### Target Module Structure
+### Phase 4: Dispatch
+- `start_dispatch()` - push DispatchingFrame (handler_started=False)
+- `collect_available_handlers()` - walk K for handlers
+- DispatchingFrame processing - check handler_started flag
+  - False: start handler, update to True
+  - True: handler returned without Resume → implicit abandonment
 
-```
-doeff/cesk/
-├── level1_cesk/
-│   ├── __init__.py
-│   ├── state.py          # CESKState, Value, Error, EffectYield, ProgramControl, Done, Failed
-│   ├── frames.py         # ReturnFrame, WithHandlerFrame
-│   ├── step.py           # cesk_step()
-│   └── types.py          # Kontinuation, Environment, Store type aliases
-│
-├── level2_algebraic_effects/
-│   ├── __init__.py
-│   ├── state.py          # AlgebraicEffectsState, HandlerEntry, DOEFF_INTERNAL_AE
-│   ├── primitives.py     # ControlPrimitive, WithHandler, Resume, Abort, etc.
-│   ├── step.py           # level2_step()
-│   ├── translate.py      # translate_control_primitive()
-│   └── handle.py         # ContinuationHandle, Handler type alias
-│
-├── level3_user_effects/
-│   ├── __init__.py
-│   ├── base.py           # EffectBase
-│   └── translate.py      # translate_user_effect()
-│
-├── run.py                # Main loop: run()
-└── errors.py             # UnhandledEffectError, etc.
-```
+### Phase 5: Control Primitives
+- `handle_resume()` - find handler's WHF by identity, arrange K
+- `handle_forward()` - create nested DF with outer handlers
+- `handle_implicit_abandonment()` - drop user continuation, close generators
 
----
+### Phase 6: Integration
+- `run()` main loop
+- Basic handler examples
 
-## Success Criteria
-
-1. **Module clarity**: Each class lives in the correct level module
-2. **One stepper**: Only `cesk_step()` exists; no `algebraic_effects_step()` or `user_effects_step()`
-3. **Translation functions**: `translate_control_primitive()` and `translate_user_effect()`
-4. **Immutable state dataclass**: `AlgebraicEffectsState` in `S["__doeff_internal_ae__"]`
-5. **Handler = function**: `Handler = Callable[[EffectBase], Program[Any]]`, no wrapper class
-6. **No hacks**: No `DirectState`, no `ResumeK`, no `ctx.k`, no `HandlerCtx`
-7. **Tests pass**: All existing functionality preserved
-
-**Two-Stack Model:**
-
-8. **Per-handler captured_k**: 
-   - `HandlerEntry` contains `captured_k` and `captured_k_id`
-   - `handler_stack: tuple[HandlerEntry, ...]` (not `tuple[Handler, ...]`)
-   - Each handler invocation maintains its own captured continuation
-   - Enables nested handler dispatch (handler yielding WithHandler)
-
-9. **Stack coordination** (relaxed, not strict correspondence):
-   - Each `WithHandler` creates paired (HandlerEntry, WHF) - they get popped together
-   - Push/pop at END of handler_stack for index stability
-   - `active_handler_index` remains valid across nested handler pushes
-   - Note: During dispatch, K is cleared so count(WHF in K) != len(handler_stack) temporarily
-
-**Invariant Enforcement:**
-
-10. **Level 1 never processes WHF at K[0]**: 
-    - Runtime: assert in `cesk_step()` that K[0] is `ReturnFrame` when processing
-    - Level 2 intercepts `WithHandlerFrame` before delegating to Level 1
-    - Note: K CAN contain `WithHandlerFrame` deeper in the stack
-   
-11. **ControlPrimitive never reaches Level 3**:
-    - Runtime: `assert not isinstance(effect, ControlPrimitive)` in Level 3
-    - Semgrep: Block ControlPrimitive in handler dispatch paths
-   
-12. **Internal store key private**:
-    - Runtime: `AskStore()` filters out `__doeff_internal_*` keys
-    - Semgrep: Block direct access to `__doeff_internal_ae__` outside Level 2
-
-13. **One-shot continuations**:
-    - Runtime: Track in `AlgebraicEffectsState.consumed_continuations`
-    - Runtime: `Resume` raises `RuntimeError` if continuation already consumed
-    - Semgrep: Warn on multiple `yield Resume(...)` in same handler (heuristic)
-    - Semgrep: Error on sequential `yield Resume(...)` calls (definite violation)
-
----
-
-## Testing Structure
-
-Tests are organized by layer with dedicated fixtures per layer. No mocking between layers - Level 1 is pure and deterministic, so Level 2/3 tests use the real Level 1 implementation.
-
-### Directory Structure
-
-```
-tests/cesk/
-├── conftest.py                     # Shared across all cesk tests
-│
-├── level1_cesk/
-│   ├── conftest.py                 # Level 1 fixtures
-│   ├── test_cesk_step.py           # cesk_step() transitions
-│   ├── test_return_frame.py        # ReturnFrame behavior
-│   ├── test_generator_protocol.py  # next/send/throw mechanics
-│   └── test_terminal_states.py     # Done/Failed conditions
-│
-├── level2_algebraic_effects/
-│   ├── conftest.py                 # Level 2 fixtures
-│   ├── test_with_handler_frame.py  # WithHandlerFrame lifecycle
-│   ├── test_control_primitives.py  # WithHandler, Resume, GetContinuation
-│   ├── test_one_shot.py            # One-shot continuation enforcement
-│   ├── test_ae_state.py            # AlgebraicEffectsState immutability
-│   └── test_level2_step.py         # level2_step() wrapping behavior
-│
-├── level3_user_effects/
-│   ├── conftest.py                 # Level 3 fixtures
-│   ├── test_handler_dispatch.py    # Finding/invoking handlers
-│   ├── test_effect_forwarding.py   # active_handler_index mechanics
-│   └── test_handler_errors.py      # Auto-resume with error
-│
-├── integration/
-│   ├── conftest.py
-│   ├── test_full_stack.py          # End-to-end effect handling
-│   ├── test_nested_handlers.py     # Handler composition
-│   ├── test_handler_yields_with_handler.py  # Handler installing nested handlers
-│   ├── test_resume_flow.py         # K concatenation semantics
-│   └── test_handler_transforms.py  # Handlers transforming results
-│
-├── invariants/
-│   ├── conftest.py
-│   ├── test_l1_never_sees_whf.py   # Level 1 never processes WHF at K[0]
-│   ├── test_control_primitive_intercept.py  # ControlPrimitive never reaches L3
-│   ├── test_internal_key_private.py # __doeff_internal_ae__ hidden
-│   ├── test_one_shot_violations.py  # Double-resume raises RuntimeError
-│   ├── test_paired_push_pop.py     # HandlerEntry and WHF popped together
-│   └── test_index_stability.py     # active_handler_index valid across nested pushes
-│
-└── migration/
-    ├── conftest.py
-    ├── test_existing_handlers.py   # Current handlers still work
-    └── test_backward_compat.py     # Public API unchanged
-```
-
-### Testing Philosophy
-
-| Layer | Testing Approach | Isolation |
-|-------|------------------|-----------|
-| **Level 1** | Pure unit tests | Fully isolated - no effects knowledge |
-| **Level 2** | Unit tests with real Level 1 | Uses real `cesk_step()` |
-| **Level 3** | Unit tests with real Level 1+2 | Uses real `level2_step()` |
-| **Integration** | Full stack tests | No mocks, verify end behavior |
-| **Invariants** | Adversarial + property-based | Try to break invariants |
-
-### Corrected Invariants
-
-**Important**: K CAN contain `WithHandlerFrame` - it marks handler scope boundaries deeper in the stack.
-
-The correct invariant is: **Level 1 never processes `WithHandlerFrame` at `K[0]`**.
-
-```
-User code running inside handler scope:
-  K = [ReturnFrame(user_gen), WithHandlerFrame, ReturnFrame(outer_gen)]
-                              ↑
-                              Handler boundary (valid, deeper in stack)
-
-When Value reaches WithHandlerFrame:
-  C = Value(result)
-  K = [WithHandlerFrame, ReturnFrame(outer_gen)]
-       ↑
-       Level 2 intercepts BEFORE cesk_step sees it
-```
-
-### Key Test Cases
-
-#### Level 1 Tests
-
-```python
-# test_cesk_step.py
-def test_program_control_starts_generator():
-    """ProgramControl → EffectYield + ReturnFrame pushed"""
-    
-def test_value_sends_to_return_frame():
-    """Value + ReturnFrame → send() to generator"""
-    
-def test_value_empty_k_is_done():
-    """Value + [] → Done(value)"""
-    
-def test_error_throws_to_return_frame():
-    """Error + ReturnFrame → throw() to generator"""
-
-def test_asserts_on_non_return_frame():
-    """Assert if K[0] is not ReturnFrame when processing"""
-```
-
-#### Level 2 Tests
-
-```python
-# test_level2_step.py
-def test_intercepts_whf_before_level1():
-    """Value + WithHandlerFrame → pop handler, cesk_step NOT called"""
-    
-def test_delegates_return_frame_to_level1():
-    """Value + ReturnFrame → cesk_step called"""
-    
-def test_translates_control_primitive():
-    """EffectYield(ControlPrimitive) → translate, not passed to L3"""
-
-# test_one_shot.py
-def test_resume_marks_consumed():
-    """Resume adds k_id to consumed_continuations"""
-    
-def test_double_resume_raises():
-    """Second Resume with same k_id → RuntimeError"""
-```
-
-#### Level 3 Tests
-
-```python
-# test_handler_dispatch.py
-def test_finds_handler_in_stack():
-    """Effect → handler_stack[0] invoked"""
-    
-def test_captures_continuation_per_handler():
-    """K captured in handler_stack[i].captured_k, not global field"""
-
-# test_effect_forwarding.py  
-def test_active_handler_index_increments():
-    """Handler yields effect → search from index+1"""
-```
-
-#### Integration Tests: Handler Yields WithHandler (Two-Stack Model)
-
-```python
-# test_handler_yields_with_handler.py
-
-def test_handler_installs_nested_handler():
-    """Handler can yield WithHandler to install nested handler.
-    
-    outer_handler handles MyEffect, installs inner_handler for sub-program,
-    then resumes user with the result.
-    """
-    @do
-    def inner_handler(effect):
-        if isinstance(effect, InnerEffect):
-            return (yield Resume(100))
-        outer = yield effect
-        return (yield Resume(outer))
-
-    @do
-    def outer_handler(effect):
-        if isinstance(effect, MyEffect):
-            @do
-            def nested():
-                return (yield InnerEffect())
-            
-            result = yield WithHandler(inner_handler, nested())
-            return (yield Resume(result))  # Resume ORIGINAL user
-        ...
-
-    @do
-    def user_code():
-        x = yield MyEffect()
-        return x + 1
-    
-    # Expected: user_code receives 100, returns 101
-    result = run(WithHandler(outer_handler, user_code()))
-    assert result == 101
-
-
-def test_nested_handler_does_not_overwrite_outer_captured_k():
-    """Per-handler captured_k prevents outer continuation loss.
-    
-    When inner_handler dispatches, it stores captured_k in handler_stack[0].
-    outer_handler's captured_k remains in handler_stack[1], untouched.
-    """
-    @do
-    def inner_handler(effect):
-        if isinstance(effect, InnerEffect):
-            # This captures nested()'s K into handler_stack[0].captured_k
-            return (yield Resume("inner_result"))
-        outer = yield effect
-        return (yield Resume(outer))
-
-    @do
-    def outer_handler(effect):
-        if isinstance(effect, MyEffect):
-            @do
-            def nested():
-                return (yield InnerEffect())
-            
-            inner_result = yield WithHandler(inner_handler, nested())
-            # handler_stack[1].captured_k still has user's K
-            user_result = yield Resume(inner_result)
-            return user_result
-        ...
-
-    @do
-    def user_code():
-        x = yield MyEffect()
-        return f"user got {x}"
-    
-    result = run(WithHandler(outer_handler, user_code()))
-    assert result == "user got inner_result"
-
-
-def test_deeply_nested_handlers():
-    """Three levels of nested handlers, each with its own captured_k."""
-    # handler_stack[0] → innermost, has nested2's K
-    # handler_stack[1] → middle, has nested1's K  
-    # handler_stack[2] → outermost, has user's K
-    ...
-```
-
-### Property-Based Tests (Hypothesis)
-
-```python
-# test_l1_never_sees_whf.py
-from hypothesis import given, strategies as st
-
-@given(k_stack=st.lists(st.sampled_from([
-    ReturnFrame(mock_gen()),
-    WithHandlerFrame(),
-])))
-def test_level2_always_intercepts_whf_before_level1(k_stack):
-    """Property: If K[0] is WithHandlerFrame and C is Value,
-    level2_step handles it without calling cesk_step."""
-    if k_stack and isinstance(k_stack[0], WithHandlerFrame):
-        state = CESKState(C=Value(42), E={}, S={}, K=k_stack)
-        result = level2_step(state)
-        # Verify WHF was popped
-        assert not (result.K and isinstance(result.K[0], WithHandlerFrame))
-
-
-# test_internal_key_private.py
-@given(user_keys=st.dictionaries(
-    keys=st.text().filter(lambda k: not k.startswith("__doeff_internal_")),
-    values=st.integers()
-))
-def test_ask_store_never_exposes_internal_keys(user_keys):
-    """Property: AskStore() result never contains __doeff_internal_* keys."""
-    internal_state = AlgebraicEffectsState()
-    store = {**user_keys, DOEFF_INTERNAL_AE: internal_state}
-    
-    result = translate_ask_store(store)
-    
-    assert DOEFF_INTERNAL_AE not in result
-    assert all(not k.startswith("__doeff_internal_") for k in result)
-```
+### Phase 7: Testing
+- Unit tests per level
+- Integration tests for nested handlers
+- Forwarding tests (Forward and re-yield)
+- Implicit abandonment tests
 
 ---
 
 ## References
 
-### Language Implementations
-
 - [Koka Language](https://koka-lang.github.io/) - Evidence-passing, multi-prompt delimited control
-- [Koka Book - Section 3.4.8](https://koka-lang.github.io/koka/doc/book.html#sec-overriding-handlers) - Handlers installing nested handlers
 - [OCaml 5 Effects](https://ocaml.org/manual/effects.html) - Fiber-based stack switching
-- [OCaml 5 Manual - Section 24.5](https://v2.ocaml.org/manual/effects.html#s:effects-nesting) - Nested effect handlers
-
-### Academic Papers
-
-- [Generalized Evidence Passing for Effect Handlers](https://www.microsoft.com/en-us/research/publication/generalized-evidence-passing-for-effect-handlers/) (Xie & Leijen, 2021) - Koka's compilation strategy
-- [Effect Handlers via Generalised Continuations](https://homepages.inf.ed.ac.uk/slindley/papers/ehgc.pdf) (Hillerström et al., 2020) - Deep, shallow, parameterized handlers
-- [Handlers of Algebraic Effects](https://www.eff-lang.org/handlers-tutorial.pdf) (Pretnar, 2015) - Tutorial on algebraic effects
-
-### Key Insights from Research
-
-| System | Continuation Management | Nested Handlers |
-|--------|------------------------|-----------------|
-| **Koka** | Evidence vectors - each prompt has own state | ✓ Fully supported |
-| **OCaml5** | Fibers - linked list of stack segments | ✓ Fully supported |
-| **doeff** | Per-handler captured_k in handler_stack | ✓ Supported via two-stack model |
-
-Both Koka and OCaml5 allow handlers to:
-1. Perform effects (handled by outer handlers)
-2. Install nested handlers before resuming
-
-This informed our decision for per-handler `captured_k` (ADR-3).
-
-### Internal Specs
-
-- SPEC-CESK-001: Separation of Concerns
-- SPEC-CESK-003: Minimal Frame Architecture
-- SPEC-CESK-005: Simplify PythonAsyncSyntaxEscape
+- [Generalized Evidence Passing](https://www.microsoft.com/en-us/research/publication/generalized-evidence-passing-for-effect-handlers/) - Koka's compilation strategy
