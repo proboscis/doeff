@@ -7,342 +7,511 @@
 
 Implement the layered algebraic effects architecture as defined in SPEC-CESK-006. This is a rewrite of `step.py` (v1) with proper three-level architecture.
 
-## Implementation Approach
+## Current Status
 
-This is **v3** of the CESK implementation. We keep v1 tests intact and migrate them incrementally.
+**109 tests passing** in `tests/cesk_v3/`
 
-### Test Migration Strategy
+### Completed
+- [x] Phase 1: Module Structure & Types
+- [x] Phase 2: Level 1 CESK Machine (`cesk_step`)
+- [x] Phase 3: Level 2 WithHandler
+- [x] Phase 4: Level 2 Resume, Forward
+- [x] Phase 5: Level 2 Dispatch (DispatchingFrame)
+- [x] Phase 6: Simple `run()` loop
+- [x] Phase 7: Nested handlers, implicit abandonment
+- [x] Phase 8: Scheduling Primitives (GetContinuation, ResumeContinuation)
+- [x] Phase 9: Fiber Creation (GetHandlers, CreateContinuation)
 
-```
-tests/cesk/           # v1 tests (existing) - keep intact, mark as v1
-tests/cesk_v3/        # v3 tests (new) - migrated + new tests per spec
-```
+### In Progress
+- [ ] Phase 10: Async Execution Architecture
+- [ ] Phase 11: Run Functions (sync_run, async_run)
+- [ ] Phase 12: Handler Presets
+- [ ] Phase 13: Async Integration Tests
 
-**For each phase:**
-1. Identify v1 tests that cover similar functionality
-2. Copy relevant tests to `tests/cesk_v3/` 
-3. Adapt to v3 API (new imports, new primitives)
-4. Write additional tests based on spec (for new behavior)
-5. Implement v3 code until all v3 tests pass
-6. v1 tests remain intact (can run separately)
+### Pending
+- [ ] Phase 14: Level 3 Core Effects (full implementation)
+- [ ] Phase 15: Handler Migration from v1
+- [ ] Phase 16: Cutover & Cleanup
 
-**Why this approach:**
-- Don't lose valuable test cases from v1
-- v1 tests serve as reference for expected behavior
-- Incremental migration reduces risk
-- Can run v1 and v3 tests independently during transition
-- After full migration, v1 tests can be removed
+---
 
-### Directory Structure During Development
+## Phase 10: Async Execution Architecture
 
-```
-doeff/cesk/                    # v1 implementation (existing, keep until Phase 8)
-doeff/cesk_v3/                 # v3 implementation (new, per this spec)
-    ├── level1_cesk/
-    ├── level2_algebraic_effects/
-    ├── level3_user_effects/
-    └── run.py
+**Goal**: Add `PythonAsyncSyntaxEscape` as a Level 2 control primitive and step result.
 
-tests/cesk/                    # v1 tests (existing, keep as reference)
-tests/cesk_v3/                 # v3 tests (new + migrated from v1)
-    ├── level1_cesk/
-    ├── level2_algebraic_effects/
-    ├── level3_user_effects/
-    ├── integration/
-    └── invariants/
-```
+**Reference**: SPEC-CESK-006 "Async Execution Architecture" section, ADR-15
 
-### Running Tests
+**Key insight**: `PythonAsyncSyntaxEscape` is a Python syntax workaround, NOT a fundamental primitive. sync_run is the clean implementation; async_run exists for asyncio integration.
 
-```bash
-# During development - run only v3 tests
-pytest tests/cesk_v3/
+### Step 1 - Add PythonAsyncSyntaxEscape primitive
 
-# Check v1 still works (optional, for reference)
-pytest tests/cesk/
+File: `doeff/cesk_v3/level2_algebraic_effects/primitives.py`
 
-# After Phase 8 cutover - v3 becomes main
-pytest tests/cesk/
+```python
+@dataclass(frozen=True)
+class PythonAsyncSyntaxEscape(ControlPrimitive):
+    """Escape to Python's async event loop.
+    
+    WHY THIS EXISTS: Python's asyncio APIs require async def context.
+    Handlers run during step() which is synchronous. This escape lets
+    handlers say "please run this in an async context".
+    
+    - Handler yields with VALUE-returning action
+    - level2_step wraps to STATE-returning action
+    - async_run awaits and gets CESKState directly
+    """
+    action: Callable[[], Awaitable[Any]]
 ```
 
-## Phases
+### Step 2 - Add handle_async_escape to Level 2
 
-### Phase 1: Module Structure & Types (Foundation)
+File: `doeff/cesk_v3/level2_algebraic_effects/handlers.py`
 
-**Goal**: Create module structure and all type definitions. No logic yet.
-
-**Step 1 - Migrate/create tests**:
-
-Check v1 tests for relevant cases:
-```bash
-# Find existing type-related tests
-ls tests/cesk/test_*.py | xargs grep -l "CESKState\|ReturnFrame\|HandlerFrame"
+```python
+def handle_async_escape(
+    escape: PythonAsyncSyntaxEscape, state: CESKState
+) -> PythonAsyncSyntaxEscape:
+    """Wrap handler's value-returning action to return CESKState."""
+    C, E, S, K = state.C, state.E, state.S, state.K
+    original_action = escape.action
+    
+    async def wrapped_action() -> CESKState:
+        value = await original_action()
+        return CESKState(C=Value(value), E=E, S=S, K=K)
+    
+    return PythonAsyncSyntaxEscape(action=wrapped_action)
 ```
 
-Create v3 test structure:
+### Step 3 - Update level2_step return type
+
+File: `doeff/cesk_v3/level2_algebraic_effects/step.py`
+
+```python
+def level2_step(state: CESKState) -> CESKState | Done | Failed | PythonAsyncSyntaxEscape:
+    # ... existing code ...
+    
+    if isinstance(C, EffectYield):
+        yielded = C.yielded
+        
+        # ... existing primitives ...
+        
+        if isinstance(yielded, PythonAsyncSyntaxEscape):
+            return handle_async_escape(yielded, state)
+```
+
+### Step 4 - Tests
+
+File: `tests/cesk_v3/level2/test_async_escape.py`
+
+- Handler yields escape with value-returning action
+- level2_step wraps and returns state-returning escape
+- Action captures correct E, S, K
+
+**Exit criteria**: PythonAsyncSyntaxEscape flows from handler through level2_step with correct wrapping.
+
+---
+
+## Phase 11: Run Functions (sync_run, async_run)
+
+**Goal**: Replace simple `run()` with `sync_run()` and `async_run()` returning `RunResult`.
+
+**Reference**: SPEC-CESK-006 "Async Execution Architecture" section
+
+### Step 1 - Define RunResult
+
+File: `doeff/cesk_v3/result.py`
+
+```python
+@dataclass
+class RunResult(Generic[T]):
+    """Result of running a program, with CESK state access."""
+    value: T | None = None
+    error: BaseException | None = None
+    final_store: dict[str, Any] = field(default_factory=dict)
+    
+    @property
+    def is_ok(self) -> bool:
+        return self.error is None
+    
+    def unwrap(self) -> T:
+        if self.error is not None:
+            raise self.error
+        return cast(T, self.value)
+```
+
+### Step 2 - Implement sync_run
+
+File: `doeff/cesk_v3/run.py`
+
+```python
+def sync_run(
+    program: Program[T],
+    handlers: list[Handler],
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> RunResult[T]:
+    """Run synchronously. Raises TypeError on PythonAsyncSyntaxEscape."""
+    wrapped = _wrap_with_handlers(program, handlers)
+    state = CESKState(C=ProgramControl(wrapped), E=env or {}, S=store or {}, K=[])
+    
+    while True:
+        result = level2_step(state)
+        
+        if isinstance(result, Done):
+            return RunResult(value=result.value, final_store=state.S)
+        if isinstance(result, Failed):
+            return RunResult(error=result.error, final_store=state.S)
+        if isinstance(result, PythonAsyncSyntaxEscape):
+            raise TypeError("sync_run received PythonAsyncSyntaxEscape. Use async_run.")
+        
+        state = result
+```
+
+### Step 3 - Implement async_run
+
+```python
+async def async_run(
+    program: Program[T],
+    handlers: list[Handler],
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> RunResult[T]:
+    """Run asynchronously. Awaits PythonAsyncSyntaxEscape actions."""
+    wrapped = _wrap_with_handlers(program, handlers)
+    state = CESKState(C=ProgramControl(wrapped), E=env or {}, S=store or {}, K=[])
+    
+    while True:
+        result = level2_step(state)
+        
+        if isinstance(result, Done):
+            return RunResult(value=result.value, final_store=state.S)
+        if isinstance(result, Failed):
+            return RunResult(error=result.error, final_store=state.S)
+        if isinstance(result, PythonAsyncSyntaxEscape):
+            state = await result.action()
+            await asyncio.sleep(0)
+            continue
+        
+        state = result
+        await asyncio.sleep(0)
+```
+
+### Step 4 - Tests
+
+File: `tests/cesk_v3/test_run.py`
+
+- sync_run returns RunResult with value
+- sync_run returns RunResult with error
+- sync_run raises TypeError on escape
+- async_run awaits escapes and continues
+- async_run returns RunResult
+
+**Exit criteria**: Both run functions work, return RunResult, handle escapes correctly.
+
+---
+
+## Phase 12: Handler Presets
+
+**Goal**: Create sync_handlers_preset and async_handlers_preset.
+
+**Reference**: SPEC-CESK-006 "Handler Presets" section, ADR-16
+
+### Step 1 - Implement sync_await_handler
+
+File: `doeff/cesk_v3/level3_core_effects/asyncio_bridge.py`
+
+Handler that handles `AwaitEffect` by running async in thread pool (no escape).
+
+```python
+@do
+def sync_await_handler(effect: EffectBase) -> Program[Any]:
+    if isinstance(effect, AwaitEffect):
+        # Run in thread pool, block until complete
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(effect.awaitable)
+        finally:
+            loop.close()
+        return (yield Resume(result))
+    return (yield Forward(effect))
+```
+
+### Step 2 - Implement python_async_syntax_escape_handler
+
+File: `doeff/cesk_v3/level3_core_effects/asyncio_bridge.py` (same file)
+
+Handler that handles `AwaitEffect` by yielding `PythonAsyncSyntaxEscape`.
+
+```python
+@do
+def python_async_syntax_escape_handler(effect: EffectBase) -> Program[Any]:
+    if isinstance(effect, AwaitEffect):
+        promise = yield CreateExternalPromise()
+        
+        async def fire_task():
+            try:
+                result = await effect.awaitable
+                promise.complete(result)
+            except BaseException as e:
+                promise.fail(e)
+        
+        yield PythonAsyncSyntaxEscape(
+            action=lambda: asyncio.create_task(fire_task())
+        )
+        
+        result = yield Wait(promise.future)
+        return (yield Resume(result))
+    
+    return (yield Forward(effect))
+```
+
+### Step 3 - Define presets
+
+File: `doeff/cesk_v3/run.py` (alongside sync_run/async_run)
+
+```python
+sync_handlers_preset: list[Handler] = [
+    state_handler({}),
+    reader_handler({}),
+    writer_handler(),
+    sync_await_handler,
+    # ... other handlers
+]
+
+async_handlers_preset: list[Handler] = [
+    state_handler({}),
+    reader_handler({}),
+    writer_handler(),
+    python_async_syntax_escape_handler,
+    # ... other handlers
+]
+```
+
+### Step 4 - Tests
+
+File: `tests/cesk_v3/test_presets.py`
+
+- sync_handlers_preset works with sync_run
+- async_handlers_preset works with async_run
+- Await effect works in both contexts
+
+**Exit criteria**: Both presets defined, work with respective run functions.
+
+---
+
+## Phase 13: Async Integration Tests
+
+**Goal**: Comprehensive tests for async execution.
+
+### Test Files
+
 ```
 tests/cesk_v3/
-├── conftest.py           # Shared fixtures for v3
-├── level1_cesk/
-│   ├── conftest.py
-│   └── test_types.py     # Type construction, immutability, frozen dataclass
+├── test_run.py                  # sync_run, async_run basics
+├── test_presets.py              # Handler preset tests
+├── test_async_integration.py    # Full async integration
+└── level2/
+    └── test_async_escape.py     # PythonAsyncSyntaxEscape Level 2 tests
+```
+
+### Test Cases
+
+**File: `tests/cesk_v3/test_run.py`**
+- sync_run returns RunResult with value
+- sync_run returns RunResult with error
+- sync_run raises TypeError on escape
+- async_run awaits escapes and continues
+- async_run returns RunResult
+
+**File: `tests/cesk_v3/test_presets.py`**
+- sync_handlers_preset works with sync_run
+- async_handlers_preset works with async_run
+- Both presets handle State/Reader/Writer identically
+
+**File: `tests/cesk_v3/test_async_integration.py`**
+
+1. **sync_run with sync_handlers_preset**
+   - Pure programs work
+   - State/Reader/Writer effects work
+   - Await effect via thread pool works
+
+2. **async_run with async_handlers_preset**
+   - Pure programs work
+   - State/Reader/Writer effects work
+   - Await effect via escape works
+   - Multiple awaits in sequence
+   - Concurrent awaits (Gather pattern)
+
+3. **Error handling**
+   - Exception in awaitable propagates
+   - sync_run raises TypeError on escape
+   - Error in handler propagates to RunResult
+
+4. **Integration with existing scheduling**
+   - Spawn + Await combination
+   - Cooperative scheduling with async effects
+
+**Exit criteria**: All async integration tests pass.
+
+---
+
+## Phase 14: Level 3 Core Effects (Full Implementation)
+
+**Goal**: Implement remaining core effects from spec.
+
+### Effects to implement
+
+Per SPEC-CESK-006 Level 3 section:
+
+| Category | Effects | Handler |
+|----------|---------|---------|
+| Writer | WriterTellEffect, WriterListenEffect | writer_handler |
+| Cache | CacheGet, CachePut, CacheDelete, CacheExists | cache_handler |
+| Atomic | AtomicGet, AtomicUpdate | atomic_handler |
+| Result | ResultSafeEffect | result_handler |
+| Promise | CreatePromise, CompletePromise, FailPromise | promise_handler |
+| Scheduler | Spawn, Wait, Gather, Race | scheduler_handler |
+| Debug | Graph, Intercept, Debug, Callstack | various |
+
+### Files to create
+
+```
+doeff/cesk_v3/level3_core_effects/
 │
-├── level2_algebraic_effects/
-│   ├── conftest.py
-│   └── test_state.py     # HandlerEntry methods, AlgebraicEffectsState methods
+│   # Fundamental Effects (pure, closure-based handlers)
+├── state.py            # ✅ Done - Get, Put, Modify + state_handler
+├── reader.py           # ✅ Done (partial) - Ask + reader_handler
+├── writer.py           # 🔄 In progress - Tell, Listen + writer_handler
+├── cache.py            # ⏳ Pending - CacheGet/Put/Delete/Exists + cache_handler
+├── atomic.py           # ⏳ Pending - AtomicGet/Update + atomic_handler
+├── result.py           # ⏳ Pending - Safe + result_handler
 │
-└── level3_user_effects/
-    ├── conftest.py
-    └── test_base.py      # EffectBase inheritance
-```
-
-**Step 2 - Implementation**:
-```
-doeff/cesk/
-├── level1_cesk/
-│   ├── __init__.py
-│   ├── state.py          # CESKState, Value, Error, EffectYield, ProgramControl, Done, Failed
-│   ├── frames.py         # ReturnFrame, WithHandlerFrame
-│   └── types.py          # Kontinuation, Environment, Store type aliases
+│   # Cooperative Scheduling Effects
+├── promise.py          # ⏳ Pending - CreatePromise/Complete/Fail + promise_handler
+├── scheduler.py        # ⏳ Pending - Spawn/Wait/Gather/Race + scheduler_handler
 │
-├── level2_algebraic_effects/
-│   ├── __init__.py
-│   ├── state.py          # AlgebraicEffectsState, HandlerEntry, DOEFF_INTERNAL_AE
-│   ├── primitives.py     # ControlPrimitive, WithHandler, Resume, Abort, GetContinuation, etc.
-│   └── handle.py         # ContinuationHandle, Handler type alias
+│   # External Integration Effects
+├── asyncio_bridge.py   # ⏳ Pending (Phase 12) - AwaitEffect
+│                       #   + sync_await_handler (thread pool)
+│                       #   + python_async_syntax_escape_handler (escapes)
+├── external_promise.py # ⏳ Pending - CreateExternalPromise
+│                       #   + sync_external_wait_handler
+│                       #   + async_external_wait_handler
 │
-├── level3_user_effects/
-│   ├── __init__.py
-│   └── base.py           # EffectBase
-│
-└── errors.py             # UnhandledEffectError, etc.
+│   # Debugging/Introspection Effects
+├── graph.py            # ⏳ Pending - GraphStep/Annotate/Snapshot/Capture + graph_handler
+├── intercept.py        # ⏳ Pending - InterceptEffect + intercept_handler
+├── debug.py            # ⏳ Pending - GetDebugContext + debug_handler
+└── callstack.py        # ⏳ Pending - ProgramCallFrame/Stack + callstack_handler
 ```
 
-**Exit criteria**: All types importable, pyright passes, all Phase 1 tests pass.
+**Exit criteria**: All core effects implemented with tests.
 
 ---
 
-### Phase 2: Level 1 CESK Machine (Pure Stepper)
+## Phase 15: Handler Migration from v1
 
-**Goal**: Implement `cesk_step()` - pure CESK machine with no effect knowledge.
+**Goal**: Migrate v1 handlers to v3 API, ensure feature parity.
 
-**Step 1 - Tests first**:
-- `tests/cesk/level1_cesk/test_cesk_step.py` - State transitions
-- `tests/cesk/level1_cesk/test_generator_protocol.py` - next/send/throw
-- `tests/cesk/level1_cesk/test_terminal_states.py` - Done/Failed conditions
+### v1 handlers to migrate
 
-**Step 2 - Implementation**:
 ```
-doeff/cesk/level1_cesk/
-└── step.py               # cesk_step() implementation
+doeff/cesk/handlers/
+├── state_handler.py           → use v3 state.py
+├── writer_handler.py          → use v3 writer.py
+├── cache_handler.py           → use v3 cache.py
+├── atomic_handler.py          → use v3 atomic.py
+├── graph_handler.py           → use v3 graph.py
+├── core_handler.py            → integrate into v3
+├── scheduler_state_handler.py → use v3 scheduler.py
+├── task_scheduler_handler.py  → use v3 scheduler.py
+├── sync_await_handler.py      → use v3 sync_await.py
+├── async_external_wait_handler.py → use v3 async handlers
+└── python_async_syntax_escape_handler.py → use v3 async_escape.py
 ```
 
-**Behavior to implement**:
-- `ProgramControl` → start generator, push ReturnFrame
-- `Value` + ReturnFrame → send to generator
-- `Error` + ReturnFrame → throw to generator  
-- `Value` + empty K → `Done`
-- `Error` + empty K → `Failed`
-- Assert: K[0] must be ReturnFrame when processing
+### Migration approach
 
-**Exit criteria**: Level 1 can step pure generator programs (no effects) to completion. All Phase 2 tests pass.
+1. Compare v1 handler behavior with v3 implementation
+2. Port any missing features/edge cases
+3. Ensure v1 tests pass against v3 handlers
+4. Mark v1 handlers as deprecated
+
+**Exit criteria**: v3 handlers have feature parity with v1.
 
 ---
 
-### Phase 3: Level 2 Step & WithHandler (Handler Installation)
+## Phase 16: Cutover & Cleanup
 
-**Goal**: Implement `level2_step()` that wraps Level 1, handle `WithHandler` and `WithHandlerFrame`.
+**Goal**: Make v3 the main implementation, remove v1.
 
-**Step 1 - Tests first**:
-- `tests/cesk/level2_algebraic_effects/test_level2_step.py` - Wrapping behavior
-- `tests/cesk/level2_algebraic_effects/test_with_handler.py` - Handler installation
-- `tests/cesk/invariants/test_l1_never_sees_whf.py` - WHF interception
+### Steps
 
-**Step 2 - Implementation**:
-```
-doeff/cesk/level2_algebraic_effects/
-├── step.py               # level2_step() - wraps cesk_step
-└── translate.py          # translate_control_primitive() - WithHandler only
-```
+1. **Update imports**
+   - `doeff/__init__.py` exports v3 run functions
+   - `doeff/cesk/__init__.py` deprecated, points to v3
 
-**Behavior to implement**:
-- PRE-STEP: If `C=Value` and `K[0]=WHF` → pop handler, continue
-- DELEGATE: Call `cesk_step()`
-- POST-STEP: If `EffectYield(ControlPrimitive)` → translate
-- `WithHandler` translation: push handler (at END), push WHF, start program
+2. **Move tests**
+   - `tests/cesk_v3/` → becomes main test location
+   - v1-specific tests marked/removed
 
-**Exit criteria**: Can install handlers, WHF correctly pops handlers on scope end. All Phase 3 tests pass.
+3. **Remove deprecated code**
+   - `doeff/cesk/step.py` (old v1)
+   - `doeff/cesk/step_v2.py`
+   - `doeff/cesk/handler_frame.py`
+   - Any other v1-only files
 
----
+4. **Documentation**
+   - Update docs to reference v3 API
+   - Migration guide for v1 → v3
 
-### Phase 4: Level 2 Resume & Abort (Continuation Management)
+5. **Final validation**
+   - `make lint` passes
+   - `make test` passes (full suite)
+   - Example programs work
 
-**Goal**: Implement `Resume` and `Abort` control primitives.
-
-**Step 1 - Tests first**:
-- `tests/cesk/level2_algebraic_effects/test_resume.py` - K concatenation, value flow
-- `tests/cesk/level2_algebraic_effects/test_abort.py` - Cleanup, warning
-- `tests/cesk/level2_algebraic_effects/test_one_shot.py` - Consumption tracking
-- `tests/cesk/invariants/test_one_shot_violations.py` - Double-resume error
-
-**Step 2 - Implementation**:
-- Update `translate.py` with Resume, Abort cases
-- One-shot tracking in AlgebraicEffectsState
-
-**Behavior to implement**:
-- `Resume`: Get captured_k from active handler, concatenate K, send value
-- `Abort`: Clean up captured_k (close generators), warn, continue with handler's K only
-- One-shot enforcement: Track consumed k_ids, raise on double-resume
-
-**Exit criteria**: Resume/Abort work correctly, one-shot enforced. All Phase 4 tests pass.
-
----
-
-### Phase 5: Level 3 User Effect Dispatch
-
-**Goal**: Implement `translate_user_effect()` - dispatch effects to handlers.
-
-**Step 1 - Tests first**:
-- `tests/cesk/level3_user_effects/test_handler_dispatch.py` - Finding handlers
-- `tests/cesk/level3_user_effects/test_effect_forwarding.py` - active_handler_index
-- `tests/cesk/invariants/test_control_primitive_intercept.py` - ControlPrimitive blocked
-
-**Step 2 - Implementation**:
-```
-doeff/cesk/level3_user_effects/
-└── translate.py          # translate_user_effect()
-```
-
-**Behavior to implement**:
-- Assert not ControlPrimitive
-- Find handler (search from END, innermost first)
-- Capture K into handler's slot (per-handler captured_k)
-- Invoke handler, set K=[]
-
-**Exit criteria**: Effects dispatched to correct handler, forwarding works. All Phase 5 tests pass.
-
----
-
-### Phase 6: Main Loop & Basic Handlers
-
-**Goal**: Wire up `run()` and implement basic handlers (state, reader).
-
-**Step 1 - Tests first**:
-- `tests/cesk/integration/test_full_stack.py` - End-to-end execution
-- `tests/cesk/integration/test_state_handler.py` - Get/Put effects
-- `tests/cesk/integration/test_reader_handler.py` - Ask effect
-
-**Step 2 - Implementation**:
-```
-doeff/cesk/
-├── run.py                # Main loop: run()
-└── handlers/
-    ├── __init__.py
-    ├── state.py          # Get/Put handler using new primitives
-    └── reader.py         # Ask handler using new primitives
-```
-
-**Behavior to implement**:
-- `run()`: Loop calling level2_step, translate user effects
-- State handler: `yield AskStore()`, `yield ModifyStore()`, `yield Resume()`
-- Reader handler: `yield AskEnv()`, `yield Resume()`
-
-**Exit criteria**: Can run programs with Get/Put/Ask effects end-to-end. All Phase 6 tests pass.
-
----
-
-### Phase 7: Nested Handlers & Edge Cases
-
-**Goal**: Verify nested handler dispatch works correctly (the two-stack model).
-
-**Step 1 - Tests first** (these test the hardest scenarios):
-- `tests/cesk/integration/test_nested_handlers.py` - Basic nesting
-- `tests/cesk/integration/test_handler_yields_with_handler.py` - Handler installing nested handler
-- `tests/cesk/integration/test_handler_errors.py` - Exception propagation
-- `tests/cesk/invariants/test_index_stability.py` - active_handler_index stays valid
-- `tests/cesk/invariants/test_paired_push_pop.py` - HandlerEntry/WHF pairing
-
-**Step 2 - Fix any issues found by tests**
-
-**Exit criteria**: All nested handler scenarios from spec work correctly. All Phase 7 tests pass.
-
----
-
-### Phase 8: Handler Migration & Cleanup
-
-**Goal**: Migrate remaining handlers, remove old code.
-
-**Step 1 - Migrate remaining v1 tests to v3**:
-- Copy remaining relevant tests from `tests/cesk/` to `tests/cesk_v3/`
-- Adapt to v3 API
-- Ensure all migrated tests pass
-
-**Step 2 - Migrate handlers**:
-1. Migrate each existing handler to new primitives:
-   - writer handler
-   - cache handler  
-   - scheduler handlers
-   - async handlers
-
-**Step 3 - Cutover**:
-1. Replace `doeff/cesk/` with v3 implementation
-2. Move `tests/cesk_v3/` to `tests/cesk/` (replace old tests)
-3. Remove deprecated files: `step.py` (old v1), `step_v2.py`, `handler_frame.py`
-4. Update `__init__.py` exports
-5. Run full test suite
-
-**Exit criteria**: All handlers migrated, v3 is now the main implementation, full test suite passes.
-
----
-
-### Phase 9: Enforcement & Documentation
-
-**Goal**: Add static analysis rules, finalize documentation.
-
-**Step 1 - Add semgrep rules** (test by running on codebase):
-- Block direct access to `__doeff_internal_ae__` outside Level 2
-- Warn on multiple Resume in handler
-- Block ControlPrimitive subclasses outside Level 2
-
-**Step 2 - Documentation**:
-- Update docstrings in all new modules
-- Type stubs if needed for public API
-- Update README if needed
-
-**Exit criteria**: `make lint` passes with new rules, docs complete.
+**Exit criteria**: v3 is the only CESK implementation, all tests pass.
 
 ---
 
 ## Phase Summary
 
-| Phase | Focus | Key Deliverable | Est. Effort |
-|-------|-------|-----------------|-------------|
-| 1 | Foundation | Module structure, all types | 2-3h |
-| 2 | Level 1 | `cesk_step()` - pure CESK | 3-4h |
-| 3 | Level 2 (install) | `level2_step()`, WithHandler | 3-4h |
-| 4 | Level 2 (resume) | Resume, Abort, one-shot | 3-4h |
-| 5 | Level 3 | `translate_user_effect()` | 2-3h |
-| 6 | Integration | `run()`, basic handlers | 3-4h |
-| 7 | Edge cases | Nested handlers, errors | 2-3h |
-| 8 | Migration | Handler migration, cleanup | 4-6h |
-| 9 | Polish | Semgrep, docs | 2-3h |
+| Phase | Focus | Status | Est. Effort |
+|-------|-------|--------|-------------|
+| 1-9 | Level 1-2-3 Foundation | ✅ Done | - |
+| 10 | PythonAsyncSyntaxEscape | ⏳ Next | 2-3h |
+| 11 | sync_run / async_run | ⏳ Pending | 2-3h |
+| 12 | Handler Presets | ⏳ Pending | 3-4h |
+| 13 | Async Integration Tests | ⏳ Pending | 2-3h |
+| 14 | Level 3 Core Effects | ⏳ Pending | 4-6h |
+| 15 | Handler Migration | ⏳ Pending | 4-6h |
+| 16 | Cutover & Cleanup | ⏳ Pending | 2-3h |
 
-**Total estimated effort**: ~3-4 days
+**Remaining effort**: ~3-4 days
+
+## Commands
+
+```bash
+# Run v3 tests
+uv run pytest tests/cesk_v3/ -v
+
+# Type check v3
+uv run pyright doeff/cesk_v3/
+
+# Full lint
+make lint
+```
 
 ## Acceptance Criteria
 
 - [ ] All phases completed with tests passing
-- [ ] `make lint` passes (including new semgrep rules)
+- [ ] `make lint` passes
 - [ ] `make test` passes (all existing + new tests)
-- [ ] Old files removed (`step_v2.py`, hacks)
-- [ ] Spec invariants enforced (runtime assertions + semgrep)
+- [ ] sync_run and async_run work correctly
+- [ ] Handler presets provide expected behavior
+- [ ] Old v1 code removed
 
 ## Dependencies
 
 - SPEC-CESK-006 (this implements it)
-
-## Notes
-
-- Each phase should be a separate PR for easier review
-- Phase 1-6 can potentially be combined if moving fast
-- Phase 8 (migration) may reveal edge cases requiring spec updates
+- SPEC-CESK-005 (PythonAsyncSyntaxEscape design)

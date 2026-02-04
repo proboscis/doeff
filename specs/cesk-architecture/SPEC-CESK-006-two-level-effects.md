@@ -207,12 +207,39 @@ Available for nested dispatch:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Level 0: Python (CPython)                                           │
-│   - Executes Python bytecode                                        │
-│   - Manages generator objects                                       │
-│   - Provides next()/send()/throw() protocol                         │
+│ Level 3: User-Space Effects & Handlers                              │
+│                                                                     │
+│   Core Effects (pure, closure-based handlers):                      │
+│     - State: Get, Put, Modify (keyed mutable state)                 │
+│     - Reader: Ask, Local (environment/config access)                │
+│     - Writer: Tell, Listen (logging, output accumulation)           │
+│     - Cache: CacheGet, CachePut, CacheDelete, CacheExists           │
+│     - Atomic: AtomicGet, AtomicUpdate (thread-safe shared state)    │
+│     - Result: Safe (error handling/Result wrapper)                  │
+│                                                                     │
+│   Cooperative Scheduling Effects (use Level 2 scheduling primitives)│
+│     - Spawn, Wait (task creation and waiting)                       │
+│     - Gather, Race (parallel patterns)                              │
+│     - Promise: CreatePromise, CompletePromise, FailPromise          │
+│     - Implemented via GetContinuation, ResumeContinuation,          │
+│       GetHandlers, CreateContinuation                               │
+│                                                                     │
+│   External Integration Effects:                                     │
+│     - Await (PythonAsyncioAwaitEffect) - asyncio bridge             │
+│     - ExternalPromise: CreateExternalPromise (external → doeff)     │
+│                                                                     │
+│   Debugging/Introspection Effects:                                  │
+│     - Graph: Step, Annotate, Snapshot, CaptureGraph                 │
+│     - Intercept (effect interception/transformation)                │
+│     - Debug: GetDebugContext                                        │
+│     - Callstack: ProgramCallFrame, ProgramCallStack                 │
+│                                                                     │
+│   User-Defined Effects:                                             │
+│     - Subclass EffectBase to define custom effects                  │
+│     - Implement handlers using @do + Level 2 primitives             │
+│     - Core effects serve as reference implementations               │
 └─────────────────────────────────────────────────────────────────────┘
-                              │
+                              │ uses Level 2 primitives
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ Level 2: Algebraic Effects Machine (level2_step) - WRAPS Level 1    │
@@ -220,7 +247,8 @@ Available for nested dispatch:
 │   Handles:                                                          │
 │     - WithHandlerFrame (C=Value, K[0]=WHF → scope ends)             │
 │     - DispatchingFrame (C=Value, K[0]=DF → try handler)             │
-│     - Resume/Abort (control primitives)                             │
+│     - Control primitives: Resume, Forward, GetContinuation,         │
+│       ResumeContinuation, GetHandlers, CreateContinuation           │
 │     - EffectYield (push DispatchingFrame, start dispatch)           │
 │                                                                     │
 │   ┌───────────────────────────────────────────────────────────────┐ │
@@ -233,11 +261,19 @@ Available for nested dispatch:
 │                                                                     │
 │   INVARIANT: Level 1 only sees ReturnFrame at K[0]                  │
 └─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│ Level 0: Python (CPython)                                           │
+│   - Executes Python bytecode                                        │
+│   - Manages generator objects                                       │
+│   - Provides next()/send()/throw() protocol                         │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key insight**: Level 2 WRAPS Level 1. It intercepts WHF and DispatchingFrame before Level 1 sees them. Level 1 only ever processes ReturnFrame.
 
-**No Level 3**: User effect dispatch is handled by Level 2 via DispatchingFrame. No separate translation layer needed.
+**Level 3**: Core effects and reference handlers built on Level 2 primitives. These serve as both standard library and reference implementations for users.
 
 ### CESK State
 
@@ -428,20 +464,28 @@ class Forward(ControlPrimitive):
 
 @dataclass(frozen=True)
 class Continuation:
-    """A captured continuation that can be resumed later.
+    """A captured or created continuation that can be resumed later.
     
     Continuations are first-class values that represent "the rest of the computation."
     They can be stored, passed around, and resumed with ResumeContinuation.
     
+    Two kinds of continuations:
+    1. Captured (via GetContinuation): Already started, has frames from K
+    2. Created (via CreateContinuation): Unstarted, has program + handler frames
+    
     Attributes:
         cont_id: Unique identifier for one-shot tracking
-        frames: The captured continuation frames
+        frames: The continuation frames (handler frames for created, full K for captured)
+        program: For unstarted continuations, the program to run (None if captured)
+        started: Whether this continuation has been started
     
     One-shot invariant: Each continuation can only be resumed once.
     Attempting to resume a continuation twice raises RuntimeError.
     """
     cont_id: int
     frames: tuple[Frame, ...]
+    program: Program | None = None  # Set for unstarted continuations
+    started: bool = True  # False for CreateContinuation results
 
 
 @dataclass(frozen=True)
@@ -496,6 +540,146 @@ class ResumeContinuation(ControlPrimitive):
     """
     continuation: Continuation
     value: Any
+
+
+# --- Fiber/Task Creation Primitives ---
+
+@dataclass(frozen=True)
+class GetHandlers(ControlPrimitive):
+    """Get the handlers from the yielder's scope.
+    
+    Returns the tuple of handler functions that were available to the user code
+    when it yielded the effect. This is the snapshot stored in DispatchingFrame,
+    NOT the handlers visible to the handler code itself.
+    
+    This enables spawn patterns where child tasks inherit parent's handlers:
+    
+    Example:
+        @do
+        def spawn_handler(effect):
+            if isinstance(effect, Spawn):
+                # Get handlers from user's perspective (not handler's)
+                user_handlers = yield GetHandlers()
+                
+                # Create child with same handlers
+                child_k = yield CreateContinuation(
+                    effect.program,
+                    handlers=user_handlers
+                )
+                ...
+    
+    Returns: tuple[Handler, ...] - handlers in order (outermost to innermost)
+    
+    Must be called within handler context (during dispatch).
+    Raises RuntimeError if called outside dispatch context.
+    """
+    pass
+
+
+@dataclass(frozen=True)
+class CreateContinuation(ControlPrimitive):
+    """Create an unstarted continuation from a program.
+    
+    Unlike GetContinuation (which captures an already-running continuation),
+    CreateContinuation packages a program that hasn't started yet.
+    
+    This is the key primitive for Spawn/Fork semantics:
+    - GetContinuation: Capture existing computation's state
+    - CreateContinuation: Create new computation from program
+    
+    The handlers parameter controls which handlers the new continuation sees:
+    - Empty tuple: Fresh context, no handlers (must wrap with WithHandler)
+    - From GetHandlers(): Inherit parent's handlers (common for spawn)
+    - Custom list: Explicit handler configuration
+    
+    When ResumeContinuation is called on an unstarted continuation:
+    1. The program is converted to a generator
+    2. Handler frames (WHFs) are built from the handlers tuple
+    3. The generator is started (first step taken)
+    4. Execution continues normally
+    
+    Example:
+        @do
+        def spawn_handler(effect):
+            if isinstance(effect, Spawn):
+                handlers = yield GetHandlers()  # Inherit handlers
+                child_k = yield CreateContinuation(effect.program, handlers)
+                
+                parent_k = yield GetContinuation()
+                task_queue.append(('child', child_k))
+                task_queue.append(('parent', parent_k))
+                
+                next_k = task_queue.pop(0)
+                return (yield ResumeContinuation(next_k, Task(new_id())))
+    
+    Attributes:
+        program: The program to package as a continuation
+        handlers: Handler functions to install (default: empty = fresh context)
+    """
+    program: Program
+    handlers: tuple[Handler, ...] = ()
+
+
+# --- Async Escape Primitive (Python Syntax Workaround) ---
+
+@dataclass(frozen=True)
+class PythonAsyncSyntaxEscape(ControlPrimitive):
+    """Escape to Python's async event loop - a WORKAROUND for Python's async syntax.
+    
+    WHY THIS EXISTS:
+    This primitive exists ONLY because Python's asyncio APIs (asyncio.create_task,
+    await, etc.) require:
+    1. A running event loop
+    2. Being called from an `async def` context
+    
+    Handlers run during step(), which is synchronous Python code. They CANNOT
+    directly call asyncio APIs. This escape allows handlers to say "please run
+    this action in an async context" - which async_run provides.
+    
+    THIS IS NOT A FUNDAMENTAL PRIMITIVE:
+    - sync_run is the clean, canonical implementation
+    - doeff's cooperative scheduling works without async/await
+    - If Python had first-class coroutines without syntax requirements,
+      this primitive would not exist
+    
+    DUAL NATURE:
+    - As ControlPrimitive: Yielded by handlers with VALUE-returning action
+    - As StepResult: Returned by level2_step with STATE-returning action
+    
+    FLOW:
+    1. Handler creates action that returns a VALUE (e.g., asyncio.Task)
+    2. level2_step wraps action to return CESKState (capturing E, S, K)
+    3. level2_step returns PythonAsyncSyntaxEscape as step result
+    4. async_run awaits action, gets CESKState, continues stepping
+    
+    Example (handler perspective):
+        @do
+        def await_handler(effect):
+            if isinstance(effect, AwaitEffect):
+                promise = yield CreateExternalPromise()
+                
+                async def fire_task():
+                    try:
+                        result = await effect.awaitable
+                        promise.complete(result)
+                    except BaseException as e:
+                        promise.fail(e)
+                
+                # Yield escape - action returns Task (value)
+                yield PythonAsyncSyntaxEscape(
+                    action=lambda: asyncio.create_task(fire_task())
+                )
+                
+                # After escape, wait on promise
+                return (yield Wait(promise.future))
+    
+    Attributes:
+        action: Async function returning a value (handler) or CESKState (step result)
+    
+    IMPORTANT: Only handlers designed for async_run should yield this primitive.
+    sync_run will raise TypeError if it encounters this step result.
+    """
+    action: Callable[[], Awaitable[Any]]
 ```
 
 ### Yield Classification Summary
@@ -505,8 +689,11 @@ class ResumeContinuation(ControlPrimitive):
 | `WithHandler(h, p)` | Control primitive | Install handler, start scoped program |
 | `Resume(value)` | Control primitive | Resume user continuation with value |
 | `Forward(effect)` | Control primitive | Forward to outer handlers |
-| `GetContinuation()` | Control primitive | Capture continuation as first-class value |
-| `ResumeContinuation(k, v)` | Control primitive | Resume captured continuation k with value v |
+| `GetContinuation()` | Control primitive | Capture running continuation as first-class value |
+| `ResumeContinuation(k, v)` | Control primitive | Resume any continuation k with value v |
+| `GetHandlers()` | Control primitive | Get handlers from yielder's scope (DF snapshot) |
+| `CreateContinuation(p, h)` | Control primitive | Create unstarted continuation from program |
+| `PythonAsyncSyntaxEscape(action)` | Control primitive | Wrap action, return as step result for async_run |
 | `Program` / `KleisliProgramCall` | Monadic bind | Execute nested program, send result back |
 | `EffectBase` subclass | User effect | Start dispatch via DispatchingFrame |
 | `return value` | Handler completion | **Implicit abandonment** - user continuation dropped |
@@ -607,7 +794,7 @@ Level 2 wraps Level 1, handling WithHandlerFrame, DispatchingFrame, and control 
 ### Main Step Function
 
 ```python
-def level2_step(state: CESKState) -> CESKState | Done | Failed:
+def level2_step(state: CESKState) -> CESKState | Done | Failed | PythonAsyncSyntaxEscape:
     """Level 2 step: wraps Level 1, handles effect machinery.
     
     Processing order:
@@ -624,6 +811,12 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
     - EffectYield MUST be consumed and converted to another Control type.
       Level 2 must NEVER return a state with C=EffectYield.
       (Prevents infinite loops where EffectYield bounces between levels)
+    
+    STEP RESULTS:
+    - CESKState: Continue stepping
+    - Done: Computation completed successfully
+    - Failed: Computation failed with exception
+    - PythonAsyncSyntaxEscape: Escape to async_run for async operation
     """
     C, E, S, K = state.C, state.E, state.S, state.K
     
@@ -679,6 +872,9 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
         if isinstance(yielded, ResumeContinuation):
             return handle_resume_continuation(yielded, state)
         
+        if isinstance(yielded, PythonAsyncSyntaxEscape):
+            return handle_async_escape(yielded, state)
+        
         # --- Program: monadic bind (ADR-12) ---
         if isinstance(yielded, ProgramBase):
             # Execute nested program; result flows back via ReturnFrame
@@ -692,6 +888,25 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
     
     # === Delegate to Level 1 ===
     return cesk_step(state)
+
+
+def handle_async_escape(
+    escape: PythonAsyncSyntaxEscape, state: CESKState
+) -> PythonAsyncSyntaxEscape:
+    """Wrap handler's value-returning action to return CESKState.
+    
+    Handler yields escape with action that returns a VALUE.
+    We wrap it to return CESKState, capturing current E, S, K.
+    async_run then awaits and gets the new state directly.
+    """
+    C, E, S, K = state.C, state.E, state.S, state.K
+    original_action = escape.action
+    
+    async def wrapped_action() -> CESKState:
+        value = await original_action()
+        return CESKState(C=Value(value), E=E, S=S, K=K)
+    
+    return PythonAsyncSyntaxEscape(action=wrapped_action)
 ```
 
 ### WithHandler Translation
@@ -989,15 +1204,200 @@ Both are semantically correct.
 
 ---
 
-## Main Run Loop
+## Async Execution Architecture
+
+### Overview
+
+doeff provides two run functions for different execution contexts:
+
+| Function | Signature | Use Case |
+|----------|-----------|----------|
+| `sync_run` | `def sync_run(...) -> RunResult[T]` | Scripts, CLI, testing |
+| `async_run` | `async def async_run(...) -> RunResult[T]` | Production async, asyncio integration |
+
+Both return `RunResult[T]` which exposes CESK internals for debugging and introspection.
+
+### Design Philosophy: sync_run is the Clean Implementation
+
+**sync_run is the canonical, clean implementation.** doeff has its own cooperative scheduling world via algebraic effects. The CESK machine steps synchronously, handlers manage concurrency via `GetContinuation`/`ResumeContinuation`, and everything works without Python's `async/await` syntax.
+
+**async_run exists solely as a Python syntax workaround.** When users need to integrate with Python's asyncio ecosystem (aiohttp, asyncpg, etc.), they face a problem: `asyncio.create_task()` and `await` require a running event loop and `async def` context. Since handlers run during `step()` (which is synchronous), they cannot directly call asyncio APIs.
+
+`PythonAsyncSyntaxEscape` bridges this gap:
+- It is NOT a fundamental architectural primitive
+- It is a workaround for Python's `async def` syntax requirement
+- It allows handlers to request "please run this in an async context"
+- async_run provides that async context
+
+**If Python had first-class coroutines without the async/await syntax requirement, PythonAsyncSyntaxEscape would not exist.**
+
+### When to Use Each
+
+| Scenario | Recommended | Why |
+|----------|-------------|-----|
+| Pure doeff programs | `sync_run` | Clean, no workarounds needed |
+| Testing | `sync_run` | Deterministic, easier to debug |
+| CLI tools, scripts | `sync_run` | Simpler mental model |
+| Using asyncio libraries | `async_run` | Required for `await` syntax |
+| Production with aiohttp/asyncpg | `async_run` | Integration with async ecosystem |
+
+**Key insight**: async_run is a reference implementation showing how to integrate doeff with Python's async world. The "real" doeff is sync_run with cooperative scheduling via effects.
+
+### Step Results
+
+`level2_step` can return four types:
 
 ```python
-def run(program: Program[T]) -> T:
-    """Main interpreter loop."""
+StepResult = CESKState | Done | Failed | PythonAsyncSyntaxEscape
+
+@dataclass(frozen=True)
+class Done:
+    """Computation completed successfully."""
+    value: Any
+
+@dataclass(frozen=True)
+class Failed:
+    """Computation failed with exception."""
+    error: BaseException
+
+@dataclass(frozen=True)
+class PythonAsyncSyntaxEscape:
+    """Escape to Python's async event loop.
+    
+    When returned as step result, action returns CESKState.
+    """
+    action: Callable[[], Awaitable[CESKState]]
+```
+
+### PythonAsyncSyntaxEscape Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Handler (Level 3)                                                           │
+│                                                                             │
+│   yield PythonAsyncSyntaxEscape(action=lambda: asyncio.create_task(...))    │
+│                            │                                                │
+│                            │ action returns VALUE                           │
+└────────────────────────────┼────────────────────────────────────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ level2_step (Level 2)                                                       │
+│                                                                             │
+│   if isinstance(yielded, PythonAsyncSyntaxEscape):                          │
+│       original = yielded.action                                             │
+│       async def wrapped():                                                  │
+│           value = await original()                                          │
+│           return CESKState(C=Value(value), E=E, S=S, K=K)                   │
+│       return PythonAsyncSyntaxEscape(action=wrapped)                        │
+│                            │                                                │
+│                            │ action returns CESKState                       │
+└────────────────────────────┼────────────────────────────────────────────────┘
+                             ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ async_run                                                                   │
+│                                                                             │
+│   result = level2_step(state)                                               │
+│   if isinstance(result, PythonAsyncSyntaxEscape):                           │
+│       state = await result.action()  # Returns CESKState                    │
+│       continue                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Key design**: Handler yields escape with value-returning action. level2_step wraps it to capture E, S, K and return CESKState. async_run just awaits and continues.
+
+### level2_step: Handling PythonAsyncSyntaxEscape
+
+```python
+def level2_step(state: CESKState) -> CESKState | Done | Failed | PythonAsyncSyntaxEscape:
+    C, E, S, K = state.C, state.E, state.S, state.K
+    
+    # ... other cases ...
+    
+    if isinstance(C, EffectYield):
+        yielded = C.yielded
+        
+        # ... other control primitives ...
+        
+        if isinstance(yielded, PythonAsyncSyntaxEscape):
+            # Wrap action to return CESKState
+            original_action = yielded.action
+            
+            async def wrapped_action() -> CESKState:
+                value = await original_action()
+                return CESKState(C=Value(value), E=E, S=S, K=K)
+            
+            return PythonAsyncSyntaxEscape(action=wrapped_action)
+    
+    # ... rest of level2_step ...
+```
+
+### RunResult
+
+`RunResult` exposes CESK internals from a completed run:
+
+```python
+@dataclass
+class RunResult(Generic[T]):
+    """Result of running a program, with full CESK state access.
+    
+    Provides both the computation result and debugging context.
+    """
+    # Result
+    value: T | None = None
+    error: BaseException | None = None
+    
+    # CESK State (final)
+    final_store: dict[str, Any] = field(default_factory=dict)
+    
+    # Diagnostics
+    effect_stack: EffectStackTrace | None = None
+    python_stack: PythonStackTrace | None = None
+    
+    @property
+    def is_ok(self) -> bool:
+        return self.error is None
+    
+    @property
+    def is_error(self) -> bool:
+        return self.error is not None
+    
+    def unwrap(self) -> T:
+        """Get value or raise error."""
+        if self.error is not None:
+            raise self.error
+        return cast(T, self.value)
+```
+
+### sync_run
+
+```python
+def sync_run(
+    program: Program[T],
+    handlers: list[Handler],
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> RunResult[T]:
+    """Run a program synchronously with the given handlers.
+    
+    sync_run should NEVER see PythonAsyncSyntaxEscape. Use handlers that
+    handle async effects directly (e.g., sync_await_handler which runs
+    async operations in a background thread).
+    
+    Args:
+        program: The program to run.
+        handlers: List of handlers, from outermost to innermost.
+        env: Optional initial environment.
+        store: Optional initial store.
+    
+    Returns:
+        RunResult containing the final value or error.
+    """
+    wrapped = _wrap_with_handlers(program, handlers)
+    
     state = CESKState(
-        C=ProgramControl(program),
-        E={},
-        S={},
+        C=ProgramControl(wrapped),
+        E=FrozenDict(env) if env else FrozenDict(),
+        S=dict(store) if store else {},
         K=[],
     )
     
@@ -1005,11 +1405,186 @@ def run(program: Program[T]) -> T:
         result = level2_step(state)
         
         if isinstance(result, Done):
-            return result.value
+            return RunResult(value=result.value, final_store=state.S)
+        
         if isinstance(result, Failed):
-            raise result.error
+            return RunResult(error=result.error, final_store=state.S)
+        
+        if isinstance(result, PythonAsyncSyntaxEscape):
+            raise TypeError(
+                "sync_run received PythonAsyncSyntaxEscape. "
+                "Use async_run or replace python_async_syntax_escape_handler "
+                "with sync_await_handler."
+            )
         
         state = result
+
+
+def _wrap_with_handlers(program: Program[T], handlers: list[Handler]) -> Program[T]:
+    """Wrap a program with the handler stack.
+    
+    Handlers are applied so that first in list is outermost (sees effects last).
+    [h0, h1, h2] -> h2 sees effects first, h0 sees last.
+    """
+    result: Program[T] = program
+    for handler in reversed(handlers):
+        result = WithHandler(handler=handler, program=result)
+    return result
+```
+
+### async_run
+
+```python
+async def async_run(
+    program: Program[T],
+    handlers: list[Handler],
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> RunResult[T]:
+    """Run a program asynchronously with the given handlers.
+    
+    Handles PythonAsyncSyntaxEscape by awaiting actions in the event loop.
+    Use python_async_syntax_escape_handler to produce escapes for async effects.
+    
+    Args:
+        program: The program to run.
+        handlers: List of handlers, from outermost to innermost.
+        env: Optional initial environment.
+        store: Optional initial store.
+    
+    Returns:
+        RunResult containing the final value or error.
+    """
+    wrapped = _wrap_with_handlers(program, handlers)
+    
+    state = CESKState(
+        C=ProgramControl(wrapped),
+        E=FrozenDict(env) if env else FrozenDict(),
+        S=dict(store) if store else {},
+        K=[],
+    )
+    
+    while True:
+        result = level2_step(state)
+        
+        if isinstance(result, Done):
+            return RunResult(value=result.value, final_store=state.S)
+        
+        if isinstance(result, Failed):
+            return RunResult(error=result.error, final_store=state.S)
+        
+        if isinstance(result, PythonAsyncSyntaxEscape):
+            # Await action, get new state
+            state = await result.action()
+            await asyncio.sleep(0)  # Yield to event loop
+            continue
+        
+        state = result
+        await asyncio.sleep(0)  # Yield to event loop periodically
+```
+
+### Handler Presets
+
+Standard handler presets for common use cases:
+
+```python
+# For sync_run: async effects handled via background threads
+sync_handlers_preset: list[Handler] = [
+    scheduler_state_handler,
+    sync_external_wait_handler,
+    task_scheduler_handler,
+    sync_await_handler,        # Handles Await via thread pool
+    state_handler,
+    writer_handler,
+    cache_handler,
+    graph_handler,
+    atomic_handler,
+    core_handler,
+]
+
+# For async_run: async effects produce PythonAsyncSyntaxEscape
+async_handlers_preset: list[Handler] = [
+    scheduler_state_handler,
+    async_external_wait_handler,
+    task_scheduler_handler,
+    python_async_syntax_escape_handler,  # Produces escapes for Await
+    state_handler,
+    writer_handler,
+    cache_handler,
+    graph_handler,
+    atomic_handler,
+    core_handler,
+]
+```
+
+**Key difference**:
+- `sync_await_handler`: Blocks on async via `run_in_executor` or background thread
+- `python_async_syntax_escape_handler`: Yields `PythonAsyncSyntaxEscape` for async_run to await
+
+### Handler Preset Structure
+
+```
+                            sync_run                     async_run
+                               │                            │
+                               ▼                            ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ scheduler_state_handler      Initialize task queue, current task             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ sync_external_wait_handler   │ async_external_wait_handler                   │
+│ (blocking queue.get)         │ (escape + run_in_executor)                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ task_scheduler_handler       Spawn, Wait, Gather, Race                       │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ sync_await_handler           │ python_async_syntax_escape_handler            │
+│ (thread pool)                │ (yields PythonAsyncSyntaxEscape)              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ state_handler                Get, Put, Modify                                │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ writer_handler               Log, Tell, Listen                               │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ cache_handler                CacheGet, CachePut, CacheDelete                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ graph_handler                Graph tracking effects                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ atomic_handler               AtomicGet, AtomicUpdate                         │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ core_handler                 Ask (reader), error recovery                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Usage Examples
+
+**sync_run:**
+```python
+from doeff.cesk_v3 import sync_run, sync_handlers_preset
+
+@do
+def my_program():
+    yield Put("counter", 0)
+    count = yield Get("counter")
+    yield Put("counter", count + 1)
+    return (yield Get("counter"))
+
+result = sync_run(my_program(), sync_handlers_preset)
+print(result.unwrap())  # 1
+```
+
+**async_run:**
+```python
+from doeff.cesk_v3 import async_run, async_handlers_preset
+
+@do
+def fetch_data():
+    response = yield Await(aiohttp.get("https://api.example.com"))
+    data = yield Await(response.json())
+    yield Log(f"Fetched: {data}")
+    return data
+
+async def main():
+    result = await async_run(fetch_data(), async_handlers_preset)
+    print(result.unwrap())
+
+asyncio.run(main())
 ```
 
 ---
@@ -1764,6 +2339,130 @@ if isinstance(yielded, ProgramBase):
 
 **Key insight**: The existing `ReturnFrame` machinery handles the "send result back" part. When the nested program completes with `Value(result)`, the outer generator's `ReturnFrame` receives it via `send()`.
 
+### ADR-13: GetHandlers Returns Yielder's Scope (Not Handler's)
+
+**Decision**: `GetHandlers` returns the handlers that were available to the user code when it yielded the effect, not the handlers visible to the handler code.
+
+**Rationale**:
+- When spawning, child should inherit the handlers the parent had
+- The parent is the user code, not the handler
+- Handler sees a different (outer) scope due to DispatchingFrame processing
+- The DispatchingFrame already stores this snapshot (per ADR-4)
+
+**Implementation**:
+```python
+def handle_get_handlers(state: CESKState) -> CESKState:
+    for frame in state.K:
+        if isinstance(frame, DispatchingFrame):
+            # Return handlers from yielder's perspective (the snapshot)
+            return CESKState(C=Value(frame.handlers), ...)
+    raise RuntimeError("GetHandlers called outside handler context")
+```
+
+**Comparison with Koka/OCaml5**:
+- Koka: Evidence vector (`evv`) captures handlers at handler installation
+- OCaml5: Fiber-local vars are copied, effect handlers are NOT inherited
+- doeff: Explicit control via GetHandlers + CreateContinuation
+
+### ADR-14: CreateContinuation for Unstarted Fibers
+
+**Decision**: `CreateContinuation(program, handlers)` creates an unstarted continuation that packages a program with specified handlers.
+
+**Rationale**:
+- Spawn/Fork needs to create new execution contexts
+- Unlike GetContinuation (captures running state), this creates fresh state
+- Separates "what program to run" from "what handlers to install"
+- Handlers parameter enables flexible inheritance patterns
+
+**Design choice: Handlers as explicit parameter**:
+- Koka: Strands implicitly inherit evidence vector
+- OCaml5: Fibers don't inherit user handlers (only scheduler handlers)
+- doeff: Explicit - user decides via `handlers` parameter
+
+**Patterns enabled**:
+```python
+handlers = yield GetHandlers()  # Get parent's handlers
+
+# Pattern A: Full inheritance (Koka-style)
+child_k = yield CreateContinuation(program, handlers=handlers)
+
+# Pattern B: Fresh context (OCaml5-style) 
+child_k = yield CreateContinuation(program, handlers=())
+
+# Pattern C: Filtered inheritance
+filtered = tuple(h for h in handlers if not is_internal(h))
+child_k = yield CreateContinuation(program, handlers=filtered)
+
+# Pattern D: Additional handlers
+child_k = yield CreateContinuation(program, handlers=handlers + (logger,))
+```
+
+**When ResumeContinuation receives unstarted continuation**:
+1. Build K from handler frames: `[WHF(h) for h in handlers]`
+2. Convert program to generator
+3. Start with `ProgramControl(program)`
+4. Continue normal execution
+
+### ADR-15: PythonAsyncSyntaxEscape is a Python Syntax Workaround
+
+**Decision**: `PythonAsyncSyntaxEscape` exists solely to work around Python's `async def` syntax requirement. It is NOT a fundamental architectural primitive.
+
+**Context**:
+- doeff has its own cooperative scheduling via algebraic effects
+- The CESK machine steps synchronously; handlers manage concurrency
+- sync_run is the clean, canonical implementation
+- BUT: Python's asyncio APIs require `async def` context and running event loop
+
+**Problem**:
+```python
+# Handler runs during step() - synchronous Python code
+@do
+def handler(effect):
+    # CANNOT DO THIS - not in async context!
+    task = asyncio.create_task(some_coro())  # RuntimeError: no running event loop
+```
+
+**Solution**: `PythonAsyncSyntaxEscape` lets handlers say "please run this in an async context":
+```python
+@do
+def handler(effect):
+    # CAN DO THIS - async_run will execute the action
+    yield PythonAsyncSyntaxEscape(action=lambda: asyncio.create_task(some_coro()))
+```
+
+**Dual nature (implementation detail)**:
+- As ControlPrimitive: Handler yields with VALUE-returning action
+- As StepResult: level2_step wraps to return STATE-returning action
+- async_run awaits and gets CESKState directly
+
+**Why level2_step wraps** (not handler):
+- Handlers should NOT know about CESKState construction (VM internals)
+- level2_step has full access to E, S, K
+- Keeps handlers simple; keeps async_run simple
+
+**If Python had first-class coroutines without async/await syntax, this primitive would not exist.**
+
+### ADR-16: sync_run is Canonical, async_run is Reference Implementation
+
+**Decision**: sync_run is the clean, canonical implementation. async_run is a reference implementation for Python asyncio integration.
+
+**Rationale**:
+- doeff's effect system provides full cooperative scheduling without async/await
+- sync_run demonstrates the pure algebraic effects model
+- async_run exists because users need to integrate with asyncio libraries (aiohttp, asyncpg, etc.)
+- The difference is isolated to specific "leaf" handlers
+
+**Handler differences**:
+| Context | Await Effect Handler | External Wait Handler |
+|---------|---------------------|----------------------|
+| sync_run | sync_await_handler (thread pool) | sync_external_wait_handler (blocking) |
+| async_run | python_async_syntax_escape_handler (escapes) | async_external_wait_handler (escapes) |
+
+**Key insight**: 
+- Scheduler, state, reader, writer handlers are IDENTICAL in both presets
+- Only handlers that touch Python's async runtime differ
+- This proves async_run is just a Python syntax accommodation, not a fundamental mode
+
 ---
 
 ## Module Organization
@@ -1772,29 +2471,119 @@ if isinstance(yielded, ProgramBase):
 doeff/cesk_v3/
 ├── __init__.py
 ├── errors.py                    # UnhandledEffectError
+├── run.py                       # sync_run(), async_run(), RunResult, handler presets
 │
-├── level1_cesk/
+├── level1_cesk/                 # Level 1: Pure CESK Machine
 │   ├── __init__.py
 │   ├── state.py                 # CESKState, Control types (Value, Error, etc.)
 │   ├── frames.py                # ReturnFrame only
 │   ├── step.py                  # cesk_step()
 │   └── types.py                 # Environment, Store type aliases
 │
-├── level2_algebraic_effects/
+├── level2_algebraic_effects/    # Level 2: Algebraic Effects Dispatch
 │   ├── __init__.py
 │   ├── frames.py                # WithHandlerFrame, DispatchingFrame
 │   ├── primitives.py            # ControlPrimitive, WithHandler, Resume, Forward,
-│   │                            # GetContinuation, ResumeContinuation, Continuation
-│   ├── step.py                  # level2_step()
+│   │                            # GetContinuation, ResumeContinuation, Continuation,
+│   │                            # GetHandlers, CreateContinuation, PythonAsyncSyntaxEscape
+│   ├── step.py                  # level2_step() (returns CESKState | Done | Failed | Escape)
 │   ├── dispatch.py              # start_dispatch(), collect_available_handlers()
 │   └── handlers.py              # handle_resume(), handle_forward(), handle_with_handler(),
 │                                # handle_implicit_abandonment(), handle_get_continuation(),
-│                                # handle_resume_continuation()
+│                                # handle_resume_continuation(), handle_get_handlers(),
+│                                # handle_create_continuation(), handle_async_escape()
 │
-└── run.py                       # Main loop: run()
+└── level3_core_effects/         # Level 3: Core Effects & Reference Handlers
+    ├── __init__.py              # (Users implement their own effects at this layer)
+    │
+    │   # Fundamental Effects (pure, closure-based handlers)
+    ├── state.py                 # StateGetEffect, StatePutEffect, StateModifyEffect
+    │                            # + state_handler
+    ├── reader.py                # AskEffect, LocalEffect + reader_handler
+    ├── writer.py                # WriterTellEffect, WriterListenEffect + writer_handler
+    ├── cache.py                 # CacheGetEffect, CachePutEffect, CacheDeleteEffect,
+    │                            # CacheExistsEffect + cache_handler
+    ├── atomic.py                # AtomicGetEffect, AtomicUpdateEffect + atomic_handler
+    ├── result.py                # ResultSafeEffect + result_handler
+    │
+    │   # Cooperative Scheduling Effects (use Level 2 scheduling primitives)
+    ├── scheduler.py             # SpawnEffect, WaitEffect, GatherEffect, RaceEffect
+    │                            # + scheduler_handler (uses GetContinuation,
+    │                            #   ResumeContinuation, GetHandlers, CreateContinuation)
+    ├── promise.py               # CreatePromiseEffect, CompletePromiseEffect,
+    │                            # FailPromiseEffect + promise_handler
+    │
+    │   # External Integration Effects (asyncio bridge)
+    ├── asyncio_bridge.py        # AwaitEffect (PythonAsyncioAwaitEffect)
+    │                            # + sync_await_handler (for sync_run, uses thread pool)
+    │                            # + python_async_syntax_escape_handler (for async_run, yields escape)
+    ├── external_promise.py      # CreateExternalPromiseEffect + external_promise_handler
+    │                            # + sync_external_wait_handler (for sync_run)
+    │                            # + async_external_wait_handler (for async_run)
+    │
+    │   # Debugging/Introspection Effects
+    ├── graph.py                 # GraphStepEffect, GraphAnnotateEffect,
+    │                            # GraphSnapshotEffect, GraphCaptureEffect + graph_handler
+    ├── intercept.py             # InterceptEffect + intercept_handler
+    ├── debug.py                 # GetDebugContextEffect + debug_handler
+    └── callstack.py             # ProgramCallFrameEffect, ProgramCallStackEffect
+                                 # + callstack_handler
+
+# Users implement custom Level 3 effects in their own code:
+# my_app/
+# └── effects/
+#     ├── database.py           # QueryEffect, ExecuteEffect + db_handler
+#     ├── http.py               # HttpRequestEffect + http_handler
+#     └── custom.py             # Any EffectBase subclass + @do handler
 ```
 
-**Note**: No `level3_user_effects/` - user effect dispatch is handled by Level 2 via DispatchingFrame.
+### Test Organization
+
+```
+tests/cesk_v3/
+├── __init__.py
+│
+├── level1/                      # Level 1 tests: CESK machine
+│   ├── __init__.py
+│   ├── test_foundation.py       # Frame types, Control types, CESKState
+│   └── test_cesk_step.py        # cesk_step() unit tests
+│
+├── level2/                      # Level 2 tests: Algebraic effects dispatch
+│   ├── __init__.py
+│   ├── test_dispatch.py         # dispatch, handlers, level2_step unit tests
+│   └── test_async_escape.py     # PythonAsyncSyntaxEscape wrapping in level2_step
+│
+├── level3/                      # Level 3 tests: Core effects & handlers
+│   ├── __init__.py
+│   │
+│   │   # Core Effects
+│   ├── test_state.py            # State: Get, Put, Modify
+│   ├── test_reader.py           # Reader: Ask, Local
+│   ├── test_writer.py           # Writer: Tell, Listen
+│   ├── test_cache.py            # Cache: CacheGet, CachePut, CacheDelete, CacheExists
+│   ├── test_atomic.py           # Atomic: AtomicGet, AtomicUpdate
+│   ├── test_result.py           # Result: Safe
+│   │
+│   │   # Cooperative Scheduling
+│   ├── test_scheduler.py        # Spawn, Wait, Gather, Race
+│   ├── test_promise.py          # CreatePromise, CompletePromise, FailPromise
+│   ├── test_fiber_creation.py   # GetHandlers, CreateContinuation patterns
+│   │
+│   │   # External Integration
+│   ├── test_asyncio_bridge.py   # Await effect with both handlers
+│   ├── test_external_promise.py # CreateExternalPromise
+│   │
+│   │   # Debugging/Introspection
+│   ├── test_graph.py            # Graph: Step, Annotate, Snapshot, Capture
+│   ├── test_intercept.py        # Intercept
+│   ├── test_debug.py            # GetDebugContext
+│   └── test_callstack.py        # ProgramCallFrame, ProgramCallStack
+│
+│   # Run function tests (top-level, not in level3/)
+├── test_run.py                  # sync_run, async_run, RunResult
+├── test_presets.py              # sync_handlers_preset, async_handlers_preset
+└── test_async_integration.py    # Full async integration tests
+```
 
 ---
 
@@ -1802,8 +2591,40 @@ doeff/cesk_v3/
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Level 0: Python (CPython)                                          │
-│  - Executes Python bytecode, manages generators                     │
+│  Level 3: User-Space Effects & Handlers                             │
+│  Module: doeff.cesk_v3.level3_core_effects (core effects)           │
+│                                                                     │
+│  Core Effects:                                                      │
+│    - State: Get, Put, Modify         - Cache: CacheGet/Put/Delete   │
+│    - Reader: Ask, Local              - Atomic: AtomicGet/Update     │
+│    - Writer: Tell, Listen            - Result: Safe                 │
+│                                                                     │
+│  Cooperative Scheduling (uses Level 2 primitives):                  │
+│    - Spawn, Wait, Gather, Race                                      │
+│    - Promise: CreatePromise, CompletePromise, FailPromise           │
+│                                                                     │
+│  External Integration:                                              │
+│    - Await (asyncio bridge)                                         │
+│    - CreateExternalPromise (external → doeff)                       │
+│                                                                     │
+│  Debugging: Graph, Intercept, Debug, Callstack                      │
+│  User Effects: Custom EffectBase subclasses + @do handlers          │
+└─────────────────────────────────────────────────────────────────────┘
+                              │ uses Level 2 primitives
+                              ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  Level 2: Algebraic Effects Machine (level2_step)                   │
+│  Module: doeff.cesk_v3.level2_algebraic_effects                     │
+│  Frames: WithHandlerFrame, DispatchingFrame                         │
+│  Handles: WithHandler, Resume, Forward, EffectBase dispatch         │
+│  Scheduling: GetContinuation, ResumeContinuation                    │
+│  Fiber Creation: GetHandlers, CreateContinuation                    │
+│                                                                     │
+│  KEY INSIGHT: All state in K. No separate H stack.                  │
+│  - WHF holds handler function                                       │
+│  - DispatchingFrame tracks dispatch progress + handler_started      │
+│  - Forwarding = Forward primitive or re-yield (both work)           │
+│  - Implicit abandonment if handler returns without Resume           │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -1817,16 +2638,8 @@ doeff/cesk_v3/
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Level 2: Algebraic Effects Machine (level2_step)                   │
-│  Module: doeff.cesk_v3.level2_algebraic_effects                     │
-│  Frames: WithHandlerFrame, DispatchingFrame                         │
-│  Handles: WithHandler, Resume, Forward, EffectBase dispatch         │
-│                                                                     │
-│  KEY INSIGHT: All state in K. No separate H stack.                  │
-│  - WHF holds handler function                                       │
-│  - DispatchingFrame tracks dispatch progress + handler_started      │
-│  - Forwarding = Forward primitive or re-yield (both work)           │
-│  - Implicit abandonment if handler returns without Resume           │
+│  Level 0: Python (CPython)                                          │
+│  - Executes Python bytecode, manages generators                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1839,7 +2652,7 @@ doeff/cesk_v3/
 5. **handler_started flag**: Distinguishes initial dispatch from handler completion
 6. **Handler snapshot**: DispatchingFrame freezes available handlers at dispatch start
 7. **Busy boundary**: Nested dispatch uses `handlers[:idx]` from parent DF (see ADR-5)
-8. **No Level 3**: User effect dispatch is Level 2's DispatchingFrame logic
+8. **Level 3 is user-space**: Effect dispatch is Level 2; effect definitions and handlers are Level 3
 9. **K never cleared**: Invariant violation → raise, never `K=[]`
 
 **Handler API:**
@@ -1850,6 +2663,7 @@ doeff/cesk_v3/
 | `Forward(effect)` | Delegate to outer handlers (explicit) |
 | `GetContinuation()` | Capture current continuation. DF preserved. |
 | `ResumeContinuation(k, v)` | Context switch to captured continuation k |
+| `PythonAsyncSyntaxEscape(action)` | Escape to async event loop (async_run only) |
 | `yield effect` | Also forwards (via nested DF), works but more frames |
 | `return value` | Implicit abandonment - user continuation dropped |
 
@@ -1892,7 +2706,7 @@ doeff/cesk_v3/
 - `handle_implicit_abandonment()` - drop user continuation, close generators
 
 ### Phase 6: Integration
-- `run()` main loop
+- Simple `run()` main loop (sync only)
 - Basic handler examples
 
 ### Phase 7: Testing
@@ -1914,6 +2728,32 @@ doeff/cesk_v3/
 - One-shot violation detection
 - Cooperative scheduler example (Yield effect)
 - Multiple task interleaving
+
+### Phase 10: Async Execution Architecture
+- `PythonAsyncSyntaxEscape` control primitive in Level 2
+- `handle_async_escape()` - wrap value-returning action to return CESKState
+- Update `level2_step()` return type to include `PythonAsyncSyntaxEscape`
+- `RunResult` dataclass with value, error, final_store, diagnostics
+
+### Phase 11: Run Functions
+- `sync_run()` - synchronous stepping, raises on escape
+- `async_run()` - async stepping, awaits escapes
+- `_wrap_with_handlers()` - apply handler stack to program
+
+### Phase 12: Handler Presets
+- `sync_handlers_preset` - includes `sync_await_handler`
+- `async_handlers_preset` - includes `python_async_syntax_escape_handler`
+- `sync_await_handler` - handles Await via thread pool (no escape)
+- `python_async_syntax_escape_handler` - yields escape for Await
+- `sync_external_wait_handler` - blocking queue.get for external completions
+- `async_external_wait_handler` - escape for external completions
+
+### Phase 13: Async Integration Tests
+- sync_run with sync_handlers_preset
+- async_run with async_handlers_preset
+- sync_run raises TypeError on escape
+- Await effect works in both contexts
+- External promise completion in both contexts
 
 ---
 
