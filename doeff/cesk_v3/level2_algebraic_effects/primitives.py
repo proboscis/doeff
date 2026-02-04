@@ -41,21 +41,20 @@ class Forward(ControlPrimitive):
 
 @dataclass(frozen=True)
 class Continuation:
-    """A captured continuation that can be resumed later.
+    """A captured or created continuation that can be resumed later.
 
-    Continuations are first-class values that represent "the rest of the computation."
-    They can be stored, passed around, and resumed with ResumeContinuation.
-
-    Attributes:
-        cont_id: Unique identifier for one-shot tracking
-        frames: The captured continuation frames
+    Two kinds:
+    1. Captured (via GetContinuation): started=True, frames contains K frames
+    2. Created (via CreateContinuation): started=False, program and handlers set
 
     One-shot invariant: Each continuation can only be resumed once.
-    Attempting to resume a continuation twice raises RuntimeError.
     """
 
     cont_id: int
-    frames: tuple[Frame, ...]
+    frames: tuple[Frame, ...] = ()
+    program: "Program[Any] | None" = None
+    started: bool = True
+    handlers: tuple[Handler, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,26 +78,53 @@ class GetContinuation(ControlPrimitive):
 
 @dataclass(frozen=True)
 class ResumeContinuation(ControlPrimitive):
-    """Resume a previously captured continuation with a value.
+    """Resume a captured or created continuation with a value.
 
-    Unlike Resume (which resumes the current dispatch's continuation),
-    ResumeContinuation can resume ANY captured continuation.
+    Handles both captured continuations (from GetContinuation) and
+    unstarted continuations (from CreateContinuation).
 
-    This is the key primitive for cooperative scheduling:
-    - Resume(v) = resume current DF's continuation immediately
-    - ResumeContinuation(k, v) = resume ANY continuation k
+    For captured (started=True):
+    1. The continuation frames become the new K
+    2. Value is sent to the continuation
 
-    When ResumeContinuation is executed:
-    1. The current computation is abandoned (current K is dropped)
-    2. The captured continuation k becomes the new K
-    3. Execution continues with value v
+    For created (started=False):
+    1. Build K from handlers in frames (as WHFs)
+    2. Start the program with ProgramControl
+    3. The value parameter is ignored (program starts fresh)
 
     One-shot invariant: The continuation must not have been resumed before.
-
-    Attributes:
-        continuation: The captured Continuation to resume
-        value: The value to send to the resumed continuation
     """
 
     continuation: Continuation
     value: Any
+
+
+@dataclass(frozen=True)
+class GetHandlers(ControlPrimitive):
+    """Get the handlers from the yielder's scope (DispatchingFrame snapshot).
+
+    Returns the handlers that were available to user code when it yielded,
+    NOT the handlers visible to the handler code. This enables spawn patterns
+    where child tasks inherit the parent's handler context.
+
+    Must be called within handler context (during dispatch).
+    """
+
+    pass
+
+
+@dataclass(frozen=True)
+class CreateContinuation(ControlPrimitive):
+    """Create an unstarted continuation from a program.
+
+    Unlike GetContinuation (which captures an already-running continuation),
+    CreateContinuation packages a program that hasn't started yet.
+
+    The handlers parameter controls which handlers the new continuation sees:
+    - Empty tuple: Fresh context, no handlers
+    - From GetHandlers(): Inherit parent's handlers
+    - Custom tuple: Explicit handler configuration
+    """
+
+    program: "Program[Any]"
+    handlers: tuple[Handler, ...] = ()
