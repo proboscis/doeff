@@ -33,6 +33,7 @@ from doeff.cesk_v3.level2_algebraic_effects.primitives import (
     ResumeContinuation,
     WithHandler,
 )
+from doeff.program import ProgramBase
 
 
 def level2_step(state: CESKState) -> CESKState | Done | Failed:
@@ -81,6 +82,9 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
 
         if isinstance(yielded, ResumeContinuation):
             return handle_resume_continuation(yielded, state)
+
+        if isinstance(yielded, ProgramBase):
+            return CESKState(C=ProgramControl(yielded), E=E, S=S, K=K)
 
         if isinstance(yielded, EffectBase):
             return start_dispatch(yielded, state)

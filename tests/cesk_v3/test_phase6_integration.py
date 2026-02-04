@@ -3,8 +3,7 @@
 Tests the full stack: run() loop with handlers for state-like and reader-like patterns.
 Uses handler closures for state management (AskStore/AskEnv primitives not yet implemented).
 
-NOTE: cesk_v3 does not yet support nested program yields (KleisliProgramCall) or
-nested WithHandler as program content. Tests use flat effect sequences only.
+Supports nested program yields (KleisliProgramCall) via ADR-12 monadic bind handling.
 """
 
 from dataclasses import dataclass
@@ -70,6 +69,38 @@ class TestFullStackExecution:
 
         result = run(program())
         assert result == 30
+
+    def test_nested_pure_programs(self) -> None:
+        @do
+        def inner(x: int):
+            return x * 2
+            yield  # type: ignore
+
+        @do
+        def outer():
+            a = yield inner(10)
+            b = yield inner(20)
+            return a + b
+
+        result = run(outer())
+        assert result == 60
+
+    def test_deeply_nested_programs(self) -> None:
+        @do
+        def level3(x: int):
+            return x + 1
+            yield  # type: ignore
+
+        @do
+        def level2(x: int):
+            return (yield level3(x)) * 2
+
+        @do
+        def level1():
+            return (yield level2(5))
+
+        result = run(level1())
+        assert result == 12
 
     def test_unhandled_effect_raises(self) -> None:
         @do

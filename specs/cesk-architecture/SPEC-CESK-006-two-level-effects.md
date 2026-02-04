@@ -349,7 +349,13 @@ class Error:
 
 @dataclass(frozen=True)
 class EffectYield:
-    """Control: generator yielded something."""
+    """Control: generator yielded something.
+    
+    The yielded value can be:
+    - ControlPrimitive (WithHandler, Resume, Forward, GetContinuation, ResumeContinuation)
+    - ProgramBase (nested program to execute - monadic bind)
+    - EffectBase (user effect to dispatch)
+    """
     yielded: Any
 
 
@@ -492,16 +498,18 @@ class ResumeContinuation(ControlPrimitive):
     value: Any
 ```
 
-### Handler API Summary
+### Yield Classification Summary
 
-| Yield | Meaning |
-|-------|---------|
-| `Resume(value)` | Resume user continuation with value. Handler receives user's final result. |
-| `Forward(effect)` | Forward to outer handlers. Handler receives outer's result, then typically Resumes. |
-| `GetContinuation()` | Capture current continuation as first-class value. DF is NOT consumed. |
-| `ResumeContinuation(k, v)` | Resume ANY captured continuation k with value v. Current computation abandoned. |
-| `yield effect` | Also forwards (creates new DispatchingFrame). Works but more frames. |
-| `return value` | **Implicit abandonment.** User continuation is dropped. Value flows past WHF. |
+| Yield Type | Classification | Level 2 Action |
+|------------|----------------|----------------|
+| `WithHandler(h, p)` | Control primitive | Install handler, start scoped program |
+| `Resume(value)` | Control primitive | Resume user continuation with value |
+| `Forward(effect)` | Control primitive | Forward to outer handlers |
+| `GetContinuation()` | Control primitive | Capture continuation as first-class value |
+| `ResumeContinuation(k, v)` | Control primitive | Resume captured continuation k with value v |
+| `Program` / `KleisliProgramCall` | Monadic bind | Execute nested program, send result back |
+| `EffectBase` subclass | User effect | Start dispatch via DispatchingFrame |
+| `return value` | Handler completion | **Implicit abandonment** - user continuation dropped |
 
 ### Implicit Abandonment (No Abort)
 
@@ -605,7 +613,10 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
     Processing order:
     1. Check for WithHandlerFrame at K[0] (scope end)
     2. Check for DispatchingFrame at K[0] (dispatch logic)
-    3. Check for EffectYield (start dispatch or control primitive)
+    3. Check for EffectYield:
+       - ControlPrimitive → execute primitive
+       - ProgramBase → monadic bind (execute nested program)
+       - EffectBase → start dispatch
     4. Delegate to Level 1 for ReturnFrame
     
     INVARIANTS:
@@ -661,6 +672,17 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
         
         if isinstance(yielded, Forward):
             return handle_forward(yielded, state)
+        
+        if isinstance(yielded, GetContinuation):
+            return handle_get_continuation(yielded, state)
+        
+        if isinstance(yielded, ResumeContinuation):
+            return handle_resume_continuation(yielded, state)
+        
+        # --- Program: monadic bind (ADR-12) ---
+        if isinstance(yielded, ProgramBase):
+            # Execute nested program; result flows back via ReturnFrame
+            return CESKState(C=ProgramControl(yielded), E=E, S=S, K=K)
         
         # --- User Effect: start dispatch ---
         if isinstance(yielded, EffectBase):
@@ -1713,6 +1735,34 @@ def handler(effect):
 - One-shot is sufficient for most scheduling patterns
 
 **Future extension**: If multi-shot is needed, could add explicit `Continuation.clone()` that deep-copies generators (if supported by Python).
+
+### ADR-12: Program Yields Handled in Level 2 (Monadic Bind)
+
+**Decision**: When a generator yields a `Program` (including `KleisliProgramCall`), Level 2 handles it by converting to `ProgramControl` - the monadic bind operation.
+
+**Rationale**:
+- `Program` is the fundamental composable unit in doeff
+- Yielding a Program means "run this program, give me its result" (flatMap/bind)
+- This is NOT an effect - it's sequencing/composition
+- Level 1 is pure CESK (generators only), shouldn't know about Program types
+- Level 2 already handles program semantics (WithHandler installs programs)
+
+**Yield Classification in Level 2**:
+| Yielded Type | Classification | Action |
+|--------------|----------------|--------|
+| `ControlPrimitive` | VM instruction | Execute primitive (Resume, Forward, etc.) |
+| `ProgramBase` | Monadic bind | Convert to `ProgramControl`, execute nested program |
+| `EffectBase` | User effect | Start dispatch via `DispatchingFrame` |
+| Other | Error | Raise `TypeError` |
+
+**Implementation**:
+```python
+if isinstance(yielded, ProgramBase):
+    # Monadic bind: execute nested program, result flows back via ReturnFrame
+    return CESKState(C=ProgramControl(yielded), E=E, S=S, K=K)
+```
+
+**Key insight**: The existing `ReturnFrame` machinery handles the "send result back" part. When the nested program completes with `Value(result)`, the outer generator's `ReturnFrame` receives it via `send()`.
 
 ---
 
