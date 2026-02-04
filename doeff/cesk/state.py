@@ -28,10 +28,12 @@ from doeff.cesk.types import (
 
 if TYPE_CHECKING:
     from doeff.cesk.frames import Kontinuation
-    from doeff.cesk.handler_frame import HandlerContext
+    from doeff.cesk.handler_frame import HandlerContext, HandlerCtx
     from doeff.cesk_traceback import CapturedTraceback
     from doeff.effects._program_types import ProgramLike
     from doeff.effects.spawn import SpawnBackend
+
+HandlerStack: TypeAlias = "list[HandlerCtx]"
 
 
 # ============================================
@@ -338,6 +340,9 @@ class CESKState:
         E: Environment | None = None,
         S: Store | None = None,
         K: Kontinuation | None = None,
+        # CESK+H extension (handler stack separate from K)
+        H: "HandlerStack | None" = None,
+        active_handler: int = -1,
     ):
         """Initialize CESKState with either new or legacy interface.
 
@@ -346,7 +351,15 @@ class CESKState:
 
         Legacy interface (for backward compatibility):
             CESKState(C=Value(42), E=FrozenDict(), S={}, K=[])
+            
+        CESK+H extension adds:
+            H: Handler stack (list of HandlerCtx)
+            active_handler: Index of currently active handler (-1 = none)
         """
+        # CESK+H fields
+        self._H: HandlerStack = H if H is not None else []
+        self._active_handler = active_handler
+        
         if tasks is not None:
             # New interface
             self.tasks = tasks
@@ -391,6 +404,16 @@ class CESKState:
     def K(self) -> Kontinuation:
         """Kontinuation of main task (legacy interface)."""
         return self.tasks[self.main_task].kontinuation
+
+    @property
+    def H(self) -> "HandlerStack":
+        """Handler stack (CESK+H extension)."""
+        return self._H
+    
+    @property
+    def active_handler(self) -> int:
+        """Index of active handler, -1 if none (CESK+H extension)."""
+        return self._active_handler
 
     def __repr__(self) -> str:
         return f"CESKState(tasks={self.tasks!r}, store={self.store!r}, main_task={self.main_task!r}, futures={self.futures!r}, spawn_results={self.spawn_results!r})"
@@ -522,6 +545,8 @@ class CESKState:
         env: "Environment",
         store: "Store",
         k: "Kontinuation",
+        h: "HandlerStack | None" = None,
+        active_handler: int = -1,
     ) -> "CESKState":
         """Create state that continues with a value.
 
@@ -530,7 +555,7 @@ class CESKState:
         Example:
             return CESKState.with_value(result, env, store, k_rest)
         """
-        return cls(C=Value(value), E=env, S=store, K=list(k))
+        return cls(C=Value(value), E=env, S=store, K=list(k), H=h, active_handler=active_handler)
 
     @classmethod
     def with_error(
@@ -540,13 +565,15 @@ class CESKState:
         store: "Store",
         k: "Kontinuation",
         captured_traceback: "CapturedTraceback | None" = None,
+        h: "HandlerStack | None" = None,
+        active_handler: int = -1,
     ) -> "CESKState":
         """Create state that continues with an error.
 
         Example:
             return CESKState.with_error(exc, env, store, k_rest)
         """
-        return cls(C=Error(error, captured_traceback), E=env, S=store, K=list(k))
+        return cls(C=Error(error, captured_traceback), E=env, S=store, K=list(k), H=h, active_handler=active_handler)
 
     @classmethod
     def with_program(
@@ -555,13 +582,15 @@ class CESKState:
         env: "Environment",
         store: "Store",
         k: "Kontinuation",
+        h: "HandlerStack | None" = None,
+        active_handler: int = -1,
     ) -> "CESKState":
         """Create state that continues with a new program.
 
         Example:
             return CESKState.with_program(sub_program, env, store, k_rest)
         """
-        return cls(C=ProgramControl(program), E=env, S=store, K=list(k))
+        return cls(C=ProgramControl(program), E=env, S=store, K=list(k), H=h, active_handler=active_handler)
 
     # ============================================
     # Handler Convenience Methods
@@ -617,26 +646,22 @@ __all__ = [
     "Control",
     "CreateFuture",
     "CreateSpawn",
-    # Requests
     "CreateTask",
     "Done",
     "EffectControl",
     "Error",
     "FutureCondition",
+    "HandlerStack",
     "PerformIO",
     "ProgramControl",
-    # Task status
     "Ready",
     "Request",
     "Requesting",
     "ResolveFuture",
     "SpawnCondition",
     "TaskCondition",
-    # State classes
     "TaskState",
     "TaskStatus",
-    # Conditions
     "TimeCondition",
-    # Control states
     "Value",
 ]
