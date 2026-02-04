@@ -30,7 +30,38 @@ T = TypeVar("T")
 
 
 # ============================================
-# Handler Context
+# Handler Stack Entry (for H stack in CESK+H)
+# ============================================
+
+
+@dataclass
+class HandlerCtx:
+    """Entry in the H (handler) stack for CESK+H architecture.
+    
+    This is NOT the same as HandlerContext (which is passed to handlers).
+    HandlerCtx tracks the state of a handler in the H stack.
+    
+    Attributes:
+        handler: The handler function
+        handles: Set of effect types this handler handles (empty = catch-all)
+        saved_env: Environment when handler was installed
+        generator: Handler's generator when active (None if not processing an effect)
+        captured_k: K captured when effect was dispatched to this handler
+    """
+    handler: Callable[["EffectBase", "HandlerContext"], Any]
+    handles: frozenset[type]
+    saved_env: Environment
+    generator: Any = None  # Generator when active
+    captured_k: Kontinuation | None = None
+
+
+def get_handler_handles(handler: Callable) -> frozenset[type]:
+    """Get the effect types a handler declares it handles."""
+    return getattr(handler, "__handles__", frozenset())
+
+
+# ============================================
+# Handler Context (passed to handlers)
 # ============================================
 
 
@@ -56,6 +87,7 @@ class HandlerContext:
         handler_depth: The depth of this handler in the handler stack (0 = outermost)
         outer_k: The continuation beyond this handler (for full task suspension)
         inherited_handlers: All handler frames from the original K (for spawn inheritance)
+        h: The handler stack (CESK+H extension)
     """
 
     store: Store
@@ -64,6 +96,7 @@ class HandlerContext:
     handler_depth: int
     outer_k: Kontinuation = field(default_factory=list)
     inherited_handlers: Kontinuation = field(default_factory=list)
+    h: "list[HandlerCtx] | None" = None
 
     @property
     def k(self) -> Kontinuation:
@@ -274,8 +307,10 @@ class WithHandler(EffectBase, Generic[T]):
 __all__ = [
     "Handler",
     "HandlerContext",
+    "HandlerCtx",
     "HandlerFrame",
     "HandlerResultFrame",
     "ResumeK",
     "WithHandler",
+    "get_handler_handles",
 ]

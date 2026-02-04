@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 
 
 def to_generator(program: Program[Any]) -> Generator[Any, Any, Any]:
+    if hasattr(program, "to_generator"):
+        return program.to_generator()  # type: ignore
     if hasattr(program, "__iter__"):
         return iter(program)  # type: ignore
     raise TypeError(f"Cannot convert {type(program).__name__} to generator")
