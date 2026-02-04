@@ -12,8 +12,10 @@ from doeff.cesk_v3.level2_algebraic_effects.frames import (
 )
 from doeff.cesk_v3.level2_algebraic_effects.primitives import (
     Continuation,
+    CreateContinuation,
     Forward,
     GetContinuation,
+    GetHandlers,
     Resume,
     ResumeContinuation,
     WithHandler,
@@ -223,10 +225,47 @@ def handle_resume_continuation(rc: ResumeContinuation, state: CESKState) -> CESK
     if whf_idx is None:
         raise RuntimeError("ResumeContinuation: cannot find handler's WithHandlerFrame")
 
-    new_k = (
-        list(rc.continuation.frames)
-        + [handler_gen]
-        + list(user_continuation[whf_idx:])
+    if rc.continuation.started:
+        new_k = (
+            list(rc.continuation.frames)
+            + [handler_gen]
+            + list(user_continuation[whf_idx:])
+        )
+        return CESKState(C=Value(rc.value), E=E, S=new_store, K=new_k)
+    else:
+        if rc.continuation.program is None:
+            raise RuntimeError("Unstarted continuation must have a program")
+
+        handler_frames = [
+            WithHandlerFrame(handler=h) for h in rc.continuation.handlers
+        ]
+        new_k = handler_frames + [handler_gen] + list(user_continuation[whf_idx:])
+
+        return CESKState(
+            C=ProgramControl(rc.continuation.program), E=E, S=new_store, K=new_k
+        )
+
+
+def handle_get_handlers(gh: GetHandlers, state: CESKState) -> CESKState:
+    C, E, S, K = state.C, state.E, state.S, state.K
+
+    for frame in K:
+        if isinstance(frame, DispatchingFrame):
+            return CESKState(C=Value(frame.handlers), E=E, S=S, K=K)
+
+    raise RuntimeError("GetHandlers called outside handler context")
+
+
+def handle_create_continuation(cc: CreateContinuation, state: CESKState) -> CESKState:
+    C, E, S, K = state.C, state.E, state.S, state.K
+
+    cont_id = next(_continuation_id_counter)
+    continuation = Continuation(
+        cont_id=cont_id,
+        frames=(),
+        program=cc.program,
+        started=False,
+        handlers=cc.handlers,
     )
 
-    return CESKState(C=Value(rc.value), E=E, S=new_store, K=new_k)
+    return CESKState(C=Value(continuation), E=E, S=S, K=K)

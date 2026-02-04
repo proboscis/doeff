@@ -18,8 +18,10 @@ from doeff.cesk_v3.level2_algebraic_effects.frames import (
     WithHandlerFrame,
 )
 from doeff.cesk_v3.level2_algebraic_effects.handlers import (
+    handle_create_continuation,
     handle_forward,
     handle_get_continuation,
+    handle_get_handlers,
     handle_implicit_abandonment,
     handle_resume,
     handle_resume_continuation,
@@ -27,8 +29,10 @@ from doeff.cesk_v3.level2_algebraic_effects.handlers import (
 )
 from doeff.cesk_v3.level2_algebraic_effects.primitives import (
     ControlPrimitive,
+    CreateContinuation,
     Forward,
     GetContinuation,
+    GetHandlers,
     Resume,
     ResumeContinuation,
     WithHandler,
@@ -82,6 +86,12 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed:
 
         if isinstance(yielded, ResumeContinuation):
             return handle_resume_continuation(yielded, state)
+
+        if isinstance(yielded, GetHandlers):
+            return handle_get_handlers(yielded, state)
+
+        if isinstance(yielded, CreateContinuation):
+            return handle_create_continuation(yielded, state)
 
         if isinstance(yielded, ProgramBase):
             return CESKState(C=ProgramControl(yielded), E=E, S=S, K=K)
