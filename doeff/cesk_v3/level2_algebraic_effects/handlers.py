@@ -16,6 +16,7 @@ from doeff.cesk_v3.level2_algebraic_effects.primitives import (
     Forward,
     GetContinuation,
     GetHandlers,
+    PythonAsyncSyntaxEscape,
     Resume,
     ResumeContinuation,
     WithHandler,
@@ -269,3 +270,16 @@ def handle_create_continuation(cc: CreateContinuation, state: CESKState) -> CESK
     )
 
     return CESKState(C=Value(continuation), E=E, S=S, K=K)
+
+
+def handle_async_escape(
+    escape: PythonAsyncSyntaxEscape, state: CESKState
+) -> PythonAsyncSyntaxEscape:
+    E, S, K = state.E, state.S, state.K
+    original_action = escape.action
+
+    async def wrapped_action() -> CESKState:
+        value = await original_action()
+        return CESKState(C=Value(value), E=E, S=S, K=K)
+
+    return PythonAsyncSyntaxEscape(action=wrapped_action)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -26,7 +27,7 @@ class ControlPrimitive:
 @dataclass(frozen=True)
 class WithHandler(ControlPrimitive, Generic[T]):
     handler: Handler
-    program: Program[T]
+    program: "Program[T] | WithHandler[T]"
 
 
 @dataclass(frozen=True)
@@ -128,3 +129,39 @@ class CreateContinuation(ControlPrimitive):
 
     program: "Program[Any]"
     handlers: tuple[Handler, ...] = ()
+
+
+@dataclass(frozen=True)
+class PythonAsyncSyntaxEscape(ControlPrimitive):
+    """Escape to Python's async event loop - a WORKAROUND for Python's async syntax.
+
+    WHY THIS EXISTS:
+    Python's asyncio APIs (asyncio.create_task, await, etc.) require:
+    1. A running event loop
+    2. Being called from an `async def` context
+
+    Handlers run during step(), which is synchronous Python code. They CANNOT
+    directly call asyncio APIs. This escape lets handlers say "please run this
+    action in an async context" - which async_run provides.
+
+    THIS IS NOT A FUNDAMENTAL PRIMITIVE:
+    - sync_run is the clean, canonical implementation
+    - doeff's cooperative scheduling works without async/await
+    - If Python had first-class coroutines without syntax requirements,
+      this primitive would not exist
+
+    DUAL NATURE:
+    - As ControlPrimitive: Yielded by handlers with VALUE-returning action
+    - As StepResult: Returned by level2_step with STATE-returning action
+
+    FLOW:
+    1. Handler creates action that returns a VALUE (e.g., asyncio.Task)
+    2. level2_step wraps action to return CESKState (capturing E, S, K)
+    3. level2_step returns PythonAsyncSyntaxEscape as step result
+    4. async_run awaits action, gets CESKState, continues stepping
+
+    IMPORTANT: Only handlers designed for async_run should yield this primitive.
+    sync_run will raise TypeError if it encounters this step result.
+    """
+
+    action: Callable[[], Awaitable[Any]]
