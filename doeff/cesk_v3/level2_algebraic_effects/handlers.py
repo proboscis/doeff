@@ -58,6 +58,15 @@ def handle_resume(resume: Resume, state: CESKState) -> CESKState:
 
     df = K[df_idx]
     assert isinstance(df, DispatchingFrame)
+
+    # Check if this handler already forwarded - Resume after Forward is not allowed
+    if df.forwarded:
+        raise RuntimeError(
+            "Resume called after Forward. Once a handler forwards an effect, "
+            "the outer handler's Resume sends the value directly to user code. "
+            "The forwarding handler should just return the Forward result."
+        )
+
     handler_gen = K[0]
     user_continuation = K[df_idx + 1 :]
     target_handler = df.handlers[df.handler_idx]
@@ -94,14 +103,14 @@ def handle_forward(forward: Forward, state: CESKState) -> CESKState:
 
     current_df = K[df_idx]
     assert isinstance(current_df, DispatchingFrame)
-    outer_handlers = current_df.handlers[: current_df.handler_idx]
+    outer_handlers = current_df.handlers[current_df.handler_idx + 1 :]
 
     if not outer_handlers:
         raise UnhandledEffectError(forward.effect)
 
     new_df = DispatchingFrame(
         effect=forward.effect,
-        handler_idx=len(outer_handlers) - 1,
+        handler_idx=0,
         handlers=outer_handlers,
         handler_started=False,
     )

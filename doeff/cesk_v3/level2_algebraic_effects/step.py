@@ -39,6 +39,7 @@ from doeff.cesk_v3.level2_algebraic_effects.primitives import (
     ResumeContinuation,
     WithHandler,
 )
+from doeff.effects.pure import PureEffect
 from doeff.program import ProgramBase
 
 
@@ -58,7 +59,7 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed | PythonAsyncSynt
         df = K[0]
 
         if not df.handler_started:
-            if df.handler_idx < 0:
+            if df.handler_idx >= len(df.handlers):
                 raise UnhandledEffectError(df.effect)
 
             handler = df.handlers[df.handler_idx]
@@ -100,6 +101,9 @@ def level2_step(state: CESKState) -> CESKState | Done | Failed | PythonAsyncSynt
 
         if isinstance(yielded, PythonAsyncSyntaxEscape):
             return handle_async_escape(yielded, state)
+
+        if isinstance(yielded, PureEffect):
+            return CESKState(C=Value(yielded.value), E=E, S=S, K=K)
 
         if isinstance(yielded, ProgramBase):
             return CESKState(C=ProgramControl(yielded), E=E, S=S, K=K)

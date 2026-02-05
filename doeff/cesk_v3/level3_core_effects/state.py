@@ -137,7 +137,8 @@ def state_handler(
             new_value = effect.func(old_value)
             state[effect.key] = new_value
             return (yield Resume(new_value))
-        return (yield Forward(effect))
+        forwarded = yield Forward(effect)
+        return (yield Resume(forwarded))
 
     return handler
 
