@@ -23,9 +23,9 @@ This spec defines a **Rust-based VM** for doeff's algebraic effects system, with
 │    Segments          Frames           Dispatch                  │
 │    ┌────────┐       ┌────────┐       ┌────────────┐            │
 │    │ marker │       │ PyGen  │       │ dispatch_  │            │
-│    │ frames │◄─────►│ RustCb │       │ stack      │            │
-│    │ caller │       └────────┘       │            │            │
-│    │ scope  │                        │ visible_   │            │
+│    │ frames │◄─────►│ RustProg│      │ stack      │            │
+│    │ caller │       │ RustCb │       │            │            │
+│    │ scope  │       └────────┘       │ visible_   │            │
 │    └────────┘                        │ handlers() │            │
 │        │                             └────────────┘            │
 │        │              Primitives                                │
@@ -92,6 +92,13 @@ print(stdlib.writer.logs())
 # User can replace stdlib with custom implementation
 custom_state = MyPersistentStateHandler()
 prog = with_handler(custom_state, user_program())
+```
+
+**Built-in Scheduler (Explicit)**:
+```python
+vm = doeff.VM()
+scheduler = vm.scheduler()  # Rust program handler, not auto-installed
+prog = with_handler(scheduler, user_program())
 ```
 
 ### ADR-3: GIL Release Strategy
@@ -167,14 +174,23 @@ Segment is a Rust struct representing a delimited continuation frame:
 
 ### Principle 3: Explicit Continuations
 
-Handlers (Rust or Python) receive continuations explicitly:
+Handlers (Rust or Python) receive continuations explicitly. Rust supports both
+immediate stdlib handlers and generator-like Rust program handlers:
 
 ```rust
-// Rust handler signature
-fn handle_effect(effect: &Effect, k: Continuation, vm: &mut VM) -> Control;
+// Stdlib handler signature (immediate action)
+fn handle_effect(effect: &Effect, k: Continuation, store: &mut RustStore) -> HandlerAction;
+
+// Rust program handler signature (generator-like)
+trait RustHandlerProgram {
+    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
+}
 
 // Python handler signature (via PyO3)
 // def handler(effect, k) -> Program[Any]
+// VM converts the Program to a generator via to_generator().
 ```
 
 ### Principle 4: Ownership and Lifetimes
@@ -202,6 +218,8 @@ pub struct Marker(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct SegmentId(u32);
 
+// SegmentId(0) may be used as a placeholder for unstarted continuations.
+
 /// Unique identifier for continuations (one-shot tracking)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ContId(u64);
@@ -214,16 +232,14 @@ pub struct DispatchId(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct CallbackId(u32);
 
-/// Unique identifier for runnable continuations
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct RunnableId(u64);
-
 impl Marker {
     pub fn fresh() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(1);
         Marker(COUNTER.fetch_add(1, Ordering::Relaxed))
     }
 }
+
+// Marker(0) is reserved for internal placeholders (e.g., unstarted continuations).
 ```
 
 ### Frame (Clone-able via CallbackId)
@@ -241,6 +257,12 @@ pub enum Frame {
         cb: CallbackId,
     },
     
+    /// Rust program handler frame (generator-like, no Python calls).
+    /// program is a shared reference (see RustProgramRef in Handler section).
+    RustProgram {
+        program: RustProgramRef,
+    },
+    
     /// Python generator frame (user code or Python handlers)
     PythonGenerator {
         /// The Python generator object (GIL-independent storage)
@@ -252,7 +274,7 @@ pub enum Frame {
 
 /// Callback type stored in VM.callbacks table.
 /// Consumed (removed) when executed.
-pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Control + Send>;
+pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send>;
 ```
 
 ### Segment
@@ -344,25 +366,27 @@ impl Segment {
 ### Continuation (with Snapshot)
 
 ```rust
-/// Capturable continuation (subject to one-shot check).
+/// Captured or created continuation (subject to one-shot check).
 /// 
-/// Contains a snapshot of frames and scope_chain at capture time.
-/// Resume materializes this snapshot into a new execution segment.
+/// Two kinds:
+/// - Captured (started=true): frames_snapshot/scope_chain/marker/dispatch_id are valid
+/// - Created (started=false): program/handlers are valid; frames_snapshot is empty
 #[derive(Debug, Clone)]
 pub struct Continuation {
     /// Unique identifier for one-shot tracking
     pub cont_id: ContId,
     
-    /// Original segment this was captured from (for debugging/reference)
+    /// Original segment this was captured from (for debugging/reference).
+    /// Meaningful only when started=true.
     pub segment_id: SegmentId,
     
-    /// Frozen frames at capture time
+    /// Frozen frames at capture time (captured only)
     pub frames_snapshot: Arc<Vec<Frame>>,
     
-    /// Frozen scope_chain at capture time
+    /// Frozen scope_chain at capture time (captured only)
     pub scope_chain: Arc<Vec<Marker>>,
     
-    /// Handler marker this continuation belongs to.
+    /// Handler marker this continuation belongs to (captured only).
     /// 
     /// SEMANTICS: This is the innermost handler at capture time (scope_chain[0]).
     /// Used primarily for debugging/tracing. The authoritative handler info
@@ -376,6 +400,17 @@ pub struct Continuation {
     /// RULE: Only callsite continuations (k_user) have Some here.
     /// Handler-local and scheduler continuations have None.
     pub dispatch_id: Option<DispatchId>,
+    
+    /// Whether this continuation is already started.
+    /// started=true  => captured continuation
+    /// started=false => created (unstarted) continuation
+    pub started: bool,
+    
+    /// Program object to start when started=false (ProgramBase: KleisliProgramCall or EffectBase).
+    pub program: Option<Py<PyAny>>,
+    
+    /// Handlers to install when started=false (innermost first).
+    pub handlers: Vec<Handler>,
 }
 
 impl Continuation {
@@ -392,27 +427,26 @@ impl Continuation {
             scope_chain: Arc::new(segment.scope_chain.clone()),
             marker: segment.marker,
             dispatch_id,
+            started: true,
+            program: None,
+            handlers: Vec::new(),
         }
     }
-}
-```
-
-### RunnableContinuation (Internal)
-
-```rust
-/// Ready-to-run continuation. INTERNAL to scheduler.
-/// 
-/// Created by ResumeThenTransfer for scheduler queues.
-#[derive(Debug)]
-pub(crate) struct RunnableContinuation {
-    /// Unique identifier for execution tracking
-    pub runnable_id: RunnableId,
     
-    /// The continuation to resume
-    pub continuation: Continuation,
-    
-    /// Value to deliver when executed
-    pub pending_value: Value,
+    /// Create an unstarted continuation from a program and handlers.
+    pub fn create(program: Py<PyAny>, handlers: Vec<Handler>) -> Self {
+        Continuation {
+            cont_id: ContId::fresh(),
+            segment_id: SegmentId(0),  // unused when started=false
+            frames_snapshot: Arc::new(Vec::new()),
+            scope_chain: Arc::new(Vec::new()),
+            marker: Marker(0),  // ignored when started=false
+            dispatch_id: None,
+            started: false,
+            program: Some(program),
+            handlers,
+        }
+    }
 }
 ```
 
@@ -434,14 +468,14 @@ pub struct DispatchContext {
     /// Current position (0 = innermost)
     pub handler_idx: usize,
     
-    /// cont_id of k_user (for completion detection)
-    pub callsite_cont_id: ContId,
+    /// Callsite continuation (for completion detection and Delegate)
+    pub k_user: Continuation,
     
-    /// Prompt segment for this handler (captured at WithHandler time)
-    /// Handler returns and abandon go HERE.
+    /// Prompt boundary for the current handler (root dispatch).
+    /// Updated on Delegate for debugging/abandon routing.
     pub prompt_seg_id: SegmentId,
     
-    /// Marked true when Resume targets callsite
+    /// Marked true when callsite is resolved (Resume/Transfer/Return)
     pub completed: bool,
 }
 ```
@@ -451,11 +485,26 @@ pub struct DispatchContext {
 ```rust
 /// A value that can flow through the VM.
 /// 
-/// Can be either a Rust-native value or a Python object.
+/// Can be Rust-native, Python objects, or VM-level objects (Continuation/Handlers).
 #[derive(Debug, Clone)]
 pub enum Value {
     /// Python object (GIL-independent)
     Python(Py<PyAny>),
+
+    /// Captured or created continuation
+    Continuation(Continuation),
+
+    /// Handler list (innermost first)
+    Handlers(Vec<Handler>),
+
+    /// Task handle (scheduler)
+    Task(TaskHandle),
+
+    /// Promise handle (scheduler)
+    Promise(PromiseHandle),
+
+    /// External promise handle (scheduler)
+    ExternalPromise(ExternalPromise),
     
     /// Rust unit (for primitives that don't return meaningful values)
     Unit,
@@ -478,6 +527,17 @@ impl Value {
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
             Value::Python(obj) => Ok(obj.bind(py).clone()),
+            Value::Continuation(k) => k.to_pyobject(py),
+            Value::Handlers(handlers) => {
+                let py_list = PyList::empty(py);
+                for h in handlers {
+                    py_list.append(h.to_pyobject(py)?)?;
+                }
+                Ok(py_list.into_any())
+            }
+            Value::Task(handle) => handle.to_pyobject(py),
+            Value::Promise(handle) => handle.to_pyobject(py),
+            Value::ExternalPromise(handle) => handle.to_pyobject(py),
             Value::Unit => Ok(py.None().into_bound(py)),
             Value::Int(i) => Ok(i.into_pyobject(py)?.into_any()),
             Value::String(s) => Ok(s.into_pyobject(py)?.into_any()),
@@ -492,6 +552,8 @@ impl Value {
         if obj.is_none() {
             return Value::None;
         }
+        // Scheduler handle wrappers are left as Value::Python; effect extraction
+        // is responsible for decoding them when needed.
         // Check bool before int (bool is subclass of int in Python)
         if let Ok(b) = obj.extract::<bool>() {
             return Value::Bool(b);
@@ -534,6 +596,9 @@ pub enum Effect {
     /// Tell(message) -> () (Writer effect)
     Tell { message: Value },
     
+    // === Built-in scheduler effects (Rust-native, but open to Python handlers) ===
+    Scheduler(SchedulerEffect),
+    
     // === User-defined effects ===
     
     /// Any Python effect object (handled by Python handlers)
@@ -549,19 +614,82 @@ impl Effect {
             Effect::Modify { .. } => "Modify",
             Effect::Ask { .. } => "Ask",
             Effect::Tell { .. } => "Tell",
+            Effect::Scheduler(_) => "Scheduler",
             Effect::Python(_) => "Python",
         }
     }
     
-    /// Check if this is a stdlib effect (for handler matching convenience).
+    /// Check if this is a stdlib effect (state/reader/writer only).
     /// NOTE: This does NOT mean bypass - all effects still go through dispatch.
+    /// Scheduler effects are built-in but are not considered stdlib here.
     pub fn is_stdlib(&self) -> bool {
-        !matches!(self, Effect::Python(_))
+        matches!(
+            self,
+            Effect::Get { .. }
+                | Effect::Put { .. }
+                | Effect::Modify { .. }
+                | Effect::Ask { .. }
+                | Effect::Tell { .. }
+        )
     }
 }
 ```
 
-### Handler (Rust Stdlib + Python User)
+### Python FFI Wrappers (Effect, Continuation, Handler)
+
+Effect, Continuation, and Handler are exposed to Python as PyO3 classes
+(e.g., `PyEffect`, `PyContinuation`, `PyStdlibHandler`, `PyRustProgramHandler`).
+These conversions require the GIL and are performed by the driver.
+
+```rust
+impl Effect {
+    /// Convert to Python object (driver only, requires GIL).
+    /// Stdlib effects map to the Python effect classes (Get/Put/Modify/Ask/Tell).
+    /// Scheduler effects map to the Python scheduler classes (Spawn/Gather/Race/Promise/...),
+    /// so Python handlers can intercept them (including store_mode for Spawn).
+    /// Effect::Python returns the wrapped object.
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+}
+
+impl Continuation {
+    /// Convert to Python object (driver only, requires GIL).
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+
+    /// Convert from Python object (driver only, requires GIL).
+    /// Accepts PyContinuation wrapper objects.
+    pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> PyResult<Self>;
+}
+
+impl Handler {
+    /// Convert to Python object (driver only, requires GIL).
+    /// - Handler::Python returns the original callable
+    /// - Handler::Stdlib returns a callable PyStdlibHandler wrapper
+    /// - Handler::RustProgram returns an opaque PyRustProgramHandler wrapper
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+    
+    /// Convert from Python object (driver only, requires GIL).
+    /// Accepts user callables, PyStdlibHandler wrappers, and PyRustProgramHandler wrappers.
+    pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> PyResult<Self>;
+}
+
+// Scheduler handle wrappers (built-in).
+impl TaskHandle {
+    /// Convert to Python object (driver only, requires GIL).
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+}
+
+impl PromiseHandle {
+    /// Convert to Python object (driver only, requires GIL).
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+}
+
+impl ExternalPromise {
+    /// Convert to Python object (driver only, requires GIL).
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
+}
+```
+
+### Handler (Rust Stdlib + Rust Program + Python User)
 
 ```rust
 /// A handler that can process effects.
@@ -574,9 +702,47 @@ pub enum Handler {
     /// These handlers have direct access to RustStore.
     Stdlib(StdlibHandler),
     
+    /// Rust program handler (generator-like, Rust-native)
+    /// Implemented via RustProgramHandler (factory for RustHandlerProgram instances).
+    RustProgram(RustProgramHandlerRef),
+    
     /// Python handler function
     /// Signature: def handler(effect, k) -> Program[Any]
     Python(Py<PyAny>),
+}
+
+/// Shared reference to a Rust program handler factory.
+pub type RustProgramHandlerRef = Arc<dyn RustProgramHandler + Send + Sync>;
+
+/// Shared reference to a running Rust handler program (cloneable for continuations).
+pub type RustProgramRef = Arc<Mutex<Box<dyn RustHandlerProgram + Send>>>;
+
+/// Result of stepping a Rust handler program.
+pub enum RustProgramStep {
+    /// Yield a control primitive / effect / program
+    Yield(Yielded),
+    /// Return a value (like generator return)
+    Return(Value),
+    /// Throw an exception into the VM
+    Throw(PyException),
+}
+
+/// A Rust handler program instance (generator-like).
+/// 
+/// start/resume/throw mirror Python generator protocol but run in Rust.
+pub trait RustHandlerProgram {
+    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
+        -> RustProgramStep;
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
+}
+
+/// Factory for Rust handler programs.
+/// 
+/// Each dispatch creates a fresh RustHandlerProgram instance.
+pub trait RustProgramHandler {
+    fn can_handle(&self, effect: &Effect) -> bool;
+    fn create_program(&self) -> RustProgramRef;
 }
 
 /// Stdlib handlers (Rust-implemented).
@@ -604,10 +770,11 @@ impl Handler {
     pub fn can_handle(&self, effect: &Effect) -> bool {
         match self {
             Handler::Stdlib(stdlib) => stdlib.can_handle(effect),
-            Handler::Python(py_handler) => {
-                // Python handlers handle Python effects
-                // (actual matching done by Python code)
-                matches!(effect, Effect::Python(_))
+            Handler::RustProgram(handler) => handler.can_handle(effect),
+            Handler::Python(_) => {
+                // Python handlers are considered capable of handling any effect.
+                // They can Delegate when they do not handle a specific effect.
+                true
             }
         }
     }
@@ -653,7 +820,7 @@ They read/write `RustStore` directly, avoiding Python calls for maximum performa
 The `HandlerAction` enum supports this via `NeedsPython`.
 
 ```rust
-/// Action returned by handlers (stdlib or user).
+/// Action returned by stdlib handlers (Rust-native, immediate).
 /// 
 /// This tells the VM what to do after handling an effect.
 /// CRITICAL: Includes NeedsPython for effects that require Python calls (e.g., Modify).
@@ -664,14 +831,21 @@ pub enum HandlerAction {
     /// Transfer control to continuation (tail call, no return)
     Transfer { k: Continuation, value: Value },
     
-    /// Return a value (abandon continuation)
+    /// Return a value from handler.
+    /// 
+    /// Returns to the handler's caller segment. If the caller is the
+    /// dispatch prompt boundary (root handler), this abandons the callsite
+    /// and marks the dispatch completed.
     Return { value: Value },
     
     /// Need to call Python before completing the handler action.
     /// Used by Modify (calls modifier function), async escapes, etc.
     /// 
     /// After Python returns, VM will call handler.continue_after_python(result).
+    /// NOTE: continue_after_python must return Resume/Transfer/Return (no nested NeedsPython).
     NeedsPython {
+        /// Which stdlib handler to continue after Python returns
+        handler: StdlibHandler,
         /// The Python call to make
         call: PythonCall,
         /// Continuation to resume after Python returns
@@ -727,6 +901,7 @@ impl StdStateHandler {
                 
                 // 2. Return NeedsPython to call modifier(old_value)
                 HandlerAction::NeedsPython {
+                    handler: StdlibHandler::State(self.clone()),
                     call: PythonCall::CallFunc {
                         func: modifier.clone(),
                         args: vec![old_value.clone()],
@@ -821,9 +996,439 @@ impl StdWriterHandler {
 }
 ```
 
+### Built-in Scheduler Handler (Rust, Explicit Installation)
+
+This is a built-in Rust program handler that implements cooperative scheduling for
+Spawn/Race/Gather/Task/Promise/ExternalPromise using **Transfer-only** semantics.
+It is **not** auto-installed; users must install it explicitly via `WithHandler`.
+It can be replaced by custom Python or Rust handlers.
+The VM ships this as the default scheduler implementation (explicit installation only).
+
+Assumptions for the reference implementation:
+- Spawn effects carry the callsite handler chain (`handlers: Vec<Handler>`) so the
+  scheduler can create child continuations without calling `GetHandlers` in Rust.
+- Spawn includes `store_mode` to opt into RustStore isolation.
+- Task/Promise handles are opaque IDs exposed to Python via `Value` variants and
+  PyO3 wrappers.
+- Scheduling decisions **always** yield `ControlPrimitive::Transfer` to avoid stack growth.
+
+Integration note:
+- Driver `extract_effect` maps built-in Python scheduler classes
+  (Spawn/Gather/Race/Promise/ExternalPromise/...) to `Effect::Scheduler`.
+  Spawn defaults `store_mode` to `StoreMode::Shared` if not specified.
+- `Effect::to_pyobject` maps `Effect::Scheduler` back to Python scheduler objects
+  so Python handlers can intercept or override scheduling.
+
+```rust
+#[derive(Debug, Clone)]
+pub enum SchedulerEffect {
+    Spawn {
+        program: Py<PyAny>,
+        handlers: Vec<Handler>,
+        /// Default is StoreMode::Shared if not specified by the Python effect.
+        store_mode: StoreMode,
+    },
+    Gather {
+        items: Vec<Waitable>,
+    },
+    Race {
+        items: Vec<Waitable>,
+    },
+    CreatePromise,
+    CompletePromise { promise: PromiseId, value: Value },
+    FailPromise { promise: PromiseId, error: PyException },
+    CreateExternalPromise,
+    TaskCompleted { task: TaskId, result: Result<Value, PyException> },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TaskId(u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct PromiseId(u64);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Waitable {
+    Task(TaskId),
+    Promise(PromiseId),
+    ExternalPromise(PromiseId),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum StoreMode {
+    Shared,
+    /// Isolated RustStore per task (PyStore remains shared).
+    Isolated { merge: StoreMergePolicy },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum StoreMergePolicy {
+    /// Merge only logs (append in Gather items order). State/env changes are not merged.
+    LogsOnly,
+    // Future: add policies for metrics/caches, or custom merges.
+}
+
+#[derive(Debug, Clone)]
+pub enum TaskStore {
+    Shared,
+    Isolated { store: RustStore, merge: StoreMergePolicy },
+}
+
+#[derive(Debug)]
+enum TaskState {
+    Pending { cont: Continuation, store: TaskStore },
+    Done { result: Result<Value, PyException>, store: TaskStore },
+}
+
+#[derive(Debug)]
+enum PromiseState {
+    Pending,
+    Done(Result<Value, PyException>),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct TaskHandle {
+    pub id: TaskId,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PromiseHandle {
+    pub id: PromiseId,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ExternalPromise {
+    pub id: PromiseId,
+}
+
+pub struct SchedulerState {
+    ready: VecDeque<TaskId>,
+    tasks: HashMap<TaskId, TaskState>,
+    promises: HashMap<PromiseId, PromiseState>,
+    waiters: HashMap<Waitable, Vec<Continuation>>,
+    next_task: u64,
+    next_promise: u64,
+    current_task: Option<TaskId>,
+}
+
+impl SchedulerState {
+    fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> RustProgramStep {
+        if let Some(task_id) = self.ready.pop_front() {
+            return self.transfer_task(task_id, store);
+        }
+        RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+            continuation: k,
+            value: Value::Unit,
+        }))
+    }
+
+    fn transfer_task(&mut self, task_id: TaskId, store: &mut RustStore) -> RustProgramStep {
+        // Save current store into current task (if isolated) before switching.
+        if let Some(current_id) = self.current_task {
+            self.save_task_store(current_id, store);
+        }
+        self.load_task_store(task_id, store);
+        self.current_task = Some(task_id);
+        // transfer_task should return Transfer to the task continuation.
+        // (implementation omitted in this spec snippet)
+        RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+            continuation: self.task_cont(task_id),
+            value: Value::Unit,
+        }))
+    }
+
+    fn save_task_store(&mut self, task_id: TaskId, store: &RustStore) {
+        let Some(state) = self.tasks.get_mut(&task_id) else { return; };
+        match state {
+            TaskState::Pending { store: TaskStore::Isolated { store: task_store, .. }, .. }
+            | TaskState::Done { store: TaskStore::Isolated { store: task_store, .. }, .. } => {
+                *task_store = store.clone();
+            }
+            _ => {}
+        }
+    }
+
+    fn load_task_store(&mut self, task_id: TaskId, store: &mut RustStore) {
+        let Some(state) = self.tasks.get(&task_id) else { return; };
+        let task_store = match state {
+            TaskState::Pending { store, .. } => store,
+            TaskState::Done { store, .. } => store,
+        };
+        if let TaskStore::Isolated { store: task_store, .. } = task_store {
+            *store = task_store.clone();
+        }
+    }
+
+    fn merge_task_logs(&mut self, task_id: TaskId, store: &mut RustStore) {
+        let Some(state) = self.tasks.get(&task_id) else { return; };
+        let task_store = match state {
+            TaskState::Pending { store, .. } => store,
+            TaskState::Done { store, .. } => store,
+        };
+        if let TaskStore::Isolated { store: task_store, merge: StoreMergePolicy::LogsOnly } =
+            task_store
+        {
+            store.log.extend(task_store.log.iter().cloned());
+        }
+    }
+
+    fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
+        let Some(state) = self.tasks.get(&task_id) else { return; };
+        let task_store = match state {
+            TaskState::Pending { store, .. } => store.clone(),
+            TaskState::Done { store, .. } => store.clone(),
+        };
+        self.tasks.insert(task_id, TaskState::Done { result, store: task_store });
+    }
+
+    fn merge_gather_logs(&mut self, items: &[Waitable], store: &mut RustStore) {
+        for item in items {
+            if let Waitable::Task(task_id) = item {
+                self.merge_task_logs(*task_id, store);
+            }
+        }
+    }
+
+    fn task_cont(&self, task_id: TaskId) -> Continuation {
+        // Retrieve task continuation from TaskState (pending only).
+        match self.tasks.get(&task_id) {
+            Some(TaskState::Pending { cont, .. }) => cont.clone(),
+            _ => panic!("task continuation not available"),
+        }
+    }
+
+    // helper methods omitted: try_collect, try_race, wait_on_all, wait_on_any, wake_waiters
+}
+
+#[derive(Clone)]
+pub struct SchedulerHandler {
+    state: Arc<Mutex<SchedulerState>>,
+}
+
+impl SchedulerHandler {
+    pub fn new() -> Self {
+        SchedulerHandler {
+            state: Arc::new(Mutex::new(SchedulerState {
+                ready: VecDeque::new(),
+                tasks: HashMap::new(),
+                promises: HashMap::new(),
+                waiters: HashMap::new(),
+                next_task: 0,
+                next_promise: 0,
+                current_task: None,
+            })),
+        }
+    }
+}
+
+impl RustProgramHandler for SchedulerHandler {
+    fn can_handle(&self, effect: &Effect) -> bool {
+        matches!(effect, Effect::Scheduler(_))
+    }
+
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
+            self.state.clone(),
+        ))))
+    }
+}
+
+#[derive(Debug)]
+enum SchedulerPhase {
+    Idle,
+    SpawnPending {
+        k_user: Continuation,
+        store_mode: StoreMode,
+        store_snapshot: Option<RustStore>,
+    },
+}
+
+pub struct SchedulerProgram {
+    state: Arc<Mutex<SchedulerState>>,
+    phase: SchedulerPhase,
+}
+
+impl SchedulerProgram {
+    pub fn new(state: Arc<Mutex<SchedulerState>>) -> Self {
+        SchedulerProgram {
+            state,
+            phase: SchedulerPhase::Idle,
+        }
+    }
+}
+
+impl RustHandlerProgram for SchedulerProgram {
+    fn start(
+        &mut self,
+        effect: Effect,
+        k_user: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
+        let Effect::Scheduler(effect) = effect else {
+            return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
+                effect,
+            }));
+        };
+        match effect {
+            SchedulerEffect::Spawn { program, handlers, store_mode } => {
+                let store_snapshot = match store_mode {
+                    StoreMode::Shared => None,
+                    StoreMode::Isolated { .. } => Some(store.clone()),
+                };
+                self.phase = SchedulerPhase::SpawnPending {
+                    k_user,
+                    store_mode,
+                    store_snapshot,
+                };
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::CreateContinuation {
+                    program,
+                    handlers,
+                }))
+            }
+            SchedulerEffect::TaskCompleted { task, result } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                state.save_task_store(task, store);
+                state.mark_task_done(task, result);
+                state.wake_waiters(Waitable::Task(task));
+                state.transfer_next_or(k_user, store)
+            }
+            SchedulerEffect::Gather { items } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                if let Some(results) = state.try_collect(&items) {
+                    state.merge_gather_logs(&items, store);
+                    return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                        continuation: k_user,
+                        value: results,
+                    }));
+                }
+                state.wait_on_all(&items, k_user);
+                state.transfer_next_or(k_user, store)
+            }
+            SchedulerEffect::Race { items } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                if let Some(result) = state.try_race(&items) {
+                    return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                        continuation: k_user,
+                        value: result,
+                    }));
+                }
+                state.wait_on_any(&items, k_user);
+                state.transfer_next_or(k_user, store)
+            }
+            SchedulerEffect::CreatePromise => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let pid = PromiseId(state.next_promise);
+                state.next_promise += 1;
+                state.promises.insert(pid, PromiseState::Pending);
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                    continuation: k_user,
+                    value: Value::Promise(PromiseHandle { id: pid }),
+                }))
+            }
+            SchedulerEffect::CompletePromise { promise, value } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                state.promises.insert(promise, PromiseState::Done(Ok(value)));
+                state.wake_waiters(Waitable::Promise(promise));
+                state.transfer_next_or(k_user, store)
+            }
+            SchedulerEffect::FailPromise { promise, error } => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                state.promises.insert(promise, PromiseState::Done(Err(error)));
+                state.wake_waiters(Waitable::Promise(promise));
+                state.transfer_next_or(k_user, store)
+            }
+            SchedulerEffect::CreateExternalPromise => {
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let pid = PromiseId(state.next_promise);
+                state.next_promise += 1;
+                state.promises.insert(pid, PromiseState::Pending);
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                    continuation: k_user,
+                    value: Value::ExternalPromise(ExternalPromise { id: pid }),
+                }))
+            }
+        }
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
+            SchedulerPhase::SpawnPending { k_user, store_mode, store_snapshot } => {
+                let cont = match value {
+                    Value::Continuation(c) => c,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "expected continuation",
+                        ));
+                    }
+                };
+                let task_store = match store_mode {
+                    StoreMode::Shared => TaskStore::Shared,
+                    StoreMode::Isolated { merge } => {
+                        let Some(store_snapshot) = store_snapshot else {
+                            return RustProgramStep::Throw(PyException::runtime_error(
+                                "missing store snapshot for isolated task",
+                            ));
+                        };
+                        TaskStore::Isolated {
+                            store: store_snapshot,
+                            merge,
+                        }
+                    }
+                };
+                let mut state = self.state.lock().expect("Scheduler lock poisoned");
+                let task_id = TaskId(state.next_task);
+                state.next_task += 1;
+                state.tasks.insert(
+                    task_id,
+                    TaskState::Pending { cont, store: task_store },
+                );
+                state.ready.push_back(task_id);
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                    continuation: k_user,
+                    value: Value::Task(TaskHandle { id: task_id }),
+                }))
+            }
+            SchedulerPhase::Idle => RustProgramStep::Throw(PyException::runtime_error(
+                "Unexpected resume in scheduler",
+            )),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        RustProgramStep::Throw(exc)
+    }
+}
+```
+
+**Notes**:
+- This handler assumes `Value::Task/Promise/ExternalPromise` variants with
+  `Value::to_pyobject` mappings to PyO3 wrapper classes.
+- Stores are shared by default (RustStore + PyStore). Spawn can request
+  `StoreMode::Isolated` to give the child a RustStore snapshot.
+- PyStore remains shared unless a GIL-aware copy/merge path is added.
+- On Gather, logs from isolated tasks are merged into the current RustStore
+  according to `StoreMergePolicy` (default: append logs).
+- Child programs should be wrapped to emit `TaskCompleted` on return/throw so the
+  scheduler can record results and wake waiters.
+
+### Python API for Scheduler (Explicit)
+
+Users install the built-in scheduler explicitly:
+
+```python
+vm = doeff.VM()
+scheduler = vm.scheduler()  # PyRustProgramHandler
+prog = with_handler(scheduler, user_program())
+result = vm.run(prog)
+```
+
+Spawn can request `store_mode=Isolated` (RustStore snapshot). Gather merges logs
+back into the current RustStore according to `StoreMergePolicy`.
+Stdlib handlers can be layered inside or outside the scheduler with `with_handler`.
+
 ### Python API for Stdlib
 
-Users install stdlib handlers via `vm.stdlib()`:
+Users install stdlib handlers via `vm.stdlib()` (scheduler is separate):
 
 ```python
 # Python usage
@@ -865,6 +1470,9 @@ prog = with_handler(MyPersistentState(db),
 **CRITICAL**: When VM returns `NeedsPython`, it must also store `pending_python` 
 to know what to do with the result. Different call types have different result handling.
 
+**GIL RULE**: The driver converts Python objects to `Value` before returning
+`PyCallOutcome::Value` to the VM. The VM never calls `Value::from_pyobject`.
+
 ```rust
 /// A pending call into Python code.
 /// 
@@ -872,10 +1480,26 @@ to know what to do with the result. Different call types have different result h
 /// distinguishes between calling functions and advancing generators.
 #[derive(Debug, Clone)]
 pub enum PythonCall {
-    /// Call a Python function (often returns a generator)
+    /// Start a Program object (ProgramBase: KleisliProgramCall or EffectBase).
+    /// Driver calls to_generator() and returns Value::Python(generator).
+    StartProgram {
+        program: Py<PyAny>,
+    },
+    
+    /// Call a Python function for pure computation (non-program).
     CallFunc {
         func: Py<PyAny>,
         args: Vec<Value>,
+    },
+    
+    /// Call a Python handler with effect and continuation.
+    /// Driver wraps Effect/Continuation into Python objects (PyEffect/PyContinuation).
+    /// Handler must return a ProgramBase (KleisliProgramCall or EffectBase);
+    /// driver calls to_generator() on it.
+    CallHandler {
+        handler: Py<PyAny>,
+        effect: Effect,
+        continuation: Continuation,
     },
     
     /// Start a generator (first iteration, equivalent to __next__)
@@ -902,7 +1526,7 @@ pub enum PythonCall {
 /// When receive_python_result() is called, VM uses pending_python to route the result.
 #[derive(Debug, Clone)]
 pub enum PendingPython {
-    /// CallFunc for a Program body - result is generator to push as frame
+    /// StartProgram for a Program body - result is Value::Python(generator)
     StartProgramFrame,
     
     /// GenNext/GenSend/GenThrow on a user generator frame
@@ -913,8 +1537,10 @@ pub enum PendingPython {
         generator: Py<PyAny>,
     },
     
-    /// CallFunc for Python handler invocation
-    /// Result is a Program generator that yields control primitives
+    /// CallHandler for Python handler invocation
+    /// Result is Value::Python(generator) after converting Program via to_generator()
+    /// The resulting generator is treated as a handler program; StopIteration
+    /// triggers implicit handler return semantics.
     CallPythonHandler {
         /// Continuation to pass to handler
         k_user: Continuation,
@@ -923,7 +1549,8 @@ pub enum PendingPython {
     },
     
     /// Stdlib handler needs Python (e.g., Modify calling modifier function)
-    /// Result feeds back to handler's continue_after_python()
+    /// Result is already a Value (converted by driver) and feeds back to handler
+    /// continue_after_python()
     StdlibContinuation {
         /// Which stdlib handler
         handler: StdlibHandler,
@@ -933,12 +1560,20 @@ pub enum PendingPython {
         context: HandlerContext,
     },
 }
+
+**Program Input Rule**: `StartProgram`, `CallHandler`, and `Yielded::Program`
+require a ProgramBase value (KleisliProgramCall or EffectBase). The driver must
+call `to_generator()` to obtain the generator, preserving Kleisli metadata
+(function_name/created_at) and the KleisliProgramCall stack for effect
+debugging. Raw generators are rejected at these entry points; only low-level
+`start_with_generator()` accepts raw generators.
 ```
 
-### Generator Frame Re-Push Rule
+### Program Frame Re-Push Rule (Python + Rust)
 
-**CRITICAL INVARIANT**: When stepping a generator and it yields (not returns/errors),
-the generator must be re-pushed to the current segment with `started=true`.
+**CRITICAL INVARIANT**: When stepping a Python generator or a Rust handler program
+and it yields (not returns/errors), the program frame must be re-pushed to the
+current segment.
 
 ```
 GenNext/GenSend/GenThrow → driver executes → PyCallOutcome::GenYield(yielded)
@@ -954,7 +1589,29 @@ receive_python_result:
   2. Set mode = Deliver(value) or Throw(exception)
 ```
 
-This ensures the generator frame exists when we need to send the next value.
+Rust program step:
+
+```
+RustProgramStep::Yield(yielded)
+  ↓
+apply_rust_program_step:
+  1. Re-push Frame::RustProgram { program }
+  2. Set mode = HandleYield(yielded)
+
+RustProgramStep::Return/Throw → program is DONE, do NOT re-push
+  ↓
+apply_rust_program_step:
+  1. Do NOT push any frame (program consumed)
+  2. Set mode = Deliver(value) or Throw(exception)
+```
+
+This ensures the program frame exists when we need to send the next value.
+
+**Handler Return Hook**: When pushing a handler program frame (Python or Rust),
+the VM also installs a handler-return hook (e.g., a RustReturn callback or a
+special frame). When the handler returns (StopIteration/Return), the hook runs
+`handle_handler_return(value)` so implicit Return semantics apply. User programs
+do not install this hook.
 
 ---
 
@@ -974,13 +1631,15 @@ The VM state is organized into three layers with clear separation of concerns:
 2. **RustStore is the source of truth**: Stdlib handlers read/write here; fast Rust access
 3. **PyStore is an escape hatch**: Python handlers can store arbitrary data; VM doesn't read it
 4. **No synchronization**: RustStore and PyStore are independent; no mirroring or sync
-5. **Continuations don't snapshot S**: State is global (no backtracking by default)
+5. **Continuations don't snapshot S**: State is global (no backtracking by default).
+   Stores are shared by default; Spawn may request isolated RustStore with explicit
+   merge policies (PyStore remains shared unless a GIL-aware copy path is added).
 
 ### Layer 1: Internals (VM-internal, invisible to users)
 
 Layer 1 fields are defined directly in the VM struct (see "VM Struct" below).
 They include: `segments`, `free_segments`, `dispatch_stack`, `callbacks`, 
-`consumed_cont_ids`, `consumed_runnable_ids`, `handlers`.
+`consumed_cont_ids`, `handlers`.
 
 These structures maintain VM invariants and must NOT be accessible or 
 modifiable by user code directly.
@@ -994,6 +1653,8 @@ modifiable by user code directly.
 /// Python handlers can access via PyO3-exposed read/write APIs.
 /// 
 /// Key design: Value can hold Py<PyAny>, so Python objects flow through.
+/// StoreMode::Isolated requires RustStore to be cloneable.
+#[derive(Clone)]
 pub struct RustStore {
     /// State for Get/Put/Modify effects
     pub state: HashMap<String, Value>,
@@ -1093,6 +1754,7 @@ impl RustStore {
 /// - Prototyping before solidifying Rust key model
 /// 
 /// NOTE: No synchronization with RustStore. They are independent.
+/// PyStore is shared across tasks even when RustStore is isolated.
 pub struct PyStore {
     dict: Py<PyDict>,
 }
@@ -1137,9 +1799,6 @@ pub struct VM {
     
     /// One-shot tracking for continuations
     consumed_cont_ids: HashSet<ContId>,
-    
-    /// One-shot tracking for runnables
-    consumed_runnable_ids: HashSet<RunnableId>,
     
     /// Handler registry: marker -> HandlerEntry
     /// NOTE: Includes prompt_seg_id to avoid linear search
@@ -1229,7 +1888,7 @@ pub enum Mode {
     /// Throw an exception to the next frame
     Throw(PyException),
     
-    /// Handle something yielded by a generator
+    /// Handle something yielded by a generator or Rust program
     HandleYield(Yielded),
     
     /// Current segment is empty; return value to caller
@@ -1239,14 +1898,16 @@ pub enum Mode {
 
 ### Yielded (Generator Output Classification)
 
-**IMPORTANT**: Classification happens in the **driver** (with GIL), not in the VM.
+**IMPORTANT**: Classification of Python generator yields happens in the **driver**
+(with GIL), not in the VM. Rust program handlers yield `Yielded` directly.
 The VM receives pre-classified `Yielded` values and operates without GIL.
 
 ```rust
 /// Classification of what a generator yielded.
 /// 
-/// INVARIANT: Classification is done by DRIVER (GIL held), not VM.
-/// VM receives Yielded and processes it without needing GIL.
+/// INVARIANT: Python generator yields are classified by the DRIVER (GIL held),
+/// not by the VM. Rust program handlers return Yielded directly.
+/// The VM receives Yielded and processes it without needing GIL.
 pub enum Yielded {
     /// A control primitive (Resume, Transfer, WithHandler, etc.)
     Primitive(ControlPrimitive),
@@ -1254,7 +1915,7 @@ pub enum Yielded {
     /// An effect to be handled
     Effect(Effect),
     
-    /// A nested Program to execute (if yield-based DSL supports this)
+    /// A nested Program object to execute (ProgramBase: KleisliProgramCall or EffectBase)
     Program(Py<PyAny>),
     
     /// Unknown object (will cause TypeError)
@@ -1288,22 +1949,42 @@ impl Yielded {
 }
 ```
 
+**Note**: A yielded Program is a ProgramBase object (KleisliProgramCall or EffectBase),
+not a generator. The driver must call `to_generator()` to start it. Raw generators
+are rejected for yielded Program; only low-level entry points like
+`start_with_generator()` accept raw generators.
+Calling `to_generator()` preserves the KleisliProgramCall stack for effect debugging.
+
+**Note**: Rust program handlers yield `Yielded` directly (already classified),
+so no driver-side classification or GIL is required for those yields.
+
+`extract_control_primitive` uses `Handler::from_pyobject` to decode `WithHandler`
+and `CreateContinuation` handler arguments, and `Continuation::from_pyobject`
+to decode `Resume`/`Transfer`/`ResumeContinuation`.
+`extract_effect` recognizes built-in scheduler effect classes and maps them to
+`Effect::Scheduler`.
+
 ### PyCallOutcome (Python Call Results)
 
-**CRITICAL**: CallFunc and Gen* have fundamentally different result semantics:
-- `CallFunc` returns a **value** (usually a generator object)
+**CRITICAL**: StartProgram/CallFunc/CallHandler and Gen* have different semantics:
+- `StartProgram` returns a **Value** (Value::Python(generator) after to_generator())
+- `CallFunc` returns a **Value** (non-generator result)
+- `CallHandler` returns a **Value** (Value::Python(generator) after to_generator())
 - `GenNext/GenSend/GenThrow` interact with a running generator (yield/return/error)
 
 ```rust
 /// Result of executing a PythonCall.
 /// 
 /// IMPORTANT: This enum correctly separates:
-/// - CallFunc results (a value, typically a generator object)
+/// - StartProgram/CallFunc/CallHandler results (a Value)
 /// - Generator step results (yield/return/error)
 pub enum PyCallOutcome {
-    /// CallFunc returned a value (usually a generator object).
-    /// VM should push Frame::PythonGenerator with started=false.
-    Value(Py<PyAny>),
+    /// StartProgram returns Value::Python(generator) after to_generator().
+    /// CallFunc returns Value (non-generator).
+    /// CallHandler returns Value::Python(generator) after to_generator().
+    /// VM should push Frame::PythonGenerator with started=false for generator Values.
+    /// The driver performs Python->Value conversion while holding the GIL.
+    Value(Value),
     
     /// Generator yielded a value.
     /// Driver has already classified it (requires GIL).
@@ -1312,7 +1993,7 @@ pub enum PyCallOutcome {
     /// Generator returned via StopIteration.
     GenReturn(Value),
     
-    /// Generator (or CallFunc) raised an exception.
+    /// Generator (or StartProgram/CallFunc/CallHandler) raised an exception.
     GenError(PyException),
 }
 
@@ -1326,7 +2007,8 @@ pub struct PyException {
 ```
 
 **Key insight**: `GenYield(Yielded)` contains a *classified* `Yielded`, not a raw `Py<PyAny>`. 
-Classification requires GIL, so driver does it. VM receives pre-classified data and stays GIL-free.
+Classification and Python->Value conversion require GIL, so driver does them. VM receives
+pre-classified data and `Value` only, and stays GIL-free.
 
 ---
 
@@ -1345,10 +2027,12 @@ Deliver(v)      Throw(e)                              HandleYield(y)      Return
    │                │                                         │                │
    │                │                                         │  (y already    │
    ▼                ▼                                         │   classified   │
-frames.pop()   frames.pop()                                   │   by driver)   │
+frames.pop()   frames.pop()                                   │   by driver or Rust)│
    │                │                                         │                │
    ├─RustReturn─────┼──────────────────────────────────┬──────┘                │
    │  callback(v)   │  callback(e)                     │                       │
+   ├─RustProg───────┼──────────────────────────────────┤                       │
+   │  step()/yield  │                                  │                       │
    │                │                                  ├─Primitive────────────►│
    ├─PyGen──────────┼──────────────────────────────────┤  handle_primitive()   │
    │  NeedsPython   │  NeedsPython(GenThrow)           │                       │
@@ -1357,7 +2041,7 @@ frames.pop()   frames.pop()                                   │   by driver)  
    ▼                ▼                                  │  (all effects)        │
                                                        │                       │
                                                        ├─Program──────────────►│
-                                                       │  NeedsPython(CallFunc)│
+                                                       │  NeedsPython(StartProgram)│
                                                        │                       │
                                                        └─Unknown──────────────►│
                                                           Throw(TypeError)     │
@@ -1422,6 +2106,21 @@ fn step_deliver_or_throw(&mut self) -> StepEvent {
             }
         }
         
+        Frame::RustProgram { program } => {
+            let step = match &self.mode {
+                Mode::Deliver(v) => {
+                    let mut guard = program.lock().expect("Rust program lock poisoned");
+                    guard.resume(v.clone(), &mut self.rust_store)
+                }
+                Mode::Throw(e) => {
+                    let mut guard = program.lock().expect("Rust program lock poisoned");
+                    guard.throw(e.clone(), &mut self.rust_store)
+                }
+                _ => unreachable!(),
+            };
+            self.apply_rust_program_step(step, program)
+        }
+        
         Frame::PythonGenerator { generator, started } => {
             // Need to call Python
             // CRITICAL: Set pending_python so receive_python_result knows to re-push
@@ -1464,13 +2163,14 @@ impl VM {
     /// 
     /// Uses pending_python to know what to do with the result.
     /// INVARIANT: pending_python is Some when this is called.
+    /// Driver has already converted Python objects to Value.
     pub fn receive_python_result(&mut self, outcome: PyCallOutcome) {
         let pending = self.pending_python.take()
             .expect("pending_python must be set when receiving result");
         
         match (pending, outcome) {
-            // === StartProgramFrame: CallFunc returned generator object ===
-            (PendingPython::StartProgramFrame, PyCallOutcome::Value(gen_obj)) => {
+            // === StartProgramFrame: StartProgram returned Value::Python(generator) ===
+            (PendingPython::StartProgramFrame, PyCallOutcome::Value(Value::Python(gen_obj))) => {
                 // Push generator as new frame with started=false
                 let segment = &mut self.segments[self.current_segment.index()];
                 segment.push_frame(Frame::PythonGenerator {
@@ -1479,8 +2179,13 @@ impl VM {
                 });
                 // Mode stays Deliver (will trigger GenNext on next step)
             }
+            (PendingPython::StartProgramFrame, PyCallOutcome::Value(_)) => {
+                self.mode = Mode::Throw(PyException::type_error(
+                    "program did not return a generator"
+                ));
+            }
             (PendingPython::StartProgramFrame, PyCallOutcome::GenError(e)) => {
-                // CallFunc raised exception
+                // StartProgram raised exception
                 self.mode = Mode::Throw(e);
             }
             
@@ -1505,17 +2210,22 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
             
-            // === CallPythonHandler: Handler returned Program generator ===
-            (PendingPython::CallPythonHandler { k_user, effect }, PyCallOutcome::Value(handler_gen)) => {
-                // Handler returned a generator that yields control primitives
-                // Push it as frame with started=false
+            // === CallPythonHandler: Handler returned Value::Python(generator) ===
+            (PendingPython::CallPythonHandler { k_user, effect }, PyCallOutcome::Value(Value::Python(handler_gen))) => {
+                // Handler returned a Program converted to a generator that yields primitives
+                // Push handler-return hook (implicit Return), then generator frame (started=false)
                 let segment = &mut self.segments[self.current_segment.index()];
+                // segment.push_frame(Frame::RustReturn { cb: handler_return_cb });
                 segment.push_frame(Frame::PythonGenerator {
                     generator: handler_gen,
                     started: false,
                 });
-                // Store k_user somewhere accessible to handler primitives
-                // (e.g., in dispatch context or handler_exec_seg)
+                // k_user is stored in DispatchContext for completion detection and Delegate
+            }
+            (PendingPython::CallPythonHandler { .. }, PyCallOutcome::Value(_)) => {
+                self.mode = Mode::Throw(PyException::type_error(
+                    "handler did not return a ProgramBase (KleisliProgramCall or EffectBase)"
+                ));
             }
             (PendingPython::CallPythonHandler { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
@@ -1524,12 +2234,18 @@ impl VM {
             // === StdlibContinuation: Stdlib handler's Python call returned ===
             (PendingPython::StdlibContinuation { handler, k, context }, PyCallOutcome::Value(result)) => {
                 // Feed result back to stdlib handler's continue_after_python
-                let value = Value::from_pyobject_unbound(result);
                 let action = match handler {
-                    StdlibHandler::State(h) => h.continue_after_python(value, context, k, &mut self.rust_store),
+                    StdlibHandler::State(h) => h.continue_after_python(result, context, k, &mut self.rust_store),
                     _ => panic!("Only State handler uses StdlibContinuation currently"),
                 };
-                self.apply_handler_action(action);
+                let event = self.apply_handler_action(action);
+                match event {
+                    StepEvent::Continue => {}
+                    StepEvent::NeedsPython(_) => {
+                        panic!("continue_after_python must not request another Python call");
+                    }
+                    _ => unreachable!("apply_handler_action does not return Done/Error"),
+                }
             }
             (PendingPython::StdlibContinuation { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
@@ -1556,8 +2272,7 @@ fn step_handle_yield(&mut self) -> StepEvent {
     match yielded {
         Yielded::Primitive(prim) => {
             // Handle control primitive
-            self.mode = self.handle_primitive(prim);
-            StepEvent::Continue
+            self.handle_primitive(prim)
         }
         
         Yielded::Effect(effect) => {
@@ -1565,7 +2280,7 @@ fn step_handle_yield(&mut self) -> StepEvent {
             // Stdlib effects are handled by stdlib handlers (Rust, fast)
             // User effects are handled by Python handlers
             match self.start_dispatch(effect) {
-                Ok(()) => StepEvent::Continue,
+                Ok(event) => event,
                 Err(e) => StepEvent::Error(e),
             }
         }
@@ -1573,10 +2288,7 @@ fn step_handle_yield(&mut self) -> StepEvent {
         Yielded::Program(program) => {
             // Nested program - need to call Python to get generator
             self.pending_python = Some(PendingPython::StartProgramFrame);
-            StepEvent::NeedsPython(PythonCall::CallFunc {
-                func: program,
-                args: vec![],
-            })
+            StepEvent::NeedsPython(PythonCall::StartProgram { program })
         }
         
         Yielded::Unknown(obj) => {
@@ -1628,6 +2340,67 @@ impl VM {
 }
 ```
 
+### Continuation Primitive Semantics (Summary)
+
+- **GetContinuation**: returns the current dispatch callsite continuation (`k_user`) to the handler
+  without consuming it. Error if called outside handler context.
+- **GetHandlers**: returns the full handler chain from the callsite scope (innermost → outermost).
+  These handlers can be passed back to `WithHandler` or `CreateContinuation`.
+- **CreateContinuation**: returns an unstarted continuation storing `(program, handlers)`.
+- **ResumeContinuation**: if `started=true`, behaves like `Resume` (call-resume). If
+  `started=false`, installs handlers (outermost first) and starts the program, returning
+  to the current handler when it finishes; `value` is ignored.
+- **Implicit Handler Return**: if a handler program (Python/Rust) returns, the VM
+  treats it as handler return. The returned value becomes the result of
+  `yield Delegate(effect)` for inner handlers; for the root handler it abandons the
+  callsite (marks dispatch completed) and returns to the prompt boundary.
+- **Single Resume per Dispatch**: The callsite continuation (`k_user`) is one-shot.
+  Exactly one of Resume/Transfer/Return may consume it in a dispatch. After
+  `yield Delegate(effect)` returns, the handler must return (not Resume). Any
+  double-resume or resume-after-delegate is a runtime error.
+- **No Multi-shot**: Multi-shot continuations are not supported. All continuations
+  are one-shot and cannot be resumed more than once.
+
+**Delegate Data Flow (Koka/OCaml semantics)**:
+
+```
+User --perform E--> H1
+H1: z = yield Delegate(E)
+      |
+      v
+     H2 handles E
+     H2: u = yield Resume(k_user, v)
+     User: r = ...; return r
+     H2: u == r; return h2
+H1: z == h2; return h1
+```
+
+Notes:
+- Only one handler in the chain resumes the callsite (`k_user`).
+- `yield Delegate(E)` returns the outer handler's return value (`h2`).
+- After Delegate returns, the handler must return (no Resume).
+
+### Scheduler Pattern: Spawn with Transfer (Reference)
+
+User-space schedulers can avoid stack growth without a special primitive by
+returning the task handle via `Transfer` and enqueueing the child continuation.
+
+```
+handler --Transfer--> parent (Task handle)
+queue   --ResumeContinuation--> child (later)
+```
+
+```python
+def spawn_handler(effect, k_user):
+    def program():
+        if isinstance(effect, Spawn):
+            task_k = (yield CreateContinuation(effect.program, effect.handlers))
+            queue.append(task_k)
+            return (yield Transfer(k_user, Task(task_k)))
+        return (yield Delegate(effect))
+    return program()
+```
+
 ---
 
 ## Driver Loop (PyO3 Side)
@@ -1638,8 +2411,8 @@ The driver handles GIL boundaries and **classifies yielded values** before passi
 impl PyVM {
     /// Run a program to completion.
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<PyObject> {
-        // Initialize: call program to get generator
-        let gen = program.call0()?;
+        // Initialize: convert Program object to generator
+        let gen = self.to_generator(py, program)?;
         self.vm.start_with_generator(gen.unbind());
         
         loop {
@@ -1674,20 +2447,53 @@ impl PyVM {
     
     /// Execute a Python call and return the outcome.
     /// 
-    /// CRITICAL: This correctly distinguishes CallFunc from Gen* results:
-    /// - CallFunc → Value (the returned object, usually a generator)
+    /// CRITICAL: This correctly distinguishes StartProgram/CallFunc/CallHandler from Gen* results:
+    /// - StartProgram → Value::Python(generator)
+    /// - CallFunc → Value (non-generator)
+    /// - CallHandler → Value::Python(generator) after to_generator()
     /// - Gen* → GenYield/GenReturn/GenError (generator step result)
     /// 
     /// Classification of yielded values happens HERE (with GIL).
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
+            PythonCall::StartProgram { program } => {
+                if is_program(py, &program.bind(py)) {
+                    let gen = self.to_generator(py, program.bind(py))?;
+                    Ok(PyCallOutcome::Value(Value::Python(gen.unbind())))
+                } else {
+                    Ok(PyCallOutcome::GenError(PyException::type_error(
+                        "StartProgram requires a ProgramBase (KleisliProgramCall or EffectBase)",
+                    )))
+                }
+            }
             PythonCall::CallFunc { func, args } => {
                 let py_args = args.to_py_tuple(py)?;
                 match func.bind(py).call1(py_args) {
                     Ok(result) => {
                         // CallFunc returns a Value (not a generator yield!)
-                        // VM will push this as Frame::PythonGenerator with started=false
-                        Ok(PyCallOutcome::Value(result.unbind()))
+                        Ok(PyCallOutcome::Value(Value::from_pyobject(&result)))
+                    }
+                    Err(e) => {
+                        Ok(PyCallOutcome::GenError(PyException::from_pyerr(py, e)))
+                    }
+                }
+            }
+            
+            PythonCall::CallHandler { handler, effect, continuation } => {
+                // Wrap Effect/Continuation into Python objects while holding GIL
+                let py_effect = effect.to_pyobject(py)?;
+                let py_k = continuation.to_pyobject(py)?;
+                match handler.bind(py).call1((py_effect, py_k)) {
+                    Ok(result) => {
+                        // Handler must return a ProgramBase (KleisliProgramCall or EffectBase)
+                        if is_program(py, &result) {
+                            let gen = self.to_generator(py, result)?;
+                            Ok(PyCallOutcome::Value(Value::Python(gen.unbind())))
+                        } else {
+                            Ok(PyCallOutcome::GenError(PyException::type_error(
+                                "handler must return a ProgramBase (KleisliProgramCall or EffectBase)",
+                            )))
+                        }
                     }
                     Err(e) => {
                         Ok(PyCallOutcome::GenError(PyException::from_pyerr(py, e)))
@@ -1709,6 +2515,25 @@ impl PyVM {
                 self.step_generator(py, gen, "throw", Some(exc_bound.clone()))
             }
         }
+    }
+
+    /// Convert a ProgramBase object to a generator.
+    /// 
+    /// Accepts ProgramBase (KleisliProgramCall or EffectBase) and calls to_generator().
+    /// This preserves the KleisliProgramCall stack for effect debugging.
+    /// Raw generators are rejected here (only allowed by start_with_generator()).
+    fn to_generator(
+        &self,
+        py: Python<'_>,
+        program: Bound<'_, PyAny>,
+    ) -> PyResult<Bound<'_, PyAny>> {
+        if program.is_instance_of::<PyGenerator>()? {
+            return Err(PyException::type_error(
+                "ProgramBase required; raw generators are not accepted"
+            ).to_pyerr(py));
+        }
+        let to_gen = program.getattr("to_generator")?;
+        to_gen.call0()
     }
     
     /// Step a generator and classify the result.
@@ -1769,14 +2594,8 @@ pub enum ControlPrimitive {
         value: Value,
     },
     
-    /// ResumeThenTransfer(k_return, v, k_next) - Atomic return-and-switch
-    ResumeThenTransfer {
-        k_return: Continuation,
-        value: Value,
-        k_next: Continuation,
-    },
-    
-    /// Delegate(effect) - Delegate to outer handler
+    /// Delegate(effect) - Delegate to outer handler.
+    /// Yield result is the outer handler's return value.
     Delegate {
         effect: Effect,
     },
@@ -1787,25 +2606,32 @@ pub enum ControlPrimitive {
         program: Py<PyAny>,
     },
     
-    /// GetContinuation - Capture current continuation
+    /// GetContinuation - Capture current continuation (callsite k_user)
     GetContinuation,
     
-    /// GetHandlers - Get handlers from yielder's scope
+    /// GetHandlers - Get handlers from callsite scope (full chain, innermost first)
     GetHandlers,
     
     /// CreateContinuation(program, handlers) - Create unstarted continuation
     CreateContinuation {
+        /// Program object (ProgramBase: KleisliProgramCall or EffectBase)
         program: Py<PyAny>,
-        handlers: Vec<Marker>,
+        /// Handlers in innermost-first order (as returned by GetHandlers)
+        handlers: Vec<Handler>,
     },
     
-    /// ResumeContinuation(k, v) - Resume any captured continuation
+    /// ResumeContinuation(k, v) - Resume captured or created continuation
+    /// (v is ignored for unstarted continuations)
     ResumeContinuation {
         continuation: Continuation,
         value: Value,
     },
 }
 ```
+
+**Note**: There is no `Return` control primitive. Handler return is implicit:
+when a handler program finishes, the VM applies `handle_handler_return(value)`
+semantics (return to caller; root handler return abandons callsite).
 
 ---
 
@@ -1830,7 +2656,7 @@ impl VM {
     ///   body_seg             <- body program runs here
     ///                           scope_chain = [handler_marker] ++ outside.scope_chain
     ///
-    /// Returns: PythonCall to start body program, or Mode for next step
+    /// Returns: PythonCall to start body program (caller returns NeedsPython)
     fn handle_with_handler(&mut self, handler: Handler, program: Py<PyAny>) -> PythonCall {
         let handler_marker = Marker::fresh();
         let outside_seg_id = self.current_segment;
@@ -1868,10 +2694,7 @@ impl VM {
         self.current_segment = body_seg_id;
         
         // 5. Return PythonCall to start body program
-        PythonCall::CallFunc {
-            func: program,
-            args: vec![],
-        }
+        PythonCall::StartProgram { program }
     }
 }
 ```
@@ -1885,9 +2708,9 @@ impl VM {
     /// ALL effects go through this path - no bypass for stdlib effects.
     /// Stdlib handlers are Rust-native for speed but still dispatched normally.
     /// 
-    /// Returns Ok(()) if dispatch started successfully (mode updated).
+    /// Returns Ok(StepEvent) if dispatch started successfully.
     /// Returns Err(VMError) if no handler found.
-    fn start_dispatch(&mut self, effect: Effect) -> Result<(), VMError> {
+    fn start_dispatch(&mut self, effect: Effect) -> Result<StepEvent, VMError> {
         // Lazy pop completed dispatch contexts
         self.lazy_pop_completed();
         
@@ -1924,13 +2747,13 @@ impl VM {
             effect: effect.clone(),
             handler_chain: handler_chain.clone(),
             handler_idx,  // <-- actual matched position, not hardcoded 0
-            callsite_cont_id: k_user.cont_id,
+            k_user: k_user.clone(),
             prompt_seg_id,
             completed: false,
         });
         
         // Create handler execution segment
-        //    caller = prompt_seg (abandon goes to prompt)
+        //    caller = prompt_seg (root handler return goes to prompt)
         //    scope_chain = same as callsite (handler in scope during handling)
         let handler_seg = Segment::new(
             handler_marker,
@@ -1943,21 +2766,119 @@ impl VM {
         self.current_segment = handler_seg_id;
         
         // Invoke handler based on type
+        Ok(self.invoke_handler(handler, &effect, k_user))
+    }
+
+    /// Invoke a handler and return the next StepEvent.
+    fn invoke_handler(
+        &mut self,
+        handler: Handler,
+        effect: &Effect,
+        k_user: Continuation,
+    ) -> StepEvent {
         match handler {
             Handler::Stdlib(stdlib_handler) => {
                 // Stdlib handler: Rust-native, direct invocation
                 // These handlers read/write RustStore directly
-                let action = stdlib_handler.handle(&effect, k_user, &mut self.rust_store);
-                self.apply_handler_action(action);
+                let action = stdlib_handler.handle(effect, k_user, &mut self.rust_store);
+                self.apply_handler_action(action)
+            }
+            Handler::RustProgram(handler) => {
+                // Rust program handler: create program instance and step it
+                let program = handler.create_program();
+                let step = {
+                    let mut guard = program.lock().expect("Rust program lock poisoned");
+                    guard.start(effect.clone(), k_user.clone(), &mut self.rust_store)
+                };
+                self.apply_rust_program_step(step, program)
             }
             Handler::Python(py_handler) => {
-                // Python handler: need to call Python
-                // Return NeedsPython from step()
-                // (implementation detail: set pending_python_call field)
+                // Python handler: call with (effect, k_user) and expect a Program
+                // Driver converts Program to generator via to_generator()
+                self.pending_python = Some(PendingPython::CallPythonHandler {
+                    k_user: k_user.clone(),
+                    effect: effect.clone(),
+                });
+                StepEvent::NeedsPython(PythonCall::CallHandler {
+                    handler: py_handler,
+                    effect: effect.clone(),
+                    continuation: k_user,
+                })
+            }
+        }
+    }
+
+    /// Apply a RustProgramStep and return the next StepEvent.
+    fn apply_rust_program_step(
+        &mut self,
+        step: RustProgramStep,
+        program: RustProgramRef,
+    ) -> StepEvent {
+        match step {
+            RustProgramStep::Yield(yielded) => {
+                let segment = &mut self.segments[self.current_segment.index()];
+                segment.push_frame(Frame::RustProgram { program });
+                self.mode = Mode::HandleYield(yielded);
+                StepEvent::Continue
+            }
+            RustProgramStep::Return(value) => {
+                self.mode = Mode::Deliver(value);
+                StepEvent::Continue
+            }
+            RustProgramStep::Throw(exc) => {
+                self.mode = Mode::Throw(exc);
+                StepEvent::Continue
+            }
+        }
+    }
+
+    /// Apply a HandlerAction and return the next StepEvent.
+    fn apply_handler_action(&mut self, action: HandlerAction) -> StepEvent {
+        match action {
+            HandlerAction::Resume { k, value } => {
+                self.mode = self.handle_resume(k, value);
+                StepEvent::Continue
+            }
+            HandlerAction::Transfer { k, value } => {
+                self.mode = self.handle_transfer(k, value);
+                StepEvent::Continue
+            }
+            HandlerAction::Return { value } => {
+                self.handle_handler_return(value)
+            }
+            HandlerAction::NeedsPython { handler, call, k, context } => {
+                self.pending_python = Some(PendingPython::StdlibContinuation {
+                    handler,
+                    k,
+                    context,
+                });
+                StepEvent::NeedsPython(call)
+            }
+        }
+    }
+
+    /// Handle handler return (explicit or implicit).
+    /// 
+    /// Returns to the handler's caller segment. If the caller is the current
+    /// dispatch's prompt boundary (root handler), this abandons the callsite
+    /// and marks the dispatch completed.
+    fn handle_handler_return(&mut self, value: Value) -> StepEvent {
+        let Some(top) = self.dispatch_stack.last_mut() else {
+            self.mode = Mode::Throw(PyException::runtime_error(
+                "Return outside of dispatch"
+            ));
+            return StepEvent::Continue;
+        };
+        
+        if let Some(caller_id) = self.segments[self.current_segment.index()].caller {
+            if caller_id == top.prompt_seg_id {
+                top.completed = true;
+                self.consumed_cont_ids.insert(top.k_user.cont_id);
             }
         }
         
-        Ok(())
+        self.mode = Mode::Deliver(value);
+        StepEvent::Continue
     }
     
     /// Find first handler in chain that can handle the effect.
@@ -1982,7 +2903,8 @@ impl VM {
     /// Compute visible handlers (TOP-ONLY busy exclusion).
     /// 
     /// Only the current (topmost non-completed) dispatch creates a busy boundary.
-    /// This is more permissive than union-all and matches effect semantics.
+    /// Visibility is computed from the CURRENT scope_chain so handlers installed
+    /// inside a handler remain visible unless they are busy.
     fn visible_handlers(&self, scope_chain: &[Marker]) -> Vec<Marker> {
         let Some(top) = self.dispatch_stack.last() else {
             return scope_chain.to_vec();
@@ -1993,9 +2915,16 @@ impl VM {
         }
         
         // Busy = handlers at indices 0..=handler_idx in top dispatch
-        // Visible = handlers at indices handler_idx+1.. (outer side)
-        let outer_handlers = &top.handler_chain[(top.handler_idx + 1)..];
-        outer_handlers.to_vec()
+        // Visible = current scope_chain minus busy handlers (preserve order)
+        let busy: HashSet<Marker> = top.handler_chain[..=top.handler_idx]
+            .iter()
+            .copied()
+            .collect();
+        scope_chain
+            .iter()
+            .copied()
+            .filter(|marker| !busy.contains(marker))
+            .collect()
     }
     
     fn lazy_pop_completed(&mut self) {
@@ -2018,7 +2947,11 @@ impl VM {
 }
 ```
 
-### Resume Primitive (Materializes Snapshot)
+### Resume + Continuation Primitives
+
+The following functions cover captured continuations (Resume/Transfer) and created
+continuations (ResumeContinuation). They also define handler introspection primitives
+(GetContinuation/GetHandlers).
 
 ```rust
 impl VM {
@@ -2027,6 +2960,11 @@ impl VM {
     /// The continuation's frames_snapshot is materialized into a new segment.
     /// The current segment becomes the caller (returns here after k completes).
     fn handle_resume(&mut self, k: Continuation, value: Value) -> Mode {
+        if !k.started {
+            return Mode::Throw(PyException::runtime_error(
+                "Resume on unstarted continuation; use ResumeContinuation"
+            ));
+        }
         // One-shot check
         if self.consumed_cont_ids.contains(&k.cont_id) {
             return Mode::Throw(PyException::runtime_error(
@@ -2042,7 +2980,7 @@ impl VM {
         // RULE: dispatch_id is only Some for callsite continuations
         if let Some(dispatch_id) = k.dispatch_id {
             if let Some(top) = self.dispatch_stack.last_mut() {
-                if top.dispatch_id == dispatch_id && top.callsite_cont_id == k.cont_id {
+                if top.dispatch_id == dispatch_id && top.k_user.cont_id == k.cont_id {
                     top.completed = true;
                 }
             }
@@ -2068,7 +3006,13 @@ impl VM {
     /// Transfer to a continuation (tail-transfer, non-returning).
     /// 
     /// Does NOT set up return link. Current handler is abandoned.
+    /// Marks dispatch completed when the target is k_user.
     fn handle_transfer(&mut self, k: Continuation, value: Value) -> Mode {
+        if !k.started {
+            return Mode::Throw(PyException::runtime_error(
+                "Transfer on unstarted continuation; use ResumeContinuation"
+            ));
+        }
         // One-shot check
         if self.consumed_cont_ids.contains(&k.cont_id) {
             return Mode::Throw(PyException::runtime_error(
@@ -2076,6 +3020,18 @@ impl VM {
             ));
         }
         self.consumed_cont_ids.insert(k.cont_id);
+        
+        // Lazy pop completed dispatches
+        self.lazy_pop_completed();
+        
+        // Check dispatch completion (Transfer completes when resuming callsite)
+        if let Some(dispatch_id) = k.dispatch_id {
+            if let Some(top) = self.dispatch_stack.last_mut() {
+                if top.dispatch_id == dispatch_id && top.k_user.cont_id == k.cont_id {
+                    top.completed = true;
+                }
+            }
+        }
         
         // Materialize continuation
         let exec_seg = Segment {
@@ -2092,28 +3048,138 @@ impl VM {
         
         Mode::Deliver(value)
     }
-    
-    /// Handle a control primitive, returning the next Mode.
-    fn handle_primitive(&mut self, prim: ControlPrimitive) -> Mode {
+
+    /// Resume a captured or created continuation.
+    /// 
+    /// Captured: same as Resume (call-resume semantics).
+    /// Created: installs handlers, starts program, returns to current segment.
+    fn handle_resume_continuation(&mut self, k: Continuation, value: Value) -> StepEvent {
+        if k.started {
+            self.mode = self.handle_resume(k, value);
+            return StepEvent::Continue;
+        }
+        
+        // Unstarted continuation: value is ignored, program starts fresh.
+        if self.consumed_cont_ids.contains(&k.cont_id) {
+            self.mode = Mode::Throw(PyException::runtime_error(
+                "Continuation already resumed"
+            ));
+            return StepEvent::Continue;
+        }
+        self.consumed_cont_ids.insert(k.cont_id);
+        
+        let Some(program) = k.program.clone() else {
+            self.mode = Mode::Throw(PyException::runtime_error(
+                "Unstarted continuation missing program"
+            ));
+            return StepEvent::Continue;
+        };
+        
+        // Install handlers (outermost first, so innermost ends up closest to program)
+        let mut outside_seg_id = self.current_segment;
+        let mut outside_scope = self.segments[outside_seg_id.index()].scope_chain.clone();
+        
+        for handler in k.handlers.iter().rev() {
+            let handler_marker = Marker::fresh();
+            let prompt_seg = Segment::new_prompt(
+                handler_marker,
+                Some(outside_seg_id),
+                outside_scope.clone(),
+                handler_marker,
+            );
+            let prompt_seg_id = self.alloc_segment(prompt_seg);
+            
+            self.handlers.insert(handler_marker, HandlerEntry {
+                handler: handler.clone(),
+                prompt_seg_id,
+            });
+            
+            let mut body_scope = vec![handler_marker];
+            body_scope.extend(outside_scope);
+            
+            let body_seg = Segment::new(
+                handler_marker,
+                Some(prompt_seg_id),
+                body_scope,
+            );
+            let body_seg_id = self.alloc_segment(body_seg);
+            
+            outside_seg_id = body_seg_id;
+            outside_scope = self.segments[body_seg_id.index()].scope_chain.clone();
+        }
+        
+        self.current_segment = outside_seg_id;
+        self.pending_python = Some(PendingPython::StartProgramFrame);
+        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+    }
+
+    /// Handle a control primitive, returning the next StepEvent.
+    fn handle_primitive(&mut self, prim: ControlPrimitive) -> StepEvent {
+        // Drop completed dispatches before inspecting handler context.
+        self.lazy_pop_completed();
         match prim {
             ControlPrimitive::Resume { continuation, value } => {
-                self.handle_resume(continuation, value)
+                self.mode = self.handle_resume(continuation, value);
+                StepEvent::Continue
             }
             ControlPrimitive::Transfer { continuation, value } => {
-                self.handle_transfer(continuation, value)
+                self.mode = self.handle_transfer(continuation, value);
+                StepEvent::Continue
             }
             ControlPrimitive::Delegate { effect } => {
                 // Delegate to OUTER handler (advance in SAME dispatch, not new dispatch)
                 self.handle_delegate(effect)
             }
             ControlPrimitive::WithHandler { handler, program } => {
-                // WithHandler needs PythonCall - handled specially in step
-                Mode::Deliver(Value::Unit)  // placeholder
+                // WithHandler needs PythonCall to start body program
+                let call = self.handle_with_handler(handler, program);
+                self.pending_python = Some(PendingPython::StartProgramFrame);
+                StepEvent::NeedsPython(call)
+            }
+            ControlPrimitive::GetContinuation => {
+                let Some(top) = self.dispatch_stack.last() else {
+                    self.mode = Mode::Throw(PyException::runtime_error(
+                        "GetContinuation called outside handler context"
+                    ));
+                    return StepEvent::Continue;
+                };
+                self.mode = Mode::Deliver(Value::Continuation(top.k_user.clone()));
+                StepEvent::Continue
+            }
+            ControlPrimitive::GetHandlers => {
+                let Some(top) = self.dispatch_stack.last() else {
+                    self.mode = Mode::Throw(PyException::runtime_error(
+                        "GetHandlers called outside handler context"
+                    ));
+                    return StepEvent::Continue;
+                };
+                // Return full handler_chain from callsite scope (innermost first)
+                let mut handlers = Vec::new();
+                for marker in top.handler_chain.iter() {
+                    let Some(entry) = self.handlers.get(marker) else {
+                        self.mode = Mode::Throw(PyException::runtime_error(
+                            "GetHandlers: missing handler entry"
+                        ));
+                        return StepEvent::Continue;
+                    };
+                    handlers.push(entry.handler.clone());
+                }
+                self.mode = Mode::Deliver(Value::Handlers(handlers));
+                StepEvent::Continue
+            }
+            ControlPrimitive::CreateContinuation { program, handlers } => {
+                let cont = Continuation::create(program, handlers);
+                self.mode = Mode::Deliver(Value::Continuation(cont));
+                StepEvent::Continue
+            }
+            ControlPrimitive::ResumeContinuation { continuation, value } => {
+                self.handle_resume_continuation(continuation, value)
             }
             _ => {
-                Mode::Throw(PyException::not_implemented(
+                self.mode = Mode::Throw(PyException::not_implemented(
                     format!("Primitive not yet implemented: {:?}", prim)
-                ))
+                ));
+                StepEvent::Continue
             }
         }
     }
@@ -2125,10 +3191,13 @@ impl VM {
     /// 
     /// INVARIANT: Delegate can only be called from a handler execution context.
     /// The top of dispatch_stack is the current dispatch.
-    fn handle_delegate(&mut self, effect: Effect) -> Mode {
+    fn handle_delegate(&mut self, effect: Effect) -> StepEvent {
         // Get current dispatch context
         let top = self.dispatch_stack.last_mut()
             .expect("Delegate called outside of dispatch context");
+        
+        // Capture the inner handler segment so Delegate can return to it.
+        let inner_seg_id = self.current_segment;
         
         // Advance handler_idx to find next handler that can handle this effect
         let handler_chain = &top.handler_chain;
@@ -2146,30 +3215,34 @@ impl VM {
                     
                     let handler = entry.handler.clone();
                     let prompt_seg_id = entry.prompt_seg_id;
+                    // Prompt boundary tracked for outer handler (abandon path).
+                    top.prompt_seg_id = prompt_seg_id;
                     
-                    // Capture continuation from current point (inner handler's exec segment)
-                    // callsite_cont_id stays the same (original callsite)
+                    // Use original callsite continuation (k_user) for outer handler
                     
-                    // Create new handler execution segment for outer handler
+                    // Create new handler execution segment for outer handler.
+                    // NOTE: caller is the inner handler segment so outer return
+                    // flows back to inner (result of Delegate).
                     let scope_chain = self.current_scope_chain();
                     let handler_seg = Segment::new(
                         marker,
-                        Some(prompt_seg_id),
+                        Some(inner_seg_id),
                         scope_chain,
                     );
                     let handler_seg_id = self.alloc_segment(handler_seg);
                     self.current_segment = handler_seg_id;
                     
                     // Invoke outer handler
-                    return self.invoke_handler(handler, &effect, top.callsite_cont_id);
+                    return self.invoke_handler(handler, &effect, top.k_user.clone());
                 }
             }
         }
         
         // No outer handler found
-        Mode::Throw(PyException::runtime_error(
+        self.mode = Mode::Throw(PyException::runtime_error(
             format!("Delegate: no outer handler for effect {:?}", effect)
-        ))
+        ));
+        StepEvent::Continue
     }
 }
 ```
@@ -2238,7 +3311,8 @@ impl VM {
 ```
 GIL is ONLY held during:
   - PythonCall execution
-  - Value::to_pyobject / from_pyobject
+  - Value::to_pyobject / from_pyobject (driver only)
+  - Effect::to_pyobject / Continuation::to_pyobject (driver only)
   - Final result extraction
 
 GIL is RELEASED during:
@@ -2260,8 +3334,13 @@ Segment can only be mutated via VM methods.
 
 ```
 ContId is checked in consumed_cont_ids before resume.
-RunnableId is checked in consumed_runnable_ids before execute.
-Double-resume/execute returns Error, not panic.
+Double-resume returns Error, not panic.
+
+Within a single dispatch, the callsite continuation (k_user) must be consumed
+exactly once (Resume/Transfer/Return). Any attempt to resume again (including
+after Delegate returns) is a runtime error.
+
+Multi-shot continuations are not supported. All continuations are one-shot only.
 ```
 
 ### INV-4: Scope Chain in Segment
@@ -2298,7 +3377,7 @@ start_dispatch creates:
   handler_exec_seg:
     marker = handler_marker
     kind = Normal
-    caller = prompt_seg_id  // abandon returns to prompt, not callsite
+    caller = prompt_seg_id  // root handler return goes to prompt, not callsite
     scope_chain = callsite.scope_chain  // same scope as effect callsite
 ```
 
@@ -2310,7 +3389,9 @@ All other continuations (handler-local, scheduler) have dispatch_id = None.
 
 Completion check requires BOTH:
   k.dispatch_id == Some(top.dispatch_id) AND
-  k.cont_id == top.callsite_cont_id
+  k.cont_id == top.k_user.cont_id
+
+Resume, Transfer, and Return all mark completion when they resolve k_user.
 ```
 
 ### INV-8: Busy Boundary (Top-Only)
@@ -2318,12 +3399,13 @@ Completion check requires BOTH:
 ```
 Only the topmost non-completed dispatch creates a busy boundary.
 Busy handlers = top.handler_chain[0..=top.handler_idx]
-Visible handlers = top.handler_chain[(top.handler_idx + 1)..]
+Visible handlers = current scope_chain minus busy handlers (preserve order)
 
 This is MORE PERMISSIVE than union-all. Nested dispatches can see
 handlers that are busy in outer dispatches, which matches algebraic
 effect semantics (handlers are in scope based on their installation
-point, not based on what's currently executing).
+point, not based on what's currently executing). Handlers installed
+inside a handler remain visible unless they are busy.
 ```
 
 ### INV-9: All Effects Go Through Dispatch
@@ -2369,7 +3451,21 @@ This allows multiple Continuations to share frames via Arc while
 each execution gets its own mutable working copy.
 ```
 
-### INV-12: Step Event Classification
+### INV-12: Continuation Kinds
+
+```
+Continuation has two kinds:
+
+  started=true  (captured):
+    - frames_snapshot/scope_chain/marker/dispatch_id are valid
+    - program=None, handlers=[]
+
+  started=false (created):
+    - program/handlers are valid
+    - frames_snapshot empty, scope_chain empty, dispatch_id=None
+```
+
+### INV-13: Step Event Classification
 
 ```
 step() returns exactly one of:
@@ -2382,26 +3478,28 @@ The driver loop spins on Continue (in allow_threads), only acquiring
 GIL when NeedsPython is returned.
 ```
 
-### INV-13: Mode Transitions
+### INV-14: Mode Transitions
 
 ```
 Mode transitions are deterministic:
 
   Deliver(v) + frames.pop() →
     - RustReturn: callback returns new Mode
+    - RustProgram: resume → Yield/Return/Throw
     - PythonGenerator: NeedsPython(GenSend/GenNext)
     - empty frames: Return(v)
 
   Throw(e) + frames.pop() →
     - RustReturn: propagate (callbacks don't catch)
+    - RustProgram: throw → Yield/Return/Throw
     - PythonGenerator: NeedsPython(GenThrow)
     - empty frames + caller: propagate up
     - empty frames + no caller: Error
 
   HandleYield(y) →
-    - Primitive: handle_primitive returns Mode
-    - Effect: start_dispatch, then Deliver or NeedsPython
-    - Program: NeedsPython(CallFunc)
+    - Primitive: handle_primitive returns StepEvent (Continue or NeedsPython)
+    - Effect: start_dispatch returns StepEvent (Continue or NeedsPython)
+    - Program: NeedsPython(StartProgram)
     - Unknown: Throw(TypeError)
 
   Return(v) →
@@ -2409,7 +3507,7 @@ Mode transitions are deterministic:
     - no caller: Done(v)
 ```
 
-### INV-14: Generator Protocol
+### INV-15: Generator Protocol
 
 ```
 Python generators have three outcomes:
@@ -2426,12 +3524,18 @@ Python generators have three outcomes:
   raise exception → PyCallOutcome::GenError(exc)
     → Mode::Throw(exc)
 
-CallFunc returns PyCallOutcome::Value(obj) - NOT a generator step!
-VM pushes Frame::PythonGenerator with started=false.
+StartProgram/CallFunc/CallHandler return PyCallOutcome::Value(value) - NOT a generator step.
+CallHandler returns Value::Python(generator) after to_generator().
+VM pushes Frame::PythonGenerator with started=false when value is Value::Python(generator).
 
 Generator start uses GenNext (__next__).
 Generator resume uses GenSend (send).
 Exception injection uses GenThrow (throw).
+
+Rust program handlers mirror this protocol in Rust:
+  - Yield → Mode::HandleYield(yielded)
+  - Return → Mode::Deliver(value)
+  - Throw → Mode::Throw(exc)
 ```
 
 ---
@@ -2493,19 +3597,26 @@ doeff-vm/
 
 **Phase 4: Effects & Handlers**
 - [ ] Implement stdlib handlers (StdStateHandler, StdReaderHandler, StdWriterHandler)
+- [ ] Implement Rust program handlers (RustProgramHandler/RustHandlerProgram)
+- [ ] Implement Frame::RustProgram stepping (apply_rust_program_step)
 - [ ] Implement WithHandler (prompt + body structure)
 - [ ] Implement start_dispatch with visible_handlers (all effects dispatch)
 - [ ] Implement Resume (materialize snapshot)
 - [ ] Implement Transfer (tail-transfer)
 - [ ] Implement Delegate
+- [ ] Implement GetContinuation/GetHandlers
+- [ ] Implement CreateContinuation/ResumeContinuation
 
 **Phase 5: Python Integration**
-- [ ] Implement PythonCall (CallFunc/GenNext/GenSend/GenThrow)
+- [ ] Implement PythonCall (StartProgram/CallFunc/GenNext/GenSend/GenThrow)
 - [ ] Implement PyCallOutcome handling (Value vs GenYield/GenReturn/GenError)
 - [ ] Implement Yielded::classify() in driver (with GIL)
 - [ ] Implement PyException wrapper
 - [ ] Implement PyVM driver loop (step_generator classifies yields)
 - [ ] Implement receive_python_result() (handles Value vs Gen* correctly)
+- [ ] Implement Effect/Continuation/Handler PyO3 wrappers
+- [ ] Expose built-in scheduler via `vm.scheduler()` (PyRustProgramHandler)
+- [ ] Map Python scheduler effects to `Effect::Scheduler` in `extract_effect`
 
 **Phase 6: Testing & Validation**
 - [ ] Test basic effects (Get, Put, Ask, Tell)
@@ -2544,11 +3655,14 @@ doeff-vm/
 - Implement Transfer (tail-transfer, no return link)
 - Test: handler returns without Resume (abandon)
 - Validate: body_seg is orphaned, control goes to prompt_seg
+- Implement GetContinuation/GetHandlers and Create/ResumeContinuation
 
 ### Phase 5: Python Integration
 - Implement PyVM driver loop
 - Implement correct generator protocol
 - Integrate with existing doeff Python API
+- Expose built-in scheduler via `vm.scheduler()` (explicit install)
+- Map Python scheduler effects to `Effect::Scheduler` in `extract_effect`
 - Test: run existing doeff test suite with Rust VM
 - Ensure backward compatibility
 
