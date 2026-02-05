@@ -93,14 +93,14 @@ class TestCollectAvailableHandlers:
 
         assert handlers == [h1, h2]
 
-    def test_stops_at_dispatching_frame_busy_boundary(self) -> None:
+    def test_stops_at_dispatching_frame_outer_boundary(self) -> None:
         h1 = make_handler("h1")
         h2 = make_handler("h2")
         h3 = make_handler("h3")
 
         df = DispatchingFrame(
             effect=SampleEffect(0),
-            handler_idx=1,
+            handler_idx=0,
             handlers=(h2, h3),
             handler_started=True,
         )
@@ -114,16 +114,16 @@ class TestCollectAvailableHandlers:
 
         handlers = collect_available_handlers(k)
 
-        assert handlers == [h2, h1]
+        assert handlers == [h3, h1]
 
-    def test_busy_boundary_uses_parent_handlers_up_to_idx(self) -> None:
+    def test_outer_boundary_uses_parent_handlers_after_idx(self) -> None:
         h1 = make_handler("h1")
         h2 = make_handler("h2")
         h3 = make_handler("h3")
 
         df = DispatchingFrame(
             effect=SampleEffect(0),
-            handler_idx=0,
+            handler_idx=2,
             handlers=(h1, h2, h3),
             handler_started=True,
         )
@@ -160,7 +160,7 @@ class TestStartDispatch:
         assert df.handlers == (h1,)
         assert df.handler_started is False
 
-    def test_multiple_handlers_highest_idx(self) -> None:
+    def test_multiple_handlers_starts_at_idx_zero(self) -> None:
         h1 = make_handler("h1")
         h2 = make_handler("h2")
 
@@ -178,7 +178,7 @@ class TestStartDispatch:
 
         df = result.K[0]
         assert isinstance(df, DispatchingFrame)
-        assert df.handler_idx == 1
+        assert df.handler_idx == 0
         assert df.handlers == (h1, h2)
 
     def test_raises_unhandled_effect_error(self) -> None:
@@ -243,7 +243,7 @@ class TestLevel2StepDispatchingFrame:
         assert isinstance(df, DispatchingFrame)
         assert df.handler_started is True
 
-    def test_df_raises_unhandled_when_idx_negative(self) -> None:
+    def test_df_raises_unhandled_when_idx_exceeds_handlers(self) -> None:
         def handler(effect):
             yield effect
 
@@ -254,7 +254,7 @@ class TestLevel2StepDispatchingFrame:
             K=[
                 DispatchingFrame(
                     effect=SampleEffect(1),
-                    handler_idx=-1,
+                    handler_idx=0,
                     handlers=(),
                     handler_started=False,
                 ),
@@ -442,3 +442,52 @@ class TestHandleResumeContinuationUnstarted:
 
         with pytest.raises(RuntimeError, match="must have a program"):
             handle_resume_continuation(ResumeContinuation(bad_cont, None), state)
+
+
+class TestForwardAndIntercept:
+
+    def test_resume_after_forward_raises_runtime_error(self) -> None:
+        from doeff.cesk_v3.level2_algebraic_effects.primitives import Forward, Resume
+        from doeff.cesk_v3.run import sync_run
+        from doeff.do import do
+
+        @do
+        def inner_handler(effect):
+            if isinstance(effect, SampleEffect):
+                result = yield Forward(effect)
+                return (yield Resume(result + 1))
+            return (yield Forward(effect))
+
+        @do
+        def outer_handler(effect):
+            if isinstance(effect, SampleEffect):
+                return (yield Resume(effect.value * 2))
+            return (yield Forward(effect))
+
+        @do
+        def program():
+            return (yield SampleEffect(10))
+
+        result = sync_run(program(), handlers=[inner_handler, outer_handler])
+
+        assert not result.is_ok
+        assert "Resume called after Forward" in str(result.error)
+
+    def test_single_handler_resume_works(self) -> None:
+        from doeff.cesk_v3.level2_algebraic_effects.primitives import Forward, Resume
+        from doeff.cesk_v3.run import sync_run
+        from doeff.do import do
+
+        @do
+        def handler(effect):
+            if isinstance(effect, SampleEffect):
+                return (yield Resume(effect.value * 2))
+            return (yield Forward(effect))
+
+        @do
+        def program():
+            return (yield SampleEffect(10))
+
+        result = sync_run(program(), handlers=[handler])
+
+        assert result.unwrap() == 20

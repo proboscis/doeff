@@ -413,6 +413,121 @@ class Failed:
 
 Control primitives are yielded by handlers to control execution flow.
 
+### Resume and Forward Semantics (IMPORTANT)
+
+Understanding the precise semantics of `Resume` and `Forward` is critical for writing correct handlers.
+
+#### Resume Semantics
+
+`Resume(X)` sends value `X` to the **user code** (the code that yielded the effect).
+
+```python
+@do
+def handler(effect):
+    # Resume sends 42 to user code
+    user_result = yield Resume(42)
+    # user_result is what the user's code eventually returns
+    return user_result + 1  # Handler's return value
+```
+
+**Data flow:**
+1. `Resume(X)` → `X` goes to user code as the effect's result
+2. User code continues with `X`, eventually returns `Y`
+3. `Y` comes back to handler as the result of `yield Resume(X)`
+4. Handler can transform `Y` and return
+5. Handler's return value goes to outer handler (or becomes program result if outermost)
+
+**Example:**
+```python
+@do
+def user():
+    x = yield SampleEffect(10)  # Gets 42 from Resume
+    return x * 2  # Returns 84
+
+@do
+def handler(effect):
+    user_result = yield Resume(42)  # user_result = 84
+    return user_result + 1  # Final result = 85
+```
+
+#### Forward Semantics
+
+`Forward(effect)` delegates the effect to **outer handlers**. The outer handler will Resume the user.
+
+```python
+@do
+def inner_handler(effect):
+    # Forward to outer handler, get outer's return value
+    outer_return = yield Forward(effect)
+    # outer_return is what the outer handler returned (NOT the user's return value)
+    return outer_return + 1  # Inner's return value
+```
+
+**Data flow:**
+1. Inner handler yields `Forward(effect)` → effect goes to outer handler
+2. Outer handler processes effect, calls `Resume(X)` → `X` goes to user
+3. User runs with `X`, returns `Y` → `Y` goes to outer handler
+4. Outer handler receives `Y`, returns `Z` → `Z` comes back to inner handler
+5. Inner handler receives `Z` as result of `yield Forward(effect)`
+6. Inner handler can transform `Z` and return
+
+**Example:**
+```python
+@do
+def user():
+    x = yield SampleEffect(10)  # Gets 100 from outer's Resume
+    return x * 2  # Returns 200 to outer
+
+@do
+def outer_handler(effect):
+    user_result = yield Resume(100)  # user_result = 200
+    return user_result + 5  # Returns 205 to inner
+
+@do
+def inner_handler(effect):
+    outer_return = yield Forward(effect)  # outer_return = 205
+    return outer_return + 1  # Final result = 206
+```
+
+#### Forward + Resume is INVALID
+
+**After `yield Forward(effect)` returns, the user code has already been resumed and completed.**
+
+Calling `Resume` after `Forward` is a **double-resume violation** and raises `RuntimeError`.
+
+```python
+# INVALID - raises RuntimeError
+@do
+def bad_handler(effect):
+    outer_return = yield Forward(effect)  # User already resumed by outer!
+    return (yield Resume(outer_return))   # ERROR: Can't resume twice!
+
+# VALID - just return to transform the result
+@do
+def good_handler(effect):
+    outer_return = yield Forward(effect)
+    return outer_return + 1  # Transform by returning, NOT Resume
+```
+
+**Why this is an error:**
+- When inner handler forwards, outer handler eventually calls `Resume(X)`
+- `Resume(X)` sends `X` to user code, user runs to completion
+- User's continuation is now **consumed** (one-shot)
+- Inner handler's `Resume` would try to resume an already-consumed continuation
+
+**Summary table:**
+
+| After... | Can Resume? | Can Forward? | Can Return? |
+|----------|-------------|--------------|-------------|
+| Nothing yet | Yes | Yes | Yes (implicit abandonment) |
+| `yield Resume(X)` | No (use return) | No | Yes |
+| `yield Forward(effect)` | **NO (error)** | No | Yes |
+| `yield GetContinuation()` | Yes | Yes | Yes |
+
+---
+
+### Control Primitive Definitions
+
 ```python
 class ControlPrimitive:
     """Base class for Level 2 control primitives.
@@ -432,11 +547,22 @@ class WithHandler(ControlPrimitive, Generic[T]):
 
 @dataclass(frozen=True)
 class Resume(ControlPrimitive):
-    """Resume the captured continuation with a value.
+    """Resume the user continuation with a value.
     
-    Pops the DispatchingFrame and arranges K so:
-    - Value goes to user continuation
-    - Handler receives user's return value
+    Semantics:
+    - Resume(X) sends X to user code as the effect's result
+    - yield Resume(X) returns user's final return value to handler
+    - Handler's return value goes to outer handler (or program result)
+    
+    IMPORTANT: Cannot be called after Forward. The user continuation
+    can only be resumed once. If outer handler already resumed via Forward,
+    calling Resume raises RuntimeError.
+    
+    Example:
+        @do
+        def handler(effect):
+            user_result = yield Resume(42)  # 42 goes to user
+            return user_result + 1  # Transform user's result
     """
     value: Any
 
@@ -445,17 +571,27 @@ class Resume(ControlPrimitive):
 class Forward(ControlPrimitive):
     """Forward an effect to outer handlers.
     
-    Explicit forwarding primitive. Creates a new DispatchingFrame
-    with only outer handlers (handlers[:current_idx]).
+    Semantics:
+    - Forward(effect) sends effect to the next outer handler
+    - Outer handler processes it and eventually calls Resume
+    - yield Forward(effect) returns outer handler's RETURN value
+    - After Forward returns, user has already been resumed by outer
     
-    When outer handler resumes, the value is automatically passed
-    back to this handler, which can then Resume with it.
+    IMPORTANT: After Forward, you CANNOT call Resume. The user was
+    already resumed by the outer handler. Just return to transform
+    the outer handler's result.
     
-    Semantically equivalent to:
-        result = yield effect  # re-yield (also works, more frames)
-        return (yield Resume(result))
+    CORRECT pattern:
+        @do
+        def handler(effect):
+            outer_return = yield Forward(effect)
+            return outer_return + 1  # Transform by returning
     
-    But Forward makes the intent explicit and could be optimized.
+    INVALID pattern (raises RuntimeError):
+        @do
+        def handler(effect):
+            outer_return = yield Forward(effect)
+            return (yield Resume(outer_return))  # ERROR!
     """
     effect: EffectBase
 
