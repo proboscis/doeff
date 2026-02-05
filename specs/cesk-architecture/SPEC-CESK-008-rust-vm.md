@@ -1826,6 +1826,12 @@ pub struct VM {
     /// INVARIANT: Some when step() returned NeedsPython, None otherwise.
     /// Used by receive_python_result() to know what to do with result.
     pending_python: Option<PendingPython>,
+
+    /// Debug configuration (off by default).
+    debug: DebugConfig,
+    
+    /// Monotonic step counter for debug output.
+    step_counter: u64,
 }
 
 /// Handler registry entry.
@@ -1842,6 +1848,55 @@ pub struct HandlerEntry {
     pub prompt_seg_id: SegmentId,
 }
 ```
+
+### Debug Mode (Step Tracing)
+
+Debug mode prints useful runtime state while stepping. It is **off by default**
+and must not call into Python (no GIL usage in debug output).
+
+```rust
+#[derive(Debug, Clone)]
+pub enum DebugLevel {
+    Off,
+    Steps,  // One-line summary per step
+    Trace,  // Includes handler/dispatch/yield details
+}
+
+#[derive(Debug, Clone)]
+pub struct DebugConfig {
+    pub level: DebugLevel,
+    pub show_frames: bool,
+    pub show_dispatch: bool,
+    pub show_store: bool,
+}
+```
+
+**Step output (Steps)**:
+- step_id, mode kind, current_segment, frames_len
+- dispatch_stack depth, pending_python kind
+
+**Additional output (Trace)**:
+- top frame kind (RustReturn/RustProgram/PythonGenerator)
+- effect type_name when handling Yielded::Effect
+- handler_idx and handler chain length (if dispatch active)
+- continuation ids when Resume/Transfer/Delegate is applied
+
+**Python values**: printed as placeholders (e.g., `<pyobject>`) to avoid GIL.
+
+**Integration**:
+- `VM::step()` increments `step_counter` and emits a debug line before/after state transitions.
+- `receive_python_result()` may emit a debug line showing the PyCallOutcome kind.
+- The driver may optionally emit Python-level debug info (with GIL) if requested.
+
+### Python API for Debug
+
+```python
+vm = doeff.VM(debug=True)  # Steps level
+vm.set_debug(DebugConfig(level="trace", show_frames=True, show_dispatch=True))
+result = vm.run(program)
+```
+
+Debug output defaults to stderr.
 
 ---
 
