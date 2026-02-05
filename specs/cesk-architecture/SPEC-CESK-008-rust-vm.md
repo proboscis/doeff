@@ -471,8 +471,8 @@ pub struct DispatchContext {
     /// Callsite continuation (for completion detection and Delegate)
     pub k_user: Continuation,
     
-    /// Prompt boundary for the current handler (root dispatch).
-    /// Updated on Delegate for debugging/abandon routing.
+    /// Prompt boundary for the root handler of this dispatch.
+    /// Used to detect handler return that abandons the callsite.
     pub prompt_seg_id: SegmentId,
     
     /// Marked true when callsite is resolved (Resume/Transfer/Return)
@@ -2380,6 +2380,33 @@ Notes:
 - `yield Delegate(E)` returns the outer handler's return value (`h2`).
 - After Delegate returns, the handler must return (no Resume).
 
+**Delegate/Resume Pseudocode**:
+
+```python
+@do
+def user():
+    x = yield SomeEffect()
+    return x * 2
+
+@do
+def outer_handler(effect, k_user):
+    if isinstance(effect, SomeEffect):
+        user_ret = yield Resume(k_user, 10)
+        return user_ret + 5
+    return (yield Delegate(effect))
+
+@do
+def inner_handler(effect, k_user):
+    outer_ret = yield Delegate(effect)
+    return outer_ret + 1
+
+# INVALID: Resume after Delegate (double-resume)
+@do
+def bad_handler(effect, k_user):
+    outer_ret = yield Delegate(effect)
+    return (yield Resume(k_user, outer_ret))  # runtime error
+```
+
 ### Scheduler Pattern: Spawn with Transfer (Reference)
 
 User-space schedulers can avoid stack growth without a special primitive by
@@ -3214,9 +3241,6 @@ impl VM {
                     top.effect = effect.clone();  // May be a different effect than original
                     
                     let handler = entry.handler.clone();
-                    let prompt_seg_id = entry.prompt_seg_id;
-                    // Prompt boundary tracked for outer handler (abandon path).
-                    top.prompt_seg_id = prompt_seg_id;
                     
                     // Use original callsite continuation (k_user) for outer handler
                     
@@ -3537,6 +3561,25 @@ Rust program handlers mirror this protocol in Rust:
   - Return → Mode::Deliver(value)
   - Throw → Mode::Throw(exc)
 ```
+
+---
+
+## Legacy Specs (Deprecated) — Differences
+
+SPEC-CESK-006 and SPEC-CESK-007 are deprecated. This spec (008) is authoritative.
+Key differences and decisions in 008:
+
+- Busy boundary is **top-only**: only the topmost non-completed dispatch excludes
+  busy handlers; nested dispatch does not consider older frames.
+- `Delegate` is the only forwarding primitive; yielding a raw effect starts a new
+  dispatch (does not forward).
+- `yield Delegate(effect)` returns the **outer handler's return value**; after
+  Delegate returns, the handler must return (no Resume).
+- Handler return is implicit; there is no `Return` control primitive.
+- Program input is **ProgramBase only** (KleisliProgramCall or EffectBase); raw
+  generators are rejected except via `start_with_generator()`.
+- Continuations are one-shot only; multi-shot is not supported.
+- Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
 
 ---
 
