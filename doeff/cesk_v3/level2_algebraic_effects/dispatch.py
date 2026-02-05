@@ -16,14 +16,19 @@ if TYPE_CHECKING:
 
 
 def collect_available_handlers(K: Kontinuation) -> list[Handler]:
+    """Collect handlers available for a new effect dispatch.
+
+    Convention: handlers[0] = innermost, handlers[N-1] = outermost.
+    When inside a DispatchingFrame, only outer handlers (after current idx) are available.
+    """
     handlers: list[Handler] = []
 
     for frame in K:
         if isinstance(frame, WithHandlerFrame):
             handlers.append(frame.handler)
         elif isinstance(frame, DispatchingFrame):
-            parent_available = list(frame.handlers[: frame.handler_idx])
-            return parent_available + handlers
+            outer_handlers = list(frame.handlers[frame.handler_idx + 1 :])
+            return outer_handlers + handlers
 
     return handlers
 
@@ -38,7 +43,7 @@ def start_dispatch(effect: EffectBase, state: CESKState) -> CESKState:
 
     df = DispatchingFrame(
         effect=effect,
-        handler_idx=len(handlers) - 1,
+        handler_idx=0,
         handlers=tuple(handlers),
         handler_started=False,
     )

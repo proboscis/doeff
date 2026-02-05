@@ -73,8 +73,7 @@ class TestImplicitAbandonment:
             execution_trace.append(f"outer: got {effect}")
             if isinstance(effect, SampleEffect):
                 return "outer_abandoned"
-            forward_result = yield Forward(effect)
-            return (yield Resume(forward_result))
+            return (yield Forward(effect))
 
         @do
         def inner_handler(effect):
@@ -125,17 +124,14 @@ class TestReYieldForwarding:
         result = run(WithHandler(outer_handler, main()))
         assert result == 50
 
-    def test_reyield_vs_forward_same_result(self) -> None:
+    def test_forward_then_resume_raises_error(self) -> None:
+        from doeff.cesk_v3.run import sync_run
+
         @do
         def outer_handler(effect):
             if isinstance(effect, SampleEffect):
                 return (yield Resume(100))
             return (yield Forward(effect))
-
-        @do
-        def inner_handler_reyield(effect):
-            result = yield effect
-            return (yield Resume(result))
 
         @do
         def inner_handler_forward(effect):
@@ -147,17 +143,12 @@ class TestReYieldForwarding:
             return (yield SampleEffect(1))
 
         @do
-        def main_reyield():
-            return (yield WithHandler(inner_handler_reyield, user()))
-
-        @do
         def main_forward():
             return (yield WithHandler(inner_handler_forward, user()))
 
-        result_reyield = run(WithHandler(outer_handler, main_reyield()))
-        result_forward = run(WithHandler(outer_handler, main_forward()))
-
-        assert result_reyield == result_forward == 100
+        result = sync_run(WithHandler(outer_handler, main_forward()))
+        assert result.is_error
+        assert "Resume called after Forward" in str(result.error)
 
     def test_reyield_chains_through_multiple_handlers(self) -> None:
         trace = []
@@ -206,7 +197,7 @@ class TestReYieldForwarding:
 
 class TestForwardExplicit:
 
-    def test_forward_to_outer_handler(self) -> None:
+    def test_forward_without_resume(self) -> None:
         @do
         def outer_handler(effect):
             if isinstance(effect, SampleEffect):
@@ -215,8 +206,7 @@ class TestForwardExplicit:
 
         @do
         def inner_handler(effect):
-            forward_result = yield Forward(effect)
-            return (yield Resume(forward_result))
+            return (yield Forward(effect))
 
         @do
         def user():

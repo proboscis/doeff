@@ -78,7 +78,7 @@ class TestSyncRun:
         assert result.is_ok
         assert result.unwrap() == 42
 
-    def test_program_with_multiple_handlers(self):
+    def test_program_with_single_handler(self):
         @do
         def double_handler(effect: EffectBase) -> Program[Any]:
             if isinstance(effect, SimpleEffect):
@@ -86,7 +86,22 @@ class TestSyncRun:
             return (yield Forward(effect))
 
         @do
-        def add_one_handler(effect: EffectBase) -> Program[Any]:
+        def program() -> Program[int]:
+            return (yield SimpleEffect(value=10))
+
+        result = sync_run(program(), handlers=[double_handler])
+        assert result.is_ok
+        assert result.unwrap() == 20
+
+    def test_forward_then_resume_raises_error(self):
+        @do
+        def outer_handler(effect: EffectBase) -> Program[Any]:
+            if isinstance(effect, SimpleEffect):
+                return (yield Resume(effect.value * 2))
+            return (yield Forward(effect))
+
+        @do
+        def inner_handler(effect: EffectBase) -> Program[Any]:
             if isinstance(effect, SimpleEffect):
                 result = yield Forward(effect)
                 return (yield Resume(result + 1))
@@ -96,9 +111,9 @@ class TestSyncRun:
         def program() -> Program[int]:
             return (yield SimpleEffect(value=10))
 
-        result = sync_run(program(), handlers=[add_one_handler, double_handler])
-        assert result.is_ok
-        assert result.unwrap() == 21
+        result = sync_run(program(), handlers=[inner_handler, outer_handler])
+        assert result.is_error
+        assert "Resume called after Forward" in str(result.error)
 
     def test_error_captured_in_result(self):
         @do
