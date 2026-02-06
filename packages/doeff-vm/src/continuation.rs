@@ -7,9 +7,8 @@ use pyo3::types::{PyDict, PyList, PyString};
 
 use crate::frame::Frame;
 use crate::handler::Handler;
-use crate::ids::{ContId, DispatchId, Marker, RunnableId, SegmentId};
+use crate::ids::{ContId, DispatchId, Marker, SegmentId};
 use crate::segment::Segment;
-use crate::value::Value;
 
 /// Capturable continuation with frozen frame snapshot.
 ///
@@ -127,24 +126,6 @@ impl Continuation {
     }
 }
 
-/// Ready-to-run continuation. INTERNAL to scheduler.
-#[derive(Debug)]
-pub(crate) struct RunnableContinuation {
-    pub runnable_id: RunnableId,
-    pub continuation: Continuation,
-    pub pending_value: Value,
-}
-
-impl RunnableContinuation {
-    pub fn new(continuation: Continuation, value: Value) -> Self {
-        RunnableContinuation {
-            runnable_id: RunnableId::fresh(),
-            continuation,
-            pending_value: value,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,15 +175,5 @@ mod tests {
         seg.push_frame(Frame::rust_return(CallbackId::fresh()));
         assert_eq!(cont.frames_snapshot.len(), 1);
         assert_eq!(seg.frame_count(), 2);
-    }
-
-    #[test]
-    fn test_runnable_continuation() {
-        let (seg, seg_id) = make_test_segment();
-        let cont = Continuation::capture(&seg, seg_id, None);
-        let runnable = RunnableContinuation::new(cont, Value::Int(42));
-
-        assert_eq!(runnable.continuation.segment_id, seg_id);
-        assert!(matches!(runnable.pending_value, Value::Int(42)));
     }
 }
