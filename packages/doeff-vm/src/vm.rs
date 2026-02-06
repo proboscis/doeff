@@ -259,6 +259,22 @@ impl VM {
         id
     }
 
+    /// Set mode to Throw with a RuntimeError and return Continue.
+    /// SAFETY: Caller must hold GIL (always true — called from step() within driver loop).
+    fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
+        let py = unsafe { pyo3::Python::assume_attached() };
+        let exc_type = pyo3::exceptions::PyRuntimeError::type_object(py)
+            .into_any()
+            .unbind();
+        let exc_value = pyo3::exceptions::PyRuntimeError::new_err(message.to_string())
+            .value(py)
+            .clone()
+            .into_any()
+            .unbind();
+        self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+        StepEvent::Continue
+    }
+
     pub fn step(&mut self) -> StepEvent {
         self.step_counter += 1;
 
@@ -404,28 +420,41 @@ impl VM {
             None => return StepEvent::Error(VMError::internal("no current segment")),
         };
 
+        {
+            let segment = match self.segments.get(seg_id) {
+                Some(s) => s,
+                None => return StepEvent::Error(VMError::invalid_segment("segment not found")),
+            };
+
+            if !segment.has_frames() {
+                let caller = segment.caller;
+                match &self.mode {
+                    Mode::Deliver(v) => {
+                        let value = v.clone();
+                        self.segments.free(seg_id);
+                        self.mode = Mode::Return(value);
+                        return StepEvent::Continue;
+                    }
+                    Mode::Throw(exc) => {
+                        if let Some(caller_id) = caller {
+                            self.current_segment = Some(caller_id);
+                            self.segments.free(seg_id);
+                            return StepEvent::Continue;
+                        } else {
+                            let exc = exc.clone();
+                            self.segments.free(seg_id);
+                            return StepEvent::Error(VMError::uncaught_exception(exc));
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
         let segment = match self.segments.get_mut(seg_id) {
             Some(s) => s,
             None => return StepEvent::Error(VMError::invalid_segment("segment not found")),
         };
-
-        if !segment.has_frames() {
-            let value = match &self.mode {
-                Mode::Deliver(v) => v.clone(),
-                Mode::Throw(_) => {
-                    if let Some(caller_id) = segment.caller {
-                        self.current_segment = Some(caller_id);
-                        return StepEvent::Continue;
-                    } else {
-                        return StepEvent::Error(VMError::internal("uncaught exception"));
-                    }
-                }
-                _ => unreachable!(),
-            };
-            self.mode = Mode::Return(value);
-            return StepEvent::Continue;
-        }
-
         let frame = segment.pop_frame().unwrap();
 
         match frame {
@@ -606,9 +635,21 @@ impl VM {
                 StepEvent::NeedsPython(PythonCall::StartProgram { program: prog })
             }
 
-            Yielded::Unknown(_) => StepEvent::Error(VMError::type_error(
-                "unknown yielded value: expected Effect, ControlPrimitive, or Program",
-            )),
+            Yielded::Unknown(_) => {
+                let py = unsafe { pyo3::Python::assume_attached() };
+                let exc_type = pyo3::exceptions::PyTypeError::type_object(py)
+                    .into_any()
+                    .unbind();
+                let exc_value = pyo3::exceptions::PyTypeError::new_err(
+                    "unknown yielded value: expected Effect, ControlPrimitive, or Program",
+                )
+                .value(py)
+                .clone()
+                .into_any()
+                .unbind();
+                self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+                StepEvent::Continue
+            }
         }
     }
 
@@ -628,10 +669,14 @@ impl VM {
         match caller {
             Some(caller_id) => {
                 self.current_segment = Some(caller_id);
+                self.segments.free(seg_id);
                 self.mode = Mode::Deliver(value);
                 StepEvent::Continue
             }
-            None => StepEvent::Done(value),
+            None => {
+                self.segments.free(seg_id);
+                StepEvent::Done(value)
+            }
         }
     }
 
@@ -955,12 +1000,15 @@ impl VM {
 
     fn handle_resume(&mut self, k: Continuation, value: Value) -> StepEvent {
         if !k.started {
-            return StepEvent::Error(VMError::internal(
+            return self.throw_runtime_error(
                 "Resume on unstarted continuation; use ResumeContinuation",
-            ));
+            );
         }
         if self.is_one_shot_consumed(k.cont_id) {
-            return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
+            return self.throw_runtime_error(&format!(
+                "one-shot violation: continuation {} already consumed",
+                k.cont_id.raw()
+            ));
         }
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
@@ -982,12 +1030,15 @@ impl VM {
 
     fn handle_transfer(&mut self, k: Continuation, value: Value) -> StepEvent {
         if !k.started {
-            return StepEvent::Error(VMError::internal(
+            return self.throw_runtime_error(
                 "Transfer on unstarted continuation; use ResumeContinuation",
-            ));
+            );
         }
         if self.is_one_shot_consumed(k.cont_id) {
-            return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
+            return self.throw_runtime_error(&format!(
+                "one-shot violation: continuation {} already consumed",
+                k.cont_id.raw()
+            ));
         }
         self.mark_one_shot_consumed(k.cont_id);
         self.lazy_pop_completed();
@@ -1168,7 +1219,15 @@ impl VM {
         };
         let handlers: Vec<Handler> = chain
             .iter()
-            .filter_map(|marker| self.handlers.get(marker).map(|entry| entry.handler.clone()))
+            .filter_map(|marker| {
+                self.handlers.get(marker).map(|entry| {
+                    if let Some(ref identity) = entry.py_identity {
+                        Handler::Python(identity.clone())
+                    } else {
+                        entry.handler.clone()
+                    }
+                })
+            })
             .collect();
         self.mode = Mode::Deliver(Value::Handlers(handlers));
         StepEvent::Continue
@@ -1614,45 +1673,42 @@ mod tests {
 
     #[test]
     fn test_one_shot_violation_resume() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
+        Python::attach(|_py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
 
-        let k = vm.capture_continuation(None).unwrap();
-        let cont_id = k.cont_id;
+            let k = vm.capture_continuation(None).unwrap();
 
-        let _ = vm.handle_resume(k.clone(), Value::Int(1));
-        let event = vm.handle_resume(k, Value::Int(2));
+            let _ = vm.handle_resume(k.clone(), Value::Int(1));
+            let event = vm.handle_resume(k, Value::Int(2));
 
-        match event {
-            StepEvent::Error(VMError::OneShotViolation { cont_id: id }) => {
-                assert_eq!(id, cont_id);
-            }
-            _ => panic!("Expected OneShotViolation error"),
-        }
+            assert!(matches!(event, StepEvent::Continue));
+            assert!(vm.mode.is_throw(), "One-shot violation should set Mode::Throw");
+        });
     }
 
     #[test]
     fn test_one_shot_violation_transfer() {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
+        Python::attach(|_py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
 
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
 
-        let k = vm.capture_continuation(None).unwrap();
+            let k = vm.capture_continuation(None).unwrap();
 
-        let _ = vm.handle_transfer(k.clone(), Value::Int(1));
-        let event = vm.handle_transfer(k, Value::Int(2));
+            let _ = vm.handle_transfer(k.clone(), Value::Int(1));
+            let event = vm.handle_transfer(k, Value::Int(2));
 
-        assert!(matches!(
-            event,
-            StepEvent::Error(VMError::OneShotViolation { .. })
-        ));
+            assert!(matches!(event, StepEvent::Continue));
+            assert!(vm.mode.is_throw(), "One-shot violation should set Mode::Throw");
+        });
     }
 
     #[test]
@@ -2079,6 +2135,238 @@ mod tests {
         }
     }
 
+    // ==========================================================
+    // Spec-Gap TDD Tests — Phase 2 (G1-G5 from SPEC-008 audit)
+    // ==========================================================
+
+    /// G1: Uncaught exception must preserve the original PyException.
+    /// Spec: VMError should carry the PyException, not discard it as a generic string.
+    #[test]
+    fn test_g1_uncaught_exception_preserves_pyexception() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let exc_type = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let exc_value = py
+                .eval(c"RuntimeError('test uncaught')", None, None)
+                .unwrap()
+                .unbind()
+                .into_any();
+            let py_exc = PyException::new(exc_type, exc_value, None);
+            vm.mode = Mode::Throw(py_exc);
+
+            let event = vm.step();
+
+            // The error variant must carry the exception, not be a generic string.
+            // VMError::UncaughtException { exception: PyException } is the desired variant.
+            match &event {
+                StepEvent::Error(err) => {
+                    let msg = err.to_string();
+                    assert!(
+                        !msg.contains("internal error: uncaught exception"),
+                        "G1 FAIL: Got generic InternalError(\"{}\"). \
+                         Expected a VMError variant that preserves the PyException.",
+                        msg
+                    );
+                }
+                other => panic!(
+                    "G1: Expected StepEvent::Error, got {:?}",
+                    std::mem::discriminant(other)
+                ),
+            }
+        });
+    }
+
+    /// G3: Segments must be freed when no longer reachable.
+    /// After step_return completes a child segment and returns to parent,
+    /// the child segment should be freed from the arena.
+    #[test]
+    fn test_g3_segment_freed_after_return() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+
+        // Create parent segment
+        let parent_seg = Segment::new(marker, None, vec![]);
+        let parent_id = vm.alloc_segment(parent_seg);
+
+        // Create child segment with parent as caller
+        let child_seg = Segment::new(marker, Some(parent_id), vec![]);
+        let child_id = vm.alloc_segment(child_seg);
+
+        vm.current_segment = Some(child_id);
+        vm.mode = Mode::Return(Value::Int(42));
+
+        // Before step: both segments exist
+        assert!(vm.segments.get(parent_id).is_some());
+        assert!(vm.segments.get(child_id).is_some());
+        assert_eq!(vm.segments.len(), 2);
+
+        // step_return: child returns to parent
+        let event = vm.step();
+        assert!(matches!(event, StepEvent::Continue));
+        assert_eq!(vm.current_segment, Some(parent_id));
+
+        // DESIRED: child segment should be freed
+        assert!(
+            vm.segments.get(child_id).is_none(),
+            "G3 REGRESSION: Child segment was NOT freed after return. Arena len={}",
+            vm.segments.len()
+        );
+    }
+
+    /// G4a: Resume on a consumed continuation → Mode::Throw (catchable), not StepEvent::Error.
+    #[test]
+    fn test_g4a_resume_one_shot_violation_is_throwable() {
+        Python::attach(|_py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let k = vm.capture_continuation(None).unwrap();
+            let _ = vm.handle_resume(k.clone(), Value::Int(1));
+            let event = vm.handle_resume(k, Value::Int(2));
+
+            assert!(matches!(event, StepEvent::Continue), "G4a: expected Continue, got Error");
+            assert!(vm.mode.is_throw(), "G4a: expected Mode::Throw after one-shot violation");
+        });
+    }
+
+    /// G4b: Resume on unstarted continuation → Mode::Throw (catchable), not StepEvent::Error.
+    #[test]
+    fn test_g4b_resume_unstarted_is_throwable() {
+        Python::attach(|_py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let mut k = make_dummy_continuation();
+            k.started = false;
+
+            let event = vm.handle_resume(k, Value::Int(1));
+
+            assert!(matches!(event, StepEvent::Continue), "G4b: expected Continue, got Error");
+            assert!(vm.mode.is_throw(), "G4b: expected Mode::Throw for unstarted Resume");
+        });
+    }
+
+    /// G4c: Transfer on consumed continuation → Mode::Throw (catchable).
+    #[test]
+    fn test_g4c_transfer_one_shot_violation_is_throwable() {
+        Python::attach(|_py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let k = vm.capture_continuation(None).unwrap();
+            let _ = vm.handle_transfer(k.clone(), Value::Int(1));
+            let event = vm.handle_transfer(k, Value::Int(2));
+
+            assert!(matches!(event, StepEvent::Continue), "G4c: expected Continue, got Error");
+            assert!(vm.mode.is_throw(), "G4c: expected Mode::Throw after transfer one-shot");
+        });
+    }
+
+    /// G5: Unknown Yielded should produce Mode::Throw (catchable TypeError),
+    /// not StepEvent::Error (fatal).
+    #[test]
+    fn test_g5_unknown_yielded_is_throwable() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            // Set mode to HandleYield with an Unknown yielded value
+            let unknown_obj = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            vm.mode = Mode::HandleYield(Yielded::Unknown(unknown_obj));
+
+            let event = vm.step();
+
+            match &event {
+                StepEvent::Continue => {
+                    assert!(
+                        vm.mode.is_throw(),
+                        "G5: Expected Mode::Throw for Unknown Yielded, got {:?}",
+                        vm.mode
+                    );
+                }
+                StepEvent::Error(VMError::TypeError { .. }) => {
+                    panic!("G5 REGRESSION: Unknown Yielded is StepEvent::Error (fatal) instead of Mode::Throw (catchable)");
+                }
+                other => panic!("G5: Unexpected event: {:?}", std::mem::discriminant(other)),
+            }
+        });
+    }
+
+    /// G2: GetHandlers must return py_identity (original Python sentinel) for Rust handlers,
+    /// not the Handler::RustProgram wrapper.
+    #[test]
+    fn test_g2_get_handlers_returns_py_identity() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let prompt_seg_id = SegmentId::from_index(0);
+
+            // Create a sentinel Python object to serve as py_identity
+            let sentinel = py
+                .eval(c"type('StateSentinel', (), {})()", None, None)
+                .unwrap()
+                .unbind()
+                .into_any();
+
+            // Install handler WITH py_identity
+            vm.install_handler(
+                marker,
+                HandlerEntry::with_identity(
+                    Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                    prompt_seg_id,
+                    sentinel.clone_ref(py),
+                ),
+            );
+
+            let seg = Segment::new(marker, None, vec![marker]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let event = vm.handle_get_handlers();
+            assert!(matches!(event, StepEvent::Continue));
+
+            match &vm.mode {
+                Mode::Deliver(Value::Handlers(handlers)) => {
+                    assert_eq!(handlers.len(), 1);
+                    // DESIRED: should return the py_identity sentinel, not Handler::RustProgram
+                    match &handlers[0] {
+                        Handler::Python(obj) => {
+                            // Success: the sentinel was returned
+                            let is_same = obj.bind(py).is(&sentinel.bind(py));
+                            assert!(is_same, "G2: returned object is not the original sentinel");
+                        }
+                        Handler::RustProgram(_) => {
+                            panic!("G2 REGRESSION: GetHandlers returned Handler::RustProgram instead of py_identity sentinel");
+                        }
+                    }
+                }
+                _ => panic!("G2: Expected Deliver(Handlers)"),
+            }
+        });
+    }
+
     /// G5/G6 TDD: Tests the full VM dispatch cycle with a handler that returns
     /// NeedsPython from resume(). This exercises the critical path where the
     /// second Python call result must be properly propagated back to the handler.
@@ -2175,6 +2463,68 @@ mod tests {
                     .unwrap_or(false),
                 "Dispatch should be marked complete"
             );
+        });
+    }
+
+    // === SPEC-009 Gap TDD Tests ===
+
+    /// G3: Modify handler must resume caller with new_value (modifier result), not old_value.
+    #[test]
+    fn test_s009_g3_modify_resumes_with_new_value() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            let prompt_seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = vm.alloc_segment(prompt_seg);
+
+            let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+            let body_seg_id = vm.alloc_segment(body_seg);
+            vm.current_segment = Some(body_seg_id);
+
+            vm.install_handler(
+                marker,
+                HandlerEntry::new(
+                    Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                    prompt_seg_id,
+                ),
+            );
+
+            vm.rust_store.put("x".to_string(), Value::Int(5));
+
+            let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let result = vm.start_dispatch(Effect::Modify {
+                key: "x".to_string(),
+                modifier,
+            });
+            assert!(result.is_ok());
+            let event = result.unwrap();
+            assert!(matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })));
+
+            // Feed modifier result: 5 * 10 = 50
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(50)));
+
+            // Step to process the resume
+            let event2 = vm.step();
+            assert!(matches!(event2, StepEvent::Continue));
+
+            // The mode should be HandleYield with Resume primitive
+            // The resume value should be 50 (new_value), NOT 5 (old_value)
+            match &vm.mode {
+                Mode::HandleYield(Yielded::Primitive(ControlPrimitive::Resume { value, .. })) => {
+                    assert_eq!(
+                        value.as_int(),
+                        Some(50),
+                        "G3 FAIL: Modify resumed with {} instead of 50 (new_value). \
+                         It returned old_value instead of the modifier result.",
+                        value.as_int().unwrap_or(-1)
+                    );
+                }
+                other => panic!(
+                    "G3: Expected HandleYield(Resume), got {:?}",
+                    std::mem::discriminant(other)
+                ),
+            }
         });
     }
 }

@@ -23,6 +23,11 @@ use crate::vm::VM;
 fn vmerror_to_pyerr(e: VMError) -> PyErr {
     match e {
         VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
+        VMError::UncaughtException { exception } => {
+            // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
+            let py = unsafe { Python::assume_attached() };
+            PyErr::from_value(exception.exc_value.bind(py).clone())
+        }
         _ => PyRuntimeError::new_err(e.to_string()),
     }
 }
