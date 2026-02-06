@@ -42,6 +42,18 @@ pub struct RunnableId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct CallbackId(pub u64);
 
+/// Unique identifier for spawned tasks.
+///
+/// Tasks are managed by the scheduler which maintains its own internal counter.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TaskId(pub u64);
+
+/// Unique identifier for promises.
+///
+/// Promises are managed by the scheduler which maintains its own internal counter.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct PromiseId(pub u64);
+
 // Global counters for ID generation
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -131,6 +143,30 @@ impl CallbackId {
     }
 }
 
+impl TaskId {
+    /// Get the raw value.
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+
+    /// Create a TaskId from a raw value.
+    pub fn from_raw(value: u64) -> Self {
+        TaskId(value)
+    }
+}
+
+impl PromiseId {
+    /// Get the raw value.
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+
+    /// Create a PromiseId from a raw value.
+    pub fn from_raw(value: u64) -> Self {
+        PromiseId(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +196,19 @@ mod tests {
         let c1 = CallbackId::fresh();
         let c2 = CallbackId::fresh();
         assert_ne!(c1, c2);
+    }
+
+    #[test]
+    fn test_task_id_equality() {
+        let t1 = TaskId::from_raw(42);
+        let t2 = TaskId::from_raw(42);
+        assert_eq!(t1, t2);
+    }
+
+    #[test]
+    fn test_promise_id_equality() {
+        let p1 = PromiseId::from_raw(42);
+        let p2 = PromiseId::from_raw(42);
+        assert_eq!(p1, p2);
     }
 }
