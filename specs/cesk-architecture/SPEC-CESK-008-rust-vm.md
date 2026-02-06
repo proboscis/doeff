@@ -1,6 +1,26 @@
 # SPEC-CESK-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 7)
+## Status: Draft (Revision 8)
+
+### Revision 8 Changelog
+
+Changes from Rev 7, grouped by section. Each change is marked with a tag
+so reviewers can accept/reject individually.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R8-A** | ADR-2 | Rewritten: "Unified Handler Protocol" replaces "No Built-in Bypass". Drops stdlib as separate concept. |
+| **R8-B** | ADR-8 (new) | New ADR: Drop `Handler::Stdlib`, unify to `RustProgram`/`Python` only. |
+| **R8-C** | ADR-9 (new) | New ADR: PyO3-exposed primitive types (`WithHandler`, `Resume`, `Delegate`, `Transfer`, `K`). |
+| **R8-D** | ADR-10 (new) | New ADR: Handler identity preservation — `GetHandlers` returns original Python objects. |
+| **R8-E** | ADR-11 (new) | New ADR: Store/env initialization via `put_state`/`put_env` + `env_items` extraction. |
+| **R8-F** | Principle 3 | Removed "immediate stdlib handler" signature. Only `RustHandlerProgram` + Python handler. |
+| **R8-G** | Handler enum | Reduced to two variants: `RustProgram` and `Python`. `Stdlib` variant deleted. |
+| **R8-H** | Stdlib Handlers | `StdlibHandler`, `HandlerAction`, `HandlerContext(ModifyPending)`, `NeedsPython` deleted. Replaced by `RustProgramHandler` impls. |
+| **R8-I** | Handler section | `StateHandlerFactory`, `ReaderHandlerFactory`, `WriterHandlerFactory` added as `RustProgramHandler` implementations. |
+| **R8-J** | Public API Contract (new) | New section: `run()`/`async_run()` contract, `RunResult`, `@do`/`Program[T]`, store init/extract flow, handler nesting order. Closes SPEC-009 support gaps. |
+
+---
 
 ## Summary
 
@@ -39,7 +59,7 @@ This spec defines a **Rust-based VM** for doeff's algebraic effects system, with
 │    │ L1: Internals (hidden)                       │            │
 │    │     dispatch_stack, segments, callbacks      │            │
 │    ├──────────────────────────────────────────────┤            │
-│    │ L2: RustStore (stdlib state)                 │            │
+│    │ L2: RustStore (standard handler state)        │            │
 │    │     state, env, log (HashMap/Vec<Value>)     │            │
 │    ├──────────────────────────────────────────────┤            │
 │    │ L3: PyStore (optional escape hatch)          │            │
@@ -62,43 +82,56 @@ This spec defines a **Rust-based VM** for doeff's algebraic effects system, with
 - Frame switching is Rust-native (fast)
 - Python calls happen at frame boundaries (GIL acquired/released cleanly)
 
-### ADR-2: All Effects Go Through Dispatch (No Built-in Bypass)
+### ADR-2: Unified Handler Protocol (No Stdlib Special Case)
 
-**Decision**: ALL effects go through dispatch, including State/Reader/Writer. No special-case bypass.
+**Decision**: ALL handlers — Rust-native and Python-implemented — share one
+dispatch protocol. There is no separate "stdlib" handler path. The `Handler`
+enum has exactly two variants: `RustProgram` and `Python`.
 
 **Rationale**:
 - Algebraic effects principle: "handlers give meaning to effects"
 - Users can intercept, override, or replace any effect (logging, persistence, testing)
 - Single dispatch path simplifies spec and implementation
-- Stdlib handlers are Rust-implemented for speed, but still user-installable
+- Rust-native handlers (state, reader, writer, scheduler) are an **optimization**,
+  not a protocol difference — they implement the same `RustProgramHandler` trait
+- No hard-coded effect→handler matching; each handler's `can_handle()` decides
 
-**Performance**: Stdlib handlers in Rust avoid Python calls. Dispatch overhead is minimal (lookup + function pointer call).
+**Performance**: Rust-native handlers avoid Python calls and GIL acquisition.
+The `RustProgramHandler` trait adds negligible overhead vs. the old `HandlerAction`
+path (one vtable call + one match arm).
 
-**Stdlib Installation**:
+**Handler Installation** (all handlers are explicit, no defaults):
 ```python
-vm = doeff.VM()
-stdlib = vm.stdlib()  # Returns Rust-implemented handlers
+from doeff import run, WithHandler
+from doeff.handlers import state, reader, writer
 
-# User explicitly installs stdlib handlers
-prog = with_handler(stdlib.state,
-         with_handler(stdlib.writer,
-           user_program()))
-result = vm.run(prog)
+# Standard handlers are just handlers — no special treatment
+result = run(
+    my_program(),
+    handlers=[state, reader, writer],
+    store={"x": 0},
+)
 
-# User can observe stdlib state
-print(stdlib.state.items())
-print(stdlib.writer.logs())
+# User can replace any standard handler with custom implementation
+result = run(
+    my_program(),
+    handlers=[my_persistent_state, reader, writer],
+)
 
-# User can replace stdlib with custom implementation
-custom_state = MyPersistentStateHandler()
-prog = with_handler(custom_state, user_program())
+# Handlers composable via WithHandler anywhere
+@do
+def my_program():
+    result = yield WithHandler(
+        handler=cache_handler,
+        program=sub_program(),
+    )
+    return result
 ```
 
 **Built-in Scheduler (Explicit)**:
 ```python
-vm = doeff.VM()
-scheduler = vm.scheduler()  # Rust program handler, not auto-installed
-prog = with_handler(scheduler, user_program())
+from doeff.handlers import scheduler
+result = run(my_program(), handlers=[scheduler, state, reader, writer])
 ```
 
 ### ADR-3: GIL Release Strategy
@@ -165,6 +198,89 @@ prog = with_handler(scheduler, user_program())
 - Resume materializes snapshot back to mutable Vec (shallow clone, Frame is small)
 - Future optimization: persistent cons-list for O(1) sharing
 
+### ADR-8: Drop Handler::Stdlib — Unified to RustProgram/Python [R8-B]
+
+**Decision**: The `Handler` enum has exactly two variants: `RustProgram` and
+`Python`. The former `Handler::Stdlib` variant is removed. State, Reader, and
+Writer handlers become `RustProgramHandler` implementations — the same trait
+the scheduler already uses.
+
+**Rationale**:
+- `Handler::Stdlib` had a separate dispatch path: hard-coded `can_handle()` matching,
+  direct `RustStore` mutation via `HandlerAction`, and a special `NeedsPython` flow
+  for `Modify`. This created three dispatch protocols instead of one.
+- `Handler::RustProgram` already provides a generator-like protocol
+  (`start`/`resume`/`throw`) that handles the same cases — including calling Python
+  mid-handler (the `Modify` modifier callback).
+- Unifying to two variants means one dispatch path, one matching mechanism
+  (`can_handle()`), and one handler-invocation protocol per variant.
+- The scheduler is already a `RustProgram` handler and works correctly. State, Reader,
+  and Writer are simpler — they're a subset of what the scheduler does.
+
+**What is deleted**: `StdlibHandler` enum, `HandlerAction` enum,
+`HandlerContext(ModifyPending)`, `NeedsPython` variant, `continue_after_python()`.
+
+**What replaces it**: `StateHandlerFactory`, `ReaderHandlerFactory`,
+`WriterHandlerFactory` — each implementing `RustProgramHandler`.
+
+### ADR-9: PyO3-Exposed Primitive Types [R8-C]
+
+**Decision**: Control primitives and composition primitives are Rust `#[pyclass]`
+types exposed to Python, not Python dataclasses parsed by `classify_yielded`.
+
+**Types exposed**:
+- `WithHandler(handler, program)` — composition primitive (usable anywhere)
+- `Resume(k, value)` — dispatch primitive (handler-only)
+- `Delegate(effect?)` — dispatch primitive (handler-only)
+- `Transfer(k, value)` — dispatch primitive (handler-only)
+- `K` — opaque continuation handle (no Python-visible fields)
+
+**Rationale**:
+- Eliminates fragile attribute-name parsing in `classify_yielded` (e.g., reading
+  `.body` vs `.program` from a Python dataclass)
+- Type checking via `isinstance` against a Rust-defined class is faster and
+  unambiguous
+- The `K` type is created by the VM and passed to Python handlers; Python code
+  can pass it around but cannot inspect or construct it
+- `WithHandler` field names are defined once in Rust, no Python/Rust mismatch
+
+### ADR-10: Handler Identity Preservation [R8-D]
+
+**Decision**: `GetHandlers` returns the original Python objects the user passed
+to `run()` or `WithHandler`, at `id()` level.
+
+**Mechanism**:
+- When a handler is installed (via `WithHandler` or `run()`), the VM stores the
+  original Python object (`Py<PyAny>`) alongside the internal `Handler` variant
+- For `Handler::RustProgram` handlers recognized from Python sentinel objects
+  (e.g., `state`, `reader`, `writer`), the VM stashes the sentinel's `Py<PyAny>`
+- For `Handler::Python` handlers, the callable is already stored as `Py<PyAny>`
+- `GetHandlers` traverses the scope chain and returns the stashed Python objects
+
+**Rationale**:
+- Users expect `state in (yield GetHandlers())` to work
+- Handler identity matters for patterns like "am I inside this handler?"
+- The `HandlerEntry` struct gains a `py_identity: Option<Py<PyAny>>` field
+
+### ADR-11: Store/Env Initialization and Extraction [R8-E]
+
+**Decision**: PyVM exposes `put_state()`, `put_env()`, `env_items()` for the
+`run()` function to seed initial state and read back results.
+
+**New PyVM methods**:
+- `put_state(key: str, value: PyAny)` — sets `RustStore.state[key]`
+- `put_env(key: str, value: PyAny)` — sets `RustStore.env[key]`
+- `env_items() -> dict` — returns `RustStore.env` as Python dict
+
+**Existing** (unchanged):
+- `state_items() -> dict` — returns `RustStore.state` as Python dict
+- `logs() -> list` — returns `RustStore.log` as Python list
+
+**Rationale**:
+- The `run()` function (SPEC-009) takes `env={}` and `store={}` parameters
+- It needs to seed the VM before running and extract results after
+- These methods are implementation details — users never call them directly
+
 ---
 
 ## Core Design Principles
@@ -186,26 +302,26 @@ Segment is a Rust struct representing a delimited continuation frame:
 | Handler scope boundary | Where WithHandler was installed | **PromptSegment** (kind=PromptBoundary) |
 | Handler execution | Where handler code runs | `handler_exec_seg` |
 
-### Principle 3: Explicit Continuations
+### Principle 3: Explicit Continuations [R8-F]
 
-Handlers (Rust or Python) receive continuations explicitly. Rust supports both
-immediate stdlib handlers and generator-like Rust program handlers:
+Handlers (Rust or Python) receive continuations explicitly. There is one
+handler protocol with two implementations:
 
 ```rust
-// Stdlib handler signature (immediate action)
-fn handle_effect(effect: &Effect, k: Continuation, store: &mut RustStore) -> HandlerAction;
-
-// Rust program handler signature (generator-like)
+// Rust handler (generator-like, used by state/reader/writer/scheduler)
 trait RustHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
 }
 
-// Python handler signature (via PyO3)
+// Python handler (via PyO3)
 // def handler(effect, k) -> Program[Any]
 // VM converts the Program to a generator via to_generator().
 ```
+
+Both produce the same observable behavior: `Resume(k, value)`, `Delegate(effect)`,
+or `Transfer(k, value)`. The distinction is purely an implementation optimization.
 
 ### Principle 4: Ownership and Lifetimes
 
@@ -265,7 +381,7 @@ impl Marker {
 /// FnOnce callbacks are stored separately in VM.callbacks table.
 #[derive(Debug, Clone)]
 pub enum Frame {
-    /// Rust-native return frame (for stdlib handlers).
+    /// Rust-native return frame (for standard handlers).
     /// The actual callback is in VM.callbacks[cb].
     RustReturn {
         cb: CallbackId,
@@ -587,13 +703,12 @@ impl Value {
 
 ```rust
 /// An effect that can be yielded by user code.
-/// 
-/// ALL effects go through dispatch - no bypass, no special cases.
-/// Stdlib effects (Get, Put, Ask, Tell) are handled by stdlib handlers
-/// which are Rust-implemented for speed but still user-installable.
+///
+/// ALL effects go through dispatch. Standard effects (Get, Put, Ask, Tell)
+/// are handled by the corresponding RustProgram handlers when installed.
 #[derive(Debug, Clone)]
 pub enum Effect {
-    // === Stdlib effects (handled by StdStateHandler, StdReaderHandler, StdWriterHandler) ===
+    // === Standard effects (handled by StateHandlerFactory, ReaderHandlerFactory, WriterHandlerFactory) ===
     
     /// Get(key) -> value (State effect)
     Get { key: String },
@@ -633,10 +748,9 @@ impl Effect {
         }
     }
     
-    /// Check if this is a stdlib effect (state/reader/writer only).
+    /// Check if this is a standard effect (state/reader/writer only).
     /// NOTE: This does NOT mean bypass - all effects still go through dispatch.
-    /// Scheduler effects are built-in but are not considered stdlib here.
-    pub fn is_stdlib(&self) -> bool {
+    pub fn is_standard(&self) -> bool {
         matches!(
             self,
             Effect::Get { .. }
@@ -649,40 +763,81 @@ impl Effect {
 }
 ```
 
-### Python FFI Wrappers (Effect, Continuation, Handler)
+### Python FFI Wrappers (Effect, Continuation, Handler) [R8-C]
 
-Effect, Continuation, and Handler are exposed to Python as PyO3 classes
-(e.g., `PyEffect`, `PyContinuation`, `PyStdlibHandler`, `PyRustProgramHandler`).
+Effect, Continuation, and Handler are exposed to Python as PyO3 classes.
 These conversions require the GIL and are performed by the driver.
+
+Control primitives and the continuation handle are Rust `#[pyclass]` types
+exposed to Python (see ADR-9):
+
+```rust
+/// Opaque continuation handle passed to Python handlers. [R8-C]
+/// Python code can pass K around but cannot inspect its internals.
+#[pyclass]
+pub struct K {
+    // Internal: cont_id, looked up in VM continuation registry
+    cont_id: ContId,
+}
+
+/// Composition primitive — usable in any Program. [R8-C]
+#[pyclass]
+pub struct WithHandler {
+    #[pyo3(get)] pub handler: PyObject,
+    #[pyo3(get)] pub program: PyObject,
+}
+
+/// Dispatch primitive — handler-only, during effect handling. [R8-C]
+#[pyclass]
+pub struct Resume {
+    #[pyo3(get)] pub continuation: PyObject,  // K instance
+    #[pyo3(get)] pub value: PyObject,
+}
+
+/// Dispatch primitive — handler-only. [R8-C]
+#[pyclass]
+pub struct Delegate {
+    #[pyo3(get)] pub effect: Option<PyObject>,  // None = use current dispatch effect
+}
+
+/// Dispatch primitive — handler-only, one-shot. [R8-C]
+#[pyclass]
+pub struct Transfer {
+    #[pyo3(get)] pub continuation: PyObject,  // K instance
+    #[pyo3(get)] pub value: PyObject,
+}
+```
+
+FFI conversions for VM-internal types:
 
 ```rust
 impl Effect {
     /// Convert to Python object (driver only, requires GIL).
-    /// Stdlib effects map to the Python effect classes (Get/Put/Modify/Ask/Tell).
-    /// Scheduler effects map to the Python scheduler classes (Spawn/Gather/Race/Promise/...),
-    /// so Python handlers can intercept them (including store_mode for Spawn).
+    /// Standard effects map to the Python effect classes (Get/Put/Modify/Ask/Tell).
+    /// Scheduler effects map to Python scheduler classes.
     /// Effect::Python returns the wrapped object.
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
 }
 
 impl Continuation {
     /// Convert to Python object (driver only, requires GIL).
+    /// Returns a K instance (opaque handle).
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
 
     /// Convert from Python object (driver only, requires GIL).
-    /// Accepts PyContinuation wrapper objects.
+    /// Accepts K instances, extracts cont_id.
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> PyResult<Self>;
 }
 
 impl Handler {
-    /// Convert to Python object (driver only, requires GIL).
-    /// - Handler::Python returns the original callable
-    /// - Handler::Stdlib returns a callable PyStdlibHandler wrapper
-    /// - Handler::RustProgram returns an opaque PyRustProgramHandler wrapper
+    /// Convert to Python object (driver only, requires GIL). [R8-D]
+    /// Returns the py_identity stored in HandlerEntry — preserving the
+    /// original Python object the user passed to run() or WithHandler.
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
-    
+
     /// Convert from Python object (driver only, requires GIL).
-    /// Accepts user callables, PyStdlibHandler wrappers, and PyRustProgramHandler wrappers.
+    /// Recognizes Rust sentinel objects (state/reader/writer/scheduler)
+    /// and wraps them as Handler::RustProgram. All others become Handler::Python.
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> PyResult<Self>;
 }
 
@@ -703,24 +858,20 @@ impl ExternalPromise {
 }
 ```
 
-### Handler (Rust Stdlib + Rust Program + Python User)
+### Handler (RustProgram + Python) [R8-G]
 
 ```rust
 /// A handler that can process effects.
-/// 
+///
 /// Handlers are installed via WithHandler and matched during dispatch.
-/// Stdlib handlers are Rust-implemented for speed but still go through dispatch.
+/// Two implementation strategies, one dispatch protocol.
 #[derive(Debug, Clone)]
 pub enum Handler {
-    /// Stdlib handler (Rust-implemented, fast path)
-    /// These handlers have direct access to RustStore.
-    Stdlib(StdlibHandler),
-    
-    /// Rust program handler (generator-like, Rust-native)
-    /// Implemented via RustProgramHandler (factory for RustHandlerProgram instances).
+    /// Rust-native handler (generator-like protocol).
+    /// Used by state, reader, writer, scheduler, and any custom Rust handler.
     RustProgram(RustProgramHandlerRef),
-    
-    /// Python handler function
+
+    /// Python handler function.
     /// Signature: def handler(effect, k) -> Program[Any]
     Python(Py<PyAny>),
 }
@@ -739,10 +890,13 @@ pub enum RustProgramStep {
     Return(Value),
     /// Throw an exception into the VM
     Throw(PyException),
+    /// [R8-H] Need to call a Python function (e.g., Modify calling modifier).
+    /// The program is suspended; result feeds back via resume().
+    NeedsPython(PythonCall),
 }
 
 /// A Rust handler program instance (generator-like).
-/// 
+///
 /// start/resume/throw mirror Python generator protocol but run in Rust.
 pub trait RustHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
@@ -752,261 +906,201 @@ pub trait RustHandlerProgram {
 }
 
 /// Factory for Rust handler programs.
-/// 
+///
 /// Each dispatch creates a fresh RustHandlerProgram instance.
 pub trait RustProgramHandler {
     fn can_handle(&self, effect: &Effect) -> bool;
     fn create_program(&self) -> RustProgramRef;
 }
 
-/// Stdlib handlers (Rust-implemented).
-/// 
-/// These are the "batteries included" handlers for common effects.
-/// They're Rust for performance but users can replace them with
-/// custom Python handlers if needed.
-#[derive(Debug, Clone)]
-pub enum StdlibHandler {
-    /// State handler (Get, Put, Modify)
-    /// Backed by RustStore.state
-    State(StdStateHandler),
-    
-    /// Reader handler (Ask)
-    /// Backed by RustStore.env
-    Reader(StdReaderHandler),
-    
-    /// Writer handler (Tell)
-    /// Backed by RustStore.log
-    Writer(StdWriterHandler),
-}
-
 impl Handler {
     /// Check if this handler can handle the given effect.
     pub fn can_handle(&self, effect: &Effect) -> bool {
         match self {
-            Handler::Stdlib(stdlib) => stdlib.can_handle(effect),
             Handler::RustProgram(handler) => handler.can_handle(effect),
             Handler::Python(_) => {
                 // Python handlers are considered capable of handling any effect.
-                // They can Delegate when they do not handle a specific effect.
+                // They yield Delegate() for effects they don't handle.
                 true
             }
         }
     }
 }
+```
 
-impl StdlibHandler {
-    pub fn can_handle(&self, effect: &Effect) -> bool {
-        match (self, effect) {
-            (StdlibHandler::State(_), Effect::Get { .. }) => true,
-            (StdlibHandler::State(_), Effect::Put { .. }) => true,
-            (StdlibHandler::State(_), Effect::Modify { .. }) => true,
-            (StdlibHandler::Reader(_), Effect::Ask { .. }) => true,
-            (StdlibHandler::Writer(_), Effect::Tell { .. }) => true,
-            _ => false,
-        }
-    }
-    
-    /// Handle an effect and return a HandlerAction.
-    /// 
-    /// Most stdlib handlers operate on RustStore directly - no Python calls needed.
-    /// Exception: Modify returns NeedsPython to call the modifier function.
-    pub fn handle(
-        &self, 
-        effect: &Effect, 
-        k: Continuation, 
-        store: &mut RustStore
-    ) -> HandlerAction {
-        match self {
-            StdlibHandler::State(h) => h.handle(effect, k, store),
-            StdlibHandler::Reader(h) => h.handle(effect, k, store),
-            StdlibHandler::Writer(h) => h.handle(effect, k, store),
-        }
-    }
+### Handler Entry with Identity Preservation [R8-D]
+
+```rust
+/// Entry in the handler table, linking a Handler to its prompt segment
+/// and preserving the original Python object for GetHandlers.
+#[derive(Debug, Clone)]
+pub struct HandlerEntry {
+    pub handler: Handler,
+    pub prompt_seg_id: SegmentId,
+    /// Original Python object passed by the user.
+    /// Returned by GetHandlers to preserve id()-level identity.
+    pub py_identity: Option<Py<PyAny>>,
 }
 ```
 
-### Stdlib Handler Implementations
+### Standard Handlers as RustProgramHandler [R8-H] [R8-I]
 
-The stdlib handlers provide Rust-native implementations of common effects.
-They read/write `RustStore` directly, avoiding Python calls for maximum performance.
-
-**IMPORTANT**: Some stdlib effects (like `Modify`) need to call Python.
-The `HandlerAction` enum supports this via `NeedsPython`.
+The standard handlers (state, reader, writer) implement the same
+`RustProgramHandler` trait as the scheduler. No separate `StdlibHandler`
+enum, no `HandlerAction`, no `NeedsPython` special case.
 
 ```rust
-/// Action returned by stdlib handlers (Rust-native, immediate).
-/// 
-/// This tells the VM what to do after handling an effect.
-/// CRITICAL: Includes NeedsPython for effects that require Python calls (e.g., Modify).
-pub enum HandlerAction {
-    /// Resume the continuation with a value (pure Rust, no Python needed)
-    Resume { k: Continuation, value: Value },
-    
-    /// Transfer control to continuation (tail call, no return)
-    Transfer { k: Continuation, value: Value },
-    
-    /// Return a value from handler.
-    /// 
-    /// Returns to the handler's caller segment. If the caller is the
-    /// dispatch prompt boundary (root handler), this abandons the callsite
-    /// and marks the dispatch completed.
-    Return { value: Value },
-    
-    /// Need to call Python before completing the handler action.
-    /// Used by Modify (calls modifier function) or other stdlib handlers
-    /// that require Python execution. Async integration uses PythonAsyncSyntaxEscape.
-    /// 
-    /// After Python returns, VM will call handler.continue_after_python(result).
-    /// NOTE: continue_after_python must return Resume/Transfer/Return (no nested NeedsPython).
-    NeedsPython {
-        /// Which stdlib handler to continue after Python returns
-        handler: StdlibHandler,
-        /// The Python call to make
-        call: PythonCall,
-        /// Continuation to resume after Python returns
-        k: Continuation,
-        /// Context for continue_after_python (handler-specific)
-        context: HandlerContext,
-    },
-}
-
-/// Context for continuing handler after Python call.
-/// 
-/// Used by NeedsPython to remember what the handler was doing.
-#[derive(Debug, Clone)]
-pub enum HandlerContext {
-    /// Modify: waiting for modifier(old_value) result
-    ModifyPending { key: String, old_value: Value },
-    /// Future extensions...
-}
-
-/// State handler (Get, Put, Modify).
-/// 
+/// State handler factory. Handles Get, Put, Modify.
 /// Backed by RustStore.state.
-#[derive(Debug, Clone, Default)]
-pub struct StdStateHandler;
+#[derive(Debug, Clone)]
+pub struct StateHandlerFactory;
 
-impl StdStateHandler {
-    pub fn new() -> Self {
-        StdStateHandler
+impl RustProgramHandler for StateHandlerFactory {
+    fn can_handle(&self, effect: &Effect) -> bool {
+        matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. })
     }
-    
-    pub fn handle(
-        &self, 
-        effect: &Effect, 
-        k: Continuation, 
-        store: &mut RustStore
-    ) -> HandlerAction {
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(StateHandlerProgram::new())))
+    }
+}
+
+/// State handler program instance.
+///
+/// Get/Put: start() handles immediately, yields Resume(k, value).
+/// Modify:  start() reads old value, yields the modifier call as a
+///          sub-program; resume() receives new value, stores it,
+///          yields Resume(k, old_value).
+struct StateHandlerProgram { /* state machine fields */ }
+
+impl RustHandlerProgram for StateHandlerProgram {
+    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
+        -> RustProgramStep
+    {
         match effect {
             Effect::Get { key } => {
-                let value = store.get(key).cloned().unwrap_or(Value::None);
-                // Resume with the value - this is "resumptive" handling
-                HandlerAction::Resume { k, value }
+                let value = store.get(&key).cloned().unwrap_or(Value::None);
+                RustProgramStep::Yield(Yielded::Primitive(
+                    ControlPrimitive::Resume { continuation: k, value }
+                ))
             }
-            
             Effect::Put { key, value } => {
-                store.put(key.clone(), value.clone());
-                HandlerAction::Resume { k, value: Value::Unit }
+                store.put(key, value);
+                RustProgramStep::Yield(Yielded::Primitive(
+                    ControlPrimitive::Resume { continuation: k, value: Value::Unit }
+                ))
             }
-            
             Effect::Modify { key, modifier } => {
-                // Modify requires calling Python (the modifier function)
-                // 1. Get old value
-                let old_value = store.get(key).cloned().unwrap_or(Value::None);
-                
-                // 2. Return NeedsPython to call modifier(old_value)
-                HandlerAction::NeedsPython {
-                    handler: StdlibHandler::State(self.clone()),
-                    call: PythonCall::CallFunc {
-                        func: modifier.clone(),
-                        args: vec![old_value.clone()],
-                    },
-                    k,
-                    context: HandlerContext::ModifyPending {
-                        key: key.clone(),
-                        old_value,
-                    },
-                }
+                // Save state for resume()
+                self.pending_key = Some(key.clone());
+                self.pending_k = Some(k);
+                let old_value = store.get(&key).cloned().unwrap_or(Value::None);
+                self.pending_old_value = Some(old_value.clone());
+                // [R8-H] Need Python call: modifier(old_value).
+                // VM suspends handler, calls Python, then resume() with result.
+                RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                    func: modifier,
+                    args: vec![old_value],
+                })
             }
-            
-            _ => panic!("StdStateHandler cannot handle {:?}", effect),
+            _ => RustProgramStep::Yield(Yielded::Primitive(
+                ControlPrimitive::Delegate { effect }
+            )),
         }
     }
-    
-    /// Continue handling after Python call returned.
-    /// 
-    /// Called by VM after NeedsPython completes.
-    pub fn continue_after_python(
-        &self,
-        result: Value,
-        context: HandlerContext,
-        k: Continuation,
-        store: &mut RustStore,
-    ) -> HandlerAction {
-        match context {
-            HandlerContext::ModifyPending { key, old_value } => {
-                // result = new_value from modifier(old_value)
-                store.put(key, result);
-                // Resume with old_value (Modify returns old value)
-                HandlerAction::Resume { k, value: old_value }
-            }
-        }
+
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
+        // Called after Modify's modifier(old_value) returns
+        let key = self.pending_key.take().unwrap();
+        let k = self.pending_k.take().unwrap();
+        let old_value = self.pending_old_value.take().unwrap();
+        store.put(key, value);  // value = new_value from modifier
+        RustProgramStep::Yield(Yielded::Primitive(
+            ControlPrimitive::Resume { continuation: k, value: old_value }
+        ))
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        RustProgramStep::Throw(exc)
     }
 }
 
-/// Reader handler (Ask).
-/// 
+/// Reader handler factory. Handles Ask.
 /// Backed by RustStore.env.
-#[derive(Debug, Clone, Default)]
-pub struct StdReaderHandler;
+#[derive(Debug, Clone)]
+pub struct ReaderHandlerFactory;
 
-impl StdReaderHandler {
-    pub fn new() -> Self {
-        StdReaderHandler
+impl RustProgramHandler for ReaderHandlerFactory {
+    fn can_handle(&self, effect: &Effect) -> bool {
+        matches!(effect, Effect::Ask { .. })
     }
-    
-    pub fn handle(
-        &self, 
-        effect: &Effect, 
-        k: Continuation, 
-        store: &mut RustStore
-    ) -> HandlerAction {
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
+    }
+}
+
+struct ReaderHandlerProgram;
+
+impl RustHandlerProgram for ReaderHandlerProgram {
+    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
+        -> RustProgramStep
+    {
         match effect {
             Effect::Ask { key } => {
-                let value = store.ask(key).cloned().unwrap_or(Value::None);
-                HandlerAction::Resume { k, value }
+                let value = store.ask(&key).cloned().unwrap_or(Value::None);
+                RustProgramStep::Yield(Yielded::Primitive(
+                    ControlPrimitive::Resume { continuation: k, value }
+                ))
             }
-            
-            _ => panic!("StdReaderHandler cannot handle {:?}", effect),
+            _ => RustProgramStep::Yield(Yielded::Primitive(
+                ControlPrimitive::Delegate { effect }
+            )),
         }
+    }
+    fn resume(&mut self, _: Value, _: &mut RustStore) -> RustProgramStep {
+        unreachable!("ReaderHandler never yields mid-handling")
+    }
+    fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
+        RustProgramStep::Throw(exc)
     }
 }
 
-/// Writer handler (Tell).
-/// 
+/// Writer handler factory. Handles Tell.
 /// Backed by RustStore.log.
-#[derive(Debug, Clone, Default)]
-pub struct StdWriterHandler;
+#[derive(Debug, Clone)]
+pub struct WriterHandlerFactory;
 
-impl StdWriterHandler {
-    pub fn new() -> Self {
-        StdWriterHandler
+impl RustProgramHandler for WriterHandlerFactory {
+    fn can_handle(&self, effect: &Effect) -> bool {
+        matches!(effect, Effect::Tell { .. })
     }
-    
-    pub fn handle(
-        &self, 
-        effect: &Effect, 
-        k: Continuation, 
-        store: &mut RustStore
-    ) -> HandlerAction {
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
+    }
+}
+
+struct WriterHandlerProgram;
+
+impl RustHandlerProgram for WriterHandlerProgram {
+    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
+        -> RustProgramStep
+    {
         match effect {
             Effect::Tell { message } => {
-                store.tell(message.clone());
-                HandlerAction::Resume { k, value: Value::Unit }
+                store.tell(message);
+                RustProgramStep::Yield(Yielded::Primitive(
+                    ControlPrimitive::Resume { continuation: k, value: Value::Unit }
+                ))
             }
-            
-            _ => panic!("StdWriterHandler cannot handle {:?}", effect),
+            _ => RustProgramStep::Yield(Yielded::Primitive(
+                ControlPrimitive::Delegate { effect }
+            )),
         }
+    }
+    fn resume(&mut self, _: Value, _: &mut RustStore) -> RustProgramStep {
+        unreachable!("WriterHandler never yields mid-handling")
+    }
+    fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
+        RustProgramStep::Throw(exc)
     }
 }
 ```
@@ -1439,45 +1533,47 @@ result = vm.run(prog)
 
 Spawn can request `store_mode=Isolated` (RustStore snapshot). Gather merges logs
 back into the current RustStore according to `StoreMergePolicy`.
-Stdlib handlers can be layered inside or outside the scheduler with `with_handler`.
+Standard handlers can be layered inside or outside the scheduler with `with_handler`.
 
-### Python API for Stdlib
+### Python API for Standard Handlers [R8-H]
 
-Users install stdlib handlers via `vm.stdlib()` (scheduler is separate):
+Users install standard handlers via `run()` or `WithHandler` (see SPEC-009):
 
 ```python
-# Python usage
-vm = doeff.VM()
-stdlib = vm.stdlib()
+from doeff import run, WithHandler
+from doeff.handlers import state, reader, writer
 
-# Install stdlib handlers explicitly
-prog = with_handler(stdlib.state,
-         with_handler(stdlib.reader,
-           with_handler(stdlib.writer,
-             user_program())))
+# Install standard handlers explicitly
+result = run(
+    user_program(),
+    handlers=[state, reader, writer],
+    store={"x": 0},
+    env={"key": "val"},
+)
 
-result = vm.run(prog)
+# Observe state after execution
+print(result.raw_store)    # Dict of state key-value pairs
 
-# Observe stdlib state after execution
-print(stdlib.state.items())    # Dict of state key-value pairs
-print(stdlib.reader.env())     # Dict of environment bindings  
-print(stdlib.writer.logs())    # List of logged messages
+# Users can replace standard handlers with custom ones
+@do
+def my_persistent_state(effect, k):
+    if isinstance(effect, Get):
+        value = db.get(effect.key)
+        result = yield Resume(k, value)
+        return result
+    elif isinstance(effect, Put):
+        db.put(effect.key, effect.value)
+        result = yield Resume(k, None)
+        return result
+    else:
+        yield Delegate()
 
-# Users can replace stdlib with custom handlers
-class MyPersistentState:
-    """Custom state handler that persists to database."""
-    def __call__(self, effect, k):
-        if isinstance(effect, Get):
-            value = self.db.get(effect.key)
-            return Resume(k, value)
-        elif isinstance(effect, Put):
-            self.db.put(effect.key, effect.value)
-            return Resume(k, None)
-
-# Custom handler intercepts state effects instead of stdlib
-prog = with_handler(MyPersistentState(db),
-         with_handler(stdlib.reader,
-           user_program()))
+# Custom handler intercepts state effects instead of standard state handler
+result = run(
+    user_program(),
+    handlers=[my_persistent_state, reader, writer],
+    env={"key": "val"},
+)
 ```
 
 ### PythonCall and PendingPython (Purpose-Tagged Calls)
@@ -1573,18 +1669,15 @@ pub enum PendingPython {
         effect: Effect,
     },
     
-    /// Stdlib handler needs Python (e.g., Modify calling modifier function)
-    /// Result is already a Value (converted by driver) and feeds back to handler
-    /// continue_after_python()
-    StdlibContinuation {
-        /// Which stdlib handler
-        handler: StdlibHandler,
-        /// Continuation (from HandlerAction::NeedsPython)
+    /// [R8-H] RustProgram handler needs Python callback (e.g., Modify calling modifier function).
+    /// The handler's RustHandlerProgram is suspended; result feeds back via resume().
+    RustProgramContinuation {
+        /// Handler marker (to locate handler in scope_chain)
+        marker: Marker,
+        /// Continuation from the dispatch context
         k: Continuation,
-        /// Context for continue_after_python
-        context: HandlerContext,
     },
-    
+
     /// PythonAsyncSyntaxEscape awaiting (async_run only)
     AsyncEscape,
 }
@@ -1650,13 +1743,13 @@ The VM state is organized into three layers with clear separation of concerns:
 | Layer | Name | Contents | Visibility |
 |-------|------|----------|------------|
 | **1** | `Internals` | dispatch_stack, consumed_ids, segments, callbacks | **NEVER** exposed to users |
-| **2** | `RustStore` | state, env, log (stdlib data) | User-observable via stdlib handler APIs |
+| **2** | `RustStore` | state, env, log (standard handler data) | User-observable via `RunResult.raw_store` |
 | **3** | `PyStore` | Python dict (optional) | User-owned free zone |
 
 ### Design Principles
 
 1. **Internals are sacred**: Control flow structures that could break VM invariants are hidden
-2. **RustStore is the source of truth**: Stdlib handlers read/write here; fast Rust access
+2. **RustStore is the source of truth**: Standard handlers read/write here; fast Rust access
 3. **PyStore is an escape hatch**: Python handlers can store arbitrary data; VM doesn't read it
 4. **No synchronization**: RustStore and PyStore are independent; no mirroring or sync
 5. **Continuations don't snapshot S**: State is global (no backtracking by default).
@@ -1675,9 +1768,9 @@ modifiable by user code directly.
 ### Layer 2: RustStore (user-space, Rust HashMap)
 
 ```rust
-/// Stdlib handler state. Rust-native for performance.
-/// 
-/// This is the "main memory" for stdlib effects (Get/Put/Ask/Tell).
+/// Standard handler state. Rust-native for performance.
+///
+/// This is the "main memory" for standard effects (Get/Put/Ask/Tell).
 /// Python handlers can access via PyO3-exposed read/write APIs.
 /// 
 /// Key design: Value can hold Py<PyAny>, so Python objects flow through.
@@ -1705,7 +1798,7 @@ impl RustStore {
         }
     }
     
-    // === State operations (used by StdStateHandler) ===
+    // === State operations (used by StateHandlerFactory) ===
     
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.state.get(key)
@@ -1726,7 +1819,7 @@ impl RustStore {
         })
     }
     
-    // === Environment operations (used by StdReaderHandler) ===
+    // === Environment operations (used by ReaderHandlerFactory) ===
     
     pub fn ask(&self, key: &str) -> Option<&Value> {
         self.env.get(key)
@@ -1754,7 +1847,7 @@ impl RustStore {
         result
     }
     
-    // === Log operations (used by StdWriterHandler) ===
+    // === Log operations (used by WriterHandlerFactory) ===
     
     pub fn tell(&mut self, message: Value) {
         self.log.push(message);
@@ -1832,9 +1925,9 @@ pub struct VM {
     /// NOTE: Includes prompt_seg_id to avoid linear search
     handlers: HashMap<Marker, HandlerEntry>,
     
-    // === Layer 2: RustStore (user-observable via stdlib APIs) ===
-    
-    /// Stdlib state (State/Reader/Writer handlers use this)
+    // === Layer 2: RustStore (user-observable via RunResult.raw_store) ===
+
+    /// Standard handler state (State/Reader/Writer handlers use this)
     pub rust_store: RustStore,
     
     // === Layer 3: PyStore (optional escape hatch) ===
@@ -2320,23 +2413,14 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
             
-            // === StdlibContinuation: Stdlib handler's Python call returned ===
-            (PendingPython::StdlibContinuation { handler, k, context }, PyCallOutcome::Value(result)) => {
-                // Feed result back to stdlib handler's continue_after_python
-                let action = match handler {
-                    StdlibHandler::State(h) => h.continue_after_python(result, context, k, &mut self.rust_store),
-                    _ => panic!("Only State handler uses StdlibContinuation currently"),
-                };
-                let event = self.apply_handler_action(action);
-                match event {
-                    StepEvent::Continue => {}
-                    StepEvent::NeedsPython(_) => {
-                        panic!("continue_after_python must not request another Python call");
-                    }
-                    _ => unreachable!("apply_handler_action does not return Done/Error"),
-                }
+            // === [R8-H] RustProgramContinuation: RustProgram handler's Python call returned ===
+            (PendingPython::RustProgramContinuation { marker, k }, PyCallOutcome::Value(result)) => {
+                // Feed result back to the RustHandlerProgram via resume()
+                // The handler program is located via marker in the scope_chain
+                // and resumed with the Python call result as a Value
+                self.mode = Mode::Deliver(result);
             }
-            (PendingPython::StdlibContinuation { .. }, PyCallOutcome::GenError(e)) => {
+            (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
             
@@ -2373,9 +2457,9 @@ fn step_handle_yield(&mut self) -> StepEvent {
         }
         
         Yielded::Effect(effect) => {
-            // ALL effects go through dispatch - no bypass
-            // Stdlib effects are handled by stdlib handlers (Rust, fast)
-            // User effects are handled by Python handlers
+            // ALL effects go through dispatch — no bypass [R8-B]
+            // Standard effects handled by RustProgram handlers (fast)
+            // Custom effects handled by Python handlers
             match self.start_dispatch(effect) {
                 Ok(event) => event,
                 Err(e) => StepEvent::Error(e),
@@ -2799,6 +2883,334 @@ the sync driver raises `TypeError` if it sees `CallAsync`.
 
 ---
 
+## Public API Contract (SPEC-009 Support) [R8-J]
+
+This section specifies the user-facing types and contracts that the VM must
+expose to satisfy SPEC-CESK-009. Everything in this section is part of the
+**public boundary** — the layer between user code and VM internals.
+
+### run() and async_run() — Entrypoint Contract
+
+```python
+def run(
+    program: Program[T],
+    handlers: list[Handler] = [],
+    env: dict[str, Any] = {},
+    store: dict[str, Any] = {},
+) -> RunResult[T]: ...
+
+async def async_run(
+    program: Program[T],
+    handlers: list[Handler] = [],
+    env: dict[str, Any] = {},
+    store: dict[str, Any] = {},
+) -> RunResult[T]: ...
+```
+
+These are **Python-side** functions that wrap `PyVM`. They are NOT methods on
+PyVM — they create and configure a PyVM internally.
+
+#### Implementation Contract
+
+`run(program, handlers, env, store)` does the following in order:
+
+```
+1. Create PyVM instance
+       vm = PyVM::new()
+
+2. Initialize store (SPEC-009 API-6)
+       for key, value in store.items():
+           vm.put_state(key, Value::from_pyobject(value))
+
+3. Initialize environment (SPEC-009 API-5)
+       for key, value in env.items():
+           vm.put_env(key, Value::from_pyobject(value))
+
+4. Wrap program with handlers (nesting order — see below)
+       wrapped = program
+       for h in reversed(handlers):
+           wrapped = WithHandler(handler=h, program=wrapped)
+
+5. Execute via driver loop
+       final_value_or_error = vm.run(wrapped)   # driver loop from §Driver Loop
+
+6. Extract results into RunResult
+       raw_store = {k: v.to_pyobject() for k, v in vm.state_items()}
+       result = Ok(final_value) or Err(exception)
+       return RunResult(result=result, raw_store=raw_store)
+```
+
+`async_run` is identical except step 5 uses the async driver loop (§Async Driver).
+
+#### Handler Nesting Order
+
+`handlers=[h0, h1, h2]` produces:
+
+```
+WithHandler(h0,           ← outermost, sees effects LAST
+  WithHandler(h1,
+    WithHandler(h2,       ← innermost, sees effects FIRST
+      program)))
+```
+
+`h2` is closest to the program — it sees effects first. `h0` is outermost —
+it sees effects that `h1` and `h2` delegate. This matches `reversed(handlers)`.
+
+**No default handlers** (SPEC-009 API-1). If `handlers=[]`, the program runs
+with zero handlers. Yielding any effect raises `UnhandledEffect`.
+
+### RunResult — Execution Output [R8-J]
+
+```rust
+/// The public result of a run()/async_run() call.
+///
+/// This is a #[pyclass] exposed to Python. It is immutable (SPEC-009 API-7).
+/// The concrete type is internal; users interact via the RunResult protocol.
+#[pyclass(frozen)]
+pub struct PyRunResult {
+    /// Ok(value) or Err(exception)
+    result: Result<Py<PyAny>, PyException>,
+    /// Final store snapshot (extracted from RustStore at run completion)
+    raw_store: Py<PyDict>,
+}
+
+#[pymethods]
+impl PyRunResult {
+    /// Ok(value) or Err(exception).
+    #[getter]
+    fn result(&self, py: Python<'_>) -> PyObject {
+        match &self.result {
+            Ok(v) => Ok(v.clone_ref(py)).to_pyobject(py),
+            Err(e) => Err(e.clone()).to_pyobject(py),
+        }
+    }
+
+    /// Final store snapshot after execution.
+    #[getter]
+    fn raw_store(&self, py: Python<'_>) -> PyObject {
+        self.raw_store.clone_ref(py).into()
+    }
+
+    /// Unwrap Ok or raise the Err.
+    #[getter]
+    fn value(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.result {
+            Ok(v) => Ok(v.clone_ref(py)),
+            Err(e) => Err(e.to_pyerr(py)),
+        }
+    }
+
+    /// Get Err or raise ValueError if Ok.
+    #[getter]
+    fn error(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.result {
+            Err(e) => Ok(e.to_pyobject(py)),
+            Ok(_) => Err(PyValueError::new_err("RunResult is Ok, not Err")),
+        }
+    }
+
+    fn is_ok(&self) -> bool {
+        self.result.is_ok()
+    }
+
+    fn is_err(&self) -> bool {
+        self.result.is_err()
+    }
+}
+```
+
+**Construction** (inside `run()`/`async_run()` only):
+
+```rust
+/// Build RunResult after VM execution completes.
+fn build_run_result(
+    py: Python<'_>,
+    vm: &VM,
+    outcome: Result<Value, PyException>,
+) -> PyResult<PyRunResult> {
+    // Extract final store as Python dict (SPEC-009 API-6)
+    let raw_store = PyDict::new(py);
+    for (key, value) in vm.rust_store.state.iter() {
+        raw_store.set_item(key, value.to_pyobject(py)?)?;
+    }
+
+    let result = match outcome {
+        Ok(value) => Ok(value.to_pyobject(py)?.unbind()),
+        Err(exc) => Err(exc),
+    };
+
+    Ok(PyRunResult {
+        result,
+        raw_store: raw_store.unbind(),
+    })
+}
+```
+
+**Invariants**:
+- `raw_store` is always populated, even on error (SPEC-009 API-6).
+  The store snapshot reflects state at the point execution stopped.
+- `RunResult` is frozen/immutable (SPEC-009 API-7).
+- `raw_store` contains only `state` entries (not `env` or `log`).
+  Logs are accessible via `writer` handler if the user installed it.
+
+### @do Decorator and Program[T] [R8-J]
+
+`@do` is a **Python-side** decorator. It is NOT part of the Rust VM — it lives
+in the `doeff` Python package. SPEC-008 defines how the VM processes its output.
+
+#### What @do Does
+
+```python
+def do(fn):
+    """Convert a generator function into a Program factory.
+
+    @do
+    def counter(start: int):
+        x = yield Get("count")
+        yield Put("count", x + start)
+        return x + start
+
+    # counter(10) returns a KleisliProgramCall (which is a ProgramBase)
+    # The VM calls to_generator() on it to get the actual generator
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        return KleisliProgramCall(fn, args, kwargs)
+    return wrapper
+```
+
+#### How the VM Processes @do Output
+
+1. User calls `counter(10)` → returns `KleisliProgramCall(counter, (10,), {})`
+2. This is a `ProgramBase` — accepted by `run()`, `WithHandler`, `Resume`, etc.
+3. When the VM needs to step this program, the driver calls `to_generator()`:
+   ```python
+   gen = program_base.to_generator()  # → calls counter(10), returns generator
+   ```
+4. The generator is stepped via `GenNext`/`GenSend`/`GenThrow` PythonCalls.
+5. `yield <effect>` → classified by driver as `Yielded::Effect`/`Yielded::Primitive`
+6. `return <value>` → `StopIteration(value)` → `PyCallOutcome::GenReturn(value)`
+7. Generator return produces the final `T` in `Program[T]`.
+
+#### Program Input Rule (Reiterated)
+
+All program entry points (`StartProgram`, `CallHandler`, `Yielded::Program`)
+require a **ProgramBase** value (KleisliProgramCall or EffectBase). The driver
+calls `to_generator()` to obtain the generator. Raw generators are rejected
+except via the low-level `start_with_generator()`.
+
+### Store and Env Lifecycle [R8-J]
+
+End-to-end data flow from `run()` parameters to `RunResult`:
+
+```
+ User calls run(program, handlers=[state, reader], env={"a": 1}, store={"x": 0})
+      │
+      ▼
+ ┌─────────────────────────────────────────────────┐
+ │  Step 1: Initialize RustStore                    │
+ │                                                  │
+ │  vm.rust_store.state = {"x": Value(0)}          │
+ │  vm.rust_store.env   = {"a": Value(1)}          │
+ │  vm.rust_store.log   = []                        │
+ └─────────────────────┬───────────────────────────┘
+                       │
+                       ▼
+ ┌─────────────────────────────────────────────────┐
+ │  Step 2: Wrap handlers + execute                 │
+ │                                                  │
+ │  WithHandler(state,                              │
+ │    WithHandler(reader,                           │
+ │      program))                                   │
+ │                                                  │
+ │  During execution:                               │
+ │    yield Get("x")  → state handler reads         │
+ │                       rust_store.state["x"]      │
+ │    yield Put("x",1) → state handler writes       │
+ │                       rust_store.state["x"] = 1  │
+ │    yield Ask("a")  → reader handler reads        │
+ │                       rust_store.env["a"]        │
+ │    yield Tell("hi") → writer handler appends     │
+ │                       rust_store.log.push("hi")  │
+ └─────────────────────┬───────────────────────────┘
+                       │
+                       ▼
+ ┌─────────────────────────────────────────────────┐
+ │  Step 3: Extract RunResult                       │
+ │                                                  │
+ │  result.result    = Ok(return_value)             │
+ │  result.raw_store = {"x": 1}   ← state only     │
+ │                                                  │
+ │  NOT in raw_store:                               │
+ │    env (read-only, user already has it)          │
+ │    log (accessible via writer handler if needed) │
+ └─────────────────────────────────────────────────┘
+```
+
+**RustStore field mapping**:
+
+| RustStore field | Initialized from | Modified by | Extracted into |
+|-----------------|------------------|-------------|----------------|
+| `state` | `run(store={...})` | `Put`, `Modify` effects | `RunResult.raw_store` |
+| `env` | `run(env={...})` | Never (read-only, API-5) | Not extracted |
+| `log` | Empty `[]` | `Tell` effect | Not extracted (handler-specific) |
+
+**Error case**: If the program raises an exception, `RunResult` still contains
+`raw_store` reflecting the store state at the point of failure. The `result`
+field is `Err(exception)`.
+
+### PyVM Internal Methods for Lifecycle [R8-J]
+
+These methods support the `run()`/`async_run()` lifecycle but are **internal** —
+users never call them directly (SPEC-009 §9).
+
+```rust
+#[pymethods]
+impl PyVM {
+    /// Initialize state entries from Python dict.
+    /// Called by run() before execution.
+    fn put_state(&mut self, key: String, value: PyObject) {
+        self.vm.rust_store.put(key, Value::Python(value));
+    }
+
+    /// Initialize environment entries from Python dict.
+    /// Called by run() before execution.
+    fn put_env(&mut self, key: String, value: PyObject) {
+        self.vm.rust_store.env.insert(key, Value::Python(value));
+    }
+
+    /// Extract final state as Python dict.
+    /// Called by run() after execution to build RunResult.raw_store.
+    fn state_items(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        for (k, v) in &self.vm.rust_store.state {
+            dict.set_item(k, v.to_pyobject(py)?)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Extract environment items (for debugging; not in RunResult).
+    fn env_items(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new(py);
+        for (k, v) in &self.vm.rust_store.env {
+            dict.set_item(k, v.to_pyobject(py)?)?;
+        }
+        Ok(dict.into())
+    }
+
+    /// Extract logs (for debugging; not in RunResult).
+    fn logs(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let list = PyList::new(py, &[])?;
+        for v in &self.vm.rust_store.log {
+            list.append(v.to_pyobject(py)?)?;
+        }
+        Ok(list.into())
+    }
+}
+```
+
+---
+
 ## Control Primitives
 
 ```rust
@@ -2936,73 +3348,67 @@ impl VM {
 
 ```rust
 impl VM {
-    /// Start dispatching an effect to handlers.
-    /// 
-    /// ALL effects go through this path - no bypass for stdlib effects.
-    /// Stdlib handlers are Rust-native for speed but still dispatched normally.
-    /// 
+    /// Start dispatching an effect to handlers. [R8-G]
+    ///
+    /// ALL effects go through this path. Two handler variants,
+    /// one dispatch protocol.
+    ///
     /// Returns Ok(StepEvent) if dispatch started successfully.
     /// Returns Err(VMError) if no handler found.
     fn start_dispatch(&mut self, effect: Effect) -> Result<StepEvent, VMError> {
         // Lazy pop completed dispatch contexts
         self.lazy_pop_completed();
-        
+
         // Get current scope_chain
         let scope_chain = self.current_scope_chain();
-        
+
         // Compute visible handlers (top-only busy exclusion)
         let handler_chain = self.visible_handlers(&scope_chain);
-        
+
         if handler_chain.is_empty() {
             return Err(VMError::UnhandledEffect(effect));
         }
-        
+
         // Find first handler that can handle this effect
-        // Returns (index, marker, entry) - index is critical for busy boundary
-        let (handler_idx, handler_marker, entry) = 
+        // RustProgram: can_handle() checks effect type
+        // Python: can_handle() always true (handler decides via Delegate)
+        let (handler_idx, handler_marker, entry) =
             self.find_matching_handler(&handler_chain, &effect)?;
-        
-        // Get prompt_seg_id directly from HandlerEntry (NO linear search!)
+
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
-        
-        // Generate IDs
+
         let dispatch_id = DispatchId::fresh();
-        
+
         // Capture callsite continuation
         let current_seg = &self.segments[self.current_segment.index()];
         let k_user = Continuation::capture(current_seg, self.current_segment, Some(dispatch_id));
-        
+
         // Push dispatch context
-        // CRITICAL: handler_idx is the ACTUAL position in handler_chain where match was found
         self.dispatch_stack.push(DispatchContext {
             dispatch_id,
             effect: effect.clone(),
             handler_chain: handler_chain.clone(),
-            handler_idx,  // <-- actual matched position, not hardcoded 0
+            handler_idx,
             k_user: k_user.clone(),
             prompt_seg_id,
             completed: false,
         });
-        
+
         // Create handler execution segment
-        //    caller = prompt_seg (root handler return goes to prompt)
-        //    scope_chain = same as callsite (handler in scope during handling)
         let handler_seg = Segment::new(
             handler_marker,
             Some(prompt_seg_id),
             scope_chain,
         );
         let handler_seg_id = self.alloc_segment(handler_seg);
-        
-        // Switch to handler segment
         self.current_segment = handler_seg_id;
-        
-        // Invoke handler based on type
+
+        // Invoke handler — two variants, same dispatch chain
         Ok(self.invoke_handler(handler, &effect, k_user))
     }
 
-    /// Invoke a handler and return the next StepEvent.
+    /// Invoke a handler and return the next StepEvent. [R8-G]
     fn invoke_handler(
         &mut self,
         handler: Handler,
@@ -3010,15 +3416,10 @@ impl VM {
         k_user: Continuation,
     ) -> StepEvent {
         match handler {
-            Handler::Stdlib(stdlib_handler) => {
-                // Stdlib handler: Rust-native, direct invocation
-                // These handlers read/write RustStore directly
-                let action = stdlib_handler.handle(effect, k_user, &mut self.rust_store);
-                self.apply_handler_action(action)
-            }
-            Handler::RustProgram(handler) => {
-                // Rust program handler: create program instance and step it
-                let program = handler.create_program();
+            Handler::RustProgram(rust_handler) => {
+                // Rust program handler: create program instance and step it.
+                // Used by state, reader, writer, scheduler, and custom Rust handlers.
+                let program = rust_handler.create_program();
                 let step = {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
                     guard.start(effect.clone(), k_user.clone(), &mut self.rust_store)
@@ -3062,33 +3463,28 @@ impl VM {
                 self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
-        }
-    }
-
-    /// Apply a HandlerAction and return the next StepEvent.
-    fn apply_handler_action(&mut self, action: HandlerAction) -> StepEvent {
-        match action {
-            HandlerAction::Resume { k, value } => {
-                self.mode = self.handle_resume(k, value);
-                StepEvent::Continue
-            }
-            HandlerAction::Transfer { k, value } => {
-                self.mode = self.handle_transfer(k, value);
-                StepEvent::Continue
-            }
-            HandlerAction::Return { value } => {
-                self.handle_handler_return(value)
-            }
-            HandlerAction::NeedsPython { handler, call, k, context } => {
-                self.pending_python = Some(PendingPython::StdlibContinuation {
-                    handler,
-                    k,
-                    context,
+            RustProgramStep::NeedsPython(call) => {
+                // [R8-H] Handler needs a Python callback (e.g., Modify).
+                // Re-push handler frame so resume() returns to it.
+                let segment = &mut self.segments[self.current_segment.index()];
+                segment.push_frame(Frame::RustProgram { program });
+                self.pending_python = Some(PendingPython::RustProgramContinuation {
+                    marker: self.dispatch_stack.last()
+                        .map(|d| d.handler_marker)
+                        .unwrap_or(Marker::fresh()),
+                    k: Continuation::empty(),
                 });
                 StepEvent::NeedsPython(call)
             }
         }
     }
+
+    // [R8-H] apply_handler_action() DELETED.
+    // Was: fn apply_handler_action(&mut self, action: HandlerAction) -> StepEvent
+    // HandlerAction/NeedsPython/StdlibContinuation no longer exist.
+    // All handler actions now flow through RustProgramStep::Yield(Yielded::*)
+    // and apply_rust_program_step(). Python callbacks from Modify are yielded
+    // as RustProgramStep::Yield(Yielded::PythonCall(...)) by the handler program.
 
     /// Handle handler return (explicit or implicit).
     /// 
@@ -3555,7 +3951,7 @@ GIL is ONLY held during:
 
 GIL is RELEASED during:
   - vm.step() execution
-  - Stdlib handler execution (Rust-native)
+  - RustProgram handler execution (standard handlers)
   - Segment/frame management
 ```
 
@@ -3649,16 +4045,16 @@ inside a handler remain visible unless they are busy.
 ### INV-9: All Effects Go Through Dispatch
 
 ```
-ALL effects (including stdlib Get, Put, Modify, Ask, Tell) go through
-the dispatch stack. There is NO bypass for any effect type.
+ALL effects (including standard Get, Put, Modify, Ask, Tell) go through
+the dispatch stack. There is NO bypass for any effect type. [R8-B]
 
-Stdlib handlers are Rust-implemented for performance but still:
-  - Are installed via WithHandler (explicit)
+Standard handlers are Rust-implemented (RustProgram) for performance but still:
+  - Are installed via WithHandler or run(handlers=[...]) (explicit)
   - Go through dispatch (found via handler_chain lookup)
   - Can be intercepted, overridden, or replaced by users
 
 To intercept state operations, install a custom handler that handles
-Get/Put effects before the stdlib handler in the scope chain.
+Get/Put effects before the standard state handler in the scope chain.
 ```
 
 ### INV-10: Frame Stack Order
@@ -3820,7 +4216,7 @@ doeff-vm/
 │   │   ├── state.rs     # State handler (Get, Put)
 │   │   ├── reader.rs    # Reader handler (Ask)
 │   │   └── writer.rs    # Writer handler (Tell)
-│   ├── rust_store.rs    # RustStore (stdlib state: state, env, log)
+│   ├── rust_store.rs    # RustStore (standard handler state: state, env, log)
 │   ├── value.rs         # Value enum (Rust/Python interop)
 │   ├── python_call.rs   # PythonCall, PyCallOutcome, PyException
 │   ├── driver.rs        # PyVM wrapper, driver loop
@@ -3853,8 +4249,7 @@ doeff-vm/
 - [ ] Implement step_return()
 
 **Phase 4: Effects & Handlers**
-- [ ] Implement stdlib handlers (StdStateHandler, StdReaderHandler, StdWriterHandler)
-- [ ] Implement Rust program handlers (RustProgramHandler/RustHandlerProgram)
+- [ ] Implement standard handlers as RustProgramHandler (StateHandlerFactory, ReaderHandlerFactory, WriterHandlerFactory) [R8-H]
 - [ ] Implement Frame::RustProgram stepping (apply_rust_program_step)
 - [ ] Implement WithHandler (prompt + body structure)
 - [ ] Implement start_dispatch with visible_handlers (all effects dispatch)
@@ -3889,10 +4284,10 @@ doeff-vm/
 
 ## Migration Path
 
-### Phase 1: Core VM (With Stdlib Handlers)
+### Phase 1: Core VM (With Standard Handlers) [R8-H]
 - Implement Mode-based step loop
-- Implement stdlib handlers for effects (Get, Put, Ask, Tell)
-- Stdlib handlers go through dispatch (no bypass)
+- Implement standard handlers for effects (Get, Put, Ask, Tell) as RustProgramHandler
+- Standard handlers go through dispatch (no bypass) [R8-B]
 - Test with simple Python generators
 - Validate: `step()` returns correct StepEvent sequence
 
