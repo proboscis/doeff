@@ -970,6 +970,14 @@ impl VM {
         // (result of Delegate). Per spec: caller = Some(inner_seg_id).
         let inner_seg_id = self.current_segment;
 
+        // Clear the delegating handler's frames so return values pass through
+        // without trying to resume the handler generator (Delegate is tail).
+        if let Some(seg_id) = inner_seg_id {
+            if let Some(seg) = self.segments.get_mut(seg_id) {
+                seg.frames.clear();
+            }
+        }
+
         for idx in start_idx..handler_chain.len() {
             let marker = handler_chain[idx];
             if let Some(entry) = self.handlers.get(&marker) {
