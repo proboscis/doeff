@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyDict, PyTuple};
 
 use crate::effect::Effect;
 use crate::error::VMError;
@@ -425,11 +425,22 @@ impl PyVM {
                 let gen = self.to_generator_strict(py, program)?;
                 Ok(PyCallOutcome::Value(Value::Python(gen)))
             }
-            PythonCall::CallFunc { func, args } => {
+            PythonCall::CallFunc { func, args, kwargs } => {
                 let py_args = self.values_to_tuple(py, &args)?;
-                match func.bind(py).call1(py_args) {
-                    Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
-                    Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                if kwargs.is_empty() {
+                    match func.bind(py).call1(py_args) {
+                        Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
+                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                    }
+                } else {
+                    let py_kwargs = PyDict::new(py);
+                    for (key, val) in &kwargs {
+                        py_kwargs.set_item(key, val.to_pyobject(py)?)?;
+                    }
+                    match func.bind(py).call(py_args, Some(&py_kwargs)) {
+                        Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
+                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                    }
                 }
             }
             PythonCall::CallHandler {

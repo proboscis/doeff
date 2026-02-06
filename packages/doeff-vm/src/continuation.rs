@@ -84,7 +84,7 @@ impl Continuation {
         }
     }
 
-    pub fn create(program: Py<PyAny>, handlers: Vec<Handler>) -> Self {
+    pub fn create_unstarted(expr: Py<PyAny>, handlers: Vec<Handler>) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
@@ -93,7 +93,7 @@ impl Continuation {
             marker: Marker::placeholder(),
             dispatch_id: None,
             started: false,
-            program: Some(program),
+            program: Some(expr),
             handlers,
         }
     }
