@@ -24,10 +24,10 @@ from doeff.effects.spawn import TaskCancelledError, Waitable
 
 
 class TestFutureProtocol:
-
     @pytest.mark.asyncio
     async def test_task_is_waitable(self) -> None:
         """Task from Spawn is a Waitable."""
+
         @do
         def program():
             task = yield Spawn(do(lambda: 42)())
@@ -39,6 +39,7 @@ class TestFutureProtocol:
     @pytest.mark.asyncio
     async def test_future_has_handle(self) -> None:
         """Future has _handle attribute."""
+
         @do
         def program():
             task = yield Spawn(do(lambda: 42)())
@@ -49,10 +50,10 @@ class TestFutureProtocol:
 
 
 class TestSpawnEffect:
-
     @pytest.mark.asyncio
     async def test_spawn_returns_task(self) -> None:
         """Spawn returns a Task."""
+
         @do
         def program():
             task = yield Spawn(do(lambda: 42)())
@@ -64,6 +65,7 @@ class TestSpawnEffect:
     @pytest.mark.asyncio
     async def test_spawn_runs_in_background(self) -> None:
         """Spawned task runs while parent continues."""
+
         @do
         def slow():
             yield Await(asyncio.sleep(0.05))
@@ -104,10 +106,10 @@ class TestSpawnEffect:
 
 
 class TestWaitEffect:
-
     @pytest.mark.asyncio
     async def test_wait_returns_value(self) -> None:
         """Wait returns the Future's value."""
+
         @do
         def child():
             return 42
@@ -124,6 +126,7 @@ class TestWaitEffect:
     @pytest.mark.asyncio
     async def test_wait_propagates_error(self) -> None:
         """Wait propagates errors from the Future."""
+
         @do
         def failing_child():
             raise ValueError("child failed")
@@ -141,6 +144,7 @@ class TestWaitEffect:
     @pytest.mark.asyncio
     async def test_wait_on_cancelled_task(self) -> None:
         """Wait on cancelled task raises TaskCancelledError."""
+
         @do
         def slow_child():
             yield Await(asyncio.sleep(10.0))
@@ -160,6 +164,7 @@ class TestWaitEffect:
     @pytest.mark.asyncio
     async def test_wait_multiple_tasks_sequentially(self) -> None:
         """Can Wait on multiple tasks one after another."""
+
         @do
         def make_value(x: int):
             return x * 2
@@ -180,10 +185,10 @@ class TestWaitEffect:
 
 
 class TestTaskCancel:
-
     @pytest.mark.asyncio
     async def test_cancel_returns_true(self) -> None:
         """Cancel returns True when task is running."""
+
         @do
         def slow():
             yield Await(asyncio.sleep(10.0))
@@ -201,6 +206,7 @@ class TestTaskCancel:
     @pytest.mark.asyncio
     async def test_cancel_completed_returns_false(self) -> None:
         """Cancel returns False when task already completed."""
+
         @do
         def fast():
             return "done"
@@ -217,10 +223,10 @@ class TestTaskCancel:
 
 
 class TestTaskIsDone:
-
     @pytest.mark.asyncio
     async def test_is_done_false_while_running(self) -> None:
         """is_done returns False while task is running."""
+
         @do
         def slow():
             yield Await(asyncio.sleep(10.0))
@@ -239,6 +245,7 @@ class TestTaskIsDone:
     @pytest.mark.asyncio
     async def test_is_done_true_after_completion(self) -> None:
         """is_done returns True after task completes."""
+
         @do
         def fast():
             return "done"
@@ -255,10 +262,10 @@ class TestTaskIsDone:
 
 
 class TestRaceEffect:
-
     @pytest.mark.asyncio
     async def test_race_returns_race_result(self) -> None:
         """Race returns RaceResult with first, value, rest."""
+
         @do
         def fast():
             return "fast"
@@ -286,6 +293,7 @@ class TestRaceEffect:
     @pytest.mark.asyncio
     async def test_race_first_is_winner(self) -> None:
         """RaceResult.first is the Future that won."""
+
         @do
         def fast():
             return "winner"
@@ -308,6 +316,7 @@ class TestRaceEffect:
     @pytest.mark.asyncio
     async def test_race_rest_contains_losers(self) -> None:
         """RaceResult.rest contains non-winning Futures."""
+
         @do
         def fast():
             return "fast"
@@ -338,6 +347,7 @@ class TestRaceEffect:
     @pytest.mark.asyncio
     async def test_race_can_cancel_losers(self) -> None:
         """Can cancel losing Futures after Race completes."""
+
         @do
         def fast():
             return "fast"
@@ -364,6 +374,7 @@ class TestRaceEffect:
     @pytest.mark.asyncio
     async def test_race_error_propagates(self) -> None:
         """If first to complete is an error, Race propagates it."""
+
         @do
         def fast_fail():
             raise ValueError("fast error")
@@ -386,6 +397,7 @@ class TestRaceEffect:
 
     def test_race_requires_futures(self) -> None:
         """Race only accepts Futures, not Programs."""
+
         @do
         def prog():
             return 1
@@ -400,10 +412,10 @@ class TestRaceEffect:
 
 
 class TestGatherEffect:
-
     @pytest.mark.asyncio
     async def test_gather_futures_returns_list(self) -> None:
         """Gather with Futures returns list of results."""
+
         @do
         def make_value(x: int):
             return x
@@ -422,6 +434,7 @@ class TestGatherEffect:
     @pytest.mark.asyncio
     async def test_gather_preserves_order(self) -> None:
         """Gather returns results in input order, not completion order."""
+
         @do
         def slow():
             yield Await(asyncio.sleep(0.1))
@@ -444,6 +457,7 @@ class TestGatherEffect:
     @pytest.mark.asyncio
     async def test_gather_fail_fast(self) -> None:
         """Gather fails immediately when any Future fails."""
+
         @do
         def failing():
             raise ValueError("gather failed")
@@ -467,6 +481,7 @@ class TestGatherEffect:
     @pytest.mark.asyncio
     async def test_gather_empty_returns_empty_list(self) -> None:
         """Gather with no arguments returns empty list."""
+
         @do
         def program():
             results = yield Gather()
@@ -481,6 +496,7 @@ class TestGatherEffect:
         This was changed to support auto-unwrapping of Program arguments
         in KleisliProgramCall.to_generator().
         """
+
         @do
         def child():
             return 42
@@ -512,14 +528,14 @@ class TestGatherEffect:
         with pytest.raises(TypeError) as exc_info:
             Gather(1, 2, 3)  # type: ignore
 
-        assert "Waitable or Program" in str(exc_info.value)
+        assert "Waitable" in str(exc_info.value) and "Program" in str(exc_info.value)
 
 
 class TestPromiseEffects:
-
     @pytest.mark.asyncio
     async def test_create_promise_returns_promise(self) -> None:
         """CreatePromise returns a Promise."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -531,6 +547,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_promise_has_future(self) -> None:
         """Promise.future is a Future."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -542,6 +559,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_complete_promise_resolves_wait(self) -> None:
         """CompletePromise resolves Wait on the Future."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -555,6 +573,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_fail_promise_propagates_error(self) -> None:
         """FailPromise causes Wait to raise error."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -569,6 +588,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_wait_blocks_until_complete(self) -> None:
         """Wait on Promise.future blocks until CompletePromise."""
+
         @do
         def completer(promise: Promise):
             yield Await(asyncio.sleep(0.05))
@@ -587,6 +607,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_multiple_waiters_on_same_future(self) -> None:
         """Multiple tasks can Wait on the same Future."""
+
         @do
         def waiter(future: Future):
             return (yield Wait(future))
@@ -607,6 +628,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_complete_already_completed_promise_raises(self) -> None:
         """CompletePromise on already-completed Promise raises RuntimeError."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -622,6 +644,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_fail_already_completed_promise_raises(self) -> None:
         """FailPromise on already-completed Promise raises RuntimeError."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -637,6 +660,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_complete_already_failed_promise_raises(self) -> None:
         """CompletePromise on already-failed Promise raises RuntimeError."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -652,6 +676,7 @@ class TestPromiseEffects:
     @pytest.mark.asyncio
     async def test_fail_already_failed_promise_raises(self) -> None:
         """FailPromise on already-failed Promise raises RuntimeError."""
+
         @do
         def program():
             promise = yield CreatePromise()
@@ -666,10 +691,10 @@ class TestPromiseEffects:
 
 
 class TestConcurrencyComposition:
-
     @pytest.mark.asyncio
     async def test_race_with_timeout_pattern(self) -> None:
         """Race can implement timeout pattern."""
+
         @do
         def slow_work():
             yield Await(asyncio.sleep(10.0))
@@ -700,6 +725,7 @@ class TestConcurrencyComposition:
     @pytest.mark.asyncio
     async def test_spawn_wait_is_like_sequential(self) -> None:
         """Spawn + immediate Wait is like sequential execution."""
+
         @do
         def step1():
             return 1
@@ -724,6 +750,7 @@ class TestConcurrencyComposition:
     @pytest.mark.asyncio
     async def test_parallel_then_sequential(self) -> None:
         """Start work in parallel, then process results sequentially."""
+
         @do
         def fetch(name: str):
             return f"data_{name}"

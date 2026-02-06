@@ -686,6 +686,12 @@ pub enum Value {
     
     /// None/null
     None,
+    
+    /// [D8] Call stack metadata (returned by GetCallStack)
+    CallStack(Vec<CallMetadata>),
+    
+    /// [D11] List of values (returned by Gather/try_collect)
+    List(Vec<Value>),
 }
 
 impl Value {
@@ -1184,6 +1190,9 @@ pub enum SchedulerEffect {
     FailPromise { promise: PromiseId, error: PyException },
     CreateExternalPromise,
     TaskCompleted { task: TaskId, result: Result<Value, PyException> },
+    /// [D6] Raw Python scheduler effect — classified as Effect::Scheduler for dispatch,
+    /// field extraction deferred to handler start().
+    PythonSchedulerEffect(Py<PyAny>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1997,6 +2006,10 @@ pub struct VM {
     
     /// Monotonic step counter for debug output.
     step_counter: u64,
+    
+    /// [D7] Registry of all continuations created during execution.
+    /// Keyed by ContId, used for one-shot enforcement and cleanup.
+    continuation_registry: HashMap<ContId, Continuation>,
 }
 
 /// Handler registry entry.
@@ -2011,6 +2024,10 @@ pub struct HandlerEntry {
     /// Prompt segment for this handler (set at WithHandler time)
     /// Abandon/return goes here. No search needed.
     pub prompt_seg_id: SegmentId,
+    
+    /// [D8] Original Python object passed by the user.
+    /// Returned by GetHandlers to preserve id()-level identity.
+    pub py_identity: Option<Py<PyAny>>,
 }
 ```
 
@@ -3993,6 +4010,12 @@ impl VM {
         
         // Capture the inner handler segment so Delegate can return to it.
         let inner_seg_id = self.current_segment;
+        
+        // [D3] Clear the delegating handler's frames so return values pass through
+        // without trying to resume the handler generator (Delegate is tail-position).
+        if let Some(seg) = self.segments.get_mut(inner_seg_id) {
+            seg.frames.clear();
+        }
         
         // Advance handler_idx to find next handler that can handle this effect
         let handler_chain = &top.handler_chain;

@@ -543,13 +543,20 @@ impl VM {
                 StepEvent::Continue
             }
             RustProgramStep::NeedsPython(call) => {
-                // Program needs a Python call (e.g., Modify modifier).
-                // Re-push the frame so the result flows through normal step delivery.
-                // The next Deliver will hit this frame and call resume().
                 if let Some(seg) = self.current_segment_mut() {
                     seg.push_frame(Frame::RustProgram { program });
                 }
-                self.pending_python = Some(PendingPython::RustProgramContinuation);
+                let top = self.dispatch_stack.last().expect(
+                    "RustProgramContinuation: handler always runs inside dispatch",
+                );
+                let marker = top
+                    .handler_chain
+                    .get(top.handler_idx)
+                    .copied()
+                    .unwrap_or_else(Marker::fresh);
+                let k = top.k_user.clone();
+                self.pending_python =
+                    Some(PendingPython::RustProgramContinuation { marker, k });
                 StepEvent::NeedsPython(call)
             }
         }
@@ -794,16 +801,11 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
 
-            (PendingPython::RustProgramContinuation, PyCallOutcome::Value(result)) => {
-                // Frame was re-pushed on the stack. Set Mode::Deliver so the
-                // next step() delivers the result to the re-pushed RustProgram
-                // frame, which calls resume() through the normal step cycle.
+            (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::Value(result)) => {
                 self.mode = Mode::Deliver(result);
             }
 
-            (PendingPython::RustProgramContinuation, PyCallOutcome::GenError(e)) => {
-                // Frame was re-pushed. Set Mode::Throw so the next step()
-                // throws into the re-pushed RustProgram frame.
+            (PendingPython::RustProgramContinuation { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
@@ -1180,6 +1182,11 @@ impl VM {
         StepEvent::Error(VMError::delegate_no_outer_handler(effect))
     }
 
+    /// Handle handler return (explicit or implicit).
+    ///
+    /// Per SPEC-008: sets Mode::Deliver(value) and lets the natural caller chain
+    /// walk deliver the value back. Does NOT explicitly jump to prompt_seg_id.
+    /// If the handler's caller is the prompt boundary, marks dispatch completed.
     fn handle_handler_return(&mut self, value: Value) -> StepEvent {
         let Some(top) = self.dispatch_stack.last_mut() else {
             return StepEvent::Error(VMError::internal("Return outside of dispatch"));
@@ -1194,8 +1201,9 @@ impl VM {
             }
         }
 
-        self.current_segment = Some(top.prompt_seg_id);
-        self.mode = Mode::Return(value);
+        // D10: Spec says Mode::Deliver, not Mode::Return + explicit segment jump.
+        // Natural caller-chain walking handles segment transitions.
+        self.mode = Mode::Deliver(value);
         StepEvent::Continue
     }
 
@@ -1212,11 +1220,12 @@ impl VM {
     }
 
     fn handle_get_handlers(&mut self) -> StepEvent {
-        let chain = if let Some(top) = self.dispatch_stack.last() {
-            top.handler_chain.clone()
-        } else {
-            self.current_scope_chain()
+        let Some(top) = self.dispatch_stack.last() else {
+            return StepEvent::Error(VMError::internal(
+                "GetHandlers called outside of dispatch context",
+            ));
         };
+        let chain = top.handler_chain.clone();
         let handlers: Vec<Handler> = chain
             .iter()
             .filter_map(|marker| {
@@ -1246,11 +1255,9 @@ impl VM {
 
     fn handle_resume_continuation(&mut self, k: Continuation, value: Value) -> StepEvent {
         if k.started {
-            // Behaves like Resume for started continuations
             return self.handle_resume(k, value);
         }
 
-        // Unstarted continuation: install handlers and start program
         if self.is_one_shot_consumed(k.cont_id) {
             return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
         }
@@ -1263,16 +1270,18 @@ impl VM {
             }
         };
 
-        // Install handlers outermost first
-        let mut outer_seg_id = self.current_segment;
-        let mut scope_chain = self.current_scope_chain();
+        // G7: Install handlers with prompt+body segments per handler (matches spec topology).
+        // Each handler gets: prompt_seg → body_seg (handler in scope).
+        // Body_seg becomes the outside for the next handler.
+        let mut outside_seg_id = self.current_segment;
+        let mut outside_scope = self.current_scope_chain();
 
         for handler in k.handlers.iter().rev() {
             let handler_marker = Marker::fresh();
             let prompt_seg = Segment::new_prompt(
                 handler_marker,
-                outer_seg_id,
-                scope_chain.clone(),
+                outside_seg_id,
+                outside_scope.clone(),
                 handler_marker,
             );
             let prompt_seg_id = self.alloc_segment(prompt_seg);
@@ -1280,17 +1289,18 @@ impl VM {
                 handler_marker,
                 HandlerEntry::new(handler.clone(), prompt_seg_id),
             );
-            scope_chain.insert(0, handler_marker);
-            outer_seg_id = Some(prompt_seg_id);
+
+            let mut body_scope = vec![handler_marker];
+            body_scope.extend(outside_scope);
+
+            let body_seg = Segment::new(handler_marker, Some(prompt_seg_id), body_scope.clone());
+            let body_seg_id = self.alloc_segment(body_seg);
+
+            outside_seg_id = Some(body_seg_id);
+            outside_scope = body_scope;
         }
 
-        // Create body segment
-        let body_marker = Marker::fresh();
-        let body_seg = Segment::new(body_marker, outer_seg_id, scope_chain);
-        let body_seg_id = self.alloc_segment(body_seg);
-        self.current_segment = Some(body_seg_id);
-
-        // Start the program
+        self.current_segment = outside_seg_id;
         self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
         StepEvent::NeedsPython(PythonCall::StartProgram { program })
     }
@@ -1781,7 +1791,9 @@ mod tests {
     fn test_handle_get_handlers() {
         let mut vm = VM::new();
         let marker = Marker::fresh();
-        let prompt_seg_id = SegmentId::from_index(0);
+
+        let seg = Segment::new(marker, None, vec![marker]);
+        let prompt_seg_id = vm.alloc_segment(seg);
 
         vm.install_handler(
             marker,
@@ -1791,9 +1803,21 @@ mod tests {
             ),
         );
 
-        let seg = Segment::new(marker, None, vec![marker]);
-        let seg_id = vm.alloc_segment(seg);
-        vm.current_segment = Some(seg_id);
+        let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+        let handler_seg_id = vm.alloc_segment(handler_seg);
+        vm.current_segment = Some(handler_seg_id);
+
+        // G8: GetHandlers requires dispatch context
+        let k_user = make_dummy_continuation();
+        vm.dispatch_stack.push(DispatchContext {
+            dispatch_id: DispatchId::fresh(),
+            effect: Effect::Get { key: "x".to_string() },
+            handler_chain: vec![marker],
+            handler_idx: 0,
+            k_user,
+            prompt_seg_id,
+            completed: false,
+        });
 
         let event = vm.handle_get_handlers();
         assert!(matches!(event, StepEvent::Continue));
@@ -1804,6 +1828,21 @@ mod tests {
             }
             _ => panic!("Expected Deliver(Handlers)"),
         }
+    }
+
+    #[test]
+    fn test_handle_get_handlers_no_dispatch_errors() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let event = vm.handle_get_handlers();
+        assert!(
+            matches!(event, StepEvent::Error(_)),
+            "G8: GetHandlers without dispatch must error"
+        );
     }
 
     #[test]
@@ -2074,15 +2113,14 @@ mod tests {
         );
     }
 
-    /// G16: lazy_pop_completed must be called before ALL primitives.
-    /// Without it, GetHandlers sees stale completed dispatch context.
+    /// G16: lazy_pop_completed runs before GetHandlers.
+    /// G8: After pop leaves empty stack, GetHandlers errors (spec: no dispatch = error).
     #[test]
     fn test_gap16_lazy_pop_before_get_handlers() {
         use crate::step::ControlPrimitive;
 
         let mut vm = VM::new();
 
-        // Install a handler so GetHandlers has something to find
         let m1 = Marker::fresh();
         let seg = Segment::new(m1, None, vec![m1]);
         let seg_id = vm.alloc_segment(seg);
@@ -2095,8 +2133,6 @@ mod tests {
         );
         vm.current_segment = Some(seg_id);
 
-        // Push a COMPLETED dispatch context — should be popped before
-        // GetHandlers inspects the stack.
         let k_user = make_dummy_continuation();
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
@@ -2107,32 +2143,22 @@ mod tests {
             handler_idx: 0,
             k_user: k_user.clone(),
             prompt_seg_id: SegmentId::from_index(0),
-            completed: true, // <-- COMPLETED
+            completed: true,
         });
 
-        // Drive through step_handle_yield which calls lazy_pop_completed
-        // before dispatching to GetHandlers.
         vm.mode = Mode::HandleYield(Yielded::Primitive(ControlPrimitive::GetHandlers));
         let event = vm.step_handle_yield();
-        assert!(matches!(event, StepEvent::Continue));
 
-        // Dispatch stack should be empty (completed was popped)
         assert!(
             vm.dispatch_stack.is_empty(),
-            "Completed dispatch should have been popped"
+            "Completed dispatch should have been popped before GetHandlers runs"
         );
 
-        // Should return handlers from current scope, not from stale dispatch
-        match &vm.mode {
-            Mode::Deliver(Value::Handlers(handlers)) => {
-                assert_eq!(
-                    handlers.len(),
-                    1,
-                    "Expected 1 handler from scope_chain, not 0 from stale dispatch"
-                );
-            }
-            other => panic!("Expected Deliver(Handlers), got {:?}", other),
-        }
+        assert!(
+            matches!(event, StepEvent::Error(_)),
+            "G8: GetHandlers with no dispatch must error, got {:?}",
+            std::mem::discriminant(&event)
+        );
     }
 
     // ==========================================================
@@ -2314,23 +2340,22 @@ mod tests {
         });
     }
 
-    /// G2: GetHandlers must return py_identity (original Python sentinel) for Rust handlers,
-    /// not the Handler::RustProgram wrapper.
+    /// G2: GetHandlers must return py_identity (original Python sentinel) for Rust handlers.
     #[test]
     fn test_g2_get_handlers_returns_py_identity() {
         Python::attach(|py| {
             let mut vm = VM::new();
             let marker = Marker::fresh();
-            let prompt_seg_id = SegmentId::from_index(0);
 
-            // Create a sentinel Python object to serve as py_identity
+            let seg = Segment::new(marker, None, vec![marker]);
+            let prompt_seg_id = vm.alloc_segment(seg);
+
             let sentinel = py
                 .eval(c"type('StateSentinel', (), {})()", None, None)
                 .unwrap()
                 .unbind()
                 .into_any();
 
-            // Install handler WITH py_identity
             vm.install_handler(
                 marker,
                 HandlerEntry::with_identity(
@@ -2340,9 +2365,20 @@ mod tests {
                 ),
             );
 
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
+            let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+            let handler_seg_id = vm.alloc_segment(handler_seg);
+            vm.current_segment = Some(handler_seg_id);
+
+            let k_user = make_dummy_continuation();
+            vm.dispatch_stack.push(DispatchContext {
+                dispatch_id: DispatchId::fresh(),
+                effect: Effect::Get { key: "x".to_string() },
+                handler_chain: vec![marker],
+                handler_idx: 0,
+                k_user,
+                prompt_seg_id,
+                completed: false,
+            });
 
             let event = vm.handle_get_handlers();
             assert!(matches!(event, StepEvent::Continue));
@@ -2526,5 +2562,70 @@ mod tests {
                 ),
             }
         });
+    }
+
+    /// D10: handle_handler_return must use Mode::Deliver (not Mode::Return)
+    /// and must NOT explicitly jump current_segment to prompt_seg_id.
+    #[test]
+    fn test_d10_handler_return_uses_deliver_not_return() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+
+        let prompt_seg = Segment::new(marker, None, vec![marker]);
+        let prompt_seg_id = vm.alloc_segment(prompt_seg);
+
+        let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+        let handler_seg_id = vm.alloc_segment(handler_seg);
+        vm.current_segment = Some(handler_seg_id);
+
+        vm.install_handler(
+            marker,
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
+        );
+
+        let dispatch_id = DispatchId::fresh();
+        let k_user = Continuation {
+            cont_id: ContId::fresh(),
+            segment_id: prompt_seg_id,
+            frames_snapshot: std::sync::Arc::new(Vec::new()),
+            scope_chain: std::sync::Arc::new(vec![marker]),
+            marker,
+            dispatch_id: Some(dispatch_id),
+            started: true,
+            program: None,
+            handlers: Vec::new(),
+        };
+
+        vm.dispatch_stack.push(DispatchContext {
+            dispatch_id,
+            effect: Effect::Get {
+                key: "x".to_string(),
+            },
+            handler_chain: vec![marker],
+            handler_idx: 0,
+            k_user,
+            prompt_seg_id,
+            completed: false,
+        });
+
+        let event = vm.handle_handler_return(Value::Int(42));
+        assert!(matches!(event, StepEvent::Continue));
+
+        // D10: Mode must be Deliver, NOT Return
+        assert!(
+            matches!(vm.mode, Mode::Deliver(Value::Int(42))),
+            "D10 REGRESSION: handle_handler_return must use Mode::Deliver, got {:?}",
+            std::mem::discriminant(&vm.mode)
+        );
+
+        // D10: current_segment must NOT have jumped to prompt_seg_id
+        assert_eq!(
+            vm.current_segment,
+            Some(handler_seg_id),
+            "D10 REGRESSION: handle_handler_return must not explicitly jump current_segment"
+        );
     }
 }

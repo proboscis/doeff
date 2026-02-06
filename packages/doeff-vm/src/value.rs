@@ -27,6 +27,7 @@ pub enum Value {
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
     CallStack(Vec<CallMetadata>),
+    List(Vec<Value>),
 }
 
 impl Value {
@@ -70,6 +71,13 @@ impl Value {
                 dict.set_item("type", "ExternalPromise")?;
                 dict.set_item("promise_id", handle.id.raw())?;
                 Ok(dict.into_any())
+            }
+            Value::List(items) => {
+                let list = PyList::empty(py);
+                for item in items {
+                    list.append(item.to_pyobject(py)?)?;
+                }
+                Ok(list.into_any())
             }
             Value::CallStack(stack) => {
                 let list = PyList::empty(py);
@@ -175,6 +183,7 @@ impl Value {
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(*h),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
+            Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }
     }
 }
