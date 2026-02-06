@@ -168,14 +168,15 @@ impl RustHandlerProgram for StateHandlerProgram {
             // Terminal case (Get/Put): handler is done, pass through return value
             return RustProgramStep::Return(value);
         }
-        // Modify case: process the modifier result
+        // Modify case: store modifier result and resume caller with new value
         let key = self.pending_key.take().unwrap();
         let continuation = self.pending_k.take().unwrap();
-        let old_value = self.pending_old_value.take().unwrap();
+        let _old_value = self.pending_old_value.take().unwrap();
+        let new_value = value.clone();
         store.put(key, value);
         RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
             continuation,
-            value: old_value,
+            value: new_value,
         }))
     }
 
@@ -553,9 +554,9 @@ mod tests {
                     value,
                     ..
                 })) => {
-                    assert_eq!(value.as_int(), Some(10)); // old_value returned
+                    assert_eq!(value.as_int(), Some(20)); // new_value returned (modifier result)
                 }
-                _ => panic!("Expected Yield(Resume) with old_value"),
+                _ => panic!("Expected Yield(Resume) with new_value"),
             }
             assert_eq!(store.get("key").unwrap().as_int(), Some(20)); // new value stored
         });
