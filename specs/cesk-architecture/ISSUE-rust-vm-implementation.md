@@ -2,7 +2,7 @@
 
 **Issue:** #235
 **Spec:** SPEC-CESK-008-rust-vm.md (Revision 7)
-**Status:** Phase 8.5 Complete — Core VM functional, 52 Rust + 14 Python tests passing.
+**Status:** Phase 9 Complete — All control primitives + RustProgram handlers implemented. 57 Rust + 18 Python tests passing.
 
 ## Overview
 
@@ -18,20 +18,20 @@ Implement a high-performance Rust VM with PyO3 integration, replacing the Python
 
 ---
 
-## Implementation Status vs Spec (Verified 2026-02-06)
+## Implementation Status vs Spec (Verified 2026-02-06, Updated after Phase 9)
 
 | Category | Status | Notes |
 |----------|--------|-------|
-| Core Types (IDs, Value, Frame, Segment) | ~95% | All present; missing `Value::Handlers/Task/Promise/ExternalPromise`, `Frame::RustProgram` |
+| Core Types (IDs, Value, Frame, Segment) | ~98% | All present + `Value::Handlers`, `Frame::RustProgram`. Missing: `Value::Task/Promise/ExternalPromise` |
 | Continuation & Arena | 100% | Fully aligned with spec |
-| Effect & Handler | ~85% | Missing `Effect::Scheduler`, `Handler::RustProgram`, `StdlibHandler` is enum variant not struct |
-| Step Machine (Mode, StepEvent, Yielded) | ~90% | Working; missing `PythonCall::CallAsync`, `PendingPython::AsyncEscape`, 4 ControlPrimitive variants |
+| Effect & Handler | ~95% | `Handler::RustProgram` + `RustHandlerProgram` trait + `RustProgramHandler` factory. Missing: `Effect::Scheduler` |
+| Step Machine (Mode, StepEvent, Yielded) | ~95% | Working. Missing: `PythonCall::CallAsync`, `PendingPython::AsyncEscape` |
 | Dispatch System | 100% | `start_dispatch`, `visible_handlers`, `lazy_pop_completed` all correct |
-| Control Primitives | ~75% | 6/10 implemented (Pure, Resume, Transfer, WithHandler, Delegate, GetContinuation). Missing: GetHandlers, CreateContinuation, ResumeContinuation, PythonAsyncSyntaxEscape |
-| PyO3 Driver | ~80% | Functional but GIL-coupled (`step()` takes `py` param, no `allow_threads`). `PyCallOutcome::Value(Py<PyAny>)` not `Value`. |
-| Stdlib Handlers | ~90% | Semantics correct. Pre-installed globally (not WithHandler-scoped). `RustStore` not `Clone`. |
-| Scheduler | 0% | Not started |
-| PyStore (Layer 3) | 0% | Not started |
+| Control Primitives | ~90% | 9/10 implemented. Missing: `PythonAsyncSyntaxEscape` |
+| PyO3 Driver | ~90% | GIL-decoupled (`step()` no `py` param). `PyCallOutcome::Value(Value)`. Missing: `allow_threads` (requires Send), `CallAsync` |
+| Stdlib Handlers | ~95% | Semantics correct. `RustStore` is `Clone`. Pre-installed globally (not WithHandler-scoped). |
+| Scheduler | 0% | Not started — types, handler, state management all needed |
+| PyStore (Layer 3) | ~50% | `PyStore` struct exists with `Py<PyDict>`. Not exposed to handlers yet. |
 | Async Integration | 0% | No `CallAsync`, no `async_run`, no `PythonAsyncSyntaxEscape` |
 
 ---
@@ -65,7 +65,7 @@ Implement a high-performance Rust VM with PyO3 integration, replacing the Python
 - [x] Implement `StepEvent` enum (`Continue`, `NeedsPython`, `Done`, `Error`)
 - [x] Implement `PendingPython` enum (`StartProgramFrame`, `StepUserGenerator`, `CallPythonHandler`, `StdlibContinuation`)
 - [x] Implement `Yielded` enum (Primitive, Effect, Program, Unknown)
-- [x] Implement `ControlPrimitive` enum (Resume, Transfer, WithHandler, Delegate, GetContinuation, Pure)
+- [x] Implement `ControlPrimitive` enum (Resume, Transfer, WithHandler, Delegate, GetContinuation, GetHandlers, CreateContinuation, ResumeContinuation, Pure)
 - [x] Implement `step()` main loop — dispatches to step_deliver_or_throw / step_handle_yield / step_return
 - [x] Implement `step_deliver_or_throw()` with RustReturn callback and PythonGenerator handling
 - [x] Implement `step_handle_yield()` — routes Primitive/Effect/Program/Unknown
@@ -129,7 +129,7 @@ Implement a high-performance Rust VM with PyO3 integration, replacing the Python
 - [x] `PyVM::run()` — driver loop (step → NeedsPython → execute → receive → repeat)
 - [x] `execute_python_call()` — dispatches all PythonCall variants
 - [x] `step_generator()` — handles GenYield/GenReturn/GenError via __next__/send/throw
-- [x] `classify_yielded()` — GIL-held classification: Pure, Resume, Transfer, WithHandler, Delegate, GetContinuation, all effects, Programs
+- [x] `classify_yielded()` — GIL-held classification: Pure, Resume, Transfer, WithHandler, Delegate, GetContinuation, GetHandlers, CreateContinuation, ResumeContinuation, all effects, Programs
 - [x] `to_generator()` — converts ProgramBase to generator (via to_generator method)
 - [x] `PyStdlib` — install_state/install_reader/install_writer
 - [x] `PyVM::state_items()` and `PyVM::logs()` — observe stdlib state
@@ -152,58 +152,51 @@ Implement a high-performance Rust VM with PyO3 integration, replacing the Python
 - Semantics correct. `StdlibHandler` uses unit variants instead of inner structs (functionally equivalent).
 - `RustStore` not `Clone` — needed for scheduler's `StoreMode::Isolated`.
 
-### 8.5.4 Control Primitives — 6/10 Implemented
-Implemented: `Pure`, `Resume`, `Transfer`, `WithHandler`, `Delegate`, `GetContinuation`
+### 8.5.4 Control Primitives — 9/10 Implemented ✅ (Phase 9)
+Implemented: `Pure`, `Resume`, `Transfer`, `WithHandler`, `Delegate`, `GetContinuation`, `GetHandlers`, `CreateContinuation`, `ResumeContinuation`
 Missing:
-- `GetHandlers` — return handler chain from callsite scope
-- `CreateContinuation` — create unstarted continuation from (program, handlers)
-- `ResumeContinuation` — resume both started and unstarted continuations
-- `PythonAsyncSyntaxEscape` — request async execution in handler
+- `PythonAsyncSyntaxEscape` — request async execution in handler (deferred to async integration)
 
 `Delegate` is no-arg (reuses top dispatch effect). Spec has `Delegate { effect }` variant. Current impl updates `top.effect` correctly so behavior matches, but signature diverges.
 
 ### 8.5.5 Handler Return — Non-Spec Mechanism ⚠️
-- `resume_pending`/`resume_value` fields in DispatchContext buffer handler return values
-- Spec says handler return value flows directly; impl uses a custom buffering path
-- Works correctly for current test cases but may cause edge-case issues with complex handler chains
+- `resume_pending`/`resume_value` fields removed from DispatchContext (Phase 9 P0)
+- Handler return handled via `handle_handler_return()` callback on RustReturn frame
+- Works correctly for current test cases
 
-### 8.5.6 GIL Coupling — Structural ⚠️
-- `step()` takes `py: Python<'_>` parameter; spec says step runs without GIL
-- `run_rust_steps()` does not call `py.allow_threads()` — GIL held during pure Rust steps
-- Root cause: `Value::clone_ref(py)` calls within step require GIL
-- Fix requires `PyCallOutcome::Value(Value)` change (driver converts before passing to VM)
+### 8.5.6 GIL Coupling — Mostly Resolved ✅ (Phase 9)
+- `step()` no longer takes `py: Python<'_>` parameter ✅
+- `PyCallOutcome::Value(Value)` — driver converts while holding GIL ✅
+- `Value::clone_ref(py)` → plain `.clone()` ✅
+- Remaining: `py.allow_threads()` deferred — PyVM is `#[pyclass(unsendable)]`, `&mut self` not `Send`
 
-### 8.5.7 Continuation Registry — No Lifecycle Management ⚠️
-- `continuation_registry: HashMap<ContId, Continuation>` grows without bound
-- No cleanup when continuations are consumed or dispatches complete
-- Not a correctness issue but a memory leak for long-running VMs
+### 8.5.7 Continuation Registry — Lifecycle Managed ✅ (Phase 9)
+- `mark_one_shot_consumed()` removes entries from `continuation_registry`
+- Memory bounded by live continuations only
 
 ### 8.5.8 Stdlib Installation — Global Pre-Install ⚠️
 - `PyStdlib::install_*()` pre-installs handlers globally with dedicated prompt segments
 - Spec envisions stdlib installed via `WithHandler` like any other handler
 - Current approach works but handlers aren't scoped — they persist across runs on same VM
 
+### 8.5.9 RustProgram Handlers — Fully Implemented ✅ (Phase 9)
+- `RustHandlerProgram` trait (start/resume/throw generator protocol)
+- `RustProgramHandler` factory trait + `Arc` type aliases
+- `Handler::RustProgram` variant with `can_handle` dispatch
+- `Frame::RustProgram` variant for continuation stack
+- `apply_rust_program_step()` routes Yield/Return/Throw
+- Dispatch and Delegate both wire through RustProgram `.start()`
+
 ---
 
 ## Remaining Work (Prioritized)
 
-### P0 — Must Fix (before Phase 10 integration)
+### P0 — Completed ✅
 
-1. **GIL decoupling** — The central structural issue.
-   - Change `PyCallOutcome::Value(Py<PyAny>)` → `PyCallOutcome::Value(Value)` — driver converts while holding GIL
-   - Remove `py: Python<'_>` parameter from `step()`
-   - Replace `Value::clone_ref(py)` calls with plain `Clone` (Value must derive Clone without GIL)
-   - Wrap pure Rust step loop in `py.allow_threads()` in `run_rust_steps()`
-
-2. **`resume_pending`/`resume_value` refactor** — Remove non-spec mechanism.
-   - Handler return value should flow directly through the frame callback, not via DispatchContext buffering
-   - Current `handle_handler_return()` should use the passed `value` directly when no Resume was yielded
-
-3. **Continuation registry cleanup** — Prevent memory leaks.
-   - Remove entries from `continuation_registry` when `consumed_cont_ids` marks them consumed
-   - Clean up on dispatch completion
-
-4. **Dead code cleanup** — Remove `PythonCallPurpose` and `PythonCall` struct from `frame.rs` (real `PythonCall` is in `step.rs`)
+1. ~~**GIL decoupling**~~ ✅ — `step()` no longer takes `py`, `PyCallOutcome::Value(Value)`, `clone_ref` → `.clone()`
+2. ~~**`resume_pending`/`resume_value` refactor**~~ ✅ — Removed; handler return flows through RustReturn callback
+3. ~~**Continuation registry cleanup**~~ ✅ — `mark_one_shot_consumed()` removes from registry
+4. ~~**Dead code cleanup**~~ ✅ — PythonCallPurpose/PythonCall removed from frame.rs
 
 ### P1 — Should Fix (correctness edge cases)
 
@@ -215,71 +208,69 @@ Missing:
 
 8. **WithHandler stdlib scoping** — Refactor `PyStdlib` to return handler objects usable with `WithHandler` instead of global pre-installation.
 
-9. **`RustStore` Clone** — Derive/implement Clone for RustStore (needed for scheduler store isolation).
+### P2 — Completed ✅
 
-### P2 — Missing ControlPrimitive Variants (needed for scheduler)
+9. ~~**`RustStore` Clone**~~ ✅ — Derives Clone
+10. ~~**`GetHandlers`**~~ ✅ — Returns handler chain from scope
+11. ~~**`CreateContinuation`**~~ ✅ — Creates unstarted continuation with handlers
+12. ~~**`ResumeContinuation`**~~ ✅ — Handles started + unstarted continuations
+13. ~~**`Handler::RustProgram`**~~ ✅ — Full type system + dispatch integration
 
-10. **`GetHandlers`** — Return full handler chain from callsite scope. Needed for `CreateContinuation` patterns.
+### P3 — Scheduler + Extensions (Phase 10-11)
 
-11. **`CreateContinuation`** — Create unstarted continuation from `(program, handlers)`. Uses `Continuation::create()` (already exists).
-
-12. **`ResumeContinuation`** — If `started=true`, behaves like Resume. If `started=false`, installs handlers and starts program.
-
-### P3 — Extensions (Phase 11)
-
-13. **`Handler::RustProgram`** variant + `RustHandlerProgram` trait + `RustProgramHandler` factory + `Frame::RustProgram`
-14. **Scheduler handler** — `SchedulerEffect` enum, `SchedulerHandler` (implements `RustProgramHandler`), task/promise state, Transfer-only semantics
-15. **`Value::Task/Promise/ExternalPromise`** variants + PyO3 wrappers
-16. **`Effect::Scheduler`** variant
-17. **PyStore (Layer 3)** — Python dict for user handler state
+14. **Scheduler types** — `SchedulerEffect` enum, `TaskId`/`PromiseId`/`Waitable` IDs, `StoreMode`/`StoreMergePolicy`, `TaskStore`/`TaskState`/`PromiseState`
+15. **`Effect::Scheduler`** variant + `Value::Task/Promise/ExternalPromise` + PyO3 wrappers
+16. **`SchedulerState`** — Ready queue, tasks, promises, waiters, store save/load/merge
+17. **`SchedulerHandler`** (`RustProgramHandler`) + **`SchedulerProgram`** (`RustHandlerProgram`) — Spawn/Gather/Race/Promise, Transfer-only semantics
 18. **`PythonAsyncSyntaxEscape`** + `PythonCall::CallAsync` + `PendingPython::AsyncEscape` + `async_run` driver
 19. **`PythonCall::CallAsync`** + sync_run TypeError guard
 
 ---
 
-## Phase 9: End-to-End & Performance (Next)
+## Phase 9: P0 Fixes + RustProgram + ControlPrimitives ✅
 
-- [ ] Fix P0 items (GIL decoupling, resume_pending refactor, registry cleanup, dead code)
-- [ ] Test complex nested handler scenarios (handler-in-handler, delegate chains)
-- [ ] Test abandon semantics (handler returns without Resume)
-- [ ] Test exception propagation through handler chains
-- [ ] Benchmark against Python CESK v3 interpreter
-- [ ] Memory leak checks (PyObject reference counting, continuation registry)
+- [x] Fix P0 items (GIL decoupling, resume_pending refactor, registry cleanup, dead code)
+- [x] Add `RustHandlerProgram` trait + `RustProgramHandler` factory + type aliases
+- [x] Add `Handler::RustProgram` variant with dispatch integration
+- [x] Add `Frame::RustProgram` variant + `apply_rust_program_step()`
+- [x] Add `Value::Handlers` variant + `GetHandlers` primitive
+- [x] Add `CreateContinuation` + `ResumeContinuation` primitives
+- [x] Add `RustStore` Clone + `PyStore` struct
+- [x] pyvm.rs: classify_yielded support for all new primitives
+- [x] Test complex nested handler scenarios (handler-in-handler, delegate chains)
+- [x] Test abandon semantics (handler returns without Resume)
+- [x] Test exception propagation through handler chains
+- [x] **Tests:** 57 Rust unit tests + 18 Python integration tests
 
-## Phase 10: Integration & Migration
+## Phase 10: Scheduler Handler (Next)
 
-- [ ] Fix P1 items (validation, stdlib scoping, RustStore Clone)
-- [ ] Integrate with existing doeff Python API
-- [ ] Migrate `@do` decorator support (verify compatibility)
-- [ ] Ensure backward compatibility with existing programs
-- [ ] Add P2 ControlPrimitive variants (GetHandlers, CreateContinuation, ResumeContinuation)
-
-## Phase 11: Optional Extensions
-
-### 11.1 RustProgram Handlers
-- [ ] Add `Frame::RustProgram` variant
-- [ ] Add `Handler::RustProgram(RustProgramHandlerRef)` variant
-- [ ] Implement `RustHandlerProgram` trait (start/resume/throw)
-- [ ] Implement `RustProgramHandler` factory trait (can_handle/create_program)
-- [ ] Add `RustProgramStep` enum (Yield, Return, Throw)
-- [ ] Handle RustProgram in `step_deliver_or_throw()` (call resume/throw, apply_rust_program_step)
-
-### 11.2 Scheduler Handler
-- [ ] Add `SchedulerEffect` enum (Spawn, Gather, Race, CreatePromise, CompletePromise, FailPromise, CreateExternalPromise, TaskCompleted)
+### 10.1 Scheduler Types
+- [ ] Add `TaskId`, `PromiseId`, `Waitable` ID types to `ids.rs`
+- [ ] Add `SchedulerEffect` enum to `effect.rs`
 - [ ] Add `Effect::Scheduler` variant
-- [ ] Add `Value::Task`, `Value::Promise`, `Value::ExternalPromise`
+- [ ] Add `StoreMode`, `StoreMergePolicy`, `TaskStore` types
+- [ ] Add `Value::Task(TaskHandle)`, `Value::Promise(PromiseHandle)`, `Value::ExternalPromise(ExternalPromise)`
+- [ ] Add `TaskHandle`, `PromiseHandle`, `ExternalPromise` structs with PyO3 wrappers
+
+### 10.2 Scheduler State + Handler
 - [ ] Implement `SchedulerState` (ready queue, tasks, promises, waiters)
-- [ ] Implement `SchedulerHandler` (RustProgramHandler)
-- [ ] Implement `SchedulerProgram` (RustHandlerProgram) with Transfer-only semantics
-- [ ] Add StoreMode::Shared/Isolated with StoreMergePolicy
-- [ ] Add PyO3 wrappers for TaskHandle, PromiseHandle, ExternalPromise
+- [ ] Implement `TaskState`, `PromiseState` enums
+- [ ] Implement `SchedulerHandler` (`RustProgramHandler` — factory)
+- [ ] Implement `SchedulerProgram` (`RustHandlerProgram` — start/resume/throw)
+- [ ] Implement Spawn (CreateContinuation → enqueue task → Transfer)
+- [ ] Implement Gather/Race (wait or immediate → Transfer)
+- [ ] Implement Promise lifecycle (Create/Complete/Fail)
+- [ ] Implement TaskCompleted (mark done, wake waiters)
+- [ ] Implement store save/load/merge for isolated tasks
 
-### 11.3 PyStore Layer 3
-- [ ] Implement `PyStore` struct with Python dict
-- [ ] Add to VM struct as `Option<PyStore>`
-- [ ] Expose via PyO3 for Python handlers
+### 10.3 Integration
+- [ ] Fix P1 items (validation, stdlib scoping)
+- [ ] Wire `PyVM::scheduler()` to return PyO3-wrapped handler
+- [ ] Integration tests: spawn, gather, race, promises
+- [ ] Benchmark against Python CESK v3 interpreter
 
-### 11.4 Async Integration
+## Phase 11: Async Integration (Optional)
+
 - [ ] Add `PythonCall::CallAsync` variant
 - [ ] Add `PendingPython::AsyncEscape` variant
 - [ ] Add `ControlPrimitive::PythonAsyncSyntaxEscape`
@@ -292,12 +283,12 @@ Missing:
 
 | ID | Invariant | Status |
 |----|-----------|--------|
-| INV-1 | GIL only held during PythonCall execution | ⚠️ Violated: step() takes py param, no allow_threads |
+| INV-1 | GIL only held during PythonCall execution | ✅ (step() GIL-free; allow_threads deferred due to unsendable) |
 | INV-3 | One-shot continuations (ContId checked before resume) | ✅ |
 | INV-7 | k.started validated before Resume/Transfer | ✅ |
 | INV-9 | All effects go through dispatch (no bypass) | ✅ |
 | INV-14 | Generator re-push: GenYield re-pushes frame with started=true | ✅ |
-| INV-15 | GIL-safe cloning: use clone_ref(py) for Py\<PyAny\> | ✅ (but blocks GIL decoupling) |
+| INV-15 | GIL-safe cloning: plain Clone (Py\<PyAny\> Clone via refcount) | ✅ |
 
 ---
 
@@ -305,9 +296,9 @@ Missing:
 
 | Suite | Count | Status |
 |-------|-------|--------|
-| Rust unit tests (`cargo test`) | 52 | ✅ All passing |
-| Python integration tests (`test_pyvm.py`) | 14 | ✅ All passing |
-| **Total** | **66** | **✅** |
+| Rust unit tests (`cargo test`) | 57 | ✅ All passing |
+| Python integration tests (`test_pyvm.py`) | 18 | ✅ All passing |
+| **Total** | **75** | **✅** |
 
 ---
 
@@ -319,16 +310,16 @@ packages/doeff-vm/
 ├── src/
 │   ├── lib.rs          # Module root + re-exports
 │   ├── ids.rs          # Core ID types (Marker, SegmentId, ContId, CallbackId, DispatchId, RunnableId)
-│   ├── value.rs        # Value enum (Python, Continuation, Unit, Int, String, Bool, None)
+│   ├── value.rs        # Value enum (Python, Continuation, Handlers, Unit, Int, String, Bool, None)
 │   ├── error.rs        # VMError enum (OneShotViolation, UnhandledEffect, etc.)
-│   ├── frame.rs        # Frame enum (RustReturn, PythonGenerator) + dead code to clean up
+│   ├── frame.rs        # Frame enum (RustReturn, RustProgram, PythonGenerator)
 │   ├── effect.rs       # Effect enum (Get, Put, Modify, Ask, Tell, Python)
 │   ├── segment.rs      # Segment + SegmentKind (Normal, PromptBoundary)
 │   ├── continuation.rs # Continuation (capture/create) + RunnableContinuation
-│   ├── handler.rs      # Handler, HandlerAction, HandlerEntry, StdlibHandler, stdlib impls
+│   ├── handler.rs      # Handler, HandlerAction, StdlibHandler, RustHandlerProgram trait, RustProgramHandler trait
 │   ├── arena.rs        # SegmentArena with free list
-│   ├── step.rs         # Mode, StepEvent, PythonCall, PendingPython, Yielded, ControlPrimitive, PyCallOutcome
-│   ├── vm.rs           # VM struct, step functions, RustStore, DispatchContext, DebugConfig
+│   ├── step.rs         # Mode, StepEvent, PythonCall, PendingPython, Yielded, 9 ControlPrimitives, PyCallOutcome
+│   ├── vm.rs           # VM struct, step functions, RustStore, PyStore, DispatchContext, DebugConfig
 │   └── pyvm.rs         # PyVM wrapper, PyStdlib, Python bindings, classify_yielded
 └── tests/
     └── test_pyvm.py    # 14 Python integration tests
