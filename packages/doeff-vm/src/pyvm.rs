@@ -13,7 +13,7 @@ use crate::step::{
 use crate::value::Value;
 use crate::vm::VM;
 
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct PyVM {
     vm: VM,
 }
@@ -25,7 +25,7 @@ pub struct PyStdlib {
     writer_marker: Option<Marker>,
 }
 
-#[pyclass(unsendable)]
+#[pyclass]
 pub struct PySchedulerHandler {
     handler: SchedulerHandler,
     marker: Option<Marker>,
@@ -40,11 +40,20 @@ impl PyVM {
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<PyObject> {
         // Convert program to generator - handles KleisliProgramCall and other Program types
-        let gen = self.to_generator(py, program.unbind())?;
+        // Lenient: accepts raw generators for user convenience at the entry point.
+        let gen = self.to_generator_lenient(py, program.unbind())?;
         let gen_bound = gen.bind(py).clone();
         self.start_with_generator(gen_bound)?;
 
         loop {
+            // GIL note: We cannot use py.allow_threads(|| self.run_rust_steps())
+            // here because VM.step() clones Py<PyAny> values internally (generator
+            // references, Mode values, Yielded snapshots). On free-threaded Python
+            // (3.14t) with PyO3's py-clone feature, Py::clone() asserts the GIL is
+            // held. To enable allow_threads, step() would need to be refactored to
+            // use move/swap semantics instead of clone for all Py<PyAny> fields.
+            // PyVM is Send+Sync (unsendable removed), so the structural prerequisite
+            // is satisfied -- only the internal clone barrier remains.
             let event = self.run_rust_steps();
 
             match event {
@@ -103,6 +112,178 @@ impl PyVM {
         };
         self.vm.set_debug(config);
     }
+
+    /// Get the PyStore dict, creating it lazily.
+    pub fn py_store(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+        self.vm.init_py_store(py);
+        match self.vm.py_store() {
+            Some(store) => Ok(store.dict.clone_ref(py).into()),
+            None => Ok(py.None().into()),
+        }
+    }
+
+    /// Set a value in the PyStore.
+    pub fn set_store(&mut self, py: Python<'_>, key: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
+        self.vm.init_py_store(py);
+        if let Some(store) = self.vm.py_store_mut() {
+            store.dict.bind(py).set_item(key, value)?;
+        }
+        Ok(())
+    }
+
+    /// Get a value from the PyStore.
+    pub fn get_store(&self, py: Python<'_>, key: &str) -> PyResult<PyObject> {
+        match self.vm.py_store() {
+            Some(store) => {
+                let dict = store.dict.bind(py);
+                match dict.get_item(key)? {
+                    Some(val) => Ok(val.into()),
+                    None => Ok(py.None().into()),
+                }
+            }
+            None => Ok(py.None().into()),
+        }
+    }
+
+    /// Initialize the VM with a program (generator or Program object) without running the step loop.
+    /// Use with `step_once()` for manual / async driving.
+    pub fn start_program(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
+        let gen = self.to_generator_lenient(py, program.unbind())?;
+        let gen_bound = gen.bind(py).clone();
+        self.start_with_generator(gen_bound)?;
+        Ok(())
+    }
+
+    /// Run one Rust step cycle, returning a tuple whose first element is a string tag.
+    ///
+    /// Possible returns:
+    /// - `("done", value)` -- program completed
+    /// - `("call_async", func, args_tuple)` -- an async Python call is needed
+    /// - `("continue",)` -- a synchronous Python call was handled internally; call again
+    ///
+    /// Raises `RuntimeError` on VM errors.
+    pub fn step_once(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+        // See run() for GIL/allow_threads note.
+        let event = self.run_rust_steps();
+
+        match event {
+            StepEvent::Done(value) => {
+                let py_val = value.to_pyobject(py)?;
+                let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
+                    "done".into_pyobject(py)?.into_any(),
+                    py_val,
+                ];
+                let tuple = PyTuple::new(py, elems)?;
+                Ok(tuple.into())
+            }
+            StepEvent::Error(e) => {
+                Err(PyRuntimeError::new_err(e.to_string()))
+            }
+            StepEvent::NeedsPython(call) => {
+                if let PythonCall::CallAsync { func, args } = call {
+                    let py_func = func.bind(py).clone().into_any();
+                    let py_args = self.values_to_tuple(py, &args)?.into_any();
+                    let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
+                        "call_async".into_pyobject(py)?.into_any(),
+                        py_func,
+                        py_args,
+                    ];
+                    let tuple = PyTuple::new(py, elems)?;
+                    Ok(tuple.into())
+                } else {
+                    // Handle synchronously like run() does
+                    let outcome = self.execute_python_call(py, call)?;
+                    self.vm.receive_python_result(outcome);
+                    let elems: Vec<Bound<'_, pyo3::PyAny>> = vec![
+                        "continue".into_pyobject(py)?.into_any(),
+                    ];
+                    let tuple = PyTuple::new(py, elems)?;
+                    Ok(tuple.into())
+                }
+            }
+            StepEvent::Continue => unreachable!("handled in run_rust_steps"),
+        }
+    }
+
+    /// Feed the result of an async call back into the VM.
+    pub fn feed_async_result(&mut self, _py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
+        let val = Value::from_pyobject(&value);
+        self.vm.receive_python_result(PyCallOutcome::Value(val));
+        Ok(())
+    }
+
+    /// Feed an async error back into the VM.
+    pub fn feed_async_error(&mut self, py: Python<'_>, error_value: Bound<'_, PyAny>) -> PyResult<()> {
+        // Build a PyException from the error value.
+        // error_value is expected to be a Python exception instance.
+        let exc_type = error_value.get_type().into_any().unbind();
+        let exc_value = error_value.clone().unbind();
+        let exc_tb = py.None();
+        let py_exc = crate::step::PyException::new(exc_type, exc_value, Some(exc_tb));
+        self.vm.receive_python_result(PyCallOutcome::GenError(py_exc));
+        Ok(())
+    }
+
+    /// Run a program with scoped stdlib handlers.
+    ///
+    /// Handlers are installed only for this run and removed afterwards,
+    /// even if the program errors. This provides proper WithHandler-style
+    /// scoping without requiring Python-side wrappers.
+    #[pyo3(signature = (program, state=false, reader=false, writer=false))]
+    pub fn run_scoped(
+        &mut self,
+        py: Python<'_>,
+        program: Bound<'_, PyAny>,
+        state: bool,
+        reader: bool,
+        writer: bool,
+    ) -> PyResult<PyObject> {
+        // Track markers installed in this scope so we can clean them up
+        let mut scoped_markers: Vec<Marker> = Vec::new();
+
+        if state {
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = self.vm.alloc_segment(seg);
+            self.vm.install_handler(
+                marker,
+                HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            );
+            scoped_markers.push(marker);
+        }
+
+        if reader {
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = self.vm.alloc_segment(seg);
+            self.vm.install_handler(
+                marker,
+                HandlerEntry::new(Handler::Stdlib(StdlibHandler::Reader), prompt_seg_id),
+            );
+            scoped_markers.push(marker);
+        }
+
+        if writer {
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = self.vm.alloc_segment(seg);
+            self.vm.install_handler(
+                marker,
+                HandlerEntry::new(Handler::Stdlib(StdlibHandler::Writer), prompt_seg_id),
+            );
+            scoped_markers.push(marker);
+        }
+
+        // Run the program
+        let result = self.run(py, program);
+
+        // Clean up: remove handlers installed in this scope
+        for marker in &scoped_markers {
+            self.vm.remove_handler(*marker);
+        }
+
+        result
+    }
 }
 
 impl PyVM {
@@ -138,7 +319,8 @@ impl PyVM {
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
             PythonCall::StartProgram { program } => {
-                let gen = self.to_generator(py, program)?;
+                // Strict: internal sub-program starts require ProgramBase, not raw generators.
+                let gen = self.to_generator_strict(py, program)?;
                 Ok(PyCallOutcome::Value(Value::Python(gen)))
             }
             PythonCall::CallFunc { func, args } => {
@@ -187,7 +369,24 @@ impl PyVM {
         }
     }
 
-    fn to_generator(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    /// Strict: requires ProgramBase (has `to_generator` method). Rejects raw generators.
+    /// Used for `StartProgram` (when `Yielded::Program` is processed internally).
+    fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        let program_bound = program.bind(py);
+        let type_name = program_bound.get_type().name()?;
+        if type_name.to_string().contains("generator") {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Expected ProgramBase (with to_generator method), got raw generator. \
+                 Yield a ProgramBase object (e.g. decorated with @do) instead of a raw generator."
+            ));
+        }
+        let to_gen = program_bound.getattr("to_generator")?;
+        let gen = to_gen.call0()?;
+        Ok(gen.unbind())
+    }
+
+    /// Lenient: accepts raw generators or ProgramBase. Used for `run()` / `start_program`.
+    fn to_generator_lenient(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let program_bound = program.bind(py);
         let type_name = program_bound.get_type().name()?;
         if type_name.to_string().contains("generator") {
