@@ -5,6 +5,7 @@ use pyo3::types::PyTuple;
 use crate::effect::Effect;
 use crate::handler::{Handler, HandlerEntry, StdlibHandler};
 use crate::ids::{ContId, Marker};
+use crate::scheduler::{SchedulerEffect, SchedulerHandler};
 use crate::segment::Segment;
 use crate::step::{
     ControlPrimitive, Mode, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
@@ -22,6 +23,12 @@ pub struct PyStdlib {
     state_marker: Option<Marker>,
     reader_marker: Option<Marker>,
     writer_marker: Option<Marker>,
+}
+
+#[pyclass(unsendable)]
+pub struct PySchedulerHandler {
+    handler: SchedulerHandler,
+    marker: Option<Marker>,
 }
 
 #[pymethods]
@@ -61,6 +68,13 @@ impl PyVM {
             state_marker: None,
             reader_marker: None,
             writer_marker: None,
+        }
+    }
+
+    pub fn scheduler(&self) -> PySchedulerHandler {
+        PySchedulerHandler {
+            handler: SchedulerHandler::new(),
+            marker: None,
         }
     }
 
@@ -329,6 +343,16 @@ impl PyVM {
                         message: Value::from_pyobject(&message),
                     }));
                 }
+                "CreatePromise" | "SchedulerCreatePromise" => {
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::CreatePromise,
+                    )));
+                }
+                "CreateExternalPromise" | "SchedulerCreateExternalPromise" => {
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::CreateExternalPromise,
+                    )));
+                }
                 _ => {}
             }
         }
@@ -417,6 +441,26 @@ impl PyStdlib {
     }
 }
 
+#[pymethods]
+impl PySchedulerHandler {
+    pub fn install(&mut self, vm: &mut PyVM) {
+        if self.marker.is_none() {
+            self.marker = Some(Marker::fresh());
+        }
+        if let Some(marker) = self.marker {
+            let seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = vm.vm.alloc_segment(seg);
+            vm.vm.install_handler(
+                marker,
+                HandlerEntry::new(
+                    Handler::RustProgram(std::sync::Arc::new(self.handler.clone())),
+                    prompt_seg_id,
+                ),
+            );
+        }
+    }
+}
+
 fn pyerr_to_exception(py: Python<'_>, e: PyErr) -> PyResult<PyException> {
     let exc_type = e.get_type(py).into_any().unbind();
     let exc_value = e.value(py).clone().into_any().unbind();
@@ -433,5 +477,6 @@ fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
     m.add_class::<PyStdlib>()?;
+    m.add_class::<PySchedulerHandler>()?;
     Ok(())
 }

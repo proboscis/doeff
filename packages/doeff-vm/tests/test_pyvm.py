@@ -446,5 +446,37 @@ def test_handler_accumulates_across_effects():
     assert accumulated == [10, 20, 30]
 
 
+def test_scheduler_creation():
+    """Test scheduler handler can be created and installed."""
+    from doeff_vm import PyVM, PySchedulerHandler
+    vm = PyVM()
+    scheduler = vm.scheduler()
+    assert scheduler is not None
+    scheduler.install(vm)
+
+
+class CreatePromise:
+    """Scheduler effect: create a new promise."""
+    pass
+
+
+def test_scheduler_create_promise():
+    """Test scheduler CreatePromise effect."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+    scheduler = vm.scheduler()
+    scheduler.install(vm)
+
+    def body():
+        promise = yield CreatePromise()
+        return promise
+
+    result = vm.run(body())
+    # Result should be a dict representing a PromiseHandle
+    assert isinstance(result, dict)
+    assert result["type"] == "Promise"
+    assert "promise_id" in result
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
