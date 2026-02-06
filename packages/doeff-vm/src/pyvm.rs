@@ -179,6 +179,11 @@ impl PyVM {
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
+            PythonCall::CallAsync { .. } => {
+                Err(pyo3::exceptions::PyTypeError::new_err(
+                    "CallAsync requires async_run (PythonAsyncSyntaxEscape not supported in sync mode)"
+                ))
+            }
         }
     }
 
@@ -275,7 +280,16 @@ impl PyVM {
                     }));
                 }
                 "Delegate" => {
-                    return Ok(Yielded::Primitive(ControlPrimitive::Delegate));
+                    let effect = if let Ok(eff_obj) = obj.getattr("effect") {
+                        if !eff_obj.is_none() {
+                            Some(Effect::Python(eff_obj.unbind()))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+                    return Ok(Yielded::Primitive(ControlPrimitive::Delegate { effect }));
                 }
                 "GetContinuation" => {
                     return Ok(Yielded::Primitive(ControlPrimitive::GetContinuation));
@@ -352,6 +366,10 @@ impl PyVM {
                     return Ok(Yielded::Effect(Effect::Scheduler(
                         SchedulerEffect::CreateExternalPromise,
                     )));
+                }
+                "PythonAsyncSyntaxEscape" => {
+                    let action = obj.getattr("action")?.unbind();
+                    return Ok(Yielded::Primitive(ControlPrimitive::PythonAsyncSyntaxEscape { action }));
                 }
                 _ => {}
             }
