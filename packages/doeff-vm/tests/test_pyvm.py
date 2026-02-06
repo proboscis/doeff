@@ -238,6 +238,11 @@ class Resume:
         self.value = value
 
 
+class Delegate:
+    """Control primitive to delegate effect to outer handler."""
+    pass
+
+
 class CustomEffect:
     """Custom effect for testing Python handlers."""
     def __init__(self, value):
@@ -245,13 +250,13 @@ class CustomEffect:
 
 
 def make_custom_handler():
-    """Create a handler that doubles the effect value."""
+    """Create a handler that doubles the effect value and delegates unknown effects."""
     def handler(effect, k):
         if isinstance(effect, CustomEffect):
             resume_value = yield Resume(k, effect.value * 2)
             return resume_value
         else:
-            raise ValueError(f"Unknown effect: {effect}")
+            yield Delegate()
     return handler
 
 
@@ -274,16 +279,16 @@ def test_python_handler_basic():
 
 
 def make_state_counting_handler():
-    """Create a handler that counts effect invocations."""
+    """Create a handler that counts effect invocations and delegates unknown effects."""
     state = {"count": 0}
-    
+
     def handler(effect, k):
         if isinstance(effect, CustomEffect):
             state["count"] += 1
             resume_value = yield Resume(k, state["count"])
             return resume_value
         else:
-            raise ValueError(f"Unknown effect: {effect}")
+            yield Delegate()
     return handler, state
 
 
