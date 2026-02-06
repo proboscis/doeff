@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::error::VMError;
-use crate::handler::StdlibHandler;
+use crate::handler::{Handler, StdlibHandler};
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -95,6 +95,9 @@ pub enum ControlPrimitive {
     WithHandler { handler: Py<PyAny>, body: Py<PyAny> },
     Delegate,
     GetContinuation,
+    GetHandlers,
+    CreateContinuation { program: Py<PyAny>, handlers: Vec<Handler> },
+    ResumeContinuation { k: Continuation, value: Value },
     Pure(Value),
 }
 
@@ -180,6 +183,15 @@ impl ControlPrimitive {
             },
             ControlPrimitive::Delegate => ControlPrimitive::Delegate,
             ControlPrimitive::GetContinuation => ControlPrimitive::GetContinuation,
+            ControlPrimitive::GetHandlers => ControlPrimitive::GetHandlers,
+            ControlPrimitive::CreateContinuation { program, handlers } => ControlPrimitive::CreateContinuation {
+                program: program.clone_ref(py),
+                handlers: handlers.clone(),
+            },
+            ControlPrimitive::ResumeContinuation { k, value } => ControlPrimitive::ResumeContinuation {
+                k: k.clone(),
+                value: value.clone(),
+            },
             ControlPrimitive::Pure(v) => ControlPrimitive::Pure(v.clone()),
         }
     }

@@ -1,17 +1,20 @@
 //! Handler types for effect handling.
 
+use std::sync::{Arc, Mutex};
+
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::ids::SegmentId;
-use crate::step::{HandlerContext, PythonCall};
+use crate::step::{HandlerContext, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
 
 #[derive(Debug, Clone)]
 pub enum Handler {
     Stdlib(StdlibHandler),
+    RustProgram(RustProgramHandlerRef),
     Python(Py<PyAny>),
 }
 
@@ -21,6 +24,36 @@ pub enum StdlibHandler {
     Reader,
     Writer,
 }
+
+/// Result of stepping a Rust handler program.
+pub enum RustProgramStep {
+    /// Yield a control primitive / effect / program
+    Yield(Yielded),
+    /// Return a value (like generator return)
+    Return(Value),
+    /// Throw an exception into the VM
+    Throw(PyException),
+}
+
+/// A Rust handler program instance (generator-like).
+/// start/resume/throw mirror Python generator protocol but run in Rust.
+pub trait RustHandlerProgram: std::fmt::Debug + Send {
+    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
+}
+
+/// Factory for Rust handler programs. Each dispatch creates a fresh instance.
+pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
+    fn can_handle(&self, effect: &Effect) -> bool;
+    fn create_program(&self) -> RustProgramRef;
+}
+
+/// Shared reference to a Rust program handler factory.
+pub type RustProgramHandlerRef = Arc<dyn RustProgramHandler + Send + Sync>;
+
+/// Shared reference to a running Rust handler program (cloneable for continuations).
+pub type RustProgramRef = Arc<Mutex<Box<dyn RustHandlerProgram + Send>>>;
 
 #[derive(Debug, Clone)]
 pub struct HandlerEntry {
@@ -158,6 +191,7 @@ impl Handler {
     pub fn can_handle(&self, effect: &Effect) -> bool {
         match self {
             Handler::Stdlib(h) => h.can_handle(effect),
+            Handler::RustProgram(h) => h.can_handle(effect),
             Handler::Python(_) => true,
         }
     }
@@ -290,5 +324,12 @@ mod tests {
         assert!(!StdlibHandler::Reader.can_handle(&Effect::Get {
             key: "x".to_string()
         }));
+    }
+
+    #[test]
+    fn test_rust_program_handler_ref_is_clone() {
+        // Verify that Handler::RustProgram is Clone via Arc
+        // (Can't easily instantiate a trait object in unit test, but verify types compile)
+        let _: fn() -> RustProgramHandlerRef = || unreachable!();
     }
 }
