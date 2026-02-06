@@ -245,6 +245,7 @@ impl VM {
                     Effect::Ask { .. } => "HandleYield(Ask)",
                     Effect::Tell { .. } => "HandleYield(Tell)",
                     Effect::Python(_) => "HandleYield(Python)",
+                    Effect::Scheduler(_) => "HandleYield(Scheduler)",
                 },
                 Yielded::Primitive(p) => match p {
                     ControlPrimitive::Pure(_) => "HandleYield(Pure)",

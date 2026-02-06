@@ -4,6 +4,7 @@
 
 use pyo3::prelude::*;
 
+use crate::scheduler::SchedulerEffect;
 use crate::value::Value;
 
 /// An effect that can be yielded by user code.
@@ -28,6 +29,9 @@ pub enum Effect {
     /// Tell(message) -> () (Writer effect)
     Tell { message: Value },
 
+    /// Scheduler effect (Spawn, Gather, Race, Promise, etc.)
+    Scheduler(SchedulerEffect),
+
     // === User-defined effects (Python handlers) ===
     /// Any Python effect object
     Python(Py<PyAny>),
@@ -43,6 +47,7 @@ impl Effect {
                 | Effect::Modify { .. }
                 | Effect::Ask { .. }
                 | Effect::Tell { .. }
+                | Effect::Scheduler(_)
         )
     }
 
@@ -54,6 +59,7 @@ impl Effect {
             Effect::Modify { .. } => "Modify",
             Effect::Ask { .. } => "Ask",
             Effect::Tell { .. } => "Tell",
+            Effect::Scheduler(_) => "Scheduler",
             Effect::Python(_) => "Python",
         }
     }
@@ -111,6 +117,11 @@ impl Effect {
                     }
                     Effect::Tell { message } => {
                         dict.set_item("message", message.to_pyobject(py)?)?;
+                    }
+                    Effect::Scheduler(_) => {
+                        let dict = pyo3::types::PyDict::new(py);
+                        dict.set_item("type", "Scheduler")?;
+                        return Ok(dict.into_any());
                     }
                     _ => {}
                 }
