@@ -100,7 +100,7 @@ pub enum ControlPrimitive {
 
 #[derive(Debug, Clone)]
 pub enum PyCallOutcome {
-    Value(Py<PyAny>),
+    Value(Value),
     GenYield(Yielded),
     GenReturn(Value),
     GenError(PyException),

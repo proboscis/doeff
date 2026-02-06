@@ -3,7 +3,6 @@
 use pyo3::prelude::*;
 
 use crate::ids::CallbackId;
-use crate::value::Value;
 
 /// A frame in the continuation stack.
 ///
@@ -34,20 +33,6 @@ impl Frame {
     pub fn is_python(&self) -> bool {
         matches!(self, Frame::PythonGenerator { .. })
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum PythonCallPurpose {
-    SendToFrame,
-    StartGenerator,
-    HandleYield,
-}
-
-#[derive(Debug)]
-pub struct PythonCall {
-    pub callable: Py<PyAny>,
-    pub args: Vec<Value>,
-    pub purpose: PythonCallPurpose,
 }
 
 #[cfg(test)]
