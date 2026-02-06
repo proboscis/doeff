@@ -10,7 +10,7 @@ use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::error::VMError;
 use crate::frame::Frame;
-use crate::handler::{Handler, HandlerAction, HandlerEntry};
+use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::segment::Segment;
 use crate::step::{
@@ -292,16 +292,21 @@ impl VM {
                     Effect::Scheduler(_) => "HandleYield(Scheduler)",
                 },
                 Yielded::Primitive(p) => match p {
-                    ControlPrimitive::Pure(_) => "HandleYield(Pure)",
                     ControlPrimitive::Resume { .. } => "HandleYield(Resume)",
                     ControlPrimitive::Transfer { .. } => "HandleYield(Transfer)",
                     ControlPrimitive::WithHandler { .. } => "HandleYield(WithHandler)",
                     ControlPrimitive::Delegate { .. } => "HandleYield(Delegate)",
                     ControlPrimitive::GetContinuation => "HandleYield(GetContinuation)",
                     ControlPrimitive::GetHandlers => "HandleYield(GetHandlers)",
-                    ControlPrimitive::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
-                    ControlPrimitive::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                    ControlPrimitive::CreateContinuation { .. } => {
+                        "HandleYield(CreateContinuation)"
+                    }
+                    ControlPrimitive::ResumeContinuation { .. } => {
+                        "HandleYield(ResumeContinuation)"
+                    }
                     ControlPrimitive::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                    ControlPrimitive::Call { .. } => "HandleYield(Call)",
+                    ControlPrimitive::GetCallStack => "HandleYield(GetCallStack)",
                 },
                 Yielded::Program(_) => "HandleYield(Program)",
                 Yielded::Unknown(_) => "HandleYield(Unknown)",
@@ -319,10 +324,10 @@ impl VM {
             .pending_python
             .as_ref()
             .map(|p| match p {
-                PendingPython::StartProgramFrame => "StartProgramFrame",
+                PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
                 PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
-                PendingPython::StdlibContinuation { .. } => "StdlibContinuation",
+                PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
                 PendingPython::AsyncEscape => "AsyncEscape",
             })
             .unwrap_or("None");
@@ -342,9 +347,17 @@ impl VM {
                     let frame_kind = match frame {
                         Frame::RustReturn { .. } => "RustReturn",
                         Frame::RustProgram { .. } => "RustProgram",
-                        Frame::PythonGenerator { started, .. } => {
+                        Frame::PythonGenerator {
+                            started, metadata, ..
+                        } => {
                             if *started {
-                                "PythonGenerator(started)"
+                                if metadata.is_some() {
+                                    "PythonGenerator(started,meta)"
+                                } else {
+                                    "PythonGenerator(started)"
+                                }
+                            } else if metadata.is_some() {
+                                "PythonGenerator(new,meta)"
                             } else {
                                 "PythonGenerator(new)"
                             }
@@ -414,8 +427,8 @@ impl VM {
         let frame = segment.pop_frame().unwrap();
 
         match frame {
-            Frame::RustReturn { callback_id } => {
-                let callback = match self.callbacks.remove(&callback_id) {
+            Frame::RustReturn { cb } => {
+                let callback = match self.callbacks.remove(&cb) {
                     Some(cb) => cb,
                     None => return StepEvent::Error(VMError::internal("callback not found")),
                 };
@@ -442,9 +455,14 @@ impl VM {
                 self.apply_rust_program_step(step, program)
             }
 
-            Frame::PythonGenerator { generator, started } => {
+            Frame::PythonGenerator {
+                generator,
+                started,
+                metadata,
+            } => {
                 self.pending_python = Some(PendingPython::StepUserGenerator {
                     generator: generator.clone(),
+                    metadata: metadata.clone(),
                 });
 
                 match &self.mode {
@@ -493,6 +511,16 @@ impl VM {
                 self.mode = Mode::Throw(exc);
                 StepEvent::Continue
             }
+            RustProgramStep::NeedsPython(call) => {
+                // Program needs a Python call (e.g., Modify modifier).
+                // Re-push the frame so the result flows through normal step delivery.
+                // The next Deliver will hit this frame and call resume().
+                if let Some(seg) = self.current_segment_mut() {
+                    seg.push_frame(Frame::RustProgram { program });
+                }
+                self.pending_python = Some(PendingPython::RustProgramContinuation);
+                StepEvent::NeedsPython(call)
+            }
         }
     }
 
@@ -513,14 +541,16 @@ impl VM {
                 self.lazy_pop_completed();
                 use crate::step::ControlPrimitive;
                 match prim {
-                    ControlPrimitive::Pure(v) => {
-                        self.mode = Mode::Deliver(v);
-                        StepEvent::Continue
-                    }
-                    ControlPrimitive::Resume { k, value } => self.handle_resume(k, value),
-                    ControlPrimitive::Transfer { k, value } => self.handle_transfer(k, value),
-                    ControlPrimitive::WithHandler { handler, body } => {
-                        self.handle_with_handler(handler, body)
+                    ControlPrimitive::Resume {
+                        continuation,
+                        value,
+                    } => self.handle_resume(continuation, value),
+                    ControlPrimitive::Transfer {
+                        continuation,
+                        value,
+                    } => self.handle_transfer(continuation, value),
+                    ControlPrimitive::WithHandler { handler, program } => {
+                        self.handle_with_handler(handler, program)
                     }
                     ControlPrimitive::Delegate { effect } => self.handle_delegate(effect),
                     ControlPrimitive::GetContinuation => self.handle_get_continuation(),
@@ -528,9 +558,10 @@ impl VM {
                     ControlPrimitive::CreateContinuation { program, handlers } => {
                         self.handle_create_continuation(program, handlers)
                     }
-                    ControlPrimitive::ResumeContinuation { k, value } => {
-                        self.handle_resume_continuation(k, value)
-                    }
+                    ControlPrimitive::ResumeContinuation {
+                        continuation,
+                        value,
+                    } => self.handle_resume_continuation(continuation, value),
                     ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
                         self.pending_python = Some(PendingPython::AsyncEscape);
                         StepEvent::NeedsPython(PythonCall::CallAsync {
@@ -538,15 +569,44 @@ impl VM {
                             args: vec![],
                         })
                     }
+                    ControlPrimitive::Call { program, metadata } => {
+                        self.pending_python = Some(PendingPython::StartProgramFrame {
+                            metadata: Some(metadata),
+                        });
+                        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+                    }
+                    ControlPrimitive::GetCallStack => {
+                        let mut stack = Vec::new();
+                        let mut seg_id = self.current_segment;
+                        while let Some(id) = seg_id {
+                            if let Some(seg) = self.segments.get(id) {
+                                for frame in seg.frames.iter().rev() {
+                                    if let Frame::PythonGenerator {
+                                        metadata: Some(m), ..
+                                    } = frame
+                                    {
+                                        stack.push(m.clone());
+                                    }
+                                }
+                                seg_id = seg.caller;
+                            } else {
+                                break;
+                            }
+                        }
+                        self.mode = Mode::Deliver(Value::Unit);
+                        StepEvent::Continue
+                    }
                 }
             }
 
             Yielded::Program(prog) => {
-                self.pending_python = Some(PendingPython::StartProgramFrame);
+                self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
                 StepEvent::NeedsPython(PythonCall::StartProgram { program: prog })
             }
 
-            Yielded::Unknown(_) => StepEvent::Error(VMError::type_error("unknown yielded value: expected Effect, ControlPrimitive, or Program")),
+            Yielded::Unknown(_) => StepEvent::Error(VMError::type_error(
+                "unknown yielded value: expected Effect, ControlPrimitive, or Program",
+            )),
         }
     }
 
@@ -583,13 +643,14 @@ impl VM {
         };
 
         match (pending, outcome) {
-            (PendingPython::StartProgramFrame, PyCallOutcome::Value(gen_val)) => {
+            (PendingPython::StartProgramFrame { metadata }, PyCallOutcome::Value(gen_val)) => {
                 match gen_val {
                     Value::Python(gen) => {
                         if let Some(seg) = self.current_segment_mut() {
                             seg.push_frame(Frame::PythonGenerator {
                                 generator: gen,
                                 started: false,
+                                metadata,
                             });
                         }
                         self.mode = Mode::Deliver(Value::Unit);
@@ -600,15 +661,22 @@ impl VM {
                 }
             }
 
-            (PendingPython::StartProgramFrame, PyCallOutcome::GenError(e)) => {
+            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
-            (PendingPython::StepUserGenerator { generator }, PyCallOutcome::GenYield(yielded)) => {
+            (
+                PendingPython::StepUserGenerator {
+                    generator,
+                    metadata,
+                },
+                PyCallOutcome::GenYield(yielded),
+            ) => {
                 if let Some(seg) = self.current_segment_mut() {
                     seg.push_frame(Frame::PythonGenerator {
                         generator,
                         started: true,
+                        metadata,
                     });
                 }
                 self.mode = Mode::HandleYield(yielded);
@@ -628,47 +696,43 @@ impl VM {
                     effect: _,
                 },
                 PyCallOutcome::Value(handler_gen_val),
-            ) => {
-                match handler_gen_val {
-                    Value::Python(handler_gen) => {
-                        let handler_return_cb = self.register_callback(Box::new(|value, vm| {
-                            let _ = vm.handle_handler_return(value);
-                            vm.mode.clone()
-                        }));
-                        if let Some(seg) = self.current_segment_mut() {
-                            seg.push_frame(Frame::RustReturn {
-                                callback_id: handler_return_cb,
-                            });
-                            seg.push_frame(Frame::PythonGenerator {
-                                generator: handler_gen,
-                                started: false,
-                            });
-                        }
-                        self.mode = Mode::Deliver(Value::Unit);
+            ) => match handler_gen_val {
+                Value::Python(handler_gen) => {
+                    let handler_return_cb = self.register_callback(Box::new(|value, vm| {
+                        let _ = vm.handle_handler_return(value);
+                        vm.mode.clone()
+                    }));
+                    if let Some(seg) = self.current_segment_mut() {
+                        seg.push_frame(Frame::RustReturn {
+                            cb: handler_return_cb,
+                        });
+                        seg.push_frame(Frame::PythonGenerator {
+                            generator: handler_gen,
+                            started: false,
+                            metadata: None,
+                        });
                     }
-                    _ => {
-                        self.mode = Mode::Deliver(Value::Unit);
-                    }
+                    self.mode = Mode::Deliver(Value::Unit);
                 }
-            }
+                _ => {
+                    self.mode = Mode::Deliver(Value::Unit);
+                }
+            },
 
             (PendingPython::CallPythonHandler { .. }, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
-            (
-                PendingPython::StdlibContinuation {
-                    handler,
-                    k,
-                    context,
-                },
-                PyCallOutcome::Value(result),
-            ) => {
-                let action = handler.continue_after_python(result, context, k, &mut self.rust_store);
-                self.apply_handler_action(action);
+            (PendingPython::RustProgramContinuation, PyCallOutcome::Value(result)) => {
+                // Frame was re-pushed on the stack. Set Mode::Deliver so the
+                // next step() delivers the result to the re-pushed RustProgram
+                // frame, which calls resume() through the normal step cycle.
+                self.mode = Mode::Deliver(result);
             }
 
-            (PendingPython::StdlibContinuation { .. }, PyCallOutcome::GenError(e)) => {
+            (PendingPython::RustProgramContinuation, PyCallOutcome::GenError(e)) => {
+                // Frame was re-pushed. Set Mode::Throw so the next step()
+                // throws into the re-pushed RustProgram frame.
                 self.mode = Mode::Throw(e);
             }
 
@@ -805,10 +869,6 @@ impl VM {
         });
 
         match handler {
-            Handler::Stdlib(stdlib_handler) => {
-                let action = stdlib_handler.handle(&effect, k_user, &mut self.rust_store);
-                Ok(self.apply_handler_action(action))
-            }
             Handler::RustProgram(rust_handler) => {
                 let program = rust_handler.create_program();
                 let step = {
@@ -828,74 +888,6 @@ impl VM {
                     effect,
                     continuation: k_user,
                 }))
-            }
-        }
-    }
-
-    pub fn apply_handler_action(&mut self, action: HandlerAction) -> StepEvent {
-        match action {
-            HandlerAction::Resume { k, value } => {
-                if self.is_one_shot_consumed(k.cont_id) {
-                    return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
-                }
-                self.mark_one_shot_consumed(k.cont_id);
-                self.check_dispatch_completion(&k);
-
-                let exec_seg = Segment {
-                    marker: k.marker,
-                    frames: (*k.frames_snapshot).clone(),
-                    caller: self.current_segment,
-                    scope_chain: (*k.scope_chain).clone(),
-                    kind: crate::segment::SegmentKind::Normal,
-                };
-                let exec_seg_id = self.alloc_segment(exec_seg);
-
-                self.current_segment = Some(exec_seg_id);
-                self.mode = Mode::Deliver(value);
-                StepEvent::Continue
-            }
-
-            HandlerAction::Transfer { k, value } => {
-                if self.is_one_shot_consumed(k.cont_id) {
-                    return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
-                }
-                self.mark_one_shot_consumed(k.cont_id);
-                self.check_dispatch_completion(&k);
-
-                let exec_seg = Segment {
-                    marker: k.marker,
-                    frames: (*k.frames_snapshot).clone(),
-                    caller: None,
-                    scope_chain: (*k.scope_chain).clone(),
-                    kind: crate::segment::SegmentKind::Normal,
-                };
-                let exec_seg_id = self.alloc_segment(exec_seg);
-
-                self.current_segment = Some(exec_seg_id);
-                self.mode = Mode::Deliver(value);
-                StepEvent::Continue
-            }
-
-            HandlerAction::Return { value } => {
-                if let Some(top) = self.dispatch_stack.last() {
-                    self.current_segment = Some(top.prompt_seg_id);
-                }
-                self.mode = Mode::Return(value);
-                StepEvent::Continue
-            }
-
-            HandlerAction::NeedsPython {
-                handler,
-                call,
-                k,
-                context,
-            } => {
-                self.pending_python = Some(PendingPython::StdlibContinuation {
-                    handler,
-                    k,
-                    context,
-                });
-                StepEvent::NeedsPython(call)
             }
         }
     }
@@ -977,7 +969,7 @@ impl VM {
         StepEvent::Continue
     }
 
-    fn handle_with_handler(&mut self, handler: Py<PyAny>, body: Py<PyAny>) -> StepEvent {
+    fn handle_with_handler(&mut self, handler: Handler, program: Py<PyAny>) -> StepEvent {
         let handler_marker = Marker::fresh();
         let outside_seg_id = match self.current_segment {
             Some(id) => id,
@@ -999,10 +991,23 @@ impl VM {
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
 
-        self.handlers.insert(
-            handler_marker,
-            HandlerEntry::new(Handler::Python(handler), prompt_seg_id),
-        );
+        // Extract py_identity for Python handlers
+        let py_identity = match &handler {
+            Handler::Python(py_handler) => Some(py_handler.clone()),
+            Handler::RustProgram(_) => None,
+        };
+        match py_identity {
+            Some(identity) => {
+                self.handlers.insert(
+                    handler_marker,
+                    HandlerEntry::with_identity(handler, prompt_seg_id, identity),
+                );
+            }
+            None => {
+                self.handlers
+                    .insert(handler_marker, HandlerEntry::new(handler, prompt_seg_id));
+            }
+        }
 
         let mut body_scope = vec![handler_marker];
         body_scope.extend(outside_scope);
@@ -1012,10 +1017,8 @@ impl VM {
 
         self.current_segment = Some(body_seg_id);
 
-        self.pending_python = Some(PendingPython::StartProgramFrame);
-        StepEvent::NeedsPython(PythonCall::StartProgram {
-            program: body,
-        })
+        self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
+        StepEvent::NeedsPython(PythonCall::StartProgram { program })
     }
 
     fn handle_delegate(&mut self, effect: Effect) -> StepEvent {
@@ -1060,11 +1063,6 @@ impl VM {
                     self.current_segment = Some(handler_seg_id);
 
                     match handler {
-                        Handler::Stdlib(stdlib_handler) => {
-                            let action =
-                                stdlib_handler.handle(&effect, k_user, &mut self.rust_store);
-                            return self.apply_handler_action(action);
-                        }
                         Handler::RustProgram(rust_handler) => {
                             let program = rust_handler.create_program();
                             let step = {
@@ -1132,15 +1130,17 @@ impl VM {
         };
         let handlers: Vec<Handler> = chain
             .iter()
-            .filter_map(|marker| {
-                self.handlers.get(marker).map(|entry| entry.handler.clone())
-            })
+            .filter_map(|marker| self.handlers.get(marker).map(|entry| entry.handler.clone()))
             .collect();
         self.mode = Mode::Deliver(Value::Handlers(handlers));
         StepEvent::Continue
     }
 
-    fn handle_create_continuation(&mut self, program: Py<PyAny>, handlers: Vec<Handler>) -> StepEvent {
+    fn handle_create_continuation(
+        &mut self,
+        program: Py<PyAny>,
+        handlers: Vec<Handler>,
+    ) -> StepEvent {
         let k = Continuation::create(program, handlers);
         self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
@@ -1161,7 +1161,9 @@ impl VM {
 
         let program = match k.program {
             Some(prog) => prog,
-            None => return StepEvent::Error(VMError::internal("unstarted continuation has no program")),
+            None => {
+                return StepEvent::Error(VMError::internal("unstarted continuation has no program"))
+            }
         };
 
         // Install handlers outermost first
@@ -1192,7 +1194,7 @@ impl VM {
         self.current_segment = Some(body_seg_id);
 
         // Start the program
-        self.pending_python = Some(PendingPython::StartProgramFrame);
+        self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
         StepEvent::NeedsPython(PythonCall::StartProgram { program })
     }
 }
@@ -1206,7 +1208,6 @@ impl Default for VM {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::handler::StdlibHandler;
 
     fn make_dummy_continuation() -> Continuation {
         Continuation {
@@ -1429,11 +1430,17 @@ mod tests {
 
         vm.install_handler(
             m1,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::Reader), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::ReaderHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
         vm.install_handler(
             m2,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
 
         let get_effect = Effect::Get {
@@ -1481,7 +1488,10 @@ mod tests {
 
         vm.install_handler(
             marker,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
 
         vm.rust_store.put("counter".to_string(), Value::Int(42));
@@ -1492,6 +1502,9 @@ mod tests {
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), StepEvent::Continue));
         assert_eq!(vm.dispatch_stack.len(), 1);
+        // Handler yields Resume primitive; step through to process it
+        let event = vm.step();
+        assert!(matches!(event, StepEvent::Continue));
         assert!(vm.dispatch_stack[0].completed);
     }
 
@@ -1509,13 +1522,17 @@ mod tests {
 
         vm.install_handler(
             marker,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
 
         let _ = vm.start_dispatch(Effect::Get {
             key: "x".to_string(),
         });
-
+        // Handler yields Resume; step through to mark dispatch complete
+        let _ = vm.step();
         assert!(vm.dispatch_stack[0].completed);
     }
 
@@ -1674,7 +1691,10 @@ mod tests {
 
         vm.install_handler(
             marker,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
 
         let seg = Segment::new(marker, None, vec![marker]);
@@ -1686,7 +1706,7 @@ mod tests {
         match &vm.mode {
             Mode::Deliver(Value::Handlers(h)) => {
                 assert_eq!(h.len(), 1);
-                assert!(matches!(h[0], Handler::Stdlib(StdlibHandler::State)));
+                assert!(matches!(h[0], Handler::RustProgram(_)));
             }
             _ => panic!("Expected Deliver(Handlers)"),
         }
@@ -1722,7 +1742,10 @@ mod tests {
 
         vm.install_handler(
             marker,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
         assert!(vm.handlers.contains_key(&marker));
         assert_eq!(vm.handlers.len(), 1);
@@ -1746,11 +1769,17 @@ mod tests {
 
         vm.install_handler(
             m1,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
         vm.install_handler(
             m2,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::Writer), prompt_seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::WriterHandlerFactory)),
+                prompt_seg_id,
+            ),
         );
         assert_eq!(vm.handlers.len(), 2);
 
@@ -1829,8 +1858,12 @@ mod tests {
     #[test]
     fn test_gap11_with_local_scoped_bindings() {
         let mut store = RustStore::new();
-        store.env.insert("db".to_string(), Value::String("prod".to_string()));
-        store.env.insert("host".to_string(), Value::String("localhost".to_string()));
+        store
+            .env
+            .insert("db".to_string(), Value::String("prod".to_string()));
+        store
+            .env
+            .insert("host".to_string(), Value::String("localhost".to_string()));
 
         let result = store.with_local(
             HashMap::from([
@@ -1868,7 +1901,9 @@ mod tests {
 
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id,
-            effect: Effect::Get { key: "x".to_string() },
+            effect: Effect::Get {
+                key: "x".to_string(),
+            },
             handler_chain: vec![marker],
             handler_idx: 0,
             k_user: Continuation {
@@ -1897,7 +1932,9 @@ mod tests {
         use crate::step::ControlPrimitive;
         // Spec: Delegate { effect: Effect }
         let prim = ControlPrimitive::Delegate {
-            effect: Effect::Get { key: "x".to_string() },
+            effect: Effect::Get {
+                key: "x".to_string(),
+            },
         };
         match prim {
             ControlPrimitive::Delegate { effect } => {
@@ -1937,7 +1974,10 @@ mod tests {
         //
         // Verified by code inspection + Python integration tests.
         // The StartProgram path routes through to_generator validation.
-        assert!(true, "See handle_with_handler implementation for spec compliance");
+        assert!(
+            true,
+            "See handle_with_handler implementation for spec compliance"
+        );
     }
 
     /// G16: lazy_pop_completed must be called before ALL primitives.
@@ -1954,7 +1994,10 @@ mod tests {
         let seg_id = vm.alloc_segment(seg);
         vm.install_handler(
             m1,
-            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), seg_id),
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
+                seg_id,
+            ),
         );
         vm.current_segment = Some(seg_id);
 
@@ -1963,7 +2006,9 @@ mod tests {
         let k_user = make_dummy_continuation();
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
-            effect: Effect::Get { key: "x".to_string() },
+            effect: Effect::Get {
+                key: "x".to_string(),
+            },
             handler_chain: vec![],
             handler_idx: 0,
             k_user: k_user.clone(),
@@ -1978,14 +2023,120 @@ mod tests {
         assert!(matches!(event, StepEvent::Continue));
 
         // Dispatch stack should be empty (completed was popped)
-        assert!(vm.dispatch_stack.is_empty(), "Completed dispatch should have been popped");
+        assert!(
+            vm.dispatch_stack.is_empty(),
+            "Completed dispatch should have been popped"
+        );
 
         // Should return handlers from current scope, not from stale dispatch
         match &vm.mode {
             Mode::Deliver(Value::Handlers(handlers)) => {
-                assert_eq!(handlers.len(), 1, "Expected 1 handler from scope_chain, not 0 from stale dispatch");
+                assert_eq!(
+                    handlers.len(),
+                    1,
+                    "Expected 1 handler from scope_chain, not 0 from stale dispatch"
+                );
             }
             other => panic!("Expected Deliver(Handlers), got {:?}", other),
         }
+    }
+
+    /// G5/G6 TDD: Tests the full VM dispatch cycle with a handler that returns
+    /// NeedsPython from resume(). This exercises the critical path where the
+    /// second Python call result must be properly propagated back to the handler.
+    ///
+    /// The DoubleCallHandlerFactory handler does:
+    ///   start() → NeedsPython(call1)
+    ///   resume(result1) → NeedsPython(call2)   ← THIS is the critical path
+    ///   resume(result2) → Yield(Resume { value: result1 + result2 })
+    #[test]
+    fn test_needs_python_from_resume_propagates_correctly() {
+        use pyo3::Python;
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+
+            // Set up handler and segments
+            let prompt_seg = Segment::new(marker, None, vec![]);
+            let prompt_seg_id = vm.alloc_segment(prompt_seg);
+
+            let body_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
+            let body_seg_id = vm.alloc_segment(body_seg);
+            vm.current_segment = Some(body_seg_id);
+
+            vm.install_handler(
+                marker,
+                HandlerEntry::new(
+                    Handler::RustProgram(std::sync::Arc::new(
+                        crate::handler::DoubleCallHandlerFactory,
+                    )),
+                    prompt_seg_id,
+                ),
+            );
+
+            // Create a dummy Python modifier (won't actually be called — we feed results manually)
+            let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
+
+            // Step 1: start_dispatch sends Modify effect
+            let result = vm.start_dispatch(Effect::Modify {
+                key: "key".to_string(),
+                modifier,
+            });
+            assert!(result.is_ok());
+            let event1 = result.unwrap();
+
+            // Should get NeedsPython for first call
+            assert!(
+                matches!(event1, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
+                "Expected NeedsPython for first call, got {:?}",
+                std::mem::discriminant(&event1)
+            );
+
+            // Step 2: Feed first Python result (100)
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(100)));
+
+            // After first resume(), handler returns NeedsPython again.
+            // The VM must surface this as a NeedsPython event, not silently lose it.
+            // With the fix, the frame is re-pushed and mode is set to Deliver(100),
+            // so stepping delivers 100 to the re-pushed frame, which calls resume(),
+            // which returns NeedsPython(call2).
+            let event2 = vm.step();
+            assert!(
+                matches!(event2, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
+                "Expected NeedsPython for SECOND call (from resume), got {:?}",
+                std::mem::discriminant(&event2)
+            );
+
+            // Step 3: Feed second Python result (200)
+            vm.receive_python_result(PyCallOutcome::Value(Value::Int(200)));
+
+            // After second resume(), handler yields Resume { value: 100 + 200 = 300 }
+            // step() delivers 200 to the re-pushed RustProgram frame, resume() returns
+            // Yield(Resume), which sets mode to HandleYield. This is a Continue.
+            let event3 = vm.step();
+            assert!(
+                matches!(event3, StepEvent::Continue),
+                "Expected Continue after Yield(Resume), got {:?}",
+                std::mem::discriminant(&event3)
+            );
+
+            // Step 4: Process the HandleYield(Resume) primitive.
+            // This calls handle_resume(k, 300) → marks dispatch complete.
+            let event4 = vm.step();
+            assert!(
+                matches!(event4, StepEvent::Continue),
+                "Expected Continue after handle_resume, got {:?}",
+                std::mem::discriminant(&event4)
+            );
+
+            // Verify dispatch was completed with combined value
+            assert!(
+                vm.dispatch_stack
+                    .last()
+                    .map(|d| d.completed)
+                    .unwrap_or(false),
+                "Dispatch should be marked complete"
+            );
+        });
     }
 }

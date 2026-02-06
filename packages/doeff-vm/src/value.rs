@@ -44,14 +44,6 @@ impl Value {
                         Handler::Python(py_handler) => {
                             list.append(py_handler.bind(py))?;
                         }
-                        Handler::Stdlib(stdlib_handler) => {
-                            let label = match stdlib_handler {
-                                crate::handler::StdlibHandler::State => "stdlib:State",
-                                crate::handler::StdlibHandler::Reader => "stdlib:Reader",
-                                crate::handler::StdlibHandler::Writer => "stdlib:Writer",
-                            };
-                            list.append(PyString::new(py, label))?;
-                        }
                         Handler::RustProgram(_) => {
                             list.append(PyString::new(py, "rust_program_handler"))?;
                         }
@@ -230,7 +222,7 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![Handler::Stdlib(crate::handler::StdlibHandler::State)];
+        let handlers = vec![Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory))];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);

@@ -29,12 +29,12 @@ pub use continuation::Continuation;
 pub use effect::Effect;
 pub use error::VMError;
 pub use frame::Frame;
-pub use handler::{Handler, HandlerAction, HandlerEntry, StdlibHandler};
+pub use handler::{Handler, HandlerEntry, StateHandlerFactory, ReaderHandlerFactory, WriterHandlerFactory};
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
 pub use pyvm::{PyStdlib, PyVM};
 pub use segment::{Segment, SegmentKind};
 pub use step::{
-    ControlPrimitive, HandlerContext, Mode, PendingPython, PyCallOutcome, PyException, PythonCall,
+    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PyException, PythonCall,
     StepEvent, Yielded,
 };
 pub use value::Value;

@@ -308,14 +308,14 @@ impl SchedulerState {
             if let Some(task_k) = self.task_cont(task_id) {
                 self.current_task = Some(task_id);
                 return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-                    k: task_k,
+                    continuation: task_k,
                     value: Value::Unit,
                 }));
             }
         }
         // No ready tasks, resume the caller
         RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-            k,
+            continuation: k,
             value: Value::Unit,
         }))
     }
@@ -403,7 +403,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 if let Some(results) = state.try_collect(&items) {
                     state.merge_gather_logs(&items, store);
                     return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-                        k: k_user,
+                        continuation: k_user,
                         value: results,
                     }));
                 }
@@ -415,7 +415,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Some(result) = state.try_race(&items) {
                     return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-                        k: k_user,
+                        continuation: k_user,
                         value: result,
                     }));
                 }
@@ -428,7 +428,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
                 RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-                    k: k_user,
+                    continuation: k_user,
                     value: Value::Promise(PromiseHandle { id: pid }),
                 }))
             }
@@ -452,7 +452,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
                 RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-                    k: k_user,
+                    continuation: k_user,
                     value: Value::ExternalPromise(ExternalPromise { id: pid }),
                 }))
             }
@@ -487,7 +487,7 @@ impl RustHandlerProgram for SchedulerProgram {
 
                 // Transfer back to caller with the task handle
                 RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
-                    k: k_user,
+                    continuation: k_user,
                     value: Value::Task(TaskHandle { id: task_id }),
                 }))
             }

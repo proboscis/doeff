@@ -2,7 +2,7 @@
 //!
 //! All IDs are lightweight Copy types using newtype pattern for type safety.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 /// Unique identifier for prompts/handlers.
 ///
@@ -40,7 +40,7 @@ pub struct RunnableId(pub u64);
 /// Callbacks are stored separately from Frames to allow Frame to be Clone.
 /// The callback is consumed when executed.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct CallbackId(pub u64);
+pub struct CallbackId(pub u32);
 
 /// Unique identifier for spawned tasks.
 ///
@@ -59,7 +59,7 @@ static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-static CALLBACK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+static CALLBACK_ID_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 impl Marker {
     /// Create a fresh unique Marker.
@@ -138,7 +138,7 @@ impl CallbackId {
         CallbackId(CALLBACK_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
     }
 
-    pub fn raw(&self) -> u64 {
+    pub fn raw(&self) -> u32 {
         self.0
     }
 }
