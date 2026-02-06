@@ -30,8 +30,6 @@ pub struct DispatchContext {
     pub prompt_seg_id: SegmentId,
     pub handler_seg_id: SegmentId,
     pub completed: bool,
-    pub resume_pending: bool,
-    pub resume_value: Option<Value>,
 }
 
 pub struct RustStore {
@@ -187,7 +185,7 @@ impl VM {
         id
     }
 
-    pub fn step(&mut self, py: Python<'_>) -> StepEvent {
+    pub fn step(&mut self) -> StepEvent {
         self.step_counter += 1;
 
         if self.debug.is_enabled() {
@@ -195,9 +193,9 @@ impl VM {
         }
 
         let result = match &self.mode {
-            Mode::Deliver(_) | Mode::Throw(_) => self.step_deliver_or_throw(py),
-            Mode::HandleYield(_) => self.step_handle_yield(py),
-            Mode::Return(_) => self.step_return(py),
+            Mode::Deliver(_) | Mode::Throw(_) => self.step_deliver_or_throw(),
+            Mode::HandleYield(_) => self.step_handle_yield(),
+            Mode::Return(_) => self.step_return(),
         };
 
         if self.debug.is_enabled() {
@@ -305,7 +303,7 @@ impl VM {
         }
     }
 
-    fn step_deliver_or_throw(&mut self, py: Python<'_>) -> StepEvent {
+    fn step_deliver_or_throw(&mut self) -> StepEvent {
         let seg_id = match self.current_segment {
             Some(id) => id,
             None => return StepEvent::Error(VMError::internal("no current segment")),
@@ -318,7 +316,7 @@ impl VM {
 
         if !segment.has_frames() {
             let value = match &self.mode {
-                Mode::Deliver(v) => v.clone_ref(py),
+                Mode::Deliver(v) => v.clone(),
                 Mode::Throw(_) => {
                     if let Some(caller_id) = segment.caller {
                         self.current_segment = Some(caller_id);
@@ -344,7 +342,7 @@ impl VM {
 
                 match &self.mode {
                     Mode::Deliver(v) => {
-                        self.mode = callback(v.clone_ref(py), self);
+                        self.mode = callback(v.clone(), self);
                         StepEvent::Continue
                     }
                     Mode::Throw(_) => StepEvent::Continue,
@@ -353,15 +351,8 @@ impl VM {
             }
 
             Frame::PythonGenerator { generator, started } => {
-                if let (Mode::Deliver(v), Some(top)) = (&self.mode, self.dispatch_stack.last_mut())
-                {
-                    if self.current_segment == Some(top.handler_seg_id) && top.resume_pending {
-                        top.resume_pending = false;
-                        top.resume_value = Some(v.clone_ref(py));
-                    }
-                }
                 self.pending_python = Some(PendingPython::StepUserGenerator {
-                    generator: generator.clone_ref(py),
+                    generator: generator.clone(),
                 });
 
                 match &self.mode {
@@ -369,7 +360,7 @@ impl VM {
                         if started {
                             StepEvent::NeedsPython(PythonCall::GenSend {
                                 gen: generator,
-                                value: v.clone_ref(py),
+                                value: v.clone(),
                             })
                         } else {
                             StepEvent::NeedsPython(PythonCall::GenNext { gen: generator })
@@ -377,7 +368,7 @@ impl VM {
                     }
                     Mode::Throw(e) => StepEvent::NeedsPython(PythonCall::GenThrow {
                         gen: generator,
-                        exc: e.exc_value.clone_ref(py),
+                        exc: e.exc_value.clone(),
                     }),
                     _ => unreachable!(),
                 }
@@ -385,9 +376,9 @@ impl VM {
         }
     }
 
-    fn step_handle_yield(&mut self, py: Python<'_>) -> StepEvent {
+    fn step_handle_yield(&mut self) -> StepEvent {
         let yielded = match &self.mode {
-            Mode::HandleYield(y) => y.clone_ref(py),
+            Mode::HandleYield(y) => y.clone(),
             _ => return StepEvent::Error(VMError::internal("invalid mode for handle_yield")),
         };
 
@@ -423,9 +414,9 @@ impl VM {
         }
     }
 
-    fn step_return(&mut self, py: Python<'_>) -> StepEvent {
+    fn step_return(&mut self) -> StepEvent {
         let value = match &self.mode {
-            Mode::Return(v) => v.clone_ref(py),
+            Mode::Return(v) => v.clone(),
             _ => return StepEvent::Error(VMError::internal("invalid mode for return")),
         };
 
@@ -435,13 +426,6 @@ impl VM {
         };
 
         let caller = self.segments.get(seg_id).and_then(|s| s.caller);
-
-        if let (Some(caller_id), Some(top)) = (caller, self.dispatch_stack.last_mut()) {
-            if top.resume_pending && caller_id == top.handler_seg_id {
-                top.resume_pending = false;
-                top.resume_value = Some(value.clone_ref(py));
-            }
-        }
 
         match caller {
             Some(caller_id) => {
@@ -453,7 +437,7 @@ impl VM {
         }
     }
 
-    pub fn receive_python_result(&mut self, py: Python<'_>, outcome: PyCallOutcome) {
+    pub fn receive_python_result(&mut self, outcome: PyCallOutcome) {
         let pending = match self.pending_python.take() {
             Some(p) => p,
             None => {
@@ -463,14 +447,21 @@ impl VM {
         };
 
         match (pending, outcome) {
-            (PendingPython::StartProgramFrame, PyCallOutcome::Value(gen_obj)) => {
-                if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::PythonGenerator {
-                        generator: gen_obj,
-                        started: false,
-                    });
+            (PendingPython::StartProgramFrame, PyCallOutcome::Value(gen_val)) => {
+                match gen_val {
+                    Value::Python(gen) => {
+                        if let Some(seg) = self.current_segment_mut() {
+                            seg.push_frame(Frame::PythonGenerator {
+                                generator: gen,
+                                started: false,
+                            });
+                        }
+                        self.mode = Mode::Deliver(Value::Unit);
+                    }
+                    _ => {
+                        self.mode = Mode::Deliver(Value::Unit);
+                    }
                 }
-                self.mode = Mode::Deliver(Value::Unit);
             }
 
             (PendingPython::StartProgramFrame, PyCallOutcome::GenError(e)) => {
@@ -500,22 +491,29 @@ impl VM {
                     k_user: _,
                     effect: _,
                 },
-                PyCallOutcome::Value(handler_gen),
+                PyCallOutcome::Value(handler_gen_val),
             ) => {
-                let handler_return_cb = self.register_callback(Box::new(|value, vm| {
-                    let _ = vm.handle_handler_return(value);
-                    vm.mode.clone()
-                }));
-                if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::RustReturn {
-                        callback_id: handler_return_cb,
-                    });
-                    seg.push_frame(Frame::PythonGenerator {
-                        generator: handler_gen,
-                        started: false,
-                    });
+                match handler_gen_val {
+                    Value::Python(handler_gen) => {
+                        let handler_return_cb = self.register_callback(Box::new(|value, vm| {
+                            let _ = vm.handle_handler_return(value);
+                            vm.mode.clone()
+                        }));
+                        if let Some(seg) = self.current_segment_mut() {
+                            seg.push_frame(Frame::RustReturn {
+                                callback_id: handler_return_cb,
+                            });
+                            seg.push_frame(Frame::PythonGenerator {
+                                generator: handler_gen,
+                                started: false,
+                            });
+                        }
+                        self.mode = Mode::Deliver(Value::Unit);
+                    }
+                    _ => {
+                        self.mode = Mode::Deliver(Value::Unit);
+                    }
                 }
-                self.mode = Mode::Deliver(Value::Unit);
             }
 
             (PendingPython::CallPythonHandler { .. }, PyCallOutcome::GenError(e)) => {
@@ -530,8 +528,7 @@ impl VM {
                 },
                 PyCallOutcome::Value(result),
             ) => {
-                let value = Value::from_pyobject(&result.bind(py));
-                let action = handler.continue_after_python(value, context, k, &mut self.rust_store);
+                let action = handler.continue_after_python(result, context, k, &mut self.rust_store);
                 self.apply_handler_action(action);
             }
 
@@ -551,6 +548,7 @@ impl VM {
 
     pub fn mark_one_shot_consumed(&mut self, cont_id: ContId) {
         self.consumed_cont_ids.insert(cont_id);
+        self.continuation_registry.remove(&cont_id);
     }
 
     pub fn register_continuation(&mut self, k: Continuation) {
@@ -662,8 +660,6 @@ impl VM {
             prompt_seg_id,
             handler_seg_id,
             completed: false,
-            resume_pending: false,
-            resume_value: None,
         });
 
         match handler {
@@ -785,12 +781,6 @@ impl VM {
         self.lazy_pop_completed();
         self.check_dispatch_completion(&k);
 
-        if let (Some(dispatch_id), Some(top)) = (k.dispatch_id, self.dispatch_stack.last_mut()) {
-            if top.dispatch_id == dispatch_id {
-                top.resume_pending = true;
-            }
-        }
-
         let exec_seg = Segment {
             marker: k.marker,
             frames: (*k.frames_snapshot).clone(),
@@ -901,8 +891,6 @@ impl VM {
                         let top = self.dispatch_stack.last_mut().unwrap();
                         top.handler_idx = idx;
                         top.effect = effect.clone();
-                        top.resume_pending = false;
-                        top.resume_value = None;
                         top.k_user.clone()
                     };
 
@@ -944,8 +932,6 @@ impl VM {
             return StepEvent::Error(VMError::internal("Return outside of dispatch"));
         };
 
-        let return_value = top.resume_value.take().unwrap_or(value);
-
         if let Some(seg_id) = self.current_segment {
             if let Some(caller_id) = self.segments.get(seg_id).and_then(|s| s.caller) {
                 if caller_id == top.prompt_seg_id {
@@ -956,7 +942,7 @@ impl VM {
         }
 
         self.current_segment = Some(top.prompt_seg_id);
-        self.mode = Mode::Return(return_value);
+        self.mode = Mode::Return(value);
         StepEvent::Continue
     }
 
@@ -1029,40 +1015,36 @@ mod tests {
 
     #[test]
     fn test_vm_step_return_no_caller() {
-        Python::with_gil(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-            let seg = Segment::new(marker, None, vec![]);
-            let seg_id = vm.alloc_segment(seg);
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![]);
+        let seg_id = vm.alloc_segment(seg);
 
-            vm.current_segment = Some(seg_id);
-            vm.mode = Mode::Return(Value::Int(42));
+        vm.current_segment = Some(seg_id);
+        vm.mode = Mode::Return(Value::Int(42));
 
-            let event = vm.step(py);
-            assert!(matches!(event, StepEvent::Done(Value::Int(42))));
-        });
+        let event = vm.step();
+        assert!(matches!(event, StepEvent::Done(Value::Int(42))));
     }
 
     #[test]
     fn test_vm_step_return_with_caller() {
-        Python::with_gil(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
 
-            let caller_seg = Segment::new(marker, None, vec![]);
-            let caller_id = vm.alloc_segment(caller_seg);
+        let caller_seg = Segment::new(marker, None, vec![]);
+        let caller_id = vm.alloc_segment(caller_seg);
 
-            let child_seg = Segment::new(marker, Some(caller_id), vec![]);
-            let child_id = vm.alloc_segment(child_seg);
+        let child_seg = Segment::new(marker, Some(caller_id), vec![]);
+        let child_id = vm.alloc_segment(child_seg);
 
-            vm.current_segment = Some(child_id);
-            vm.mode = Mode::Return(Value::Int(99));
+        vm.current_segment = Some(child_id);
+        vm.mode = Mode::Return(Value::Int(99));
 
-            let event = vm.step(py);
-            assert!(matches!(event, StepEvent::Continue));
-            assert_eq!(vm.current_segment, Some(caller_id));
-            assert!(vm.mode.is_deliver());
-        });
+        let event = vm.step();
+        assert!(matches!(event, StepEvent::Continue));
+        assert_eq!(vm.current_segment, Some(caller_id));
+        assert!(vm.mode.is_deliver());
     }
 
     #[test]
@@ -1114,8 +1096,6 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
             handler_seg_id: SegmentId::from_index(0),
             completed: false,
-            resume_pending: false,
-            resume_value: None,
         });
 
         let visible = vm.visible_handlers(&vec![m1, m2, m3]);
@@ -1141,8 +1121,6 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
             handler_seg_id: SegmentId::from_index(0),
             completed: true,
-            resume_pending: false,
-            resume_value: None,
         });
 
         let visible = vm.visible_handlers(&vec![m1, m2]);
@@ -1168,8 +1146,6 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
             handler_seg_id: SegmentId::from_index(0),
             completed: true,
-            resume_pending: false,
-            resume_value: None,
         });
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
@@ -1183,8 +1159,6 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
             handler_seg_id: SegmentId::from_index(0),
             completed: true,
-            resume_pending: false,
-            resume_value: None,
         });
         vm.dispatch_stack.push(DispatchContext {
             dispatch_id: DispatchId::fresh(),
@@ -1198,8 +1172,6 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
             handler_seg_id: SegmentId::from_index(0),
             completed: false,
-            resume_pending: false,
-            resume_value: None,
         });
 
         vm.lazy_pop_completed();
@@ -1412,8 +1384,6 @@ mod tests {
             prompt_seg_id: SegmentId::from_index(0),
             handler_seg_id: seg_id,
             completed: false,
-            resume_pending: false,
-            resume_value: None,
         });
 
         let event = vm.handle_get_continuation();
@@ -1439,5 +1409,27 @@ mod tests {
             event,
             StepEvent::Error(VMError::InternalError { .. })
         ));
+    }
+
+    #[test]
+    fn test_continuation_registry_cleanup_on_consume() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let k = vm.capture_continuation(None).unwrap();
+        let cont_id = k.cont_id;
+        vm.register_continuation(k);
+
+        assert!(vm.lookup_continuation(cont_id).is_some());
+        assert_eq!(vm.continuation_registry.len(), 1);
+
+        vm.mark_one_shot_consumed(cont_id);
+
+        assert!(vm.lookup_continuation(cont_id).is_none());
+        assert_eq!(vm.continuation_registry.len(), 0);
+        assert!(vm.is_one_shot_consumed(cont_id));
     }
 }
