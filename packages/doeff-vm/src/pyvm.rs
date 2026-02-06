@@ -38,7 +38,7 @@ impl PyVM {
         self.start_with_generator(gen_bound)?;
 
         loop {
-            let event = self.run_rust_steps(py);
+            let event = self.run_rust_steps();
 
             match event {
                 StepEvent::Done(value) => {
@@ -49,7 +49,7 @@ impl PyVM {
                 }
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
-                    self.vm.receive_python_result(py, outcome);
+                    self.vm.receive_python_result(outcome);
                 }
                 StepEvent::Continue => unreachable!("handled in run_rust_steps"),
             }
@@ -112,9 +112,9 @@ impl PyVM {
         Ok(())
     }
 
-    fn run_rust_steps(&mut self, py: Python<'_>) -> StepEvent {
+    fn run_rust_steps(&mut self) -> StepEvent {
         loop {
-            match self.vm.step(py) {
+            match self.vm.step() {
                 StepEvent::Continue => continue,
                 other => return other,
             }
@@ -125,12 +125,12 @@ impl PyVM {
         match call {
             PythonCall::StartProgram { program } => {
                 let gen = self.to_generator(py, program)?;
-                Ok(PyCallOutcome::Value(gen))
+                Ok(PyCallOutcome::Value(Value::Python(gen)))
             }
             PythonCall::CallFunc { func, args } => {
                 let py_args = self.values_to_tuple(py, &args)?;
                 match func.bind(py).call1(py_args) {
-                    Ok(result) => Ok(PyCallOutcome::Value(result.unbind())),
+                    Ok(result) => Ok(PyCallOutcome::Value(Value::from_pyobject(&result))),
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -142,7 +142,7 @@ impl PyVM {
                 let py_effect = effect.to_pyobject(py)?;
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => Ok(PyCallOutcome::Value(result.unbind())),
+                    Ok(result) => Ok(PyCallOutcome::Value(Value::Python(result.unbind()))),
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
