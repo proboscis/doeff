@@ -330,5 +330,121 @@ def test_python_handler_with_stdlib():
     assert result == 20
 
 
+def test_nested_with_handler():
+    """Test nested WithHandler: inner handler completes, then outer handler handles."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    def inner_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            resume_value = yield Resume(k, effect.value + 100)
+            return resume_value
+        else:
+            raise ValueError(f"Unknown effect: {effect}")
+
+    def outer_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            resume_value = yield Resume(k, effect.value * 2)
+            return resume_value
+        else:
+            raise ValueError(f"Unknown effect: {effect}")
+
+    def inner_body():
+        val = yield CustomEffect(5)  # inner_handler: 5 + 100 = 105
+        return val
+
+    def outer_body():
+        inner_result = yield WithHandler(inner_handler, inner_body)  # 105
+        outer_val = yield CustomEffect(inner_result)  # outer_handler: 105 * 2 = 210
+        return outer_val
+
+    def main():
+        result = yield WithHandler(outer_handler, outer_body)
+        return result
+
+    result = vm.run(main())
+    assert result == 210
+
+
+def test_handler_transforms_resume_result():
+    """Test that handler can transform the value returned after Resume."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    def transforming_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            resume_value = yield Resume(k, effect.value)
+            return resume_value * 3
+        else:
+            raise ValueError(f"Unknown effect: {effect}")
+
+    def body():
+        x = yield CustomEffect(10)  # handler sends 10 back
+        return x + 5  # body returns 15
+
+    def main():
+        # Handler resumes body with 10, body returns 15,
+        # handler gets resume_value=15, returns 15*3=45.
+        result = yield WithHandler(transforming_handler, body)
+        return result
+
+    result = vm.run(main())
+    assert result == 45
+
+
+def test_handler_abandon_continuation():
+    """Test handler that returns without resuming the continuation (abandon)."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    def abandoning_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            # Return directly without Resume; the body's continuation is abandoned.
+            return effect.value * 10
+        yield  # unreachable, but makes this function a generator
+
+    def body():
+        x = yield CustomEffect(7)  # handler does not resume, so body stops here
+        return x + 1000  # this line should never execute
+
+    def main():
+        result = yield WithHandler(abandoning_handler, body)
+        return result
+
+    result = vm.run(main())
+    assert result == 70
+
+
+def test_handler_accumulates_across_effects():
+    """Test handler that accumulates state across multiple effect invocations."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    accumulated = []
+
+    def accumulating_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            accumulated.append(effect.value)
+            total = sum(accumulated)
+            resume_value = yield Resume(k, total)
+            return resume_value
+        else:
+            raise ValueError(f"Unknown effect: {effect}")
+
+    def body():
+        a = yield CustomEffect(10)  # accumulated=[10], total=10
+        b = yield CustomEffect(20)  # accumulated=[10,20], total=30
+        c = yield CustomEffect(30)  # accumulated=[10,20,30], total=60
+        return (a, b, c)
+
+    def main():
+        result = yield WithHandler(accumulating_handler, body)
+        return result
+
+    result = vm.run(main())
+    assert result == (10, 30, 60)
+    assert accumulated == [10, 20, 30]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
