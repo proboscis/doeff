@@ -76,7 +76,10 @@ pub enum PendingPython {
         k_user: Continuation,
         effect: Effect,
     },
-    RustProgramContinuation,
+    RustProgramContinuation {
+        marker: crate::ids::Marker,
+        k: crate::continuation::Continuation,
+    },
     AsyncEscape,
 }
 

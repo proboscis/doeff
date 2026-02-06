@@ -18,6 +18,7 @@ class GatherEffect(EffectBase):
     - ProgramBase: Executed sequentially in sync runtime, concurrently in async
     - Waitable (Task/Future): Waited on concurrently
     """
+
     items: tuple[Any, ...]  # Programs or Waitables
     _partial_results: tuple[Any, ...] | None = field(default=None, compare=False)
 
@@ -28,13 +29,13 @@ class GatherEffect(EffectBase):
 
 
 def _validate_gather_items(items: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Validate that items are either Waitable or ProgramBase."""
     from doeff.program import ProgramBase
+    from doeff.types import EffectBase
 
     for i, item in enumerate(items):
-        if not isinstance(item, (Waitable, ProgramBase)):
+        if not isinstance(item, (Waitable, ProgramBase, EffectBase)):
             raise TypeError(
-                f"Gather expects Waitable or Program, got {type(item).__name__} at index {i}."
+                f"Gather expects Waitable, Program, or Effect, got {type(item).__name__} at index {i}."
             )
     return items
 
@@ -46,9 +47,7 @@ def gather(*items: "Waitable[Any] | ProgramBase[Any]") -> GatherEffect:
 
 def Gather(*items: "Waitable[Any] | ProgramBase[Any]") -> Effect:
     validated = _validate_gather_items(tuple(items))
-    return create_effect_with_trace(
-        GatherEffect(items=validated), skip_frames=3
-    )
+    return create_effect_with_trace(GatherEffect(items=validated), skip_frames=3)
 
 
 __all__ = [

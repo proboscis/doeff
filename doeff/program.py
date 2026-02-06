@@ -68,8 +68,9 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
     if not stripped:
         return False
     # Handle quoted strings from __future__ annotations in Python 3.14+
-    if (stripped.startswith("'") and stripped.endswith("'")) or \
-       (stripped.startswith('"') and stripped.endswith('"')):
+    if (stripped.startswith("'") and stripped.endswith("'")) or (
+        stripped.startswith('"') and stripped.endswith('"')
+    ):
         stripped = stripped[1:-1]
     if "|" in stripped:
         return any(_string_annotation_is_program(part) for part in stripped.split("|"))
@@ -100,8 +101,9 @@ def _string_annotation_is_effect(annotation_text: str) -> bool:
     if not stripped:
         return False
     # Handle quoted strings from __future__ annotations in Python 3.14+
-    if (stripped.startswith("'") and stripped.endswith("'")) or \
-       (stripped.startswith('"') and stripped.endswith('"')):
+    if (stripped.startswith("'") and stripped.endswith("'")) or (
+        stripped.startswith('"') and stripped.endswith('"')
+    ):
         stripped = stripped[1:-1]
     if "|" in stripped:
         return any(_string_annotation_is_effect(part) for part in stripped.split("|"))
@@ -288,9 +290,11 @@ class ProgramBase(ABC, Generic[T]):
                 return list(resolved_args), resolved_kwargs
 
             def call_program() -> Generator[Effect | Program, Any, Any]:
+                from doeff.types import EffectBase
+
                 resolved_args, resolved_kwargs = yield GeneratorProgram(gather_inputs)
                 result = func(*resolved_args, **resolved_kwargs)
-                if isinstance(result, ProgramBase):
+                if isinstance(result, (ProgramBase, EffectBase)):
                     return (yield result)
                 return result
 
@@ -317,9 +321,11 @@ class ProgramBase(ABC, Generic[T]):
             raise TypeError("binder must be callable returning a Program")
 
         def factory() -> Generator[Effect | Program, Any, U]:
+            from doeff.types import EffectBase
+
             value = yield self
             next_prog = f(value)
-            if not isinstance(next_prog, ProgramBase):
+            if not isinstance(next_prog, (ProgramBase, EffectBase)):
                 raise TypeError(f"binder must return a Program; got {type(next_prog).__name__}")
             result = yield next_prog
             return result
@@ -343,7 +349,9 @@ class ProgramBase(ABC, Generic[T]):
 
     @staticmethod
     def lift(value: Program[U] | U) -> Program[U]:
-        if isinstance(value, ProgramBase):
+        from doeff.types import EffectBase
+
+        if isinstance(value, (ProgramBase, EffectBase)):
             return value  # type: ignore[return-value]
         return ProgramBase.pure(value)  # type: ignore[return-value]
 
@@ -484,14 +492,17 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         args_tuple = self.args
         kwargs_dict = self.kwargs
 
+        from doeff.types import EffectBase
+
         def generator() -> Generator[Effect | Program, Any, T]:
+            resolvable = (ProgramBase, EffectBase)
             program_args: list[ProgramBase[Any]] = []
             program_indices: list[int] = []
             regular_args: list[Any | None] = list(args_tuple)
 
             for index, arg in enumerate(args_tuple):
                 should_unwrap = strategy.should_unwrap_positional(index)
-                if should_unwrap and isinstance(arg, ProgramBase):
+                if should_unwrap and isinstance(arg, resolvable):
                     program_args.append(arg)
                     program_indices.append(index)
                     regular_args[index] = None
@@ -503,7 +514,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
 
             for key, value in kwargs_dict.items():
                 should_unwrap = strategy.should_unwrap_keyword(key)
-                if should_unwrap and isinstance(value, ProgramBase):
+                if should_unwrap and isinstance(value, resolvable):
                     program_kwargs[key] = value
                 else:
                     regular_kwargs[key] = value
@@ -522,7 +533,7 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
             final_args = tuple(regular_args)
             result = kernel(*final_args, **regular_kwargs)
 
-            if isinstance(result, ProgramBase):
+            if isinstance(result, (ProgramBase, EffectBase)):
                 resolved = yield result
                 return resolved
 

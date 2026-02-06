@@ -49,11 +49,13 @@ def with_local(env_updates: dict[str, Any], program: "ProgramLike[T]") -> Progra
         if isinstance(effect, AskEffect) and effect.key in env_updates:
             # Return plain value - HandlerResultFrame constructs CESKState
             return Program.pure(env_updates[effect.key])
+
         # Forward other effects
         @do
         def forward():
             result = yield effect
             return result  # Plain value
+
         return forward()
 
     result = yield WithHandler(handler=local_handler, program=program)
@@ -80,6 +82,7 @@ def with_safe(program: "ProgramLike[T]") -> "Program[Ok[T] | Err[Exception]]":
         def forward():
             result = yield effect
             return result  # Plain value
+
         return forward()
 
     try:
@@ -120,17 +123,21 @@ def with_listen(program: "ProgramLike[T]") -> Program[ListenResult[T]]:
                 log.extend(message)
             else:
                 log.append(message)
+
             # Also forward to outer handler (writes to global __log__)
             @do
             def forward_and_capture():
                 result = yield effect
                 return result  # Plain value
+
             return forward_and_capture()
+
         # Forward other effects
         @do
         def forward():
             result = yield effect
             return result  # Plain value
+
         return forward()
 
     result = yield WithHandler(handler=listen_handler, program=program)
@@ -167,12 +174,13 @@ def with_intercept(
                 return Program.pure(CESKState.with_error(ex, ctx.env, ctx.store, ctx.k))
 
             if transformed is not effect and transformed is not None:
-                if isinstance(transformed, ProgramBase):
+                if isinstance(transformed, (ProgramBase, EffectBase)):
                     # Execute the program and return its result
                     @do
                     def run_transformed_program():
                         result = yield transformed
                         return result  # Plain value
+
                     return run_transformed_program()
                 else:
                     # Yield the transformed effect
@@ -180,6 +188,7 @@ def with_intercept(
                     def forward_transformed():
                         result = yield transformed
                         return result  # Plain value
+
                     return forward_transformed()
 
         # No transform matched, forward original
@@ -187,6 +196,7 @@ def with_intercept(
         def forward():
             result = yield effect
             return result  # Plain value
+
         return forward()
 
     result = yield WithHandler(handler=intercept_handler, program=program)
@@ -214,17 +224,21 @@ def with_graph_capture(program: "ProgramLike[T]") -> Program[tuple[T, list[Any]]
         if isinstance(effect, GraphStepEffect):
             node = {"value": effect.value, "meta": effect.meta}
             captured_nodes.append(node)
+
             # Forward to outer handler AND capture locally
             @do
             def forward_and_capture():
                 result = yield effect
                 return result  # Plain value
+
             return forward_and_capture()
+
         # Forward other effects
         @do
         def forward():
             result = yield effect
             return result  # Plain value
+
         return forward()
 
     result = yield WithHandler(handler=capture_handler, program=program)
