@@ -3,7 +3,7 @@
 //! Values can be either Rust-native (for optimization) or Python objects.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyInt, PyNone, PyString};
+use pyo3::types::{PyBool, PyString};
 
 /// A value that can flow through the VM.
 ///
@@ -11,44 +11,29 @@ use pyo3::types::{PyBool, PyInt, PyNone, PyString};
 /// Rust-native variants avoid Python overhead for common cases.
 #[derive(Debug, Clone)]
 pub enum Value {
-    /// Python object (GIL-independent storage via Py<T>)
     Python(Py<PyAny>),
-
-    /// Rust unit (for primitives that don't return meaningful values)
     Unit,
-
-    /// Rust integer (optimization for common case)
     Int(i64),
-
-    /// Rust string (optimization for common case)
     String(String),
-
-    /// Rust boolean
     Bool(bool),
-
-    /// None/null
     None,
+    Continuation(crate::continuation::Continuation),
 }
 
 impl Value {
-    /// Convert to Python object (requires GIL).
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         match self {
             Value::Python(obj) => Ok(obj.bind(py).clone()),
             Value::Unit => Ok(py.None().into_bound(py)),
             Value::Int(i) => Ok(i.into_pyobject(py)?.into_any()),
             Value::String(s) => Ok(PyString::new(py, s).into_any()),
-            Value::Bool(b) => Ok(b.into_pyobject(py)?.into_any()),
+            Value::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
             Value::None => Ok(py.None().into_bound(py)),
+            Value::Continuation(k) => k.to_pyobject(py),
         }
     }
 
-    /// Create from Python object (requires GIL).
-    ///
-    /// Attempts to extract as primitive for optimization.
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> Self {
-        // Try to extract as primitive for optimization
-        // Order matters: check bool before int (bool is subclass of int in Python)
         if obj.is_none() {
             return Value::None;
         }
@@ -107,6 +92,29 @@ impl Value {
 impl Default for Value {
     fn default() -> Self {
         Value::None
+    }
+}
+
+impl Value {
+    pub fn clone_ref(&self, py: Python<'_>) -> Self {
+        match self {
+            Value::Python(obj) => Value::Python(obj.clone_ref(py)),
+            Value::Unit => Value::Unit,
+            Value::Int(i) => Value::Int(*i),
+            Value::String(s) => Value::String(s.clone()),
+            Value::Bool(b) => Value::Bool(*b),
+            Value::None => Value::None,
+            Value::Continuation(k) => Value::Continuation(k.clone()),
+        }
+    }
+}
+
+impl Value {
+    pub fn from_effect(effect: &crate::effect::Effect) -> Self {
+        match effect {
+            crate::effect::Effect::Python(py_obj) => Value::Python(py_obj.clone()),
+            _ => Value::None,
+        }
     }
 }
 

@@ -35,16 +35,29 @@ pub struct DispatchId(pub u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct RunnableId(pub u64);
 
+/// Unique identifier for callbacks stored in VM's callback table.
+///
+/// Callbacks are stored separately from Frames to allow Frame to be Clone.
+/// The callback is consumed when executed.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct CallbackId(pub u64);
+
 // Global counters for ID generation
 static MARKER_COUNTER: AtomicU64 = AtomicU64::new(1);
 static CONT_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DISPATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 static RUNNABLE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+static CALLBACK_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl Marker {
     /// Create a fresh unique Marker.
     pub fn fresh() -> Self {
         Marker(MARKER_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Reserved placeholder marker for unstarted continuations.
+    pub fn placeholder() -> Self {
+        Marker(0)
     }
 
     /// Create a Marker with a specific value (for testing/deserialization).
@@ -67,6 +80,10 @@ impl ContId {
     /// Get the raw value.
     pub fn raw(&self) -> u64 {
         self.0
+    }
+
+    pub fn from_raw(value: u64) -> Self {
+        ContId(value)
     }
 }
 
@@ -95,14 +112,22 @@ impl RunnableId {
 }
 
 impl SegmentId {
-    /// Create a SegmentId from an index.
     pub fn from_index(index: usize) -> Self {
         SegmentId(index as u32)
     }
 
-    /// Get the index value.
     pub fn index(&self) -> usize {
         self.0 as usize
+    }
+}
+
+impl CallbackId {
+    pub fn fresh() -> Self {
+        CallbackId(CALLBACK_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+
+    pub fn raw(&self) -> u64 {
+        self.0
     }
 }
 
@@ -128,5 +153,12 @@ mod tests {
     fn test_segment_id_index_roundtrip() {
         let id = SegmentId::from_index(42);
         assert_eq!(id.index(), 42);
+    }
+
+    #[test]
+    fn test_callback_id_fresh_is_unique() {
+        let c1 = CallbackId::fresh();
+        let c2 = CallbackId::fresh();
+        assert_ne!(c1, c2);
     }
 }
