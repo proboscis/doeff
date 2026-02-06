@@ -15,7 +15,7 @@ use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::segment::Segment;
 use crate::step::{
-    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
+    DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
     Yielded,
 };
 use crate::value::Value;
@@ -309,22 +309,23 @@ impl VM {
                     Effect::Python(_) => "HandleYield(Python)",
                     Effect::Scheduler(_) => "HandleYield(Scheduler)",
                 },
-                Yielded::Primitive(p) => match p {
-                    ControlPrimitive::Resume { .. } => "HandleYield(Resume)",
-                    ControlPrimitive::Transfer { .. } => "HandleYield(Transfer)",
-                    ControlPrimitive::WithHandler { .. } => "HandleYield(WithHandler)",
-                    ControlPrimitive::Delegate { .. } => "HandleYield(Delegate)",
-                    ControlPrimitive::GetContinuation => "HandleYield(GetContinuation)",
-                    ControlPrimitive::GetHandlers => "HandleYield(GetHandlers)",
-                    ControlPrimitive::CreateContinuation { .. } => {
-                        "HandleYield(CreateContinuation)"
-                    }
-                    ControlPrimitive::ResumeContinuation { .. } => {
-                        "HandleYield(ResumeContinuation)"
-                    }
-                    ControlPrimitive::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-                    ControlPrimitive::Call { .. } => "HandleYield(Call)",
-                    ControlPrimitive::GetCallStack => "HandleYield(GetCallStack)",
+Yielded::DoCtrl(p) => match p {
+            DoCtrl::Resume { .. } => "HandleYield(Resume)",
+            DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+            DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+            DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+            DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+            DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+            DoCtrl::CreateContinuation { .. } => {
+                "HandleYield(CreateContinuation)"
+            }
+            DoCtrl::ResumeContinuation { .. } => {
+                "HandleYield(ResumeContinuation)"
+            }
+            DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+            DoCtrl::Call { .. } => "HandleYield(Call)",
+            DoCtrl::Eval { .. } => "HandleYield(Eval)",
+            DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
                 },
                 Yielded::Program(_) => "HandleYield(Program)",
                 Yielded::Unknown(_) => "HandleYield(Unknown)",
@@ -574,46 +575,64 @@ impl VM {
                 Err(e) => StepEvent::Error(e),
             },
 
-            Yielded::Primitive(prim) => {
+            Yielded::DoCtrl(prim) => {
                 // Spec: Drop completed dispatches before inspecting handler context.
                 self.lazy_pop_completed();
-                use crate::step::ControlPrimitive;
+                use crate::step::DoCtrl;
                 match prim {
-                    ControlPrimitive::Resume {
+                    DoCtrl::Resume {
                         continuation,
                         value,
                     } => self.handle_resume(continuation, value),
-                    ControlPrimitive::Transfer {
+                    DoCtrl::Transfer {
                         continuation,
                         value,
                     } => self.handle_transfer(continuation, value),
-                    ControlPrimitive::WithHandler { handler, program } => {
-                        self.handle_with_handler(handler, program)
+                    DoCtrl::WithHandler { handler, expr } => {
+                        self.handle_with_handler(handler, expr)
                     }
-                    ControlPrimitive::Delegate { effect } => self.handle_delegate(effect),
-                    ControlPrimitive::GetContinuation => self.handle_get_continuation(),
-                    ControlPrimitive::GetHandlers => self.handle_get_handlers(),
-                    ControlPrimitive::CreateContinuation { program, handlers } => {
-                        self.handle_create_continuation(program, handlers)
+                    DoCtrl::Delegate { effect } => self.handle_delegate(effect),
+                    DoCtrl::GetContinuation => self.handle_get_continuation(),
+                    DoCtrl::GetHandlers => self.handle_get_handlers(),
+                    DoCtrl::CreateContinuation { expr, handlers } => {
+                        self.handle_create_continuation(expr, handlers)
                     }
-                    ControlPrimitive::ResumeContinuation {
+                    DoCtrl::ResumeContinuation {
                         continuation,
                         value,
                     } => self.handle_resume_continuation(continuation, value),
-                    ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
+                    DoCtrl::PythonAsyncSyntaxEscape { action } => {
                         self.pending_python = Some(PendingPython::AsyncEscape);
                         StepEvent::NeedsPython(PythonCall::CallAsync {
                             func: action,
                             args: vec![],
                         })
                     }
-                    ControlPrimitive::Call { program, metadata } => {
+                    DoCtrl::Call { f, args, kwargs, metadata } => {
                         self.pending_python = Some(PendingPython::StartProgramFrame {
                             metadata: Some(metadata),
                         });
-                        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+                        if args.is_empty() && kwargs.is_empty() {
+                            // DoThunk path: f is a DoThunk, driver calls to_generator()
+                            StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
+                        } else {
+                            // Kernel path: driver calls f(*args, **kwargs), gets generator
+                            // Flatten kwargs into args for now (CallFunc takes Vec<Value>)
+                            let mut call_args = args;
+                            for (_key, val) in kwargs {
+                                call_args.push(val);
+                            }
+                            StepEvent::NeedsPython(PythonCall::CallFunc {
+                                func: f,
+                                args: call_args,
+                            })
+                        }
                     }
-                    ControlPrimitive::GetCallStack => {
+                    DoCtrl::Eval { expr, handlers } => {
+                        let cont = Continuation::create(expr, handlers);
+                        self.handle_resume_continuation(cont, Value::None)
+                    }
+                    DoCtrl::GetCallStack => {
                         let mut stack = Vec::new();
                         let mut seg_id = self.current_segment;
                         while let Some(id) = seg_id {
@@ -648,7 +667,7 @@ impl VM {
                     .into_any()
                     .unbind();
                 let exc_value = pyo3::exceptions::PyTypeError::new_err(
-                    "unknown yielded value: expected Effect, ControlPrimitive, or Program",
+                    "unknown yielded value: expected Effect, DoCtrl, or Program",
                 )
                 .value(py)
                 .clone()
@@ -2062,15 +2081,15 @@ mod tests {
     /// This test verifies Delegate works with a direct Effect value.
     #[test]
     fn test_gap13_delegate_takes_non_optional_effect() {
-        use crate::step::ControlPrimitive;
+        use crate::step::DoCtrl;
         // Spec: Delegate { effect: Effect }
-        let prim = ControlPrimitive::Delegate {
+        let prim = DoCtrl::Delegate {
             effect: Effect::Get {
                 key: "x".to_string(),
             },
         };
         match prim {
-            ControlPrimitive::Delegate { effect } => {
+            DoCtrl::Delegate { effect } => {
                 assert_eq!(effect.type_name(), "Get");
             }
             _ => panic!("expected Delegate"),
@@ -2117,7 +2136,7 @@ mod tests {
     /// G8: After pop leaves empty stack, GetHandlers errors (spec: no dispatch = error).
     #[test]
     fn test_gap16_lazy_pop_before_get_handlers() {
-        use crate::step::ControlPrimitive;
+        use crate::step::DoCtrl;
 
         let mut vm = VM::new();
 
@@ -2146,7 +2165,7 @@ mod tests {
             completed: true,
         });
 
-        vm.mode = Mode::HandleYield(Yielded::Primitive(ControlPrimitive::GetHandlers));
+        vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::GetHandlers));
         let event = vm.step_handle_yield();
 
         assert!(
@@ -2547,7 +2566,7 @@ mod tests {
             // The mode should be HandleYield with Resume primitive
             // The resume value should be 50 (new_value), NOT 5 (old_value)
             match &vm.mode {
-                Mode::HandleYield(Yielded::Primitive(ControlPrimitive::Resume { value, .. })) => {
+                Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
                     assert_eq!(
                         value.as_int(),
                         Some(50),

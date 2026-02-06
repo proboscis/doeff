@@ -7,7 +7,7 @@ use pyo3::prelude::*;
 use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::ids::SegmentId;
-use crate::step::{ControlPrimitive, PyException, PythonCall, Yielded};
+use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
 
@@ -135,14 +135,14 @@ impl RustHandlerProgram for StateHandlerProgram {
         match effect {
             Effect::Get { key } => {
                 let value = store.get(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation: k,
                     value,
                 }))
             }
             Effect::Put { key, value } => {
                 store.put(key, value);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation: k,
                     value: Value::Unit,
                 }))
@@ -157,9 +157,7 @@ impl RustHandlerProgram for StateHandlerProgram {
                     args: vec![old_value],
                 })
             }
-            other => RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
-                effect: other,
-            })),
+            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
 
@@ -174,7 +172,7 @@ impl RustHandlerProgram for StateHandlerProgram {
         let _old_value = self.pending_old_value.take().unwrap();
         let new_value = value.clone();
         store.put(key, value);
-        RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
             continuation,
             value: new_value,
         }))
@@ -210,14 +208,12 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         match effect {
             Effect::Ask { key } => {
                 let value = store.ask(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation: k,
                     value,
                 }))
             }
-            other => RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
-                effect: other,
-            })),
+            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
 
@@ -256,14 +252,12 @@ impl RustHandlerProgram for WriterHandlerProgram {
         match effect {
             Effect::Tell { message } => {
                 store.tell(message);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation: k,
                     value: Value::Unit,
                 }))
             }
-            other => RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
-                effect: other,
-            })),
+            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
 
@@ -350,9 +344,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                     args: vec![Value::Int(10)],
                 })
             }
-            other => RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
-                effect: other,
-            })),
+            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
 
@@ -374,7 +366,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                 // Got second result. Combine and yield Resume.
                 let combined =
                     Value::Int(first_result.as_int().unwrap_or(0) + value.as_int().unwrap_or(0));
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation: k,
                     value: combined,
                 }))
@@ -455,9 +447,7 @@ mod tests {
             )
         };
         match step {
-            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
-                value, ..
-            })) => {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
                 assert_eq!(value.as_int(), Some(42));
             }
             _ => panic!(
@@ -485,7 +475,7 @@ mod tests {
         };
         assert!(matches!(
             step,
-            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 value: Value::Unit,
                 ..
             }))
@@ -550,10 +540,7 @@ mod tests {
                 guard.resume(Value::Int(20), &mut store)
             };
             match step {
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
-                    value,
-                    ..
-                })) => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
                     assert_eq!(value.as_int(), Some(20)); // new_value returned (modifier result)
                 }
                 _ => panic!("Expected Yield(Resume) with new_value"),
@@ -595,9 +582,7 @@ mod tests {
             )
         };
         match step {
-            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
-                value, ..
-            })) => {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
                 assert_eq!(value.as_str(), Some("value"));
             }
             _ => panic!("Expected Yield(Resume)"),
@@ -635,7 +620,7 @@ mod tests {
         };
         assert!(matches!(
             step,
-            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 value: Value::Unit,
                 ..
             }))
@@ -693,10 +678,7 @@ mod tests {
                 guard.resume(Value::Int(200), &mut store)
             };
             match step3 {
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
-                    value,
-                    ..
-                })) => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
                     // 100 + 200 = 300
                     assert_eq!(value.as_int(), Some(300));
                 }
