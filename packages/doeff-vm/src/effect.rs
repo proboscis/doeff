@@ -39,7 +39,9 @@ pub enum Effect {
 
 impl Effect {
     /// Check if this effect has a built-in Rust handler.
-    pub fn has_builtin_handler(&self) -> bool {
+    /// Check if this is a standard effect (state/reader/writer only).
+    /// NOTE: This does NOT mean bypass — all effects still go through dispatch.
+    pub fn is_standard(&self) -> bool {
         matches!(
             self,
             Effect::Get { .. }
@@ -47,7 +49,6 @@ impl Effect {
                 | Effect::Modify { .. }
                 | Effect::Ask { .. }
                 | Effect::Tell { .. }
-                | Effect::Scheduler(_)
         )
     }
 
@@ -152,9 +153,16 @@ mod tests {
 
     #[test]
     fn test_builtin_detection() {
-        assert!(Effect::get("x").has_builtin_handler());
-        assert!(Effect::put("x", 1i64).has_builtin_handler());
-        assert!(Effect::ask("x").has_builtin_handler());
-        assert!(Effect::tell("x").has_builtin_handler());
+        assert!(Effect::get("x").is_standard());
+        assert!(Effect::put("x", 1i64).is_standard());
+        assert!(Effect::ask("x").is_standard());
+        assert!(Effect::tell("x").is_standard());
+    }
+
+    /// G14: Scheduler effects are NOT standard (state/reader/writer only).
+    #[test]
+    fn test_scheduler_not_standard() {
+        let sched = Effect::Scheduler(crate::scheduler::SchedulerEffect::CreatePromise);
+        assert!(!sched.is_standard(), "Scheduler effects should not be standard");
     }
 }

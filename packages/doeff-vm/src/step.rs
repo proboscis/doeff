@@ -5,7 +5,8 @@ use pyo3::prelude::*;
 use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::error::VMError;
-use crate::handler::{Handler, StdlibHandler};
+use crate::frame::CallMetadata;
+use crate::handler::Handler;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -64,25 +65,19 @@ pub enum PythonCall {
 
 #[derive(Debug, Clone)]
 pub enum PendingPython {
-    StartProgramFrame,
+    StartProgramFrame {
+        metadata: Option<CallMetadata>,
+    },
     StepUserGenerator {
         generator: Py<PyAny>,
+        metadata: Option<CallMetadata>,
     },
     CallPythonHandler {
         k_user: Continuation,
         effect: Effect,
     },
-    StdlibContinuation {
-        handler: StdlibHandler,
-        k: Continuation,
-        context: HandlerContext,
-    },
+    RustProgramContinuation,
     AsyncEscape,
-}
-
-#[derive(Debug, Clone)]
-pub enum HandlerContext {
-    ModifyPending { key: String, old_value: Value },
 }
 
 #[derive(Debug, Clone)]
@@ -95,16 +90,39 @@ pub enum Yielded {
 
 #[derive(Debug, Clone)]
 pub enum ControlPrimitive {
-    Resume { k: Continuation, value: Value },
-    Transfer { k: Continuation, value: Value },
-    WithHandler { handler: Py<PyAny>, body: Py<PyAny> },
-    Delegate { effect: Effect },
+    Resume {
+        continuation: Continuation,
+        value: Value,
+    },
+    Transfer {
+        continuation: Continuation,
+        value: Value,
+    },
+    WithHandler {
+        handler: Handler,
+        program: Py<PyAny>,
+    },
+    Delegate {
+        effect: Effect,
+    },
     GetContinuation,
     GetHandlers,
-    CreateContinuation { program: Py<PyAny>, handlers: Vec<Handler> },
-    ResumeContinuation { k: Continuation, value: Value },
-    Pure(Value),
-    PythonAsyncSyntaxEscape { action: Py<PyAny> },
+    CreateContinuation {
+        program: Py<PyAny>,
+        handlers: Vec<Handler>,
+    },
+    ResumeContinuation {
+        continuation: Continuation,
+        value: Value,
+    },
+    PythonAsyncSyntaxEscape {
+        action: Py<PyAny>,
+    },
+    Call {
+        program: Py<PyAny>,
+        metadata: CallMetadata,
+    },
+    GetCallStack,
 }
 
 #[derive(Debug, Clone)]
@@ -175,33 +193,52 @@ impl Yielded {
 impl ControlPrimitive {
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
-            ControlPrimitive::Resume { k, value } => ControlPrimitive::Resume {
-                k: k.clone(),
+            ControlPrimitive::Resume {
+                continuation,
+                value,
+            } => ControlPrimitive::Resume {
+                continuation: continuation.clone(),
                 value: value.clone(),
             },
-            ControlPrimitive::Transfer { k, value } => ControlPrimitive::Transfer {
-                k: k.clone(),
+            ControlPrimitive::Transfer {
+                continuation,
+                value,
+            } => ControlPrimitive::Transfer {
+                continuation: continuation.clone(),
                 value: value.clone(),
             },
-            ControlPrimitive::WithHandler { handler, body } => ControlPrimitive::WithHandler {
-                handler: handler.clone_ref(py),
-                body: body.clone_ref(py),
+            ControlPrimitive::WithHandler { handler, program } => ControlPrimitive::WithHandler {
+                handler: handler.clone(),
+                program: program.clone_ref(py),
             },
-            ControlPrimitive::Delegate { ref effect } => ControlPrimitive::Delegate { effect: effect.clone() },
+            ControlPrimitive::Delegate { ref effect } => ControlPrimitive::Delegate {
+                effect: effect.clone(),
+            },
             ControlPrimitive::GetContinuation => ControlPrimitive::GetContinuation,
             ControlPrimitive::GetHandlers => ControlPrimitive::GetHandlers,
-            ControlPrimitive::CreateContinuation { program, handlers } => ControlPrimitive::CreateContinuation {
-                program: program.clone_ref(py),
-                handlers: handlers.clone(),
-            },
-            ControlPrimitive::ResumeContinuation { k, value } => ControlPrimitive::ResumeContinuation {
-                k: k.clone(),
+            ControlPrimitive::CreateContinuation { program, handlers } => {
+                ControlPrimitive::CreateContinuation {
+                    program: program.clone_ref(py),
+                    handlers: handlers.clone(),
+                }
+            }
+            ControlPrimitive::ResumeContinuation {
+                continuation,
+                value,
+            } => ControlPrimitive::ResumeContinuation {
+                continuation: continuation.clone(),
                 value: value.clone(),
             },
-            ControlPrimitive::Pure(v) => ControlPrimitive::Pure(v.clone()),
-            ControlPrimitive::PythonAsyncSyntaxEscape { action } => ControlPrimitive::PythonAsyncSyntaxEscape {
-                action: action.clone_ref(py),
+            ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
+                ControlPrimitive::PythonAsyncSyntaxEscape {
+                    action: action.clone_ref(py),
+                }
+            }
+            ControlPrimitive::Call { program, metadata } => ControlPrimitive::Call {
+                program: program.clone_ref(py),
+                metadata: metadata.clone(),
             },
+            ControlPrimitive::GetCallStack => ControlPrimitive::GetCallStack,
         }
     }
 }
@@ -248,5 +285,95 @@ mod tests {
         let cont = StepEvent::Continue;
         assert!(!cont.is_done());
         assert!(!cont.is_error());
+    }
+
+    /// G1-G3: ControlPrimitive uses spec field names `continuation` (not `k`)
+    /// and `program` (not `body`).
+    #[test]
+    fn test_control_primitive_spec_field_names() {
+        use crate::continuation::Continuation;
+        use crate::ids::{ContId, Marker, SegmentId};
+
+        let k = Continuation {
+            cont_id: ContId::fresh(),
+            segment_id: SegmentId::from_index(0),
+            frames_snapshot: std::sync::Arc::new(Vec::new()),
+            scope_chain: std::sync::Arc::new(Vec::new()),
+            marker: Marker::fresh(),
+            dispatch_id: None,
+            started: true,
+            program: None,
+            handlers: Vec::new(),
+        };
+
+        // Resume uses `continuation` field
+        let resume = ControlPrimitive::Resume {
+            continuation: k.clone(),
+            value: Value::Int(1),
+        };
+        match resume {
+            ControlPrimitive::Resume {
+                continuation,
+                value,
+            } => {
+                assert_eq!(continuation.cont_id, k.cont_id);
+                assert_eq!(value.as_int(), Some(1));
+            }
+            _ => panic!("Expected Resume"),
+        }
+
+        // Transfer uses `continuation` field
+        let transfer = ControlPrimitive::Transfer {
+            continuation: k.clone(),
+            value: Value::Int(2),
+        };
+        match transfer {
+            ControlPrimitive::Transfer {
+                continuation,
+                value,
+            } => {
+                assert_eq!(continuation.cont_id, k.cont_id);
+                assert_eq!(value.as_int(), Some(2));
+            }
+            _ => panic!("Expected Transfer"),
+        }
+
+        // ResumeContinuation uses `continuation` field
+        let resume_cont = ControlPrimitive::ResumeContinuation {
+            continuation: k.clone(),
+            value: Value::Int(3),
+        };
+        match resume_cont {
+            ControlPrimitive::ResumeContinuation {
+                continuation,
+                value,
+            } => {
+                assert_eq!(continuation.cont_id, k.cont_id);
+                assert_eq!(value.as_int(), Some(3));
+            }
+            _ => panic!("Expected ResumeContinuation"),
+        }
+    }
+
+    /// G4: Pure variant should not exist in ControlPrimitive.
+    /// This test verifies that ControlPrimitive has exactly the spec variants.
+    #[test]
+    fn test_control_primitive_no_pure_variant() {
+        // This is a compile-time check. If Pure existed, this match would
+        // be non-exhaustive. Since we removed it, this compiles.
+        let prim = ControlPrimitive::GetContinuation;
+        match prim {
+            ControlPrimitive::Resume { .. } => {}
+            ControlPrimitive::Transfer { .. } => {}
+            ControlPrimitive::WithHandler { .. } => {}
+            ControlPrimitive::Delegate { .. } => {}
+            ControlPrimitive::GetContinuation => {}
+            ControlPrimitive::GetHandlers => {}
+            ControlPrimitive::CreateContinuation { .. } => {}
+            ControlPrimitive::ResumeContinuation { .. } => {}
+            ControlPrimitive::PythonAsyncSyntaxEscape { .. } => {}
+            ControlPrimitive::Call { .. } => {}
+            ControlPrimitive::GetCallStack => {}
+        }
     }
 }

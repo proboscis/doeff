@@ -118,9 +118,9 @@ mod tests {
 
         match (f3, f2, f1) {
             (
-                Frame::RustReturn { callback_id: id3 },
-                Frame::RustReturn { callback_id: id2 },
-                Frame::RustReturn { callback_id: id1 },
+                Frame::RustReturn { cb: id3 },
+                Frame::RustReturn { cb: id2 },
+                Frame::RustReturn { cb: id1 },
             ) => {
                 assert_eq!(id3, cb3);
                 assert_eq!(id2, cb2);
