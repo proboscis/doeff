@@ -3,7 +3,9 @@
 //! Values can be either Rust-native (for optimization) or Python objects.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyString};
+use pyo3::types::{PyBool, PyList, PyString};
+
+use crate::handler::Handler;
 
 /// A value that can flow through the VM.
 ///
@@ -18,6 +20,7 @@ pub enum Value {
     Bool(bool),
     None,
     Continuation(crate::continuation::Continuation),
+    Handlers(Vec<Handler>),
 }
 
 impl Value {
@@ -30,6 +33,28 @@ impl Value {
             Value::Bool(b) => Ok(PyBool::new(py, *b).to_owned().into_any()),
             Value::None => Ok(py.None().into_bound(py)),
             Value::Continuation(k) => k.to_pyobject(py),
+            Value::Handlers(handlers) => {
+                let list = PyList::empty(py);
+                for h in handlers {
+                    match h {
+                        Handler::Python(py_handler) => {
+                            list.append(py_handler.bind(py))?;
+                        }
+                        Handler::Stdlib(stdlib_handler) => {
+                            let label = match stdlib_handler {
+                                crate::handler::StdlibHandler::State => "stdlib:State",
+                                crate::handler::StdlibHandler::Reader => "stdlib:Reader",
+                                crate::handler::StdlibHandler::Writer => "stdlib:Writer",
+                            };
+                            list.append(PyString::new(py, label))?;
+                        }
+                        Handler::RustProgram(_) => {
+                            list.append(PyString::new(py, "rust_program_handler"))?;
+                        }
+                    }
+                }
+                Ok(list.into_any())
+            }
         }
     }
 
@@ -87,6 +112,14 @@ impl Value {
             _ => None,
         }
     }
+
+    /// Try to get as handlers slice.
+    pub fn as_handlers(&self) -> Option<&[Handler]> {
+        match self {
+            Value::Handlers(h) => Some(h),
+            _ => None,
+        }
+    }
 }
 
 impl Default for Value {
@@ -105,6 +138,7 @@ impl Value {
             Value::Bool(b) => Value::Bool(*b),
             Value::None => Value::None,
             Value::Continuation(k) => Value::Continuation(k.clone()),
+            Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
         }
     }
 }
@@ -167,5 +201,13 @@ mod tests {
         assert_eq!(Value::Bool(true).as_bool(), Some(true));
         assert!(Value::None.is_none());
         assert!(Value::Unit.is_none());
+    }
+
+    #[test]
+    fn test_value_handlers() {
+        let handlers = vec![Handler::Stdlib(crate::handler::StdlibHandler::State)];
+        let val = Value::Handlers(handlers);
+        assert!(val.as_handlers().is_some());
+        assert_eq!(val.as_handlers().unwrap().len(), 1);
     }
 }

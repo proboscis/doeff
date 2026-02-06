@@ -266,6 +266,39 @@ impl PyVM {
                 "GetContinuation" => {
                     return Ok(Yielded::Primitive(ControlPrimitive::GetContinuation));
                 }
+                "GetHandlers" => {
+                    return Ok(Yielded::Primitive(ControlPrimitive::GetHandlers));
+                }
+                "CreateContinuation" => {
+                    let program = obj.getattr("program")?.unbind();
+                    let handlers_list = obj.getattr("handlers")?;
+                    let mut handlers = Vec::new();
+                    for item in handlers_list.try_iter()? {
+                        let item = item?;
+                        handlers.push(crate::handler::Handler::Python(item.unbind()));
+                    }
+                    return Ok(Yielded::Primitive(ControlPrimitive::CreateContinuation {
+                        program,
+                        handlers,
+                    }));
+                }
+                "ResumeContinuation" => {
+                    if let Ok(k_obj) = obj.getattr("continuation") {
+                        let cont_id_raw = k_obj
+                            .getattr("cont_id")
+                            .or_else(|_| k_obj.get_item("cont_id"))?;
+                        if let Ok(cont_id_val) = cont_id_raw.extract::<u64>() {
+                            let cont_id = ContId::from_raw(cont_id_val);
+                            if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
+                                let value = obj.getattr("value")?;
+                                return Ok(Yielded::Primitive(ControlPrimitive::ResumeContinuation {
+                                    k,
+                                    value: Value::from_pyobject(&value),
+                                }));
+                            }
+                        }
+                    }
+                }
                 "StateGetEffect" | "Get" => {
                     let key: String = obj.getattr("key")?.extract()?;
                     return Ok(Yielded::Effect(Effect::Get { key }));
