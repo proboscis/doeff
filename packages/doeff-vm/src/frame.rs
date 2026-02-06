@@ -2,6 +2,7 @@
 
 use pyo3::prelude::*;
 
+use crate::handler::RustProgramRef;
 use crate::ids::CallbackId;
 
 /// A frame in the continuation stack.
@@ -11,6 +12,7 @@ use crate::ids::CallbackId;
 #[derive(Debug, Clone)]
 pub enum Frame {
     RustReturn { callback_id: CallbackId },
+    RustProgram { program: RustProgramRef },
     PythonGenerator { generator: Py<PyAny>, started: bool },
 }
 
@@ -26,8 +28,16 @@ impl Frame {
         }
     }
 
+    pub fn rust_program(program: RustProgramRef) -> Self {
+        Frame::RustProgram { program }
+    }
+
     pub fn is_rust(&self) -> bool {
-        matches!(self, Frame::RustReturn { .. })
+        matches!(self, Frame::RustReturn { .. } | Frame::RustProgram { .. })
+    }
+
+    pub fn is_rust_program(&self) -> bool {
+        matches!(self, Frame::RustProgram { .. })
     }
 
     pub fn is_python(&self) -> bool {

@@ -124,6 +124,9 @@ impl Continuation {
                         };
                         list.append(PyString::new(py, label))?;
                     }
+                    Handler::RustProgram(_) => {
+                        list.append(PyString::new(py, "rust_program_handler"))?;
+                    }
                 }
             }
             dict.set_item("handlers", list)?;

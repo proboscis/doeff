@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
 use crate::continuation::Continuation;
@@ -32,6 +33,7 @@ pub struct DispatchContext {
     pub completed: bool,
 }
 
+#[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<String, Value>,
@@ -71,6 +73,20 @@ impl RustStore {
 impl Default for RustStore {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Optional Python dict for user-defined handler state (Layer 3).
+/// VM doesn't read it; users can store arbitrary data.
+pub struct PyStore {
+    pub dict: Py<PyDict>,
+}
+
+impl PyStore {
+    pub fn new(py: Python<'_>) -> Self {
+        PyStore {
+            dict: PyDict::new(py).unbind(),
+        }
     }
 }
 
@@ -129,6 +145,7 @@ pub struct VM {
     pub consumed_cont_ids: HashSet<ContId>,
     pub handlers: HashMap<Marker, HandlerEntry>,
     pub rust_store: RustStore,
+    pub py_store: Option<PyStore>,
     pub current_segment: Option<SegmentId>,
     pub mode: Mode,
     pub pending_python: Option<PendingPython>,
@@ -146,6 +163,7 @@ impl VM {
             consumed_cont_ids: HashSet::new(),
             handlers: HashMap::new(),
             rust_store: RustStore::new(),
+            py_store: None,
             current_segment: None,
             mode: Mode::Deliver(Value::Unit),
             pending_python: None,
@@ -164,6 +182,16 @@ impl VM {
 
     pub fn set_debug(&mut self, config: DebugConfig) {
         self.debug = config;
+    }
+
+    pub fn py_store(&self) -> Option<&PyStore> {
+        self.py_store.as_ref()
+    }
+
+    pub fn init_py_store(&mut self, py: Python<'_>) {
+        if self.py_store.is_none() {
+            self.py_store = Some(PyStore::new(py));
+        }
     }
 
     pub fn alloc_segment(&mut self, segment: Segment) -> SegmentId {
@@ -225,6 +253,9 @@ impl VM {
                     ControlPrimitive::WithHandler { .. } => "HandleYield(WithHandler)",
                     ControlPrimitive::Delegate => "HandleYield(Delegate)",
                     ControlPrimitive::GetContinuation => "HandleYield(GetContinuation)",
+                    ControlPrimitive::GetHandlers => "HandleYield(GetHandlers)",
+                    ControlPrimitive::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
+                    ControlPrimitive::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
                 },
                 Yielded::Program(_) => "HandleYield(Program)",
                 Yielded::Unknown(_) => "HandleYield(Unknown)",
@@ -263,6 +294,7 @@ impl VM {
                 for (i, frame) in seg.frames.iter().enumerate() {
                     let frame_kind = match frame {
                         Frame::RustReturn { .. } => "RustReturn",
+                        Frame::RustProgram { .. } => "RustProgram",
                         Frame::PythonGenerator { started, .. } => {
                             if *started {
                                 "PythonGenerator(started)"
@@ -350,6 +382,18 @@ impl VM {
                 }
             }
 
+            Frame::RustProgram { program } => {
+                let step = {
+                    let mut guard = program.lock().expect("Rust program lock poisoned");
+                    match &self.mode {
+                        Mode::Deliver(v) => guard.resume(v.clone(), &mut self.rust_store),
+                        Mode::Throw(e) => guard.throw(e.clone(), &mut self.rust_store),
+                        _ => unreachable!(),
+                    }
+                };
+                self.apply_rust_program_step(step, program)
+            }
+
             Frame::PythonGenerator { generator, started } => {
                 self.pending_python = Some(PendingPython::StepUserGenerator {
                     generator: generator.clone(),
@@ -372,6 +416,34 @@ impl VM {
                     }),
                     _ => unreachable!(),
                 }
+            }
+        }
+    }
+
+    fn apply_rust_program_step(
+        &mut self,
+        step: crate::handler::RustProgramStep,
+        program: crate::handler::RustProgramRef,
+    ) -> StepEvent {
+        use crate::handler::RustProgramStep;
+        match step {
+            RustProgramStep::Yield(yielded) => {
+                // Re-push the RustProgram frame (like re-pushing a Python generator on yield)
+                if let Some(seg) = self.current_segment_mut() {
+                    seg.push_frame(Frame::RustProgram { program });
+                }
+                self.mode = Mode::HandleYield(yielded);
+                StepEvent::Continue
+            }
+            RustProgramStep::Return(value) => {
+                // Program is done, do NOT re-push
+                self.mode = Mode::Deliver(value);
+                StepEvent::Continue
+            }
+            RustProgramStep::Throw(exc) => {
+                // Program threw, do NOT re-push
+                self.mode = Mode::Throw(exc);
+                StepEvent::Continue
             }
         }
     }
@@ -402,6 +474,13 @@ impl VM {
                     }
                     ControlPrimitive::Delegate => self.handle_delegate(),
                     ControlPrimitive::GetContinuation => self.handle_get_continuation(),
+                    ControlPrimitive::GetHandlers => self.handle_get_handlers(),
+                    ControlPrimitive::CreateContinuation { program, handlers } => {
+                        self.handle_create_continuation(program, handlers)
+                    }
+                    ControlPrimitive::ResumeContinuation { k, value } => {
+                        self.handle_resume_continuation(k, value)
+                    }
                 }
             }
 
@@ -667,6 +746,14 @@ impl VM {
                 let action = stdlib_handler.handle(&effect, k_user, &mut self.rust_store);
                 Ok(self.apply_handler_action(action))
             }
+            Handler::RustProgram(rust_handler) => {
+                let program = rust_handler.create_program();
+                let step = {
+                    let mut guard = program.lock().expect("Rust program lock poisoned");
+                    guard.start(effect, k_user, &mut self.rust_store)
+                };
+                Ok(self.apply_rust_program_step(step, program))
+            }
             Handler::Python(py_handler) => {
                 self.register_continuation(k_user.clone());
                 self.pending_python = Some(PendingPython::CallPythonHandler {
@@ -907,6 +994,14 @@ impl VM {
                                 stdlib_handler.handle(&effect, k_user, &mut self.rust_store);
                             return self.apply_handler_action(action);
                         }
+                        Handler::RustProgram(rust_handler) => {
+                            let program = rust_handler.create_program();
+                            let step = {
+                                let mut guard = program.lock().expect("Rust program lock poisoned");
+                                guard.start(effect, k_user, &mut self.rust_store)
+                            };
+                            return self.apply_rust_program_step(step, program);
+                        }
                         Handler::Python(py_handler) => {
                             self.register_continuation(k_user.clone());
                             self.pending_python = Some(PendingPython::CallPythonHandler {
@@ -956,6 +1051,74 @@ impl VM {
         self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
+    }
+
+    fn handle_get_handlers(&mut self) -> StepEvent {
+        let scope_chain = self.current_scope_chain();
+        let handlers: Vec<Handler> = scope_chain
+            .iter()
+            .filter_map(|marker| {
+                self.handlers.get(marker).map(|entry| entry.handler.clone())
+            })
+            .collect();
+        self.mode = Mode::Deliver(Value::Handlers(handlers));
+        StepEvent::Continue
+    }
+
+    fn handle_create_continuation(&mut self, program: Py<PyAny>, handlers: Vec<Handler>) -> StepEvent {
+        let k = Continuation::create(program, handlers);
+        self.register_continuation(k.clone());
+        self.mode = Mode::Deliver(Value::Continuation(k));
+        StepEvent::Continue
+    }
+
+    fn handle_resume_continuation(&mut self, k: Continuation, value: Value) -> StepEvent {
+        if k.started {
+            // Behaves like Resume for started continuations
+            return self.handle_resume(k, value);
+        }
+
+        // Unstarted continuation: install handlers and start program
+        if self.is_one_shot_consumed(k.cont_id) {
+            return StepEvent::Error(VMError::one_shot_violation(k.cont_id));
+        }
+        self.mark_one_shot_consumed(k.cont_id);
+
+        let program = match k.program {
+            Some(prog) => prog,
+            None => return StepEvent::Error(VMError::internal("unstarted continuation has no program")),
+        };
+
+        // Install handlers outermost first
+        let mut outer_seg_id = self.current_segment;
+        let mut scope_chain = self.current_scope_chain();
+
+        for handler in k.handlers.iter().rev() {
+            let handler_marker = Marker::fresh();
+            let prompt_seg = Segment::new_prompt(
+                handler_marker,
+                outer_seg_id,
+                scope_chain.clone(),
+                handler_marker,
+            );
+            let prompt_seg_id = self.alloc_segment(prompt_seg);
+            self.handlers.insert(
+                handler_marker,
+                HandlerEntry::new(handler.clone(), prompt_seg_id),
+            );
+            scope_chain.insert(0, handler_marker);
+            outer_seg_id = Some(prompt_seg_id);
+        }
+
+        // Create body segment
+        let body_marker = Marker::fresh();
+        let body_seg = Segment::new(body_marker, outer_seg_id, scope_chain);
+        let body_seg_id = self.alloc_segment(body_seg);
+        self.current_segment = Some(body_seg_id);
+
+        // Start the program
+        self.pending_python = Some(PendingPython::StartProgramFrame);
+        StepEvent::NeedsPython(PythonCall::StartProgram { program })
     }
 }
 
@@ -1409,6 +1572,49 @@ mod tests {
             event,
             StepEvent::Error(VMError::InternalError { .. })
         ));
+    }
+
+    #[test]
+    fn test_rust_store_clone() {
+        let mut store = RustStore::new();
+        store.put("key".to_string(), Value::Int(42));
+        store.tell(Value::String("log".to_string()));
+        store.env.insert("env_key".to_string(), Value::Bool(true));
+
+        let cloned = store.clone();
+        assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
+        assert_eq!(cloned.logs().len(), 1);
+        assert_eq!(cloned.ask("env_key").unwrap().as_bool(), Some(true));
+
+        // Verify independence
+        store.put("key".to_string(), Value::Int(99));
+        assert_eq!(cloned.get("key").unwrap().as_int(), Some(42));
+    }
+
+    #[test]
+    fn test_handle_get_handlers() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let prompt_seg_id = SegmentId::from_index(0);
+
+        vm.install_handler(
+            marker,
+            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+        );
+
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = vm.alloc_segment(seg);
+        vm.current_segment = Some(seg_id);
+
+        let event = vm.handle_get_handlers();
+        assert!(matches!(event, StepEvent::Continue));
+        match &vm.mode {
+            Mode::Deliver(Value::Handlers(h)) => {
+                assert_eq!(h.len(), 1);
+                assert!(matches!(h[0], Handler::Stdlib(StdlibHandler::State)));
+            }
+            _ => panic!("Expected Deliver(Handlers)"),
+        }
     }
 
     #[test]
