@@ -364,7 +364,7 @@ impl RustHandlerProgram for SchedulerProgram {
     fn start(&mut self, effect: Effect, k_user: Continuation, store: &mut RustStore) -> RustProgramStep {
         let Effect::Scheduler(sched_effect) = effect else {
             // Not our effect, delegate
-            return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate));
+            return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate { effect: None }));
         };
 
         match sched_effect {

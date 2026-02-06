@@ -252,11 +252,12 @@ impl VM {
                     ControlPrimitive::Resume { .. } => "HandleYield(Resume)",
                     ControlPrimitive::Transfer { .. } => "HandleYield(Transfer)",
                     ControlPrimitive::WithHandler { .. } => "HandleYield(WithHandler)",
-                    ControlPrimitive::Delegate => "HandleYield(Delegate)",
+                    ControlPrimitive::Delegate { .. } => "HandleYield(Delegate)",
                     ControlPrimitive::GetContinuation => "HandleYield(GetContinuation)",
                     ControlPrimitive::GetHandlers => "HandleYield(GetHandlers)",
                     ControlPrimitive::CreateContinuation { .. } => "HandleYield(CreateContinuation)",
                     ControlPrimitive::ResumeContinuation { .. } => "HandleYield(ResumeContinuation)",
+                    ControlPrimitive::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
                 },
                 Yielded::Program(_) => "HandleYield(Program)",
                 Yielded::Unknown(_) => "HandleYield(Unknown)",
@@ -278,6 +279,7 @@ impl VM {
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
                 PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::StdlibContinuation { .. } => "StdlibContinuation",
+                PendingPython::AsyncEscape => "AsyncEscape",
             })
             .unwrap_or("None");
 
@@ -326,6 +328,7 @@ impl VM {
                     PythonCall::GenNext { .. } => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
                     PythonCall::GenThrow { .. } => "GenThrow",
+                    PythonCall::CallAsync { .. } => "CallAsync",
                 };
                 eprintln!("[step {}] -> NeedsPython({})", self.step_counter, call_kind);
                 return;
@@ -473,7 +476,7 @@ impl VM {
                     ControlPrimitive::WithHandler { handler, body } => {
                         self.handle_with_handler(handler, body)
                     }
-                    ControlPrimitive::Delegate => self.handle_delegate(),
+                    ControlPrimitive::Delegate { effect } => self.handle_delegate(effect),
                     ControlPrimitive::GetContinuation => self.handle_get_continuation(),
                     ControlPrimitive::GetHandlers => self.handle_get_handlers(),
                     ControlPrimitive::CreateContinuation { program, handlers } => {
@@ -481,6 +484,13 @@ impl VM {
                     }
                     ControlPrimitive::ResumeContinuation { k, value } => {
                         self.handle_resume_continuation(k, value)
+                    }
+                    ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
+                        self.pending_python = Some(PendingPython::AsyncEscape);
+                        StepEvent::NeedsPython(PythonCall::CallAsync {
+                            func: action,
+                            args: vec![],
+                        })
                     }
                 }
             }
@@ -613,6 +623,14 @@ impl VM {
             }
 
             (PendingPython::StdlibContinuation { .. }, PyCallOutcome::GenError(e)) => {
+                self.mode = Mode::Throw(e);
+            }
+
+            (PendingPython::AsyncEscape, PyCallOutcome::Value(result)) => {
+                self.mode = Mode::Deliver(result);
+            }
+
+            (PendingPython::AsyncEscape, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
@@ -952,7 +970,7 @@ impl VM {
         })
     }
 
-    fn handle_delegate(&mut self) -> StepEvent {
+    fn handle_delegate(&mut self, override_effect: Option<Effect>) -> StepEvent {
         let top = match self.dispatch_stack.last_mut() {
             Some(t) => t,
             None => {
@@ -962,7 +980,7 @@ impl VM {
             }
         };
 
-        let effect = top.effect.clone();
+        let effect = override_effect.unwrap_or_else(|| top.effect.clone());
         let handler_chain = top.handler_chain.clone();
         let start_idx = top.handler_idx + 1;
 
@@ -1576,7 +1594,7 @@ mod tests {
     #[test]
     fn test_handle_delegate_no_dispatch() {
         let mut vm = VM::new();
-        let event = vm.handle_delegate();
+        let event = vm.handle_delegate(None);
         assert!(matches!(
             event,
             StepEvent::Error(VMError::InternalError { .. })
