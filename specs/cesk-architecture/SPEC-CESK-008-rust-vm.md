@@ -1,6 +1,20 @@
 # SPEC-CESK-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 8)
+## Status: Draft (Revision 9)
+
+### Revision 9 Changelog
+
+Changes from Rev 8. Driven by SPEC-TYPES-001 reconciliation (Program/Effect separation).
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R9-A** | Control Primitives | New: `Call { program, metadata }` — run a sub-program with call stack metadata. |
+| **R9-B** | Control Primitives | New: `GetCallStack` — walk frames and return `Vec<CallMetadata>`. |
+| **R9-C** | Frame enum | `PythonGenerator` gains `metadata: Option<CallMetadata>` field for call stack tracking. |
+| **R9-D** | New struct | `CallMetadata { function_name, source_file, source_line, program_call }` — carried on frames. |
+| **R9-E** | Yielded / classify | `Yielded::Program` kept for backward compat (metadata: None). KPC-originated programs upgraded to `Call` with metadata by driver. |
+| **R9-F** | handle_primitive | New arms for `Call` (emit StartProgram + store metadata) and `GetCallStack` (walk frames). |
+| **R9-G** | receive_python_result | `StartProgramFrame` pending now carries `Option<CallMetadata>` to attach to pushed frame. |
 
 ### Revision 8 Changelog
 
@@ -51,7 +65,8 @@ This spec defines a **Rust-based VM** for doeff's algebraic effects system, with
 │        │              Primitives                                │
 │        │             ┌─────────────────────────────┐           │
 │        └────────────►│ Resume, Transfer, Delegate  │           │
-│                      │ WithHandler, GetContinuation│           │
+│                      │ WithHandler, Call,           │           │
+│                      │ GetContinuation, GetCallStack│          │
 │                      └─────────────────────────────┘           │
 │                                                                 │
 │    3-Layer State Model                                          │
@@ -399,7 +414,28 @@ pub enum Frame {
         generator: Py<PyAny>,
         /// Whether this generator has been started (first __next__ called)
         started: bool,
+        /// Call stack metadata (populated by Call primitive, None for legacy Yielded::Program) [R9-C]
+        metadata: Option<CallMetadata>,
     },
+}
+
+/// Metadata about a program call for call stack reconstruction. [R9-D]
+///
+/// Extracted by the driver (with GIL) during classify_yielded or by
+/// RustHandlerPrograms that emit Call primitives. Stored on PythonGenerator
+/// frames. Read by GetCallStack (no GIL needed for the Rust fields).
+#[derive(Debug, Clone)]
+pub struct CallMetadata {
+    /// Human-readable function name (e.g., "fetch_user", from KPC.function_name)
+    pub function_name: String,
+    /// Source file where the @do function is defined
+    pub source_file: String,
+    /// Line number in source file
+    pub source_line: u32,
+    /// Optional: reference to the full KleisliProgramCall Python object.
+    /// Enables rich introspection (args, kwargs, kleisli_source) via GIL.
+    /// None for non-KPC programs or when metadata is extracted from Rust-side only.
+    pub program_call: Option<Py<PyAny>>,
 }
 
 /// Callback type stored in VM.callbacks table.
@@ -1647,15 +1683,22 @@ pub enum PythonCall {
 /// When receive_python_result() is called, VM uses pending_python to route the result.
 #[derive(Debug, Clone)]
 pub enum PendingPython {
-    /// StartProgram for a Program body - result is Value::Python(generator)
-    StartProgramFrame,
+    /// StartProgram for a Program body - result is Value::Python(generator).
+    /// Carries optional CallMetadata to attach to the PythonGenerator frame. [R9-G]
+    /// When metadata is Some, the frame was created via ControlPrimitive::Call.
+    /// When metadata is None, the frame was created via Yielded::Program (legacy).
+    StartProgramFrame {
+        metadata: Option<CallMetadata>,
+    },
     
     /// GenNext/GenSend/GenThrow on a user generator frame
-    /// On GenYield: re-push generator with started=true
+    /// On GenYield: re-push generator with started=true and preserved metadata [R9-C]
     /// On GenReturn/GenError: generator is done, don't re-push
     StepUserGenerator {
         /// The generator being stepped (needed for re-push)
         generator: Py<PyAny>,
+        /// CallMetadata from the original frame (preserved across yields) [R9-C]
+        metadata: Option<CallMetadata>,
     },
     
     /// CallHandler for Python handler invocation
@@ -1700,7 +1743,8 @@ current segment.
 GenNext/GenSend/GenThrow → driver executes → PyCallOutcome::GenYield(yielded)
   ↓
 receive_python_result:
-  1. Re-push generator as Frame::PythonGenerator { generator, started: true }
+  1. Re-push generator as Frame::PythonGenerator { generator, started: true, metadata }
+     (metadata is preserved from the original frame — it does not change across yields)
   2. Set mode = HandleYield(yielded)
   
 GenReturn/GenError → generator is DONE, do NOT re-push
@@ -2088,13 +2132,16 @@ The VM receives pre-classified `Yielded` values and operates without GIL.
 /// not by the VM. Rust program handlers return Yielded directly.
 /// The VM receives Yielded and processes it without needing GIL.
 pub enum Yielded {
-    /// A control primitive (Resume, Transfer, WithHandler, etc.)
+    /// A control primitive (Resume, Transfer, WithHandler, Call, GetCallStack, etc.)
     Primitive(ControlPrimitive),
     
     /// An effect to be handled
     Effect(Effect),
     
-    /// A nested Program object to execute (ProgramBase: KleisliProgramCall or EffectBase)
+    /// A nested Program object to execute — LEGACY PATH (no call metadata). [R9-E]
+    /// After SPEC-TYPES-001 separation, KPC-originated programs should use
+    /// Primitive(Call { program, metadata }) instead. This variant is kept for
+    /// backward compatibility with non-KPC programs that don't carry metadata.
     Program(Py<PyAny>),
     
     /// Unknown object (will cause TypeError)
@@ -2106,19 +2153,31 @@ impl Yielded {
     /// 
     /// MUST be called by DRIVER with GIL held.
     /// Result is passed to VM via PyCallOutcome::GenYield(Yielded).
+    ///
+    /// [R9-E] Programs with recognizable metadata (KPC-like objects with
+    /// function_name/kleisli_source) are upgraded to Call primitives.
+    /// Programs without metadata fall through to Yielded::Program (legacy).
     pub fn classify(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Self {
         // Check for ControlPrimitive
         if let Ok(prim) = extract_control_primitive(py, obj) {
             return Yielded::Primitive(prim);
         }
         
-        // Check for Effect
+        // Check for Effect (including KPC after SPEC-TYPES-001 separation)
         if let Ok(effect) = extract_effect(py, obj) {
             return Yielded::Effect(effect);
         }
         
-        // Check for Program (nested)
+        // Check for Program (nested) — with metadata upgrade [R9-E]
         if is_program(py, obj) {
+            // Try to extract CallMetadata for Call upgrade
+            if let Some(metadata) = extract_call_metadata(py, obj) {
+                return Yielded::Primitive(ControlPrimitive::Call {
+                    program: obj.clone().unbind(),
+                    metadata,
+                });
+            }
+            // No metadata — legacy path
             return Yielded::Program(obj.clone().unbind());
         }
         
@@ -2126,13 +2185,42 @@ impl Yielded {
         Yielded::Unknown(obj.clone().unbind())
     }
 }
+
+/// Extract CallMetadata from a Python program object (with GIL). [R9-E]
+///
+/// Returns Some(CallMetadata) if the object has recognizable metadata
+/// (function_name, kleisli_source with __code__). Returns None otherwise.
+fn extract_call_metadata(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallMetadata> {
+    let function_name = obj.getattr("function_name").ok()?.extract::<String>().ok()?;
+    let (source_file, source_line) = if let Ok(kleisli) = obj.getattr("kleisli_source") {
+        if let Ok(func) = kleisli.getattr("original_func") {
+            if let Ok(code) = func.getattr("__code__") {
+                let file = code.getattr("co_filename").ok()?.extract::<String>().ok()?;
+                let line = code.getattr("co_firstlineno").ok()?.extract::<u32>().ok()?;
+                (file, line)
+            } else { return None; }
+        } else { return None; }
+    } else { return None; };
+    Some(CallMetadata {
+        function_name,
+        source_file,
+        source_line,
+        program_call: Some(obj.clone().unbind()),
+    })
+}
 ```
 
-**Note**: A yielded Program is a ProgramBase object (KleisliProgramCall or EffectBase),
-not a generator. The driver must call `to_generator()` to start it. Raw generators
-are rejected for yielded Program; only low-level entry points like
-`start_with_generator()` accept raw generators.
-Calling `to_generator()` preserves the KleisliProgramCall stack for effect debugging.
+**Note**: A yielded Program is a ProgramBase object. The driver must call
+`to_generator()` to start it. Raw generators are rejected; only low-level
+entry points like `start_with_generator()` accept raw generators.
+
+**[R9-E] Call upgrade**: When the driver detects a program with metadata
+(function_name, kleisli_source), it emits `Yielded::Primitive(Call { program, metadata })`
+instead of `Yielded::Program(obj)`. This enables call stack tracking without
+changing user code. After SPEC-TYPES-001 separation, KPC will be classified as
+`Yielded::Effect` (not Program), and the KPC handler will emit `Call` primitives
+for sub-program execution. Direct `yield some_program` from user code still goes
+through classify → Call upgrade (if metadata available) or Yielded::Program (legacy).
 
 **Note**: Rust program handlers yield `Yielded` directly (already classified),
 so no driver-side classification or GIL is required for those yields.
@@ -2164,7 +2252,7 @@ pub enum PyCallOutcome {
     /// CallFunc returns Value (non-generator).
     /// CallAsync returns Value (awaited result).
     /// CallHandler returns Value::Python(generator) after to_generator().
-    /// VM should push Frame::PythonGenerator with started=false for generator Values.
+    /// VM should push Frame::PythonGenerator with started=false and metadata for generator Values.
     /// The driver performs Python->Value conversion while holding the GIL.
     Value(Value),
     
@@ -2303,11 +2391,13 @@ fn step_deliver_or_throw(&mut self) -> StepEvent {
             self.apply_rust_program_step(step, program)
         }
         
-        Frame::PythonGenerator { generator, started } => {
+        Frame::PythonGenerator { generator, started, metadata } => {
             // Need to call Python
             // CRITICAL: Set pending_python so receive_python_result knows to re-push
+            // [R9-C] metadata is preserved across yields (carried in StepUserGenerator)
             self.pending_python = Some(PendingPython::StepUserGenerator {
                 generator: generator.clone(),
+                metadata: metadata.clone(),  // Carry metadata for re-push [R9-C]
             });
             
             match &self.mode {
@@ -2352,33 +2442,35 @@ impl VM {
         
         match (pending, outcome) {
             // === StartProgramFrame: StartProgram returned Value::Python(generator) ===
-            (PendingPython::StartProgramFrame, PyCallOutcome::Value(Value::Python(gen_obj))) => {
-                // Push generator as new frame with started=false
+            (PendingPython::StartProgramFrame { metadata }, PyCallOutcome::Value(Value::Python(gen_obj))) => {
+                // Push generator as new frame with started=false and CallMetadata [R9-G]
                 let segment = &mut self.segments[self.current_segment.index()];
                 segment.push_frame(Frame::PythonGenerator {
                     generator: gen_obj,
                     started: false,
+                    metadata,  // Some for Call primitive, None for Yielded::Program
                 });
                 // Mode stays Deliver (will trigger GenNext on next step)
             }
-            (PendingPython::StartProgramFrame, PyCallOutcome::Value(_)) => {
+            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::Value(_)) => {
                 self.mode = Mode::Throw(PyException::type_error(
                     "program did not return a generator"
                 ));
             }
-            (PendingPython::StartProgramFrame, PyCallOutcome::GenError(e)) => {
+            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::GenError(e)) => {
                 // StartProgram raised exception
                 self.mode = Mode::Throw(e);
             }
             
             // === StepUserGenerator: Generator stepped ===
-            (PendingPython::StepUserGenerator { generator }, PyCallOutcome::GenYield(yielded)) => {
-                // CRITICAL: Re-push generator with started=true
+            (PendingPython::StepUserGenerator { generator, metadata }, PyCallOutcome::GenYield(yielded)) => {
+                // CRITICAL: Re-push generator with started=true + preserved metadata [R9-C]
                 // Otherwise we lose the frame and can't continue it later
                 let segment = &mut self.segments[self.current_segment.index()];
                 segment.push_frame(Frame::PythonGenerator {
                     generator,
                     started: true,
+                    metadata,  // Preserve call stack metadata across yields
                 });
                 self.mode = Mode::HandleYield(yielded);
             }
@@ -2467,8 +2559,11 @@ fn step_handle_yield(&mut self) -> StepEvent {
         }
         
         Yielded::Program(program) => {
-            // Nested program - need to call Python to get generator
-            self.pending_python = Some(PendingPython::StartProgramFrame);
+            // Nested program - need to call Python to get generator [R9-E]
+            // Legacy path: no metadata. Use Call primitive for metadata-carrying calls.
+            self.pending_python = Some(PendingPython::StartProgramFrame {
+                metadata: None,
+            });
             StepEvent::NeedsPython(PythonCall::StartProgram { program })
         }
         
@@ -3094,10 +3189,15 @@ def do(fn):
 
 #### Program Input Rule (Reiterated)
 
-All program entry points (`StartProgram`, `CallHandler`, `Yielded::Program`)
-require a **ProgramBase** value (KleisliProgramCall or EffectBase). The driver
-calls `to_generator()` to obtain the generator. Raw generators are rejected
-except via the low-level `start_with_generator()`.
+All program entry points (`StartProgram`, `CallHandler`, `Yielded::Program`,
+`ControlPrimitive::Call`) require a **ProgramBase** value with `to_generator()`.
+The driver calls `to_generator()` to obtain the generator. Raw generators are
+rejected except via the low-level `start_with_generator()`.
+
+**[R9-E] After SPEC-TYPES-001**: KleisliProgramCall will no longer be a ProgramBase
+(it becomes an EffectBase). It goes through effect dispatch to the KPC handler,
+which emits `Call` primitives for the resolved kernel program. EffectBase will also
+lose `to_generator()`, so only true Program types pass this rule.
 
 ### Store and Env Lifecycle [R8-J]
 
@@ -3268,6 +3368,33 @@ pub enum ControlPrimitive {
         continuation: Continuation,
         value: Value,
     },
+
+    /// Call(program, metadata) - Run a sub-program with call stack metadata. [R9-A]
+    ///
+    /// Semantics: calls to_generator() on program, pushes PythonGenerator frame
+    /// with metadata onto current segment. No dispatch, no handler stack involvement.
+    /// This is the doeff equivalent of a function call — not an effect.
+    ///
+    /// The metadata is extracted by the driver (with GIL) during classify_yielded
+    /// for user-yielded programs, or constructed by RustHandlerPrograms (e.g., KPC
+    /// handler) for programs they invoke internally.
+    ///
+    /// Backward compat: Yielded::Program (without metadata) is still supported
+    /// and handled identically but with metadata: None on the frame.
+    Call {
+        /// The program object (ProgramBase with to_generator())
+        program: Py<PyAny>,
+        /// Call stack metadata (function name, source location)
+        metadata: CallMetadata,
+    },
+
+    /// GetCallStack - Walk frames and return call stack metadata. [R9-B]
+    ///
+    /// Pure Rust frame walk — no GIL, no Python interaction.
+    /// Returns Vec<CallMetadata> from PythonGenerator frames that have metadata.
+    /// Walks current segment + caller chain (innermost frame first).
+    /// Analogous to GetHandlers (structural VM inspection, not an effect).
+    GetCallStack,
 }
 ```
 
@@ -3738,7 +3865,10 @@ impl VM {
         }
         
         self.current_segment = outside_seg_id;
-        self.pending_python = Some(PendingPython::StartProgramFrame);
+        // WithHandler body has no call metadata (it's a handler scope, not a @do call)
+        self.pending_python = Some(PendingPython::StartProgramFrame {
+            metadata: None,
+        });
         StepEvent::NeedsPython(PythonCall::StartProgram { program })
     }
 
@@ -3760,9 +3890,11 @@ impl VM {
                 self.handle_delegate(effect)
             }
             ControlPrimitive::WithHandler { handler, program } => {
-                // WithHandler needs PythonCall to start body program
+                // WithHandler needs PythonCall to start body program (no call metadata)
                 let call = self.handle_with_handler(handler, program);
-                self.pending_python = Some(PendingPython::StartProgramFrame);
+                self.pending_python = Some(PendingPython::StartProgramFrame {
+                    metadata: None,
+                });
                 StepEvent::NeedsPython(call)
             }
             ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
@@ -3811,6 +3943,32 @@ impl VM {
             }
             ControlPrimitive::ResumeContinuation { continuation, value } => {
                 self.handle_resume_continuation(continuation, value)
+            }
+            ControlPrimitive::Call { program, metadata } => {
+                // [R9-A] Run sub-program with call stack metadata.
+                // Same as Yielded::Program but carries CallMetadata.
+                // Store metadata in pending state so receive_python_result
+                // can attach it to the PythonGenerator frame.
+                self.pending_python = Some(PendingPython::StartProgramFrame {
+                    metadata: Some(metadata),
+                });
+                StepEvent::NeedsPython(PythonCall::StartProgram { program })
+            }
+            ControlPrimitive::GetCallStack => {
+                // [R9-B] Walk frames across segments, collect CallMetadata.
+                let mut stack = Vec::new();
+                let mut seg_id = self.current_segment;
+                while let Some(id) = seg_id {
+                    let seg = &self.segments[id.index()];
+                    for frame in seg.frames.iter().rev() {
+                        if let Frame::PythonGenerator { metadata: Some(m), .. } = frame {
+                            stack.push(m.clone());
+                        }
+                    }
+                    seg_id = seg.caller;
+                }
+                self.mode = Mode::Deliver(Value::CallStack(stack));
+                StepEvent::Continue
             }
             _ => {
                 self.mode = Mode::Throw(PyException::not_implemented(
@@ -4160,7 +4318,7 @@ Python generators have three outcomes:
 
 StartProgram/CallFunc/CallAsync/CallHandler return PyCallOutcome::Value(value) - NOT a generator step.
 CallHandler returns Value::Python(generator) after to_generator().
-VM pushes Frame::PythonGenerator with started=false when value is Value::Python(generator).
+VM pushes Frame::PythonGenerator with started=false and metadata (from pending) when value is Value::Python(generator).
 
 Generator start uses GenNext (__next__).
 Generator resume uses GenSend (send).
@@ -4190,6 +4348,9 @@ Key differences and decisions in 008:
   generators are rejected except via `start_with_generator()`.
 - Continuations are one-shot only; multi-shot is not supported.
 - Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
+- `Call(program, metadata)` is a control primitive for sub-program invocation with
+  call stack metadata (R9-A). `GetCallStack` walks frames (R9-B). `Yielded::Program`
+  is kept as legacy fallback (R9-E).
 
 ---
 
