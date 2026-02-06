@@ -51,6 +51,7 @@ pub enum SchedulerEffect {
 pub enum Waitable {
     Task(TaskId),
     Promise(PromiseId),
+    ExternalPromise(PromiseId),
 }
 
 /// Store isolation mode for spawned tasks.
@@ -215,7 +216,7 @@ impl SchedulerState {
                         _ => return None,
                     }
                 }
-                Waitable::Promise(pid) => {
+                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     match self.promises.get(pid) {
                         Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
                         Some(PromiseState::Done(Err(_))) => return None,
@@ -245,7 +246,7 @@ impl SchedulerState {
                         return Some(v.clone());
                     }
                 }
-                Waitable::Promise(pid) => {
+                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
                     if let Some(PromiseState::Done(Ok(v))) = self.promises.get(pid) {
                         return Some(v.clone());
                     }
@@ -260,7 +261,7 @@ impl SchedulerState {
         for item in items {
             let done = match item {
                 Waitable::Task(tid) => matches!(self.tasks.get(tid), Some(TaskState::Done { .. })),
-                Waitable::Promise(pid) => matches!(self.promises.get(pid), Some(PromiseState::Done(_))),
+                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => matches!(self.promises.get(pid), Some(PromiseState::Done(_))),
             };
             if !done {
                 self.waiters.entry(*item).or_default().push(k.clone());
@@ -273,7 +274,7 @@ impl SchedulerState {
         for item in items {
             let done = match item {
                 Waitable::Task(tid) => matches!(self.tasks.get(tid), Some(TaskState::Done { .. })),
-                Waitable::Promise(pid) => matches!(self.promises.get(pid), Some(PromiseState::Done(_))),
+                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => matches!(self.promises.get(pid), Some(PromiseState::Done(_))),
             };
             if !done {
                 self.waiters.entry(*item).or_default().push(k.clone());
@@ -362,9 +363,12 @@ impl SchedulerProgram {
 
 impl RustHandlerProgram for SchedulerProgram {
     fn start(&mut self, effect: Effect, k_user: Continuation, store: &mut RustStore) -> RustProgramStep {
-        let Effect::Scheduler(sched_effect) = effect else {
-            // Not our effect, delegate
-            return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate { effect: None }));
+        let sched_effect = match effect {
+            Effect::Scheduler(se) => se,
+            other => {
+                // Not our effect, delegate
+                return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate { effect: other }));
+            }
         };
 
         match sched_effect {
@@ -628,6 +632,36 @@ mod tests {
         let handler = SchedulerHandler::new();
         assert!(handler.can_handle(&Effect::Scheduler(SchedulerEffect::CreatePromise)));
         assert!(!handler.can_handle(&Effect::Get { key: "x".to_string() }));
+    }
+
+    #[test]
+    fn test_waitable_external_promise() {
+        let pid = PromiseId::from_raw(5);
+        let w = Waitable::ExternalPromise(pid);
+        assert!(matches!(w, Waitable::ExternalPromise(id) if id == pid));
+        assert_ne!(w, Waitable::Promise(pid));
+    }
+
+    #[test]
+    fn test_external_promise_try_race() {
+        let mut state = SchedulerState::new();
+        let pid = state.alloc_promise_id();
+        state.promises.insert(pid, PromiseState::Done(Ok(Value::Int(99))));
+
+        let result = state.try_race(&[Waitable::ExternalPromise(pid)]);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_int(), Some(99));
+    }
+
+    #[test]
+    fn test_external_promise_try_collect() {
+        let mut state = SchedulerState::new();
+        let pid = state.alloc_promise_id();
+        state.promises.insert(pid, PromiseState::Done(Ok(Value::Int(77))));
+
+        let result = state.try_collect(&[Waitable::ExternalPromise(pid)]);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().as_int(), Some(77));
     }
 
     #[test]

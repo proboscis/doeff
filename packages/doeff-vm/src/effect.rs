@@ -52,7 +52,7 @@ impl Effect {
     }
 
     /// Get a string representation of the effect type.
-    pub fn effect_type(&self) -> &'static str {
+    pub fn type_name(&self) -> &'static str {
         match self {
             Effect::Get { .. } => "Get",
             Effect::Put { .. } => "Put",
@@ -103,7 +103,7 @@ impl Effect {
             _ => {
                 // Create a dict representation for debugging
                 let dict = pyo3::types::PyDict::new(py);
-                dict.set_item("type", self.effect_type())?;
+                dict.set_item("type", self.type_name())?;
                 match self {
                     Effect::Get { key } => {
                         dict.set_item("key", key)?;

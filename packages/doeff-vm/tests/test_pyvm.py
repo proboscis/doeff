@@ -810,5 +810,146 @@ def test_run_accepts_raw_generator():
     assert result == 7
 
 
+## -- Gap-detection tests (G1, G2, G4) --------------------------------------
+# These tests expose specific spec-vs-impl divergences.
+# They should FAIL before the corresponding fixes are applied.
+
+
+class GetHandlers:
+    """Control primitive: request the current handler chain."""
+    pass
+
+
+class UnknownThing:
+    """Not an effect, not a primitive, not a program.
+
+    Used by G4 test to verify that truly unrecognized yielded objects
+    produce a TypeError (Yielded::Unknown) rather than being silently
+    dispatched as Effect::Python.
+    """
+
+    def __init__(self, value):
+        self.value = value
+
+
+def test_handler_returning_program_base():
+    """G1: CallHandler should call to_generator on the handler's return value.
+
+    If the handler is a regular function (not a generator function) that
+    returns a @do-decorated ProgramBase, the VM must call to_generator()
+    on it before pushing it as a PythonGenerator frame.
+
+    Currently fails because CallHandler wraps the result as-is, so the
+    VM tries to call __next__ on a ProgramBase object.
+    """
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    def handler_func(effect, k):
+        """Regular function that returns a @do-decorated ProgramBase."""
+
+        @do
+        def handler_program() -> Program[int]:
+            result = yield Resume(k, effect.value * 2)
+            return result
+
+        return handler_program()  # Returns ProgramBase, NOT a generator
+
+    def body():
+        result = yield CustomEffect(21)
+        return result
+
+    def main():
+        result = yield WithHandler(handler_func, body)
+        return result
+
+    result = vm.run(main())
+    assert result == 42
+
+
+def test_get_handlers_uses_dispatch_handler_chain():
+    """G2: GetHandlers inside a handler should return the dispatch-time handler_chain.
+
+    When a handler installs additional handlers (via WithHandler) during its
+    execution and then calls GetHandlers, the result should reflect the
+    handler_chain snapshot taken when dispatch started — NOT the current
+    scope_chain which includes the newly installed handler.
+
+    Currently fails because handle_get_handlers uses current_scope_chain()
+    instead of the dispatch context's handler_chain.
+    """
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    def outer_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            # Install a temporary inner handler during handler execution
+            def temp_handler(eff, k2):
+                yield Delegate()
+
+            def temp_body():
+                # GetHandlers here: if using scope_chain, result includes
+                # temp_handler; if using handler_chain, it does not.
+                handlers = yield GetHandlers()
+                return handlers
+
+            inner_result = yield WithHandler(temp_handler, temp_body)
+            # inner_result is the handler list from GetHandlers
+            resume_value = yield Resume(k, inner_result)
+            return resume_value
+        yield Delegate()
+
+    def body():
+        result = yield CustomEffect(42)
+        return result
+
+    def main():
+        result = yield WithHandler(outer_handler, body)
+        return result
+
+    result = vm.run(main())
+    # result is the list returned by GetHandlers.
+    # Spec (handler_chain): should NOT include temp_handler.
+    # Impl (scope_chain): DOES include temp_handler → list is longer.
+    #
+    # With only outer_handler installed at dispatch time, handler_chain
+    # has exactly 1 handler.  scope_chain would have 2 (temp + outer).
+    assert isinstance(result, list)
+    assert len(result) == 1, (
+        f"Expected 1 handler (dispatch handler_chain) but got {len(result)} "
+        f"(scope_chain leaked newly installed handler)"
+    )
+
+
+def test_yielding_unknown_object_raises_type_error():
+    """G4: Yielding a primitive value (not an effect/primitive/program) raises TypeError.
+
+    Primitive Python types (int, str, bool, None, etc.) are not valid effects
+    and cannot be dispatched through handlers.  The VM should raise TypeError
+    for these, not silently try to dispatch them.
+
+    Class instances remain valid as custom effects (Effect::Python).
+    """
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    def body_int():
+        result = yield 42
+        return result
+
+    def body_str():
+        result = yield "not an effect"
+        return result
+
+    with pytest.raises(TypeError):
+        vm.run(body_int())
+
+    with pytest.raises(TypeError):
+        vm.run(body_str())
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
