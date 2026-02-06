@@ -1,0 +1,144 @@
+rules:
+  # =============================================================================
+  # DOEFF-VM SPEC ENFORCEMENT RULES
+  # =============================================================================
+  # These rules enforce SPEC-008 Rev 9 and SPEC-009 Rev 3 invariants.
+  # They exist as structural assertions alongside unit tests.
+  #
+  # Run: semgrep --config packages/doeff-vm/.semgrep.yaml packages/doeff-vm/src/
+  # =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # ADR-13 / INV-9: run() must use WithHandler nesting, not install_handler
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-no-install-handler-in-run
+    pattern-regex: '(?s)#\[pyfunction\].*?fn run\b.*?install_handler'
+    message: |
+      SPEC VIOLATION (ADR-13, INV-9): install_handler() called in module-level
+      run() function. run() must install handlers via WithHandler nesting chain,
+      not via direct install_handler() bypass.
+
+      The correct implementation builds a NestingStep chain and processes each
+      WithHandler through the normal VM handle_with_handler mechanism, creating
+      proper PromptBoundary segments and scope chains.
+
+      See: SPEC-008 ADR-13, INV-9, INV-16
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["ADR-13", "INV-9", "INV-16"]
+
+  # ---------------------------------------------------------------------------
+  # ADR-14: No string-based handler shortcuts
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-no-string-handler-shortcuts
+    pattern-regex: '(?s)#\[pyfunction\].*?fn run\b.*?extract::<String>'
+    message: |
+      SPEC VIOLATION (ADR-14): String-based handler shortcuts (e.g., "state",
+      "reader") used in run(). Handlers must be PyRustHandlerSentinel objects,
+      not strings.
+
+      Use: run(program, handlers=[state, reader, writer])
+      where state/reader/writer are PyRustHandlerSentinel instances exposed
+      at module level.
+
+      See: SPEC-008 ADR-14
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["ADR-14"]
+
+  # ---------------------------------------------------------------------------
+  # SPEC-009 API-12: async_run must be truly async
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-async-run-no-sync-delegation
+    pattern-regex: '(?s)fn async_run\b.*?let result = run\('
+    message: |
+      SPEC VIOLATION (API-12): async_run() delegates to sync run() internally.
+      async_run must be a true async function that yields control to the event
+      loop, not a sync function wrapped in a coroutine.
+
+      See: SPEC-009 API-12
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-009
+      invariants: ["API-12"]
+
+  - id: doeff-vm-no-ensure-future-wrapping
+    pattern-regex: '(?s)fn async_run\b.*?ensure_future'
+    message: |
+      SPEC VIOLATION (API-12): async_run() uses ensure_future() to wrap a
+      synchronous result. This is not true async — it blocks the thread
+      during execution and only wraps the completed result.
+
+      async_run must yield to the event loop during execution.
+
+      See: SPEC-009 API-12
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-009
+      invariants: ["API-12"]
+
+  # ---------------------------------------------------------------------------
+  # SPEC-009: RunResult Python-exposed name
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-runresult-python-name
+    pattern-regex: '#\[pyclass\(frozen\)\]\s*\n\s*pub struct PyRunResult'
+    message: |
+      SPEC VIOLATION: PyRunResult must be exposed to Python as "RunResult".
+      Use #[pyclass(frozen, name = "RunResult")] instead of #[pyclass(frozen)].
+
+      See: SPEC-009 §2
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-009
+
+  # ---------------------------------------------------------------------------
+  # ADR-12: Correctness-first — no install_handler in user-facing APIs
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-no-install-handler-in-async-run
+    pattern-regex: '(?s)fn async_run\b.*?install_handler'
+    message: |
+      SPEC VIOLATION (ADR-13): install_handler() called in async_run().
+      async_run() must use WithHandler nesting, identical to run().
+
+      See: SPEC-008 ADR-13
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["ADR-13"]

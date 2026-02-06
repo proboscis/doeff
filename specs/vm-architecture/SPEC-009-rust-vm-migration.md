@@ -1,6 +1,14 @@
-# SPEC-CESK-009: Rust VM Public API
+# SPEC-009: Rust VM Public API
 
-## Status: Draft (Revision 4)
+## Status: Draft (Revision 5)
+
+### Revision 5 Changelog
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R5-A** | §7 scheduler | Fixed scheduler effects list to match SPEC-008 `SchedulerEffect` enum. Removed `Await` (Python-level asyncio bridge, not scheduler) and `Wait` (not a SchedulerEffect variant). Added `CreateExternalPromise`, `TaskCompleted`. |
+| **R5-B** | §1 run() | Removed dangling reference to "ADR-13 in SPEC-008" (does not exist). Requirement stands on its own. |
+| **R5-C** | §7, §9 | Clarified scheduler is user-space: the built-in scheduler is a reference implementation, not a framework-internal component. Users can and should provide their own scheduler handlers. |
 
 ### Revision 4 Changelog
 
@@ -137,7 +145,7 @@ final value (or error) and the final store snapshot.
 
 Handlers are installed as nested `WithHandler` around the program,
 outermost-first. **This is a semantic requirement, not an implementation
-suggestion** (§0, ADR-13 in SPEC-008). [R3-B]
+suggestion** (§0). [R3-B, R5-B]
 
 ```
 handlers=[h0, h1, h2]  →  WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))
@@ -632,12 +640,21 @@ that captures them, or use a preset that exposes logs through a convention.
 The standard `writer` handler appends to an internal log that is not currently
 exposed via `RunResult`.
 
-### scheduler
+### scheduler [R5-A, R5-C]
 
-Handles: `Spawn`, `Await`, `Gather`, `Race`, `CreatePromise`,
-`CompletePromise`, `FailPromise`, `Wait`
+Handles: `Spawn`, `Gather`, `Race`, `CreatePromise`,
+`CompletePromise`, `FailPromise`, `CreateExternalPromise`, `TaskCompleted`
 
 Provides cooperative concurrency within a single `run()` call.
+
+The built-in scheduler is a **reference implementation** — a user-space handler,
+not a framework-internal component. Users can provide their own scheduler handler
+that handles the same `SchedulerEffect` variants. The built-in scheduler has no
+special dispatch path or privileged access to VM internals (API-10).
+
+Note: `Await` is a Python-level asyncio bridge effect (see SPEC-EFF-005), NOT a
+scheduler effect. It is handled by the `sync_await_handler` or
+`python_async_syntax_escape_handler`, not by the scheduler.
 
 ```python
 from doeff.handlers import scheduler
@@ -694,7 +711,7 @@ from doeff import Resume, Delegate, Transfer
 
 ---
 
-## 9. What is NOT Exposed
+## 9. What is NOT Exposed [R5-C]
 
 The following are **implementation-layer types** of the Rust VM (SPEC-008).
 User code and subpackages must not import or depend on them.
@@ -723,6 +740,14 @@ DispatchContext          Dispatch state
 To be clear: **the handler objects themselves are public**.  Users import and
 pass them around freely (`handlers=[state, reader, writer, scheduler]`).
 What is internal is the Rust implementation class behind each one.
+
+**Scheduler is user-space** [R5-C]: The built-in scheduler is a user-space
+handler — it is NOT a framework-internal component. It follows the same
+`RustProgramHandler` trait as `state`, `reader`, and `writer`. Users can
+replace it entirely with their own scheduler handler. The `PySchedulerHandler`
+Rust type listed above is internal only because it is an implementation detail
+of the built-in reference scheduler, not because the scheduler concept is
+framework-internal.
 
 ---
 
@@ -810,6 +835,6 @@ Key differences:
 
 ## References
 
-- SPEC-CESK-008: Rust VM for Algebraic Effects (VM internals)
+- SPEC-008: Rust VM for Algebraic Effects (VM internals)
 - SPEC-CESK-007: Segment-Based Continuation Architecture
 - SPEC-CESK-002: RuntimeResult Protocol
