@@ -116,14 +116,6 @@ impl Continuation {
                     Handler::Python(py_handler) => {
                         list.append(py_handler.bind(py))?;
                     }
-                    Handler::Stdlib(stdlib_handler) => {
-                        let label = match stdlib_handler {
-                            crate::handler::StdlibHandler::State => "stdlib:State",
-                            crate::handler::StdlibHandler::Reader => "stdlib:Reader",
-                            crate::handler::StdlibHandler::Writer => "stdlib:Writer",
-                        };
-                        list.append(PyString::new(py, label))?;
-                    }
                     Handler::RustProgram(_) => {
                         list.append(PyString::new(py, "rust_program_handler"))?;
                     }
