@@ -56,6 +56,10 @@ pub enum PythonCall {
         gen: Py<PyAny>,
         exc: Py<PyAny>,
     },
+    CallAsync {
+        func: Py<PyAny>,
+        args: Vec<Value>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +77,7 @@ pub enum PendingPython {
         k: Continuation,
         context: HandlerContext,
     },
+    AsyncEscape,
 }
 
 #[derive(Debug, Clone)]
@@ -93,12 +98,13 @@ pub enum ControlPrimitive {
     Resume { k: Continuation, value: Value },
     Transfer { k: Continuation, value: Value },
     WithHandler { handler: Py<PyAny>, body: Py<PyAny> },
-    Delegate,
+    Delegate { effect: Option<Effect> },
     GetContinuation,
     GetHandlers,
     CreateContinuation { program: Py<PyAny>, handlers: Vec<Handler> },
     ResumeContinuation { k: Continuation, value: Value },
     Pure(Value),
+    PythonAsyncSyntaxEscape { action: Py<PyAny> },
 }
 
 #[derive(Debug, Clone)]
@@ -181,7 +187,7 @@ impl ControlPrimitive {
                 handler: handler.clone_ref(py),
                 body: body.clone_ref(py),
             },
-            ControlPrimitive::Delegate => ControlPrimitive::Delegate,
+            ControlPrimitive::Delegate { ref effect } => ControlPrimitive::Delegate { effect: effect.clone() },
             ControlPrimitive::GetContinuation => ControlPrimitive::GetContinuation,
             ControlPrimitive::GetHandlers => ControlPrimitive::GetHandlers,
             ControlPrimitive::CreateContinuation { program, handlers } => ControlPrimitive::CreateContinuation {
@@ -193,6 +199,9 @@ impl ControlPrimitive {
                 value: value.clone(),
             },
             ControlPrimitive::Pure(v) => ControlPrimitive::Pure(v.clone()),
+            ControlPrimitive::PythonAsyncSyntaxEscape { action } => ControlPrimitive::PythonAsyncSyntaxEscape {
+                action: action.clone_ref(py),
+            },
         }
     }
 }
