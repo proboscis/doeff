@@ -13,10 +13,10 @@ name = "doeff_vm"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.25", features = ["py-clone"] }
+pyo3 = { version = "0.28", features = ["py-clone"] }
 
 [dev-dependencies]
-pyo3 = { version = "0.25", features = ["auto-initialize", "py-clone"] }
+pyo3 = { version = "0.28", features = ["auto-initialize", "py-clone"] }
 
 [profile.release]
 opt-level = 3

@@ -98,7 +98,7 @@ pub enum ControlPrimitive {
     Resume { k: Continuation, value: Value },
     Transfer { k: Continuation, value: Value },
     WithHandler { handler: Py<PyAny>, body: Py<PyAny> },
-    Delegate { effect: Option<Effect> },
+    Delegate { effect: Effect },
     GetContinuation,
     GetHandlers,
     CreateContinuation { program: Py<PyAny>, handlers: Vec<Handler> },

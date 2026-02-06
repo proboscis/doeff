@@ -1,4 +1,4 @@
-use pyo3::exceptions::{PyRuntimeError, PyStopIteration};
+use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 
@@ -10,8 +10,16 @@ use crate::segment::Segment;
 use crate::step::{
     ControlPrimitive, Mode, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
 };
+use crate::error::VMError;
 use crate::value::Value;
 use crate::vm::VM;
+
+fn vmerror_to_pyerr(e: VMError) -> PyErr {
+    match e {
+        VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
+        _ => PyRuntimeError::new_err(e.to_string()),
+    }
+}
 
 #[pyclass]
 pub struct PyVM {
@@ -38,7 +46,7 @@ impl PyVM {
         PyVM { vm: VM::new() }
     }
 
-    pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<PyObject> {
+    pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         // Convert program to generator - handles KleisliProgramCall and other Program types
         // Lenient: accepts raw generators for user convenience at the entry point.
         let gen = self.to_generator_lenient(py, program.unbind())?;
@@ -61,7 +69,7 @@ impl PyVM {
                     return value.to_pyobject(py).map(|v| v.unbind());
                 }
                 StepEvent::Error(e) => {
-                    return Err(PyRuntimeError::new_err(e.to_string()));
+                    return Err(vmerror_to_pyerr(e));
                 }
                 StepEvent::NeedsPython(call) => {
                     let outcome = self.execute_python_call(py, call)?;
@@ -87,7 +95,7 @@ impl PyVM {
         }
     }
 
-    pub fn state_items(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn state_items(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.state {
             dict.set_item(k, v.to_pyobject(py)?)?;
@@ -95,7 +103,7 @@ impl PyVM {
         Ok(dict.into())
     }
 
-    pub fn logs(&self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn logs(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let list = pyo3::types::PyList::empty(py);
         for v in self.vm.rust_store.logs() {
             list.append(v.to_pyobject(py)?)?;
@@ -113,8 +121,7 @@ impl PyVM {
         self.vm.set_debug(config);
     }
 
-    /// Get the PyStore dict, creating it lazily.
-    pub fn py_store(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn py_store(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.vm.init_py_store(py);
         match self.vm.py_store() {
             Some(store) => Ok(store.dict.clone_ref(py).into()),
@@ -122,7 +129,6 @@ impl PyVM {
         }
     }
 
-    /// Set a value in the PyStore.
     pub fn set_store(&mut self, py: Python<'_>, key: &str, value: Bound<'_, PyAny>) -> PyResult<()> {
         self.vm.init_py_store(py);
         if let Some(store) = self.vm.py_store_mut() {
@@ -131,8 +137,7 @@ impl PyVM {
         Ok(())
     }
 
-    /// Get a value from the PyStore.
-    pub fn get_store(&self, py: Python<'_>, key: &str) -> PyResult<PyObject> {
+    pub fn get_store(&self, py: Python<'_>, key: &str) -> PyResult<Py<PyAny>> {
         match self.vm.py_store() {
             Some(store) => {
                 let dict = store.dict.bind(py);
@@ -145,8 +150,6 @@ impl PyVM {
         }
     }
 
-    /// Initialize the VM with a program (generator or Program object) without running the step loop.
-    /// Use with `step_once()` for manual / async driving.
     pub fn start_program(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
         let gen = self.to_generator_lenient(py, program.unbind())?;
         let gen_bound = gen.bind(py).clone();
@@ -154,15 +157,7 @@ impl PyVM {
         Ok(())
     }
 
-    /// Run one Rust step cycle, returning a tuple whose first element is a string tag.
-    ///
-    /// Possible returns:
-    /// - `("done", value)` -- program completed
-    /// - `("call_async", func, args_tuple)` -- an async Python call is needed
-    /// - `("continue",)` -- a synchronous Python call was handled internally; call again
-    ///
-    /// Raises `RuntimeError` on VM errors.
-    pub fn step_once(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn step_once(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         // See run() for GIL/allow_threads note.
         let event = self.run_rust_steps();
 
@@ -177,7 +172,7 @@ impl PyVM {
                 Ok(tuple.into())
             }
             StepEvent::Error(e) => {
-                Err(PyRuntimeError::new_err(e.to_string()))
+                Err(vmerror_to_pyerr(e))
             }
             StepEvent::NeedsPython(call) => {
                 if let PythonCall::CallAsync { func, args } = call {
@@ -205,14 +200,12 @@ impl PyVM {
         }
     }
 
-    /// Feed the result of an async call back into the VM.
     pub fn feed_async_result(&mut self, _py: Python<'_>, value: Bound<'_, PyAny>) -> PyResult<()> {
         let val = Value::from_pyobject(&value);
         self.vm.receive_python_result(PyCallOutcome::Value(val));
         Ok(())
     }
 
-    /// Feed an async error back into the VM.
     pub fn feed_async_error(&mut self, py: Python<'_>, error_value: Bound<'_, PyAny>) -> PyResult<()> {
         // Build a PyException from the error value.
         // error_value is expected to be a Python exception instance.
@@ -224,11 +217,6 @@ impl PyVM {
         Ok(())
     }
 
-    /// Run a program with scoped stdlib handlers.
-    ///
-    /// Handlers are installed only for this run and removed afterwards,
-    /// even if the program errors. This provides proper WithHandler-style
-    /// scoping without requiring Python-side wrappers.
     #[pyo3(signature = (program, state=false, reader=false, writer=false))]
     pub fn run_scoped(
         &mut self,
@@ -237,7 +225,7 @@ impl PyVM {
         state: bool,
         reader: bool,
         writer: bool,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         // Track markers installed in this scope so we can clean them up
         let mut scoped_markers: Vec<Marker> = Vec::new();
 
@@ -319,9 +307,27 @@ impl PyVM {
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
             PythonCall::StartProgram { program } => {
-                // Strict: internal sub-program starts require ProgramBase, not raw generators.
-                let gen = self.to_generator_strict(py, program)?;
-                Ok(PyCallOutcome::Value(Value::Python(gen)))
+                // Try strict first (ProgramBase with to_generator method).
+                // If that fails (e.g. raw generator function), fall back to
+                // calling as a factory function. Raw generator objects are
+                // still rejected by to_generator_strict's explicit check.
+                match self.to_generator_strict(py, program.clone()) {
+                    Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+                    Err(strict_err) => {
+                        // Fallback: call as generator factory function, but
+                        // only if the object is callable (rejects raw generator
+                        // objects which are not callable).
+                        let program_bound = program.bind(py);
+                        if program_bound.is_callable() {
+                            match program_bound.call0() {
+                                Ok(result) => Ok(PyCallOutcome::Value(Value::Python(result.unbind()))),
+                                Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                            }
+                        } else {
+                            Err(strict_err)
+                        }
+                    }
+                }
             }
             PythonCall::CallFunc { func, args } => {
                 let py_args = self.values_to_tuple(py, &args)?;
@@ -338,7 +344,10 @@ impl PyVM {
                 let py_effect = effect.to_pyobject(py)?;
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => Ok(PyCallOutcome::Value(Value::Python(result.unbind()))),
+                    Ok(result) => {
+                        let gen = self.to_generator_lenient(py, result.unbind())?;
+                        Ok(PyCallOutcome::Value(Value::Python(gen)))
+                    }
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -481,12 +490,22 @@ impl PyVM {
                 "Delegate" => {
                     let effect = if let Ok(eff_obj) = obj.getattr("effect") {
                         if !eff_obj.is_none() {
-                            Some(Effect::Python(eff_obj.unbind()))
+                            Effect::Python(eff_obj.unbind())
                         } else {
-                            None
+                            // No explicit effect — use current dispatch effect
+                            self.vm.dispatch_stack.last()
+                                .map(|ctx| ctx.effect.clone())
+                                .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                                    "Delegate without effect called outside dispatch context",
+                                ))?
                         }
                     } else {
-                        None
+                        // No effect attribute — use current dispatch effect
+                        self.vm.dispatch_stack.last()
+                            .map(|ctx| ctx.effect.clone())
+                            .ok_or_else(|| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                                "Delegate without effect called outside dispatch context",
+                            ))?
                     };
                     return Ok(Yielded::Primitive(ControlPrimitive::Delegate { effect }));
                 }
@@ -582,6 +601,17 @@ impl PyVM {
             return Ok(Yielded::Program(obj.clone().unbind()));
         }
 
+        // Primitive Python types (int, str, float, bool, None) are not valid effects.
+        // Class instances are treated as custom Python effects for dispatch.
+        if let Ok(type_name) = obj.get_type().name() {
+            let ts: &str = type_name.extract().unwrap_or("");
+            match ts {
+                "int" | "float" | "str" | "bool" | "NoneType" | "bytes" | "list" | "tuple" | "dict" | "set" => {
+                    return Ok(Yielded::Unknown(obj.clone().unbind()));
+                }
+                _ => {}
+            }
+        }
         Ok(Yielded::Effect(Effect::Python(obj.clone().unbind())))
     }
 
@@ -601,7 +631,7 @@ impl PyVM {
 #[pymethods]
 impl PyStdlib {
     #[getter]
-    pub fn state(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn state(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if self.state_marker.is_none() {
             self.state_marker = Some(Marker::fresh());
         }
@@ -609,7 +639,7 @@ impl PyStdlib {
     }
 
     #[getter]
-    pub fn reader(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn reader(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if self.reader_marker.is_none() {
             self.reader_marker = Some(Marker::fresh());
         }
@@ -617,7 +647,7 @@ impl PyStdlib {
     }
 
     #[getter]
-    pub fn writer(&mut self, py: Python<'_>) -> PyResult<PyObject> {
+    pub fn writer(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         if self.writer_marker.is_none() {
             self.writer_marker = Some(Marker::fresh());
         }

@@ -13,6 +13,7 @@ pub enum VMError {
     InvalidSegment { message: String },
     PythonError { message: String },
     InternalError { message: String },
+    TypeError { message: String },
 }
 
 impl std::fmt::Display for VMError {
@@ -40,6 +41,7 @@ impl std::fmt::Display for VMError {
             VMError::InvalidSegment { message } => write!(f, "invalid segment: {}", message),
             VMError::PythonError { message } => write!(f, "Python error: {}", message),
             VMError::InternalError { message } => write!(f, "internal error: {}", message),
+            VMError::TypeError { message } => write!(f, "type error: {}", message),
         }
     }
 }
@@ -81,6 +83,12 @@ impl VMError {
 
     pub fn internal(message: impl Into<String>) -> Self {
         VMError::InternalError {
+            message: message.into(),
+        }
+    }
+
+    pub fn type_error(message: impl Into<String>) -> Self {
+        VMError::TypeError {
             message: message.into(),
         }
     }
