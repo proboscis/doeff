@@ -1,6 +1,17 @@
 # SPEC-CESK-009: Rust VM Public API
 
-## Status: Draft (Revision 3)
+## Status: Draft (Revision 4)
+
+### Revision 4 Changelog
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R4-A** | §2 RunResult | Clarified `Result[T]` type, what `raw_store` contains (state only, not env/logs). |
+| **R4-B** | §3 Program | Clarified `Program[T]` is a `KleisliProgramCall`, not the generator itself. Added lifecycle. |
+| **R4-C** | §4 Effects | Clarified `Modify(key, fn)` signature. Added effect vs primitive taxonomy. |
+| **R4-D** | §5 Handlers | Clarified Resume/Transfer/Delegate return semantics. Added "what handlers can yield" section. |
+| **R4-E** | §6 WithHandler | Fixed type signature (not `-> Effect`). |
+| **R4-F** | §7 Standard Handlers | Clarified store/env initialization mechanism and writer log access. |
 
 ### Revision 3 Changelog
 
@@ -194,11 +205,48 @@ Convenience accessors:
 
 `RunResult` is a protocol.  The concrete implementation is internal.
 
+### Result[T] [R4-A]
+
+`Result[T]` is a sum type from `doeff`:
+
+```python
+from doeff import Ok, Err
+
+result.result  # Ok(1) or Err(ValueError("..."))
+```
+
+- `Ok(value)` — program returned successfully
+- `Err(exception)` — program raised an exception
+
+This is the doeff `Result` type (see SPEC-CESK-002), not a Rust `Result`.
+
+### raw_store contents [R4-A]
+
+`raw_store` contains **only state entries** — the key-value pairs managed by
+the `state` handler via `Get`/`Put`/`Modify`.
+
+```python
+result = run(program, handlers=[state, reader, writer],
+             store={"x": 0}, env={"key": "val"})
+
+result.raw_store  # {"x": 1}  ← state only
+#                    NOT env, NOT logs
+```
+
+- `env` is NOT in `raw_store` — it is read-only, the caller already has it.
+- Logs from `Tell` are NOT in `raw_store` — they are handler-specific state.
+  See §7 (writer) for log access.
+
+`raw_store` is always populated, even when `result` is `Err`. It reflects the
+store state at the point execution stopped.
+
 ---
 
 ## 3. Program and @do
 
-A `Program[T]` is a generator that yields effects and returns `T`:
+A `Program[T]` is a value that, when executed, yields effects and returns `T`.
+
+### Writing a Program
 
 ```python
 @do
@@ -209,19 +257,46 @@ def counter():
     return x + 1
 ```
 
-- `yield <effect>` — request something from the runtime, receive a value
-- `return <value>` — produce the final result (`Program[T]` where `T` = type of value)
+- `yield <effect>` — request something from the runtime, receive a value back
+- `return <value>` — produce the final result (`T` in `Program[T]`)
 - No `Pure` effect.  `return` is the only way to produce a final value.
 
-`@do` converts a generator function into a `Program` factory:
+### What @do Does [R4-B]
+
+`@do` converts a generator function into a `Program` factory. Calling the
+factory does NOT execute the body — it creates a deferred program descriptor:
 
 ```python
 @do
-def my_func(a: int, b: str) -> ...:
+def my_func(a: int, b: str):
     ...
 
-program: Program[T] = my_func(42, "hello")  # call to get a Program instance
+# Calling the factory creates a Program[T] (a KleisliProgramCall)
+program = my_func(42, "hello")
+
+# The body has NOT run yet. It runs when passed to run() or yielded.
+result = run(program, handlers=[state], store={})
 ```
+
+### Program Lifecycle [R4-B]
+
+```
+@do def f(x):         ← generator function (not a Program)
+    ...
+
+f(42)                 ← KleisliProgramCall (this IS a Program[T])
+                         body has NOT executed
+
+run(f(42), ...)       ← VM calls to_generator() to get the actual generator
+                         body starts executing
+                         yields/returns flow through VM step machine
+```
+
+`Program[T]` is not the generator itself — it is a `KleisliProgramCall` that
+wraps the generator function and its arguments. The VM calls `to_generator()`
+when it needs to actually step the program. This deferred execution is what
+makes programs composable — they can be passed to `WithHandler`, `Resume`, etc.
+without starting execution.
 
 ---
 
@@ -229,17 +304,35 @@ program: Program[T] = my_func(42, "hello")  # call to get a Program instance
 
 An effect is a value yielded from a `Program` to request an operation.
 
+### Yield Taxonomy [R4-C]
+
+A program can yield three categories of values. Each is handled differently:
+
+```
+Category             Examples                       What the VM does
+─────────────────────────────────────────────────────────────────────
+Effect               Get, Put, Ask, Tell, custom    Dispatched through handler stack
+Composition          WithHandler                    Creates new handler scope
+Dispatch primitive   Resume, Delegate, Transfer     Controls dispatch (handler-only)
+```
+
+Effects are the only category dispatched to handlers. Composition and dispatch
+primitives are processed directly by the VM.
+
 ### Standard Effects
 
 ```
-Effect          Constructor              Handler    Description
-─────────────────────────────────────────────────────────────────
-Get             Get(key: str)            state      Read from store
-Put             Put(key: str, value)     state      Write to store
-Modify          Modify(key: str, fn)     state      Transform store value
-Ask             Ask(key: str)            reader     Read from env
-Tell            Tell(value)              writer     Append to log
+Effect          Constructor                    Handler    Description
+─────────────────────────────────────────────────────────────────────
+Get             Get(key: str)                  state      Read from store
+Put             Put(key: str, value: Any)      state      Write to store
+Modify          Modify(key: str, fn: Callable) state      Transform store value
+Ask             Ask(key: str)                  reader     Read from env
+Tell            Tell(value: Any)               writer     Append to log
 ```
+
+`Modify(key, fn)` calls `fn(old_value)` and stores the result. `fn` is a
+Python callable with signature `(Any) -> Any`. [R4-C]
 
 Standard effects are provided by the framework.  They only work when
 the corresponding handler is installed.
@@ -272,32 +365,79 @@ it.  If no handler handles it → `UnhandledEffect` error.
 Handler = Callable[[Effect, K], Program[T]]
 ```
 
-A handler is a callable that receives:
+A handler is a callable (typically `@do`-decorated) that receives:
 - `effect` — the effect being dispatched
-- `k` — the delimited continuation (opaque handle)
+- `k` — the delimited continuation (opaque handle, see below)
 
-And returns a `Program[T]` (a generator) that yields dispatch primitives.
+And returns a `Program[T]` that yields dispatch primitives, effects, or
+composition primitives. The handler's return value becomes the result of the
+`WithHandler(...)` expression that installed it.
 
-### Dispatch Primitives
+### K — Opaque Continuation Handle
 
-These are **only usable inside a handler** during effect dispatch:
+`K` is an opaque object representing the suspended caller's continuation.
+Users can:
+- Pass `k` to `Resume(k, value)` or `Transfer(k, value)`
+- Store `k` for later use (e.g., in a scheduler)
+
+Users cannot:
+- Inspect `k`'s contents
+- Construct a `K` manually
+- Call `k` directly
+
+### Dispatch Primitives [R4-D]
+
+These are **only usable inside a handler** during effect dispatch.
+Yielding them outside a handler is an error (API-3).
 
 ```
-Primitive              Description
-─────────────────────────────────────────────────────────────────
-Resume(k, value)       Resume the caller's continuation with value.
-                       The caller's `yield SomeEffect(...)` receives
-                       `value` as its result.
+Primitive              Description                    Handler continues?
+───────────────────────────────────────────────────────────────────────
+Resume(k, value)       Resume caller with value.      YES — handler gets
+                       Call-resume semantics.          continuation's return
+                                                      value back.
 
-Delegate()             Pass the effect to the next outer handler.
+Delegate()             Pass effect to outer handler.  NO — handler is done.
                        "I don't handle this."
 
-Delegate(effect)       Pass a different effect to the outer handler.
-                       Effect substitution.
+Delegate(effect)       Pass different effect to        NO — handler is done.
+                       outer handler. Substitution.
 
-Transfer(k, value)     One-shot transfer to continuation.
-                       Like Resume but consumes the continuation.
+Transfer(k, value)     Resume caller with value.      NO — handler is done.
+                       Tail-resume semantics.          (abandoned)
 ```
+
+#### Resume vs Transfer [R4-D]
+
+Both resume the caller's continuation with a value. The difference is what
+happens to the handler afterward:
+
+```python
+# Resume: handler CONTINUES after the continuation completes
+@do
+def my_handler(effect, k):
+    result = yield Resume(k, 42)    # ← caller runs, returns a value
+    # result = whatever the caller's program returned
+    # handler can do more work here
+    return result
+
+# Transfer: handler is ABANDONED — control never returns here
+@do
+def my_handler(effect, k):
+    yield Transfer(k, 42)           # ← caller runs, handler is gone
+    # THIS CODE NEVER EXECUTES
+```
+
+Use `Resume` when the handler needs the continuation's result (most common).
+Use `Transfer` for tail-position optimization or when the handler is done.
+
+#### Delegate [R4-D]
+
+`yield Delegate()` terminates the current handler and re-dispatches the
+effect to the next outer handler. The handler does NOT continue after Delegate.
+
+`yield Delegate(other_effect)` does the same but substitutes a different
+effect. The outer handler sees `other_effect`, not the original.
 
 ### Example: Custom Handler
 
@@ -327,24 +467,35 @@ def cache_handler(effect, k):
        ▼
   handler(effect, k) is called           ← dispatch begins
        │
-       ├─ yield Resume(k, value)         ← resume caller with value
-       │     caller receives value from its `yield`
+       ├─ yield Resume(k, value)         ← resume caller, handler waits
+       │     caller runs to completion
+       │     result = yield Resume(...)   ← handler gets result back
+       │     handler continues
        │
-       ├─ yield Delegate()               ← skip, try next outer handler
+       ├─ yield Delegate()               ← handler done, try outer handler
        │
-       └─ yield Transfer(k, value)       ← one-shot resume
+       └─ yield Transfer(k, value)       ← handler done, caller resumes
 ```
 
-### Handlers Can Yield Effects
+### What Handlers Can Yield [R4-D]
 
-Handlers are programs themselves.  They can yield effects, which are
-dispatched to *outer* handlers:
+Handlers are programs. They can yield anything a program can yield:
+
+| What | Example | Dispatched to |
+|------|---------|---------------|
+| Dispatch primitive | `yield Resume(k, v)` | VM processes directly |
+| Effect | `yield Tell("log msg")` | Outer handler stack |
+| Composition | `yield WithHandler(h, prog)` | VM creates new scope |
+| Nested program | `yield sub_program()` | VM runs sub-program |
+
+Effects yielded by a handler are dispatched to handlers **outside** the
+current handler's scope — never to the handler itself.
 
 ```python
 @do
 def logging_handler(effect, k):
     if isinstance(effect, MyEffect):
-        yield Tell(f"handling {effect}")    # ← effect, handled by writer
+        yield Tell(f"handling {effect}")    # ← dispatched to outer writer
         result = yield Resume(k, effect.payload)
         return result
     else:
@@ -375,10 +526,14 @@ def outer_handler(effect, k):
 ## 6. Composition: WithHandler
 
 ```python
-WithHandler(handler: Handler, program: Program[T]) -> Effect
+WithHandler(handler: Handler, program: Program[T])
 ```
 
-`WithHandler` is a composition primitive, usable from **any** `Program`:
+`WithHandler` is a **composition primitive** — not an effect, not a dispatch
+primitive (see §4 taxonomy). Yielding it installs `handler` around `program`
+and returns the program's result. [R4-E]
+
+Usable from **any** `Program`:
 - In user programs
 - Inside handlers
 - Arbitrarily nested
@@ -426,20 +581,28 @@ the same mechanism. The fact that they are Rust-optimized internally is an
 
 Handles: `Get`, `Put`, `Modify`
 
-Provides mutable key-value state.  Initialized from `run(..., store={})`.
+Provides mutable key-value state.
 
 ```python
 from doeff.handlers import state
 
-result = run(my_program(), handlers=[state])
-result.raw_store  # final state
+result = run(my_program(), handlers=[state], store={"x": 0})
+result.raw_store  # {"x": final_value}  ← final state after execution
 ```
+
+**Initialization** [R4-F]: The `store={}` parameter in `run()` seeds the
+state handler's backing store before execution. The `state` handler reads and
+writes this store via `Get`/`Put`/`Modify`. After execution, the final state
+is extracted into `RunResult.raw_store`.
+
+If `state` handler is not installed, the `store={}` parameter is still
+accepted but has no effect — no handler will read it.
 
 ### reader
 
 Handles: `Ask`
 
-Provides read-only environment.  Initialized from `run(..., env={})`.
+Provides read-only environment.
 
 ```python
 from doeff.handlers import reader
@@ -447,15 +610,27 @@ from doeff.handlers import reader
 result = run(my_program(), handlers=[reader], env={"key": "value"})
 ```
 
+**Initialization** [R4-F]: The `env={}` parameter in `run()` seeds the reader
+handler's backing environment. The `reader` handler reads it via `Ask`.
+Environment values are never mutated during execution (API-5).
+
 ### writer
 
 Handles: `Tell`
 
-Provides append-only log.  Logs are accessible via `RunResult`.
+Provides append-only log.
 
 ```python
 from doeff.handlers import writer
+
+result = run(my_program(), handlers=[state, writer], store={"x": 0})
 ```
+
+**Log access** [R4-F]: Logs are NOT in `RunResult.raw_store`. Logs are
+internal to the writer handler. To access logs, use a custom writer handler
+that captures them, or use a preset that exposes logs through a convention.
+The standard `writer` handler appends to an internal log that is not currently
+exposed via `RunResult`.
 
 ### scheduler
 
