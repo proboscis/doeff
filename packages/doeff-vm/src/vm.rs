@@ -18,7 +18,7 @@ use crate::step::{
 };
 use crate::value::Value;
 
-pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send>;
+pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct DispatchContext {
@@ -186,6 +186,10 @@ impl VM {
 
     pub fn py_store(&self) -> Option<&PyStore> {
         self.py_store.as_ref()
+    }
+
+    pub fn py_store_mut(&mut self) -> Option<&mut PyStore> {
+        self.py_store.as_mut()
     }
 
     pub fn init_py_store(&mut self, py: Python<'_>) {
@@ -868,6 +872,11 @@ impl VM {
 
     pub fn install_handler(&mut self, marker: Marker, entry: HandlerEntry) {
         self.handlers.insert(marker, entry);
+    }
+
+    /// Remove a handler by its marker. Returns true if the handler existed.
+    pub fn remove_handler(&mut self, marker: Marker) -> bool {
+        self.handlers.remove(&marker).is_some()
     }
 
     pub fn installed_handler_markers(&self) -> Vec<Marker> {
@@ -1664,5 +1673,51 @@ mod tests {
         assert!(vm.lookup_continuation(cont_id).is_none());
         assert_eq!(vm.continuation_registry.len(), 0);
         assert!(vm.is_one_shot_consumed(cont_id));
+    }
+
+    #[test]
+    fn test_remove_handler() {
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let prompt_seg_id = SegmentId::from_index(0);
+
+        vm.install_handler(
+            marker,
+            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+        );
+        assert!(vm.handlers.contains_key(&marker));
+        assert_eq!(vm.handlers.len(), 1);
+
+        let removed = vm.remove_handler(marker);
+        assert!(removed);
+        assert!(!vm.handlers.contains_key(&marker));
+        assert_eq!(vm.handlers.len(), 0);
+
+        // Removing again returns false
+        let removed_again = vm.remove_handler(marker);
+        assert!(!removed_again);
+    }
+
+    #[test]
+    fn test_remove_handler_preserves_others() {
+        let mut vm = VM::new();
+        let m1 = Marker::fresh();
+        let m2 = Marker::fresh();
+        let prompt_seg_id = SegmentId::from_index(0);
+
+        vm.install_handler(
+            m1,
+            HandlerEntry::new(Handler::Stdlib(StdlibHandler::State), prompt_seg_id),
+        );
+        vm.install_handler(
+            m2,
+            HandlerEntry::new(Handler::Stdlib(StdlibHandler::Writer), prompt_seg_id),
+        );
+        assert_eq!(vm.handlers.len(), 2);
+
+        vm.remove_handler(m1);
+        assert_eq!(vm.handlers.len(), 1);
+        assert!(!vm.handlers.contains_key(&m1));
+        assert!(vm.handlers.contains_key(&m2));
     }
 }
