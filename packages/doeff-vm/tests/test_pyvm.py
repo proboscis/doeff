@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from doeff import do, Program
@@ -481,6 +483,331 @@ def test_scheduler_create_promise():
     assert isinstance(result, dict)
     assert result["type"] == "Promise"
     assert "promise_id" in result
+
+
+def test_py_store_basic():
+    """Test PyStore read/write."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    # Set and get
+    vm.set_store("key1", 42)
+    assert vm.get_store("key1") == 42
+
+    # Get the dict directly
+    store = vm.py_store()
+    assert isinstance(store, dict)
+    assert store["key1"] == 42
+
+    # Store persists across runs
+    vm.set_store("key2", "hello")
+
+    def prog():
+        return 1
+        yield
+
+    vm.run(prog())
+
+    assert vm.get_store("key2") == "hello"
+
+
+class PythonAsyncSyntaxEscape:
+    """Marker yielded by generators to request an async Python call."""
+    def __init__(self, action):
+        self.action = action
+
+
+async def async_run(vm, program):
+    """Async driver that can await PythonAsyncSyntaxEscape actions.
+
+    Unlike ``vm.run()``, this driver can handle ``CallAsync`` events by
+    awaiting the returned coroutine inside a real asyncio event loop.
+    """
+    vm.start_program(program)
+
+    while True:
+        result = vm.step_once()
+        tag = result[0]
+        if tag == "done":
+            return result[1]
+        elif tag == "call_async":
+            func, args = result[1], result[2]
+            try:
+                awaitable = func(*args)
+                value = await awaitable
+                vm.feed_async_result(value)
+            except Exception as e:
+                vm.feed_async_error(e)
+        elif tag == "continue":
+            # yield to the event loop briefly so other tasks can run
+            await asyncio.sleep(0)
+        else:
+            raise RuntimeError(f"Unexpected step result tag: {tag}")
+
+
+# ---------------------------------------------------------------------------
+# Async tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_async_run_basic():
+    """Test async_run with a PythonAsyncSyntaxEscape handler returning a value."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    async def my_async_action():
+        await asyncio.sleep(0.01)
+        return 42
+
+    def body():
+        result = yield PythonAsyncSyntaxEscape(action=my_async_action)
+        return result
+
+    result = await async_run(vm, body())
+    assert result == 42
+
+
+@pytest.mark.asyncio
+async def test_async_run_multiple_awaits():
+    """Test async_run with several sequential async escapes."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    async def async_add(a, b):
+        await asyncio.sleep(0)
+        return a + b
+
+    def body():
+        x = yield PythonAsyncSyntaxEscape(action=lambda: async_add(1, 2))
+        y = yield PythonAsyncSyntaxEscape(action=lambda: async_add(x, 10))
+        return y
+
+    result = await async_run(vm, body())
+    assert result == 13
+
+
+@pytest.mark.asyncio
+async def test_async_run_error_propagation():
+    """Test that exceptions from async actions propagate correctly."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    async def failing_action():
+        raise ValueError("async boom")
+
+    def body():
+        result = yield PythonAsyncSyntaxEscape(action=failing_action)
+        return result  # should not reach here
+
+    with pytest.raises(RuntimeError, match=".*"):
+        await async_run(vm, body())
+
+
+@pytest.mark.asyncio
+async def test_async_run_with_pure_return():
+    """Test async_run with a program that has no async escapes."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    def body():
+        return 99
+        yield  # make it a generator
+
+    result = await async_run(vm, body())
+    assert result == 99
+
+
+@pytest.mark.asyncio
+async def test_async_run_with_state_effects():
+    """Test async_run with stdlib state effects + async escapes."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+    stdlib = vm.stdlib()
+    _ = stdlib.state
+    stdlib.install_state(vm)
+
+    async def fetch_value():
+        await asyncio.sleep(0)
+        return 100
+
+    def body():
+        fetched = yield PythonAsyncSyntaxEscape(action=fetch_value)
+        yield Put("x", fetched)
+        val = yield Get("x")
+        return val
+
+    result = await async_run(vm, body())
+    assert result == 100
+
+
+## -- Scoped stdlib handler tests (run_scoped) ----------------------------
+
+def test_run_scoped_state():
+    """Test run_scoped installs and removes the state handler."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    result = vm.run_scoped(counter_program(), state=True)
+    assert result == 1
+
+
+def test_run_scoped_writer():
+    """Test run_scoped installs and removes the writer handler."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    result = vm.run_scoped(logging_program(), writer=True)
+    assert result == "completed"
+    logs = vm.logs()
+    assert len(logs) == 3
+
+
+def test_run_scoped_combined():
+    """Test run_scoped with state + writer together."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    result = vm.run_scoped(state_and_logging_program(), state=True, writer=True)
+    assert result == 100
+    logs = vm.logs()
+    assert len(logs) == 3
+
+
+def test_run_scoped_handlers_do_not_leak():
+    """Test that scoped handlers are removed after run_scoped completes.
+
+    After a run_scoped call with state=True, a subsequent run() without
+    handlers should fail because there is no handler for Get/Put effects.
+    """
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    # First run succeeds with scoped state handler
+    result = vm.run_scoped(counter_program(), state=True)
+    assert result == 1
+
+    # Second run without handlers should fail (no state handler)
+    with pytest.raises(RuntimeError, match="(no matching handler|unhandled effect)"):
+        vm.run(counter_program())
+
+
+def test_run_scoped_handlers_do_not_leak_writer():
+    """Test that scoped writer handlers are removed after run_scoped completes."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    # First run succeeds with scoped writer handler
+    result = vm.run_scoped(logging_program(), writer=True)
+    assert result == "completed"
+
+    # Second run without handlers should fail
+    with pytest.raises(RuntimeError, match="(no matching handler|unhandled effect)"):
+        vm.run(logging_program())
+
+
+def test_run_scoped_error_still_cleans_up():
+    """Test that handlers are removed even when the program raises an error."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    @do
+    def failing_program() -> Program[int]:
+        yield Put("x", 1)
+        raise ValueError("intentional error")
+        yield  # make it a generator
+
+    # This should raise but still clean up the handlers
+    with pytest.raises(RuntimeError):
+        vm.run_scoped(failing_program(), state=True)
+
+    # Verify handler was cleaned up: running a state program should fail
+    with pytest.raises(RuntimeError, match="(no matching handler|unhandled effect)"):
+        vm.run(counter_program())
+
+
+def test_run_scoped_successive_independent_runs():
+    """Test that successive run_scoped calls are independent."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    @do
+    def put_program() -> Program[None]:
+        yield Put("key", 42)
+        return None
+
+    @do
+    def get_program() -> Program[int]:
+        val = yield Get("key")
+        return val
+
+    # Run 1: put a value
+    vm.run_scoped(put_program(), state=True)
+
+    # Run 2: get the value (state persists in RustStore across runs,
+    # but the handler must be re-installed via scoping)
+    result = vm.run_scoped(get_program(), state=True)
+    # RustStore state persists across runs (it's the store, not the handler)
+    assert result == 42
+
+
+## -- ProgramBase validation tests (to_generator_strict) --------------------
+
+def test_yielded_raw_generator_rejected_as_program():
+    """Yielding a raw generator inside a program body should raise TypeError.
+
+    The VM requires Yielded::Program entries to be ProgramBase objects (with
+    a ``to_generator`` method). Raw generators must go through ``vm.run()``
+    or ``vm.start_program()`` instead.
+    """
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    def sub_generator():
+        """A plain generator (not decorated with @do)."""
+        yield Pure(42)
+
+    def main():
+        # Yielding a raw generator triggers classify_yielded -> Yielded::Program
+        # -> StartProgram -> to_generator_strict -> TypeError
+        result = yield sub_generator()
+        return result
+
+    with pytest.raises(TypeError, match="Expected ProgramBase"):
+        vm.run(main())
+
+
+def test_yielded_program_base_accepted():
+    """Yielding a @do-decorated ProgramBase inside a program body should work.
+
+    This is the happy-path counterpart of the strict validation test.
+    """
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    @do
+    def sub_program() -> Program[int]:
+        return 99
+        yield  # make it a generator
+
+    def main():
+        result = yield sub_program()
+        return result
+
+    result = vm.run(main())
+    assert result == 99
+
+
+def test_run_accepts_raw_generator():
+    """vm.run() should accept raw generators at the top level (lenient path)."""
+    from doeff_vm import PyVM
+    vm = PyVM()
+
+    def raw_gen():
+        return 7
+        yield  # make it a generator
+
+    result = vm.run(raw_gen())
+    assert result == 7
 
 
 if __name__ == "__main__":
