@@ -85,14 +85,14 @@ pub enum PendingPython {
 
 #[derive(Debug, Clone)]
 pub enum Yielded {
-    Primitive(ControlPrimitive),
+    DoCtrl(DoCtrl),
     Effect(Effect),
     Program(Py<PyAny>),
     Unknown(Py<PyAny>),
 }
 
 #[derive(Debug, Clone)]
-pub enum ControlPrimitive {
+pub enum DoCtrl {
     Resume {
         continuation: Continuation,
         value: Value,
@@ -103,7 +103,7 @@ pub enum ControlPrimitive {
     },
     WithHandler {
         handler: Handler,
-        program: Py<PyAny>,
+        expr: Py<PyAny>,
     },
     Delegate {
         effect: Effect,
@@ -111,7 +111,7 @@ pub enum ControlPrimitive {
     GetContinuation,
     GetHandlers,
     CreateContinuation {
-        program: Py<PyAny>,
+        expr: Py<PyAny>,
         handlers: Vec<Handler>,
     },
     ResumeContinuation {
@@ -122,8 +122,14 @@ pub enum ControlPrimitive {
         action: Py<PyAny>,
     },
     Call {
-        program: Py<PyAny>,
+        f: Py<PyAny>,
+        args: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
         metadata: CallMetadata,
+    },
+    Eval {
+        expr: Py<PyAny>,
+        handlers: Vec<Handler>,
     },
     GetCallStack,
 }
@@ -185,7 +191,7 @@ impl StepEvent {
 impl Yielded {
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
-            Yielded::Primitive(p) => Yielded::Primitive(p.clone_ref(py)),
+            Yielded::DoCtrl(p) => Yielded::DoCtrl(p.clone_ref(py)),
             Yielded::Effect(e) => Yielded::Effect(e.clone()),
             Yielded::Program(p) => Yielded::Program(p.clone_ref(py)),
             Yielded::Unknown(p) => Yielded::Unknown(p.clone_ref(py)),
@@ -193,55 +199,62 @@ impl Yielded {
     }
 }
 
-impl ControlPrimitive {
+impl DoCtrl {
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
-            ControlPrimitive::Resume {
+            DoCtrl::Resume {
                 continuation,
                 value,
-            } => ControlPrimitive::Resume {
+            } => DoCtrl::Resume {
                 continuation: continuation.clone(),
                 value: value.clone(),
             },
-            ControlPrimitive::Transfer {
+            DoCtrl::Transfer {
                 continuation,
                 value,
-            } => ControlPrimitive::Transfer {
+            } => DoCtrl::Transfer {
                 continuation: continuation.clone(),
                 value: value.clone(),
             },
-            ControlPrimitive::WithHandler { handler, program } => ControlPrimitive::WithHandler {
+            DoCtrl::WithHandler { handler, expr } => DoCtrl::WithHandler {
                 handler: handler.clone(),
-                program: program.clone_ref(py),
+                expr: expr.clone_ref(py),
             },
-            ControlPrimitive::Delegate { ref effect } => ControlPrimitive::Delegate {
+            DoCtrl::Delegate { ref effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
             },
-            ControlPrimitive::GetContinuation => ControlPrimitive::GetContinuation,
-            ControlPrimitive::GetHandlers => ControlPrimitive::GetHandlers,
-            ControlPrimitive::CreateContinuation { program, handlers } => {
-                ControlPrimitive::CreateContinuation {
-                    program: program.clone_ref(py),
-                    handlers: handlers.clone(),
-                }
-            }
-            ControlPrimitive::ResumeContinuation {
+            DoCtrl::GetContinuation => DoCtrl::GetContinuation,
+            DoCtrl::GetHandlers => DoCtrl::GetHandlers,
+            DoCtrl::CreateContinuation { expr, handlers } => DoCtrl::CreateContinuation {
+                expr: expr.clone_ref(py),
+                handlers: handlers.clone(),
+            },
+            DoCtrl::ResumeContinuation {
                 continuation,
                 value,
-            } => ControlPrimitive::ResumeContinuation {
+            } => DoCtrl::ResumeContinuation {
                 continuation: continuation.clone(),
                 value: value.clone(),
             },
-            ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
-                ControlPrimitive::PythonAsyncSyntaxEscape {
-                    action: action.clone_ref(py),
-                }
-            }
-            ControlPrimitive::Call { program, metadata } => ControlPrimitive::Call {
-                program: program.clone_ref(py),
+            DoCtrl::PythonAsyncSyntaxEscape { action } => DoCtrl::PythonAsyncSyntaxEscape {
+                action: action.clone_ref(py),
+            },
+            DoCtrl::Call {
+                f,
+                args,
+                kwargs,
+                metadata,
+            } => DoCtrl::Call {
+                f: f.clone_ref(py),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
                 metadata: metadata.clone(),
             },
-            ControlPrimitive::GetCallStack => ControlPrimitive::GetCallStack,
+            DoCtrl::Eval { expr, handlers } => DoCtrl::Eval {
+                expr: expr.clone_ref(py),
+                handlers: handlers.clone(),
+            },
+            DoCtrl::GetCallStack => DoCtrl::GetCallStack,
         }
     }
 }
@@ -290,10 +303,10 @@ mod tests {
         assert!(!cont.is_error());
     }
 
-    /// G1-G3: ControlPrimitive uses spec field names `continuation` (not `k`)
+    /// G1-G3: DoCtrl uses spec field names `continuation` (not `k`)
     /// and `program` (not `body`).
     #[test]
-    fn test_control_primitive_spec_field_names() {
+    fn test_do_ctrl_spec_field_names() {
         use crate::continuation::Continuation;
         use crate::ids::{ContId, Marker, SegmentId};
 
@@ -310,12 +323,12 @@ mod tests {
         };
 
         // Resume uses `continuation` field
-        let resume = ControlPrimitive::Resume {
+        let resume = DoCtrl::Resume {
             continuation: k.clone(),
             value: Value::Int(1),
         };
         match resume {
-            ControlPrimitive::Resume {
+            DoCtrl::Resume {
                 continuation,
                 value,
             } => {
@@ -326,12 +339,12 @@ mod tests {
         }
 
         // Transfer uses `continuation` field
-        let transfer = ControlPrimitive::Transfer {
+        let transfer = DoCtrl::Transfer {
             continuation: k.clone(),
             value: Value::Int(2),
         };
         match transfer {
-            ControlPrimitive::Transfer {
+            DoCtrl::Transfer {
                 continuation,
                 value,
             } => {
@@ -342,12 +355,12 @@ mod tests {
         }
 
         // ResumeContinuation uses `continuation` field
-        let resume_cont = ControlPrimitive::ResumeContinuation {
+        let resume_cont = DoCtrl::ResumeContinuation {
             continuation: k.clone(),
             value: Value::Int(3),
         };
         match resume_cont {
-            ControlPrimitive::ResumeContinuation {
+            DoCtrl::ResumeContinuation {
                 continuation,
                 value,
             } => {
@@ -358,25 +371,26 @@ mod tests {
         }
     }
 
-    /// G4: Pure variant should not exist in ControlPrimitive.
-    /// This test verifies that ControlPrimitive has exactly the spec variants.
+    /// G4: Pure variant should not exist in DoCtrl.
+    /// This test verifies that DoCtrl has exactly the spec variants.
     #[test]
-    fn test_control_primitive_no_pure_variant() {
+    fn test_do_ctrl_no_pure_variant() {
         // This is a compile-time check. If Pure existed, this match would
         // be non-exhaustive. Since we removed it, this compiles.
-        let prim = ControlPrimitive::GetContinuation;
+        let prim = DoCtrl::GetContinuation;
         match prim {
-            ControlPrimitive::Resume { .. } => {}
-            ControlPrimitive::Transfer { .. } => {}
-            ControlPrimitive::WithHandler { .. } => {}
-            ControlPrimitive::Delegate { .. } => {}
-            ControlPrimitive::GetContinuation => {}
-            ControlPrimitive::GetHandlers => {}
-            ControlPrimitive::CreateContinuation { .. } => {}
-            ControlPrimitive::ResumeContinuation { .. } => {}
-            ControlPrimitive::PythonAsyncSyntaxEscape { .. } => {}
-            ControlPrimitive::Call { .. } => {}
-            ControlPrimitive::GetCallStack => {}
+            DoCtrl::Resume { .. } => {}
+            DoCtrl::Transfer { .. } => {}
+            DoCtrl::WithHandler { .. } => {}
+            DoCtrl::Delegate { .. } => {}
+            DoCtrl::GetContinuation => {}
+            DoCtrl::GetHandlers => {}
+            DoCtrl::CreateContinuation { .. } => {}
+            DoCtrl::ResumeContinuation { .. } => {}
+            DoCtrl::PythonAsyncSyntaxEscape { .. } => {}
+            DoCtrl::Call { .. } => {}
+            DoCtrl::Eval { .. } => {}
+            DoCtrl::GetCallStack => {}
         }
     }
 }
