@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::PyTypeInfo;
 
 use crate::arena::SegmentArena;
 use crate::continuation::Continuation;
@@ -14,7 +15,8 @@ use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
 use crate::segment::Segment;
 use crate::step::{
-    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PythonCall, StepEvent, Yielded,
+    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
+    Yielded,
 };
 use crate::value::Value;
 
@@ -593,7 +595,7 @@ impl VM {
                                 break;
                             }
                         }
-                        self.mode = Mode::Deliver(Value::Unit);
+                        self.mode = Mode::Deliver(Value::CallStack(stack));
                         StepEvent::Continue
                     }
                 }
@@ -656,7 +658,19 @@ impl VM {
                         self.mode = Mode::Deliver(Value::Unit);
                     }
                     _ => {
-                        self.mode = Mode::Deliver(Value::Unit);
+                        // Non-generator value returned from program call
+                        let py = unsafe { Python::assume_attached() };
+                        let exc_type = pyo3::exceptions::PyTypeError::type_object(py)
+                            .into_any()
+                            .unbind();
+                        let exc_value = pyo3::exceptions::PyTypeError::new_err(
+                            "StartProgram: program did not return a generator",
+                        )
+                        .value(py)
+                        .clone()
+                        .into_any()
+                        .unbind();
+                        self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
                     }
                 }
             }
@@ -715,7 +729,19 @@ impl VM {
                     self.mode = Mode::Deliver(Value::Unit);
                 }
                 _ => {
-                    self.mode = Mode::Deliver(Value::Unit);
+                    // Non-generator value returned from handler call
+                    let py = unsafe { Python::assume_attached() };
+                    let exc_type = pyo3::exceptions::PyTypeError::type_object(py)
+                        .into_any()
+                        .unbind();
+                    let exc_value = pyo3::exceptions::PyTypeError::new_err(
+                        "CallPythonHandler: handler did not return a generator",
+                    )
+                    .value(py)
+                    .clone()
+                    .into_any()
+                    .unbind();
+                    self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
                 }
             },
 
@@ -745,7 +771,19 @@ impl VM {
             }
 
             _ => {
-                self.mode = Mode::Deliver(Value::Unit);
+                // Unexpected pending/outcome combination
+                let py = unsafe { Python::assume_attached() };
+                let exc_type = pyo3::exceptions::PyRuntimeError::type_object(py)
+                    .into_any()
+                    .unbind();
+                let exc_value = pyo3::exceptions::PyRuntimeError::new_err(
+                    "unexpected pending/outcome combination in receive_python_result",
+                )
+                .value(py)
+                .clone()
+                .into_any()
+                .unbind();
+                self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
             }
         }
     }

@@ -3,8 +3,9 @@
 //! Values can be either Rust-native (for optimization) or Python objects.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyList, PyString};
+use pyo3::types::{PyBool, PyDict, PyList, PyString};
 
+use crate::frame::CallMetadata;
 use crate::handler::Handler;
 use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
@@ -25,6 +26,7 @@ pub enum Value {
     Task(TaskHandle),
     Promise(PromiseHandle),
     ExternalPromise(ExternalPromise),
+    CallStack(Vec<CallMetadata>),
 }
 
 impl Value {
@@ -68,6 +70,22 @@ impl Value {
                 dict.set_item("type", "ExternalPromise")?;
                 dict.set_item("promise_id", handle.id.raw())?;
                 Ok(dict.into_any())
+            }
+            Value::CallStack(stack) => {
+                let list = PyList::empty(py);
+                for m in stack {
+                    let dict = PyDict::new(py);
+                    dict.set_item("function_name", &m.function_name)?;
+                    dict.set_item("source_file", &m.source_file)?;
+                    dict.set_item("source_line", m.source_line)?;
+                    if let Some(ref pc) = m.program_call {
+                        dict.set_item("program_call", pc.bind(py))?;
+                    } else {
+                        dict.set_item("program_call", py.None())?;
+                    }
+                    list.append(dict)?;
+                }
+                Ok(list.into_any())
             }
         }
     }
@@ -156,6 +174,7 @@ impl Value {
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
             Value::ExternalPromise(h) => Value::ExternalPromise(*h),
+            Value::CallStack(stack) => Value::CallStack(stack.clone()),
         }
     }
 }
@@ -222,7 +241,9 @@ mod tests {
 
     #[test]
     fn test_value_handlers() {
-        let handlers = vec![Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory))];
+        let handlers = vec![Handler::RustProgram(std::sync::Arc::new(
+            crate::handler::StateHandlerFactory,
+        ))];
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);
