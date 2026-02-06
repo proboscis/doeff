@@ -1205,7 +1205,7 @@ impl NestingGenerator {
 }
 
 // ---------------------------------------------------------------------------
-// Module-level functions [G11 / SPEC-CESK-008]
+// Module-level functions [G11 / SPEC-008]
 // ---------------------------------------------------------------------------
 
 /// Module-level `run()` — the public API entry point.

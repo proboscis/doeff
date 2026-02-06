@@ -1,8 +1,8 @@
 # Rust VM Implementation Plan
 
 **Issue:** #235
-**Spec:** SPEC-CESK-008-rust-vm.md (Revision 7)
-**Status:** Phase 15 Complete — TDD spec-gap audit round 3. 87 Rust + 21 Python = 108 tests passing. (18 Python failures are pre-existing PyO3 method-registration issue on 3.14t.)
+**Spec:** SPEC-008-rust-vm.md (Revision 9), SPEC-009-rust-vm-migration.md (Revision 5)
+**Status:** R9 complete — semantic correctness enforced. SPEC-009 Rev 5 fixes applied (scheduler effects, user-space scheduler, ADR-13 ref). 97 Rust + 63 Python = 160 tests passing. 6 semgrep rules enforcing spec invariants.
 
 ## Overview
 
@@ -171,6 +171,29 @@ Third round addressing remaining audit findings. TDD: failing tests first, then 
 - [x] **G16 — lazy_pop_completed before primitives** (vm.rs): Added `self.lazy_pop_completed()` at top of `Yielded::Primitive` branch in `step_handle_yield`, matching spec's `handle_primitive` pattern. Prevents stale completed dispatches from affecting GetHandlers, Delegate, etc.
 - [x] **Tests:** 87 Rust + 21 Python = 108 total (was 84 + 21)
 
+## Phase 16: R9 Semantic Correctness Enforcement ✅
+
+SPEC-008 Rev 9 / SPEC-009 Rev 3 — correctness-first philosophy. TDD with semgrep rules as structural assertions.
+
+- [x] **Semgrep rules** (`.semgrep.yaml`): 6 rules enforcing ADR-13 (no install_handler in run/async_run), ADR-14 (no string shortcuts), API-12 (no sync delegation/ensure_future), naming (RunResult). All 6 pass.
+- [x] **PyRustHandlerSentinel** (pyvm.rs): `#[pyclass(frozen, name = "RustHandler")]` wrapping `RustProgramHandlerRef`. Module-level `state`, `reader`, `writer` sentinels.
+- [x] **NestingStep + NestingGenerator** (pyvm.rs): ProgramBase that yields one `WithHandler(handler, inner)`, creating proper nesting through normal VM `handle_with_handler` mechanism.
+- [x] **run() rewrite** (pyvm.rs): Uses NestingStep chain instead of install_handler bypass. `handlers=[h0, h1, h2]` → `WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))`.
+- [x] **classify_yielded sentinel recognition** (pyvm.rs): WithHandler arms check for PyRustHandlerSentinel → `Handler::RustProgram(factory)`.
+- [x] **classify_yielded completeness (INV-17)** (pyvm.rs): Added 6 scheduler effect arms (SpawnEffect, GatherEffect, RaceEffect, CompletePromiseEffect, FailPromiseEffect, TaskCompletedEffect) BEFORE `to_generator` fallback. Fixes infinite loop bug where EffectBase→ProgramBase inheritance caused scheduler effects to be misclassified as Programs.
+- [x] **async_run rewrite (API-12)** (pyvm.rs): True `async def` coroutine with `await asyncio.sleep(0)` yield point. Replaces `ensure_future(completed_future)` pattern.
+- [x] **Tests:** 97 Rust + 63 Python = 160 total (was 97 + 53 = 150)
+
+## Phase 17: SPEC-009 Rev 5 — Spec Review + Corrections ✅
+
+Comprehensive review of SPEC-009 against SPEC-008, SPEC-EFF-005, and implementation. Found 5 errors, fixed 3 in spec, 1 in code.
+
+- [x] **E1 (R5-A) — §7 scheduler effects list**: Removed `Await` (Python-level asyncio bridge per SPEC-EFF-005, not scheduler) and `Wait` (not a SchedulerEffect variant). Added `CreateExternalPromise`, `TaskCompleted` to match Rust `SchedulerEffect` enum.
+- [x] **E2 (R5-B) — §1 ADR-13 reference**: Removed dangling "(§0, ADR-13 in SPEC-008)" — no such ADR exists in SPEC-008.
+- [x] **E3 (R5-C) — §7, §9 scheduler user-space**: Clarified scheduler is a user-space reference implementation, not a framework-internal component. Users can provide their own scheduler handlers.
+- [x] **classify_yielded consolidation** (pyvm.rs): Merged 6 separate scheduler effect match arms into one combined arm. Added `WaitEffect`, `TaskCancelEffect`, `TaskIsDoneEffect`, `WaitForExternalCompletion`, and `_Scheduler*` prefix catch-all. Documented that `Effect::Python(obj)` is correct classification (not `Effect::Scheduler`) because schedulers are user-space Python handlers.
+- [x] **Tests:** No regressions — 97 Rust + 63 Python = 160 tests, 6 semgrep rules all passing.
+
 ---
 
 ## Remaining Work
@@ -192,9 +215,12 @@ All spec gaps resolved. Only optional optimization work remains.
 | INV-1 | GIL only held during PythonCall execution | ✅ (step() GIL-free; PyVM Send+Sync; allow_threads blocked by Py::clone() assertion) |
 | INV-3 | One-shot continuations (ContId checked before resume) | ✅ |
 | INV-7 | k.started validated before Resume/Transfer | ✅ |
-| INV-9 | All effects go through dispatch (no bypass) | ✅ |
+| INV-9 | All handler installation through WithHandler (no install_handler bypass) | ✅ (ADR-13, semgrep enforced) |
 | INV-14 | Generator re-push: GenYield re-pushes frame with started=true | ✅ |
 | INV-15 | GIL-safe cloning: plain Clone (Py\<PyAny\> Clone via refcount) | ✅ |
+| INV-16 | Structural equivalence: run() handler nesting = manual WithHandler | ✅ (NestingStep chain) |
+| INV-17 | classify_yielded completeness: all scheduler effects classified before to_generator | ✅ (6 effect arms added) |
+| API-12 | async_run is true async (yields to event loop) | ✅ (await sleep(0), semgrep enforced) |
 
 ---
 
@@ -202,9 +228,10 @@ All spec gaps resolved. Only optional optimization work remains.
 
 | Suite | Count | Status |
 |-------|-------|--------|
-| Rust unit tests (`cargo test`) | 84 | ✅ All passing |
-| Python integration tests (`test_pyvm.py`) | 21/39 | ⚠️ 21 passing, 18 pre-existing failures (PyO3 3.14t method registration) |
-| **Total** | **105** | **⚠️** |
+| Rust unit tests (`cargo test`) | 97 | ✅ All passing |
+| Python integration tests (`test_pyvm.py`) | 63 | ✅ All passing |
+| Semgrep structural rules | 6 | ✅ All passing (0 violations) |
+| **Total** | **160 + 6 rules** | **✅** |
 
 ---
 
@@ -212,7 +239,8 @@ All spec gaps resolved. Only optional optimization work remains.
 
 ```
 packages/doeff-vm/
-├── Cargo.toml      # PyO3 0.25, maturin, cdylib + rlib
+├── Cargo.toml      # PyO3 0.28, maturin, cdylib + rlib
+├── .semgrep.yaml   # 6 structural rules enforcing SPEC-008/009 invariants
 ├── src/
 │   ├── lib.rs          # Module root + re-exports
 │   ├── ids.rs          # Core ID types (Marker, SegmentId, ContId, CallbackId, DispatchId, RunnableId, TaskId, PromiseId)
@@ -256,7 +284,7 @@ c372d4b feat(doeff-vm): Implement core VM with PyO3 bindings and arena allocator
 
 ## References
 
-- Spec: `specs/cesk-architecture/SPEC-CESK-008-rust-vm.md`
+- Spec: `specs/vm-architecture/SPEC-008-rust-vm.md`
 - Scaffold: `packages/doeff-vm/`
 - PyO3 Guide: https://pyo3.rs/
 - maturin: https://www.maturin.rs/

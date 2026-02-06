@@ -1,4 +1,4 @@
-# SPEC-CESK-008: Rust VM for Algebraic Effects
+# SPEC-008: Rust VM for Algebraic Effects
 
 ## Status: Draft (Revision 9)
 
@@ -2981,7 +2981,7 @@ the sync driver raises `TypeError` if it sees `CallAsync`.
 ## Public API Contract (SPEC-009 Support) [R8-J]
 
 This section specifies the user-facing types and contracts that the VM must
-expose to satisfy SPEC-CESK-009. Everything in this section is part of the
+expose to satisfy SPEC-009. Everything in this section is part of the
 **public boundary** — the layer between user code and VM internals.
 
 ### run() and async_run() — Entrypoint Contract

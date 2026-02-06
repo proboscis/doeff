@@ -237,7 +237,7 @@ in parallel via the scheduler (see Section 4).
 ### 3.6 The busy boundary and concurrent resolution
 
 When the KPC handler yields effects (like `Gather`), the busy boundary
-(SPEC-CESK-008 INV-8) excludes the KPC handler from `visible_handlers`.
+(SPEC-008 INV-8) excludes the KPC handler from `visible_handlers`.
 This means programs resolved via Gather won't have the KPC handler in
 their handler stack.
 
@@ -586,7 +586,7 @@ The critical improvements:
 ## 8. Migration Path
 
 ### Phase A: Spec + Rust types
-1. Finalize this spec (SPEC-TYPES-001) and update SPEC-CESK-008
+1. Finalize this spec (SPEC-TYPES-001) and update SPEC-008
 2. Add `CallMetadata` struct in Rust VM
 3. Add `metadata: Option<CallMetadata>` to `Frame::PythonGenerator`
 4. Add `Call { program, metadata }` as a `ControlPrimitive` variant
@@ -676,8 +676,8 @@ The critical improvements:
 
 ## References
 
-- SPEC-CESK-008: Rust VM internals (handler stacking, busy boundary, visible_handlers)
-- SPEC-CESK-009: Public API (Rev 5)
+- SPEC-008: Rust VM internals (handler stacking, busy boundary, visible_handlers)
+- SPEC-009: Public API (Rev 5)
 - SPEC-EFF-005: Concurrency effects
 - `doeff/program.py`: Current _AutoUnwrapStrategy, _build_auto_unwrap_strategy,
   _annotation_is_program, _annotation_is_effect implementations

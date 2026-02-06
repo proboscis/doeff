@@ -1,6 +1,6 @@
 //! doeff-vm: Rust VM for algebraic effects with PyO3 Python bindings.
 //!
-//! This crate implements the VM specified in SPEC-CESK-008.
+//! This crate implements the VM specified in SPEC-008.
 //!
 //! # Architecture
 //!
@@ -29,13 +29,15 @@ pub use continuation::Continuation;
 pub use effect::Effect;
 pub use error::VMError;
 pub use frame::Frame;
-pub use handler::{Handler, HandlerEntry, StateHandlerFactory, ReaderHandlerFactory, WriterHandlerFactory};
+pub use handler::{
+    Handler, HandlerEntry, ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
+};
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
 pub use pyvm::{PyStdlib, PyVM};
 pub use segment::{Segment, SegmentKind};
 pub use step::{
-    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PyException, PythonCall,
-    StepEvent, Yielded,
+    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
+    Yielded,
 };
 pub use value::Value;
 pub use vm::{Callback, DispatchContext, RustStore, VM};
