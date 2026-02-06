@@ -6,6 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyList, PyString};
 
 use crate::handler::Handler;
+use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
 
 /// A value that can flow through the VM.
 ///
@@ -21,6 +22,9 @@ pub enum Value {
     None,
     Continuation(crate::continuation::Continuation),
     Handlers(Vec<Handler>),
+    Task(TaskHandle),
+    Promise(PromiseHandle),
+    ExternalPromise(ExternalPromise),
 }
 
 impl Value {
@@ -54,6 +58,24 @@ impl Value {
                     }
                 }
                 Ok(list.into_any())
+            }
+            Value::Task(handle) => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("type", "Task")?;
+                dict.set_item("task_id", handle.id.raw())?;
+                Ok(dict.into_any())
+            }
+            Value::Promise(handle) => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("type", "Promise")?;
+                dict.set_item("promise_id", handle.id.raw())?;
+                Ok(dict.into_any())
+            }
+            Value::ExternalPromise(handle) => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("type", "ExternalPromise")?;
+                dict.set_item("promise_id", handle.id.raw())?;
+                Ok(dict.into_any())
             }
         }
     }
@@ -139,6 +161,9 @@ impl Value {
             Value::None => Value::None,
             Value::Continuation(k) => Value::Continuation(k.clone()),
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
+            Value::Task(h) => Value::Task(*h),
+            Value::Promise(h) => Value::Promise(*h),
+            Value::ExternalPromise(h) => Value::ExternalPromise(*h),
         }
     }
 }
@@ -209,5 +234,26 @@ mod tests {
         let val = Value::Handlers(handlers);
         assert!(val.as_handlers().is_some());
         assert_eq!(val.as_handlers().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_value_task_and_promise() {
+        use crate::ids::{PromiseId, TaskId};
+        use crate::scheduler::{ExternalPromise, PromiseHandle, TaskHandle};
+
+        let task = Value::Task(TaskHandle {
+            id: TaskId::from_raw(1),
+        });
+        let promise = Value::Promise(PromiseHandle {
+            id: PromiseId::from_raw(2),
+        });
+        let ext = Value::ExternalPromise(ExternalPromise {
+            id: PromiseId::from_raw(3),
+        });
+
+        // Verify they are distinct Value variants
+        assert!(matches!(task, Value::Task(_)));
+        assert!(matches!(promise, Value::Promise(_)));
+        assert!(matches!(ext, Value::ExternalPromise(_)));
     }
 }
