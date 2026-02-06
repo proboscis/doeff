@@ -102,7 +102,7 @@ impl Value {
         if obj.is_none() {
             return Value::None;
         }
-        if let Ok(b) = obj.downcast::<PyBool>() {
+        if let Ok(b) = obj.cast::<PyBool>() {
             return Value::Bool(b.is_true());
         }
         if let Ok(i) = obj.extract::<i64>() {

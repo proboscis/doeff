@@ -543,7 +543,7 @@ impl PyVM {
         }
         if obj.is_instance_of::<PyResume>() {
             let r: PyRef<'_, PyResume> = obj.extract()?;
-            if let Ok(k_pyobj) = r.continuation.bind(_py).downcast::<PyK>() {
+            if let Ok(k_pyobj) = r.continuation.bind(_py).cast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
                 if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
                     return Ok(Yielded::DoCtrl(DoCtrl::Resume {
@@ -556,7 +556,7 @@ impl PyVM {
         }
         if obj.is_instance_of::<PyTransfer>() {
             let t: PyRef<'_, PyTransfer> = obj.extract()?;
-            if let Ok(k_pyobj) = t.continuation.bind(_py).downcast::<PyK>() {
+            if let Ok(k_pyobj) = t.continuation.bind(_py).cast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
                 if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
                     return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
