@@ -163,6 +163,9 @@ mod tests {
     #[test]
     fn test_scheduler_not_standard() {
         let sched = Effect::Scheduler(crate::scheduler::SchedulerEffect::CreatePromise);
-        assert!(!sched.is_standard(), "Scheduler effects should not be standard");
+        assert!(
+            !sched.is_standard(),
+            "Scheduler effects should not be standard"
+        );
     }
 }

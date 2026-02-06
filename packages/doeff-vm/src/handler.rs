@@ -66,7 +66,11 @@ impl HandlerEntry {
         }
     }
 
-    pub fn with_identity(handler: Handler, prompt_seg_id: SegmentId, py_identity: Py<PyAny>) -> Self {
+    pub fn with_identity(
+        handler: Handler,
+        prompt_seg_id: SegmentId,
+        py_identity: Py<PyAny>,
+    ) -> Self {
         HandlerEntry {
             handler,
             prompt_seg_id,
@@ -93,7 +97,10 @@ pub struct StateHandlerFactory;
 
 impl RustProgramHandler for StateHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. })
+        matches!(
+            effect,
+            Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }
+        )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -128,7 +135,10 @@ impl RustHandlerProgram for StateHandlerProgram {
         match effect {
             Effect::Get { key } => {
                 let value = store.get(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { continuation: k, value }))
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                    continuation: k,
+                    value,
+                }))
             }
             Effect::Put { key, value } => {
                 store.put(key, value);
@@ -199,7 +209,10 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         match effect {
             Effect::Ask { key } => {
                 let value = store.ask(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { continuation: k, value }))
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                    continuation: k,
+                    value,
+                }))
             }
             other => RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
                 effect: other,
@@ -293,8 +306,14 @@ impl RustProgramHandler for DoubleCallHandlerFactory {
 #[derive(Debug)]
 enum DoubleCallPhase {
     Init,
-    AwaitingFirstResult { k: Continuation, modifier: Py<PyAny> },
-    AwaitingSecondResult { k: Continuation, first_result: Value },
+    AwaitingFirstResult {
+        k: Continuation,
+        modifier: Py<PyAny>,
+    },
+    AwaitingSecondResult {
+        k: Continuation,
+        first_result: Value,
+    },
     Done,
 }
 
@@ -312,7 +331,12 @@ impl std::fmt::Debug for DoubleCallHandlerProgram {
 
 #[cfg(test)]
 impl RustHandlerProgram for DoubleCallHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, _store: &mut RustStore) -> RustProgramStep {
+    fn start(
+        &mut self,
+        effect: Effect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> RustProgramStep {
         match effect {
             Effect::Modify { modifier, .. } => {
                 // Store k and modifier for later. First Python call: modifier(10)
@@ -347,17 +371,14 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
             }
             DoubleCallPhase::AwaitingSecondResult { k, first_result } => {
                 // Got second result. Combine and yield Resume.
-                let combined = Value::Int(
-                    first_result.as_int().unwrap_or(0) + value.as_int().unwrap_or(0)
-                );
+                let combined =
+                    Value::Int(first_result.as_int().unwrap_or(0) + value.as_int().unwrap_or(0));
                 RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
                     continuation: k,
                     value: combined,
                 }))
             }
-            DoubleCallPhase::Done | DoubleCallPhase::Init => {
-                RustProgramStep::Return(value)
-            }
+            DoubleCallPhase::Done | DoubleCallPhase::Init => RustProgramStep::Return(value),
         }
     }
 
@@ -401,10 +422,19 @@ mod tests {
     #[test]
     fn test_state_factory_can_handle() {
         let f = StateHandlerFactory;
-        assert!(f.can_handle(&Effect::Get { key: "x".to_string() }));
-        assert!(f.can_handle(&Effect::Put { key: "x".to_string(), value: Value::Unit }));
-        assert!(!f.can_handle(&Effect::Ask { key: "x".to_string() }));
-        assert!(!f.can_handle(&Effect::Tell { message: Value::Unit }));
+        assert!(f.can_handle(&Effect::Get {
+            key: "x".to_string()
+        }));
+        assert!(f.can_handle(&Effect::Put {
+            key: "x".to_string(),
+            value: Value::Unit
+        }));
+        assert!(!f.can_handle(&Effect::Ask {
+            key: "x".to_string()
+        }));
+        assert!(!f.can_handle(&Effect::Tell {
+            message: Value::Unit
+        }));
     }
 
     #[test]
@@ -415,13 +445,24 @@ mod tests {
         let program_ref = StateHandlerFactory.create_program();
         let step = {
             let mut guard = program_ref.lock().unwrap();
-            guard.start(Effect::Get { key: "key".to_string() }, k, &mut store)
+            guard.start(
+                Effect::Get {
+                    key: "key".to_string(),
+                },
+                k,
+                &mut store,
+            )
         };
         match step {
-            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { value, .. })) => {
+            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                value, ..
+            })) => {
                 assert_eq!(value.as_int(), Some(42));
             }
-            _ => panic!("Expected Yield(Resume), got {:?}", std::mem::discriminant(&step)),
+            _ => panic!(
+                "Expected Yield(Resume), got {:?}",
+                std::mem::discriminant(&step)
+            ),
         }
     }
 
@@ -432,9 +473,22 @@ mod tests {
         let program_ref = StateHandlerFactory.create_program();
         let step = {
             let mut guard = program_ref.lock().unwrap();
-            guard.start(Effect::Put { key: "key".to_string(), value: Value::Int(99) }, k, &mut store)
+            guard.start(
+                Effect::Put {
+                    key: "key".to_string(),
+                    value: Value::Int(99),
+                },
+                k,
+                &mut store,
+            )
         };
-        assert!(matches!(step, RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { value: Value::Unit, .. }))));
+        assert!(matches!(
+            step,
+            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                value: Value::Unit,
+                ..
+            }))
+        ));
         assert_eq!(store.get("key").unwrap().as_int(), Some(99));
     }
 
@@ -450,7 +504,10 @@ mod tests {
             let step = {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
-                    Effect::Modify { key: "key".to_string(), modifier },
+                    Effect::Modify {
+                        key: "key".to_string(),
+                        modifier,
+                    },
                     k,
                     &mut store,
                 )
@@ -478,7 +535,10 @@ mod tests {
             {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
-                    Effect::Modify { key: "key".to_string(), modifier },
+                    Effect::Modify {
+                        key: "key".to_string(),
+                        modifier,
+                    },
                     k,
                     &mut store,
                 );
@@ -489,7 +549,10 @@ mod tests {
                 guard.resume(Value::Int(20), &mut store)
             };
             match step {
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { value, .. })) => {
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                    value,
+                    ..
+                })) => {
                     assert_eq!(value.as_int(), Some(10)); // old_value returned
                 }
                 _ => panic!("Expected Yield(Resume) with old_value"),
@@ -501,23 +564,39 @@ mod tests {
     #[test]
     fn test_reader_factory_can_handle() {
         let f = ReaderHandlerFactory;
-        assert!(f.can_handle(&Effect::Ask { key: "x".to_string() }));
-        assert!(!f.can_handle(&Effect::Get { key: "x".to_string() }));
-        assert!(!f.can_handle(&Effect::Tell { message: Value::Unit }));
+        assert!(f.can_handle(&Effect::Ask {
+            key: "x".to_string()
+        }));
+        assert!(!f.can_handle(&Effect::Get {
+            key: "x".to_string()
+        }));
+        assert!(!f.can_handle(&Effect::Tell {
+            message: Value::Unit
+        }));
     }
 
     #[test]
     fn test_reader_factory_ask() {
         let mut store = RustStore::new();
-        store.env.insert("config".to_string(), Value::String("value".to_string()));
+        store
+            .env
+            .insert("config".to_string(), Value::String("value".to_string()));
         let k = make_test_continuation();
         let program_ref = ReaderHandlerFactory.create_program();
         let step = {
             let mut guard = program_ref.lock().unwrap();
-            guard.start(Effect::Ask { key: "config".to_string() }, k, &mut store)
+            guard.start(
+                Effect::Ask {
+                    key: "config".to_string(),
+                },
+                k,
+                &mut store,
+            )
         };
         match step {
-            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { value, .. })) => {
+            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                value, ..
+            })) => {
                 assert_eq!(value.as_str(), Some("value"));
             }
             _ => panic!("Expected Yield(Resume)"),
@@ -527,9 +606,15 @@ mod tests {
     #[test]
     fn test_writer_factory_can_handle() {
         let f = WriterHandlerFactory;
-        assert!(f.can_handle(&Effect::Tell { message: Value::Unit }));
-        assert!(!f.can_handle(&Effect::Get { key: "x".to_string() }));
-        assert!(!f.can_handle(&Effect::Ask { key: "x".to_string() }));
+        assert!(f.can_handle(&Effect::Tell {
+            message: Value::Unit
+        }));
+        assert!(!f.can_handle(&Effect::Get {
+            key: "x".to_string()
+        }));
+        assert!(!f.can_handle(&Effect::Ask {
+            key: "x".to_string()
+        }));
     }
 
     #[test]
@@ -539,9 +624,21 @@ mod tests {
         let program_ref = WriterHandlerFactory.create_program();
         let step = {
             let mut guard = program_ref.lock().unwrap();
-            guard.start(Effect::Tell { message: Value::String("log".to_string()) }, k, &mut store)
+            guard.start(
+                Effect::Tell {
+                    message: Value::String("log".to_string()),
+                },
+                k,
+                &mut store,
+            )
         };
-        assert!(matches!(step, RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { value: Value::Unit, .. }))));
+        assert!(matches!(
+            step,
+            RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                value: Value::Unit,
+                ..
+            }))
+        ));
         assert_eq!(store.logs().len(), 1);
     }
 
@@ -563,12 +660,18 @@ mod tests {
             let step1 = {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
-                    Effect::Modify { key: "key".to_string(), modifier },
+                    Effect::Modify {
+                        key: "key".to_string(),
+                        modifier,
+                    },
                     k,
                     &mut store,
                 )
             };
-            assert!(matches!(step1, RustProgramStep::NeedsPython(PythonCall::CallFunc { .. })));
+            assert!(matches!(
+                step1,
+                RustProgramStep::NeedsPython(PythonCall::CallFunc { .. })
+            ));
 
             // Step 2: first resume() returns NeedsPython AGAIN (the critical path)
             let step2 = {
@@ -576,7 +679,10 @@ mod tests {
                 guard.resume(Value::Int(100), &mut store)
             };
             assert!(
-                matches!(step2, RustProgramStep::NeedsPython(PythonCall::CallFunc { .. })),
+                matches!(
+                    step2,
+                    RustProgramStep::NeedsPython(PythonCall::CallFunc { .. })
+                ),
                 "Expected NeedsPython from resume(), got something else"
             );
 
@@ -586,7 +692,10 @@ mod tests {
                 guard.resume(Value::Int(200), &mut store)
             };
             match step3 {
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume { value, .. })) => {
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Resume {
+                    value,
+                    ..
+                })) => {
                     // 100 + 200 = 300
                     assert_eq!(value.as_int(), Some(300));
                 }

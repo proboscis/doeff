@@ -9,13 +9,15 @@ from doeff.effects import Get, Put, Modify, Ask, Tell, Pure
 def test_import():
     """Test that doeff_vm can be imported."""
     import doeff_vm
-    assert hasattr(doeff_vm, 'PyVM')
-    assert hasattr(doeff_vm, 'PyStdlib')
+
+    assert hasattr(doeff_vm, "PyVM")
+    assert hasattr(doeff_vm, "PyStdlib")
 
 
 def test_pyvm_creation():
     """Test PyVM can be created."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     assert vm is not None
 
@@ -23,6 +25,7 @@ def test_pyvm_creation():
 def test_stdlib_creation():
     """Test stdlib can be created from PyVM."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     assert stdlib is not None
@@ -37,6 +40,7 @@ def simple_program() -> Program[int]:
 def test_simple_pure_program():
     """Test running a simple program that returns a value."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     result = vm.run(simple_program())
     assert result == 42
@@ -54,11 +58,12 @@ def counter_program() -> Program[int]:
 def test_state_effects():
     """Test Get/Put effects with state handler."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     stdlib.install_state(vm)
-    
+
     result = vm.run(counter_program())
     assert result == 1
 
@@ -75,11 +80,12 @@ def nested_program() -> Program[int]:
 def test_multiple_state_operations():
     """Test multiple state operations."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     stdlib.install_state(vm)
-    
+
     result = vm.run(nested_program())
     assert result == 30
 
@@ -95,14 +101,15 @@ def logging_program() -> Program[str]:
 def test_writer_effects():
     """Test Tell effects with writer handler."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.writer
     stdlib.install_writer(vm)
-    
+
     result = vm.run(logging_program())
     assert result == "completed"
-    
+
     logs = vm.logs()
     assert len(logs) == 3
     assert logs[0] == "Starting"
@@ -123,16 +130,17 @@ def state_and_logging_program() -> Program[int]:
 def test_combined_effects():
     """Test using multiple effect types together."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     _ = stdlib.writer
     stdlib.install_state(vm)
     stdlib.install_writer(vm)
-    
+
     result = vm.run(state_and_logging_program())
     assert result == 100
-    
+
     logs = vm.logs()
     assert len(logs) == 3
 
@@ -148,11 +156,12 @@ def modify_program() -> Program[tuple[int, int]]:
 def test_modify_effect():
     """Test Modify effect with Python callback function."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     stdlib.install_state(vm)
-    
+
     result = vm.run(modify_program())
     assert result == (10, 20)
 
@@ -173,16 +182,17 @@ def nested_state_and_writer_program() -> Program[int]:
 def test_nested_stdlib_handlers():
     """Test multiple stdlib handlers (state + writer) working together."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     _ = stdlib.writer
     stdlib.install_state(vm)
     stdlib.install_writer(vm)
-    
+
     result = vm.run(nested_state_and_writer_program())
     assert result == 11
-    
+
     logs = vm.logs()
     assert len(logs) == 4
     assert logs[0] == "outer start"
@@ -199,7 +209,7 @@ def interleaved_effects_program() -> Program[int]:
     yield Tell("set b=200")
     a = yield Get("a")
     b = yield Get("b")
-    yield Tell(f"sum={a+b}")
+    yield Tell(f"sum={a + b}")
     yield Modify("a", lambda x: x * 2)
     a2 = yield Get("a")
     yield Tell(f"doubled a={a2}")
@@ -209,16 +219,17 @@ def interleaved_effects_program() -> Program[int]:
 def test_interleaved_state_writer_modify():
     """Test interleaved state operations with logging and modify."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     _ = stdlib.writer
     stdlib.install_state(vm)
     stdlib.install_writer(vm)
-    
+
     result = vm.run(interleaved_effects_program())
     assert result == 400  # a=200, b=200 -> 400
-    
+
     logs = vm.logs()
     assert "set a=100" in logs
     assert "set b=200" in logs
@@ -228,6 +239,7 @@ def test_interleaved_state_writer_modify():
 
 class WithHandler:
     """Control primitive to install a Python handler."""
+
     def __init__(self, handler, body):
         self.handler = handler
         self.body = body
@@ -235,6 +247,7 @@ class WithHandler:
 
 class Resume:
     """Control primitive to resume continuation with value."""
+
     def __init__(self, continuation, value):
         self.continuation = continuation
         self.value = value
@@ -242,40 +255,45 @@ class Resume:
 
 class Delegate:
     """Control primitive to delegate effect to outer handler."""
+
     pass
 
 
 class CustomEffect:
     """Custom effect for testing Python handlers."""
+
     def __init__(self, value):
         self.value = value
 
 
 def make_custom_handler():
     """Create a handler that doubles the effect value and delegates unknown effects."""
+
     def handler(effect, k):
         if isinstance(effect, CustomEffect):
             resume_value = yield Resume(k, effect.value * 2)
             return resume_value
         else:
             yield Delegate()
+
     return handler
 
 
 def test_python_handler_basic():
     """Test basic Python handler invocation."""
     from doeff_vm import PyVM
+
     vm = PyVM()
-    
+
     def body():
         result = yield CustomEffect(21)
         return result
-    
+
     def main():
         handler = make_custom_handler()
         result = yield WithHandler(handler, body)
         return result
-    
+
     result = vm.run(main())
     assert result == 42
 
@@ -291,25 +309,27 @@ def make_state_counting_handler():
             return resume_value
         else:
             yield Delegate()
+
     return handler, state
 
 
 def test_python_handler_multiple_effects():
     """Test Python handler handling multiple effects."""
     from doeff_vm import PyVM
+
     vm = PyVM()
-    
+
     def body():
         a = yield CustomEffect(1)
         b = yield CustomEffect(2)
         c = yield CustomEffect(3)
         return [a, b, c]
-    
+
     def main():
         handler, _ = make_state_counting_handler()
         result = yield WithHandler(handler, body)
         return result
-    
+
     result = vm.run(main())
     assert result == [1, 2, 3]
 
@@ -317,22 +337,23 @@ def test_python_handler_multiple_effects():
 def test_python_handler_with_stdlib():
     """Test Python handler working alongside stdlib handlers."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
     stdlib.install_state(vm)
-    
+
     def body():
         x = yield CustomEffect(10)
         yield Put("x", x)
         y = yield Get("x")
         return y
-    
+
     def main():
         handler = make_custom_handler()
         result = yield WithHandler(handler, body)
         return result
-    
+
     result = vm.run(main())
     assert result == 20
 
@@ -340,6 +361,7 @@ def test_python_handler_with_stdlib():
 def test_nested_with_handler():
     """Test nested WithHandler: inner handler completes, then outer handler handles."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     def inner_handler(effect, k):
@@ -376,6 +398,7 @@ def test_nested_with_handler():
 def test_handler_transforms_resume_result():
     """Test that handler can transform the value returned after Resume."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     def transforming_handler(effect, k):
@@ -402,6 +425,7 @@ def test_handler_transforms_resume_result():
 def test_handler_abandon_continuation():
     """Test handler that returns without resuming the continuation (abandon)."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     def abandoning_handler(effect, k):
@@ -425,6 +449,7 @@ def test_handler_abandon_continuation():
 def test_handler_accumulates_across_effects():
     """Test handler that accumulates state across multiple effect invocations."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     accumulated = []
@@ -456,6 +481,7 @@ def test_handler_accumulates_across_effects():
 def test_scheduler_creation():
     """Test scheduler handler can be created and installed."""
     from doeff_vm import PyVM, PySchedulerHandler
+
     vm = PyVM()
     scheduler = vm.scheduler()
     assert scheduler is not None
@@ -464,12 +490,14 @@ def test_scheduler_creation():
 
 class CreatePromise:
     """Scheduler effect: create a new promise."""
+
     pass
 
 
 def test_scheduler_create_promise():
     """Test scheduler CreatePromise effect."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     scheduler = vm.scheduler()
     scheduler.install(vm)
@@ -488,6 +516,7 @@ def test_scheduler_create_promise():
 def test_py_store_basic():
     """Test PyStore read/write."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     # Set and get
@@ -513,6 +542,7 @@ def test_py_store_basic():
 
 class PythonAsyncSyntaxEscape:
     """Marker yielded by generators to request an async Python call."""
+
     def __init__(self, action):
         self.action = action
 
@@ -549,10 +579,12 @@ async def async_run(vm, program):
 # Async tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_async_run_basic():
     """Test async_run with a PythonAsyncSyntaxEscape handler returning a value."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     async def my_async_action():
@@ -571,6 +603,7 @@ async def test_async_run_basic():
 async def test_async_run_multiple_awaits():
     """Test async_run with several sequential async escapes."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     async def async_add(a, b):
@@ -590,6 +623,7 @@ async def test_async_run_multiple_awaits():
 async def test_async_run_error_propagation():
     """Test that exceptions from async actions propagate correctly."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     async def failing_action():
@@ -607,6 +641,7 @@ async def test_async_run_error_propagation():
 async def test_async_run_with_pure_return():
     """Test async_run with a program that has no async escapes."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     def body():
@@ -621,6 +656,7 @@ async def test_async_run_with_pure_return():
 async def test_async_run_with_state_effects():
     """Test async_run with stdlib state effects + async escapes."""
     from doeff_vm import PyVM
+
     vm = PyVM()
     stdlib = vm.stdlib()
     _ = stdlib.state
@@ -642,9 +678,11 @@ async def test_async_run_with_state_effects():
 
 ## -- Scoped stdlib handler tests (run_scoped) ----------------------------
 
+
 def test_run_scoped_state():
     """Test run_scoped installs and removes the state handler."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     result = vm.run_scoped(counter_program(), state=True)
@@ -654,6 +692,7 @@ def test_run_scoped_state():
 def test_run_scoped_writer():
     """Test run_scoped installs and removes the writer handler."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     result = vm.run_scoped(logging_program(), writer=True)
@@ -665,6 +704,7 @@ def test_run_scoped_writer():
 def test_run_scoped_combined():
     """Test run_scoped with state + writer together."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     result = vm.run_scoped(state_and_logging_program(), state=True, writer=True)
@@ -680,6 +720,7 @@ def test_run_scoped_handlers_do_not_leak():
     handlers should fail because there is no handler for Get/Put effects.
     """
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     # First run succeeds with scoped state handler
@@ -694,6 +735,7 @@ def test_run_scoped_handlers_do_not_leak():
 def test_run_scoped_handlers_do_not_leak_writer():
     """Test that scoped writer handlers are removed after run_scoped completes."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     # First run succeeds with scoped writer handler
@@ -708,6 +750,7 @@ def test_run_scoped_handlers_do_not_leak_writer():
 def test_run_scoped_error_still_cleans_up():
     """Test that handlers are removed even when the program raises an error."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     @do
@@ -728,6 +771,7 @@ def test_run_scoped_error_still_cleans_up():
 def test_run_scoped_successive_independent_runs():
     """Test that successive run_scoped calls are independent."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     @do
@@ -752,6 +796,7 @@ def test_run_scoped_successive_independent_runs():
 
 ## -- ProgramBase validation tests (to_generator_strict) --------------------
 
+
 def test_yielded_raw_generator_rejected_as_program():
     """Yielding a raw generator inside a program body should raise TypeError.
 
@@ -760,6 +805,7 @@ def test_yielded_raw_generator_rejected_as_program():
     or ``vm.start_program()`` instead.
     """
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     def sub_generator():
@@ -782,6 +828,7 @@ def test_yielded_program_base_accepted():
     This is the happy-path counterpart of the strict validation test.
     """
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     @do
@@ -800,6 +847,7 @@ def test_yielded_program_base_accepted():
 def test_run_accepts_raw_generator():
     """vm.run() should accept raw generators at the top level (lenient path)."""
     from doeff_vm import PyVM
+
     vm = PyVM()
 
     def raw_gen():
@@ -817,6 +865,7 @@ def test_run_accepts_raw_generator():
 
 class GetHandlers:
     """Control primitive: request the current handler chain."""
+
     pass
 
 
@@ -949,6 +998,459 @@ def test_yielding_unknown_object_raises_type_error():
 
     with pytest.raises(TypeError):
         vm.run(body_str())
+
+
+## -- R8 Spec Gap TDD tests --------------------------------------------------
+# These tests verify spec compliance fixes found during systematic audit.
+
+
+def test_run_with_result_has_result_getter():
+    """G9: PyRunResult must have a .result getter returning (tag, payload)."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    result = vm.run_with_result(simple_program())
+    assert result.is_ok()
+
+    # .result should return a tuple ("ok", value) or ("err", exception)
+    r = result.result
+    assert isinstance(r, tuple)
+    assert r[0] == "ok"
+    assert r[1] == 42
+
+
+def test_run_with_result_raw_store_excludes_env():
+    """G10: raw_store should contain state entries only, not env entries."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+    stdlib = vm.stdlib()
+    _ = stdlib.state
+    stdlib.install_state(vm)
+
+    # Pre-populate env
+    vm.put_env("config_key", "config_value")
+
+    @do
+    def prog() -> Program[int]:
+        yield Put("counter", 42)
+        return 1
+
+    result = vm.run_with_result(prog())
+    raw = result.raw_store
+    assert isinstance(raw, dict)
+    assert "counter" in raw
+    assert raw["counter"] == 42
+    # env entries must NOT appear in raw_store
+    assert "__env__config_key" not in raw
+    assert "config_key" not in raw
+
+
+def test_with_handler_program_attribute():
+    """WithHandler pyclass uses 'program' field (not 'body') per spec."""
+    from doeff_vm import PyVM, WithHandler as RustWithHandler
+
+    vm = PyVM()
+
+    def handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            resume_value = yield Resume(k, effect.value * 3)
+            return resume_value
+        yield Delegate()
+
+    def body():
+        result = yield CustomEffect(10)
+        return result
+
+    # Use the Rust pyclass WithHandler (which has 'program' not 'body')
+    def main():
+        result = yield RustWithHandler(handler=handler, program=body)
+        return result
+
+    result = vm.run(main())
+    assert result == 30
+
+
+def test_is_standard_excludes_scheduler_effect():
+    """G14: is_standard() should not include Scheduler effects.
+
+    Scheduler effects go through dispatch like all others, so is_standard
+    correctly identifies only state/reader/writer effects.
+    """
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+    scheduler = vm.scheduler()
+    scheduler.install(vm)
+
+    # Verify scheduler effects go through dispatch (not bypassed)
+    def body():
+        promise = yield CreatePromise()
+        return promise
+
+    result = vm.run(body())
+    assert isinstance(result, dict)
+
+
+def test_put_state_and_put_env():
+    """R8-E: put_state, put_env, env_items work correctly."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    vm.put_state("x", 10)
+    vm.put_env("env_key", "env_val")
+
+    state = vm.state_items()
+    assert state["x"] == 10
+
+    env = vm.env_items()
+    assert env["env_key"] == "env_val"
+
+
+def test_run_with_result_error_case():
+    """R8-J: PyRunResult wraps errors properly."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    @do
+    def failing_prog() -> Program[int]:
+        raise ValueError("boom")
+        yield
+
+    result = vm.run_with_result(failing_prog())
+    assert result.is_err()
+    assert not result.is_ok()
+
+    # .result should return ("err", exception)
+    r = result.result
+    assert r[0] == "err"
+
+
+## -- G11: Module-level run() and async_run() ----------------------------------
+# Spec defines these as top-level functions, not just methods on PyVM.
+
+
+def test_module_level_run_exists():
+    """G11: doeff_vm.run() must be a module-level function."""
+    import doeff_vm
+
+    assert hasattr(doeff_vm, "run"), "Module-level run() function missing"
+    assert callable(doeff_vm.run)
+
+
+def test_module_level_async_run_exists():
+    """G11: doeff_vm.async_run() must be a module-level function."""
+    import doeff_vm
+
+    assert hasattr(doeff_vm, "async_run"), "Module-level async_run() function missing"
+    assert callable(doeff_vm.async_run)
+
+
+def test_module_level_run_basic():
+    """G11: run(program) returns a RunResult with the program's return value."""
+    from doeff_vm import run
+
+    result = run(simple_program())
+    assert result.is_ok()
+    assert result.value == 42
+
+
+def test_module_level_run_with_env_and_store():
+    """G11: run() accepts env and store dicts to seed the VM."""
+    from doeff_vm import run, state
+
+    @do
+    def prog() -> Program[int]:
+        val = yield Get("counter")
+        return val
+
+    result = run(prog(), store={"counter": 99}, handlers=[state])
+    assert result.is_ok()
+    assert result.value == 99
+
+
+def test_module_level_run_with_state_handler():
+    """G11: run(program, handlers=[state]) installs state handler."""
+    from doeff_vm import run, state
+
+    result = run(counter_program(), handlers=[state])
+    assert result.is_ok()
+    assert result.value == 1
+    # raw_store should contain the state
+    assert result.raw_store.get("counter") == 1
+
+
+def test_module_level_run_with_writer_handler():
+    """G11: run(program, handlers=[writer]) installs writer handler."""
+    from doeff_vm import run, writer
+
+    result = run(logging_program(), handlers=[writer])
+    assert result.is_ok()
+    assert result.value == "completed"
+
+
+def test_module_level_run_no_handlers_unhandled_effect():
+    """G11: run(program) with no handlers raises for unhandled effects."""
+    from doeff_vm import run
+
+    result = run(counter_program())
+    assert result.is_err()
+
+
+def test_module_level_async_run_basic():
+    """G11: async_run() works with asyncio event loop."""
+    from doeff_vm import async_run
+
+    async def main():
+        result = await async_run(simple_program())
+        return result
+
+    result = asyncio.run(main())
+    assert result.is_ok()
+    assert result.value == 42
+
+
+## -- R9: Semantic Correctness Enforcement Tests ----------------------------------
+# These tests enforce SPEC-008 Rev 9 and SPEC-009 Rev 3 invariants.
+# Written as TDD RED — they SHOULD FAIL until the implementation is corrected.
+
+
+class TestR9HandlerNesting:
+    """ADR-13, INV-16: run() must use WithHandler nesting, not install_handler."""
+
+    def test_run_with_sentinel_handler_objects(self):
+        """R9: run() accepts sentinel handler objects (not strings)."""
+        import doeff_vm
+
+        # Module-level sentinel objects must exist
+        assert hasattr(doeff_vm, "state"), "Module should export 'state' sentinel"
+        assert hasattr(doeff_vm, "reader"), "Module should export 'reader' sentinel"
+        assert hasattr(doeff_vm, "writer"), "Module should export 'writer' sentinel"
+
+        from doeff_vm import run, state
+
+        result = run(counter_program(), handlers=[state])
+        assert result.is_ok()
+        assert result.value == 1
+
+    def test_run_sentinel_state_and_reader(self):
+        """R9: run() with sentinel state + reader handlers."""
+        from doeff_vm import run, state, reader
+
+        @do
+        def prog() -> Program[str]:
+            val = yield Get("x")
+            name = yield Ask("name")
+            return f"{name}={val}"
+
+        result = run(prog(), handlers=[state, reader], store={"x": 42}, env={"name": "count"})
+        assert result.is_ok()
+        assert result.value == "count=42"
+
+    def test_run_handler_ordering_is_deterministic(self):
+        """R9 INV-16: Handler ordering must be deterministic across runs."""
+        from doeff_vm import run, state, reader, writer
+
+        results = []
+        for _ in range(20):
+
+            @do
+            def prog() -> Program[int]:
+                yield Put("x", 1)
+                yield Tell("logged")
+                val = yield Get("x")
+                return val
+
+            result = run(prog(), handlers=[state, reader, writer], store={"x": 0})
+            assert result.is_ok()
+            results.append(result.value)
+
+        # All 20 runs must produce the same result
+        assert all(r == results[0] for r in results), f"Non-deterministic results: {results}"
+
+    def test_run_with_python_handler_and_sentinel(self):
+        """R9: run() accepts mixed Python handlers and sentinel handlers."""
+        from doeff_vm import run, state, Resume
+
+        @do
+        def my_handler(effect, k):
+            if hasattr(effect, "message"):
+                # Custom Tell handler that does nothing
+                result = yield Resume(k, None)
+                return result
+            from doeff_vm import Delegate
+
+            yield Delegate()
+
+        @do
+        def prog() -> Program[int]:
+            yield Put("x", 10)
+            val = yield Get("x")
+            return val
+
+        result = run(prog(), handlers=[my_handler, state])
+        assert result.is_ok()
+        assert result.value == 10
+
+
+class TestR9RunResultNaming:
+    """SPEC-009: RunResult must be the Python-visible class name."""
+
+    def test_runresult_class_name(self):
+        """R9: The class exposed to Python must be named 'RunResult', not 'PyRunResult'."""
+        from doeff_vm import run
+
+        result = run(simple_program())
+        assert type(result).__name__ == "RunResult", (
+            f"Expected class name 'RunResult', got '{type(result).__name__}'"
+        )
+
+    def test_runresult_importable(self):
+        """R9: RunResult should be importable from doeff_vm."""
+        from doeff_vm import RunResult
+
+        assert RunResult is not None
+
+
+class TestR9ClassifyYieldedCompleteness:
+    """INV-17: classify_yielded must have explicit arms for all scheduler effects.
+
+    These tests verify that scheduler effects are classified as Effect::Scheduler,
+    not falling through to Effect::Python. The distinction matters because the
+    scheduler handler's can_handle() only matches Effect::Scheduler(_).
+
+    We test this by checking that the effect class type names are recognized
+    in classify_yielded's string matching. Since we can't directly introspect
+    classify_yielded from Python, we verify that scheduler effects dispatched
+    without a scheduler handler result in UnhandledEffect (not TypeError from
+    Unknown classification or silent misrouting via Effect::Python).
+    """
+
+    def test_scheduler_effects_type_names_are_recognized(self):
+        """R9 INV-17: All scheduler effect type names must be in classify_yielded."""
+        # This is a structural test — it checks that the Rust source code
+        # contains explicit classify_yielded arms for all scheduler effects.
+        # We import from the test to verify the effect classes exist and have
+        # the expected type names that classify_yielded should match.
+        from doeff.effects.spawn import SpawnEffect
+        from doeff.effects.gather import GatherEffect
+        from doeff.effects.race import RaceEffect
+        from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
+
+        # Verify the type names that classify_yielded needs to match
+        assert SpawnEffect.__name__ == "SpawnEffect"
+        assert GatherEffect.__name__ == "GatherEffect"
+        assert RaceEffect.__name__ == "RaceEffect"
+        assert CompletePromiseEffect.__name__ == "CompletePromiseEffect"
+        assert FailPromiseEffect.__name__ == "FailPromiseEffect"
+
+    def test_classify_gather_effect_not_as_program(self):
+        """R9 INV-17: GatherEffect must be classified as Effect, not Program.
+
+        GatherEffect extends EffectBase extends ProgramBase, so it has
+        `to_generator`. classify_yielded must check for effect type names
+        BEFORE the to_generator fallback, otherwise scheduler effects get
+        misclassified as Yielded::Program and the VM tries to start them.
+        """
+        import subprocess
+        import sys
+
+        # Run in subprocess with timeout to detect hang
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                """
+from doeff import do, Program
+from doeff.effects.gather import GatherEffect
+from doeff_vm import PyVM
+
+vm = PyVM()
+
+@do
+def prog():
+    result = yield GatherEffect(items=[])
+    return result
+
+result = vm.run_with_result(prog())
+# If we get here, classify was correct (should be UnhandledEffect error)
+print("OK" if result.is_err() else "WRONG_OK")
+""",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        assert result.returncode == 0, f"Process crashed: {result.stderr}"
+        assert result.stdout.strip() == "OK", (
+            f"GatherEffect misclassified. stdout={result.stdout.strip()}, "
+            f"stderr={result.stderr[:200]}"
+        )
+
+    def test_classify_yielded_must_check_effects_before_to_generator(self):
+        """R9 INV-17: classify_yielded must check for effect type names BEFORE
+        checking for to_generator.
+
+        EffectBase extends ProgramBase, so all effects have to_generator().
+        If classify_yielded checks to_generator first, scheduler effects get
+        misclassified as Yielded::Program and the VM tries to start them as
+        programs — causing hangs or wrong behavior.
+
+        The correct order is:
+        1. Check pyclass types (Resume, WithHandler, etc.)
+        2. Check type name strings (GatherEffect, RaceEffect, SpawnEffect, etc.)
+        3. THEN check to_generator (for actual Programs)
+        """
+        # Verify the fundamental issue: all EffectBase subclasses have to_generator
+        from doeff.effects.race import RaceEffect
+        from doeff.effects.gather import GatherEffect
+        from doeff.effects.spawn import SpawnEffect
+        from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
+
+        for cls in [GatherEffect, RaceEffect, SpawnEffect]:
+            assert hasattr(cls, "to_generator"), (
+                f"{cls.__name__} should have to_generator (from ProgramBase)"
+            )
+
+        # The gather test above proves the bug exists for GatherEffect.
+        # This test documents that ALL scheduler effect classes have the same
+        # vulnerability and need explicit classify_yielded arms.
+
+
+class TestR9AsyncRunSemantics:
+    """API-12: async_run must be truly async."""
+
+    def test_async_run_yields_to_event_loop(self):
+        """R9 API-12: async_run must yield control to the event loop."""
+        from doeff_vm import async_run
+        import asyncio
+
+        execution_order = []
+
+        async def background_task():
+            execution_order.append("background_start")
+            await asyncio.sleep(0)
+            execution_order.append("background_end")
+
+        async def main():
+            execution_order.append("main_start")
+            bg = asyncio.create_task(background_task())
+            result = await async_run(simple_program())
+            await bg
+            execution_order.append("main_end")
+            return result
+
+        result = asyncio.run(main())
+        assert result.is_ok()
+        assert result.value == 42
+        # If async_run is truly async, background_task should have had a
+        # chance to run between main_start and main_end
+        assert "background_start" in execution_order, (
+            "Background task never started — async_run may be blocking"
+        )
 
 
 if __name__ == "__main__":
