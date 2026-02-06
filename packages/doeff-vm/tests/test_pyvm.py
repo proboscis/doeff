@@ -1453,5 +1453,12 @@ class TestR9AsyncRunSemantics:
         )
 
 
+# === SPEC-009 Gap TDD Tests ===
+# G1 (RunResult.result returns Ok/Err) and G3 (Modify returns new_value)
+# Python integration tests deferred until run_with_result/put_store are wired.
+# Rust-side fixes verified by Rust unit tests:
+#   - G3: vm::tests::test_s009_g3_modify_resumes_with_new_value (handler.rs)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -2,6 +2,7 @@
 
 use crate::effect::Effect;
 use crate::ids::{ContId, Marker};
+use crate::step::PyException;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
@@ -14,6 +15,7 @@ pub enum VMError {
     PythonError { message: String },
     InternalError { message: String },
     TypeError { message: String },
+    UncaughtException { exception: PyException },
 }
 
 impl std::fmt::Display for VMError {
@@ -42,6 +44,7 @@ impl std::fmt::Display for VMError {
             VMError::PythonError { message } => write!(f, "Python error: {}", message),
             VMError::InternalError { message } => write!(f, "internal error: {}", message),
             VMError::TypeError { message } => write!(f, "type error: {}", message),
+            VMError::UncaughtException { .. } => write!(f, "uncaught exception"),
         }
     }
 }
@@ -91,6 +94,10 @@ impl VMError {
         VMError::TypeError {
             message: message.into(),
         }
+    }
+
+    pub fn uncaught_exception(exception: PyException) -> Self {
+        VMError::UncaughtException { exception }
     }
 }
 
