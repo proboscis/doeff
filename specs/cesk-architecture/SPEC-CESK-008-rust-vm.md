@@ -4193,9 +4193,7 @@ Key differences and decisions in 008:
 
 ---
 
-## Implementation Checklist
-
-### Rust Crate Structure
+## Crate Structure
 
 ```
 doeff-vm/
@@ -4225,105 +4223,8 @@ doeff-vm/
     └── ...
 ```
 
-### Tasks
-
-**Phase 1: Core Types**
-- [ ] Set up Rust crate with PyO3 and maturin
-- [ ] Implement core IDs (Marker, SegmentId, ContId, CallbackId)
-- [ ] Implement Value with Python interop
-- [ ] Implement VMError enum
-
-**Phase 2: Continuation Structure**
-- [ ] Implement Segment and SegmentKind
-- [ ] Implement Frame with CallbackId
-- [ ] Implement Continuation with Arc snapshots
-- [ ] Implement Store with callback table (SlotMap)
-
-**Phase 3: Step State Machine**
-- [ ] Implement Mode enum
-- [ ] Implement StepEvent enum
-- [ ] Implement Yielded classification
-- [ ] Implement step() main loop
-- [ ] Implement step_deliver_or_throw()
-- [ ] Implement step_handle_yield()
-- [ ] Implement step_return()
-
-**Phase 4: Effects & Handlers**
-- [ ] Implement standard handlers as RustProgramHandler (StateHandlerFactory, ReaderHandlerFactory, WriterHandlerFactory) [R8-H]
-- [ ] Implement Frame::RustProgram stepping (apply_rust_program_step)
-- [ ] Implement WithHandler (prompt + body structure)
-- [ ] Implement start_dispatch with visible_handlers (all effects dispatch)
-- [ ] Implement Resume (materialize snapshot)
-- [ ] Implement Transfer (tail-transfer)
-- [ ] Implement Delegate
-- [ ] Implement GetContinuation/GetHandlers
-- [ ] Implement CreateContinuation/ResumeContinuation
-
-**Phase 5: Python Integration**
-- [ ] Implement PythonCall (StartProgram/CallFunc/CallAsync/GenNext/GenSend/GenThrow)
-- [ ] Implement PyCallOutcome handling (Value vs GenYield/GenReturn/GenError)
-- [ ] Implement Yielded::classify() in driver (with GIL)
-- [ ] Implement PyException wrapper
-- [ ] Implement PyVM driver loop (step_generator classifies yields)
-- [ ] Implement async_run driver loop (CallAsync handling)
-- [ ] Implement receive_python_result() (handles Value vs Gen* correctly)
-- [ ] Implement Effect/Continuation/Handler PyO3 wrappers
-- [ ] Expose built-in scheduler via `vm.scheduler()` (PyRustProgramHandler)
-- [ ] Map Python scheduler effects to `Effect::Scheduler` in `extract_effect`
-
-**Phase 6: Testing & Validation**
-- [ ] Test basic effects (Get, Put, Ask, Tell)
-- [ ] Test single-level handlers
-- [ ] Test nested handlers
-- [ ] Test abandon semantics
-- [ ] Test one-shot continuation enforcement
-- [ ] Benchmark against pure Python implementation
-- [ ] Document public API
-
----
-
-## Migration Path
-
-### Phase 1: Core VM (With Standard Handlers) [R8-H]
-- Implement Mode-based step loop
-- Implement standard handlers for effects (Get, Put, Ask, Tell) as RustProgramHandler
-- Standard handlers go through dispatch (no bypass) [R8-B]
-- Test with simple Python generators
-- Validate: `step()` returns correct StepEvent sequence
-
-### Phase 2: Single-Level Handlers
-- Implement WithHandler (prompt + body + scope_chain)
-- Implement start_dispatch (capture k_user)
-- Implement Resume (materialize snapshot)
-- Test: handler receives effect, resumes continuation
-- Validate: value flows correctly callsite → handler → callsite
-
-### Phase 3: Nested Handlers & Delegate
-- Implement visible_handlers (top-only busy boundary)
-- Implement Delegate (re-dispatch to outer)
-- Test: nested `with_handler` with inner delegation
-- Validate: busy boundary prevents inner handler from seeing itself
-
-### Phase 4: Abandon & Transfer
-- Implement Transfer (tail-transfer, no return link)
-- Test: handler returns without Resume (abandon)
-- Validate: body_seg is orphaned, control goes to prompt_seg
-- Implement GetContinuation/GetHandlers and Create/ResumeContinuation
-
-### Phase 5: Python Integration
-- Implement PyVM driver loop
-- Implement correct generator protocol
-- Integrate with existing doeff Python API
-- Expose built-in scheduler via `vm.scheduler()` (explicit install)
-- Map Python scheduler effects to `Effect::Scheduler` in `extract_effect`
-- Test: run existing doeff test suite with Rust VM
-- Ensure backward compatibility
-
-### Phase 6: Optimization
-- Profile hot paths (step loop, frame pop, segment alloc)
-- Consider persistent cons-list for frames (if profiling shows need)
-- Consider `#[inline]` for step_* functions
-- Evaluate segment pooling strategies
+Implementation tasks and migration phases are tracked in
+`ISSUE-rust-vm-implementation.md`, not in this spec.
 
 ---
 
