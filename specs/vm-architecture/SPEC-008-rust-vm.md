@@ -8,13 +8,14 @@ Changes from Rev 8. Driven by SPEC-TYPES-001 reconciliation (Program/Effect sepa
 
 | Tag | Section | Change |
 |-----|---------|--------|
-| **R9-A** | Control Primitives | New: `Call { program, metadata }` — run a sub-program with call stack metadata. |
+| **R9-A** | Control Primitives | New: `Call { f, args, kwargs, metadata }` — call a function and run the result with call stack metadata. |
 | **R9-B** | Control Primitives | New: `GetCallStack` — walk frames and return `Vec<CallMetadata>`. |
 | **R9-C** | Frame enum | `PythonGenerator` gains `metadata: Option<CallMetadata>` field for call stack tracking. |
 | **R9-D** | New struct | `CallMetadata { function_name, source_file, source_line, program_call }` — carried on frames. |
 | **R9-E** | Yielded / classify | `Yielded::Program` kept for backward compat (metadata: None). KPC-originated programs upgraded to `Call` with metadata by driver. |
-| **R9-F** | handle_primitive | New arms for `Call` (emit StartProgram + store metadata) and `GetCallStack` (walk frames). |
+| **R9-F** | handle_do_ctrl | New arms for `Call` (emit CallFunc/StartProgram + store metadata), `Eval` (create+resume continuation), and `GetCallStack` (walk frames). |
 | **R9-G** | receive_python_result | `StartProgramFrame` pending now carries `Option<CallMetadata>` to attach to pushed frame. |
+| **R9-H** | Control Primitives | New: `Eval { expr, handlers }` — evaluate a DoExpr in a fresh scope with explicit handler chain. Atomic CreateContinuation + ResumeContinuation. |
 
 ### Revision 8 Changelog
 
@@ -172,7 +173,7 @@ result = run(my_program(), handlers=[scheduler, state, reader, writer])
 ### ADR-4a: Asyncio Integration (Reference)
 
 **Decision**: Provide a Python-level async driver (`async_run` / `VM.run_async`) and the
-`PythonAsyncSyntaxEscape` control primitive for handlers that need `await`.
+`PythonAsyncSyntaxEscape` DoCtrl for handlers that need `await`.
 
 **Rationale**:
 - Python's asyncio APIs require an `async def` context and a running event loop
@@ -244,7 +245,7 @@ the scheduler already uses.
 types exposed to Python, not Python dataclasses parsed by `classify_yielded`.
 
 **Types exposed**:
-- `WithHandler(handler, program)` — composition primitive (usable anywhere)
+- `WithHandler(handler, expr)` — composition primitive (usable anywhere)
 - `Resume(k, value)` — dispatch primitive (handler-only)
 - `Delegate(effect?)` — dispatch primitive (handler-only)
 - `Transfer(k, value)` — dispatch primitive (handler-only)
@@ -826,7 +827,7 @@ pub struct K {
 #[pyclass]
 pub struct WithHandler {
     #[pyo3(get)] pub handler: PyObject,
-    #[pyo3(get)] pub program: PyObject,
+    #[pyo3(get)] pub expr: PyObject,
 }
 
 /// Dispatch primitive — handler-only, during effect handling. [R8-C]
@@ -926,7 +927,7 @@ pub type RustProgramRef = Arc<Mutex<Box<dyn RustHandlerProgram + Send>>>;
 
 /// Result of stepping a Rust handler program.
 pub enum RustProgramStep {
-    /// Yield a control primitive / effect / program
+    /// Yield a DoCtrl / effect / program
     Yield(Yielded),
     /// Return a value (like generator return)
     Return(Value),
@@ -1021,14 +1022,14 @@ impl RustHandlerProgram for StateHandlerProgram {
         match effect {
             Effect::Get { key } => {
                 let value = store.get(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::Primitive(
-                    ControlPrimitive::Resume { continuation: k, value }
+                RustProgramStep::Yield(Yielded::DoCtrl(
+                    DoCtrl::Resume { continuation: k, value }
                 ))
             }
             Effect::Put { key, value } => {
                 store.put(key, value);
-                RustProgramStep::Yield(Yielded::Primitive(
-                    ControlPrimitive::Resume { continuation: k, value: Value::Unit }
+                RustProgramStep::Yield(Yielded::DoCtrl(
+                    DoCtrl::Resume { continuation: k, value: Value::Unit }
                 ))
             }
             Effect::Modify { key, modifier } => {
@@ -1044,8 +1045,8 @@ impl RustHandlerProgram for StateHandlerProgram {
                     args: vec![old_value],
                 })
             }
-            _ => RustProgramStep::Yield(Yielded::Primitive(
-                ControlPrimitive::Delegate { effect }
+            _ => RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Delegate { effect }
             )),
         }
     }
@@ -1056,8 +1057,8 @@ impl RustHandlerProgram for StateHandlerProgram {
         let k = self.pending_k.take().unwrap();
         let old_value = self.pending_old_value.take().unwrap();
         store.put(key, value);  // value = new_value from modifier
-        RustProgramStep::Yield(Yielded::Primitive(
-            ControlPrimitive::Resume { continuation: k, value: old_value }
+        RustProgramStep::Yield(Yielded::DoCtrl(
+            DoCtrl::Resume { continuation: k, value: old_value }
         ))
     }
 
@@ -1089,12 +1090,12 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         match effect {
             Effect::Ask { key } => {
                 let value = store.ask(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::Primitive(
-                    ControlPrimitive::Resume { continuation: k, value }
+                RustProgramStep::Yield(Yielded::DoCtrl(
+                    DoCtrl::Resume { continuation: k, value }
                 ))
             }
-            _ => RustProgramStep::Yield(Yielded::Primitive(
-                ControlPrimitive::Delegate { effect }
+            _ => RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Delegate { effect }
             )),
         }
     }
@@ -1129,12 +1130,12 @@ impl RustHandlerProgram for WriterHandlerProgram {
         match effect {
             Effect::Tell { message } => {
                 store.tell(message);
-                RustProgramStep::Yield(Yielded::Primitive(
-                    ControlPrimitive::Resume { continuation: k, value: Value::Unit }
+                RustProgramStep::Yield(Yielded::DoCtrl(
+                    DoCtrl::Resume { continuation: k, value: Value::Unit }
                 ))
             }
-            _ => RustProgramStep::Yield(Yielded::Primitive(
-                ControlPrimitive::Delegate { effect }
+            _ => RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Delegate { effect }
             )),
         }
     }
@@ -1161,7 +1162,7 @@ Assumptions for the reference implementation:
 - Spawn includes `store_mode` to opt into RustStore isolation.
 - Task/Promise handles are opaque IDs exposed to Python via `Value` variants and
   PyO3 wrappers.
-- Scheduling decisions **always** yield `ControlPrimitive::Transfer` to avoid stack growth.
+- Scheduling decisions **always** yield `DoCtrl::Transfer` to avoid stack growth.
 
 Integration note:
 - Driver `extract_effect` maps built-in Python scheduler classes
@@ -1270,7 +1271,7 @@ impl SchedulerState {
         if let Some(task_id) = self.ready.pop_front() {
             return self.transfer_task(task_id, store);
         }
-        RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
             continuation: k,
             value: Value::Unit,
         }))
@@ -1285,7 +1286,7 @@ impl SchedulerState {
         self.current_task = Some(task_id);
         // transfer_task should return Transfer to the task continuation.
         // (implementation omitted in this spec snippet)
-        RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
             continuation: self.task_cont(task_id),
             value: Value::Unit,
         }))
@@ -1419,7 +1420,7 @@ impl RustHandlerProgram for SchedulerProgram {
         store: &mut RustStore,
     ) -> RustProgramStep {
         let Effect::Scheduler(effect) = effect else {
-            return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                 effect,
             }));
         };
@@ -1434,7 +1435,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     store_mode,
                     store_snapshot,
                 };
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::CreateContinuation {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
                     program,
                     handlers,
                 }))
@@ -1450,7 +1451,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Some(results) = state.try_collect(&items) {
                     state.merge_gather_logs(&items, store);
-                    return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                         continuation: k_user,
                         value: results,
                     }));
@@ -1461,7 +1462,7 @@ impl RustHandlerProgram for SchedulerProgram {
             SchedulerEffect::Race { items } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Some(result) = state.try_race(&items) {
-                    return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                         continuation: k_user,
                         value: result,
                     }));
@@ -1474,7 +1475,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let pid = PromiseId(state.next_promise);
                 state.next_promise += 1;
                 state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::Promise(PromiseHandle { id: pid }),
                 }))
@@ -1496,7 +1497,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let pid = PromiseId(state.next_promise);
                 state.next_promise += 1;
                 state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::ExternalPromise(ExternalPromise { id: pid }),
                 }))
@@ -1537,7 +1538,7 @@ impl RustHandlerProgram for SchedulerProgram {
                     TaskState::Pending { cont, store: task_store },
                 );
                 state.ready.push_back(task_id);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::Task(TaskHandle { id: task_id }),
                 }))
@@ -1694,7 +1695,7 @@ pub enum PythonCall {
 pub enum PendingPython {
     /// StartProgram for a Program body - result is Value::Python(generator).
     /// Carries optional CallMetadata to attach to the PythonGenerator frame. [R9-G]
-    /// When metadata is Some, the frame was created via ControlPrimitive::Call.
+    /// When metadata is Some, the frame was created via DoCtrl::Call.
     /// When metadata is None, the frame was created via Yielded::Program (legacy).
     StartProgramFrame {
         metadata: Option<CallMetadata>,
@@ -1734,11 +1735,11 @@ pub enum PendingPython {
     AsyncEscape,
 }
 
-**Program Input Rule**: `StartProgram`, `CallHandler`, and `Yielded::Program`
-require a ProgramBase value (KleisliProgramCall or EffectBase). The driver must
-call `to_generator()` to obtain the generator, preserving Kleisli metadata
-(function_name/created_at) and the KleisliProgramCall stack for effect
-debugging. Raw generators are rejected at these entry points; only low-level
+**DoExpr Input Rule**: `StartProgram`, `CallHandler`, and `Yielded::Program`
+require a DoThunk value (has `to_generator()`). The driver calls `to_generator()`
+to obtain the generator. After SPEC-TYPES-001, KPC becomes an Effect (no
+`to_generator()`) and goes through dispatch; only DoThunks pass this rule.
+Raw generators are rejected at these entry points; only low-level
 `start_with_generator()` accepts raw generators.
 ```
 
@@ -2149,16 +2150,16 @@ The VM receives pre-classified `Yielded` values and operates without GIL.
 /// not by the VM. Rust program handlers return Yielded directly.
 /// The VM receives Yielded and processes it without needing GIL.
 pub enum Yielded {
-    /// A control primitive (Resume, Transfer, WithHandler, Call, GetCallStack, etc.)
-    Primitive(ControlPrimitive),
+    /// A DoCtrl (Resume, Transfer, WithHandler, Call, GetCallStack, etc.)
+    DoCtrl(DoCtrl),
     
     /// An effect to be handled
     Effect(Effect),
     
-    /// A nested Program object to execute — LEGACY PATH (no call metadata). [R9-E]
-    /// After SPEC-TYPES-001 separation, KPC-originated programs should use
-    /// Primitive(Call { program, metadata }) instead. This variant is kept for
-    /// backward compatibility with non-KPC programs that don't carry metadata.
+    /// A nested DoThunk object to execute — LEGACY PATH (no call metadata). [R9-E]
+    /// After SPEC-TYPES-001 separation, DoThunks with metadata should use
+    /// Primitive(Call { f, args: [], kwargs: [], metadata }) instead. This variant
+    /// is kept for backward compatibility with DoThunks that don't carry metadata.
     Program(Py<PyAny>),
     
     /// Unknown object (will cause TypeError)
@@ -2175,9 +2176,9 @@ impl Yielded {
     /// function_name/kleisli_source) are upgraded to Call primitives.
     /// Programs without metadata fall through to Yielded::Program (legacy).
     pub fn classify(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Self {
-        // Check for ControlPrimitive
+        // Check for DoCtrl
         if let Ok(prim) = extract_control_primitive(py, obj) {
-            return Yielded::Primitive(prim);
+            return Yielded::DoCtrl(prim);
         }
         
         // Check for Effect (including KPC after SPEC-TYPES-001 separation)
@@ -2185,12 +2186,14 @@ impl Yielded {
             return Yielded::Effect(effect);
         }
         
-        // Check for Program (nested) — with metadata upgrade [R9-E]
-        if is_program(py, obj) {
+        // Check for DoThunk (nested) — with metadata upgrade [R9-E]
+        if is_do_thunk(py, obj) {
             // Try to extract CallMetadata for Call upgrade
             if let Some(metadata) = extract_call_metadata(py, obj) {
-                return Yielded::Primitive(ControlPrimitive::Call {
-                    program: obj.clone().unbind(),
+                return Yielded::DoCtrl(DoCtrl::Call {
+                    f: obj.clone().unbind(),
+                    args: vec![],
+                    kwargs: vec![],
                     metadata,
                 });
             }
@@ -2231,13 +2234,14 @@ fn extract_call_metadata(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallM
 `to_generator()` to start it. Raw generators are rejected; only low-level
 entry points like `start_with_generator()` accept raw generators.
 
-**[R9-E] Call upgrade**: When the driver detects a program with metadata
-(function_name, kleisli_source), it emits `Yielded::Primitive(Call { program, metadata })`
+**[R9-E] Call upgrade**: When the driver detects a DoThunk with metadata
+(function_name, kleisli_source), it emits `Yielded::DoCtrl(Call { f, args: [], kwargs: [], metadata })`
 instead of `Yielded::Program(obj)`. This enables call stack tracking without
 changing user code. After SPEC-TYPES-001 separation, KPC will be classified as
 `Yielded::Effect` (not Program), and the KPC handler will emit `Call` primitives
-for sub-program execution. Direct `yield some_program` from user code still goes
-through classify → Call upgrade (if metadata available) or Yielded::Program (legacy).
+for kernel invocation and `Eval` primitives for arg resolution. Direct
+`yield some_thunk` from user code still goes through classify → Call upgrade
+(if metadata available) or Yielded::Program (legacy).
 
 **Note**: Rust program handlers yield `Yielded` directly (already classified),
 so no driver-side classification or GIL is required for those yields.
@@ -2321,7 +2325,7 @@ frames.pop()   frames.pop()                                   │   by driver or
    ├─RustProg───────┼──────────────────────────────────┤                       │
    │  step()/yield  │                                  │                       │
    │                │                                  ├─Primitive────────────►│
-   ├─PyGen──────────┼──────────────────────────────────┤  handle_primitive()   │
+   ├─PyGen──────────┼──────────────────────────────────┤  handle_do_ctrl()   │
    │  NeedsPython   │  NeedsPython(GenThrow)           │                       │
    │  (GenSend/Next)│                                  ├─Effect───────────────►│
    │                │                                  │  start_dispatch()     │
@@ -2560,9 +2564,9 @@ fn step_handle_yield(&mut self) -> StepEvent {
     };
     
     match yielded {
-        Yielded::Primitive(prim) => {
-            // Handle control primitive
-            self.handle_primitive(prim)
+        Yielded::DoCtrl(prim) => {
+            // Handle DoCtrl
+            self.handle_do_ctrl(prim)
         }
         
         Yielded::Effect(effect) => {
@@ -2639,7 +2643,7 @@ impl VM {
   without consuming it. Error if called outside handler context.
 - **GetHandlers**: returns the full handler chain from the callsite scope (innermost → outermost).
   These handlers can be passed back to `WithHandler` or `CreateContinuation`.
-- **CreateContinuation**: returns an unstarted continuation storing `(program, handlers)`.
+- **CreateContinuation**: returns an unstarted continuation storing `(expr, handlers)`.
 - **ResumeContinuation**: if `started=true`, behaves like `Resume` (call-resume). If
   `started=false`, installs handlers (outermost first) and starts the program, returning
   to the current handler when it finishes; `value` is ignored.
@@ -2714,7 +2718,7 @@ queue   --ResumeContinuation--> child (later)
 def spawn_handler(effect, k_user):
     def program():
         if isinstance(effect, Spawn):
-            task_k = (yield CreateContinuation(effect.program, effect.handlers))
+            task_k = (yield CreateContinuation(effect.expr, effect.handlers))
             queue.append(task_k)
             return (yield Transfer(k_user, Task(task_k)))
         return (yield Delegate(effect))
@@ -3041,7 +3045,7 @@ PyVM — they create and configure a PyVM internally.
 4. Wrap program with handlers (nesting order — see below)
        wrapped = program
        for h in reversed(handlers):
-           wrapped = WithHandler(handler=h, program=wrapped)
+           wrapped = WithHandler(handler=h, expr=wrapped)
 
 5. Execute via driver loop
        final_value_or_error = vm.run(wrapped)   # driver loop from §Driver Loop
@@ -3200,21 +3204,21 @@ def do(fn):
    gen = program_base.to_generator()  # → calls counter(10), returns generator
    ```
 4. The generator is stepped via `GenNext`/`GenSend`/`GenThrow` PythonCalls.
-5. `yield <effect>` → classified by driver as `Yielded::Effect`/`Yielded::Primitive`
+5. `yield <effect>` → classified by driver as `Yielded::Effect`/`Yielded::DoCtrl`
 6. `return <value>` → `StopIteration(value)` → `PyCallOutcome::GenReturn(value)`
 7. Generator return produces the final `T` in `Program[T]`.
 
-#### Program Input Rule (Reiterated)
+#### DoExpr Input Rule (Reiterated)
 
-All program entry points (`StartProgram`, `CallHandler`, `Yielded::Program`,
-`ControlPrimitive::Call`) require a **ProgramBase** value with `to_generator()`.
+All DoExpr entry points (`StartProgram`, `CallHandler`, `Yielded::Program`,
+`DoCtrl::Call`) require a value with `to_generator()` (a DoThunk).
 The driver calls `to_generator()` to obtain the generator. Raw generators are
 rejected except via the low-level `start_with_generator()`.
 
-**[R9-E] After SPEC-TYPES-001**: KleisliProgramCall will no longer be a ProgramBase
-(it becomes an EffectBase). It goes through effect dispatch to the KPC handler,
-which emits `Call` primitives for the resolved kernel program. EffectBase will also
-lose `to_generator()`, so only true Program types pass this rule.
+**[R9-E] After SPEC-TYPES-001**: KleisliProgramCall will no longer have
+`to_generator()` (it becomes an Effect). It goes through effect dispatch to
+the KPC handler, which emits `Call` primitives for kernel invocation and `Eval`
+primitives for arg resolution. Only DoThunks pass this rule.
 
 ### Store and Env Lifecycle [R8-J]
 
@@ -3333,7 +3337,7 @@ impl PyVM {
 ```rust
 /// Control primitives that can be yielded by handlers.
 #[derive(Debug, Clone)]
-pub enum ControlPrimitive {
+pub enum DoCtrl {
     /// Resume(k, v) - Call-resume (returns to handler after k completes)
     Resume {
         continuation: Continuation,
@@ -3352,10 +3356,10 @@ pub enum ControlPrimitive {
         effect: Effect,
     },
     
-    /// WithHandler(handler, program) - Install handler
+    /// WithHandler(handler, expr) - Install handler and evaluate DoExpr under it
     WithHandler {
         handler: Handler,
-        program: Py<PyAny>,
+        expr: Py<PyAny>,
     },
 
     /// PythonAsyncSyntaxEscape(action) - Request async context execution.
@@ -3371,10 +3375,10 @@ pub enum ControlPrimitive {
     /// GetHandlers - Get handlers from callsite scope (full chain, innermost first)
     GetHandlers,
     
-    /// CreateContinuation(program, handlers) - Create unstarted continuation
+    /// CreateContinuation(expr, handlers) - Create unstarted continuation
     CreateContinuation {
-        /// Program object (ProgramBase: KleisliProgramCall or EffectBase)
-        program: Py<PyAny>,
+        /// DoExpr to evaluate (DoThunk or Effect)
+        expr: Py<PyAny>,
         /// Handlers in innermost-first order (as returned by GetHandlers)
         handlers: Vec<Handler>,
     },
@@ -3386,23 +3390,56 @@ pub enum ControlPrimitive {
         value: Value,
     },
 
-    /// Call(program, metadata) - Run a sub-program with call stack metadata. [R9-A]
+    /// Call(f, args, kwargs, metadata) - Call a function and run the result. [R9-A]
     ///
-    /// Semantics: calls to_generator() on program, pushes PythonGenerator frame
-    /// with metadata onto current segment. No dispatch, no handler stack involvement.
+    /// Semantics: the VM emits NeedsPython(CallFunc { f, args, kwargs }) to the
+    /// driver. The driver calls f(*args, **kwargs), gets a generator or DoThunk.
+    /// If DoThunk, calls to_generator(). Pushes PythonGenerator frame with
+    /// metadata onto current segment. No dispatch, no handler stack involvement.
     /// This is the doeff equivalent of a function call — not an effect.
     ///
-    /// The metadata is extracted by the driver (with GIL) during classify_yielded
-    /// for user-yielded programs, or constructed by RustHandlerPrograms (e.g., KPC
-    /// handler) for programs they invoke internally.
+    /// Two usage patterns:
+    /// - DoThunk (no args): Call { f: thunk, args: [], kwargs: {}, metadata }
+    ///   → driver calls to_generator() on the thunk, pushes frame.
+    /// - Kernel call (with args): Call { f: kernel, args, kwargs, metadata }
+    ///   → driver calls kernel(*args, **kwargs), gets result, pushes frame.
+    ///
+    /// Metadata is extracted by the driver (with GIL) during classify_yielded
+    /// for user-yielded DoThunks, or constructed by RustHandlerPrograms (e.g.,
+    /// KPC handler) for kernel invocations.
     ///
     /// Backward compat: Yielded::Program (without metadata) is still supported
     /// and handled identically but with metadata: None on the frame.
     Call {
-        /// The program object (ProgramBase with to_generator())
-        program: Py<PyAny>,
+        /// The callable (DoThunk or kernel function)
+        f: Py<PyAny>,
+        /// Positional arguments (empty for DoThunk path)
+        args: Vec<Value>,
+        /// Keyword arguments (empty for DoThunk path)
+        kwargs: Vec<(String, Value)>,
         /// Call stack metadata (function name, source location)
         metadata: CallMetadata,
+    },
+
+    /// Eval(expr, handlers) - Evaluate a DoExpr in a fresh scope. [R9-H]
+    ///
+    /// Atomically creates an unstarted continuation with the given handler
+    /// chain and evaluates the DoExpr within it. The caller is suspended;
+    /// when the evaluation completes, the VM resumes the caller with the
+    /// result. Equivalent to CreateContinuation + ResumeContinuation but
+    /// as a single atomic step.
+    ///
+    /// The DoExpr can be any yieldable value:
+    /// - DoThunk: VM calls to_generator(), runs generator in continuation scope
+    /// - Effect: VM dispatches through continuation's handler stack
+    ///
+    /// Primary use: KPC handler resolving args with the full callsite handler
+    /// chain (captured via GetHandlers), avoiding busy boundary issues.
+    Eval {
+        /// The DoExpr to evaluate (Effect or DoThunk)
+        expr: Py<PyAny>,
+        /// Handler chain for the continuation's scope (from GetHandlers)
+        handlers: Vec<Handler>,
     },
 
     /// GetCallStack - Walk frames and return call stack metadata. [R9-B]
@@ -3415,18 +3452,18 @@ pub enum ControlPrimitive {
 }
 ```
 
-**Note**: There is no `Return` control primitive. Handler return is implicit:
+**Note**: There is no `Return` DoCtrl. Handler return is implicit:
 when a handler program finishes, the VM applies `handle_handler_return(value)`
 semantics (return to caller; root handler return abandons callsite).
 
 **Async note**: `PythonAsyncSyntaxEscape` yields `PythonCall::CallAsync` via
-`handle_primitive`. It is only valid under `async_run` / `VM.run_async`.
+`handle_do_ctrl`. It is only valid under `async_run` / `VM.run_async`.
 
 ---
 
 ## Primitive Handlers
 
-These implementations show how control primitives modify VM state and return the next Mode.
+These implementations show how DoCtrls modify VM state and return the next Mode.
 
 ### WithHandler (Creates Prompt + Body Structure)
 
@@ -3446,7 +3483,7 @@ impl VM {
     ///                           scope_chain = [handler_marker] ++ outside.scope_chain
     ///
     /// Returns: PythonCall to start body program (caller returns NeedsPython)
-    fn handle_with_handler(&mut self, handler: Handler, program: Py<PyAny>) -> PythonCall {
+    fn handle_with_handler(&mut self, handler: Handler, expr: Py<PyAny>) -> PythonCall {
         let handler_marker = Marker::fresh();
         let outside_seg_id = self.current_segment;
         let outside_scope = self.segments[outside_seg_id.index()].scope_chain.clone();
@@ -3482,8 +3519,8 @@ impl VM {
         // 4. Switch to body segment
         self.current_segment = body_seg_id;
         
-        // 5. Return PythonCall to start body program
-        PythonCall::StartProgram { program }
+        // 5. Return PythonCall to start body DoExpr
+        PythonCall::StartProgram { program: expr }
     }
 }
 ```
@@ -3889,32 +3926,32 @@ impl VM {
         StepEvent::NeedsPython(PythonCall::StartProgram { program })
     }
 
-    /// Handle a control primitive, returning the next StepEvent.
-    fn handle_primitive(&mut self, prim: ControlPrimitive) -> StepEvent {
+    /// Handle a DoCtrl, returning the next StepEvent.
+    fn handle_do_ctrl(&mut self, prim: DoCtrl) -> StepEvent {
         // Drop completed dispatches before inspecting handler context.
         self.lazy_pop_completed();
         match prim {
-            ControlPrimitive::Resume { continuation, value } => {
+            DoCtrl::Resume { continuation, value } => {
                 self.mode = self.handle_resume(continuation, value);
                 StepEvent::Continue
             }
-            ControlPrimitive::Transfer { continuation, value } => {
+            DoCtrl::Transfer { continuation, value } => {
                 self.mode = self.handle_transfer(continuation, value);
                 StepEvent::Continue
             }
-            ControlPrimitive::Delegate { effect } => {
+            DoCtrl::Delegate { effect } => {
                 // Delegate to OUTER handler (advance in SAME dispatch, not new dispatch)
                 self.handle_delegate(effect)
             }
-            ControlPrimitive::WithHandler { handler, program } => {
-                // WithHandler needs PythonCall to start body program (no call metadata)
-                let call = self.handle_with_handler(handler, program);
+            DoCtrl::WithHandler { handler, expr } => {
+                // WithHandler needs PythonCall to start body DoExpr (no call metadata)
+                let call = self.handle_with_handler(handler, expr);
                 self.pending_python = Some(PendingPython::StartProgramFrame {
                     metadata: None,
                 });
                 StepEvent::NeedsPython(call)
             }
-            ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
+            DoCtrl::PythonAsyncSyntaxEscape { action } => {
                 // Async-only escape to event loop
                 self.pending_python = Some(PendingPython::AsyncEscape);
                 StepEvent::NeedsPython(PythonCall::CallAsync {
@@ -3922,7 +3959,7 @@ impl VM {
                     args: vec![],
                 })
             }
-            ControlPrimitive::GetContinuation => {
+            DoCtrl::GetContinuation => {
                 let Some(top) = self.dispatch_stack.last() else {
                     self.mode = Mode::Throw(PyException::runtime_error(
                         "GetContinuation called outside handler context"
@@ -3932,7 +3969,7 @@ impl VM {
                 self.mode = Mode::Deliver(Value::Continuation(top.k_user.clone()));
                 StepEvent::Continue
             }
-            ControlPrimitive::GetHandlers => {
+            DoCtrl::GetHandlers => {
                 let Some(top) = self.dispatch_stack.last() else {
                     self.mode = Mode::Throw(PyException::runtime_error(
                         "GetHandlers called outside handler context"
@@ -3953,25 +3990,38 @@ impl VM {
                 self.mode = Mode::Deliver(Value::Handlers(handlers));
                 StepEvent::Continue
             }
-            ControlPrimitive::CreateContinuation { program, handlers } => {
-                let cont = Continuation::create(program, handlers);
+            DoCtrl::CreateContinuation { expr, handlers } => {
+                let cont = Continuation::create(expr, handlers);
                 self.mode = Mode::Deliver(Value::Continuation(cont));
                 StepEvent::Continue
             }
-            ControlPrimitive::ResumeContinuation { continuation, value } => {
+            DoCtrl::ResumeContinuation { continuation, value } => {
                 self.handle_resume_continuation(continuation, value)
             }
-            ControlPrimitive::Call { program, metadata } => {
-                // [R9-A] Run sub-program with call stack metadata.
-                // Same as Yielded::Program but carries CallMetadata.
-                // Store metadata in pending state so receive_python_result
-                // can attach it to the PythonGenerator frame.
+            DoCtrl::Call { f, args, kwargs, metadata } => {
+                // [R9-A] Call f(*args, **kwargs) and push result as generator frame.
+                // Store metadata so receive_python_result attaches it to the frame.
                 self.pending_python = Some(PendingPython::StartProgramFrame {
                     metadata: Some(metadata),
                 });
-                StepEvent::NeedsPython(PythonCall::StartProgram { program })
+                if args.is_empty() && kwargs.is_empty() {
+                    // DoThunk path: f is a DoThunk, driver calls to_generator()
+                    StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
+                } else {
+                    // Kernel path: driver calls f(*args, **kwargs), gets generator
+                    StepEvent::NeedsPython(PythonCall::CallFunc {
+                        func: f,
+                        args: CallArgs::from_values(args, kwargs),
+                    })
+                }
             }
-            ControlPrimitive::GetCallStack => {
+            DoCtrl::Eval { expr, handlers } => {
+                // [R9-H] Evaluate a DoExpr in a fresh scope with given handlers.
+                // Atomically equivalent to CreateContinuation + ResumeContinuation.
+                let cont = Continuation::create_unstarted(expr, handlers);
+                self.handle_resume_continuation(cont, Value::None)
+            }
+            DoCtrl::GetCallStack => {
                 // [R9-B] Walk frames across segments, collect CallMetadata.
                 let mut stack = Vec::new();
                 let mut seg_id = self.current_segment;
@@ -4312,7 +4362,7 @@ Mode transitions are deterministic:
     - empty frames + no caller: Error
 
   HandleYield(y) →
-    - Primitive: handle_primitive returns StepEvent (Continue or NeedsPython)
+    - Primitive: handle_do_ctrl returns StepEvent (Continue or NeedsPython)
     - Effect: start_dispatch returns StepEvent (Continue or NeedsPython)
     - Program: NeedsPython(StartProgram)
     - Unknown: Throw(TypeError)
@@ -4366,14 +4416,15 @@ Key differences and decisions in 008:
   dispatch (does not forward).
 - `yield Delegate(effect)` returns the **outer handler's return value**; after
   Delegate returns, the handler must return (no Resume).
-- Handler return is implicit; there is no `Return` control primitive.
+- Handler return is implicit; there is no `Return` DoCtrl.
 - Program input is **ProgramBase only** (KleisliProgramCall or EffectBase); raw
   generators are rejected except via `start_with_generator()`.
 - Continuations are one-shot only; multi-shot is not supported.
 - Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
-- `Call(program, metadata)` is a control primitive for sub-program invocation with
-  call stack metadata (R9-A). `GetCallStack` walks frames (R9-B). `Yielded::Program`
-  is kept as legacy fallback (R9-E).
+- `Call(f, args, kwargs, metadata)` is a DoCtrl for function invocation with
+  call stack metadata (R9-A). `Eval(expr, handlers)` evaluates a DoExpr in a fresh scope
+  (R9-H). `GetCallStack` walks frames (R9-B). `Yielded::Program` is kept as legacy
+  fallback (R9-E).
 
 ---
 
@@ -4391,7 +4442,7 @@ doeff-vm/
 │   ├── frame.rs         # Frame enum, Callback type
 │   ├── continuation.rs  # Continuation with Arc snapshot
 │   ├── dispatch.rs      # DispatchContext, visible_handlers
-│   ├── primitives.rs    # ControlPrimitive enum
+│   ├── do_ctrl.rs       # DoCtrl enum
 │   ├── yielded.rs       # Yielded enum, classification
 │   ├── handlers/
 │   │   ├── mod.rs

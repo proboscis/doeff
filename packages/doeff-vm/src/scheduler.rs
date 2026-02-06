@@ -14,7 +14,7 @@ use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
 use crate::ids::{PromiseId, TaskId};
-use crate::step::{ControlPrimitive, PyException, Yielded};
+use crate::step::{DoCtrl, PyException, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
 
@@ -329,14 +329,14 @@ impl SchedulerState {
         if let Some(task_id) = self.ready.pop_front() {
             if let Some(task_k) = self.task_cont(task_id) {
                 self.current_task = Some(task_id);
-                return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: task_k,
                     value: Value::Unit,
                 }));
             }
         }
         // No ready tasks, resume the caller
-        RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
             continuation: k,
             value: Value::Unit,
         }))
@@ -394,9 +394,7 @@ impl RustHandlerProgram for SchedulerProgram {
             Effect::Scheduler(se) => se,
             other => {
                 // Not our effect, delegate
-                return RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
-                    effect: other,
-                }));
+                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other }));
             }
         };
 
@@ -417,8 +415,8 @@ impl RustHandlerProgram for SchedulerProgram {
                 };
                 // Yield CreateContinuation -- the VM will create an unstarted continuation
                 // and resume us with the result
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::CreateContinuation {
-                    program,
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                    expr: program,
                     handlers,
                 }))
             }
@@ -435,12 +433,10 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Some(results) = state.try_collect(&items) {
                     state.merge_gather_logs(&items, store);
-                    return RustProgramStep::Yield(Yielded::Primitive(
-                        ControlPrimitive::Transfer {
-                            continuation: k_user,
-                            value: results,
-                        },
-                    ));
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+                        continuation: k_user,
+                        value: results,
+                    }));
                 }
                 state.wait_on_all(&items, k_user.clone());
                 state.transfer_next_or(k_user, store)
@@ -449,12 +445,10 @@ impl RustHandlerProgram for SchedulerProgram {
             SchedulerEffect::Race { items } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 if let Some(result) = state.try_race(&items) {
-                    return RustProgramStep::Yield(Yielded::Primitive(
-                        ControlPrimitive::Transfer {
-                            continuation: k_user,
-                            value: result,
-                        },
-                    ));
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+                        continuation: k_user,
+                        value: result,
+                    }));
                 }
                 state.wait_on_any(&items, k_user.clone());
                 state.transfer_next_or(k_user, store)
@@ -464,7 +458,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::Promise(PromiseHandle { id: pid }),
                 }))
@@ -492,7 +486,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::ExternalPromise(ExternalPromise { id: pid }),
                 }))
@@ -501,7 +495,7 @@ impl RustHandlerProgram for SchedulerProgram {
             // D6: Raw Python scheduler effect — field extraction not yet implemented.
             // TODO: Extract fields from Python object and dispatch to typed variants.
             SchedulerEffect::PythonSchedulerEffect(py_obj) => {
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: Effect::Python(py_obj),
                 }))
             }
@@ -548,7 +542,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 state.ready.push_back(task_id);
 
                 // Transfer back to caller with the task handle
-                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::Task(TaskHandle { id: task_id }),
                 }))

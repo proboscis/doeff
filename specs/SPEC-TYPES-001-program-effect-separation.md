@@ -1,6 +1,6 @@
 # SPEC-TYPES-001: DoExpr Type Hierarchy — Draft Spec
 
-## Status: WIP Discussion Draft (Rev 5)
+## Status: WIP Discussion Draft (Rev 6)
 
 ## Context
 
@@ -13,9 +13,11 @@ and have effects auto-unwrap. But this conflates concepts through inheritance:
 3. The Rust VM needs special-case logic for what should be a clean type distinction
 4. Type-level reasoning breaks (an Effect is not a "thunk")
 
-This spec proposes a clean hierarchy: `DoExpr` → `Program` → `DoThunk`/`Effect`,
-where Effects ARE Programs (composable) but are NOT DoThunks (no `to_generator()`).
-See Section 1.4 for the full type hierarchy.
+This spec proposes `DoExpr[T]` as the universal base type for everything
+yieldable in `@do` generators. All DoExprs are composable (`map`, `flat_map`,
+`+`). `Program[T]` is a user-facing alias for `DoExpr[T]`. Subtypes:
+`DoThunk` (has `to_generator()`), `Effect` (handler dispatch), `DoCtrl`
+(VM control instructions). See Section 1.4 for the full type hierarchy.
 
 ---
 
@@ -25,11 +27,17 @@ See Section 1.4 for the full type hierarchy.
 
 The Rust VM operates on two fundamental concepts:
 
-- **`Call(program, metadata)`** — a control primitive (like `WithHandler`, `Resume`).
-  "Run this program's generator and record where it came from." The VM handles it
-  directly: calls `to_generator()`, pushes the generator frame with `CallMetadata`.
-  No dispatch, no handler stack involvement. This is the doeff equivalent of a
-  function call in Koka/OCaml.
+- **`Call(f, args, kwargs, metadata)`** — a control primitive (like `WithHandler`,
+  `Resume`). "Call f with args/kwargs and run the result." The VM handles it
+  directly: calls `f(*args, **kwargs)`, expects a DoThunk or generator, pushes
+  the generator frame with `CallMetadata`. No dispatch, no handler stack
+  involvement. This is the doeff equivalent of a function call in Koka/OCaml.
+
+  Two usage patterns:
+  - **DoThunk (no args)**: `Call(thunk, [], {}, metadata)` — VM calls
+    `to_generator()` on the thunk, pushes frame.
+  - **Kernel call (with args)**: `Call(kernel, args, kwargs, metadata)` — VM
+    calls `kernel(*args, **kwargs)`, gets a generator/DoThunk result, pushes frame.
 
   The metadata carries the caller's identity (function_name, source_file, source_line)
   and optionally a reference to the `KleisliProgramCall` for rich introspection.
@@ -49,10 +57,10 @@ These are at different levels:
 
 | Concept | Type | Who handles | Example |
 |---------|------|-------------|---------|
-| Run a program | `Call(program, metadata)` (control primitive) | VM directly | `yield some_program` |
+| Run a callable | `Call(f, args, kwargs, metadata)` (control primitive) | VM directly | `yield some_thunk` |
 | Resolve args + call @do func | `KleisliProgramCall` (effect) | KPC handler | `my_do_func(x, y)` |
 
-The KPC handler uses `Call` internally to run sub-programs during arg resolution.
+The KPC handler uses `Eval` internally to resolve args (DoExprs) during arg resolution.
 The VM never needs to know about `@do`.
 
 ### 1.3 Why KPC is an effect, not syntax
@@ -62,77 +70,73 @@ Arg resolution scheduling is a **handler concern**:
 - The handler decides. Different strategies for different contexts.
 - Users who want custom resolution install a different KPC handler.
 
-### 1.4 Type hierarchy — DoExpr, Program, DoThunk, Effect
+### 1.4 Type hierarchy — DoExpr (= Program), DoThunk, Effect, DoCtrl
 
 The old design conflated concepts through inheritance (`EffectBase(ProgramBase)`).
-The new design introduces a clean hierarchy with precise names:
+The new design has `DoExpr[T]` as the universal composable base.
 
-**`DoExpr`** (base VM contract): The root of everything yieldable inside a
-`@do` generator. "A do-expression." The VM knows how to handle any `DoExpr` —
-either by running a thunk's generator or dispatching an effect through the
-handler stack. Control primitives (WithHandler, Resume, Transfer) are also
-`DoExpr` but are NOT composable programs.
+**`DoExpr[T]`** (root type): Everything yieldable inside a `@do` generator.
+"A do-expression." Every DoExpr produces a value `T` when the VM runs it,
+and every DoExpr is composable (`map`, `flat_map`, `+`, `pure`). There is
+no yieldable thing that isn't composable — if it returns T, you can `.map()` it.
 
-**`Program[T]`** (`DoExpr` + user composability): The user-facing type for any
-deferred doeff computation. Has `map`, `flat_map`, `>>`, `+`, `pure()`.
-This is what users write in type hints and compose in pipelines:
-`fetch_user(42).map(lambda u: u.name)`. Every `Program` is a `DoExpr`
-(yieldable), but not every `DoExpr` is a `Program` (control primitives aren't).
+**`Program[T]`** = **`DoExpr[T]`** (alias): User-facing name for `DoExpr[T]`.
+Users write `Program[T]` in type hints. Internally it's `DoExpr[T]`.
 
 ```python
-class DoExpr(Protocol):
-    """Base: anything yieldable in a @do generator. VM handles it."""
-
-class Program(DoExpr, Protocol[T]):
-    """DoExpr + composable computation."""
-    def map(self, f: Callable[[T], U]) -> Program[U]: ...
-    def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]: ...
+class DoExpr(Generic[T]):
+    """Root: anything yieldable in @do. Always composable."""
+    def map(self, f: Callable[[T], U]) -> DoExpr[U]: ...
+    def flat_map(self, f: Callable[[T], DoExpr[U]]) -> DoExpr[U]: ...
     @staticmethod
-    def pure(value: T) -> Program[T]: ...
+    def pure(value: T) -> DoExpr[T]: ...
+
+# User-facing alias
+Program = DoExpr
 ```
 
-**`DoThunk[T]`** (`Program` + `to_generator()`): A program that the VM can run
+**`DoThunk[T]`** (`DoExpr` + `to_generator()`): A DoExpr the VM can run
 directly by calling `to_generator()` to get a generator frame. Purely
 mechanical. `PureProgram` and `DerivedProgram` are thunks.
 
-**`Effect[T]`** (`Program` + handler dispatch): A request yielded by programs,
-dispatched through the handler stack, resolved by handlers. Effects are also
-`Program` — users can compose them: `Ask("key").map(str.upper)`.
+**`Effect[T]`** (`DoExpr` + handler dispatch): A request dispatched through
+the handler stack, resolved by handlers. `Ask("key").map(str.upper)` works.
+
+**`DoCtrl[T]`** (`DoExpr` + VM control): VM control instructions. They return
+values (e.g., `WithHandler` returns the program's result), so they're
+composable too: `WithHandler(h, prog).map(f)` works.
 
 ```
-DoExpr                        ← "yieldable in @do, VM handles it"
+DoExpr[T]  (= Program[T])    ← root: yieldable + composable
   │
-  ├── Program[T]              ← DoExpr + composable (map, flat_map, +, pure)
-  │   │
-  │   ├── DoThunk[T]          ← Program + to_generator() (VM runs directly)
-  │   │   ├── PureProgram
-  │   │   └── DerivedProgram
-  │   │
-  │   └── Effect[T]           ← Program + handler dispatch
-  │       ├── Ask, Get, Put, Tell, Modify, ...
-  │       ├── Spawn, Gather, Race, ...
-  │       ├── KleisliProgramCall
-  │       └── user-defined effects
+  ├── DoThunk[T]              ← to_generator() (VM runs directly)
+  │   ├── PureProgram
+  │   └── DerivedProgram
   │
-  └── ControlPrimitive        ← DoExpr, but NOT Program (not composable)
+  ├── Effect[T]               ← handler dispatch
+  │   ├── Ask, Get, Put, Tell, Modify, ...
+  │   ├── Spawn, Gather, Race, ...
+  │   ├── KleisliProgramCall
+  │   └── user-defined effects
+  │
+  └── DoCtrl[T]               ← VM control instructions
       ├── WithHandler, Resume, Transfer, Delegate
       ├── GetHandlers, GetCallStack, GetContinuation
       ├── CreateContinuation, ResumeContinuation
-      └── Call(thunk, metadata)
+      ├── Call(f, args, kwargs, metadata)
+      └── Eval(expr, handlers)
 ```
 
-| Type | DoExpr | Program | DoThunk | Effect |
-|------|--------|---------|---------|--------|
-| PureProgram | yes | yes | **yes** | no |
-| DerivedProgram | yes | yes | **yes** | no |
-| KleisliProgramCall | yes | yes | no | **yes** |
-| Ask, Get, Put, ... | yes | yes | no | **yes** |
-| WithHandler, Resume, ... | yes | no | no | no |
+| Type | DoExpr | DoThunk | Effect | DoCtrl |
+|------|--------|---------|--------|--------|
+| PureProgram | yes | **yes** | no | no |
+| DerivedProgram | yes | **yes** | no | no |
+| KleisliProgramCall | yes | no | **yes** | no |
+| Ask, Get, Put, ... | yes | no | **yes** | no |
+| WithHandler, Call, ... | yes | no | no | **yes** |
 
-Key insight: **Effects are Programs**. Users can compose any effect with
-`.map()`, `.flat_map()`, etc. The `.map()` on an Effect may produce a DoThunk
-(e.g., `Ask("key").map(f)` → `DerivedProgram`), but the return type is
-always `Program[T]` — the user doesn't care about the concrete subtype.
+`.map()` on any DoExpr returns a `DerivedProgram` (DoThunk). The user only
+sees `Program[T]` (= `DoExpr[T]`) — the concrete subtype doesn't matter.
 
 ---
 
@@ -148,53 +152,47 @@ EffectBase(ProgramBase)        ← ALSO has to_generator() (inherits)
 Get  Put  Ask  SpawnEffect ... ← every effect IS-A program
 ```
 
-### Proposed (correct) — DoExpr / Program / Thunk / Effect
+### Proposed (correct) — DoExpr (= Program) / DoThunk / Effect / DoCtrl
 
 ```
-DoExpr
+DoExpr[T]  (= Program[T])    ← root: yieldable + composable
   │
-  ├── Program[T]  (= DoExpr + map/flat_map/+/pure)
-  │   │
-  │   ├── Thunk[T]  (= Program + to_generator())
-  │   │   ├── PureProgram[T]
-  │   │   └── DerivedProgram[T]
-  │   │
-  │   └── Effect[T]  (= Program + handler dispatch)
-  │       ├── Ask[T], Get[T], Put, Tell, Modify, ...
-  │       ├── Spawn, Gather, Race, ...
-  │       ├── KleisliProgramCall[T]
-  │       └── user-defined effects
+  ├── DoThunk[T]              ← to_generator() (VM runs directly)
+  │   ├── PureProgram[T]
+  │   └── DerivedProgram[T]
   │
-  └── ControlPrimitive  (= DoExpr only, NOT Program)
+  ├── Effect[T]               ← handler dispatch
+  │   ├── Ask[T], Get[T], Put, Tell, Modify, ...
+  │   ├── Spawn, Gather, Race, ...
+  │   ├── KleisliProgramCall[T]
+  │   └── user-defined effects
+  │
+  └── DoCtrl[T]               ← VM control instructions
       ├── WithHandler, Resume, Transfer, Delegate
-      ├── Call(thunk, metadata)
+      ├── Call(f, args, kwargs, metadata)
+      ├── Eval(expr, handlers)
       └── GetHandlers, GetCallStack, ...
 ```
 
-**All Effects are Programs**. All Programs are DoExprs. Not all DoExprs are
-Programs (control primitives aren't composable).
+Every DoExpr is composable. `Program[T]` is a user-facing alias for `DoExpr[T]`.
 
-The VM handles DoExprs through two paths:
-- **Thunk path**: call `to_generator()`, push generator frame
+The VM handles DoExprs through three paths:
+- **DoThunk path**: call `to_generator()`, push generator frame
 - **Effect path**: dispatch through handler stack via `start_dispatch`
-- **ControlPrimitive path**: VM handles directly (no dispatch, no generator)
+- **DoCtrl path**: VM handles directly (no dispatch, no generator)
 
-User code examples showing the unified `Program[T]` type:
+All paths produce a value T, so all support `.map()`:
 
 ```python
 @do
 def fetch_user(id: int) -> Program[User]: ...
 
-# Effect as Program — yieldable:
-@do
-def main():
-    user = yield fetch_user(1)      # KPC effect → handler dispatch
-    key = yield Ask("api_key")      # Ask effect → handler dispatch
+# Effects — yieldable and composable:
+name_prog = fetch_user(1).map(lambda u: u.name)   # KPC.map → DoThunk
+upper_key = Ask("api_key").map(str.upper)          # Effect.map → DoThunk
 
-# Effect as Program — composable:
-name_prog = fetch_user(1).map(lambda u: u.name)
-upper_key = Ask("api_key").map(str.upper)
-both = fetch_user(1) + fetch_user(2)
+# DoCtrl — also composable:
+result = WithHandler(h, prog).map(lambda x: x + 1)  # DoCtrl.map → DoThunk
 ```
 
 ---
@@ -213,12 +211,10 @@ User code yields KleisliProgramCall(f, [Ask("key"), fetch_user(42)], {})
    │  1. Read auto_unwrap_strategy from KPC      │
    │  2. Classify args: unwrap vs pass-as-is     │
    │  3. Resolve unwrap-marked args:             │
-   │     - Program arg → yield Call(prog, meta)  │
-   │     - Effect arg  → yield effect (dispatch) │
+   │     - DoExpr arg → yield Eval(arg, handlers)│
    │     - Plain value → use as-is               │
-   │  4. Call f.kernel(*resolved_args)            │
-   │  5. yield Call(result_program, meta)         │
-   │  6. Resume(k, result)                        │
+   │  4. yield Call(kernel, resolved, {}, meta)  │
+   │  5. Resume(k, result)                        │
    └─────────────────────────────────────────────┘
 ```
 
@@ -281,73 +277,97 @@ per-arg behavior.
 
 | Arg value | `should_unwrap` | Handler action |
 |-----------|----------------|----------------|
-| `DoThunk` instance | `True` | `yield Call(thunk, metadata)` → use resolved value |
+| `DoThunk` instance | `True` | `yield Eval(arg, handlers)` → use resolved value |
 | `DoThunk` instance | `False` | Pass the DoThunk object as-is |
-| `Effect` instance | `True` | `yield effect` → use resolved value (handler dispatch) |
+| `Effect` instance | `True` | `yield Eval(arg, handlers)` → use resolved value |
 | `Effect` instance | `False` | Pass the Effect object as-is |
 | Plain value (`int`, `str`, etc.) | either | Pass through unchanged |
 
 ### 3.5 Resolution strategies
 
-The default KPC handler is a `RustHandlerProgram` that resolves args
-**sequentially** using `Call` (control primitive) for DoThunks and direct
-effect yield for Effects:
+The default KPC handler is a `RustHandlerProgram` that resolves args using
+`Eval(expr, handlers)` — a control primitive that evaluates any DoExpr
+in a fresh scope with the given handler chain. The handler first captures
+the callsite handlers via `GetHandlers`, then uses `Eval` for each arg.
 
 ```
-// Rust handler pseudo-code:
-fn start(effect: KPC, k: Continuation) -> RustProgramStep:
+// Default KPC handler (sequential resolution):
+fn start(effect: KPC, k_user: Continuation) -> RustProgramStep:
+    handlers = yield GetHandlers()
     strategy = effect.auto_unwrap_strategy
-    for (idx, arg) in effect.args:
-        if strategy.should_unwrap(idx) and is_do_thunk(arg):
-            metadata = extract_call_metadata(arg)
-            yield Call(arg, metadata)  // control primitive → VM runs thunk
-            // resume(resolved_value) called by VM when thunk completes
-        elif strategy.should_unwrap(idx) and is_effect(arg):
-            yield effect(arg)          // new dispatch via start_dispatch
-            // resume(resolved_value) called when handler responds
-        else:
-            // plain value or pass-as-is, no yield needed
     
-    // All args resolved → call kernel
-    metadata = extract_call_metadata(effect)  // KPC metadata
-    yield Call(kernel(*resolved_args), metadata)
-    // resume(result) → 
-    yield Resume(k, result)
+    resolved_args = []
+    for (idx, arg) in effect.args:
+        if strategy.should_unwrap(idx) and is_do_expr(arg):
+            value = yield Eval(arg, handlers)
+            resolved_args.push(value)
+        else:
+            resolved_args.push(arg)
+    
+    metadata = extract_call_metadata(effect)
+    result = yield Call(effect.kernel, resolved_args, resolved_kwargs, metadata)
+    yield Resume(k_user, result)
 ```
 
-**IMPORTANT**: Effect args are resolved by yielding them directly as
-`Yielded::Effect(effect)`, NOT via `Delegate`. `Delegate` advances within
-the SAME dispatch context and requires the handler to return immediately
-after (no Resume). Yielding an effect directly triggers `start_dispatch`,
-which creates a NEW dispatch context. The KPC handler resumes with the
-resolved value when the new dispatch completes.
+**`Eval` semantics**: `Eval(expr, handlers)` is a `DoCtrl` that
+atomically creates an unstarted continuation with the given handler chain
+and evaluates the DoExpr within it. The caller (KPC handler) is suspended;
+when the evaluation completes, the VM resumes the caller with the result.
+Internally equivalent to `CreateContinuation` + `ResumeContinuation` but
+as a single step.
 
-For **concurrent resolution**, a user installs a different handler that uses
-`GetHandlers` + `CreateContinuation` + `ResumeContinuation` to run args
-in parallel via the scheduler (see Section 4).
+The DoExpr can be any yieldable value:
+- **DoThunk** (PureProgram, DerivedProgram): VM calls `to_generator()`,
+  runs the generator within the continuation's scope
+- **Effect** (Get, Put, Ask, KPC, ...): VM dispatches through the
+  continuation's handler stack via `start_dispatch`
 
-### 3.6 The busy boundary and concurrent resolution
+`Eval` uses the explicit `handlers` to build the continuation's scope chain.
+This preserves the full handler chain (including the KPC handler itself) for
+nested `@do` calls within resolved args — avoiding busy boundary issues.
 
-When the KPC handler yields effects (like `Gather`), the busy boundary
-(SPEC-008 INV-8) excludes the KPC handler from `visible_handlers`.
-This means programs resolved via Gather won't have the KPC handler in
-their handler stack.
+**Sequential vs concurrent**: The default handler resolves args one at a time
+with `Eval` per arg. For **concurrent resolution**, a different KPC handler
+wraps args in `Gather`:
 
-**Sequential resolution avoids this entirely**: `Call(program, metadata)` is a
-control primitive, not dispatched — it pushes a `PythonGenerator` frame directly
-onto the current segment. No busy boundary applies. Nested `@do` calls within
-resolved programs work because they yield KPC effects, which dispatch from the
-sub-program's scope (which includes the KPC handler in its scope_chain).
-
-**Concurrent resolution requires the 3-yield dance**:
 ```
-handlers = yield GetHandlers()                    // full chain from callsite
-cont = yield CreateContinuation(Gather(*programs), handlers)
-resolved = yield ResumeContinuation(cont, None)   // call-resume semantics
+// Concurrent KPC handler variant:
+fn start(effect: KPC, k_user: Continuation) -> RustProgramStep:
+    handlers = yield GetHandlers()
+    exprs_to_resolve = [arg for (idx, arg) if should_unwrap(idx)]
+    results = yield Eval(Gather(*exprs_to_resolve), handlers)
+    // merge resolved values back with non-unwrapped args
+    metadata = extract_call_metadata(effect)
+    result = yield Call(effect.kernel, merged_args, merged_kwargs, metadata)
+    yield Resume(k_user, result)
 ```
 
-This is cheap for Rust handlers (3 extra `Continue` steps, ~nanoseconds).
-The GIL crossing only happens for `StartProgram` at the end.
+The handler decides the strategy. Users swap KPC handlers for different
+resolution policies (sequential, concurrent, cached, retried, etc.).
+
+### 3.6 Eval and the busy boundary
+
+`Eval(expr, handlers)` sidesteps the busy boundary entirely. The
+continuation created by `Eval` uses the explicit `handlers` parameter to
+build its scope chain — NOT the current `visible_handlers`. Since
+`GetHandlers` captures the full callsite chain (before the KPC dispatch
+made anything busy), `Eval` preserves the complete handler stack for all
+nested operations.
+
+This means:
+- Nested `@do` calls within resolved args find the KPC handler (it's in
+  the explicit handlers list)
+- State/reader/writer handlers are all visible
+- No ordering or installation tricks needed
+
+Both sequential (`Eval` per-arg) and concurrent (`Eval` with `Gather`)
+resolution benefit from this — the handler chain is always explicit, never
+affected by busy boundary computation.
+
+Under the hood, `Eval` is equivalent to the 3-primitive sequence
+`GetHandlers` + `CreateContinuation` + `ResumeContinuation`, collapsed
+into a single atomic step. The VM creates an unstarted continuation with
+the given handlers, starts it, and resumes the caller with the result.
 
 ---
 
@@ -511,8 +531,8 @@ for frame in ctx.delimited_k:
 
 ### 5.3 Rust VM mechanism — `Call` carries `CallMetadata`
 
-This is why `Call` must be a `ControlPrimitive` (not just `Yielded::Program`).
-The `Call` primitive carries metadata alongside the program:
+This is why `Call` must be a `DoCtrl` (not just `Yielded::Program`).
+The `Call` primitive carries the callable, args, kwargs, and metadata:
 
 ```rust
 /// Metadata about a program call for call stack reconstruction.
@@ -545,7 +565,7 @@ Frame::PythonGenerator {
 ### 5.4 Metadata extraction flow
 
 ```
-User code yields DoExpr (KPC, DoThunk, Effect, or ControlPrimitive)
+User code yields DoExpr (KPC, DoThunk, Effect, or DoCtrl)
     │
     ▼ driver classify_yielded (GIL held)
     │
@@ -559,9 +579,11 @@ User code yields DoExpr (KPC, DoThunk, Effect, or ControlPrimitive)
     ├─ Non-KPC DoThunk → no metadata available
     │   → emit Yielded::Program(obj)  (backward compat, metadata: None)
     │
-    ▼ VM handles Call:
-    1. Emit StartProgram to driver → get generator
-    2. Push Frame::PythonGenerator { generator, started: false, metadata: Some(m) }
+    ▼ VM handles Call(f, args, kwargs, metadata):
+    1. Emit NeedsPython(CallFunc { f, args, kwargs }) to driver
+    2. Driver calls f(*args, **kwargs), gets result (generator or DoThunk)
+    3. If DoThunk: driver calls to_generator() → generator
+    4. Push Frame::PythonGenerator { generator, started: false, metadata: Some(m) }
     
     ▼ VM handles Yielded::Program (legacy):
     1. Emit StartProgram to driver → get generator
@@ -572,14 +594,14 @@ User code yields DoExpr (KPC, DoThunk, Effect, or ControlPrimitive)
 not in the VM. This is consistent with SPEC-008's architecture — the driver
 does all Python interaction, the VM stays GIL-free.
 
-### 5.5 `GetCallStack` control primitive
+### 5.5 `GetCallStack` DoCtrl
 
-`GetCallStack` is a `ControlPrimitive` (like `GetHandlers`) that walks
+`GetCallStack` is a `DoCtrl` (like `GetHandlers`) that walks
 segments and frames, collecting `CallMetadata` from each `PythonGenerator`
 frame that has it:
 
 ```rust
-ControlPrimitive::GetCallStack => {
+DoCtrl::GetCallStack => {
     let mut stack = Vec::new();
     // Walk current segment + caller chain
     let mut seg_id = self.current_segment;
@@ -603,10 +625,9 @@ via a Python-side effect that reads the `Py<PyAny>` reference with GIL.
 
 ### 5.6 How the KPC handler populates metadata
 
-When the KPC handler yields `Call(kernel_program, metadata)` for arg
-resolution or kernel execution, the metadata comes from the `KleisliProgramCall`
-effect it received. The handler extracts it once at `start()` time and
-attaches it to each `Call` it emits:
+When the KPC handler yields `Call(kernel, args, kwargs, metadata)`, the
+metadata comes from the `KleisliProgramCall` effect it received. The handler
+extracts it once at `start()` time and attaches it to the final `Call`:
 
 ```rust
 // KPC handler (RustHandlerProgram) pseudo-code:
@@ -618,11 +639,13 @@ fn start(effect: KPC, k_user: Continuation) -> RustProgramStep {
         program_call: Some(effect.as_py_ref()),
     };
     
-    // ... resolve args ...
+    // ... resolve args via Eval ...
     
-    // Call kernel with metadata
-    RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Call {
-        program: kernel,
+    // Call kernel with resolved args and metadata
+    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Call {
+        f: effect.kernel,
+        args: resolved_args,
+        kwargs: resolved_kwargs,
         metadata,
     }))
 }
@@ -632,35 +655,38 @@ fn start(effect: KPC, k_user: Continuation) -> RustProgramStep {
 
 ## 6. DoExpr Taxonomy (Revised)
 
-All yieldable values in `@do` generators are `DoExpr`. The VM classifies
-each `DoExpr` and handles it according to its category:
+All yieldable values in `@do` generators are `DoExpr[T]` (= `Program[T]`).
+The VM classifies each DoExpr and handles it according to its subtype:
 
 ```
-DoExpr Category      Examples                        Handled by
+DoExpr Subtype       Examples                        Handled by
 ────────────────────────────────────────────────────────────────────
-ControlPrimitive     Call(thunk, metadata),           VM directly
-(DoExpr only)        WithHandler, Resume,
-                     Transfer, Delegate,
+DoCtrl               Call(f, args, kwargs, metadata), VM directly
+                     Eval(expr, handlers),
+                     WithHandler, Resume,
+                     Transfer (DoCtrl[Never]),
+                     Delegate,
                      GetContinuation, GetHandlers,
                      GetCallStack,
                      CreateContinuation,
                      ResumeContinuation,
                      PythonAsyncSyntaxEscape
 
-Effect (= Program)   Get, Put, Modify, Ask, Tell     state/reader/writer handler
+Effect               Get, Put, Modify, Ask, Tell     state/reader/writer handler
                      KleisliProgramCall               KPC handler
                      Spawn, Gather, Race              scheduler handler
                      user-defined effects             user handler
 
-DoThunk (= Program)  PureProgram, DerivedProgram     VM directly (to_generator())
+DoThunk              PureProgram, DerivedProgram     VM directly (to_generator())
 ```
+
+All three subtypes are `DoExpr[T]`, therefore all are composable with `map`,
+`flat_map`, `+`, etc. `Transfer` is `DoCtrl[Never]` — composable vacuously
+(`.map(f)` type-checks but `f` never runs since Transfer aborts).
 
 `KleisliProgramCall` is a regular Effect — it goes through the handler stack
 like any other effect. The KPC handler is a user-space handler (default
 provided as `RustHandlerProgram`), not a VM-internal component.
-
-All Effects and DoThunks are also `Program` — composable with `map`,
-`flat_map`, `+`, etc.
 
 ---
 
@@ -671,10 +697,9 @@ With the DoExpr hierarchy, `classify_yielded` classifies each yielded
 
 ```
 Phase 1: isinstance for Rust pyclass types
-    ├── ControlPrimitive: PyWithHandler, PyResume, PyTransfer,
-    │   PyDelegate, ...
-    ├── Effects: PyGet, PyPut, PyModify, PyAsk, PyTell
-    ├── Effects: PySpawn, PyGather, PyRace, ...
+    ├── DoCtrl: PyWithHandler, PyResume, PyTransfer, PyDelegate, ...
+    ├── Effect: PyGet, PyPut, PyModify, PyAsk, PyTell
+    ├── Effect: PySpawn, PyGather, PyRace, ...
     └── Effect: PyKleisliProgramCall → Yielded::Effect
 
 Phase 2: string-based match (Python classes, backward compat)
@@ -685,7 +710,7 @@ Phase 2: string-based match (Python classes, backward compat)
 Phase 3: has to_generator()? → DoThunk → UPGRADE TO Call
     ├── If has metadata (function_name, kleisli_source):
     │       Extract CallMetadata (function_name, source_file, source_line)
-    │       → Yielded::Primitive(ControlPrimitive::Call { thunk, metadata })
+    │       → Yielded::DoCtrl(DoCtrl::Call { f: obj, args: [], kwargs: {}, metadata })
     └── Otherwise (plain DoThunk, no metadata):
             → Yielded::Program(obj)  (legacy path, metadata: None)
     NO AMBIGUITY — Effects don't have to_generator() anymore
@@ -699,7 +724,7 @@ The critical improvements:
 - **Phase 3 is unambiguous**. If something has `to_generator()`, it IS a DoThunk.
   Effects never have it. No ordering hacks.
 - **KPCs detected in Phase 1 go to Effect dispatch** (not DoThunk path). The KPC
-  handler resolves args and emits `Call` primitives for sub-programs.
+  handler resolves args and emits `Call` (DoCtrl) for kernel invocation.
 - **Phase 3 extracts metadata** from recognized DoThunk objects before emitting
   `Call`. DoThunks yielded directly by user code (not via KPC handler) get
   metadata extracted here by the driver.
@@ -712,32 +737,35 @@ The critical improvements:
 1. Finalize this spec (SPEC-TYPES-001) and update SPEC-008
 2. Add `CallMetadata` struct in Rust VM
 3. Add `metadata: Option<CallMetadata>` to `Frame::PythonGenerator`
-4. Add `Call { program, metadata }` as a `ControlPrimitive` variant
-5. Add `GetCallStack` as a `ControlPrimitive` variant
-6. Implement metadata extraction in driver's `classify_yielded` (KPC → Call upgrade)
-7. Keep existing `Yielded::Program` handling as fallback (metadata: None)
+4. Add `Call { f, args, kwargs, metadata }` as a `DoCtrl` variant
+5. Add `Eval { expr, handlers }` as a `DoCtrl` variant
+6. Add `GetCallStack` as a `DoCtrl` variant
+7. Implement metadata extraction in driver's `classify_yielded` (KPC → Call upgrade)
+8. Keep existing `Yielded::Program` handling as fallback (metadata: None)
 
 ### Phase B: Introduce DoExpr type hierarchy
-1. Define `DoExpr` as base protocol (everything yieldable in `@do`)
-2. Define `Program[T]` as `DoExpr` + composability (map, flat_map, +, pure)
-3. Define `DoThunk[T]` as `Program` + `to_generator()` (PureProgram, DerivedProgram)
-4. Define `Effect[T]` as `Program` + handler dispatch
-5. Make `KleisliProgramCall` an `Effect` (yieldable to handler stack + composable)
-6. Make all standard effects (Get, Put, Ask, ...) implement `Effect` (= `Program`)
-7. Remove `to_generator()` from `KleisliProgramCall` (it is NOT a DoThunk)
-8. Implement default KPC handler as `RustHandlerProgram`
-9. Update `classify_yielded` to classify KPC as `Yielded::Effect`
-10. Update presets to include KPC handler
-11. Update `@do` decorator — `KleisliProgram.__call__` yields KPC effect
-12. Ensure `create_derived()` returns KPC (preserving Effect + Program)
+1. Define `DoExpr[T]` as composable base (map, flat_map, +, pure)
+2. Define `Program[T]` as user-facing alias for `DoExpr[T]`
+3. Define `DoThunk[T]` as `DoExpr` + `to_generator()` (PureProgram, DerivedProgram)
+4. Define `Effect[T]` as `DoExpr` + handler dispatch
+5. Define `DoCtrl[T]` as `DoExpr` + VM control (replaces ControlPrimitive)
+6. Make `KleisliProgramCall` an `Effect` (handler-dispatched + composable)
+7. Make all standard effects (Get, Put, Ask, ...) implement `Effect`
+8. Remove `to_generator()` from `KleisliProgramCall` (it is NOT a DoThunk)
+9. `.map()` on any DoExpr uniformly returns `DerivedProgram` (DoThunk)
+10. Implement default KPC handler as `RustHandlerProgram`
+11. Update `classify_yielded` to classify KPC as `Yielded::Effect`
+12. Update presets to include KPC handler
+13. Update `@do` decorator — `KleisliProgram.__call__` yields KPC effect
 
 ### Phase C: Complete separation (DoExpr hierarchy replaces old ProgramBase/EffectBase)
 1. Remove `EffectBase(ProgramBase)` inheritance
-2. `Effect` becomes `Program` subtype (composable, handler-dispatched)
+2. `Effect` becomes `DoExpr` subtype (composable, handler-dispatched)
 3. `DoThunk` retains `to_generator()` for PureProgram, DerivedProgram
-4. `ControlPrimitive` is `DoExpr` only (not `Program`, not composable)
-5. Remove `classify_yielded` ordering hacks (effects-before-programs)
-6. Verify all tests pass
+4. `DoCtrl` replaces `ControlPrimitive` — also composable (`DoExpr[T]`)
+5. `Transfer` is `DoCtrl[Never]` (composable vacuously — `.map(f)` type-checks but `f` never runs)
+6. Remove `classify_yielded` ordering hacks (effects-before-programs)
+7. Verify all tests pass
 
 ### Phase D: Cleanup
 1. Remove Python CESK v1 and v3 (avoid confusion with Rust VM semantics)
@@ -748,33 +776,40 @@ The critical improvements:
 
 ## 9. Resolved Questions
 
-1. **`Call(program, metadata)` is a control primitive, not an effect.** Like
-   function calls in Koka/OCaml. The VM handles it directly (push generator
-   frame with `CallMetadata`). No dispatch. The metadata carries function_name,
+1. **`Call(f, args, kwargs, metadata)` is a DoCtrl, not an Effect.**
+   Like function calls in Koka/OCaml. The VM handles it directly: calls
+   `f(*args, **kwargs)`, pushes the resulting generator frame with
+   `CallMetadata`. No dispatch. Works for both DoThunks (no args) and kernel
+   invocations (with resolved args). The metadata carries function_name,
    source_file, source_line — extracted by the driver with GIL.
 
-2. **KPC is an effect, not a control primitive.** Arg resolution scheduling is a
+2. **KPC is an Effect, not a DoCtrl.** Arg resolution scheduling is a
    handler concern. Sequential, concurrent, cached, retried — the handler decides.
 
 3. **Auto-unwrap strategy is carried on the KPC effect.** Computed at `@do`
    decoration time from type annotations, stored on `KleisliProgramCall`.
    The KPC handler reads it to classify args.
 
-4. **Default KPC handler resolves sequentially** using `Call` for Program args
-   and direct effect yield for Effect args. No busy boundary issues since `Call`
-   is a control primitive (not dispatched).
+4. **Default KPC handler resolves sequentially** using `Eval(expr, handlers)`
+   per arg. `Eval` is a DoCtrl that creates an unstarted continuation
+   with the given handler chain and evaluates the DoExpr within it. The caller
+   is suspended and resumed with the result. No busy boundary issues because
+   `Eval` uses explicit handlers, not `visible_handlers`.
 
-5. **Effect args use direct yield, NOT Delegate.** `Delegate` advances within
-   the same dispatch context and requires the handler to return immediately
-   after — incompatible with multi-arg resolution. Yielding an effect directly
-   triggers `start_dispatch` (new dispatch), and the KPC handler resumes with
-   the resolved value.
+5. **Arg resolution uses `Eval`, NOT direct effect yield or `Delegate`.**
+   Direct effect yield would hit the busy boundary (KPC handler excluded from
+   `visible_handlers`), breaking nested `@do` calls in args. `Delegate`
+   advances within the same dispatch context — incompatible with multi-arg
+   resolution. `Eval` creates a fresh scope with the full handler chain
+   (captured via `GetHandlers` before the dispatch made anything busy).
 
-6. **Concurrent resolution is opt-in** via a different KPC handler that uses
-   `GetHandlers` + `CreateContinuation` + `ResumeContinuation`.
+6. **Sequential vs concurrent resolution is the handler's choice.** The default
+   KPC handler uses `Eval` per-arg (sequential). A concurrent variant wraps
+   args in `Gather` and uses a single `Eval`. Users swap handlers for
+   different policies.
 
 7. **Call stack is structural** (walked from segments/frames on demand), not
-   tracked via push/pop. `GetCallStack` is a control primitive like `GetHandlers`.
+   tracked via push/pop. `GetCallStack` is a DoCtrl like `GetHandlers`.
    It returns `Vec<CallMetadata>` from `PythonGenerator` frames — pure Rust,
    no GIL needed.
 
@@ -783,35 +818,32 @@ The critical improvements:
    path with `metadata: None`. Over time, `classify_yielded` can upgrade more
    program types to `Call` with metadata.
 
-9. **Type hierarchy: DoExpr / Program / DoThunk / Effect (Rev 5).**
+9. **DoExpr[T] is the universal composable base (Rev 6).**
    The old design had `EffectBase(ProgramBase)` — all effects inherited
-   `to_generator()`. The new design introduces a clean hierarchy:
+   `to_generator()`. The new design has `DoExpr[T]` as the root:
 
-   - `DoExpr`: base of everything yieldable in `@do` generators
-   - `Program[T]`: `DoExpr` + composability (`map`, `flat_map`, `+`, `pure`)
-   - `DoThunk[T]`: `Program` + `to_generator()` (VM runs directly)
-   - `Effect[T]`: `Program` + handler dispatch
-   - `ControlPrimitive`: `DoExpr` only (not composable)
+   - `DoExpr[T]`: root — yieldable + composable (map, flat_map, +, pure)
+   - `Program[T]`: user-facing alias for `DoExpr[T]`
+   - `DoThunk[T]`: `DoExpr` + `to_generator()` (VM runs directly)
+   - `Effect[T]`: `DoExpr` + handler dispatch
+   - `DoCtrl[T]`: `DoExpr` + VM control instructions
 
-   **Effects ARE Programs.** Users can compose any effect:
-   `Ask("key").map(str.upper)`. KPC is an Effect (therefore also a Program).
-   The key difference from the old design: Effects do NOT have `to_generator()`.
-   Only DoThunks do. The VM handles them through different paths (handler
-   dispatch vs generator frame).
+   Every DoExpr produces a value T, so every DoExpr supports `.map()`.
+   There is no non-composable yieldable — if it returns T, you can compose it.
+   `Transfer` is `DoCtrl[Never]` (composable vacuously).
 
-10. **Naming conventions (Rev 5).** `DoExpr` and `DoThunk` use the `Do-`
-    prefix to tie them to the `@do` decorator and the doeff framework.
-    `Program` and `Effect` are unprefixed for user ergonomics — these are
-    the types users write in annotations and interact with daily.
+10. **Naming conventions (Rev 6).** `DoExpr`, `DoThunk`, `DoCtrl` use the
+    `Do-` prefix (framework-internal concepts). `Program` and `Effect` are
+    unprefixed (user-facing). `Program = DoExpr` is a type alias.
 
 11. **run() requires explicit KPC handler (Rev 5).** The KPC handler is not
     auto-installed. If a KPC is dispatched with no handler, the VM errors.
     Users provide it via presets or explicit handler list.
 
-12. **Effect.map() returns DerivedProgram / DoThunk (Rev 5).** ALL effects
-    cross from Effect to DoThunk when composed with `.map()` — uniformly,
-    including KPC. No special cases. The thunk wraps the effect in a
-    generator that yields it.
+12. **DoExpr.map() uniformly returns DerivedProgram / DoThunk (Rev 6).**
+    `.map()` on ANY DoExpr (Effect, DoCtrl, DoThunk) returns a DerivedProgram.
+    No special cases. The thunk wraps the original DoExpr in a generator
+    that yields it.
 
 ---
 
@@ -819,9 +851,9 @@ The critical improvements:
 
 1. ~~**Composition operators after separation**~~
 
-   **RESOLVED (Rev 4)**: Derived calls remain `KleisliProgramCall` (Effect)
-   instances. The full composition chain produces Effects at every step —
-   each one yieldable AND further composable. See Section 4.7.
+   **RESOLVED (Rev 6)**: `.map()` on any DoExpr (including KPC) returns a
+   `DerivedProgram` (DoThunk). The composition chain crosses from Effect to
+   DoThunk, but the user only sees `Program[T]` (= `DoExpr[T]`). See Section 4.7.
 
 2. ~~**run() entry point**~~
 
@@ -852,11 +884,11 @@ The critical improvements:
    The effect is wrapped in a generator thunk:
 
    ```python
-   class Effect(Program[T]):
-       def map(self, f: Callable[[T], U]) -> Program[U]:
-           effect = self
+   class DoExpr(Generic[T]):
+       def map(self, f: Callable[[T], U]) -> DoExpr[U]:
+           source = self
            def thunk():
-               result = yield effect   # yields self as Effect → handler dispatch
+               result = yield source   # yields original DoExpr → VM handles it
                return f(result)
            return DerivedProgram(thunk)
    ```

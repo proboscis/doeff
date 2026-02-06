@@ -36,7 +36,7 @@ pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
 pub use pyvm::{PyStdlib, PyVM};
 pub use segment::{Segment, SegmentKind};
 pub use step::{
-    ControlPrimitive, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
+    DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
     Yielded,
 };
 pub use value::Value;

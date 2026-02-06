@@ -14,9 +14,7 @@ use crate::handler::{
 use crate::ids::{ContId, Marker};
 use crate::scheduler::{SchedulerEffect, SchedulerHandler};
 use crate::segment::Segment;
-use crate::step::{
-    ControlPrimitive, Mode, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
-};
+use crate::step::{DoCtrl, Mode, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded};
 use crate::value::Value;
 use crate::vm::VM;
 
@@ -226,6 +224,37 @@ impl PyVM {
             }
             None => Ok(py.None().into()),
         }
+    }
+
+    pub fn build_run_result(
+        &self,
+        py: Python<'_>,
+        value: Bound<'_, PyAny>,
+    ) -> PyResult<PyRunResult> {
+        let raw_store = pyo3::types::PyDict::new(py);
+        for (k, v) in &self.vm.rust_store.state {
+            raw_store.set_item(k, v.to_pyobject(py)?)?;
+        }
+        Ok(PyRunResult {
+            result: Ok(value.unbind()),
+            raw_store: raw_store.unbind(),
+        })
+    }
+
+    pub fn build_run_result_error(
+        &self,
+        py: Python<'_>,
+        error: Bound<'_, PyAny>,
+    ) -> PyResult<PyRunResult> {
+        let raw_store = pyo3::types::PyDict::new(py);
+        for (k, v) in &self.vm.rust_store.state {
+            raw_store.set_item(k, v.to_pyobject(py)?)?;
+        }
+        let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
+        Ok(PyRunResult {
+            result: Err(exc),
+            raw_store: raw_store.unbind(),
+        })
     }
 
     pub fn start_program(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
@@ -496,9 +525,9 @@ impl PyVM {
             } else {
                 Handler::Python(wh.handler.clone_ref(_py))
             };
-            return Ok(Yielded::Primitive(ControlPrimitive::WithHandler {
+            return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                 handler,
-                program: wh.program.clone_ref(_py),
+                expr: wh.program.clone_ref(_py),
             }));
         }
         if obj.is_instance_of::<PyResume>() {
@@ -506,7 +535,7 @@ impl PyVM {
             if let Ok(k_pyobj) = r.continuation.bind(_py).downcast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
                 if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
-                    return Ok(Yielded::Primitive(ControlPrimitive::Resume {
+                    return Ok(Yielded::DoCtrl(DoCtrl::Resume {
                         continuation: k,
                         value: Value::from_pyobject(r.value.bind(_py)),
                     }));
@@ -519,7 +548,7 @@ impl PyVM {
             if let Ok(k_pyobj) = t.continuation.bind(_py).downcast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
                 if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
-                    return Ok(Yielded::Primitive(ControlPrimitive::Transfer {
+                    return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
                         continuation: k,
                         value: Value::from_pyobject(t.value.bind(_py)),
                     }));
@@ -541,7 +570,7 @@ impl PyVM {
                         )
                     })?
             };
-            return Ok(Yielded::Primitive(ControlPrimitive::Delegate { effect }));
+            return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
         }
 
         // Fallback: string-based type name parsing (for Python dataclasses)
@@ -560,7 +589,7 @@ impl PyVM {
                             let cont_id = ContId::from_raw(cont_id_val);
                             if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
                                 let value = obj.getattr("value")?;
-                                return Ok(Yielded::Primitive(ControlPrimitive::Resume {
+                                return Ok(Yielded::DoCtrl(DoCtrl::Resume {
                                     continuation: k,
                                     value: Value::from_pyobject(&value),
                                 }));
@@ -577,7 +606,7 @@ impl PyVM {
                             let cont_id = ContId::from_raw(cont_id_val);
                             if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
                                 let value = obj.getattr("value")?;
-                                return Ok(Yielded::Primitive(ControlPrimitive::Transfer {
+                                return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
                                     continuation: k,
                                     value: Value::from_pyobject(&value),
                                 }));
@@ -594,9 +623,9 @@ impl PyVM {
                     } else {
                         Handler::Python(handler_obj.unbind())
                     };
-                    return Ok(Yielded::Primitive(ControlPrimitive::WithHandler {
+                    return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                         handler,
-                        program: program.unbind(),
+                        expr: program.unbind(),
                     }));
                 }
                 "Delegate" => {
@@ -627,13 +656,13 @@ impl PyVM {
                                 )
                             })?
                     };
-                    return Ok(Yielded::Primitive(ControlPrimitive::Delegate { effect }));
+                    return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
                 }
                 "GetContinuation" => {
-                    return Ok(Yielded::Primitive(ControlPrimitive::GetContinuation));
+                    return Ok(Yielded::DoCtrl(DoCtrl::GetContinuation));
                 }
                 "GetHandlers" => {
-                    return Ok(Yielded::Primitive(ControlPrimitive::GetHandlers));
+                    return Ok(Yielded::DoCtrl(DoCtrl::GetHandlers));
                 }
                 "CreateContinuation" => {
                     let program = obj.getattr("program")?.unbind();
@@ -643,8 +672,8 @@ impl PyVM {
                         let item = item?;
                         handlers.push(crate::handler::Handler::Python(item.unbind()));
                     }
-                    return Ok(Yielded::Primitive(ControlPrimitive::CreateContinuation {
-                        program,
+                    return Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                        expr: program,
                         handlers,
                     }));
                 }
@@ -657,12 +686,10 @@ impl PyVM {
                             let cont_id = ContId::from_raw(cont_id_val);
                             if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
                                 let value = obj.getattr("value")?;
-                                return Ok(Yielded::Primitive(
-                                    ControlPrimitive::ResumeContinuation {
-                                        continuation: k,
-                                        value: Value::from_pyobject(&value),
-                                    },
-                                ));
+                                return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                                    continuation: k,
+                                    value: Value::from_pyobject(&value),
+                                }));
                             }
                         }
                     }
@@ -709,25 +736,102 @@ impl PyVM {
                 }
                 "PythonAsyncSyntaxEscape" => {
                     let action = obj.getattr("action")?.unbind();
-                    return Ok(Yielded::Primitive(
-                        ControlPrimitive::PythonAsyncSyntaxEscape { action },
-                    ));
+                    return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
                 }
-                // D6: Scheduler effects classified as Effect::Scheduler per spec.
+                // D6: Scheduler effects — extract fields into typed SchedulerEffect variants.
                 // Must be classified BEFORE to_generator fallback (EffectBase has to_generator).
-                "SpawnEffect"
-                | "SchedulerSpawn"
-                | "GatherEffect"
-                | "SchedulerGather"
-                | "RaceEffect"
-                | "SchedulerRace"
-                | "CompletePromiseEffect"
-                | "SchedulerCompletePromise"
-                | "FailPromiseEffect"
-                | "SchedulerFailPromise"
-                | "TaskCompletedEffect"
+                "SpawnEffect" | "SchedulerSpawn" => {
+                    let program = obj.getattr("program")?.unbind();
+                    // Python SpawnEffect doesn't carry handler chain; use empty + default shared mode.
+                    // The scheduler will use GetHandlers or the current scope chain.
+                    return Ok(Yielded::Effect(Effect::Scheduler(SchedulerEffect::Spawn {
+                        program,
+                        handlers: vec![],
+                        store_mode: crate::scheduler::StoreMode::Shared,
+                    })));
+                }
+                "GatherEffect" | "SchedulerGather" => {
+                    let items_obj = obj.getattr("items")?;
+                    let mut waitables = Vec::new();
+                    for item in items_obj.try_iter()? {
+                        let item = item?;
+                        match Self::extract_waitable(_py, &item) {
+                            Some(w) => waitables.push(w),
+                            None => {
+                                // Item is a Program, not a Waitable — fall back to PythonSchedulerEffect
+                                // so the scheduler handler can deal with mixed items.
+                                return Ok(Yielded::Effect(Effect::Scheduler(
+                                    SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                                )));
+                            }
+                        }
+                    }
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::Gather { items: waitables },
+                    )));
+                }
+                "RaceEffect" | "SchedulerRace" => {
+                    let futures_obj = obj.getattr("futures")?;
+                    let mut waitables = Vec::new();
+                    for item in futures_obj.try_iter()? {
+                        let item = item?;
+                        match Self::extract_waitable(_py, &item) {
+                            Some(w) => waitables.push(w),
+                            None => {
+                                return Ok(Yielded::Effect(Effect::Scheduler(
+                                    SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                                )));
+                            }
+                        }
+                    }
+                    return Ok(Yielded::Effect(Effect::Scheduler(SchedulerEffect::Race {
+                        items: waitables,
+                    })));
+                }
+                "CompletePromiseEffect" | "SchedulerCompletePromise" => {
+                    let promise_obj = obj.getattr("promise")?;
+                    if let Some(pid) = Self::extract_promise_id(_py, &promise_obj) {
+                        let value = obj.getattr("value")?;
+                        return Ok(Yielded::Effect(Effect::Scheduler(
+                            SchedulerEffect::CompletePromise {
+                                promise: pid,
+                                value: Value::from_pyobject(&value),
+                            },
+                        )));
+                    }
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                    )));
+                }
+                "FailPromiseEffect" | "SchedulerFailPromise" => {
+                    let promise_obj = obj.getattr("promise")?;
+                    if let Some(pid) = Self::extract_promise_id(_py, &promise_obj) {
+                        let error_obj = obj.getattr("error")?;
+                        let exc = pyerr_to_exception(_py, PyErr::from_value(error_obj))?;
+                        return Ok(Yielded::Effect(Effect::Scheduler(
+                            SchedulerEffect::FailPromise {
+                                promise: pid,
+                                error: exc,
+                            },
+                        )));
+                    }
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                    )));
+                }
+                "WaitEffect" => {
+                    let future_obj = obj.getattr("future")?;
+                    if let Some(w) = Self::extract_waitable(_py, &future_obj) {
+                        return Ok(Yielded::Effect(Effect::Scheduler(
+                            SchedulerEffect::Gather { items: vec![w] },
+                        )));
+                    }
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                    )));
+                }
+                "TaskCompletedEffect"
                 | "SchedulerTaskCompleted"
-                | "WaitEffect"
                 | "TaskCancelEffect"
                 | "TaskIsDoneEffect"
                 | "WaitForExternalCompletion" => {
@@ -747,8 +851,10 @@ impl PyVM {
 
         if obj.hasattr("to_generator")? {
             if let Some(metadata) = Self::extract_call_metadata(_py, obj) {
-                return Ok(Yielded::Primitive(ControlPrimitive::Call {
-                    program: obj.clone().unbind(),
+                return Ok(Yielded::DoCtrl(DoCtrl::Call {
+                    f: obj.clone().unbind(),
+                    args: vec![],
+                    kwargs: vec![],
                     metadata,
                 }));
             }
@@ -784,6 +890,49 @@ impl PyVM {
             .map(|v| v.to_pyobject(py))
             .collect::<PyResult<_>>()?;
         Ok(PyTuple::new(py, py_values)?)
+    }
+
+    /// Convert a Python Waitable (Task, Future, Promise) to a Rust Waitable.
+    /// Python objects store `_handle` as a dict with `{"type": "Task"/"Promise"/"ExternalPromise", "task_id"/"promise_id": u64}`.
+    fn extract_waitable(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+    ) -> Option<crate::scheduler::Waitable> {
+        let handle = obj.getattr("_handle").ok()?;
+        let type_val = handle.get_item("type").ok()?;
+        let type_str: String = type_val.extract().ok()?;
+        match type_str.as_str() {
+            "Task" => {
+                let raw: u64 = handle.get_item("task_id").ok()?.extract().ok()?;
+                Some(crate::scheduler::Waitable::Task(
+                    crate::ids::TaskId::from_raw(raw),
+                ))
+            }
+            "Promise" => {
+                let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
+                Some(crate::scheduler::Waitable::Promise(
+                    crate::ids::PromiseId::from_raw(raw),
+                ))
+            }
+            "ExternalPromise" => {
+                let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
+                Some(crate::scheduler::Waitable::ExternalPromise(
+                    crate::ids::PromiseId::from_raw(raw),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extract a PromiseId from a Python Promise object.
+    /// Promise stores `_promise_handle` as the dict from the VM.
+    fn extract_promise_id(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+    ) -> Option<crate::ids::PromiseId> {
+        let handle = obj.getattr("_promise_handle").ok()?;
+        let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
+        Some(crate::ids::PromiseId::from_raw(raw))
     }
 
     fn extract_call_metadata(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallMetadata> {
@@ -1272,11 +1421,12 @@ fn run(
     vm.run_with_result(py, wrapped.bind(py).clone())
 }
 
-/// Module-level `async_run()` — async version of `run()`.
+/// Module-level `async_run()` — true async version of `run()`.
 ///
-/// API-12: Returns a true Python coroutine that yields control to the event
-/// loop. The coroutine awaits `asyncio.sleep(0)` before running the sync VM
-/// driver, giving other tasks a chance to execute.
+/// G6/API-12: Returns a Python coroutine that uses `step_once()` in a loop.
+/// `CallAsync` events are awaited in the Python event loop, enabling true
+/// async interop. All other PythonCall variants are handled synchronously
+/// via the Rust-side `step_once()`.
 #[pyfunction]
 #[pyo3(signature = (program, handlers=None, env=None, store=None))]
 fn async_run<'py>(
@@ -1286,36 +1436,76 @@ fn async_run<'py>(
     env: Option<Bound<'py, pyo3::types::PyDict>>,
     store: Option<Bound<'py, pyo3::types::PyDict>>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let run_fn = wrap_pyfunction!(run, py)?;
-    let args_tuple = {
-        let mut args: Vec<Bound<'py, PyAny>> = vec![program.into_any()];
-        args.push(match handlers {
-            Some(h) => h.into_any(),
-            None => py.None().into_bound(py),
-        });
-        args.push(match env {
-            Some(e) => e.into_any(),
-            None => py.None().into_bound(py),
-        });
-        args.push(match store {
-            Some(s) => s.into_any(),
-            None => py.None().into_bound(py),
-        });
-        PyTuple::new(py, args)?
-    };
+    let mut vm = PyVM { vm: VM::new() };
+
+    if let Some(env_dict) = env {
+        for (key, value) in env_dict.iter() {
+            let k: String = key.extract()?;
+            vm.vm.rust_store.env.insert(k, Value::from_pyobject(&value));
+        }
+    }
+
+    if let Some(store_dict) = store {
+        for (key, value) in store_dict.iter() {
+            let k: String = key.extract()?;
+            vm.vm.rust_store.put(k, Value::from_pyobject(&value));
+        }
+    }
+
+    let mut wrapped: Py<PyAny> = program.unbind();
+    if let Some(handler_list) = handlers {
+        let items: Vec<_> = handler_list.iter().collect();
+        for handler_obj in items.into_iter().rev() {
+            let step = NestingStep {
+                handler: handler_obj.unbind(),
+                inner: wrapped,
+            };
+            let bound = Bound::new(py, step)?;
+            wrapped = bound.into_any().unbind();
+        }
+    }
+
+    let gen = vm.to_generator_strict(py, wrapped)?;
+    let gen_bound = gen.bind(py).clone();
+    vm.start_with_generator(gen_bound)?;
+
+    let py_vm = Bound::new(py, vm)?;
 
     let asyncio = py.import("asyncio")?;
     let ns = pyo3::types::PyDict::new(py);
-    ns.set_item("_run_fn", run_fn)?;
-    ns.set_item("_args", args_tuple)?;
+    ns.set_item("_vm", &py_vm)?;
     ns.set_item("asyncio", asyncio)?;
 
-    // G6/API-12: This is a sync wrapper with sleep(0), NOT truly async.
-    // SPEC-008 API-12 requires yielding to the event loop during execution,
-    // not just once before. Requires async-aware VM driver to fix properly.
-    py.run(pyo3::ffi::c_str!(
-        "async def _async_run_impl():\n    await asyncio.sleep(0)\n    return _run_fn(*_args)\n_coro = _async_run_impl()\n"
-    ), Some(&ns), None)?;
+    py.run(
+        pyo3::ffi::c_str!(concat!(
+            "async def _async_run_impl():\n",
+            "    while True:\n",
+            "        try:\n",
+            "            result = _vm.step_once()\n",
+            "        except BaseException as exc:\n",
+            "            return _vm.build_run_result_error(exc)\n",
+            "        tag = result[0]\n",
+            "        if tag == 'done':\n",
+            "            return _vm.build_run_result(result[1])\n",
+            "        elif tag == 'call_async':\n",
+            "            func, args = result[1], result[2]\n",
+            "            try:\n",
+            "                awaitable = func(*args)\n",
+            "                value = await awaitable\n",
+            "                _vm.feed_async_result(value)\n",
+            "            except BaseException as exc:\n",
+            "                _vm.feed_async_error(exc)\n",
+            "        elif tag == 'continue':\n",
+            "            await asyncio.sleep(0)\n",
+            "            continue\n",
+            "        else:\n",
+            "            raise RuntimeError(f'Unexpected step_once tag: {tag}')\n",
+            "        await asyncio.sleep(0)\n",
+            "_coro = _async_run_impl()\n"
+        )),
+        Some(&ns),
+        None,
+    )?;
 
     Ok(ns.get_item("_coro")?.unwrap().into_any())
 }
