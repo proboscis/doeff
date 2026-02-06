@@ -29,9 +29,7 @@ def apply_transforms(
     return effect
 
 
-def apply_intercept_chain(
-    K: Kontinuation, effect: Effect
-) -> tuple[Effect | ProgramBase, Any]:
+def apply_intercept_chain(K: Kontinuation, effect: Effect) -> tuple[Effect | ProgramBase, Any]:
     """Apply intercept transforms from continuation frames to an effect.
 
     DEPRECATED: InterceptFrame has been removed per SPEC-CESK-003.
@@ -40,7 +38,9 @@ def apply_intercept_chain(
     return effect, None
 
 
-def merge_store(parent_store: Store, child_store: Store, child_snapshot: Store | None = None) -> Store:
+def merge_store(
+    parent_store: Store, child_store: Store, child_snapshot: Store | None = None
+) -> Store:
     merged = {**parent_store}
 
     for key, value in child_store.items():
@@ -89,6 +89,7 @@ def _merge_thread_state(parent_store: Store, child_store: Store) -> Store:
 
 
 def to_generator(program: ProgramLike) -> Generator[Any, Any, Any]:
+    from doeff._types_internal import EffectBase
     from doeff.program import KleisliProgramCall, ProgramBase
 
     if isinstance(program, KleisliProgramCall):
@@ -98,6 +99,14 @@ def to_generator(program: ProgramLike) -> Generator[Any, Any, Any]:
         to_gen = getattr(program, "to_generator", None)
         if callable(to_gen):
             return to_gen()
+
+    if isinstance(program, EffectBase):
+
+        def _effect_as_generator():
+            result = yield program
+            return result
+
+        return _effect_as_generator()
 
     raise TypeError(f"Cannot convert {type(program).__name__} to generator")
 

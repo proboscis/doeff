@@ -23,7 +23,7 @@ from typing import (
     runtime_checkable,
 )
 
-#from doeff import CachePut
+# from doeff import CachePut
 
 # Import Program for type alias, but avoid circular imports
 if TYPE_CHECKING:
@@ -108,9 +108,11 @@ def _truncate_repr(obj: object, limit: int | None) -> str:
         f"set env['{REPR_LIMIT_KEY}'] to adjust]"
     )
 
+
 # ============================================
 # Effect Creation Context
 # ============================================
+
 
 @dataclass(frozen=True)
 class EffectCreationContext:
@@ -136,9 +138,11 @@ class EffectCreationContext:
         if self.stack_trace:
             lines.append("\nCreation stack trace:")
             for frame in self.stack_trace:
-                lines.append(f'  File "{frame["filename"]}", line {frame["line"]}, in {frame["function"]}')
+                lines.append(
+                    f'  File "{frame["filename"]}", line {frame["line"]}, in {frame["function"]}'
+                )
                 if frame.get("code"):
-                    lines.append(f'    {frame["code"]}')
+                    lines.append(f"    {frame['code']}")
         return "\n".join(lines)
 
     def build_traceback(self) -> str:
@@ -171,11 +175,7 @@ class EffectCreationContext:
         sanitized_stack: list[dict[str, Any]] = []
         for frame in self.stack_trace:
             if isinstance(frame, dict):
-                sanitized_frame = {
-                    key: value
-                    for key, value in frame.items()
-                    if key != "frame"
-                }
+                sanitized_frame = {key: value for key, value in frame.items() if key != "frame"}
                 sanitized_stack.append(sanitized_frame)
 
         return EffectCreationContext(
@@ -192,11 +192,7 @@ class EffectCreationContext:
         sanitized_stack: list[dict[str, Any]] = []
         for frame in self.stack_trace:
             if isinstance(frame, dict):
-                sanitized_frame = {
-                    key: value
-                    for key, value in frame.items()
-                    if key != "frame"
-                }
+                sanitized_frame = {key: value for key, value in frame.items() if key != "frame"}
                 sanitized_stack.append(sanitized_frame)
 
         return {
@@ -281,12 +277,7 @@ class CapturedTraceback:
         """Return sanitized traceback lines with optional condensation."""
 
         sanitized = self._sanitize_lines()
-        if (
-            not condensed
-            or max_lines is None
-            or len(sanitized) <= max_lines
-            or not sanitized
-        ):
+        if not condensed or max_lines is None or len(sanitized) <= max_lines or not sanitized:
             return sanitized
 
         return _condense_traceback_lines(sanitized, max_lines)
@@ -334,6 +325,7 @@ class RaiseLocation:
 @dataclass(frozen=True)
 class _TracebackSplit:
     """Split traceback into header and body sections."""
+
     header: list[str]
     body: list[str]
 
@@ -341,6 +333,7 @@ class _TracebackSplit:
 @dataclass(frozen=True)
 class _HeadTailLengths:
     """Head and tail line counts for traceback display."""
+
     head_lines: int
     tail_lines: int
 
@@ -368,7 +361,7 @@ def _condense_traceback_lines(lines: list[str], max_lines: int) -> list[str]:
         return fallback
 
     ellipsis_line = "    ..."
-    return header + body[:lengths.head_lines] + [ellipsis_line] + body[-lengths.tail_lines:]
+    return header + body[: lengths.head_lines] + [ellipsis_line] + body[-lengths.tail_lines :]
 
 
 def _split_traceback_header(lines: list[str]) -> _TracebackSplit:
@@ -502,7 +495,6 @@ def _is_library_traceback_path(path: str) -> bool:
     return "/python" in lowered and "/repos/" not in lowered
 
 
-
 def capture_traceback(exc: BaseException) -> CapturedTraceback:
     """Capture and memoize traceback information for an exception."""
 
@@ -522,6 +514,7 @@ def get_captured_traceback(exc: BaseException) -> CapturedTraceback | None:
 # Effect Failure Exception
 # ============================================
 
+
 @dataclass
 class EffectFailureError(Exception):
     """Complete error information for a failed effect.
@@ -534,7 +527,9 @@ class EffectFailureError(Exception):
     cause: BaseException  # The original exception that caused the failure
     runtime_traceback: CapturedTraceback | None = None
     creation_context: EffectCreationContext | None = None
-    call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure time
+    call_stack_snapshot: tuple[CallFrame, ...] = field(
+        default_factory=tuple
+    )  # Program call stack at failure time
 
     def __str__(self) -> str:
         """Format the error for display."""
@@ -560,6 +555,7 @@ class EffectFailureError(Exception):
                 captured = capture_traceback(self.cause)
             self.runtime_traceback = captured
 
+
 EffectFailure = EffectFailureError
 
 
@@ -583,24 +579,20 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase(ProgramBase):
-    """Base dataclass implementing :class:`Effect` semantics."""
+class EffectBase:
+    """Base dataclass implementing :class:`Effect` semantics.
 
-    created_at: EffectCreationContext | None = field(
-        default=None, compare=False
-    )
+    SPEC-TYPES-001: EffectBase is standalone — NOT a ProgramBase subclass.
+    Effects are requests (pure data), not computation thunks.
+    They have no to_generator() — they are yielded directly for dispatch.
+    """
 
-    def with_created_at(
-        self: E, created_at: EffectCreationContext | None
-    ) -> E:
+    created_at: EffectCreationContext | None = field(default=None, compare=False)
+
+    def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
         if created_at is self.created_at:
             return self
         return replace(self, created_at=created_at)
-
-    def to_generator(self) -> Generator[Effect | Program, Any, Any]:
-        """An Effect is a single-step program that yields itself."""
-        result = yield self
-        return result
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -629,6 +621,7 @@ ProgramGenerator = Generator[Effect, Any, T]
 # Call Frame - tracks program call stack
 # ============================================
 
+
 @dataclass(frozen=True)
 class CallFrame:
     """
@@ -649,6 +642,7 @@ class CallFrame:
 # ============================================
 # Execution Context
 # ============================================
+
 
 @dataclass
 class ExecutionContext:
@@ -732,7 +726,9 @@ class EffectFailureInfo:
     cause: BaseException | None
     runtime_trace: CapturedTraceback | None
     cause_trace: CapturedTraceback | None
-    call_stack_snapshot: tuple[CallFrame, ...] = field(default_factory=tuple)  # Program call stack at failure
+    call_stack_snapshot: tuple[CallFrame, ...] = field(
+        default_factory=tuple
+    )  # Program call stack at failure
 
 
 @dataclass(frozen=True)
@@ -819,6 +815,7 @@ class RunFailureDetails:
 # Run Result
 # ============================================
 
+
 @dataclass(frozen=True)
 class RunResult(Generic[T]):
     """
@@ -891,8 +888,7 @@ class RunResult(Generic[T]):
                 effect_name = head.effect.__class__.__name__
                 if head.cause:
                     return (
-                        f"effect={effect_name}, "
-                        f"cause={head.cause.__class__.__name__}: {head.cause}"
+                        f"effect={effect_name}, cause={head.cause.__class__.__name__}: {head.cause}"
                     )
                 return f"effect={effect_name}"
             if isinstance(head, ExceptionFailureInfo):
@@ -963,17 +959,13 @@ class RunResult(Generic[T]):
 
         summary = self._failure_summary()
         return (
-            f"RunResult(Err({summary}), "
-            f"state={len(self.state)} items, "
-            f"log={len(self.log)} entries)"
+            f"RunResult(Err({summary}), state={len(self.state)} items, log={len(self.log)} entries)"
         )
 
     def display(self, verbose: bool = False, indent: int = 2) -> str:
         """Render a human-readable report using structured sections."""
 
-        dep_ask_stats = _DepAskStats.from_observations(
-            self.effect_observations
-        )
+        dep_ask_stats = _DepAskStats.from_observations(self.effect_observations)
         context = RunResultDisplayContext(
             run_result=self,
             verbose=verbose,
@@ -999,7 +991,9 @@ class RunResult(Generic[T]):
     ) -> str:
         """Render the computation graph as ASCII art using the phart library."""
 
-        nx_module, renderer_cls, layout_options_cls, node_style_cls = self._import_phart_dependencies()
+        nx_module, renderer_cls, layout_options_cls, node_style_cls = (
+            self._import_phart_dependencies()
+        )
 
         steps = self.graph.steps or frozenset({self.graph.last})
         base_graph, producers = self._build_base_graph(nx_module, steps)
@@ -1232,6 +1226,7 @@ class RunResult(Generic[T]):
             return text[:max_length] + "..."
         return text
 
+
 @dataclass(frozen=True)
 class _DepAskUsageRecord:
     effect_type: str
@@ -1295,10 +1290,7 @@ class _DepAskStats:
 
         return cls(
             records=tuple(records),
-            keys_by_type={
-                effect_type: tuple(keys)
-                for effect_type, keys in keys_by_type.items()
-            },
+            keys_by_type={effect_type: tuple(keys) for effect_type, keys in keys_by_type.items()},
         )
 
     def is_empty(self) -> bool:
@@ -1431,9 +1423,7 @@ class _StatusSection(_BaseSection):
                         )
             elif isinstance(head, ExceptionFailureInfo):
                 exc = head.exception
-                lines.append(
-                    self.indent(1, f"{exc.__class__.__name__}: {exc}")
-                )
+                lines.append(self.indent(1, f"{exc.__class__.__name__}: {exc}"))
         else:
             lines.append(self.indent(1, f"Error: {rr.result.error!r}"))
 
@@ -1509,9 +1499,7 @@ class _UserEffectStackSection(_BaseSection):
         root_cause = self._find_root_cause(details)
         if root_cause:
             lines.append("Root Cause:")
-            lines.append(
-                self.indent(1, f"{root_cause.__class__.__name__}: {root_cause}")
-            )
+            lines.append(self.indent(1, f"{root_cause.__class__.__name__}: {root_cause}"))
             lines.append("")
 
         # Extract user code frames from the effect chain
@@ -1528,9 +1516,7 @@ class _UserEffectStackSection(_BaseSection):
 
         return lines
 
-    def _find_root_cause(
-        self, details: RunFailureDetails
-    ) -> BaseException | None:
+    def _find_root_cause(self, details: RunFailureDetails) -> BaseException | None:
         """Find the innermost exception that's not an EffectFailure."""
         root_cause: BaseException | None = None
 
@@ -1543,9 +1529,7 @@ class _UserEffectStackSection(_BaseSection):
 
         return root_cause
 
-    def _extract_user_frames(
-        self, details: RunFailureDetails
-    ) -> list[_UserEffectFrame]:
+    def _extract_user_frames(self, details: RunFailureDetails) -> list[_UserEffectFrame]:
         """Extract user code frames from effect creation contexts and call stack."""
         frames: list[_UserEffectFrame] = []
         seen_locations: set[tuple[str, int, str]] = set()
@@ -1686,9 +1670,7 @@ class _ErrorSection(_BaseSection):
             lines = [self.indent(1, f"[{idx}] Exception raised")]
         else:
             lines = [self.indent(1, f"[{idx}] Effect '{effect_name}' failed")]
-        lines.extend(
-            self._render_effect_creation_details(entry, effect_name, is_primary)
-        )
+        lines.extend(self._render_effect_creation_details(entry, effect_name, is_primary))
         lines.extend(self._render_effect_cause(entry))
         lines.extend(self._render_runtime_trace(entry))
         return lines
@@ -1705,7 +1687,9 @@ class _ErrorSection(_BaseSection):
                 loc = entry.runtime_trace.get_raise_location()
                 if loc:
                     rel_path = self._relative_path(loc.filename)
-                    lines = [self.indent(2, f"📍 Raised at: {rel_path}:{loc.line} in {loc.function}")]
+                    lines = [
+                        self.indent(2, f"📍 Raised at: {rel_path}:{loc.line} in {loc.function}")
+                    ]
                     if loc.code:
                         lines.append(self.indent(3, loc.code.strip()))
                     return lines
@@ -1779,9 +1763,7 @@ class _ErrorSection(_BaseSection):
             "🔥 Execution Stack Trace",
         )
 
-    def _render_exception_entry(
-        self, idx: int, entry: ExceptionFailureInfo
-    ) -> list[str]:
+    def _render_exception_entry(self, idx: int, entry: ExceptionFailureInfo) -> list[str]:
         exc = entry.exception
         lines = [self.indent(1, f"[{idx}] {exc.__class__.__name__}: {exc}")]
         if entry.trace:
@@ -1874,17 +1856,12 @@ class _EffectUsageSection(_BaseSection):
             lines.append(
                 self.indent(
                     1,
-                    (
-                        f"[{idx}] {record.effect_type}"
-                        f"{key_text} (count={record.count})"
-                    ),
+                    (f"[{idx}] {record.effect_type}{key_text} (count={record.count})"),
                 )
             )
             context = record.first_context
             if context is not None:
-                lines.append(
-                    self.indent(2, context.format_location())
-                )
+                lines.append(self.indent(2, context.format_location()))
                 if context.code:
                     lines.append(self.indent(3, context.code))
             else:
@@ -1909,15 +1886,10 @@ class _EffectKeysSection(_BaseSection):
         for effect_type in ("Dep", "Ask"):
             keys = stats.keys_for(effect_type)
             if keys:
-                formatted = ", ".join(
-                    repr(key) if key is not None else "None"
-                    for key in keys
-                )
+                formatted = ", ".join(repr(key) if key is not None else "None" for key in keys)
             else:
                 formatted = "(no keys)"
-            lines.append(
-                self.indent(1, f"{effect_type} keys: {formatted}")
-            )
+            lines.append(self.indent(1, f"{effect_type} keys: {formatted}"))
 
         return lines
 
@@ -2070,6 +2042,7 @@ class RunResultDisplayRenderer:
 # Listen Result
 # ============================================
 
+
 @dataclass(frozen=True)
 class ListenResult:
     """Result from writer.listen effect."""
@@ -2082,9 +2055,7 @@ class ListenResult:
         return iter([self.value, self.log])
 
 
-def _intercept_value(
-    value: Any, transform: Callable[[Effect], Effect | Program]
-) -> Any:
+def _intercept_value(value: Any, transform: Callable[[Effect], Effect | Program]) -> Any:
     """Recursively intercept Programs embedded within ``value``."""
 
     from doeff.program import ProgramBase  # Local import to avoid circular dependency
@@ -2134,6 +2105,8 @@ def _wrap_callable(
         return _intercept_value(result, transform)
 
     return wrapper
+
+
 __all__ = [
     "NOTHING",
     "Effect",
@@ -2160,4 +2133,3 @@ __all__ = [
     "WStep",
     "trace_err",
 ]
-

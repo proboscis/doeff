@@ -103,7 +103,9 @@ class ProgramBuilder:
             raise ValueError("Either program_path or program_instance must be provided")
         return self._resolver.program(context.program_path, "--program")
 
-    def inject_envs(self, program: Program[Any], env_sources: list[str], *, report_verbose: bool) -> Program[Any]:
+    def inject_envs(
+        self, program: Program[Any], env_sources: list[str], *, report_verbose: bool
+    ) -> Program[Any]:
         if not env_sources:
             return program
 
@@ -119,18 +121,14 @@ class ProgramBuilder:
         local_effect = Local(merged_env_dict, program)
         return local_effect
 
-    def apply_kleisli(
-        self, program: Program[Any], context: ResolvedRunContext
-    ) -> Program[Any]:
+    def apply_kleisli(self, program: Program[Any], context: ResolvedRunContext) -> Program[Any]:
         if not context.apply_path:
             return program
         kleisli = self._resolver.kleisli(context.apply_path, "--apply")
         return kleisli(program)
 
     def apply_transformer(self, program: Program[Any], transform_path: str) -> Program[Any]:
-        transformer = self._resolver.transformer(
-            transform_path, f"transformer {transform_path}"
-        )
+        transformer = self._resolver.transformer(transform_path, f"transformer {transform_path}")
         return transformer(program)
 
 
@@ -221,9 +219,7 @@ class RunCommand:
             interpreter_obj = self._resolver.resolve(context.interpreter_path)
 
             if not callable(interpreter_obj):
-                raise TypeError(
-                    "--interpreter must resolve to a callable"
-                )
+                raise TypeError("--interpreter must resolve to a callable")
 
             result = _call_interpreter(interpreter_obj, program)
             final_value, run_result = _finalize_result(result)
@@ -361,9 +357,7 @@ def _import_symbol(path: str) -> Any:
         return _resolve_attr(module, attr_path)
     parts = path.split(".")
     if len(parts) < 2:
-        raise ValueError(
-            f"'{path}' is not a fully-qualified symbol. Use module.symbol format."
-        )
+        raise ValueError(f"'{path}' is not a fully-qualified symbol. Use module.symbol format.")
     module_name = ".".join(parts[:-1])
     attr_name = parts[-1]
     module = importlib.import_module(module_name)
@@ -378,13 +372,13 @@ def _resolve_attr(obj: Any, attr_path: str) -> Any:
 
 
 def _ensure_program(obj: Any, description: str) -> Program[Any]:
-    from doeff.types import Program
+    from doeff.types import EffectBase, Program
 
-    if isinstance(obj, Program):
+    if isinstance(obj, (Program, EffectBase)):
         return obj  # type: ignore[return-value]
     if callable(obj):
         produced = obj()
-        if isinstance(produced, Program):
+        if isinstance(produced, (Program, EffectBase)):
             return produced  # type: ignore[return-value]
     raise TypeError(f"{description} did not resolve to a Program instance.")
 
@@ -399,9 +393,11 @@ def _ensure_kleisli(obj: Any, description: str) -> Callable[[Program[Any]], Prog
 
 def _ensure_transformer(obj: Any, description: str) -> Callable[[Program[Any]], Program[Any]]:
     if callable(obj):
+
         def _wrapper(prog: Program[Any]) -> Program[Any]:
             result = obj(prog)
             return _ensure_program(result, description)
+
         return _wrapper
     raise TypeError(f"{description} is not callable and cannot transform a Program.")
 
@@ -586,7 +582,6 @@ def handle_run_code(args: argparse.Namespace) -> int:
         print("Error: No code provided", file=sys.stderr)
         return 1
 
-
     # Create runbox record before execution (if runbox CLI is available)
     skip_runbox = getattr(args, "no_runbox", False)
     maybe_create_runbox_record(skip_runbox=skip_runbox)
@@ -619,7 +614,6 @@ def handle_run(args: argparse.Namespace) -> int:
         print("Error: --program is required when not using -c", file=sys.stderr)
         return 1
 
-
     # Create runbox record before execution (if runbox CLI is available)
     skip_runbox = getattr(args, "no_runbox", False)
     maybe_create_runbox_record(skip_runbox=skip_runbox)
@@ -646,7 +640,9 @@ def handle_run(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="doeff", description="Utilities for working with doeff programs")
+    parser = argparse.ArgumentParser(
+        prog="doeff", description="Utilities for working with doeff programs"
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     run_parser = subparsers.add_parser(
@@ -771,6 +767,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         else:
             print(f"Error: {exc}", file=sys.stderr)
         return 1
+
 
 """
 Feature Update Plan:

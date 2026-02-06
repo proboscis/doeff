@@ -464,7 +464,7 @@ def task_scheduler_handler(effect: EffectBase, ctx: HandlerContext):
             if isinstance(item, SpawnEffect):
                 item = item.program  # Extract inner program
 
-            if isinstance(item, ProgramBase) and not isinstance(item, SpawnEffect):
+            if isinstance(item, (ProgramBase, EffectBase)) and not isinstance(item, SpawnEffect):
                 # Inline spawn logic - cannot yield SpawnEffect because it would
                 # go to outer handler (scheduler_state_handler) which doesn't handle it
                 task_id = uuid4()

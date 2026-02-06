@@ -35,7 +35,9 @@ if TYPE_CHECKING:
     from doeff.cesk.state import HandlerStack
 
 
-def _find_handler(effect_type: type, H: "HandlerStack", start_idx: int = 0) -> tuple[int, HandlerCtx] | None:
+def _find_handler(
+    effect_type: type, H: "HandlerStack", start_idx: int = 0
+) -> tuple[int, HandlerCtx] | None:
     """Find handler for effect type in H, starting from start_idx."""
     for i in range(start_idx, len(H)):
         h = H[i]
@@ -47,7 +49,7 @@ def _find_handler(effect_type: type, H: "HandlerStack", start_idx: int = 0) -> t
 
 def step(state: CESKState) -> StepResult:
     """V2 CESK+H step function.
-    
+
     K = Program continuation (user code generators only)
     H = Handler stack (separate from K)
     active_handler = Currently executing handler index (-1 = none)
@@ -57,7 +59,7 @@ def step(state: CESKState) -> StepResult:
     # ========================================
     # Terminal states (empty K, no active handler)
     # ========================================
-    
+
     if isinstance(C, Value) and not K and active == -1:
         if isinstance(C.v, PythonAsyncSyntaxEscape):
             return C.v
@@ -67,8 +69,17 @@ def step(state: CESKState) -> StepResult:
             result_store = v.store if v.store is not None else S
             result_env = v.env if v.env is not None else E
             if v.error is not None:
-                return CESKState(C=Error(v.error), E=result_env, S=result_store, K=list(v.k), H=H, active_handler=-1)
-            return CESKState(C=Value(v.value), E=result_env, S=result_store, K=list(v.k), H=H, active_handler=-1)
+                return CESKState(
+                    C=Error(v.error),
+                    E=result_env,
+                    S=result_store,
+                    K=list(v.k),
+                    H=H,
+                    active_handler=-1,
+                )
+            return CESKState(
+                C=Value(v.value), E=result_env, S=result_store, K=list(v.k), H=H, active_handler=-1
+            )
         return Done(C.v, S)
 
     if isinstance(C, Error) and not K and active == -1:
@@ -77,18 +88,19 @@ def step(state: CESKState) -> StepResult:
     # ========================================
     # Handler completing (active >= 0, K empty)
     # ========================================
-    
+
     if isinstance(C, Value) and not K and active >= 0:
         handler_ctx = H[active]
         value = C.v
-        
+
         # DirectState: pass through unchanged (direct jumps like Local, Listen, etc.)
         # The handler has already constructed the exact state to jump to
         from doeff.cesk.result import DirectState
+
         if isinstance(value, DirectState):
             inner = value.state
             new_handler = replace(handler_ctx, generator=None, captured_k=None)
-            new_H = H[:active] + [new_handler] + H[active+1:]
+            new_H = H[:active] + [new_handler] + H[active + 1 :]
             return CESKState(
                 C=inner.C,
                 E=inner.E,
@@ -97,13 +109,13 @@ def step(state: CESKState) -> StepResult:
                 H=new_H,
                 active_handler=-1,
             )
-        
+
         # Handler returned CESKState - use it to continue
         if isinstance(value, CESKState):
             # Restore K from handler's captured_k, merge with returned state
             restored_k = list(handler_ctx.captured_k) if handler_ctx.captured_k else []
             new_handler = replace(handler_ctx, generator=None, captured_k=None)
-            new_H = H[:active] + [new_handler] + H[active+1:]
+            new_H = H[:active] + [new_handler] + H[active + 1 :]
             return CESKState(
                 C=value.C,
                 E=value.E,
@@ -112,35 +124,53 @@ def step(state: CESKState) -> StepResult:
                 H=new_H,
                 active_handler=-1,
             )
-        
+
         # Handler returned ResumeK - switch continuation
         if isinstance(value, ResumeK):
             new_handler = replace(handler_ctx, generator=None, captured_k=None)
-            new_H = H[:active] + [new_handler] + H[active+1:]
+            new_H = H[:active] + [new_handler] + H[active + 1 :]
             result_store = value.store if value.store is not None else S
             result_env = value.env if value.env is not None else E
             if value.error is not None:
-                return CESKState(C=Error(value.error), E=result_env, S=result_store, K=list(value.k), H=new_H, active_handler=-1)
-            return CESKState(C=Value(value.value), E=result_env, S=result_store, K=list(value.k), H=new_H, active_handler=-1)
-        
+                return CESKState(
+                    C=Error(value.error),
+                    E=result_env,
+                    S=result_store,
+                    K=list(value.k),
+                    H=new_H,
+                    active_handler=-1,
+                )
+            return CESKState(
+                C=Value(value.value),
+                E=result_env,
+                S=result_store,
+                K=list(value.k),
+                H=new_H,
+                active_handler=-1,
+            )
+
         # Handler returned plain value - restore K and send value
         restored_k = list(handler_ctx.captured_k) if handler_ctx.captured_k else []
         new_handler = replace(handler_ctx, generator=None, captured_k=None)
-        new_H = H[:active] + [new_handler] + H[active+1:]
-        return CESKState(C=Value(value), E=handler_ctx.saved_env, S=S, K=restored_k, H=new_H, active_handler=-1)
+        new_H = H[:active] + [new_handler] + H[active + 1 :]
+        return CESKState(
+            C=Value(value), E=handler_ctx.saved_env, S=S, K=restored_k, H=new_H, active_handler=-1
+        )
 
     if isinstance(C, Error) and not K and active >= 0:
         # Handler raised error - restore K and propagate error
         handler_ctx = H[active]
         restored_k = list(handler_ctx.captured_k) if handler_ctx.captured_k else []
         new_handler = replace(handler_ctx, generator=None, captured_k=None)
-        new_H = H[:active] + [new_handler] + H[active+1:]
-        return CESKState(C=C, E=handler_ctx.saved_env, S=S, K=restored_k, H=new_H, active_handler=-1)
+        new_H = H[:active] + [new_handler] + H[active + 1 :]
+        return CESKState(
+            C=C, E=handler_ctx.saved_env, S=S, K=restored_k, H=new_H, active_handler=-1
+        )
 
     # ========================================
     # Effect handling
     # ========================================
-    
+
     if isinstance(C, EffectControl):
         effect = C.effect
 
@@ -154,12 +184,19 @@ def step(state: CESKState) -> StepResult:
             async def wrapped_action():
                 result = original_action()
                 import asyncio
+
                 if asyncio.iscoroutine(result):
                     value = await result
                 else:
                     value = result
                 # Return state WITHOUT H - caller will provide current H
-                return CESKState(C=Value(value), E=captured_E, S=captured_S, K=captured_K, active_handler=captured_active)
+                return CESKState(
+                    C=Value(value),
+                    E=captured_E,
+                    S=captured_S,
+                    K=captured_K,
+                    active_handler=captured_active,
+                )
 
             return PythonAsyncSyntaxEscape(action=wrapped_action)
 
@@ -173,8 +210,13 @@ def step(state: CESKState) -> StepResult:
                 handles=handles,
                 saved_env=E,
             )
+            inner = effect.program
+            if isinstance(inner, EffectBase):
+                inner_control = EffectControl(inner)
+            else:
+                inner_control = ProgramControl(inner)
             return CESKState(
-                C=ProgramControl(effect.program),
+                C=inner_control,
                 E=E,
                 S=S,
                 K=K,
@@ -184,6 +226,7 @@ def step(state: CESKState) -> StepResult:
 
         # PureEffect shortcut
         from doeff.effects.pure import PureEffect
+
         if isinstance(effect, PureEffect):
             return CESKState(C=Value(effect.value), E=E, S=S, K=K, H=H, active_handler=active)
 
@@ -193,16 +236,24 @@ def step(state: CESKState) -> StepResult:
 
         if match_result is None:
             from doeff.cesk_traceback import capture_traceback_safe
+
             unhandled_ex = UnhandledEffectError(f"No handler for {type(effect).__name__}")
             captured = capture_traceback_safe(K, unhandled_ex)
-            return CESKState(C=Error(unhandled_ex, captured_traceback=captured), E=E, S=S, K=K, H=H, active_handler=active)
+            return CESKState(
+                C=Error(unhandled_ex, captured_traceback=captured),
+                E=E,
+                S=S,
+                K=K,
+                H=H,
+                active_handler=active,
+            )
 
         handler_idx, handler_ctx = match_result
-        
+
         # Capture K into handler
         new_handler = replace(handler_ctx, captured_k=list(K))
-        new_H = H[:handler_idx] + [new_handler] + H[handler_idx+1:]
-        
+        new_H = H[:handler_idx] + [new_handler] + H[handler_idx + 1 :]
+
         ctx = HandlerContext(
             store=S,
             env=E,
@@ -212,10 +263,10 @@ def step(state: CESKState) -> StepResult:
             inherited_handlers=[],
             h=new_H,
         )
-        
+
         # Invoke handler
         handler_program = handler_ctx.handler(effect, ctx)
-        
+
         return CESKState(
             C=ProgramControl(handler_program),
             E=handler_ctx.saved_env,
@@ -228,7 +279,7 @@ def step(state: CESKState) -> StepResult:
     # ========================================
     # Program execution
     # ========================================
-    
+
     if isinstance(C, ProgramControl):
         program = C.program
         from doeff.cesk_traceback import capture_traceback_safe, pre_capture_generator
@@ -247,11 +298,17 @@ def step(state: CESKState) -> StepResult:
                 control = ProgramControl(item)
             else:
                 return CESKState(
-                    C=Error(InterpreterInvariantError(
-                        f"Program yielded unexpected type: {type(item).__name__}. "
-                        "Programs must yield Effect or Program instances only."
-                    )),
-                    E=E, S=S, K=K, H=H, active_handler=active,
+                    C=Error(
+                        InterpreterInvariantError(
+                            f"Program yielded unexpected type: {type(item).__name__}. "
+                            "Programs must yield Effect or Program instances only."
+                        )
+                    ),
+                    E=E,
+                    S=S,
+                    K=K,
+                    H=H,
+                    active_handler=active,
                 )
 
             kleisli_fn_name: str | None = None
@@ -259,7 +316,9 @@ def step(state: CESKState) -> StepResult:
             kleisli_lineno: int | None = None
             if program_call is not None:
                 kleisli_source = getattr(program_call, "kleisli_source", None)
-                original_func = getattr(kleisli_source, "original_func", None) if kleisli_source else None
+                original_func = (
+                    getattr(kleisli_source, "original_func", None) if kleisli_source else None
+                )
                 if original_func is not None and hasattr(original_func, "__code__"):
                     code = original_func.__code__
                     kleisli_fn_name = program_call.function_name
@@ -270,13 +329,17 @@ def step(state: CESKState) -> StepResult:
                 C=control,
                 E=E,
                 S=S,
-                K=[ReturnFrame(
-                    gen, E,
-                    program_call=program_call,
-                    kleisli_function_name=kleisli_fn_name,
-                    kleisli_filename=kleisli_filename,
-                    kleisli_lineno=kleisli_lineno,
-                )] + K,
+                K=[
+                    ReturnFrame(
+                        gen,
+                        E,
+                        program_call=program_call,
+                        kleisli_function_name=kleisli_fn_name,
+                        kleisli_filename=kleisli_filename,
+                        kleisli_lineno=kleisli_lineno,
+                    )
+                ]
+                + K,
                 H=H,
                 active_handler=active,
             )
@@ -284,12 +347,14 @@ def step(state: CESKState) -> StepResult:
             return CESKState(C=Value(e.value), E=E, S=S, K=K, H=H, active_handler=active)
         except Exception as ex:
             captured = capture_traceback_safe(K, ex, pre_captured=pre_captured)
-            return CESKState(C=Error(ex, captured_traceback=captured), E=E, S=S, K=K, H=H, active_handler=active)
+            return CESKState(
+                C=Error(ex, captured_traceback=captured), E=E, S=S, K=K, H=H, active_handler=active
+            )
 
     # ========================================
     # Value with non-empty K - send to continuation
     # ========================================
-    
+
     if isinstance(C, Value) and K:
         frame = K[0]
         K_rest = K[1:]
@@ -311,46 +376,67 @@ def step(state: CESKState) -> StepResult:
                     control = ProgramControl(item)
                 else:
                     return CESKState(
-                        C=Error(InterpreterInvariantError(
-                            f"Program yielded unexpected type: {type(item).__name__}. "
-                            "Programs must yield Effect or Program instances only."
-                        )),
-                        E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active,
+                        C=Error(
+                            InterpreterInvariantError(
+                                f"Program yielded unexpected type: {type(item).__name__}. "
+                                "Programs must yield Effect or Program instances only."
+                            )
+                        ),
+                        E=frame.saved_env,
+                        S=S,
+                        K=K_rest,
+                        H=H,
+                        active_handler=active,
                     )
 
                 return CESKState(
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(
-                        frame.generator, frame.saved_env,
-                        program_call=frame.program_call,
-                        kleisli_function_name=frame.kleisli_function_name,
-                        kleisli_filename=frame.kleisli_filename,
-                        kleisli_lineno=frame.kleisli_lineno,
-                    )] + K_rest,
+                    K=[
+                        ReturnFrame(
+                            frame.generator,
+                            frame.saved_env,
+                            program_call=frame.program_call,
+                            kleisli_function_name=frame.kleisli_function_name,
+                            kleisli_filename=frame.kleisli_filename,
+                            kleisli_lineno=frame.kleisli_lineno,
+                        )
+                    ]
+                    + K_rest,
                     H=H,
                     active_handler=active,
                 )
             except StopIteration as e:
-                return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active)
+                return CESKState(
+                    C=Value(e.value), E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active
+                )
             except Exception as ex:
                 captured = capture_traceback_safe(K_rest, ex, pre_captured=pre_captured)
-                return CESKState(C=Error(ex, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active)
+                return CESKState(
+                    C=Error(ex, captured_traceback=captured),
+                    E=frame.saved_env,
+                    S=S,
+                    K=K_rest,
+                    H=H,
+                    active_handler=active,
+                )
 
         # Legacy frame types (for backward compatibility during migration)
         from doeff.cesk.handler_frame import HandlerFrame, HandlerResultFrame
         from doeff.cesk.frames import Frame
-        
+
         if isinstance(frame, (HandlerFrame, HandlerResultFrame, Frame)):
             result = frame.on_value(C.v, E, S, K_rest)
             # Preserve H and active_handler
-            return CESKState(C=result.C, E=result.E, S=result.S, K=result.K, H=H, active_handler=active)
+            return CESKState(
+                C=result.C, E=result.E, S=result.S, K=result.K, H=H, active_handler=active
+            )
 
     # ========================================
     # Error with non-empty K - propagate through continuation
     # ========================================
-    
+
     if isinstance(C, Error) and K:
         frame = K[0]
         K_rest = K[1:]
@@ -372,43 +458,66 @@ def step(state: CESKState) -> StepResult:
                     control = ProgramControl(item)
                 else:
                     return CESKState(
-                        C=Error(InterpreterInvariantError(
-                            f"Program yielded unexpected type: {type(item).__name__}. "
-                            "Programs must yield Effect or Program instances only."
-                        )),
-                        E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active,
+                        C=Error(
+                            InterpreterInvariantError(
+                                f"Program yielded unexpected type: {type(item).__name__}. "
+                                "Programs must yield Effect or Program instances only."
+                            )
+                        ),
+                        E=frame.saved_env,
+                        S=S,
+                        K=K_rest,
+                        H=H,
+                        active_handler=active,
                     )
 
                 return CESKState(
                     C=control,
                     E=frame.saved_env,
                     S=S,
-                    K=[ReturnFrame(
-                        frame.generator, frame.saved_env,
-                        program_call=frame.program_call,
-                        kleisli_function_name=frame.kleisli_function_name,
-                        kleisli_filename=frame.kleisli_filename,
-                        kleisli_lineno=frame.kleisli_lineno,
-                    )] + K_rest,
+                    K=[
+                        ReturnFrame(
+                            frame.generator,
+                            frame.saved_env,
+                            program_call=frame.program_call,
+                            kleisli_function_name=frame.kleisli_function_name,
+                            kleisli_filename=frame.kleisli_filename,
+                            kleisli_lineno=frame.kleisli_lineno,
+                        )
+                    ]
+                    + K_rest,
                     H=H,
                     active_handler=active,
                 )
             except StopIteration as e:
-                return CESKState(C=Value(e.value), E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active)
+                return CESKState(
+                    C=Value(e.value), E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active
+                )
             except Exception as propagated:
                 captured = capture_traceback_safe(K_rest, propagated, pre_captured=pre_captured)
-                return CESKState(C=Error(propagated, captured_traceback=captured), E=frame.saved_env, S=S, K=K_rest, H=H, active_handler=active)
+                return CESKState(
+                    C=Error(propagated, captured_traceback=captured),
+                    E=frame.saved_env,
+                    S=S,
+                    K=K_rest,
+                    H=H,
+                    active_handler=active,
+                )
 
         # Legacy frame types
         from doeff.cesk.handler_frame import HandlerFrame, HandlerResultFrame
         from doeff.cesk.frames import Frame
-        
+
         if isinstance(frame, (HandlerFrame, HandlerResultFrame, Frame)):
             result = frame.on_error(C.ex, E, S, K_rest)
-            return CESKState(C=result.C, E=result.E, S=result.S, K=result.K, H=H, active_handler=active)
+            return CESKState(
+                C=result.C, E=result.E, S=result.S, K=result.K, H=H, active_handler=active
+            )
 
     head_desc = type(K[0]).__name__ if K else "empty"
-    raise InterpreterInvariantError(f"Unhandled state: C={type(C).__name__}, K head={head_desc}, active={active}")
+    raise InterpreterInvariantError(
+        f"Unhandled state: C={type(C).__name__}, K head={head_desc}, active={active}"
+    )
 
 
 __all__ = ["step"]

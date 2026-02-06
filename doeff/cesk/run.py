@@ -35,7 +35,9 @@ from doeff.cesk.handlers.atomic_handler import atomic_handler
 from doeff.cesk.handlers.cache_handler import cache_handler
 from doeff.cesk.handlers.core_handler import core_handler
 from doeff.cesk.handlers.graph_handler import graph_handler
-from doeff.cesk.handlers.python_async_syntax_escape_handler import python_async_syntax_escape_handler
+from doeff.cesk.handlers.python_async_syntax_escape_handler import (
+    python_async_syntax_escape_handler,
+)
 from doeff.cesk.handlers.scheduler_state_handler import (
     CURRENT_TASK_KEY,
     EXTERNAL_COMPLETION_QUEUE_KEY,
@@ -57,7 +59,7 @@ from doeff.cesk.runtime_result import (
     RuntimeResultImpl,
     build_stacks_from_captured_traceback,
 )
-from doeff.cesk.state import CESKState, Error, ProgramControl
+from doeff.cesk.state import CESKState, Control, EffectControl, Error, ProgramControl
 from doeff.cesk.step_v2 import step
 from doeff.program import Program
 
@@ -102,6 +104,7 @@ async_handlers_preset: list[Handler] = [
 # Run Functions
 # =============================================================================
 
+
 def sync_run(
     program: Program[T],
     handlers: list[Handler],
@@ -140,8 +143,15 @@ def sync_run(
 
     wrapped = _wrap_with_handlers(program, handlers)
 
+    from doeff._types_internal import EffectBase
+
+    if isinstance(wrapped, EffectBase):
+        initial_c: Control = EffectControl(wrapped)
+    else:
+        initial_c = ProgramControl(wrapped)
+
     state = CESKState(
-        C=ProgramControl(wrapped),
+        C=initial_c,
         E=frozen_env,
         S=final_store,
         K=[],
@@ -198,8 +208,15 @@ async def async_run(
 
     wrapped = _wrap_with_handlers(program, handlers)
 
+    from doeff._types_internal import EffectBase as _EB
+
+    if isinstance(wrapped, _EB):
+        _initial_c: Control = EffectControl(wrapped)
+    else:
+        _initial_c = ProgramControl(wrapped)
+
     state = CESKState(
-        C=ProgramControl(wrapped),
+        C=_initial_c,
         E=frozen_env,
         S=final_store,
         K=[],
@@ -225,6 +242,7 @@ async def async_run(
 # =============================================================================
 # Internal Helpers
 # =============================================================================
+
 
 def _wrap_with_handlers(program: Program[T], handlers: list[Handler]) -> Program[T]:
     """Wrap a program with the handler stack.
@@ -290,6 +308,7 @@ async def _async_run_until_done(state: CESKState) -> tuple[Any, CESKState]:
     - All coordination is handled by the scheduler via ExternalPromise + Wait
     """
     import os
+
     debug = os.environ.get("DOEFF_ASYNC_DEBUG", "").lower() in ("1", "true", "yes")
     step_count = 0
     while True:

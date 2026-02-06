@@ -58,9 +58,7 @@ impl PyVM {
     }
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        // Convert program to generator - handles KleisliProgramCall and other Program types
-        // Lenient: accepts raw generators for user convenience at the entry point.
-        let gen = self.to_generator_lenient(py, program.unbind())?;
+        let gen = self.to_generator_strict(py, program.unbind())?;
         let gen_bound = gen.bind(py).clone();
         self.start_with_generator(gen_bound)?;
 
@@ -96,7 +94,7 @@ impl PyVM {
         py: Python<'_>,
         program: Bound<'_, PyAny>,
     ) -> PyResult<PyRunResult> {
-        let gen = self.to_generator_lenient(py, program.unbind())?;
+        let gen = self.to_generator_strict(py, program.unbind())?;
         let gen_bound = gen.bind(py).clone();
         self.start_with_generator(gen_bound)?;
 
@@ -231,7 +229,7 @@ impl PyVM {
     }
 
     pub fn start_program(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<()> {
-        let gen = self.to_generator_lenient(py, program.unbind())?;
+        let gen = self.to_generator_strict(py, program.unbind())?;
         let gen_bound = gen.bind(py).clone();
         self.start_with_generator(gen_bound)?;
         Ok(())
@@ -394,29 +392,9 @@ impl PyVM {
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
             PythonCall::StartProgram { program } => {
-                // Try strict first (ProgramBase with to_generator method).
-                // If that fails (e.g. raw generator function), fall back to
-                // calling as a factory function. Raw generator objects are
-                // still rejected by to_generator_strict's explicit check.
-                match self.to_generator_strict(py, program.clone()) {
-                    Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
-                    Err(strict_err) => {
-                        // Fallback: call as generator factory function, but
-                        // only if the object is callable (rejects raw generator
-                        // objects which are not callable).
-                        let program_bound = program.bind(py);
-                        if program_bound.is_callable() {
-                            match program_bound.call0() {
-                                Ok(result) => {
-                                    Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
-                                }
-                                Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
-                            }
-                        } else {
-                            Err(strict_err)
-                        }
-                    }
-                }
+                // D5: Strict only — no callable fallback. Spec requires ProgramBase.
+                let gen = self.to_generator_strict(py, program)?;
+                Ok(PyCallOutcome::Value(Value::Python(gen)))
             }
             PythonCall::CallFunc { func, args } => {
                 let py_args = self.values_to_tuple(py, &args)?;
@@ -434,7 +412,7 @@ impl PyVM {
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
                     Ok(result) => {
-                        let gen = self.to_generator_lenient(py, result.unbind())?;
+                        let gen = self.to_generator_strict(py, result.unbind())?;
                         Ok(PyCallOutcome::Value(Value::Python(gen)))
                     }
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
@@ -475,18 +453,6 @@ impl PyVM {
                 "Expected ProgramBase (with to_generator method), got raw generator. \
                  Yield a ProgramBase object (e.g. decorated with @do) instead of a raw generator.",
             ));
-        }
-        let to_gen = program_bound.getattr("to_generator")?;
-        let gen = to_gen.call0()?;
-        Ok(gen.unbind())
-    }
-
-    /// Lenient: accepts raw generators or ProgramBase. Used for `run()` / `start_program`.
-    fn to_generator_lenient(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
-        let program_bound = program.bind(py);
-        let type_name = program_bound.get_type().name()?;
-        if type_name.to_string().contains("generator") {
-            return Ok(program);
         }
         let to_gen = program_bound.getattr("to_generator")?;
         let gen = to_gen.call0()?;
@@ -747,16 +713,8 @@ impl PyVM {
                         ControlPrimitive::PythonAsyncSyntaxEscape { action },
                     ));
                 }
-                // INV-17: Scheduler effects — must be classified BEFORE to_generator
-                // fallback because EffectBase extends ProgramBase (all effects have
-                // to_generator). Without these arms, scheduler effects would be
-                // misclassified as Yielded::Program, causing infinite loops.
-                //
-                // These are classified as Effect::Python (not Effect::Scheduler)
-                // because schedulers are user-space handlers (R5-C in SPEC-009).
-                // The Python scheduler handler receives the raw Python effect
-                // objects. The Rust SchedulerEffect enum is for Rust-internal
-                // operations only, not for classifying Python user-facing effects.
+                // D6: Scheduler effects classified as Effect::Scheduler per spec.
+                // Must be classified BEFORE to_generator fallback (EffectBase has to_generator).
                 "SpawnEffect"
                 | "SchedulerSpawn"
                 | "GatherEffect"
@@ -773,12 +731,15 @@ impl PyVM {
                 | "TaskCancelEffect"
                 | "TaskIsDoneEffect"
                 | "WaitForExternalCompletion" => {
-                    return Ok(Yielded::Effect(Effect::Python(obj.clone().unbind())));
+                    return Ok(Yielded::Effect(Effect::Scheduler(
+                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                    )));
                 }
                 _ => {
-                    // Catch internal _Scheduler* effects (EffectBase subclasses)
                     if type_str.starts_with("_Scheduler") {
-                        return Ok(Yielded::Effect(Effect::Python(obj.clone().unbind())));
+                        return Ok(Yielded::Effect(Effect::Scheduler(
+                            SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
+                        )));
                     }
                 }
             }
@@ -950,6 +911,51 @@ fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
 // PyRunResult — execution output [R8-J]
 // ---------------------------------------------------------------------------
 
+// D9: Ok/Err wrapper types for RunResult.result (spec says Ok(val)/Err(exc) objects)
+#[pyclass(frozen, name = "Ok")]
+pub struct PyResultOk {
+    value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyResultOk {
+    #[getter]
+    fn value(&self, py: Python<'_>) -> Py<PyAny> {
+        self.value.clone_ref(py)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let val_repr = self.value.bind(py).repr()?.to_string();
+        Ok(format!("Ok({})", val_repr))
+    }
+
+    fn __bool__(&self) -> bool {
+        true
+    }
+}
+
+#[pyclass(frozen, name = "Err")]
+pub struct PyResultErr {
+    error: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyResultErr {
+    #[getter]
+    fn error(&self, py: Python<'_>) -> Py<PyAny> {
+        self.error.clone_ref(py)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        let err_repr = self.error.bind(py).repr()?.to_string();
+        Ok(format!("Err({})", err_repr))
+    }
+
+    fn __bool__(&self) -> bool {
+        false
+    }
+}
+
 #[pyclass(frozen, name = "RunResult")]
 pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
@@ -958,7 +964,6 @@ pub struct PyRunResult {
 
 #[pymethods]
 impl PyRunResult {
-    /// Returns the Ok value or raises the stored exception.
     #[getter]
     fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
@@ -967,7 +972,6 @@ impl PyRunResult {
         }
     }
 
-    /// Returns the stored exception value, or raises ValueError if Ok.
     #[getter]
     fn error(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
@@ -978,34 +982,31 @@ impl PyRunResult {
         }
     }
 
-    /// Returns Ok(value) or Err(exception) as a Python tuple (tag, payload).
+    // D9: Returns Ok(value) or Err(exception) objects per SPEC-008.
     #[getter]
     fn result(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
             Ok(v) => {
-                let tuple = PyTuple::new(
+                let ok_obj = Bound::new(
                     py,
-                    [
-                        "ok".into_pyobject(py)?.into_any(),
-                        v.bind(py).clone().into_any(),
-                    ],
+                    PyResultOk {
+                        value: v.clone_ref(py),
+                    },
                 )?;
-                Ok(tuple.into())
+                Ok(ok_obj.into_any().unbind())
             }
             Err(e) => {
-                let tuple = PyTuple::new(
+                let err_obj = Bound::new(
                     py,
-                    [
-                        "err".into_pyobject(py)?.into_any(),
-                        e.exc_value.bind(py).clone().into_any(),
-                    ],
+                    PyResultErr {
+                        error: e.exc_value.clone_ref(py),
+                    },
                 )?;
-                Ok(tuple.into())
+                Ok(err_obj.into_any().unbind())
             }
         }
     }
 
-    /// State-only store snapshot (does not include env or logs).
     #[getter]
     fn raw_store(&self, py: Python<'_>) -> Py<PyAny> {
         self.raw_store.clone_ref(py).into_any()
@@ -1309,8 +1310,9 @@ fn async_run<'py>(
     ns.set_item("_args", args_tuple)?;
     ns.set_item("asyncio", asyncio)?;
 
-    // API-12: true async — yields to event loop via sleep(0) before sync execution.
-    // Pass ns as globals so nested async def can see asyncio, _run_fn, _args.
+    // G6/API-12: This is a sync wrapper with sleep(0), NOT truly async.
+    // SPEC-008 API-12 requires yielding to the event loop during execution,
+    // not just once before. Requires async-aware VM driver to fix properly.
     py.run(pyo3::ffi::c_str!(
         "async def _async_run_impl():\n    await asyncio.sleep(0)\n    return _run_fn(*_args)\n_coro = _async_run_impl()\n"
     ), Some(&ns), None)?;
@@ -1324,6 +1326,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyStdlib>()?;
     m.add_class::<PySchedulerHandler>()?;
     m.add_class::<PyRunResult>()?;
+    m.add_class::<PyResultOk>()?;
+    m.add_class::<PyResultErr>()?;
     m.add_class::<PyK>()?;
     m.add_class::<PyWithHandler>()?;
     m.add_class::<PyResume>()?;

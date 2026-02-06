@@ -49,15 +49,12 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         if key in ctx.env:
             env_value = ctx.env[key]
 
-            if isinstance(env_value, ProgramBase):
+            if isinstance(env_value, (ProgramBase, EffectBase)):
                 cache = store.get("__ask_lazy_cache__", {})
                 if key in cache:
                     cached_program, cached_value = cache[key]
                     if cached_value is _ASK_IN_PROGRESS:
-                        return CESKState.with_error(
-                            CircularAskError(key),
-                            ctx.env, store, ctx.k
-                        )
+                        return CESKState.with_error(CircularAskError(key), ctx.env, store, ctx.k)
                     if cached_program is env_value:
                         return CESKState.with_value(cached_value, ctx.env, store, ctx.k)
 
@@ -67,14 +64,19 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
                 new_cache = {**cache, key: (env_value, _ASK_IN_PROGRESS)}
                 new_store = {**store, "__ask_lazy_cache__": new_cache}
 
-                return DirectState(CESKState.with_program(
-                    env_value, ctx.env, new_store,
-                    [AskLazyFrame(ask_key=key, program=env_value)] + list(ctx.k)
-                ))
+                return DirectState(
+                    CESKState.with_program(
+                        env_value,
+                        ctx.env,
+                        new_store,
+                        [AskLazyFrame(ask_key=key, program=env_value)] + list(ctx.k),
+                    )
+                )
 
             return CESKState.with_value(env_value, ctx.env, store, ctx.k)
 
         from doeff.cesk.errors import MissingEnvKeyError
+
         return CESKState.with_error(MissingEnvKeyError(key), ctx.env, store, ctx.k)
 
     if isinstance(effect, LocalEffect):
@@ -84,10 +86,11 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         merged_env = FrozenDict({**ctx.env, **effect.env_update})
         local_frame = LocalRestoreFrame(saved_env=ctx.env)
 
-        return DirectState(CESKState.with_program(
-            effect.sub_program, merged_env, store,
-            [local_frame] + list(ctx.k)
-        ))
+        return DirectState(
+            CESKState.with_program(
+                effect.sub_program, merged_env, store, [local_frame] + list(ctx.k)
+            )
+        )
 
     if isinstance(effect, WriterListenEffect):
         from doeff.cesk.frames import ListenCaptureFrame
@@ -97,10 +100,9 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         log_start_index = len(current_log)
         listen_frame = ListenCaptureFrame(log_start_index=log_start_index)
 
-        return DirectState(CESKState.with_program(
-            effect.sub_program, ctx.env, store,
-            [listen_frame] + list(ctx.k)
-        ))
+        return DirectState(
+            CESKState.with_program(effect.sub_program, ctx.env, store, [listen_frame] + list(ctx.k))
+        )
 
     if isinstance(effect, ResultSafeEffect):
         result = yield with_safe(effect.sub_program)
@@ -149,7 +151,9 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
         if depth >= len(frames):
             return CESKState.with_error(
                 IndexError(f"Call stack depth {depth} exceeds available frames ({len(frames)})"),
-                ctx.env, store, ctx.k
+                ctx.env,
+                store,
+                ctx.k,
             )
 
         return CESKState.with_value(frames[depth], ctx.env, store, ctx.k)
@@ -170,7 +174,7 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
             return CESKState.with_value([], ctx.env, store, ctx.k)
 
         all_programs = all(
-            isinstance(item, ProgramBase) and not isinstance(item, SpawnEffect)
+            isinstance(item, (ProgramBase, EffectBase)) and not isinstance(item, SpawnEffect)
             for item in items
         )
         if all_programs:
@@ -183,10 +187,9 @@ def core_handler(effect: EffectBase, ctx: HandlerContext):
                 collected_results=[],
                 saved_env=ctx.env,
             )
-            return DirectState(CESKState.with_program(
-                first_prog, ctx.env, store,
-                [gather_frame] + list(ctx.k)
-            ))
+            return DirectState(
+                CESKState.with_program(first_prog, ctx.env, store, [gather_frame] + list(ctx.k))
+            )
 
         result = yield effect
         return result

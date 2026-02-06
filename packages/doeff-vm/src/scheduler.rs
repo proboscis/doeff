@@ -46,6 +46,10 @@ pub enum SchedulerEffect {
         task: TaskId,
         result: Result<Value, PyException>,
     },
+    // D6: Raw Python scheduler effect — classified as Effect::Scheduler for dispatch
+    // but field extraction deferred to handler start(). Bridges the gap between
+    // spec-mandated Effect::Scheduler classification and complex field extraction.
+    PythonSchedulerEffect(Py<PyAny>),
 }
 
 /// What a task can wait on.
@@ -241,16 +245,10 @@ impl SchedulerState {
                 }
             }
         }
-        // All items are done. Return as a Python-compatible list value.
-        // For now, return a simple representation. We'd need PyO3 for a real list.
-        // Use Value::Python with a list, but we can't create Py<PyAny> without GIL.
-        // So return a special encoding. For Rust-only tests, return the first result for single items,
-        // or Value::None for the list case (will be handled properly in integration).
         if results.len() == 1 {
             Some(results.into_iter().next().unwrap())
         } else {
-            // TODO: Create a proper list value when we have GIL access
-            Some(Value::None) // placeholder for list of results
+            Some(Value::List(results))
         }
     }
 
@@ -497,6 +495,14 @@ impl RustHandlerProgram for SchedulerProgram {
                 RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Transfer {
                     continuation: k_user,
                     value: Value::ExternalPromise(ExternalPromise { id: pid }),
+                }))
+            }
+
+            // D6: Raw Python scheduler effect — field extraction not yet implemented.
+            // TODO: Extract fields from Python object and dispatch to typed variants.
+            SchedulerEffect::PythonSchedulerEffect(py_obj) => {
+                RustProgramStep::Yield(Yielded::Primitive(ControlPrimitive::Delegate {
+                    effect: Effect::Python(py_obj),
                 }))
             }
         }
