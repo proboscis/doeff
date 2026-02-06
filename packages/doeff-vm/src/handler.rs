@@ -155,6 +155,7 @@ impl RustHandlerProgram for StateHandlerProgram {
                 RustProgramStep::NeedsPython(PythonCall::CallFunc {
                     func: modifier,
                     args: vec![old_value],
+                    kwargs: vec![],
                 })
             }
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
@@ -342,6 +343,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                 RustProgramStep::NeedsPython(PythonCall::CallFunc {
                     func: modifier,
                     args: vec![Value::Int(10)],
+                    kwargs: vec![],
                 })
             }
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
@@ -360,6 +362,7 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
                 RustProgramStep::NeedsPython(PythonCall::CallFunc {
                     func: modifier,
                     args: vec![value],
+                    kwargs: vec![],
                 })
             }
             DoubleCallPhase::AwaitingSecondResult { k, first_result } => {
