@@ -121,6 +121,20 @@ prog = with_handler(scheduler, user_program())
 - Rust `async` would complicate lifetime management with PyO3
 - Can add async Rust later if needed
 
+### ADR-4a: Asyncio Integration (Reference)
+
+**Decision**: Provide a Python-level async driver (`async_run` / `VM.run_async`) and the
+`PythonAsyncSyntaxEscape` control primitive for handlers that need `await`.
+
+**Rationale**:
+- Python's asyncio APIs require an `async def` context and a running event loop
+- Handlers execute during `step()` (synchronous) and cannot call asyncio directly
+- `PythonAsyncSyntaxEscape` lets handlers request "run this action in async context"
+- `sync_run`/`VM.run` remains the canonical path; `async_run` is a wrapper for interop
+
+**Invariant**: `sync_run` MUST NOT see `PythonAsyncSyntaxEscape` / `CallAsync`. It raises
+`TypeError` if it does.
+
 ### ADR-5: Typed Store with Escape Hatch
 
 **Decision**: Known VM state in typed Rust fields; user state in `HashMap<String, Value>`.
@@ -839,7 +853,8 @@ pub enum HandlerAction {
     Return { value: Value },
     
     /// Need to call Python before completing the handler action.
-    /// Used by Modify (calls modifier function), async escapes, etc.
+    /// Used by Modify (calls modifier function) or other stdlib handlers
+    /// that require Python execution. Async integration uses PythonAsyncSyntaxEscape.
     /// 
     /// After Python returns, VM will call handler.continue_after_python(result).
     /// NOTE: continue_after_python must return Resume/Transfer/Return (no nested NeedsPython).
@@ -1473,6 +1488,9 @@ to know what to do with the result. Different call types have different result h
 **GIL RULE**: The driver converts Python objects to `Value` before returning
 `PyCallOutcome::Value` to the VM. The VM never calls `Value::from_pyobject`.
 
+**ASYNC RULE**: `PythonAsyncSyntaxEscape` maps to `PythonCall::CallAsync` and
+`PendingPython::AsyncEscape`. Only async_run may execute CallAsync; sync_run errors.
+
 ```rust
 /// A pending call into Python code.
 /// 
@@ -1488,6 +1506,13 @@ pub enum PythonCall {
     
     /// Call a Python function for pure computation (non-program).
     CallFunc {
+        func: Py<PyAny>,
+        args: Vec<Value>,
+    },
+    
+    /// Call a Python function that returns an awaitable (async_run only).
+    /// Driver awaits the result and returns PyCallOutcome::Value.
+    CallAsync {
         func: Py<PyAny>,
         args: Vec<Value>,
     },
@@ -1559,6 +1584,9 @@ pub enum PendingPython {
         /// Context for continue_after_python
         context: HandlerContext,
     },
+    
+    /// PythonAsyncSyntaxEscape awaiting (async_run only)
+    AsyncEscape,
 }
 
 **Program Input Rule**: `StartProgram`, `CallHandler`, and `Yielded::Program`
@@ -1930,6 +1958,9 @@ pub enum StepEvent {
 
 **Note**: `Continue` means the VM made progress internally. The value being delivered is stored in `VM.mode`, not returned. This simplifies the state machine.
 
+**Async note**: `PythonCall::CallAsync` is only valid under `async_run` / `VM.run_async`.
+The sync driver must raise `TypeError` if it receives CallAsync.
+
 ### Mode (Internal State)
 
 ```rust
@@ -2016,14 +2047,16 @@ so no driver-side classification or GIL is required for those yields.
 `extract_control_primitive` uses `Handler::from_pyobject` to decode `WithHandler`
 and `CreateContinuation` handler arguments, and `Continuation::from_pyobject`
 to decode `Resume`/`Transfer`/`ResumeContinuation`.
+It also recognizes `PythonAsyncSyntaxEscape` and extracts the `action` callable.
 `extract_effect` recognizes built-in scheduler effect classes and maps them to
 `Effect::Scheduler`.
 
 ### PyCallOutcome (Python Call Results)
 
-**CRITICAL**: StartProgram/CallFunc/CallHandler and Gen* have different semantics:
+**CRITICAL**: StartProgram/CallFunc/CallAsync/CallHandler and Gen* have different semantics:
 - `StartProgram` returns a **Value** (Value::Python(generator) after to_generator())
 - `CallFunc` returns a **Value** (non-generator result)
+- `CallAsync` returns a **Value** (awaited result; async_run only)
 - `CallHandler` returns a **Value** (Value::Python(generator) after to_generator())
 - `GenNext/GenSend/GenThrow` interact with a running generator (yield/return/error)
 
@@ -2031,11 +2064,12 @@ to decode `Resume`/`Transfer`/`ResumeContinuation`.
 /// Result of executing a PythonCall.
 /// 
 /// IMPORTANT: This enum correctly separates:
-/// - StartProgram/CallFunc/CallHandler results (a Value)
+/// - StartProgram/CallFunc/CallAsync/CallHandler results (a Value)
 /// - Generator step results (yield/return/error)
 pub enum PyCallOutcome {
     /// StartProgram returns Value::Python(generator) after to_generator().
     /// CallFunc returns Value (non-generator).
+    /// CallAsync returns Value (awaited result).
     /// CallHandler returns Value::Python(generator) after to_generator().
     /// VM should push Frame::PythonGenerator with started=false for generator Values.
     /// The driver performs Python->Value conversion while holding the GIL.
@@ -2048,7 +2082,7 @@ pub enum PyCallOutcome {
     /// Generator returned via StopIteration.
     GenReturn(Value),
     
-    /// Generator (or StartProgram/CallFunc/CallHandler) raised an exception.
+    /// Generator (or StartProgram/CallFunc/CallAsync/CallHandler) raised an exception.
     GenError(PyException),
 }
 
@@ -2306,6 +2340,14 @@ impl VM {
                 self.mode = Mode::Throw(e);
             }
             
+            // === AsyncEscape: PythonAsyncSyntaxEscape awaited ===
+            (PendingPython::AsyncEscape, PyCallOutcome::Value(result)) => {
+                self.mode = Mode::Deliver(result);
+            }
+            (PendingPython::AsyncEscape, PyCallOutcome::GenError(e)) => {
+                self.mode = Mode::Throw(e);
+            }
+            
             // Unexpected combinations
             (pending, outcome) => {
                 panic!("Unexpected pending/outcome combination: {:?} / {:?}", pending, outcome);
@@ -2488,6 +2530,7 @@ def spawn_handler(effect, k_user):
 ## Driver Loop (PyO3 Side)
 
 The driver handles GIL boundaries and **classifies yielded values** before passing to VM.
+The sync driver is `run`; async integration is provided by `async_run` (see below).
 
 ```rust
 impl PyVM {
@@ -2529,9 +2572,10 @@ impl PyVM {
     
     /// Execute a Python call and return the outcome.
     /// 
-    /// CRITICAL: This correctly distinguishes StartProgram/CallFunc/CallHandler from Gen* results:
+    /// CRITICAL: This correctly distinguishes StartProgram/CallFunc/CallAsync/CallHandler from Gen* results:
     /// - StartProgram → Value::Python(generator)
     /// - CallFunc → Value (non-generator)
+    /// - CallAsync → Value (awaited result; async_run only)
     /// - CallHandler → Value::Python(generator) after to_generator()
     /// - Gen* → GenYield/GenReturn/GenError (generator step result)
     /// 
@@ -2559,6 +2603,12 @@ impl PyVM {
                         Ok(PyCallOutcome::GenError(PyException::from_pyerr(py, e)))
                     }
                 }
+            }
+            
+            PythonCall::CallAsync { .. } => {
+                Ok(PyCallOutcome::GenError(PyException::type_error(
+                    "CallAsync requires async_run (PythonAsyncSyntaxEscape handler)",
+                )))
             }
             
             PythonCall::CallHandler { handler, effect, continuation } => {
@@ -2658,6 +2708,97 @@ impl PyVM {
 
 ---
 
+## Asyncio Integration (Reference)
+
+This section mirrors SPEC-CESK-006's asyncio bridge, adapted to the Rust VM.
+The VM core remains synchronous; async integration is implemented by a driver
+wrapper and a handler that yields `PythonAsyncSyntaxEscape`.
+
+### Async Driver (async_run)
+
+`async_run` uses the same step loop but awaits `PythonCall::CallAsync` events.
+All other PythonCall variants are handled synchronously via `execute_python_call`.
+
+```python
+async def async_run(vm, program):
+    gen = program.to_generator()
+    vm.start_with_generator(gen)
+    while True:
+        event = vm.step()
+        if isinstance(event, Done):
+            return event.value
+        if isinstance(event, Error):
+            raise event.error
+        if isinstance(event, NeedsPython):
+            call = event.call
+            if isinstance(call, CallAsync):
+                outcome = await execute_python_call_async(call)
+            else:
+                outcome = execute_python_call(call)
+            vm.receive_python_result(outcome)
+        await asyncio.sleep(0)
+```
+
+`execute_python_call_async` is a thin wrapper:
+
+```python
+async def execute_python_call_async(call):
+    py_args = to_py_args(call.args)
+    awaitable = call.func(*py_args)
+    result = await awaitable
+    return PyCallOutcome.Value(Value.from_pyobject(result))
+```
+
+Argument conversion uses the same `Value` → Python path as `CallFunc`.
+
+### Await Effect (Reference)
+
+`Await(awaitable)` is a Python-level effect (see SPEC-EFF-005). The Rust VM
+treats it as `Effect::Python` and dispatches to user handlers.
+
+Two reference handlers are provided:
+- `sync_await_handler`: runs the awaitable in a background thread/executor and
+  resumes the continuation with the result.
+- `python_async_syntax_escape_handler`: yields `PythonAsyncSyntaxEscape` so
+  `async_run` can await in the event loop.
+
+```python
+@do
+def sync_await_handler(effect, k):
+    if isinstance(effect, Await):
+        promise = yield CreateExternalPromise()
+        thread_pool.submit(run_and_complete, effect.awaitable, promise)
+        return (yield Wait(promise.future))
+    return (yield Delegate(effect))
+```
+
+```python
+@do
+def python_async_syntax_escape_handler(effect, k):
+    if isinstance(effect, Await):
+        promise = yield CreateExternalPromise()
+        async def fire_task():
+            try:
+                result = await effect.awaitable
+                promise.complete(result)
+            except BaseException as exc:
+                promise.fail(exc)
+        yield PythonAsyncSyntaxEscape(
+            action=lambda: asyncio.create_task(fire_task())
+        )
+        return (yield Wait(promise.future))
+    return (yield Delegate(effect))
+```
+
+`python_async_syntax_escape_handler` must only be used with `async_run`;
+the sync driver raises `TypeError` if it sees `CallAsync`.
+
+**Usage**:
+- Sync: `vm.run(with_handler(sync_await_handler, program))`
+- Async: `await vm.run_async(with_handler(python_async_syntax_escape_handler, program))`
+
+---
+
 ## Control Primitives
 
 ```rust
@@ -2687,6 +2828,13 @@ pub enum ControlPrimitive {
         handler: Handler,
         program: Py<PyAny>,
     },
+
+    /// PythonAsyncSyntaxEscape(action) - Request async context execution.
+    /// Used by async_run to await Python coroutines.
+    PythonAsyncSyntaxEscape {
+        /// Callable returning an awaitable
+        action: Py<PyAny>,
+    },
     
     /// GetContinuation - Capture current continuation (callsite k_user)
     GetContinuation,
@@ -2714,6 +2862,9 @@ pub enum ControlPrimitive {
 **Note**: There is no `Return` control primitive. Handler return is implicit:
 when a handler program finishes, the VM applies `handle_handler_return(value)`
 semantics (return to caller; root handler return abandons callsite).
+
+**Async note**: `PythonAsyncSyntaxEscape` yields `PythonCall::CallAsync` via
+`handle_primitive`. It is only valid under `async_run` / `VM.run_async`.
 
 ---
 
@@ -3218,6 +3369,14 @@ impl VM {
                 self.pending_python = Some(PendingPython::StartProgramFrame);
                 StepEvent::NeedsPython(call)
             }
+            ControlPrimitive::PythonAsyncSyntaxEscape { action } => {
+                // Async-only escape to event loop
+                self.pending_python = Some(PendingPython::AsyncEscape);
+                StepEvent::NeedsPython(PythonCall::CallAsync {
+                    func: action,
+                    args: vec![],
+                })
+            }
             ControlPrimitive::GetContinuation => {
                 let Some(top) = self.dispatch_stack.last() else {
                     self.mode = Mode::Throw(PyException::runtime_error(
@@ -3603,7 +3762,7 @@ Python generators have three outcomes:
   raise exception → PyCallOutcome::GenError(exc)
     → Mode::Throw(exc)
 
-StartProgram/CallFunc/CallHandler return PyCallOutcome::Value(value) - NOT a generator step.
+StartProgram/CallFunc/CallAsync/CallHandler return PyCallOutcome::Value(value) - NOT a generator step.
 CallHandler returns Value::Python(generator) after to_generator().
 VM pushes Frame::PythonGenerator with started=false when value is Value::Python(generator).
 
@@ -3706,11 +3865,12 @@ doeff-vm/
 - [ ] Implement CreateContinuation/ResumeContinuation
 
 **Phase 5: Python Integration**
-- [ ] Implement PythonCall (StartProgram/CallFunc/GenNext/GenSend/GenThrow)
+- [ ] Implement PythonCall (StartProgram/CallFunc/CallAsync/GenNext/GenSend/GenThrow)
 - [ ] Implement PyCallOutcome handling (Value vs GenYield/GenReturn/GenError)
 - [ ] Implement Yielded::classify() in driver (with GIL)
 - [ ] Implement PyException wrapper
 - [ ] Implement PyVM driver loop (step_generator classifies yields)
+- [ ] Implement async_run driver loop (CallAsync handling)
 - [ ] Implement receive_python_result() (handles Value vs Gen* correctly)
 - [ ] Implement Effect/Continuation/Handler PyO3 wrappers
 - [ ] Expose built-in scheduler via `vm.scheduler()` (PyRustProgramHandler)
