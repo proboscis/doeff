@@ -40,6 +40,7 @@ pub enum PythonCall {
     CallFunc {
         func: Py<PyAny>,
         args: Vec<Value>,
+        kwargs: Vec<(String, Value)>,
     },
     CallHandler {
         handler: Py<PyAny>,

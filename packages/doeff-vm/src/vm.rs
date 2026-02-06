@@ -616,20 +616,15 @@ Yielded::DoCtrl(p) => match p {
                             // DoThunk path: f is a DoThunk, driver calls to_generator()
                             StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
                         } else {
-                            // Kernel path: driver calls f(*args, **kwargs), gets generator
-                            // Flatten kwargs into args for now (CallFunc takes Vec<Value>)
-                            let mut call_args = args;
-                            for (_key, val) in kwargs {
-                                call_args.push(val);
-                            }
                             StepEvent::NeedsPython(PythonCall::CallFunc {
                                 func: f,
-                                args: call_args,
+                                args,
+                                kwargs,
                             })
                         }
                     }
                     DoCtrl::Eval { expr, handlers } => {
-                        let cont = Continuation::create(expr, handlers);
+                        let cont = Continuation::create_unstarted(expr, handlers);
                         self.handle_resume_continuation(cont, Value::None)
                     }
                     DoCtrl::GetCallStack => {
@@ -1266,7 +1261,7 @@ Yielded::DoCtrl(p) => match p {
         program: Py<PyAny>,
         handlers: Vec<Handler>,
     ) -> StepEvent {
-        let k = Continuation::create(program, handlers);
+        let k = Continuation::create_unstarted(program, handlers);
         self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
@@ -1334,6 +1329,7 @@ impl Default for VM {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::CallMetadata;
 
     fn make_dummy_continuation() -> Continuation {
         Continuation {
@@ -2646,5 +2642,273 @@ mod tests {
             Some(handler_seg_id),
             "D10 REGRESSION: handle_handler_return must not explicitly jump current_segment"
         );
+    }
+
+    // ==========================================================
+    // R9-A: DoCtrl::Call — dual-path dispatch tests
+    // ==========================================================
+
+    /// R9-A: Call with empty args/kwargs → StartProgram (DoThunk path).
+    /// Spec: "DoThunk (no args): Call { f: thunk, args: [], kwargs: {}, metadata }
+    ///        → driver calls to_generator() on the thunk, pushes frame."
+    #[test]
+    fn test_r9a_call_empty_args_yields_start_program() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata {
+                function_name: "test_thunk".to_string(),
+                source_file: "test.py".to_string(),
+                source_line: 1,
+                program_call: None,
+            };
+
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+                f: dummy_f,
+                args: vec![],
+                kwargs: vec![],
+                metadata: metadata.clone(),
+            }));
+
+            let event = vm.step_handle_yield();
+
+            assert!(
+                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
+                "R9-A: empty args must yield StartProgram, got {:?}",
+                std::mem::discriminant(&event)
+            );
+
+            match &vm.pending_python {
+                Some(PendingPython::StartProgramFrame { metadata: Some(m) }) => {
+                    assert_eq!(m.function_name, "test_thunk");
+                }
+                other => panic!(
+                    "R9-A: pending_python must be StartProgramFrame with metadata, got {:?}",
+                    other
+                ),
+            }
+        });
+    }
+
+    /// R9-A: Call with non-empty args → CallFunc (Kernel path).
+    /// Spec: "Kernel call (with args): Call { f: kernel, args, kwargs, metadata }
+    ///        → driver calls kernel(*args, **kwargs), gets result, pushes frame."
+    #[test]
+    fn test_r9a_call_with_args_yields_call_func() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata {
+                function_name: "test_kernel".to_string(),
+                source_file: "test.py".to_string(),
+                source_line: 10,
+                program_call: None,
+            };
+
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+                f: dummy_f,
+                args: vec![Value::Int(42), Value::String("hello".to_string())],
+                kwargs: vec![],
+                metadata,
+            }));
+
+            let event = vm.step_handle_yield();
+
+            match event {
+                StepEvent::NeedsPython(PythonCall::CallFunc { args, .. }) => {
+                    assert_eq!(args.len(), 2);
+                    assert_eq!(args[0].as_int(), Some(42));
+                    match &args[1] {
+                        Value::String(s) => assert_eq!(s, "hello"),
+                        other => panic!("R9-A: expected String arg, got {:?}", other),
+                    }
+                }
+                other => panic!(
+                    "R9-A: non-empty args must yield CallFunc, got {:?}",
+                    std::mem::discriminant(&other)
+                ),
+            }
+        });
+    }
+
+    /// R9-A: Call with kwargs preserves them as separate field in CallFunc.
+    /// Spec: driver calls f(*args, **kwargs) — keyword semantics are preserved.
+    #[test]
+    fn test_r9a_call_kwargs_preserved_separately() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata {
+                function_name: "test_kwargs".to_string(),
+                source_file: "test.py".to_string(),
+                source_line: 20,
+                program_call: None,
+            };
+
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+                f: dummy_f,
+                args: vec![Value::Int(1)],
+                kwargs: vec![
+                    ("key1".to_string(), Value::Int(2)),
+                    ("key2".to_string(), Value::String("val".to_string())),
+                ],
+                metadata,
+            }));
+
+            let event = vm.step_handle_yield();
+
+            match event {
+                StepEvent::NeedsPython(PythonCall::CallFunc { args, kwargs, .. }) => {
+                    assert_eq!(args.len(), 1, "R9-A: positional args preserved separately");
+                    assert_eq!(args[0].as_int(), Some(1));
+
+                    assert_eq!(kwargs.len(), 2, "R9-A: kwargs preserved separately");
+                    assert_eq!(kwargs[0].0, "key1");
+                    assert_eq!(kwargs[0].1.as_int(), Some(2));
+                    assert_eq!(kwargs[1].0, "key2");
+                    match &kwargs[1].1 {
+                        Value::String(s) => assert_eq!(s, "val"),
+                        other => panic!("R9-A: expected String kwarg value, got {:?}", other),
+                    }
+                }
+                other => panic!(
+                    "R9-A: kwargs call must yield CallFunc, got {:?}",
+                    std::mem::discriminant(&other)
+                ),
+            }
+        });
+    }
+
+    /// R9-A: Call with only kwargs (no positional args) still takes Kernel path.
+    /// Empty args but non-empty kwargs → not DoThunk path.
+    #[test]
+    fn test_r9a_call_kwargs_only_takes_kernel_path() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_f = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata {
+                function_name: "test_kwargs_only".to_string(),
+                source_file: "test.py".to_string(),
+                source_line: 30,
+                program_call: None,
+            };
+
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+                f: dummy_f,
+                args: vec![],
+                kwargs: vec![("name".to_string(), Value::String("test".to_string()))],
+                metadata,
+            }));
+
+            let event = vm.step_handle_yield();
+
+            assert!(
+                matches!(event, StepEvent::NeedsPython(PythonCall::CallFunc { .. })),
+                "R9-A: kwargs-only call must yield CallFunc (not StartProgram), got {:?}",
+                std::mem::discriminant(&event)
+            );
+        });
+    }
+
+    // ==========================================================
+    // R9-H: DoCtrl::Eval — atomic Create + Resume tests
+    // ==========================================================
+
+    /// R9-H: Eval creates unstarted continuation and resumes it via handle_resume_continuation.
+    /// Result: NeedsPython(StartProgram { program: expr }) because unstarted continuation
+    /// has a program that needs to_generator() call.
+    #[test]
+    fn test_r9h_eval_creates_and_resumes_continuation() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
+
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                expr: dummy_expr,
+                handlers: vec![],
+            }));
+
+            let event = vm.step_handle_yield();
+
+            assert!(
+                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
+                "R9-H: Eval must create unstarted continuation and yield StartProgram, got {:?}",
+                std::mem::discriminant(&event)
+            );
+
+            assert!(
+                matches!(
+                    vm.pending_python,
+                    Some(PendingPython::StartProgramFrame { metadata: None })
+                ),
+                "R9-H: Eval continuation has no metadata (metadata comes from Call, not Eval)"
+            );
+        });
+    }
+
+    /// R9-H: Eval with handlers installs them on the continuation scope.
+    /// Handlers are installed as prompt+body segment pairs by handle_resume_continuation.
+    #[test]
+    fn test_r9h_eval_with_handlers_installs_scope() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
+
+            let handler =
+                Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                expr: dummy_expr,
+                handlers: vec![handler],
+            }));
+
+            let event = vm.step_handle_yield();
+
+            assert!(
+                matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })),
+                "R9-H: Eval with handlers must still yield StartProgram"
+            );
+
+            assert!(
+                !vm.handlers.is_empty(),
+                "R9-H: Eval with handlers must install handler entries"
+            );
+
+            assert_ne!(
+                vm.current_segment,
+                Some(seg_id),
+                "R9-H: Eval must change current_segment to the body segment of installed handlers"
+            );
+        });
     }
 }
