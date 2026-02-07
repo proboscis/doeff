@@ -11,13 +11,9 @@ The underscore prefix (_Scheduler*) signals internal/private use.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from doeff._types_internal import EffectBase
-
-if TYPE_CHECKING:
-    from doeff.cesk.frames import Kontinuation
-    from doeff.effects.spawn import Task
 
 T = TypeVar("T")
 
@@ -36,7 +32,7 @@ class _SchedulerEnqueueTask(EffectBase):
     """
 
     task_id: Any
-    k: Kontinuation
+    k: Any
     store_snapshot: dict[str, Any] | None = None
     program: Any | None = None
 
@@ -67,7 +63,7 @@ class _SchedulerRegisterWaiter(EffectBase):
 
     handle_id: Any
     waiter_task_id: Any
-    waiter_k: Kontinuation
+    waiter_k: Any
     waiter_store: dict[str, Any] | None = None
 
 

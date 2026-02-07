@@ -50,7 +50,7 @@ def with_snapshot():
 ### CaptureGraph - Get Final Graph
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def traced_program():
@@ -59,7 +59,7 @@ def traced_program():
     yield Step("step3")
     return "result"
 
-result = sync_run(traced_program(), sync_handlers_preset)
+result = run(traced_program(), default_handlers())
 # Graph is tracked during execution in result.raw_store.get("__graph__")
 ```
 
@@ -68,25 +68,25 @@ result = sync_run(traced_program(), sync_handlers_preset)
 ### Export to HTML
 
 ```python
-from doeff import graph_to_html, sync_run, sync_handlers_preset
+from doeff import graph_to_html, run, default_handlers
 
 # Run program with graph tracking
-result = sync_run(my_program(), sync_handlers_preset)
+result = run(my_program(), default_handlers())
 
 # Get graph from raw_store
 graph = result.raw_store.get("__graph__")
 if graph:
     # graph_to_html is a @do function, run it to get HTML
-    html_result = sync_run(graph_to_html(graph), sync_handlers_preset)
+    html_result = run(graph_to_html(graph), default_handlers())
     html = html_result.value
 ```
 
 ### Getting the Graph
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
-result = sync_run(my_program(), sync_handlers_preset)
+result = run(my_program(), default_handlers())
 
 # Access graph from raw_store
 graph = result.raw_store.get("__graph__")

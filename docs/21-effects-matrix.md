@@ -2,7 +2,7 @@
 
 This document provides a comprehensive overview of all effects defined in doeff, their handler implementations, and behavior with different handler presets.
 
-**Architecture Note:** `sync_run` and `async_run` are steppers that step through the CESK machine. The actual effect handling and scheduling is done by handlers. The columns below show behavior when using the corresponding handler preset.
+**Architecture Note:** `run` and `async_run` are steppers that step through the CESK machine. The actual effect handling and scheduling is done by handlers. The columns below show behavior when using the corresponding handler preset.
 
 ## Quick Reference
 
@@ -15,7 +15,7 @@ This document provides a comprehensive overview of all effects defined in doeff,
 
 ## Core Effects (Reader/State/Writer)
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `AskEffect` | `Ask(key)` | `core_handler` | Supported | Supported | Yes |
 | `LocalEffect` | `Local(env, program)` | `core_handler` | Supported | Supported | Yes |
@@ -37,9 +37,9 @@ def use_config():
     return config
 
 # Pass a Program as env value - evaluated lazily on first Ask
-result = sync_run(
+result = run(
     use_config(),
-    sync_handlers_preset,
+    default_handlers(),
     env={"config": expensive_computation()}  # Program, not value
 )
 ```
@@ -48,7 +48,7 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ## Control Flow Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `PureEffect` | `Pure(value)` | `core_handler` | Supported | Supported | Yes |
 | `ResultSafeEffect` | `Safe(program)` | `core_handler` | Supported | Supported | Yes |
@@ -56,13 +56,13 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ## IO Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `IOPerformEffect` | `IO(action)` | `core_handler` | Supported | Supported | Yes |
 
 ## Cache Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `CacheGetEffect` | `CacheGet(key)` | `core_handler` | Supported | Supported | Yes |
 | `CachePutEffect` | `CachePut(key, value)` | `core_handler` | Supported | Supported | Yes |
@@ -71,7 +71,7 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ## Time Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `DelayEffect` | `Delay(seconds)` | `core_handler` | Real `time.sleep` | Async `asyncio.sleep` | Yes |
 | `GetTimeEffect` | `GetTime()` | `core_handler` | Supported | Supported | Yes |
@@ -79,12 +79,12 @@ See [SPEC-EFF-001](../specs/effects/SPEC-EFF-001-reader.md) for details.
 
 ### Time Effect Handling Note
 
-- **sync_handlers_preset**: `core_handler` uses real wall-clock time
-- **async_handlers_preset**: Handler produces async escape, `async_run` awaits it
+- **default_handlers()**: `core_handler` uses real wall-clock time
+- **default_handlers()**: Handler produces async escape, `async_run` awaits it
 
 ## Concurrency Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `SpawnEffect` | `Spawn(program)` | `task_scheduler_handler` | Cooperative | asyncio.create_task | Yes |
 | `WaitEffect` | `Wait(future)` | `task_scheduler_handler` | Cooperative | Async | Yes |
@@ -130,7 +130,7 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 
 ### Concurrency Model Comparison
 
-| Aspect | async_handlers_preset | sync_handlers_preset |
+| Aspect | default_handlers() | default_handlers() |
 |--------|----------------------|----------------------|
 | `Spawn` | asyncio.create_task | Enqueue to `task_scheduler_handler` |
 | `Gather` | asyncio.gather (true parallel) | Cooperative interleaving |
@@ -140,21 +140,21 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 
 ## Atomic Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `AtomicGetEffect` | `AtomicGet(key)` | `core_handler` | Supported | Supported | Yes |
 | `AtomicUpdateEffect` | `AtomicUpdate(key, updater)` | `core_handler` | Supported | Supported | Yes |
 
 ## Debug/Introspection Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `ProgramCallFrameEffect` | `ProgramCallFrame(depth)` | `core_handler` | Supported | Supported | Yes |
 | `ProgramCallStackEffect` | `ProgramCallStack()` | `core_handler` | Supported | Supported | Yes |
 
 ## Graph Effects
 
-| Effect | Constructor | Handler | sync_handlers_preset | async_handlers_preset | Tested |
+| Effect | Constructor | Handler | default_handlers() | default_handlers() | Tested |
 |--------|-------------|---------|----------------------|------------------------|--------|
 | `GraphStepEffect` | `Step(value, meta)` | `core_handler` | Supported | Supported | Yes |
 | `GraphAnnotateEffect` | `Annotate(meta)` | `core_handler` | Supported | Supported | Yes |
@@ -165,10 +165,10 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 
 | Stepper | Handler Preset | Key Handlers |
 |---------|----------------|--------------|
-| `sync_run` | `sync_handlers_preset` | `core_handler`, `task_scheduler_handler`, `sync_await_handler` |
-| `async_run` | `async_handlers_preset` | `core_handler`, `task_scheduler_handler`, `python_async_syntax_escape_handler` |
+| `run` | `default_handlers()` | `core_handler`, `task_scheduler_handler`, `sync_await_handler` |
+| `async_run` | `default_handlers()` | `core_handler`, `task_scheduler_handler`, `python_async_syntax_escape_handler` |
 
-**Note:** The steppers (`sync_run`, `async_run`) just step through the CESK machine. All effect handling and scheduling logic is in the handlers.
+**Note:** The steppers (`run`, `async_run`) just step through the CESK machine. All effect handling and scheduling logic is in the handlers.
 
 ### Selection Guide
 
@@ -177,26 +177,26 @@ See [SPEC-EFF-005](../specs/effects/SPEC-EFF-005-concurrency.md) for details.
 | Production async code | `async_run` |
 | True parallel I/O | `async_run` |
 | Python coroutine interop (`Await`) | `async_run` |
-| Scripts, CLI tools | `sync_run` |
-| Concurrent tasks without asyncio | `sync_run` |
-| Testing with controlled time | `sync_run` with `__current_time__` in store |
-| Deterministic concurrent testing | `sync_run` |
+| Scripts, CLI tools | `run` |
+| Concurrent tasks without asyncio | `run` |
+| Testing with controlled time | `run` with `__current_time__` in store |
+| Deterministic concurrent testing | `run` |
 
 ## Handler Registration
 
 Default handlers are available via preset lists:
 
 ```python
-from doeff import sync_handlers_preset, async_handlers_preset
+from doeff import default_handlers, default_handlers
 
-# Use presets directly with sync_run/async_run
-result = sync_run(my_program(), sync_handlers_preset)
+# Use presets directly with run/async_run
+result = run(my_program(), default_handlers())
 ```
 
 Custom handlers can be prepended to presets:
 
 ```python
-from doeff import do, sync_run, sync_handlers_preset
+from doeff import do, run, default_handlers
 from doeff.cesk.handler_frame import HandlerContext
 from doeff.cesk.state import CESKState
 
@@ -209,18 +209,18 @@ def my_handler(effect, ctx: HandlerContext):
     return result
 
 # Prepend custom handler to preset
-handlers = [my_handler, *sync_handlers_preset]
-result = sync_run(my_program(), handlers)
+handlers = [my_handler, *default_handlers()]
+result = run(my_program(), handlers)
 ```
 
 ## RuntimeResult
 
-Both `sync_run()` and `async_run()` return `RuntimeResult[T]`:
+Both `run()` and `arun()` return `RuntimeResult[T]`:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
-result = sync_run(my_program(), sync_handlers_preset)
+result = run(my_program(), default_handlers())
 
 if result.is_ok():
     print(f"Success: {result.value}")

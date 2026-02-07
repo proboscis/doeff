@@ -36,8 +36,8 @@ from doeff.cache import (
     persistent_cache_path,
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
-from doeff.cesk.errors import MissingEnvKeyError
 from doeff.do import do
+from doeff.errors import MissingEnvKeyError
 from doeff.effects import (
     Annotate,
     Ask,
@@ -105,8 +105,8 @@ from doeff.graph_snapshot import (
 )
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program
-from doeff.rust_vm import async_run, default_handlers, run
 from doeff.run import ProgramRunResult, run_program
+from doeff.rust_vm import async_run, default_handlers, run
 from doeff.types import (
     DEFAULT_REPR_LIMIT,
     NOTHING,

@@ -335,5 +335,3 @@ When violations are found, the hook outputs:
 
 MIT License - see LICENSE file for details.
 
-
-

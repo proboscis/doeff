@@ -12,9 +12,9 @@ Public API:
 
 Example usage:
     from doeff.storage import SQLiteStorage
-    from doeff.cesk import run_sync
+    from doeff import run
 
-    result = run_sync(
+    result = run(
         my_workflow(),
         storage=SQLiteStorage("workflow.db"),
     )

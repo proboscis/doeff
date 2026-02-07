@@ -488,10 +488,10 @@ def test_effects_executed():
         yield Step("step1")
         return "result"
 
-    from doeff import sync_run, sync_handlers_preset
+    from doeff import run, default_handlers
 
     # Run with result
-    result = sync_run(program(), sync_handlers_preset)
+    result = run(program(), default_handlers())
 
     # Verify result
     assert result.is_ok()
@@ -502,7 +502,7 @@ def test_effects_executed():
 
 ```python
 from hypothesis import given, strategies as st
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @given(st.integers(min_value=0, max_value=1000))
 def test_counter_properties(initial_value):
@@ -513,7 +513,7 @@ def test_counter_properties(initial_value):
         result = yield Get("counter")
         return result
 
-    result = sync_run(counter_program(), sync_handlers_preset)
+    result = run(counter_program(), default_handlers())
 
     # Property: counter should always increment by 1
     assert result.value == initial_value + 1

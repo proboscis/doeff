@@ -231,7 +231,7 @@ def trackable_side_effects():
 Mock IO effects in tests by providing custom handlers:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 from doeff.program import Program
 
 # Create a mock IO handler
@@ -241,8 +241,8 @@ def mock_io_handler(effect, k, env, store):
     return None  # Not handled
 
 # Prepend custom handler to preset
-handlers = [mock_io_handler, *sync_handlers_preset]
-result = sync_run(my_program(), handlers)
+handlers = [mock_io_handler, *default_handlers()]
+result = run(my_program(), handlers)
 ```
 
 ### Console Output vs Log

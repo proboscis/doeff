@@ -83,7 +83,7 @@ class ExecutionContext:
 
 ### RuntimeResult[T]
 
-Result of Program execution returned by `sync_run()` and `async_run()`.
+Result of Program execution returned by `run()` and `arun()`.
 
 ```python
 class RuntimeResult[T](Protocol):
@@ -123,7 +123,7 @@ class RuntimeResult[T](Protocol):
 **Accessing logs and graph:**
 
 ```python
-result = sync_run(my_program(), sync_handlers_preset)
+result = run(my_program(), default_handlers())
 logs = result.raw_store.get("__log__", [])
 graph = result.raw_store.get("__graph__")
 ```
@@ -708,20 +708,20 @@ iproxy = program_to_iproxy_result(my_program())
 
 ## Execution
 
-### sync_run
+### run
 
 Executes Programs synchronously with cooperative scheduling.
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 # Run a program synchronously
-result = sync_run(my_program(), sync_handlers_preset)
+result = run(my_program(), default_handlers())
 
 # With initial environment and store
-result = sync_run(
+result = run(
     my_program(),
-    sync_handlers_preset,
+    default_handlers(),
     env={"key": "value"},
     store={"state": 0}
 )
@@ -730,7 +730,7 @@ result = sync_run(
 **Signature:**
 
 ```python
-def sync_run(
+def run(
     program: Program[T],
     handlers: list[Handler],
     env: dict | None = None,
@@ -741,7 +741,7 @@ def sync_run(
 **Parameters:**
 
 - **`program`** - Program to execute
-- **`handlers`** - List of effect handlers (use `sync_handlers_preset` for defaults)
+- **`handlers`** - List of effect handlers (use `default_handlers()` for defaults)
 - **`env`** (optional) - Initial environment (Reader effects)
 - **`store`** (optional) - Initial store (State effects)
 
@@ -756,15 +756,15 @@ def sync_run(
 Executes Programs asynchronously with real async I/O support.
 
 ```python
-from doeff import async_run, async_handlers_preset
+from doeff import async_run, default_handlers
 
 # Run a program asynchronously
-result = await async_run(my_program(), async_handlers_preset)
+result = await arun(my_program(), default_handlers())
 
 # With initial environment and store
-result = await async_run(
+result = await arun(
     my_program(),
-    async_handlers_preset,
+    default_handlers(),
     env={"key": "value"},
     store={"state": 0}
 )
@@ -773,7 +773,7 @@ result = await async_run(
 **Signature:**
 
 ```python
-async def async_run(
+async def arun(
     program: Program[T],
     handlers: list[Handler],
     env: dict | None = None,
@@ -784,7 +784,7 @@ async def async_run(
 **Parameters:**
 
 - **`program`** - Program to execute
-- **`handlers`** - List of effect handlers (use `async_handlers_preset` for defaults)
+- **`handlers`** - List of effect handlers (use `default_handlers()` for defaults)
 - **`env`** (optional) - Initial environment (Reader effects)
 - **`store`** (optional) - Initial store (State effects)
 
@@ -930,8 +930,8 @@ await write_graph_html(result.graph, "output.html")
 from doeff import do, Program
 
 # Execution
-from doeff import sync_run, sync_handlers_preset
-from doeff import async_run, async_handlers_preset
+from doeff import run, default_handlers
+from doeff import async_run, default_handlers
 
 # Basic Effects
 from doeff import Ask, Local, Get, Put, Modify, Log, Tell, Listen

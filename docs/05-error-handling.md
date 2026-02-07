@@ -14,12 +14,12 @@ This chapter covers doeff's error handling approach using the Result monad, the 
 
 ## RuntimeResult Protocol
 
-`sync_run()` and `async_run()` return a `RuntimeResult[T]`. This provides both the computation outcome and full debugging context.
+`run()` and `arun()` return a `RuntimeResult[T]`. This provides both the computation outcome and full debugging context.
 
 ### Basic Usage
 
 ```python
-from doeff import do, Log, Ask, sync_run, sync_handlers_preset
+from doeff import do, Log, Ask, run, default_handlers
 
 @do
 def my_program():
@@ -28,9 +28,9 @@ def my_program():
     return config["value"]
 
 def main():
-    result = sync_run(
+    result = run(
         my_program(),
-        sync_handlers_preset,
+        default_handlers(),
         env={"config": {"value": 42}}
     )
 
@@ -87,10 +87,10 @@ if result.is_ok:   # This is WRONG - always True!
 ### Pattern Matching
 
 ```python
-from doeff import Ok, Err, sync_run, sync_handlers_preset
+from doeff import Ok, Err, run, default_handlers
 
 def main():
-    result = sync_run(my_program(), sync_handlers_preset)
+    result = run(my_program(), default_handlers())
 
     match result.result:
         case Ok(value):
@@ -429,10 +429,10 @@ When errors occur, `RuntimeResult` provides three complementary stack traces for
 ### Accessing Stack Traces
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 def main():
-    result = sync_run(failing_program(), sync_handlers_preset)
+    result = run(failing_program(), default_handlers())
 
     if result.is_err():
         # Full formatted output
@@ -679,14 +679,14 @@ final_result = result.ok()
 
 | Approach | Purpose | When to Use |
 |----------|---------|-------------|
-| `RuntimeResult` | Get full execution context | Always returned from `sync_run()`/`async_run()` |
+| `RuntimeResult` | Get full execution context | Always returned from `run()`/`arun()` |
 | `raise` | Signal error | Validation, explicit failures |
 | `Safe(prog)` | Get Result type | Need Ok/Err inspection, error recovery |
 | `try/finally` | Ensure cleanup | Resource management |
 | Manual loop + Safe | Retry logic | Transient errors, network calls |
 
 **Key Principles:**
-- `sync_run()` and `async_run()` return `RuntimeResult` (not raw values)
+- `run()` and `arun()` return `RuntimeResult` (not raw values)
 - Use `is_ok()` / `is_err()` as **methods** (with parentheses!)
 - Use `result.value` to get the unwrapped value (raises on error)
 - Use `result.error` to get the exception (raises on success)
