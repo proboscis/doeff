@@ -11,10 +11,18 @@ use crate::py_shared::PyShared;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
-pub struct PyException {
-    pub exc_type: Py<PyAny>,
-    pub exc_value: Py<PyAny>,
-    pub exc_tb: Option<Py<PyAny>>,
+pub enum PyException {
+    Materialized {
+        exc_type: PyShared,
+        exc_value: PyShared,
+        exc_tb: Option<PyShared>,
+    },
+    RuntimeError {
+        message: String,
+    },
+    TypeError {
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +64,7 @@ pub enum PythonCall {
     },
     /// Generator throw — gen lives in PendingPython::StepUserGenerator (D1 Phase 2).
     GenThrow {
-        exc: PyShared,
+        exc: PyException,
     },
     CallAsync {
         func: PyShared,
@@ -105,6 +113,7 @@ pub enum DoCtrl {
     WithHandler {
         handler: Handler,
         expr: Py<PyAny>,
+        py_identity: Option<PyShared>,
     },
     Delegate {
         effect: Effect,
@@ -145,11 +154,47 @@ pub enum PyCallOutcome {
 
 impl PyException {
     pub fn new(exc_type: Py<PyAny>, exc_value: Py<PyAny>, exc_tb: Option<Py<PyAny>>) -> Self {
-        PyException {
-            exc_type,
-            exc_value,
-            exc_tb,
+        PyException::Materialized {
+            exc_type: PyShared::new(exc_type),
+            exc_value: PyShared::new(exc_value),
+            exc_tb: exc_tb.map(PyShared::new),
         }
+    }
+
+    pub fn runtime_error(message: impl Into<String>) -> Self {
+        PyException::RuntimeError {
+            message: message.into(),
+        }
+    }
+
+    pub fn type_error(message: impl Into<String>) -> Self {
+        PyException::TypeError {
+            message: message.into(),
+        }
+    }
+
+    pub fn value_clone_ref(&self, py: Python<'_>) -> Py<PyAny> {
+        match self {
+            PyException::Materialized { exc_value, .. } => exc_value.clone_ref(py),
+            PyException::RuntimeError { message } => {
+                pyo3::exceptions::PyRuntimeError::new_err(message.clone())
+                    .value(py)
+                    .clone()
+                    .into_any()
+                    .unbind()
+            }
+            PyException::TypeError { message } => {
+                pyo3::exceptions::PyTypeError::new_err(message.clone())
+                    .value(py)
+                    .clone()
+                    .into_any()
+                    .unbind()
+            }
+        }
+    }
+
+    pub fn to_pyerr(&self, py: Python<'_>) -> PyErr {
+        PyErr::from_value(self.value_clone_ref(py).bind(py).clone())
     }
 }
 
@@ -217,9 +262,14 @@ impl DoCtrl {
                 continuation: continuation.clone(),
                 value: value.clone(),
             },
-            DoCtrl::WithHandler { handler, expr } => DoCtrl::WithHandler {
+            DoCtrl::WithHandler {
+                handler,
+                expr,
+                py_identity,
+            } => DoCtrl::WithHandler {
                 handler: handler.clone(),
                 expr: expr.clone_ref(py),
+                py_identity: py_identity.clone(),
             },
             DoCtrl::Delegate { ref effect } => DoCtrl::Delegate {
                 effect: effect.clone(),
@@ -262,10 +312,22 @@ impl DoCtrl {
 
 impl PyException {
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
-        PyException {
-            exc_type: self.exc_type.clone_ref(py),
-            exc_value: self.exc_value.clone_ref(py),
-            exc_tb: self.exc_tb.as_ref().map(|t| t.clone_ref(py)),
+        match self {
+            PyException::Materialized {
+                exc_type,
+                exc_value,
+                exc_tb,
+            } => PyException::Materialized {
+                exc_type: PyShared::new(exc_type.clone_ref(py)),
+                exc_value: PyShared::new(exc_value.clone_ref(py)),
+                exc_tb: exc_tb.as_ref().map(|tb| PyShared::new(tb.clone_ref(py))),
+            },
+            PyException::RuntimeError { message } => PyException::RuntimeError {
+                message: message.clone(),
+            },
+            PyException::TypeError { message } => PyException::TypeError {
+                message: message.clone(),
+            },
         }
     }
 }
