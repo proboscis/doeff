@@ -193,19 +193,6 @@ class WaitForExternalCompletion(EffectBase):
     queue: Any  # queue.Queue - can't import due to circular deps
 
 
-# Backwards compatibility aliases (deprecated, will be removed in future version)
-QueueAdd = _SchedulerEnqueueTask
-QueuePop = _SchedulerDequeueTask
-RegisterWaiter = _SchedulerRegisterWaiter
-TaskComplete = _SchedulerTaskComplete
-CreateTaskHandle = _SchedulerCreateTaskHandle
-CancelTask = _SchedulerCancelTask
-CreatePromiseHandle = _SchedulerCreatePromise
-GetCurrentTaskId = _SchedulerGetCurrentTaskId
-TaskCompletedEffect = _SchedulerTaskCompleted
-GetTaskResult = _SchedulerGetTaskResult
-
-
 __all__ = [
     "_SchedulerCancelTask",
     "_SchedulerCreatePromise",
@@ -218,15 +205,4 @@ __all__ = [
     "_SchedulerTaskComplete",
     "_SchedulerTaskCompleted",
     "WaitForExternalCompletion",
-    # Backwards compatibility aliases (deprecated)
-    "CancelTask",
-    "CreatePromiseHandle",
-    "CreateTaskHandle",
-    "GetCurrentTaskId",
-    "GetTaskResult",
-    "QueueAdd",
-    "QueuePop",
-    "RegisterWaiter",
-    "TaskComplete",
-    "TaskCompletedEffect",
 ]
