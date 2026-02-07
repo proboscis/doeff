@@ -373,11 +373,9 @@ pub struct KpcHandlerFactory;
 
 impl RustProgramHandler for KpcHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(
-                effect,
-                Effect::Python(obj)
-                    if matches!(python_effect_type_name(obj).as_deref(), Some("KleisliProgramCall"))
-            )
+        effect.as_python().is_some_and(|obj| {
+            matches!(python_effect_type_name(obj).as_deref(), Some("KleisliProgramCall"))
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -517,22 +515,28 @@ impl RustHandlerProgram for KpcHandlerProgram {
         k: Continuation,
         _store: &mut RustStore,
     ) -> RustProgramStep {
-        match effect {
-            Effect::Python(obj) => match parse_kpc_python_effect(&obj) {
+        if let Some(obj) = effect.clone().into_python() {
+            return match parse_kpc_python_effect(&obj) {
                 Ok(Some(kpc)) => {
                     self.phase = KpcPhase::AwaitHandlers { k_user: k, kpc };
                     RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
                 }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::Python(obj),
+                    effect: Effect::python(obj.into_inner()),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse KleisliProgramCall effect: {msg}"
                 ))),
-            },
-            #[cfg(test)]
-            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+            };
         }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
     }
 
     fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
@@ -585,14 +589,12 @@ impl RustProgramHandler for StateHandlerFactory {
             return true;
         }
 
-        matches!(
-            effect,
-            Effect::Python(obj)
-                if matches!(
-                    python_effect_type_name(obj).as_deref(),
-                    Some("StateGetEffect" | "Get" | "StatePutEffect" | "Put" | "StateModifyEffect" | "Modify")
-                )
-        )
+        effect.as_python().is_some_and(|obj| {
+            matches!(
+                python_effect_type_name(obj).as_deref(),
+                Some("StateGetEffect" | "Get" | "StatePutEffect" | "Put" | "StateModifyEffect" | "Modify")
+            )
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -624,36 +626,39 @@ impl StateHandlerProgram {
 
 impl RustHandlerProgram for StateHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
-        match effect {
-            #[cfg(test)]
-            Effect::Get { key } => {
-                let value = store.get(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation: k,
-                    value,
-                }))
-            }
-            #[cfg(test)]
-            Effect::Put { key, value } => {
-                store.put(key, value);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation: k,
-                    value: Value::Unit,
-                }))
-            }
-            #[cfg(test)]
-            Effect::Modify { key, modifier } => {
-                let old_value = store.get(&key).cloned().unwrap_or(Value::None);
-                self.pending_key = Some(key);
-                self.pending_k = Some(k);
-                self.pending_old_value = Some(old_value.clone());
-                RustProgramStep::NeedsPython(PythonCall::CallFunc {
-                    func: modifier,
-                    args: vec![old_value],
-                    kwargs: vec![],
-                })
-            }
-            Effect::Python(obj) => match parse_state_python_effect(&obj) {
+        #[cfg(test)]
+        if let Effect::Get { key } = effect.clone() {
+            let value = store.get(&key).cloned().unwrap_or(Value::None);
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation: k,
+                value,
+            }));
+        }
+
+        #[cfg(test)]
+        if let Effect::Put { key, value } = effect.clone() {
+            store.put(key, value);
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation: k,
+                value: Value::Unit,
+            }));
+        }
+
+        #[cfg(test)]
+        if let Effect::Modify { key, modifier } = effect.clone() {
+            let old_value = store.get(&key).cloned().unwrap_or(Value::None);
+            self.pending_key = Some(key);
+            self.pending_k = Some(k);
+            self.pending_old_value = Some(old_value.clone());
+            return RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                func: modifier,
+                args: vec![old_value],
+                kwargs: vec![],
+            });
+        }
+
+        if let Some(obj) = effect.clone().into_python() {
+            return match parse_state_python_effect(&obj) {
                 Ok(Some(parsed)) => match parsed {
                     ParsedStateEffect::Get { key } => {
                         let value = store.get(&key).cloned().unwrap_or(Value::None);
@@ -682,15 +687,21 @@ impl RustHandlerProgram for StateHandlerProgram {
                     }
                 },
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::Python(obj),
+                    effect: Effect::python(obj.into_inner()),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse state effect: {msg}"
                 ))),
-            },
-            #[cfg(test)]
-            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+            };
         }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
     }
 
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
@@ -729,11 +740,9 @@ impl RustProgramHandler for ReaderHandlerFactory {
             return true;
         }
 
-        matches!(
-            effect,
-            Effect::Python(obj)
-                if matches!(python_effect_type_name(obj).as_deref(), Some("AskEffect" | "Ask"))
-        )
+        effect.as_python().is_some_and(|obj| {
+            matches!(python_effect_type_name(obj).as_deref(), Some("AskEffect" | "Ask"))
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -746,16 +755,17 @@ struct ReaderHandlerProgram;
 
 impl RustHandlerProgram for ReaderHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
-        match effect {
-            #[cfg(test)]
-            Effect::Ask { key } => {
-                let value = store.ask(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation: k,
-                    value,
-                }))
-            }
-            Effect::Python(obj) => match parse_reader_python_effect(&obj) {
+        #[cfg(test)]
+        if let Effect::Ask { key } = effect.clone() {
+            let value = store.ask(&key).cloned().unwrap_or(Value::None);
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation: k,
+                value,
+            }));
+        }
+
+        if let Some(obj) = effect.clone().into_python() {
+            return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => {
                     let value = store.ask(&key).cloned().unwrap_or(Value::None);
                     RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -764,15 +774,21 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     }))
                 }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::Python(obj),
+                    effect: Effect::python(obj.into_inner()),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse reader effect: {msg}"
                 ))),
-            },
-            #[cfg(test)]
-            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+            };
         }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore) -> RustProgramStep {
@@ -799,11 +815,12 @@ impl RustProgramHandler for WriterHandlerFactory {
             return true;
         }
 
-        matches!(
-            effect,
-            Effect::Python(obj)
-                if matches!(python_effect_type_name(obj).as_deref(), Some("WriterTellEffect" | "Tell"))
-        )
+        effect.as_python().is_some_and(|obj| {
+            matches!(
+                python_effect_type_name(obj).as_deref(),
+                Some("WriterTellEffect" | "Tell")
+            )
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -816,16 +833,17 @@ struct WriterHandlerProgram;
 
 impl RustHandlerProgram for WriterHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
-        match effect {
-            #[cfg(test)]
-            Effect::Tell { message } => {
-                store.tell(message);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    continuation: k,
-                    value: Value::Unit,
-                }))
-            }
-            Effect::Python(obj) => match parse_writer_python_effect(&obj) {
+        #[cfg(test)]
+        if let Effect::Tell { message } = effect.clone() {
+            store.tell(message);
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation: k,
+                value: Value::Unit,
+            }));
+        }
+
+        if let Some(obj) = effect.clone().into_python() {
+            return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
                     RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -834,15 +852,21 @@ impl RustHandlerProgram for WriterHandlerProgram {
                     }))
                 }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::Python(obj),
+                    effect: Effect::python(obj.into_inner()),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse writer effect: {msg}"
                 ))),
-            },
-            #[cfg(test)]
-            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+            };
         }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
     }
 
     fn resume(&mut self, value: Value, _: &mut RustStore) -> RustProgramStep {
@@ -1011,7 +1035,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
             let f = KpcHandlerFactory;
             assert!(
                 f.can_handle(&effect),
@@ -1034,7 +1058,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
 
             let program_ref = KpcHandlerFactory.create_program();
             let step = {
@@ -1077,7 +1101,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
             let f = StateHandlerFactory;
             assert!(
                 f.can_handle(&effect),
@@ -1152,7 +1176,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
 
             let program_ref = StateHandlerFactory.create_program();
             let step = {
@@ -1261,7 +1285,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
             let f = ReaderHandlerFactory;
             assert!(
                 f.can_handle(&effect),
@@ -1321,7 +1345,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
             let f = WriterHandlerFactory;
             assert!(
                 f.can_handle(&effect),
