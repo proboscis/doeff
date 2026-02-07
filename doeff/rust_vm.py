@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 import importlib
+import inspect
 from typing import Any
 
 
@@ -39,6 +41,22 @@ class _LegacyRunResult:
         return False
 
 
+class _TopLevelDoExpr:
+    def __init__(self, expr: Any):
+        self._expr = expr
+
+    def to_generator(self):
+        value = yield self._expr
+        return value
+
+
+def _normalize_program(program: Any) -> Any:
+    to_gen = inspect.getattr_static(program, "to_generator", None)
+    if callable(to_gen):
+        return program
+    return _TopLevelDoExpr(program)
+
+
 def default_handlers() -> list[Any]:
     vm = _vm()
     required = ("state", "reader", "writer")
@@ -59,29 +77,12 @@ def run(
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
 ) -> Any:
+    program = _normalize_program(program)
     vm = _vm()
     run_fn = getattr(vm, "run", None)
     if run_fn is None and hasattr(vm, "PyVM"):
-        if env is not None or store is not None:
-            raise RuntimeError("Installed doeff_vm legacy API does not support env/store seeding")
-        pyvm = vm.PyVM()
-        stdlib = pyvm.stdlib()
         selected = list(handlers) if handlers is not None else default_handlers()
-        for h in selected:
-            if h == "state":
-                _ = stdlib.state
-                stdlib.install_state(pyvm)
-            elif h == "reader":
-                _ = stdlib.reader
-                stdlib.install_reader(pyvm)
-            elif h == "writer":
-                _ = stdlib.writer
-                stdlib.install_writer(pyvm)
-            else:
-                raise RuntimeError(
-                    "Installed doeff_vm legacy API supports only default state/reader/writer handlers"
-                )
-        return _LegacyRunResult(pyvm.run(program))
+        return _run_legacy_pyvm(program, vm=vm, handlers=selected, env=env, store=store)
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose run()")
     selected_handlers = list(handlers) if handlers is not None else default_handlers()
@@ -94,16 +95,53 @@ async def async_run(
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
 ) -> Any:
+    program = _normalize_program(program)
     vm = _vm()
     run_fn = getattr(vm, "async_run", None)
     if run_fn is None and hasattr(vm, "PyVM"):
-        raise RuntimeError(
-            "Installed doeff_vm does not expose async_run(); rebuild extension with full API"
+        selected_handlers = list(handlers) if handlers is not None else default_handlers()
+        return await asyncio.to_thread(
+            _run_legacy_pyvm,
+            program,
+            vm=vm,
+            handlers=selected_handlers,
+            env=env,
+            store=store,
         )
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
     selected_handlers = list(handlers) if handlers is not None else default_handlers()
     return await run_fn(program, handlers=selected_handlers, env=env, store=store)
+
+
+def _run_legacy_pyvm(
+    program: Any,
+    *,
+    vm: Any,
+    handlers: Sequence[Any],
+    env: dict[str, Any] | None,
+    store: dict[str, Any] | None,
+) -> _LegacyRunResult:
+    if env is not None or store is not None:
+        raise RuntimeError("Installed doeff_vm legacy API does not support env/store seeding")
+
+    pyvm = vm.PyVM()
+    stdlib = pyvm.stdlib()
+    for h in handlers:
+        if h == "state":
+            _ = stdlib.state
+            stdlib.install_state(pyvm)
+        elif h == "reader":
+            _ = stdlib.reader
+            stdlib.install_reader(pyvm)
+        elif h == "writer":
+            _ = stdlib.writer
+            stdlib.install_writer(pyvm)
+        else:
+            raise RuntimeError(
+                "Installed doeff_vm legacy API supports only default state/reader/writer handlers"
+            )
+    return _LegacyRunResult(pyvm.run(program))
 
 
 def __getattr__(name: str) -> Any:

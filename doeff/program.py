@@ -253,6 +253,10 @@ class ProgramBase(ABC, Generic[T]):
 
         if name.startswith("__"):
             raise AttributeError(name)
+        if name == "to_generator":
+            # Preserve DoThunk detection semantics: objects without a real
+            # to_generator method must not fabricate one via projection.
+            raise AttributeError(name)
 
         def mapper(value: Any) -> Any:
             try:
@@ -460,7 +464,10 @@ class ProgramProtocol(Protocol[T]):
 
 @dataclass(frozen=True)
 class KleisliProgramCall(ProgramBase, Generic[T]):
-    """Bound invocation of a KleisliProgram with captured arguments."""
+    """Bound invocation of a KleisliProgram.
+
+    SPEC-TYPES-001: KPC is handler-dispatched (effect path), not a DoThunk.
+    """
 
     kleisli_source: Any  # KleisliProgram to execute
     args: tuple
@@ -470,97 +477,6 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
     created_at: Any = None
     auto_unwrap_strategy: _AutoUnwrapStrategy | None = None
     execution_kernel: Callable[..., Generator[Effect | Program, Any, T]] | None = None
-
-    def to_generator(self) -> Generator[Effect | Program, Any, T]:
-        """Create generator by invoking the captured Kleisli program."""
-
-        from doeff.effects import Gather
-
-        kleisli = self.kleisli_source
-        strategy = self.auto_unwrap_strategy
-        if strategy is None and kleisli is not None:
-            strategy = _build_auto_unwrap_strategy(kleisli)
-        if strategy is None:
-            strategy = _AutoUnwrapStrategy()
-
-        kernel = self.execution_kernel
-        if kernel is None and kleisli is not None:
-            kernel = getattr(kleisli, "func", None)
-        if kernel is None:
-            raise TypeError("Execution kernel unavailable for KleisliProgramCall")
-
-        args_tuple = self.args
-        kwargs_dict = self.kwargs
-
-        from doeff.types import EffectBase
-
-        def generator() -> Generator[Effect | Program, Any, T]:
-            resolvable = (ProgramBase, EffectBase)
-            program_args: list[ProgramBase[Any]] = []
-            program_indices: list[int] = []
-            regular_args: list[Any | None] = list(args_tuple)
-
-            for index, arg in enumerate(args_tuple):
-                should_unwrap = strategy.should_unwrap_positional(index)
-                if should_unwrap and isinstance(arg, resolvable):
-                    program_args.append(arg)
-                    program_indices.append(index)
-                    regular_args[index] = None
-                else:
-                    regular_args[index] = arg
-
-            program_kwargs: dict[str, ProgramBase[Any]] = {}
-            regular_kwargs: dict[str, Any] = {}
-
-            for key, value in kwargs_dict.items():
-                should_unwrap = strategy.should_unwrap_keyword(key)
-                if should_unwrap and isinstance(value, resolvable):
-                    program_kwargs[key] = value
-                else:
-                    regular_kwargs[key] = value
-
-            if program_args:
-                unwrapped_args = yield Gather(*program_args)
-                for idx, unwrapped_value in zip(program_indices, unwrapped_args, strict=False):
-                    regular_args[idx] = unwrapped_value
-
-            if program_kwargs:
-                keys = list(program_kwargs.keys())
-                values = yield Gather(*program_kwargs.values())
-                unwrapped_kwargs = dict(zip(keys, values, strict=False))
-                regular_kwargs.update(unwrapped_kwargs)
-
-            final_args = tuple(regular_args)
-            result = kernel(*final_args, **regular_kwargs)
-
-            if isinstance(result, (ProgramBase, EffectBase)):
-                resolved = yield result
-                return resolved
-
-            generator_obj = result
-            try:
-                current = next(generator_obj)
-            except StopIteration as stop_exc:
-                return stop_exc.value
-
-            while True:
-                try:
-                    sent_value = yield current
-                except GeneratorExit:
-                    generator_obj.close()
-                    raise
-                except BaseException as e:
-                    try:
-                        current = generator_obj.throw(e)
-                    except StopIteration as stop_exc:
-                        return stop_exc.value
-                    continue
-                try:
-                    current = generator_obj.send(sent_value)
-                except StopIteration as stop_exc:
-                    return stop_exc.value
-
-        return generator()
 
     @classmethod
     def create_from_kleisli(
