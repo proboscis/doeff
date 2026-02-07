@@ -50,13 +50,7 @@ class RuntimeAdapter:
         """
         if self.mode == "sync":
             return run(program, handlers=default_handlers(), env=env, store=state)
-        else:
-            try:
-                return await async_run(program, handlers=default_handlers(), env=env, store=state)
-            except RuntimeError as exc:
-                if "does not expose async_run" in str(exc):
-                    return run(program, handlers=default_handlers(), env=env, store=state)
-                raise
+        return await async_run(program, handlers=default_handlers(), env=env, store=state)
 
 
 @pytest.fixture
