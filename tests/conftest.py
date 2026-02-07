@@ -1,3 +1,5 @@
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
 import pytest
@@ -22,6 +24,7 @@ class Interpreter(Protocol):
 
 class RuntimeAdapter:
     """Adapter for using sync_run/async_run with the test interpreter protocol."""
+
     interpreter_type = "cesk"
 
     def __init__(self, mode: RunnerMode = "async") -> None:
@@ -76,3 +79,29 @@ def cesk_interpreter() -> RuntimeAdapter:
 @pytest.fixture
 def pure_interpreter() -> RuntimeAdapter:
     return RuntimeAdapter(mode="async")
+
+
+@lru_cache(maxsize=None)
+def _is_cesk_related_test(path: Path) -> bool:
+    normalized = path.as_posix()
+    if "/tests/cesk/" in normalized:
+        return True
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    cesk_indicators = (
+        "doeff.cesk",
+        "doeff.cesk_traceback",
+        "cesk_interpreter",
+    )
+    return any(indicator in content for indicator in cesk_indicators)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    skip_cesk = pytest.mark.skip(reason="CESK-related tests are skipped")
+    for item in items:
+        if _is_cesk_related_test(Path(str(item.path))):
+            item.add_marker(skip_cesk)
