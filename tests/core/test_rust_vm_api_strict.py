@@ -57,3 +57,19 @@ def test_run_normalizes_top_level_expr(monkeypatch: pytest.MonkeyPatch) -> None:
     result = rust_vm_module.run(Program.pure(2), handlers=[])
     assert result == "ok"
     assert hasattr(captured["program"], "to_generator")
+
+
+def test_run_rejects_non_program_object(monkeypatch: pytest.MonkeyPatch) -> None:
+    called = {"run": False}
+
+    def fake_run(*args: object, **kwargs: object) -> str:
+        called["run"] = True
+        return "ok"
+
+    fake_vm = SimpleNamespace(run=fake_run, state=object(), reader=object(), writer=object())
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
+    with pytest.raises(TypeError, match="program must expose to_generator"):
+        rust_vm_module.run(object(), handlers=[])
+
+    assert called["run"] is False

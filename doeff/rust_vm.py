@@ -23,7 +23,11 @@ def _normalize_program(program: Any) -> Any:
     to_gen = inspect.getattr_static(program, "to_generator", None)
     if callable(to_gen):
         return program
-    return _TopLevelDoExpr(program)
+    from doeff.types import EffectBase
+
+    if isinstance(program, EffectBase):
+        return _TopLevelDoExpr(program)
+    raise TypeError("program must expose to_generator")
 
 
 def default_handlers() -> list[Any]:

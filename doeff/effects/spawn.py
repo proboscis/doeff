@@ -11,7 +11,6 @@ Design Decisions (from spec):
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from typing import Any, Generic, Literal, TypeVar, runtime_checkable, Protocol
 
@@ -30,8 +29,7 @@ T_co = TypeVar("T_co", covariant=True)
 @runtime_checkable
 class Waitable(Protocol[T_co]):
     @property
-    def _handle(self) -> Any:
-        ...
+    def _handle(self) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -50,28 +48,6 @@ class Promise(Generic[T]):
     def future(self) -> Future[T]:
         return Future(_handle=self._promise_handle)
 
-    def complete(self, value: T) -> None:
-        warnings.warn(
-            "Promise.complete() is deprecated. Use 'yield CompletePromise(promise, value)' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if self._completed:
-            raise RuntimeError("Promise already completed")
-        self._value = value
-        self._completed = True
-
-    def fail(self, error: BaseException) -> None:
-        warnings.warn(
-            "Promise.fail() is deprecated. Use 'yield FailPromise(promise, error)' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if self._completed:
-            raise RuntimeError("Promise already completed")
-        self._error = error
-        self._completed = True
-
     @property
     def is_completed(self) -> bool:
         return self._completed
@@ -87,7 +63,7 @@ class Promise(Generic[T]):
 
 class TaskCancelledError(Exception):
     """Raised when joining a cancelled task.
-    
+
     Following asyncio conventions, this is raised when:
     - cancel() was called on the task
     - The task was awaited via join()
@@ -97,7 +73,7 @@ class TaskCancelledError(Exception):
 @dataclass(frozen=True)
 class SpawnEffect(EffectBase):
     """Spawn execution of a program and return a Task handle.
-    
+
     The spawned program runs in the background with an isolated snapshot
     of the current store. Changes made by the spawned task do not affect
     the parent's store.
@@ -126,28 +102,19 @@ class Task(Generic[T]):
     _handle: Any = field(repr=False)
     _env_snapshot: dict[Any, Any] = field(default_factory=dict, repr=False, hash=False)
     _state_snapshot: dict[str, Any] = field(default_factory=dict, repr=False, hash=False)
-    
+
     def __hash__(self) -> int:
         return hash(self._handle)
 
-    def join(self) -> Effect:
-        warnings.warn(
-            "task.join() is deprecated. Use 'yield Wait(task)' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        from .wait import WaitEffect
-        return create_effect_with_trace(WaitEffect(future=self), skip_frames=3)
-
     def cancel(self) -> Effect:
         """Request cancellation of the task.
-        
+
         This is a synchronous operation that merely requests cancellation.
         The task may take time to actually cancel. Following asyncio conventions:
         - cancel() returns immediately
         - The task may continue running until its next yield point
         - join() on a cancelled task raises TaskCancelledError
-        
+
         Returns:
             Effect that yields True if cancellation was requested successfully,
             False if the task has already completed.
@@ -156,9 +123,9 @@ class Task(Generic[T]):
 
     def is_done(self) -> Effect:
         """Check if the task has completed (success, error, or cancelled).
-        
+
         This is a non-blocking check that returns immediately.
-        
+
         Returns:
             Effect that yields True if the task is done, False otherwise.
         """
@@ -173,9 +140,7 @@ class TaskCancelEffect(EffectBase):
 
     def __post_init__(self) -> None:
         if not isinstance(self.task, Task):
-            raise TypeError(
-                f"task must be Task, got {type(self.task).__name__}"
-            )
+            raise TypeError(f"task must be Task, got {type(self.task).__name__}")
 
 
 @dataclass(frozen=True)
@@ -186,9 +151,7 @@ class TaskIsDoneEffect(EffectBase):
 
     def __post_init__(self) -> None:
         if not isinstance(self.task, Task):
-            raise TypeError(
-                f"task must be Task, got {type(self.task).__name__}"
-            )
+            raise TypeError(f"task must be Task, got {type(self.task).__name__}")
 
 
 def spawn(
@@ -198,12 +161,12 @@ def spawn(
     **options: Any,
 ) -> SpawnEffect:
     """Spawn a program as a background task.
-    
+
     Args:
         program: The program to run in the background.
         preferred_backend: Optional backend hint ("thread", "process", or "ray").
         **options: Additional backend-specific options.
-    
+
     Returns:
         SpawnEffect that yields a Task handle when executed.
     """
@@ -223,12 +186,12 @@ def Spawn(
     **options: Any,
 ) -> Effect:
     """Spawn a program as a background task (capitalized alias).
-    
+
     Args:
         program: The program to run in the background.
         preferred_backend: Optional backend hint ("thread", "process", or "ray").
         **options: Additional backend-specific options.
-    
+
     Returns:
         Effect that yields a Task handle when executed.
     """
