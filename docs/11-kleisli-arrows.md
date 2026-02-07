@@ -109,7 +109,7 @@ KleisliProgram supports functional composition.
 Chain computations with `and_then_k` (or `>>`):
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def fetch_user(user_id: int):
@@ -125,7 +125,7 @@ def fetch_posts(user: dict):
 fetch_user_posts = fetch_user.and_then_k(lambda user: fetch_posts(user))
 # Or: fetch_user_posts = fetch_user >> fetch_posts
 
-result = sync_run(fetch_user_posts(123), sync_handlers_preset)
+result = run(fetch_user_posts(123), default_handlers())
 # Result: [{"id": 1, "title": "Post 1"}, {"id": 2, "title": "Post 2"}]
 ```
 
@@ -156,7 +156,7 @@ pipeline = (
     >> (lambda d: process_data(d))
 )
 
-result = sync_run(pipeline("data.json"), sync_handlers_preset)
+result = run(pipeline("data.json"), default_handlers())
 # Result: {"result": 15}
 ```
 
@@ -172,7 +172,7 @@ def get_user():
 # Extract just the name
 get_name = get_user.fmap(lambda user: user["name"])
 
-result = sync_run(get_name(), sync_handlers_preset)
+result = run(get_name(), default_handlers())
 # Result: "Alice"
 ```
 
@@ -190,7 +190,7 @@ pipeline = (
     .and_then_k(lambda x: Program.pure(x + 10))  # 94
 )
 
-result = sync_run(pipeline(), sync_handlers_preset)
+result = run(pipeline(), default_handlers())
 # Result: 94
 ```
 
@@ -209,7 +209,7 @@ def greet(greeting: str, name: str):
 # Partially apply greeting
 say_hello = greet.partial("Hello")
 
-result = sync_run(say_hello("Alice"), sync_handlers_preset)
+result = run(say_hello("Alice"), default_handlers())
 # Result: "Hello, Alice!"
 ```
 
@@ -253,7 +253,7 @@ def use_multipliers():
 KleisliProgram works as a method decorator:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 class UserService:
     @do
@@ -269,7 +269,7 @@ class UserService:
         return updated
 
 service = UserService()
-result = sync_run(service.get_user(123), sync_handlers_preset)
+result = run(service.get_user(123), default_handlers())
 ```
 
 ### Higher-Order Functions
@@ -295,7 +295,7 @@ def example():
 ### Factory Pattern
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 def create_processor(config: dict) -> KleisliProgram:
     """Factory that creates a configured KleisliProgram"""
@@ -318,7 +318,7 @@ def create_processor(config: dict) -> KleisliProgram:
 positive_doubler = create_processor({"filter": True, "double": True})
 simple_filter = create_processor({"filter": True})
 
-result = sync_run(positive_doubler([1, -2, 3, -4, 5]), sync_handlers_preset)
+result = run(positive_doubler([1, -2, 3, -4, 5]), default_handlers())
 # Result: [2, 6, 10]
 ```
 

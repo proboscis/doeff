@@ -19,7 +19,7 @@ Reader effects provide read-only access to an environment/configuration that flo
 `Ask(key)` retrieves a value from the environment:
 
 ```python
-from doeff import do, Ask, Log, sync_run, sync_handlers_preset
+from doeff import do, Ask, Log, run, default_handlers
 
 @do
 def connect_to_database():
@@ -30,9 +30,9 @@ def connect_to_database():
 
 # Run with environment
 def main():
-    result = sync_run(
+    result = run(
         connect_to_database(),
-        sync_handlers_preset,
+        default_handlers(),
         env={
             "database_url": "postgresql://localhost/mydb",
             "timeout": 30
@@ -61,7 +61,7 @@ def requires_config():
     return timeout
 
 # Provide required keys via env parameter
-result = sync_run(requires_config(), sync_handlers_preset, env={"timeout": 30})
+result = run(requires_config(), default_handlers(), env={"timeout": 30})
 ```
 
 ### Lazy Program Evaluation in Environment
@@ -82,9 +82,9 @@ def use_config():
     return config
 
 # Pass a Program as the env value - evaluated lazily on first Ask
-result = sync_run(
+result = run(
     use_config(),
-    sync_handlers_preset,
+    default_handlers(),
     env={"config": expensive_computation()}  # Program, not value
 )
 ```
@@ -134,7 +134,7 @@ def fetch_data():
 ### Reader Pattern Example
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def application():
@@ -149,9 +149,9 @@ def application():
 
 # Initialize with config
 def main():
-    result = sync_run(
+    result = run(
         application(),
-        sync_handlers_preset,
+        default_handlers(),
         env={"config": {"option1": "value1", "option2": "value2"}}
     )
     print(result.value)
@@ -295,7 +295,7 @@ Writer effects accumulate output (logs, messages, events) throughout program exe
 `Log(message)` appends a message to the log:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def with_logging():
@@ -309,7 +309,7 @@ def with_logging():
     return "done"
 
 def main():
-    result = sync_run(with_logging(), sync_handlers_preset, store={"count": 0})
+    result = run(with_logging(), default_handlers(), store={"count": 0})
     # Logs are in result.raw_store.get("__log__", [])
 
 main()
@@ -322,7 +322,7 @@ main()
 `StructuredLog(**kwargs)` logs structured data:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def structured_logging():
@@ -343,7 +343,7 @@ def structured_logging():
     return "logged"
 
 def main():
-    result = sync_run(structured_logging(), sync_handlers_preset)
+    result = run(structured_logging(), default_handlers())
     # Structured logs in result.raw_store.get("__log__", [])
 
 main()
@@ -354,7 +354,7 @@ main()
 `Listen(sub_program)` runs a sub-program and captures its log output. Per [SPEC-EFF-003](../specs/effects/SPEC-EFF-003-writer.md), logs from the inner program are **propagated to the outer scope** in addition to being captured:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def inner_operation():
@@ -376,7 +376,7 @@ def outer_operation():
     return listen_result.value
 
 def main():
-    result = sync_run(outer_operation(), sync_handlers_preset)
+    result = run(outer_operation(), default_handlers())
     # All logs (outer AND inner) are in result.raw_store.get("__log__", [])
 
 main()

@@ -174,10 +174,10 @@ return ResumeK(
 
 ## Registering Custom Handlers
 
-Custom handlers are added to the handler list when calling `sync_run` or `async_run`. Handlers are stacked from outermost to innermost:
+Custom handlers are added to the handler list when calling `run` or `async_run`. Handlers are stacked from outermost to innermost:
 
 ```python
-from doeff import sync_run, sync_handlers_preset, do
+from doeff import run, default_handlers, do
 from doeff._types_internal import EffectBase
 from doeff.cesk.handler_frame import HandlerContext
 from doeff.cesk.state import CESKState
@@ -193,8 +193,8 @@ def my_custom_handler(effect: EffectBase, ctx: HandlerContext):
     return result
 
 # Prepend custom handler to preset (outermost handlers first)
-handlers = [my_custom_handler, *sync_handlers_preset]
-result = sync_run(my_program(), handlers)
+handlers = [my_custom_handler, *default_handlers()]
+result = run(my_program(), handlers)
 ```
 
 ### Handler Preset Structure
@@ -202,14 +202,14 @@ result = sync_run(my_program(), handlers)
 The default presets include these handlers (outermost to innermost):
 
 ```python
-sync_handlers_preset = [
+default_handlers() = [
     scheduler_state_handler,   # Task queue management
     task_scheduler_handler,    # Spawn/Wait/Gather/Race
     sync_await_handler,        # Await via background thread
     core_handler,              # Get/Put/Ask/Log/etc.
 ]
 
-async_handlers_preset = [
+default_handlers() = [
     scheduler_state_handler,
     task_scheduler_handler,
     python_async_syntax_escape_handler,  # Async escape for await
@@ -403,7 +403,7 @@ def my_handler(effect, ctx: HandlerContext):
 
 | Old Import | New Import |
 |------------|------------|
-| `from doeff.cesk.handlers import default_handlers` | Use `sync_handlers_preset` or `async_handlers_preset` |
+| `from doeff.cesk.handlers import default_handlers` | Use `default_handlers()` or `default_handlers()` |
 | `from doeff.cesk.state import TaskState` | `from doeff.cesk.handler_frame import HandlerContext` |
 | `from doeff.cesk.frames import ContinueValue` | `from doeff.cesk.state import CESKState` |
 
@@ -440,7 +440,7 @@ result = runtime.run(my_program())
 **v2 (current):**
 ```python
 from dataclasses import dataclass
-from doeff import do, sync_run, sync_handlers_preset
+from doeff import do, run, default_handlers
 from doeff._types_internal import EffectBase
 from doeff.cesk.handler_frame import HandlerContext
 from doeff.cesk.state import CESKState
@@ -460,8 +460,8 @@ def my_effect_handler(effect, ctx: HandlerContext):
     return result
 
 # Prepend custom handler to preset
-handlers = [my_effect_handler, *sync_handlers_preset]
-result = sync_run(my_program(), handlers)
+handlers = [my_effect_handler, *default_handlers()]
+result = run(my_program(), handlers)
 ```
 
 ### Migration Checklist
@@ -472,9 +472,9 @@ result = sync_run(my_program(), handlers)
 - [ ] Replace `ContinueError(...)` with `CESKState.with_error(...)`
 - [ ] Access `env` via `ctx.env`, `store` via `ctx.store`, `k` via `ctx.k`
 - [ ] Add effect forwarding: `result = yield effect; return result`
-- [ ] Replace `default_handlers()` with `sync_handlers_preset` or `async_handlers_preset`
-- [ ] Replace `SyncRuntime(handlers=h).run(p)` with `sync_run(p, handlers)`
-- [ ] Replace `AsyncRuntime(handlers=h).run(p)` with `await async_run(p, handlers)`
+- [ ] Replace `default_handlers()` with `default_handlers()` or `default_handlers()`
+- [ ] Replace `SyncRuntime(handlers=h).run(p)` with `run(p, handlers)`
+- [ ] Replace `AsyncRuntime(handlers=h).run(p)` with `await arun(p, handlers)`
 
 ---
 
@@ -564,7 +564,7 @@ Handlers are stacked outermost to innermost. Effects bubble from inner to outer 
 
 ```python
 # Effect flow: core_handler → ... → scheduler_handler → your_handler
-handlers = [your_handler, *sync_handlers_preset]
+handlers = [your_handler, *default_handlers()]
 ```
 
 Put your custom handler first if you want it to intercept effects before the defaults.
@@ -573,7 +573,7 @@ Put your custom handler first if you want it to intercept effects before the def
 
 ## See Also
 
-- [Runtime and Execution Model](20-runtime-scheduler.md) - sync_run, async_run, handler presets
+- [Runtime and Execution Model](20-runtime-scheduler.md) - run, async_run, handler presets
 - [Effects Matrix](21-effects-matrix.md) - Complete effect support reference
 - [Error Handling](05-error-handling.md) - Safe effect and error propagation
 - [Core Concepts](02-core-concepts.md) - Programs and Effects overview

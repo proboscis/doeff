@@ -56,7 +56,7 @@ doeff now uses the Rust VM entrypoints:
 | Entrypoint | Use Case |
 |------------|----------|
 | `run(program, handlers=None, env=None, store=None)` | Synchronous execution |
-| `async_run(program, handlers=None, env=None, store=None)` | Async execution with event-loop yielding |
+| `arun(program, handlers=None, env=None, store=None)` | Async execution with event-loop yielding |
 
 Default handlers are installed automatically (`state`, `reader`, `writer`).
 
