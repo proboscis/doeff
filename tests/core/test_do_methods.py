@@ -9,10 +9,35 @@ from typing import Any
 from doeff import Program, do
 
 
+def _as_generator(program: Any) -> Generator[Any, Any, Any]:
+    from doeff.program import KleisliProgramCall
+
+    if hasattr(program, "to_generator"):
+        return program.to_generator()
+
+    if isinstance(program, KleisliProgramCall):
+        kernel = program.execution_kernel
+        if kernel is None and program.kleisli_source is not None:
+            kernel = getattr(program.kleisli_source, "func", None)
+        if kernel is None:
+            raise TypeError("Execution kernel unavailable for KleisliProgramCall")
+        result = kernel(*program.args, **program.kwargs)
+        if isinstance(result, Generator):
+            return result
+
+        def _pure_result() -> Generator[Any, Any, Any]:
+            return result
+            yield  # pragma: no cover
+
+        return _pure_result()
+
+    raise TypeError(f"Unsupported program-like object: {type(program).__name__}")
+
+
 def _run_program(program: Program[Any]) -> Any:
     """Execute a program that does not yield external effects."""
 
-    stack = [program.to_generator()]
+    stack = [_as_generator(program)]
     sentinel: Any | None = None
 
     while stack:
@@ -28,8 +53,10 @@ def _run_program(program: Program[Any]) -> Any:
             sentinel = exc.value
             continue
 
-        if isinstance(yielded, Program):
-            stack.append(yielded.to_generator())
+        from doeff.program import KleisliProgramCall
+
+        if isinstance(yielded, (Program, KleisliProgramCall)):
+            stack.append(_as_generator(yielded))
             continue
 
         raise AssertionError(

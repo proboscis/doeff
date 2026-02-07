@@ -21,8 +21,8 @@ T = TypeVar("T")
 
 # Type alias for the internal generator wrapper signature.
 # This is what generator_wrapper actually produces - a generator that yields
-# effects/programs and returns T. KleisliProgramCall.to_generator() knows
-# how to execute this, even though KleisliProgram.func is typed as returning Program[T].
+# effects/programs and returns T. KleisliProgramCall is dispatched as an effect
+# and resolved by the default KPC handler pipeline.
 _GeneratorFunc = Callable[..., Generator[Effect | Program, Any, T]]
 
 
@@ -66,8 +66,8 @@ class DoYieldFunction(KleisliProgram[P, T]):
                     return stop_exc.value
 
         # KleisliProgram.func expects Callable[P, Program[T]], but we pass a
-        # generator function. KleisliProgramCall.to_generator() handles both
-        # Program and Generator returns at runtime. Cast to satisfy pyright.
+        # generator function. Runtime KPC dispatch handles both Program and
+        # generator returns from the execution kernel. Cast to satisfy pyright.
         super().__init__(cast(Callable[P, Program[T]], generator_wrapper))
         self.original_func = func
 
