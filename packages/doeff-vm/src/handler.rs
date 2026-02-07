@@ -2,6 +2,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use pyo3::prelude::*;
+
 use crate::continuation::Continuation;
 use crate::effect::{Effect, KpcArg, KpcCallEffect};
 use crate::frame::CallMetadata;
@@ -86,6 +88,113 @@ impl Handler {
             Handler::Python(_) => true,
         }
     }
+}
+
+fn python_effect_type_name(effect: &PyShared) -> Option<String> {
+    Python::attach(|py| {
+        effect
+            .bind(py)
+            .get_type()
+            .name()
+            .ok()?
+            .extract::<String>()
+            .ok()
+    })
+}
+
+fn parse_state_python_effect(effect: &PyShared) -> Result<Option<Effect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let type_name: String = obj
+            .get_type()
+            .name()
+            .map_err(|e| e.to_string())?
+            .extract::<String>()
+            .map_err(|e| e.to_string())?;
+
+        match type_name.as_str() {
+            "StateGetEffect" | "Get" => {
+                let key: String = obj
+                    .getattr("key")
+                    .map_err(|e| e.to_string())?
+                    .extract::<String>()
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(Effect::Get { key }))
+            }
+            "StatePutEffect" | "Put" => {
+                let key: String = obj
+                    .getattr("key")
+                    .map_err(|e| e.to_string())?
+                    .extract::<String>()
+                    .map_err(|e| e.to_string())?;
+                let value = obj.getattr("value").map_err(|e| e.to_string())?;
+                Ok(Some(Effect::Put {
+                    key,
+                    value: Value::from_pyobject(&value),
+                }))
+            }
+            "StateModifyEffect" | "Modify" => {
+                let key: String = obj
+                    .getattr("key")
+                    .map_err(|e| e.to_string())?
+                    .extract::<String>()
+                    .map_err(|e| e.to_string())?;
+                let modifier = obj
+                    .getattr("func")
+                    .or_else(|_| obj.getattr("modifier"))
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(Effect::Modify {
+                    key,
+                    modifier: PyShared::new(modifier.unbind()),
+                }))
+            }
+            _ => Ok(None),
+        }
+    })
+}
+
+fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<Effect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let type_name: String = obj
+            .get_type()
+            .name()
+            .map_err(|e| e.to_string())?
+            .extract::<String>()
+            .map_err(|e| e.to_string())?;
+        match type_name.as_str() {
+            "AskEffect" | "Ask" => {
+                let key: String = obj
+                    .getattr("key")
+                    .map_err(|e| e.to_string())?
+                    .extract::<String>()
+                    .map_err(|e| e.to_string())?;
+                Ok(Some(Effect::Ask { key }))
+            }
+            _ => Ok(None),
+        }
+    })
+}
+
+fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Effect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let type_name: String = obj
+            .get_type()
+            .name()
+            .map_err(|e| e.to_string())?
+            .extract::<String>()
+            .map_err(|e| e.to_string())?;
+        match type_name.as_str() {
+            "WriterTellEffect" | "Tell" => {
+                let message = obj.getattr("message").map_err(|e| e.to_string())?;
+                Ok(Some(Effect::Tell {
+                    message: Value::from_pyobject(&message),
+                }))
+            }
+            _ => Ok(None),
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -291,10 +400,15 @@ pub struct StateHandlerFactory;
 
 impl RustProgramHandler for StateHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(
-            effect,
-            Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }
-        )
+        matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. })
+            || matches!(
+                effect,
+                Effect::Python(obj)
+                    if matches!(
+                        python_effect_type_name(obj).as_deref(),
+                        Some("StateGetEffect" | "Get" | "StatePutEffect" | "Put" | "StateModifyEffect" | "Modify")
+                    )
+            )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -352,6 +466,15 @@ impl RustHandlerProgram for StateHandlerProgram {
                     kwargs: vec![],
                 })
             }
+            Effect::Python(obj) => match parse_state_python_effect(&obj) {
+                Ok(Some(parsed)) => self.start(parsed, k, store),
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: Effect::Python(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse state effect: {msg}"
+                ))),
+            },
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -388,6 +511,11 @@ pub struct ReaderHandlerFactory;
 impl RustProgramHandler for ReaderHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
         matches!(effect, Effect::Ask { .. })
+            || matches!(
+                effect,
+                Effect::Python(obj)
+                    if matches!(python_effect_type_name(obj).as_deref(), Some("AskEffect" | "Ask"))
+            )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -408,6 +536,15 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     value,
                 }))
             }
+            Effect::Python(obj) => match parse_reader_python_effect(&obj) {
+                Ok(Some(parsed)) => self.start(parsed, k, store),
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: Effect::Python(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse reader effect: {msg}"
+                ))),
+            },
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -432,6 +569,11 @@ pub struct WriterHandlerFactory;
 impl RustProgramHandler for WriterHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
         matches!(effect, Effect::Tell { .. })
+            || matches!(
+                effect,
+                Effect::Python(obj)
+                    if matches!(python_effect_type_name(obj).as_deref(), Some("WriterTellEffect" | "Tell"))
+            )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -452,6 +594,15 @@ impl RustHandlerProgram for WriterHandlerProgram {
                     value: Value::Unit,
                 }))
             }
+            Effect::Python(obj) => match parse_writer_python_effect(&obj) {
+                Ok(Some(parsed)) => self.start(parsed, k, store),
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: Effect::Python(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse writer effect: {msg}"
+                ))),
+            },
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -582,7 +733,8 @@ mod tests {
     use super::*;
     use crate::ids::Marker;
     use crate::segment::Segment;
-    use pyo3::IntoPyObject;
+    use pyo3::types::PyDictMethods;
+    use pyo3::{IntoPyObject, Python};
 
     fn make_test_continuation() -> Continuation {
         let marker = Marker::fresh();
@@ -626,6 +778,26 @@ mod tests {
         assert!(!f.can_handle(&Effect::Tell {
             message: Value::Unit
         }));
+    }
+
+    #[test]
+    fn test_state_factory_can_handle_python_state_effect() {
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class StateGetEffect:\n    def __init__(self):\n        self.key = 'x'\nobj = StateGetEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+            let f = StateHandlerFactory;
+            assert!(
+                f.can_handle(&effect),
+                "SPEC GAP: state handler should claim opaque Python state effects"
+            );
+        });
     }
 
     #[test]
@@ -679,6 +851,37 @@ mod tests {
             }))
         ));
         assert_eq!(store.get("key").unwrap().as_int(), Some(99));
+    }
+
+    #[test]
+    fn test_state_factory_put_from_python_effect_object() {
+        Python::attach(|py| {
+            let mut store = RustStore::new();
+            let k = make_test_continuation();
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class StatePutEffect:\n    def __init__(self):\n        self.key = 'key'\n        self.value = 77\nobj = StatePutEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+
+            let program_ref = StateHandlerFactory.create_program();
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.start(effect, k, &mut store)
+            };
+            assert!(matches!(
+                step,
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    value: Value::Unit,
+                    ..
+                }))
+            ));
+            assert_eq!(store.get("key").unwrap().as_int(), Some(77));
+        });
     }
 
     #[test]
@@ -762,6 +965,26 @@ mod tests {
     }
 
     #[test]
+    fn test_reader_factory_can_handle_python_ask_effect() {
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class AskEffect:\n    def __init__(self):\n        self.key = 'cfg'\nobj = AskEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+            let f = ReaderHandlerFactory;
+            assert!(
+                f.can_handle(&effect),
+                "SPEC GAP: reader handler should claim opaque Python ask effects"
+            );
+        });
+    }
+
+    #[test]
     fn test_reader_factory_ask() {
         let mut store = RustStore::new();
         store
@@ -799,6 +1022,26 @@ mod tests {
         assert!(!f.can_handle(&Effect::Ask {
             key: "x".to_string()
         }));
+    }
+
+    #[test]
+    fn test_writer_factory_can_handle_python_tell_effect() {
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class WriterTellEffect:\n    def __init__(self):\n        self.message = 'log'\nobj = WriterTellEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+            let f = WriterHandlerFactory;
+            assert!(
+                f.can_handle(&effect),
+                "SPEC GAP: writer handler should claim opaque Python tell effects"
+            );
+        });
     }
 
     #[test]
