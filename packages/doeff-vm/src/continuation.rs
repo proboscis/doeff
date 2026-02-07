@@ -8,6 +8,7 @@ use pyo3::types::{PyDict, PyList, PyString};
 use crate::frame::Frame;
 use crate::handler::Handler;
 use crate::ids::{ContId, DispatchId, Marker, SegmentId};
+use crate::py_shared::PyShared;
 use crate::segment::Segment;
 
 /// Capturable continuation with frozen frame snapshot.
@@ -36,9 +37,7 @@ pub struct Continuation {
     /// started=false => created (unstarted) continuation
     pub started: bool,
 
-    /// Program object to start when started=false (KleisliProgramCall/ProgramBase).
-    /// None for captured (started=true) continuations.
-    pub program: Option<Py<PyAny>>,
+    pub program: Option<PyShared>,
 
     /// Handlers to install when started=false (innermost first).
     /// Empty for captured (started=true) continuations.
@@ -83,7 +82,7 @@ impl Continuation {
         }
     }
 
-    pub fn create_unstarted(expr: Py<PyAny>, handlers: Vec<Handler>) -> Self {
+    pub fn create_unstarted(expr: PyShared, handlers: Vec<Handler>) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
