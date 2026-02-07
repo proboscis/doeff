@@ -1,21 +1,43 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 9)
+## Status: Draft (Revision 11)
 
-### Revision 9 Changelog
+### Revision 11 Changelog
 
-Changes from Rev 8. Driven by SPEC-TYPES-001 reconciliation (Program/Effect separation).
+Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 
 | Tag | Section | Change |
 |-----|---------|--------|
-| **R9-A** | Control Primitives | New: `Call { f, args, kwargs, metadata }` — call a function and run the result with call stack metadata. |
-| **R9-B** | Control Primitives | New: `GetCallStack` — walk frames and return `Vec<CallMetadata>`. |
-| **R9-C** | Frame enum | `PythonGenerator` gains `metadata: Option<CallMetadata>` field for call stack tracking. |
-| **R9-D** | New struct | `CallMetadata { function_name, source_file, source_line, program_call }` — carried on frames. |
-| **R9-E** | Yielded / classify | `Yielded::Program` kept for backward compat (metadata: None). KPC-originated programs upgraded to `Call` with metadata by driver. |
-| **R9-F** | handle_do_ctrl | New arms for `Call` (emit CallFunc/StartProgram + store metadata), `Eval` (create+resume continuation), and `GetCallStack` (walk frames). |
-| **R9-G** | receive_python_result | `StartProgramFrame` pending now carries `Option<CallMetadata>` to attach to pushed frame. |
-| **R9-H** | Control Primitives | New: `Eval { expr, handlers }` — evaluate a DoExpr in a fresh scope with explicit handler chain. Atomic CreateContinuation + ResumeContinuation. |
+| **R11-A** | Effect types | **All Rust-handled effects are `#[pyclass]` structs.** `Get`, `Put`, `Ask`, `Tell`, `Modify` defined in Rust, exposed to Python. Scheduler effects (`Spawn`, `Gather`, `Race`, `CreatePromise`, `CompletePromise`, `FailPromise`, `CreateExternalPromise`, `TaskCompleted`) likewise `#[pyclass]`. Python imports these types from the Rust crate. |
+| **R11-B** | Effect enum | **`Effect` typed enum REMOVED.** No `Effect::Get { key }`, `Effect::Put { .. }`, etc. Effects flow through dispatch as opaque `Py<PyAny>`. The VM does not know effect internals. Handlers downcast to concrete `#[pyclass]` types themselves. |
+| **R11-C** | classify_yielded | **Effect classification is a single isinstance check.** `classify_yielded` checks `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No field extraction. No per-effect-type arms. No string matching. The classifier does not touch effect data. |
+| **R11-D** | Handler traits | **Handler receives opaque effect.** `RustHandlerProgram::start()` takes `Py<PyAny>` (not `Effect` enum). `RustProgramHandler::can_handle()` takes `&Bound<'_, PyAny>`. Handlers downcast via `obj.downcast::<Get>()` etc. using `Python::with_gil()`. |
+| **R11-E** | start_dispatch | **Dispatch is opaque.** `start_dispatch(effect: Py<PyAny>)`. `DispatchContext.effect` is `Py<PyAny>`. `Delegate` carries `Py<PyAny>`. |
+
+**CODE-ATTENTION items** (implementation work needed — R11):
+- `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Move scheduler effect pyclasses from `scheduler.rs` or add `PySpawn`, `PyGather`, `PyRace`, `PyCreatePromise`, `PyCompletePromise`, `PyFailPromise`, `PyCreateExternalPromise`, `PyTaskCompleted`.
+- `handler.rs`: Change `RustProgramHandler::can_handle(&self, effect: &Effect)` → `can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>)`. Change `RustHandlerProgram::start(&mut self, effect: Effect, ...)` → `start(&mut self, py: Python<'_>, effect: Py<PyAny>, ...)`.
+- `vm.rs`: Change `start_dispatch(effect: Effect)` → `start_dispatch(py: Python<'_>, effect: Py<PyAny>)`. Change `DispatchContext.effect: Effect` → `effect: Py<PyAny>` (or `PyShared<PyAny>`). Change `find_matching_handler` to pass `py` + `&Bound`. Delete `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`.
+- `pyvm.rs`: Delete entire string-based `match type_str { ... }` block (~300 lines). Delete all effect field extraction. Replace with single isinstance check for EffectBase.
+- `step.rs`: Change `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`. Delete `Yielded::Program` variant.
+- State/Reader/Writer handler impls: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyGet>` etc.
+- Scheduler handler impl: Rewrite `start()` to downcast scheduler effect pyclasses.
+
+**CODE-ATTENTION items** (carried from R10):
+- `frame.rs`: Add `CallMetadata::anonymous()` constructor
+- `rust_vm.py`: Delete `_LegacyRunResult` class, delete old PyVM fallback path (lines 64-84)
+- `effects/spawn.py`: Delete `Promise.complete()`, `Promise.fail()`, `Task.join()` deprecated methods
+- `effects/gather.py`: Delete backwards compat alias
+- `effects/future.py`: Delete backwards compat alias
+- `effects/scheduler_internal.py`: Delete backwards compat aliases (lines 196+, 221+)
+- `core.py`: Delete compat re-exports or entire module
+- `_types_internal.py:35`: Delete vendored type re-export comment/code
+
+### Revision 9–10 Changelog (historical)
+
+R9: Added `Call`, `GetCallStack`, `Eval` DoCtrl variants. `CallMetadata` on frames.
+R10: Removed `Yielded::Program`, string-based classify, backward-compat paths.
+Both superseded by R11 — opaque effect architecture replaces typed `Effect` enum.
 
 ### Revision 8 Changelog
 
@@ -415,7 +437,9 @@ pub enum Frame {
         generator: Py<PyAny>,
         /// Whether this generator has been started (first __next__ called)
         started: bool,
-        /// Call stack metadata (populated by Call primitive, None for legacy Yielded::Program) [R9-C]
+        /// Call stack metadata — always populated via DoCtrl::Call. [R9-C, R10-A]
+        /// Option<> is for WithHandler body frames (no call context), NOT for
+        /// a legacy Yielded::Program path (which is removed).
         metadata: Option<CallMetadata>,
     },
 }
@@ -617,7 +641,7 @@ impl Continuation {
 }
 ```
 
-### DispatchContext
+### DispatchContext [R11-E]
 
 ```rust
 /// Tracks state of a specific effect dispatch.
@@ -626,8 +650,9 @@ pub struct DispatchContext {
     /// Unique identifier
     pub dispatch_id: DispatchId,
     
-    /// The effect being dispatched
-    pub effect: Effect,
+    /// The effect being dispatched — opaque Python object. [R11-E]
+    /// The VM does not inspect this. Handlers downcast as needed.
+    pub effect: Py<PyAny>,
     
     /// Snapshot of handler markers [innermost, ..., outermost]
     pub handler_chain: Vec<Marker>,
@@ -742,77 +767,149 @@ impl Value {
 }
 ```
 
-### Effect (Tagged Union)
+### Effect Types — `#[pyclass]` Structs [R11-A]
+
+Effects are data. The VM does not interpret them — it passes them opaquely
+through dispatch to the handler that claims them. Effects that Rust handlers
+need to inspect are `#[pyclass(frozen)]` structs defined in Rust and exposed
+to Python. User-defined effects are plain Python classes (subclassing
+`EffectBase`). Both flow through the same dispatch path identically.
+
+**There is no `Effect` enum.** The VM sees effects as `Py<PyAny>`. [R11-B]
+
+#### Standard Effects (State / Reader / Writer)
 
 ```rust
-/// An effect that can be yielded by user code.
-///
-/// ALL effects go through dispatch. Standard effects (Get, Put, Ask, Tell)
-/// are handled by the corresponding RustProgram handlers when installed.
-#[derive(Debug, Clone)]
-pub enum Effect {
-    // === Standard effects (handled by StateHandlerFactory, ReaderHandlerFactory, WriterHandlerFactory) ===
-    
-    /// Get(key) -> value (State effect)
-    Get { key: String },
-    
-    /// Put(key, value) -> () (State effect)
-    Put { key: String, value: Value },
-    
-    /// Modify(key, f) -> old_value (State effect)
-    Modify { key: String, modifier: Py<PyAny> },
-    
-    /// Ask(key) -> value (Reader effect)
-    Ask { key: String },
-    
-    /// Tell(message) -> () (Writer effect)
-    Tell { message: Value },
-    
-    // === Built-in scheduler effects (Rust-native, but open to Python handlers) ===
-    Scheduler(SchedulerEffect),
-    
-    // === User-defined effects ===
-    
-    /// Any Python effect object (handled by Python handlers)
-    Python(Py<PyAny>),
+/// State effect: read a key.
+/// Python: `yield Get("counter")`
+#[pyclass(frozen, name = "Get")]
+pub struct PyGet {
+    #[pyo3(get)] pub key: String,
 }
 
-impl Effect {
-    /// Get the effect type name (for handler matching).
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            Effect::Get { .. } => "Get",
-            Effect::Put { .. } => "Put",
-            Effect::Modify { .. } => "Modify",
-            Effect::Ask { .. } => "Ask",
-            Effect::Tell { .. } => "Tell",
-            Effect::Scheduler(_) => "Scheduler",
-            Effect::Python(_) => "Python",
-        }
-    }
-    
-    /// Check if this is a standard effect (state/reader/writer only).
-    /// NOTE: This does NOT mean bypass - all effects still go through dispatch.
-    pub fn is_standard(&self) -> bool {
-        matches!(
-            self,
-            Effect::Get { .. }
-                | Effect::Put { .. }
-                | Effect::Modify { .. }
-                | Effect::Ask { .. }
-                | Effect::Tell { .. }
-        )
-    }
+/// State effect: write a key.
+/// Python: `yield Put("counter", 42)`
+#[pyclass(frozen, name = "Put")]
+pub struct PyPut {
+    #[pyo3(get)] pub key: String,
+    #[pyo3(get)] pub value: PyObject,
+}
+
+/// State effect: modify a key with a function.
+/// Python: `yield Modify("counter", lambda x: x + 1)`
+#[pyclass(frozen, name = "Modify")]
+pub struct PyModify {
+    #[pyo3(get)] pub key: String,
+    #[pyo3(get)] pub func: PyObject,
+}
+
+/// Reader effect: read from environment.
+/// Python: `yield Ask("database_url")`
+#[pyclass(frozen, name = "Ask")]
+pub struct PyAsk {
+    #[pyo3(get)] pub key: String,
+}
+
+/// Writer effect: append to log.
+/// Python: `yield Tell("Starting operation")`
+#[pyclass(frozen, name = "Tell")]
+pub struct PyTell {
+    #[pyo3(get)] pub message: PyObject,
 }
 ```
 
-### Python FFI Wrappers (Effect, Continuation, Handler) [R8-C]
+#### Scheduler Effects
 
-Effect, Continuation, and Handler are exposed to Python as PyO3 classes.
-These conversions require the GIL and are performed by the driver.
+```rust
+/// Spawn a concurrent task.
+#[pyclass(frozen, name = "Spawn")]
+pub struct PySpawn {
+    #[pyo3(get)] pub program: PyObject,
+    #[pyo3(get)] pub handlers: PyObject,  // list of handlers
+    #[pyo3(get)] pub store_mode: PyObject, // StoreMode enum or None (default: Shared)
+}
 
-Control primitives and the continuation handle are Rust `#[pyclass]` types
-exposed to Python (see ADR-9):
+/// Gather results from multiple waitables.
+#[pyclass(frozen, name = "Gather")]
+pub struct PyGather {
+    #[pyo3(get)] pub items: PyObject,  // list of Task/Promise/ExternalPromise
+}
+
+/// Race multiple waitables, return first.
+#[pyclass(frozen, name = "Race")]
+pub struct PyRace {
+    #[pyo3(get)] pub futures: PyObject,
+}
+
+#[pyclass(frozen, name = "CreatePromise")]
+pub struct PyCreatePromise;
+
+#[pyclass(frozen, name = "CreateExternalPromise")]
+pub struct PyCreateExternalPromise;
+
+#[pyclass(frozen, name = "CompletePromise")]
+pub struct PyCompletePromise {
+    #[pyo3(get)] pub promise: PyObject,
+    #[pyo3(get)] pub value: PyObject,
+}
+
+#[pyclass(frozen, name = "FailPromise")]
+pub struct PyFailPromise {
+    #[pyo3(get)] pub promise: PyObject,
+    #[pyo3(get)] pub error: PyObject,
+}
+
+#[pyclass(frozen, name = "TaskCompleted")]
+pub struct PyTaskCompleted {
+    #[pyo3(get)] pub task: PyObject,
+    #[pyo3(get)] pub result: PyObject,  // value or error
+}
+```
+
+#### User-defined effects
+
+User effects are plain Python classes. They do NOT need to be `#[pyclass]`.
+They subclass `EffectBase` (Python) and flow through dispatch as `Py<PyAny>`
+like everything else. Python handlers receive them and read attributes
+with normal Python attribute access.
+
+```python
+class MyDatabaseQuery(EffectBase):
+    def __init__(self, sql: str):
+        self.sql = sql
+
+# Handler (Python):
+def db_handler(effect, k):
+    if isinstance(effect, MyDatabaseQuery):
+        result = execute_sql(effect.sql)
+        yield Resume(k, result)
+    else:
+        yield Delegate()
+```
+
+#### EffectBase marker (Python side)
+
+All effects — Rust `#[pyclass]` and Python user-defined — share a common
+base class or marker so `classify_yielded` can detect them with a single
+isinstance check:
+
+```python
+class EffectBase:
+    """Marker base for all effect types."""
+    pass
+
+# Rust pyclasses register as EffectBase subclasses via __init_subclass__
+# or PyO3 #[pyclass(extends=EffectBase)]
+```
+
+The old `Effect` enum (`Get { key }`, `Put { key, value }`, etc.) is deleted.
+`effect.rs` becomes a module defining the `#[pyclass]` structs above.
+
+### Python FFI Wrappers (DoCtrl primitives, Continuation, Handler) [R8-C]
+
+DoCtrl primitives and the continuation handle are Rust `#[pyclass]` types
+exposed to Python (see ADR-9). Effects are ALSO `#[pyclass]` types but
+defined in the Effect Types section above — they are data, not VM primitives.
 
 ```rust
 /// Opaque continuation handle passed to Python handlers. [R8-C]
@@ -854,14 +951,6 @@ pub struct Transfer {
 FFI conversions for VM-internal types:
 
 ```rust
-impl Effect {
-    /// Convert to Python object (driver only, requires GIL).
-    /// Standard effects map to the Python effect classes (Get/Put/Modify/Ask/Tell).
-    /// Scheduler effects map to Python scheduler classes.
-    /// Effect::Python returns the wrapped object.
-    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
-}
-
 impl Continuation {
     /// Convert to Python object (driver only, requires GIL).
     /// Returns a K instance (opaque handle).
@@ -883,25 +972,14 @@ impl Handler {
     /// and wraps them as Handler::RustProgram. All others become Handler::Python.
     pub fn from_pyobject(obj: &Bound<'_, PyAny>) -> PyResult<Self>;
 }
-
-// Scheduler handle wrappers (built-in).
-impl TaskHandle {
-    /// Convert to Python object (driver only, requires GIL).
-    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
-}
-
-impl PromiseHandle {
-    /// Convert to Python object (driver only, requires GIL).
-    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
-}
-
-impl ExternalPromise {
-    /// Convert to Python object (driver only, requires GIL).
-    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>>;
-}
 ```
 
-### Handler (RustProgram + Python) [R8-G]
+**Note**: Effect types no longer need `to_pyobject` / `from_pyobject` conversions.
+They ARE Python objects (`#[pyclass]`). The VM passes them through as `Py<PyAny>`
+without conversion. When a Python handler receives an effect, it gets the
+original `#[pyclass]` instance — isinstance works, attribute access works.
+
+### Handler (RustProgram + Python) [R8-G] [R11-D]
 
 ```rust
 /// A handler that can process effects.
@@ -938,29 +1016,34 @@ pub enum RustProgramStep {
     NeedsPython(PythonCall),
 }
 
-/// A Rust handler program instance (generator-like).
+/// A Rust handler program instance (generator-like). [R11-D]
 ///
 /// start/resume/throw mirror Python generator protocol but run in Rust.
+/// `start()` receives the effect as opaque `Py<PyAny>`. The handler
+/// downcasts to the concrete #[pyclass] type it knows how to handle
+/// (e.g., `obj.downcast::<PyGet>()`) using Python::with_gil().
 pub trait RustHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
-        -> RustProgramStep;
+    fn start(&mut self, py: Python<'_>, effect: &Bound<'_, PyAny>,
+             k: Continuation, store: &mut RustStore) -> RustProgramStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
 }
 
-/// Factory for Rust handler programs.
+/// Factory for Rust handler programs. [R11-D]
 ///
 /// Each dispatch creates a fresh RustHandlerProgram instance.
+/// `can_handle()` receives the effect as opaque `Bound<'_, PyAny>`.
+/// The factory decides via isinstance whether it handles this effect.
 pub trait RustProgramHandler {
-    fn can_handle(&self, effect: &Effect) -> bool;
+    fn can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool;
     fn create_program(&self) -> RustProgramRef;
 }
 
 impl Handler {
-    /// Check if this handler can handle the given effect.
-    pub fn can_handle(&self, effect: &Effect) -> bool {
+    /// Check if this handler can handle the given effect. [R11-D]
+    pub fn can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool {
         match self {
-            Handler::RustProgram(handler) => handler.can_handle(effect),
+            Handler::RustProgram(handler) => handler.can_handle(py, effect),
             Handler::Python(_) => {
                 // Python handlers are considered capable of handling any effect.
                 // They yield Delegate() for effects they don't handle.
@@ -986,21 +1069,24 @@ pub struct HandlerEntry {
 }
 ```
 
-### Standard Handlers as RustProgramHandler [R8-H] [R8-I]
+### Standard Handlers as RustProgramHandler [R8-H] [R8-I] [R11-D]
 
 The standard handlers (state, reader, writer) implement the same
-`RustProgramHandler` trait as the scheduler. No separate `StdlibHandler`
-enum, no `HandlerAction`, no `NeedsPython` special case.
+`RustProgramHandler` trait as the scheduler. Handlers receive the effect
+as opaque `&Bound<'_, PyAny>` and downcast to the concrete `#[pyclass]`
+types they know how to handle. The VM never extracts effect fields.
 
 ```rust
-/// State handler factory. Handles Get, Put, Modify.
+/// State handler factory. Handles PyGet, PyPut, PyModify.
 /// Backed by RustStore.state.
 #[derive(Debug, Clone)]
 pub struct StateHandlerFactory;
 
 impl RustProgramHandler for StateHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. })
+    fn can_handle(&self, _py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool {
+        effect.is_instance_of::<PyGet>()
+            || effect.is_instance_of::<PyPut>()
+            || effect.is_instance_of::<PyModify>()
     }
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(StateHandlerProgram::new())))
@@ -1016,39 +1102,42 @@ impl RustProgramHandler for StateHandlerFactory {
 struct StateHandlerProgram { /* state machine fields */ }
 
 impl RustHandlerProgram for StateHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
-        -> RustProgramStep
+    fn start(&mut self, py: Python<'_>, effect: &Bound<'_, PyAny>,
+             k: Continuation, store: &mut RustStore) -> RustProgramStep
     {
-        match effect {
-            Effect::Get { key } => {
-                let value = store.get(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::DoCtrl(
-                    DoCtrl::Resume { continuation: k, value }
-                ))
-            }
-            Effect::Put { key, value } => {
-                store.put(key, value);
-                RustProgramStep::Yield(Yielded::DoCtrl(
-                    DoCtrl::Resume { continuation: k, value: Value::Unit }
-                ))
-            }
-            Effect::Modify { key, modifier } => {
-                // Save state for resume()
-                self.pending_key = Some(key.clone());
-                self.pending_k = Some(k);
-                let old_value = store.get(&key).cloned().unwrap_or(Value::None);
-                self.pending_old_value = Some(old_value.clone());
-                // [R8-H] Need Python call: modifier(old_value).
-                // VM suspends handler, calls Python, then resume() with result.
-                RustProgramStep::NeedsPython(PythonCall::CallFunc {
-                    func: modifier,
-                    args: vec![old_value],
-                })
-            }
-            _ => RustProgramStep::Yield(Yielded::DoCtrl(
-                DoCtrl::Delegate { effect }
-            )),
+        // Downcast to concrete #[pyclass] types — the handler knows its types.
+        if let Ok(get) = effect.downcast::<PyGet>() {
+            let key = &get.borrow().key;
+            let value = store.get(key).cloned().unwrap_or(Value::None);
+            return RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Resume { continuation: k, value }
+            ));
         }
+        if let Ok(put) = effect.downcast::<PyPut>() {
+            let b = put.borrow();
+            let value = Value::from_pyobject(b.value.bind(py));
+            store.put(b.key.clone(), value);
+            return RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Resume { continuation: k, value: Value::Unit }
+            ));
+        }
+        if let Ok(modify) = effect.downcast::<PyModify>() {
+            let b = modify.borrow();
+            self.pending_key = Some(b.key.clone());
+            self.pending_k = Some(k);
+            let old_value = store.get(&b.key).cloned().unwrap_or(Value::None);
+            self.pending_old_value = Some(old_value.clone());
+            // [R8-H] Need Python call: modifier(old_value).
+            return RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                func: PyShared::new(b.func.clone_ref(py)),
+                args: vec![old_value],
+                kwargs: vec![],
+            });
+        }
+        // Unknown effect — delegate to next handler
+        RustProgramStep::Yield(Yielded::DoCtrl(
+            DoCtrl::Delegate { effect: PyShared::new(effect.clone().unbind()) }
+        ))
     }
 
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
@@ -1067,14 +1156,14 @@ impl RustHandlerProgram for StateHandlerProgram {
     }
 }
 
-/// Reader handler factory. Handles Ask.
+/// Reader handler factory. Handles PyAsk.
 /// Backed by RustStore.env.
 #[derive(Debug, Clone)]
 pub struct ReaderHandlerFactory;
 
 impl RustProgramHandler for ReaderHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Ask { .. })
+    fn can_handle(&self, _py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool {
+        effect.is_instance_of::<PyAsk>()
     }
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
@@ -1084,20 +1173,19 @@ impl RustProgramHandler for ReaderHandlerFactory {
 struct ReaderHandlerProgram;
 
 impl RustHandlerProgram for ReaderHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
-        -> RustProgramStep
+    fn start(&mut self, py: Python<'_>, effect: &Bound<'_, PyAny>,
+             k: Continuation, store: &mut RustStore) -> RustProgramStep
     {
-        match effect {
-            Effect::Ask { key } => {
-                let value = store.ask(&key).cloned().unwrap_or(Value::None);
-                RustProgramStep::Yield(Yielded::DoCtrl(
-                    DoCtrl::Resume { continuation: k, value }
-                ))
-            }
-            _ => RustProgramStep::Yield(Yielded::DoCtrl(
-                DoCtrl::Delegate { effect }
-            )),
+        if let Ok(ask) = effect.downcast::<PyAsk>() {
+            let key = &ask.borrow().key;
+            let value = store.ask(key).cloned().unwrap_or(Value::None);
+            return RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Resume { continuation: k, value }
+            ));
         }
+        RustProgramStep::Yield(Yielded::DoCtrl(
+            DoCtrl::Delegate { effect: PyShared::new(effect.clone().unbind()) }
+        ))
     }
     fn resume(&mut self, _: Value, _: &mut RustStore) -> RustProgramStep {
         unreachable!("ReaderHandler never yields mid-handling")
@@ -1107,14 +1195,14 @@ impl RustHandlerProgram for ReaderHandlerProgram {
     }
 }
 
-/// Writer handler factory. Handles Tell.
+/// Writer handler factory. Handles PyTell.
 /// Backed by RustStore.log.
 #[derive(Debug, Clone)]
 pub struct WriterHandlerFactory;
 
 impl RustProgramHandler for WriterHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Tell { .. })
+    fn can_handle(&self, _py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool {
+        effect.is_instance_of::<PyTell>()
     }
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
@@ -1124,20 +1212,19 @@ impl RustProgramHandler for WriterHandlerFactory {
 struct WriterHandlerProgram;
 
 impl RustHandlerProgram for WriterHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore)
-        -> RustProgramStep
+    fn start(&mut self, py: Python<'_>, effect: &Bound<'_, PyAny>,
+             k: Continuation, store: &mut RustStore) -> RustProgramStep
     {
-        match effect {
-            Effect::Tell { message } => {
-                store.tell(message);
-                RustProgramStep::Yield(Yielded::DoCtrl(
-                    DoCtrl::Resume { continuation: k, value: Value::Unit }
-                ))
-            }
-            _ => RustProgramStep::Yield(Yielded::DoCtrl(
-                DoCtrl::Delegate { effect }
-            )),
+        if let Ok(tell) = effect.downcast::<PyTell>() {
+            let message = Value::from_pyobject(tell.borrow().message.bind(py));
+            store.tell(message);
+            return RustProgramStep::Yield(Yielded::DoCtrl(
+                DoCtrl::Resume { continuation: k, value: Value::Unit }
+            ));
         }
+        RustProgramStep::Yield(Yielded::DoCtrl(
+            DoCtrl::Delegate { effect: PyShared::new(effect.clone().unbind()) }
+        ))
     }
     fn resume(&mut self, _: Value, _: &mut RustStore) -> RustProgramStep {
         unreachable!("WriterHandler never yields mid-handling")
@@ -1696,7 +1783,7 @@ pub enum PendingPython {
     /// StartProgram for a Program body - result is Value::Python(generator).
     /// Carries optional CallMetadata to attach to the PythonGenerator frame. [R9-G]
     /// When metadata is Some, the frame was created via DoCtrl::Call.
-    /// When metadata is None, the frame was created via Yielded::Program (legacy).
+    /// When metadata is None, the frame is a WithHandler body (no call context).
     StartProgramFrame {
         metadata: Option<CallMetadata>,
     },
@@ -1735,12 +1822,12 @@ pub enum PendingPython {
     AsyncEscape,
 }
 
-**DoExpr Input Rule**: `StartProgram`, `CallHandler`, and `Yielded::Program`
+**DoExpr Input Rule**: `StartProgram`, `CallHandler`, and `DoCtrl::Call`
 require a DoThunk value (has `to_generator()`). The driver calls `to_generator()`
-to obtain the generator. After SPEC-TYPES-001, KPC becomes an Effect (no
-`to_generator()`) and goes through dispatch; only DoThunks pass this rule.
-Raw generators are rejected at these entry points; only low-level
-`start_with_generator()` accepts raw generators.
+to obtain the generator. KPC is an Effect (no `to_generator()`) and goes through
+dispatch; only DoThunks pass this rule. `Yielded::Program` is deprecated — all
+DoThunks go through `DoCtrl::Call`. Raw generators are rejected at these entry
+points; only low-level `start_with_generator()` accepts raw generators.
 ```
 
 ### Program Frame Re-Push Rule (Python + Rust)
@@ -2144,7 +2231,7 @@ pub enum Mode {
 The VM receives pre-classified `Yielded` values and operates without GIL.
 
 ```rust
-/// Classification of what a generator yielded.
+/// Classification of what a generator yielded. [R11-B] [R11-C]
 /// 
 /// INVARIANT: Python generator yields are classified by the DRIVER (GIL held),
 /// not by the VM. Rust program handlers return Yielded directly.
@@ -2153,57 +2240,64 @@ pub enum Yielded {
     /// A DoCtrl (Resume, Transfer, WithHandler, Call, GetCallStack, etc.)
     DoCtrl(DoCtrl),
     
-    /// An effect to be handled
-    Effect(Effect),
-    
-    /// A nested DoThunk object to execute — LEGACY PATH (no call metadata). [R9-E]
-    /// After SPEC-TYPES-001 separation, DoThunks with metadata should use
-    /// Primitive(Call { f, args: [], kwargs: [], metadata }) instead. This variant
-    /// is kept for backward compatibility with DoThunks that don't carry metadata.
-    Program(Py<PyAny>),
+    /// An effect to be dispatched — opaque Python object. [R11-B]
+    /// The VM does not inspect this. It passes it through start_dispatch()
+    /// to the handler. The handler downcasts as needed.
+    Effect(Py<PyAny>),
     
     /// Unknown object (will cause TypeError)
     Unknown(Py<PyAny>),
 }
 
 impl Yielded {
-    /// Classify a Python object yielded by a generator.
+    /// Classify a Python object yielded by a generator. [R11-C]
     /// 
     /// MUST be called by DRIVER with GIL held.
     /// Result is passed to VM via PyCallOutcome::GenYield(Yielded).
     ///
-    /// [R9-E] Programs with recognizable metadata (KPC-like objects with
-    /// function_name/kleisli_source) are upgraded to Call primitives.
-    /// Programs without metadata fall through to Yielded::Program (legacy).
+    /// The classifier is simple:
+    /// 1. isinstance check for DoCtrl pyclasses (finite set, VM-level)
+    /// 2. isinstance check for EffectBase → Yielded::Effect(obj)  [ONE CHECK]
+    /// 3. has to_generator()? → DoCtrl::Call with metadata
+    /// 4. Reject primitives → Unknown
+    ///
+    /// The classifier NEVER inspects effect fields. Effects are opaque data.
     pub fn classify(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Self {
-        // Check for DoCtrl
+        // Phase 1: DoCtrl pyclasses (WithHandler, Resume, Transfer, Delegate, etc.)
         if let Ok(prim) = extract_control_primitive(py, obj) {
             return Yielded::DoCtrl(prim);
         }
         
-        // Check for Effect (including KPC after SPEC-TYPES-001 separation)
-        if let Ok(effect) = extract_effect(py, obj) {
-            return Yielded::Effect(effect);
+        // Phase 2: Effect — single isinstance check [R11-C]
+        // No field extraction. No per-type arms. Just: "is this an effect?"
+        if is_effect_base(py, obj) {
+            return Yielded::Effect(obj.clone().unbind());
         }
         
-        // Check for DoThunk (nested) — with metadata upgrade [R9-E]
+        // Phase 3: DoThunk — upgrade to DoCtrl::Call
         if is_do_thunk(py, obj) {
-            // Try to extract CallMetadata for Call upgrade
-            if let Some(metadata) = extract_call_metadata(py, obj) {
-                return Yielded::DoCtrl(DoCtrl::Call {
-                    f: obj.clone().unbind(),
-                    args: vec![],
-                    kwargs: vec![],
-                    metadata,
-                });
-            }
-            // No metadata — legacy path
-            return Yielded::Program(obj.clone().unbind());
+            let metadata = extract_call_metadata(py, obj)
+                .unwrap_or_else(|| CallMetadata::anonymous());
+            return Yielded::DoCtrl(DoCtrl::Call {
+                f: obj.clone().unbind(),
+                args: vec![],
+                kwargs: vec![],
+                metadata,
+            });
         }
         
-        // Unknown
+        // Phase 4: Reject primitives, unknown
         Yielded::Unknown(obj.clone().unbind())
     }
+}
+
+/// Check if obj is an EffectBase instance (single isinstance check). [R11-C]
+fn is_effect_base(py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
+    // EffectBase is either:
+    // - A Python base class that all effects subclass, OR
+    // - Detected via a marker attribute/protocol
+    // Both Rust #[pyclass] effects and Python user effects share this base.
+    obj.is_instance_of::<PyEffectBase>()  // or: obj.is_instance(effect_base_type)
 }
 
 /// Extract CallMetadata from a Python program object (with GIL). [R9-E]
@@ -2230,28 +2324,18 @@ fn extract_call_metadata(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallM
 }
 ```
 
-**Note**: A yielded Program is a ProgramBase object. The driver must call
-`to_generator()` to start it. Raw generators are rejected; only low-level
-entry points like `start_with_generator()` accept raw generators.
-
-**[R9-E] Call upgrade**: When the driver detects a DoThunk with metadata
-(function_name, kleisli_source), it emits `Yielded::DoCtrl(Call { f, args: [], kwargs: [], metadata })`
-instead of `Yielded::Program(obj)`. This enables call stack tracking without
-changing user code. After SPEC-TYPES-001 separation, KPC will be classified as
-`Yielded::Effect` (not Program), and the KPC handler will emit `Call` primitives
-for kernel invocation and `Eval` primitives for arg resolution. Direct
-`yield some_thunk` from user code still goes through classify → Call upgrade
-(if metadata available) or Yielded::Program (legacy).
-
-**Note**: Rust program handlers yield `Yielded` directly (already classified),
-so no driver-side classification or GIL is required for those yields.
+**Key design points [R11]:**
+- `Yielded::Effect` carries `Py<PyAny>`, not a typed `Effect` enum.
+- `Yielded::Program` is deleted. DoThunks go through `DoCtrl::Call`.
+- `classify` does ONE isinstance check for effects — no per-type arms.
+- The classifier NEVER reads effect fields (`.key`, `.value`, `.items`, etc.).
+- Rust program handlers yield `Yielded` directly (already classified),
+  so no driver-side classification or GIL is required for those yields.
 
 `extract_control_primitive` uses `Handler::from_pyobject` to decode `WithHandler`
 and `CreateContinuation` handler arguments, and `Continuation::from_pyobject`
 to decode `Resume`/`Transfer`/`ResumeContinuation`.
 It also recognizes `PythonAsyncSyntaxEscape` and extracts the `action` callable.
-`extract_effect` recognizes built-in scheduler effect classes and maps them to
-`Effect::Scheduler`.
 
 ### PyCallOutcome (Python Call Results)
 
@@ -2469,7 +2553,7 @@ impl VM {
                 segment.push_frame(Frame::PythonGenerator {
                     generator: gen_obj,
                     started: false,
-                    metadata,  // Some for Call primitive, None for Yielded::Program
+                    metadata,  // Some for DoCtrl::Call, None for WithHandler body
                 });
                 // Mode stays Deliver (will trigger GenNext on next step)
             }
@@ -2570,22 +2654,12 @@ fn step_handle_yield(&mut self) -> StepEvent {
         }
         
         Yielded::Effect(effect) => {
-            // ALL effects go through dispatch — no bypass [R8-B]
-            // Standard effects handled by RustProgram handlers (fast)
-            // Custom effects handled by Python handlers
-            match self.start_dispatch(effect) {
+            // ALL effects go through dispatch — no bypass [R8-B] [R11-E]
+            // effect is Py<PyAny> — opaque. The VM does not inspect it.
+            match self.start_dispatch(py, effect) {
                 Ok(event) => event,
                 Err(e) => StepEvent::Error(e),
             }
-        }
-        
-        Yielded::Program(program) => {
-            // Nested program - need to call Python to get generator [R9-E]
-            // Legacy path: no metadata. Use Call primitive for metadata-carrying calls.
-            self.pending_python = Some(PendingPython::StartProgramFrame {
-                metadata: None,
-            });
-            StepEvent::NeedsPython(PythonCall::StartProgram { program })
         }
         
         Yielded::Unknown(obj) => {
@@ -3210,15 +3284,12 @@ def do(fn):
 
 #### DoExpr Input Rule (Reiterated)
 
-All DoExpr entry points (`StartProgram`, `CallHandler`, `Yielded::Program`,
-`DoCtrl::Call`) require a value with `to_generator()` (a DoThunk).
-The driver calls `to_generator()` to obtain the generator. Raw generators are
-rejected except via the low-level `start_with_generator()`.
-
-**[R9-E] After SPEC-TYPES-001**: KleisliProgramCall will no longer have
-`to_generator()` (it becomes an Effect). It goes through effect dispatch to
-the KPC handler, which emits `Call` primitives for kernel invocation and `Eval`
-primitives for arg resolution. Only DoThunks pass this rule.
+All DoExpr entry points (`StartProgram`, `CallHandler`, `DoCtrl::Call`)
+require a value with `to_generator()` (a DoThunk). The driver calls
+`to_generator()` to obtain the generator. `Yielded::Program` is removed —
+DoThunks always enter via `DoCtrl::Call`. KleisliProgramCall is an Effect
+(no `to_generator()`) — it goes through dispatch to the KPC handler. Raw
+generators are rejected except via the low-level `start_with_generator()`.
 
 ### Store and Env Lifecycle [R8-J]
 
@@ -3408,8 +3479,7 @@ pub enum DoCtrl {
     /// for user-yielded DoThunks, or constructed by RustHandlerPrograms (e.g.,
     /// KPC handler) for kernel invocations.
     ///
-    /// Backward compat: Yielded::Program (without metadata) is still supported
-    /// and handled identically but with metadata: None on the frame.
+    /// The only path for DoThunk execution. Yielded::Program is removed. [R10-A]
     Call {
         /// The callable (DoThunk or kernel function)
         f: Py<PyAny>,
@@ -3536,7 +3606,11 @@ impl VM {
     ///
     /// Returns Ok(StepEvent) if dispatch started successfully.
     /// Returns Err(VMError) if no handler found.
-    fn start_dispatch(&mut self, effect: Effect) -> Result<StepEvent, VMError> {
+    /// Start dispatch for an effect. [R11-E]
+    ///
+    /// `effect` is opaque `Py<PyAny>` — the VM does not inspect it.
+    /// `py` is required because `can_handle()` needs GIL for isinstance checks.
+    fn start_dispatch(&mut self, py: Python<'_>, effect: Py<PyAny>) -> Result<StepEvent, VMError> {
         // Lazy pop completed dispatch contexts
         self.lazy_pop_completed();
 
@@ -3547,14 +3621,14 @@ impl VM {
         let handler_chain = self.visible_handlers(&scope_chain);
 
         if handler_chain.is_empty() {
-            return Err(VMError::UnhandledEffect(effect));
+            return Err(VMError::unhandled_effect_opaque());
         }
 
-        // Find first handler that can handle this effect
-        // RustProgram: can_handle() checks effect type
-        // Python: can_handle() always true (handler decides via Delegate)
+        // Find first handler that can handle this effect [R11-D]
+        // can_handle() receives &Bound<'_, PyAny> — handler does isinstance
+        let effect_bound = effect.bind(py);
         let (handler_idx, handler_marker, entry) =
-            self.find_matching_handler(&handler_chain, &effect)?;
+            self.find_matching_handler(py, &handler_chain, effect_bound)?;
 
         let prompt_seg_id = entry.prompt_seg_id;
         let handler = entry.handler.clone();
@@ -3565,10 +3639,10 @@ impl VM {
         let current_seg = &self.segments[self.current_segment.index()];
         let k_user = Continuation::capture(current_seg, self.current_segment, Some(dispatch_id));
 
-        // Push dispatch context
+        // Push dispatch context [R11-E]
         self.dispatch_stack.push(DispatchContext {
             dispatch_id,
-            effect: effect.clone(),
+            effect: effect.clone_ref(py),  // Py<PyAny> — opaque
             handler_chain: handler_chain.clone(),
             handler_idx,
             k_user: k_user.clone(),
@@ -3586,37 +3660,38 @@ impl VM {
         self.current_segment = handler_seg_id;
 
         // Invoke handler — two variants, same dispatch chain
-        Ok(self.invoke_handler(handler, &effect, k_user))
+        Ok(self.invoke_handler(py, handler, effect_bound, k_user))
     }
 
-    /// Invoke a handler and return the next StepEvent. [R8-G]
+    /// Invoke a handler and return the next StepEvent. [R8-G] [R11-D]
     fn invoke_handler(
         &mut self,
+        py: Python<'_>,
         handler: Handler,
-        effect: &Effect,
+        effect: &Bound<'_, PyAny>,
         k_user: Continuation,
     ) -> StepEvent {
         match handler {
             Handler::RustProgram(rust_handler) => {
                 // Rust program handler: create program instance and step it.
-                // Used by state, reader, writer, scheduler, and custom Rust handlers.
+                // Handler receives opaque effect — downcasts internally.
                 let program = rust_handler.create_program();
                 let step = {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
-                    guard.start(effect.clone(), k_user.clone(), &mut self.rust_store)
+                    guard.start(py, effect, k_user.clone(), &mut self.rust_store)
                 };
                 self.apply_rust_program_step(step, program)
             }
             Handler::Python(py_handler) => {
                 // Python handler: call with (effect, k_user) and expect a Program
-                // Driver converts Program to generator via to_generator()
+                // Effect is passed as-is — it's already a Python object.
                 self.pending_python = Some(PendingPython::CallPythonHandler {
                     k_user: k_user.clone(),
-                    effect: effect.clone(),
+                    effect: effect.clone().unbind(),
                 });
                 StepEvent::NeedsPython(PythonCall::CallHandler {
                     handler: py_handler,
-                    effect: effect.clone(),
+                    effect: effect.clone().unbind(),
                     continuation: k_user,
                 })
             }
@@ -4423,8 +4498,8 @@ Key differences and decisions in 008:
 - Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
 - `Call(f, args, kwargs, metadata)` is a DoCtrl for function invocation with
   call stack metadata (R9-A). `Eval(expr, handlers)` evaluates a DoExpr in a fresh scope
-  (R9-H). `GetCallStack` walks frames (R9-B). `Yielded::Program` is kept as legacy
-  fallback (R9-E).
+  (R9-H). `GetCallStack` walks frames (R9-B). `Yielded::Program` is removed (R10-A) —
+  all DoThunks go through `DoCtrl::Call`.
 
 ---
 
