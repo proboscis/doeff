@@ -889,13 +889,9 @@ impl PyVM {
                     ));
                 }
                 "WaitEffect" => {
-                    let future_obj = obj.getattr("future")?;
-                    if let Some(w) = Self::extract_waitable(_py, &future_obj) {
-                        return Ok(Yielded::Effect(Effect::Scheduler(
-                            SchedulerEffect::Gather { items: vec![w] },
-                        )));
-                    }
-                    return Err(PyTypeError::new_err("WaitEffect.future must be waitable"));
+                    return Err(PyTypeError::new_err(
+                        "WaitEffect is not supported; use GatherEffect or RaceEffect",
+                    ));
                 }
                 "TaskCompletedEffect"
                 | "SchedulerTaskCompleted"
@@ -1836,6 +1832,26 @@ mod tests {
                 res.is_err(),
                 "G6 FAIL: malformed GatherEffect should raise classification error, got {:?}",
                 res
+            );
+        });
+    }
+
+    #[test]
+    fn test_g12_wait_effect_is_rejected_strictly() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect:\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let res = pyvm.classify_yielded(py, &obj);
+            assert!(
+                res.is_err(),
+                "G12 FAIL: WaitEffect should be rejected (no compatibility coercion)"
             );
         });
     }
