@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from doeff.program import Program
 
-# Re-export vendored types for backward compatibility
+# Core graph/result primitives
 from doeff._vendor import (
     NOTHING,
     Err,
@@ -49,22 +49,6 @@ from doeff._vendor import (
     trace_err,
 )
 from doeff.utils import BoundedLog
-
-__VENDORED_EXPORTS = (
-    NOTHING,
-    Err,
-    FrozenDict,
-    Maybe,
-    Nothing,
-    Ok,
-    Result,
-    Some,
-    TraceError,
-    WGraph,
-    WNode,
-    WStep,
-    trace_err,
-)
 
 # Type variables
 T = TypeVar("T")
