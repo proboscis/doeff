@@ -6,7 +6,7 @@ doeff provides two main execution functions optimized for different contexts. Ch
 
 - [Overview](#overview)
 - [Execution Functions](#execution-functions)
-  - [sync_run](#sync_run)
+  - [run](#run)
   - [async_run](#async_run)
 - [Choosing an Execution Function](#choosing-an-execution-function)
 - [Usage Examples](#usage-examples)
@@ -24,12 +24,12 @@ doeff provides two execution functions:
 
 | Function | Execution Model | Use Case |
 |----------|-----------------|----------|
-| `sync_run` | Synchronous with cooperative scheduling | CLI tools, scripts, testing |
+| `run` | Synchronous with cooperative scheduling | CLI tools, scripts, testing |
 | `async_run` | Real async I/O with `asyncio` | Production applications, HTTP/DB operations |
 
 Both functions return `RuntimeResult`:
-- `sync_run(program, handlers, env, store)` - Execute synchronously
-- `async_run(program, handlers, env, store)` - Execute asynchronously
+- `run(program, handlers, env, store)` - Execute synchronously
+- `arun(program, handlers, env, store)` - Execute asynchronously
 
 ---
 
@@ -40,7 +40,7 @@ Both functions return `RuntimeResult`:
 The **primary function** for production applications. Executes effects using real async I/O operations through Python's `asyncio` event loop.
 
 ```python
-from doeff import do, Delay, Await, async_run, async_handlers_preset
+from doeff import do, Delay, Await, async_run, default_handlers
 import asyncio
 
 @do
@@ -50,7 +50,7 @@ def fetch_data():
     return response.json()
 
 async def main():
-    result = await async_run(fetch_data(), async_handlers_preset)
+    result = await arun(fetch_data(), default_handlers())
 
     if result.is_ok():
         print(result.value)
@@ -74,12 +74,12 @@ asyncio.run(main())
 | `task.cancel()` | Request task cancellation (yields Effect) |
 | `task.is_done()` | Check task completion (yields Effect) |
 
-### sync_run
+### run
 
 A synchronous execution function for programs that don't require async I/O. Ideal for CLI tools, scripts, and testing pure logic. Supports **cooperative concurrency** via an internal task scheduler.
 
 ```python
-from doeff import do, Get, Put, sync_run, sync_handlers_preset
+from doeff import do, Get, Put, run, default_handlers
 
 @do
 def counter():
@@ -87,7 +87,7 @@ def counter():
     yield Put("counter", count + 1)
     return count + 1
 
-result = sync_run(counter(), sync_handlers_preset, store={"counter": 0})
+result = run(counter(), default_handlers(), store={"counter": 0})
 
 if result.is_ok():
     print(result.value)  # 1
@@ -95,10 +95,10 @@ if result.is_ok():
 
 #### Cooperative Concurrency (Spawn/Wait/Gather)
 
-`sync_run` supports `Spawn`, `Wait`, and `Gather` via **cooperative scheduling**—no threads, no asyncio. Tasks are interleaved at yield points.
+`run` supports `Spawn`, `Wait`, and `Gather` via **cooperative scheduling**—no threads, no asyncio. Tasks are interleaved at yield points.
 
 ```python
-from doeff import do, Spawn, Wait, Gather, sync_run, sync_handlers_preset
+from doeff import do, Spawn, Wait, Gather, run, default_handlers
 
 @do
 def parallel_work():
@@ -113,7 +113,7 @@ def parallel_work():
     result3 = yield Wait(t3)
     return [result1, result2, result3]
 
-result = sync_run(parallel_work(), sync_handlers_preset)
+result = run(parallel_work(), default_handlers())
 ```
 
 **How it works:**
@@ -131,7 +131,7 @@ The `task_scheduler_handler` manages cooperative concurrency:
 │      - Wait  → block task until target completes        │
 │      - Gather → block until all targets complete        │
 │                                                          │
-│   sync_run steps the CESK machine until completion      │
+│   run steps the CESK machine until completion      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -139,7 +139,7 @@ This is **cooperative concurrency** (not parallelism):
 - Single-threaded task execution, no race conditions
 - Deterministic execution order (for pure compute)
 - Tasks yield control at every `yield` statement
-- Scheduling logic is in handlers, stepping logic in `sync_run`/`async_run`
+- Scheduling logic is in handlers, stepping logic in `run`/`async_run`
 
 #### Delay with Timer Thread
 
@@ -169,12 +169,12 @@ task1: ready, resumes
 - `Await` - Not supported (requires asyncio event loop). Use `async_run` for Python coroutines.
 - No true CPU parallelism (tasks run sequentially on main thread)
 
-### Time Effects in sync_run
+### Time Effects in run
 
-`sync_run` handles time effects with real wall-clock time:
+`run` handles time effects with real wall-clock time:
 
 ```python
-from doeff import do, Delay, GetTime, sync_run, sync_handlers_preset
+from doeff import do, Delay, GetTime, run, default_handlers
 
 @do
 def timed_operation():
@@ -183,7 +183,7 @@ def timed_operation():
     end = yield GetTime()
     return f"Elapsed: {(end - start).total_seconds()}s"
 
-result = sync_run(timed_operation(), sync_handlers_preset)
+result = run(timed_operation(), default_handlers())
 print(result.value)  # "Elapsed: ~1.0s"
 ```
 
@@ -196,18 +196,18 @@ print(result.value)  # "Elapsed: ~1.0s"
 | If you need... | Use |
 |----------------|-----|
 | Real HTTP/DB/file I/O | `async_run` |
-| Real wall-clock delays | `async_run` or `sync_run` |
+| Real wall-clock delays | `async_run` or `run` |
 | True parallel execution (CPU concurrency) | `async_run` |
 | Python async/await interop (`Await`) | `async_run` |
-| Concurrent tasks without asyncio | `sync_run` |
-| CLI tools / scripts | `sync_run` |
-| Deterministic concurrent testing | `sync_run` |
+| Concurrent tasks without asyncio | `run` |
+| CLI tools / scripts | `run` |
+| Deterministic concurrent testing | `run` |
 
 ### Feature Comparison
 
-| Feature | `async_run` | `sync_run` |
+| Feature | `async_run` | `run` |
 |---------|-------------|------------|
-| Call style | `await async_run(...)` | `sync_run(...)` |
+| Call style | `await arun(...)` | `run(...)` |
 | `Delay` effect | Real `asyncio.sleep` | Real `time.sleep` with timer threads |
 | `WaitUntil` effect | Real async wait | Real blocking wait |
 | `GetTime` effect | `datetime.now()` | `datetime.now()` |
@@ -227,7 +227,7 @@ print(result.value)  # "Elapsed: ~1.0s"
 **async_run (async context):**
 ```python
 import asyncio
-from doeff import do, Ask, async_run, async_handlers_preset
+from doeff import do, Ask, async_run, default_handlers
 
 @do
 def greet():
@@ -235,7 +235,7 @@ def greet():
     return f"Hello, {name}!"
 
 async def main():
-    result = await async_run(greet(), async_handlers_preset, env={"name": "World"})
+    result = await arun(greet(), default_handlers(), env={"name": "World"})
 
     if result.is_ok():
         print(result.value)  # "Hello, World!"
@@ -243,31 +243,31 @@ async def main():
 asyncio.run(main())
 ```
 
-**sync_run (sync context):**
+**run (sync context):**
 ```python
-from doeff import do, Ask, sync_run, sync_handlers_preset
+from doeff import do, Ask, run, default_handlers
 
 @do
 def greet():
     name = yield Ask("name")
     return f"Hello, {name}!"
 
-result = sync_run(greet(), sync_handlers_preset, env={"name": "World"})
+result = run(greet(), default_handlers(), env={"name": "World"})
 
 if result.is_ok():
     print(result.value)  # "Hello, World!"
 ```
 
-**Testing with sync_run:**
+**Testing with run:**
 ```python
-from doeff import do, Delay, sync_run, sync_handlers_preset
+from doeff import do, Delay, run, default_handlers
 
 @do
 def delayed_response():
     yield Delay(0.1)  # Short delay for testing
     return "Ready!"
 
-result = sync_run(delayed_response(), sync_handlers_preset)
+result = run(delayed_response(), default_handlers())
 
 assert result.is_ok()
 assert result.value == "Ready!"
@@ -275,17 +275,17 @@ assert result.value == "Ready!"
 
 ### RuntimeResult and Error Handling
 
-Both `sync_run` and `async_run` return `RuntimeResult[T]` which wraps the computation outcome with full debugging context:
+Both `run` and `async_run` return `RuntimeResult[T]` which wraps the computation outcome with full debugging context:
 
 ```python
-from doeff import do, sync_run, sync_handlers_preset
+from doeff import do, run, default_handlers
 
 @do
 def risky_operation():
     raise ValueError("Something went wrong")
     return 42  # Never reached
 
-result = sync_run(risky_operation(), sync_handlers_preset)
+result = run(risky_operation(), default_handlers())
 
 # Check result - NOTE: is_ok() and is_err() are METHODS, not properties!
 if result.is_ok():
@@ -332,7 +332,7 @@ Extend runtime behavior by providing custom effect handlers. Handlers in doeff a
 
 ```python
 from dataclasses import dataclass
-from doeff import do, sync_run, sync_handlers_preset
+from doeff import do, run, default_handlers
 from doeff._types_internal import EffectBase
 from doeff.cesk.handler_frame import HandlerContext
 from doeff.cesk.state import CESKState
@@ -359,8 +359,8 @@ def program_with_logging():
     return "Done"
 
 # Prepend custom handler to preset (handlers are outermost to innermost)
-handlers = [custom_log_handler, *sync_handlers_preset]
-result = sync_run(program_with_logging(), handlers)
+handlers = [custom_log_handler, *default_handlers()]
+result = run(program_with_logging(), handlers)
 ```
 
 **Handler Signature:**
@@ -384,7 +384,7 @@ For testing time-dependent logic, you can use custom handlers or set the initial
 
 ```python
 from datetime import datetime
-from doeff import do, GetTime, sync_run, sync_handlers_preset
+from doeff import do, GetTime, run, default_handlers
 
 @do
 def get_current_time():
@@ -392,9 +392,9 @@ def get_current_time():
     return current
 
 # Control time via store
-result = sync_run(
+result = run(
     get_current_time(),
-    sync_handlers_preset,
+    default_handlers(),
     store={"__current_time__": datetime(2024, 1, 1, 12, 0)}
 )
 print(result.value)  # datetime(2024, 1, 1, 12, 0)
@@ -425,13 +425,13 @@ result = runtime.run(program)
 
 **After:**
 ```python
-from doeff import sync_run, async_run, sync_handlers_preset, async_handlers_preset
+from doeff import run, async_run, default_handlers, default_handlers
 
 # Sync
-result = sync_run(program, sync_handlers_preset)
+result = run(program, default_handlers())
 
 # Async
-result = await async_run(program, async_handlers_preset)
+result = await arun(program, default_handlers())
 
 # Result is RuntimeResult
 if result.is_ok():
@@ -456,7 +456,7 @@ if result.is_ok:  # was a property
 **After:**
 ```python
 # Functions always return RuntimeResult
-result = sync_run(program, sync_handlers_preset)
+result = run(program, default_handlers())
 
 # NOTE: is_ok() is a METHOD now!
 if result.is_ok():
@@ -467,10 +467,10 @@ if result.is_ok():
 
 | Old API | New API |
 |---------|---------|
-| `from doeff.runtimes import AsyncioRuntime` | `from doeff import async_run, async_handlers_preset` |
-| `from doeff.runtimes import SyncRuntime` | `from doeff import sync_run, sync_handlers_preset` |
-| `runtime = SyncRuntime(); runtime.run(p)` | `sync_run(p, sync_handlers_preset)` |
-| `runtime = AsyncRuntime(); await runtime.run(p)` | `await async_run(p, async_handlers_preset)` |
+| `from doeff.runtimes import AsyncioRuntime` | `from doeff import async_run, default_handlers()` |
+| `from doeff.runtimes import SyncRuntime` | `from doeff import run, default_handlers()` |
+| `runtime = SyncRuntime(); runtime.run(p)` | `run(p, default_handlers())` |
+| `runtime = AsyncRuntime(); await runtime.run(p)` | `await arun(p, default_handlers())` |
 | `result.is_ok` (property) | `result.is_ok()` (method) |
 | `result.is_err` (property) | `result.is_err()` (method) |
 | `result.unwrap()` | `result.value` |

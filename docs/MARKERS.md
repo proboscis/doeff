@@ -204,7 +204,7 @@ async def async_interpreter(  # doeff: interpreter
     timeout: float = None
 ):
     """Execute program asynchronously with optional timeout."""
-    return await program.async_run(timeout=timeout)
+    return await program.arun(timeout=timeout)
 ```
 
 ### Transform Chain

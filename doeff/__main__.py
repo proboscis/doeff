@@ -13,10 +13,10 @@ from typing import Any
 
 from doeff import Program, RunResult
 from doeff.analysis import EffectCallTree
-from doeff.cesk.run import sync_handlers_preset, sync_run
 from doeff.cli.profiling import is_profiling_enabled, print_profiling_status, profile
 from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
+from doeff.rust_vm import default_handlers, run as vm_run
 from doeff.types import capture_traceback
 
 
@@ -113,7 +113,7 @@ class ProgramBuilder:
 
         merged_env_program = self._merger.merge_envs(env_sources)
         try:
-            merged_env_dict = sync_run(merged_env_program, sync_handlers_preset).value
+            merged_env_dict = vm_run(merged_env_program, handlers=default_handlers()).value
         except Exception as exc:
             print("[DOEFF][DISCOVERY] Environment merge failed:", file=sys.stderr)
             print(repr(exc), file=sys.stderr)
@@ -429,16 +429,18 @@ def _call_interpreter(func: Callable[..., Any], program: Program[Any]) -> Any:
 
 
 def _finalize_result(value: Any) -> tuple[Any, RunResult[Any] | None]:
-    from doeff.cesk.runtime_result import RuntimeResult
     from doeff.program import Program as ProgramType
 
     if isinstance(value, ProgramType):
-        result = sync_run(value, sync_handlers_preset)
+        result = vm_run(value, handlers=default_handlers())
         return result.value, None
-    if isinstance(value, RuntimeResult):
-        return value.value, None
     if isinstance(value, RunResult):
         return _unwrap_run_result(value), value
+    if hasattr(value, "is_ok") and hasattr(value, "value"):
+        try:
+            return value.value, None
+        except Exception as exc:
+            raise RuntimeError("Program execution failed") from exc
     return value, None
 
 

@@ -478,4 +478,3 @@ PY
 - **[CLI Run Command Architecture](cli-run-command-architecture.md)** - Internal architecture details
 - **[Getting Started](01-getting-started.md)** - Basic doeff concepts
 - **[Core Concepts](02-core-concepts.md)** - Program and Effect types
-

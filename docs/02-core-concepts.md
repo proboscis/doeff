@@ -33,7 +33,7 @@ A Program wraps a **generator function** that:
 
 **Lazy Evaluation**
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def expensive_computation():
@@ -44,7 +44,7 @@ def expensive_computation():
 program = expensive_computation()
 
 # Execution happens here
-result = sync_run(program, sync_handlers_preset)
+result = run(program, default_handlers())
 ```
 
 **Reusability**
@@ -56,8 +56,8 @@ def get_timestamp():
 
 # Unlike generators, this works:
 prog = get_timestamp()
-result1 = sync_run(prog, sync_handlers_preset)  # 1234567890.123
-result2 = sync_run(prog, sync_handlers_preset)  # 1234567890.456
+result1 = run(prog, default_handlers())  # 1234567890.123
+result2 = run(prog, default_handlers())  # 1234567890.456
 ```
 
 ### Creating Programs
@@ -271,23 +271,23 @@ except StopIteration as e:
 
 ### Running Programs
 
-Programs are executed using `sync_run` or `async_run`:
+Programs are executed using `run` or `async_run`:
 
 ```python
-from doeff import sync_run, async_run, sync_handlers_preset, async_handlers_preset
+from doeff import run, async_run, default_handlers, default_handlers
 
 # Synchronous execution
-result = sync_run(
+result = run(
     program,
-    sync_handlers_preset,
+    default_handlers(),
     env={"key": "value"},  # Optional environment
     store={"state": 123}   # Optional initial store
 )
 
 # Async execution
-result = await async_run(
+result = await arun(
     program,
-    async_handlers_preset,
+    default_handlers(),
     env={"key": "value"},
     store={"state": 123}
 )
@@ -317,7 +317,7 @@ env = {"database_url": "postgres://...", "api_key": "..."}
 store = {"counter": 0, "status": "ready"}
 
 # Pass to execution function
-result = sync_run(program, sync_handlers_preset, env=env, store=store)
+result = run(program, default_handlers(), env=env, store=store)
 ```
 
 ### RuntimeResult
@@ -510,8 +510,8 @@ from doeff import (
     Err,             # Error value
 
     # Execution
-    sync_run, async_run,
-    sync_handlers_preset, async_handlers_preset,
+    run, async_run,
+    default_handlers(), default_handlers(),
     RuntimeResult,   # Result container
 )
 ```
@@ -545,7 +545,7 @@ def create_program() -> Program[int]:
 
 # Execution
 def execute(prog: Program[T]) -> RuntimeResult[T]:
-    return sync_run(prog, sync_handlers_preset)
+    return run(prog, default_handlers())
 ```
 
 ### Generic Programs
@@ -571,7 +571,7 @@ result = identity("hello")  # Program[str]
 - **Effect**: Request for an operation (Reader, State, Writer, etc.)
 - **@do**: Converts generator functions to Programs with monadic operations
 - **Generator**: Python's coroutine mechanism enables do-notation syntax
-- **sync_run/async_run**: Execute programs with provided handlers
+- **run/async_run**: Execute programs with provided handlers
 - **Environment/Store**: Tracks environment and mutable state during execution
 - **RuntimeResult[T]**: Contains final value and raw_store
 - **Monadic Ops**: map, flat_map, sequence, pure enable composition

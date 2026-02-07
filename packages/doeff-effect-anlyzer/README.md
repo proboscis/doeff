@@ -15,4 +15,3 @@ uv run maturin develop --manifest-path packages/doeff-effect-anlyzer/Cargo.toml
 ## Status
 🚧 Work in progress — see `specs/effect-analyzer/` for design details and the implementation
 checklist.
-

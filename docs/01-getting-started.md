@@ -39,7 +39,7 @@ Let's write a simple program that uses state management and logging:
 
 ```python
 from doeff import do, Program, Put, Get, Log
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def counter_program():
@@ -56,7 +56,7 @@ def counter_program():
     return final_count
 
 def main():
-    result = sync_run(counter_program(), sync_handlers_preset)
+    result = run(counter_program(), default_handlers())
     print(f"Result: {result.value}")
 
 main()
@@ -77,14 +77,14 @@ Let's break down what's happening:
    - `Put("counter", value)` - Sets state
    - `Get("counter")` - Retrieves state
    - `Log(message)` - Writes to log
-4. **`sync_run`**: Executes programs with the provided handlers
+4. **`run`**: Executes programs with the provided handlers
 5. **Result**: Returns a `RuntimeResult` with `.value` for success or `.error` for failure
 
 ## Key Concepts
 
 ### Programs are Lazy
 
-Programs don't execute until you call `sync_run()` or `async_run()`:
+Programs don't execute until you call `run()` or `arun()`:
 
 ```python
 @do
@@ -96,7 +96,7 @@ def my_program():
 program = my_program()
 
 # Now it executes
-result = sync_run(program, sync_handlers_preset)
+result = run(program, default_handlers())
 ```
 
 ### Programs are Reusable
@@ -115,8 +115,8 @@ prog1 = get_timestamp()
 prog2 = get_timestamp()
 
 # Each execution is independent
-result1 = sync_run(prog1, sync_handlers_preset)
-result2 = sync_run(prog2, sync_handlers_preset)
+result1 = run(prog1, default_handlers())
+result2 = run(prog2, default_handlers())
 ```
 
 ### Effects are Composable
@@ -147,12 +147,12 @@ def full_program():
 You can provide initial environment and store:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 # Pass initial environment and store
-result = sync_run(
+result = run(
     my_program(),
-    sync_handlers_preset,
+    default_handlers(),
     env={"database_url": "postgresql://localhost/mydb"},
     store={"user_id": 123}
 )
@@ -160,12 +160,12 @@ result = sync_run(
 
 ## Error Handling
 
-`sync_run()` and `async_run()` always return a `RuntimeResult`:
+`run()` and `arun()` always return a `RuntimeResult`:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
-result = sync_run(my_program(), sync_handlers_preset)
+result = run(my_program(), default_handlers())
 
 # Check success with methods (use parentheses!)
 if result.is_ok():
@@ -265,10 +265,10 @@ Don't reuse Program objects after running them with sub-effects:
 ```python
 # If you need to run a program multiple times, call the function again
 prog = my_program()
-result1 = sync_run(prog, sync_handlers_preset)
+result1 = run(prog, default_handlers())
 # Don't reuse prog - create a new one
 prog2 = my_program()
-result2 = sync_run(prog2, sync_handlers_preset)
+result2 = run(prog2, default_handlers())
 ```
 
 ## Next Steps
@@ -311,15 +311,15 @@ from doeff import (
     Ok, Err, Result,
 
     # Execution functions
-    sync_run, async_run,
-    sync_handlers_preset, async_handlers_preset,
+    run, async_run,
+    default_handlers(), default_handlers(),
 )
 ```
 
 ### Basic Program Template
 
 ```python
-from doeff import do, Log, sync_run, sync_handlers_preset
+from doeff import do, Log, run, default_handlers
 
 @do
 def my_program():
@@ -328,7 +328,7 @@ def my_program():
     return "result"
 
 def main():
-    result = sync_run(my_program(), sync_handlers_preset)
+    result = run(my_program(), default_handlers())
     print(result.value)
 
 if __name__ == "__main__":

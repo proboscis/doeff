@@ -19,7 +19,7 @@ This chapter covers effects for asynchronous operations: awaiting coroutines, ru
 
 ```python
 import asyncio
-from doeff import do, Await, Log, async_run, async_handlers_preset
+from doeff import do, Await, Log, async_run, default_handlers
 
 async def fetch_data():
     await asyncio.sleep(0.1)
@@ -33,7 +33,7 @@ def process_user():
     return data["name"]
 
 async def main():
-    result = await async_run(process_user(), async_handlers_preset)
+    result = await arun(process_user(), default_handlers())
     print(result.value)  # "Alice"
 
 asyncio.run(main())
@@ -151,7 +151,7 @@ def fetch_multiple_apis():
 ### Fan-Out Pattern
 
 ```python
-from doeff import async_run, async_handlers_preset
+from doeff import async_run, default_handlers
 
 @do
 def process_item(item_id):
@@ -174,7 +174,7 @@ def process_batch(item_ids):
 
 # Usage
 async def main():
-    result = await async_run(process_batch([1, 2, 3, 4, 5]), async_handlers_preset)
+    result = await arun(process_batch([1, 2, 3, 4, 5]), default_handlers())
     print(result.value)  # ["processed-1", ..., "processed-5"]
 ```
 
@@ -339,7 +339,7 @@ def with_delay():
 
 **Execution behavior:**
 - `async_run`: Uses `asyncio.sleep` (non-blocking)
-- `sync_run`: Uses cooperative scheduling or `time.sleep`
+- `run`: Uses cooperative scheduling or `time.sleep`
 
 ### GetTime - Get Current Time
 
@@ -380,21 +380,21 @@ def wait_until_example():
     return "done"
 ```
 
-### Time Effects with sync_run
+### Time Effects with run
 
-`sync_run` with cooperative scheduling handles time effects efficiently:
+`run` with cooperative scheduling handles time effects efficiently:
 
 ```python
-from doeff import sync_run, sync_handlers_preset
+from doeff import run, default_handlers
 
 @do
 def slow_in_real_time():
     yield Delay(3600)  # 1 hour delay
     return "done"
 
-# With sync_run, time advances based on handler implementation
+# With run, time advances based on handler implementation
 def test_time_based_program():
-    result = sync_run(slow_in_real_time(), sync_handlers_preset)
+    result = run(slow_in_real_time(), default_handlers())
     assert result.is_ok()
     assert result.value == "done"
 ```
@@ -624,7 +624,7 @@ def parallel():
 ```python
 import asyncio
 import pytest
-from doeff import do, Await, Log, async_run, async_handlers_preset
+from doeff import do, Await, Log, async_run, default_handlers
 
 @pytest.mark.asyncio
 async def test_async_program():
@@ -634,7 +634,7 @@ async def test_async_program():
         yield Log(f"Result: {result}")
         return result
 
-    result = await async_run(my_program(), async_handlers_preset)
+    result = await arun(my_program(), default_handlers())
 
     assert result.is_ok()
     assert result.value == "test"
@@ -644,11 +644,11 @@ async def test_async_program():
 
 | Effect | Purpose | Execution Support |
 |--------|---------|-------------------|
-| `Await(coro)` | Wait for async operation | async_run (native), sync_run (via thread) |
-| `Gather(*progs)` | Run Programs in parallel | async_run (parallel), sync_run (cooperative) |
-| `Spawn(prog)` | Background task with snapshot | async_run (native), sync_run (cooperative) |
-| `Wait(task)` | Wait for spawned task | async_run, sync_run |
-| `task.cancel()` | Request cancellation | async_run, sync_run |
+| `Await(coro)` | Wait for async operation | async_run (native), run (via thread) |
+| `Gather(*progs)` | Run Programs in parallel | async_run (parallel), run (cooperative) |
+| `Spawn(prog)` | Background task with snapshot | async_run (native), run (cooperative) |
+| `Wait(task)` | Wait for spawned task | async_run, run |
+| `task.cancel()` | Request cancellation | async_run, run |
 | `Delay(seconds)` | Sleep for duration | All |
 | `GetTime()` | Get current time | All |
 | `WaitUntil(time)` | Wait until specific time | All |
