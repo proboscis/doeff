@@ -708,6 +708,9 @@ impl PyVM {
                 "GetHandlers" => {
                     return Ok(Yielded::DoCtrl(DoCtrl::GetHandlers));
                 }
+                "GetCallStack" => {
+                    return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
+                }
                 "CreateContinuation" => {
                     let program = obj.getattr("program")?.unbind();
                     let handlers_list = obj.getattr("handlers")?;
@@ -1934,6 +1937,27 @@ mod tests {
             assert!(
                 result.is_err(),
                 "G11 FAIL: stale continuation id must error, not fallback classification"
+            );
+        });
+    }
+
+    #[test]
+    fn test_spec_get_call_stack_classifies_to_doctrl() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class GetCallStack:\n    pass\nobj = GetCallStack()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                "SPEC GAP: GetCallStack must classify to DoCtrl::GetCallStack, got {:?}",
+                yielded
             );
         });
     }
