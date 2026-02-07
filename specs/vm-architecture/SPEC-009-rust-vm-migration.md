@@ -1,6 +1,14 @@
 # SPEC-009: Rust VM Public API
 
-## Status: Draft (Revision 5)
+## Status: Draft (Revision 6)
+
+### Revision 6 Changelog
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R6-A** | §1 Entrypoints, §9 Migration | Clarified rust-vm-only public path: `doeff.run` / `doeff.async_run` are the supported entrypoints; legacy CESK `sync_run` presets are retired from top-level exports. |
+| **R6-B** | §7 Scheduler | Removed compatibility coercion note for `WaitEffect`; typed scheduler classification is strict (malformed/unsupported scheduler forms are errors). |
+| **R6-C** | §3 Program, §5 Handlers | Clarified KPC dispatch expectation: KleisliProgramCall must route through effect-handler pipeline, not direct call rewrite bypass. |
 
 ### Revision 5 Changelog
 

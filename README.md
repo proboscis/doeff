@@ -35,74 +35,30 @@ pip install doeff-pinjected
 ## Quick Start
 
 ```python
-from doeff import do, Program, Put, Get, Log, AsyncRuntime
+from doeff import do, Program, Put, Get, Tell, run
 
 @do
 def counter_program() -> Program[int]:
     yield Put("counter", 0)
-    yield Log("Starting computation")
+    yield Tell("Starting computation")
     count = yield Get("counter")
     yield Put("counter", count + 1)
     return count + 1
 
-import asyncio
-
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(counter_program())
-    print(f"Result: {result}")  # 1
-
-asyncio.run(main())
+result = run(counter_program())
+print(result.value)  # 1
 ```
 
 ## Runtimes
 
-doeff provides three runtime implementations for executing programs:
+doeff now uses the Rust VM entrypoints:
 
-| Runtime | Use Case |
-|---------|----------|
-| `AsyncRuntime` | Production async code with native coroutine support |
-| `SyncRuntime` | Synchronous execution (blocking) |
-| `SimulationRuntime` | Testing with controlled time |
+| Entrypoint | Use Case |
+|------------|----------|
+| `run(program, handlers=None, env=None, store=None)` | Synchronous execution |
+| `async_run(program, handlers=None, env=None, store=None)` | Async execution with event-loop yielding |
 
-### AsyncRuntime (Recommended)
-
-The `AsyncRuntime` is the recommended runtime for production code. It supports:
-- All core effects (Ask, Get, Put, Modify, Tell, Listen, Safe)
-- Async-specific effects (Await, Delay, GetTime, Gather)
-- Native Python coroutine integration
-
-```python
-from doeff import do, AsyncRuntime, Await, Delay
-
-@do
-async def async_program():
-    result = yield Await(some_async_function())
-    yield Delay(seconds=1.0)
-    return result
-
-async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(async_program())
-```
-
-### SyncRuntime
-
-For synchronous code or scripts where async is not needed:
-
-```python
-from doeff import do, SyncRuntime, Get, Put
-
-@do
-def sync_program():
-    yield Put("counter", 0)
-    value = yield Get("counter")
-    return value + 1
-
-runtime = SyncRuntime()
-result = runtime.run(sync_program())
-
-```
+Default handlers are installed automatically (`state`, `reader`, `writer`).
 
 ## Migration from ProgramInterpreter
 
