@@ -42,6 +42,10 @@ pub struct Continuation {
     /// Handlers to install when started=false (innermost first).
     /// Empty for captured (started=true) continuations.
     pub handlers: Vec<Handler>,
+
+    /// Optional Python identities corresponding to handlers by index.
+    /// Used to preserve Rust sentinel identity across continuation round-trips.
+    pub handler_identities: Vec<Option<PyShared>>,
 }
 
 impl Continuation {
@@ -60,6 +64,7 @@ impl Continuation {
             started: true,
             program: None,
             handlers: Vec::new(),
+            handler_identities: Vec::new(),
         }
     }
 
@@ -79,10 +84,12 @@ impl Continuation {
             started: true,
             program: None,
             handlers: Vec::new(),
+            handler_identities: Vec::new(),
         }
     }
 
     pub fn create_unstarted(expr: PyShared, handlers: Vec<Handler>) -> Self {
+        let handler_identities = vec![None; handlers.len()];
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId::from_index(0),
@@ -93,6 +100,26 @@ impl Continuation {
             started: false,
             program: Some(expr),
             handlers,
+            handler_identities,
+        }
+    }
+
+    pub fn create_unstarted_with_identities(
+        expr: PyShared,
+        handlers: Vec<Handler>,
+        handler_identities: Vec<Option<PyShared>>,
+    ) -> Self {
+        Continuation {
+            cont_id: ContId::fresh(),
+            segment_id: SegmentId::from_index(0),
+            frames_snapshot: Arc::new(Vec::new()),
+            scope_chain: Arc::new(Vec::new()),
+            marker: Marker::placeholder(),
+            dispatch_id: None,
+            started: false,
+            program: Some(expr),
+            handlers,
+            handler_identities,
         }
     }
 
@@ -109,7 +136,11 @@ impl Continuation {
         }
         if !self.handlers.is_empty() {
             let list = PyList::empty(py);
-            for handler in &self.handlers {
+            for (idx, handler) in self.handlers.iter().enumerate() {
+                if let Some(Some(identity)) = self.handler_identities.get(idx) {
+                    list.append(identity.bind(py))?;
+                    continue;
+                }
                 match handler {
                     Handler::Python(py_handler) => {
                         list.append(py_handler.bind(py))?;
@@ -149,6 +180,7 @@ mod tests {
         assert!(cont.is_started());
         assert!(cont.program.is_none());
         assert!(cont.handlers.is_empty());
+        assert!(cont.handler_identities.is_empty());
     }
 
     #[test]

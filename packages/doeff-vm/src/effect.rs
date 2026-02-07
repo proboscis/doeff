@@ -10,8 +10,17 @@ use crate::scheduler::SchedulerEffect;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
+pub enum KpcArg {
+    Value(Value),
+    Expr(PyShared),
+}
+
+#[derive(Debug, Clone)]
 pub struct KpcCallEffect {
     pub call: PyShared,
+    pub kernel: PyShared,
+    pub args: Vec<KpcArg>,
+    pub kwargs: Vec<(String, KpcArg)>,
     pub metadata: CallMetadata,
 }
 

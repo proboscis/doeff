@@ -3,7 +3,8 @@
 use std::sync::{Arc, Mutex};
 
 use crate::continuation::Continuation;
-use crate::effect::Effect;
+use crate::effect::{Effect, KpcArg, KpcCallEffect};
+use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
 use crate::py_shared::PyShared;
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
@@ -84,6 +85,200 @@ impl Handler {
             Handler::RustProgram(h) => h.can_handle(effect),
             Handler::Python(_) => true,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// KpcHandlerFactory + KpcHandlerProgram
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct KpcHandlerFactory;
+
+impl RustProgramHandler for KpcHandlerFactory {
+    fn can_handle(&self, effect: &Effect) -> bool {
+        matches!(effect, Effect::KpcCall(_))
+    }
+
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(KpcHandlerProgram::new())))
+    }
+}
+
+#[derive(Debug, Clone)]
+enum KpcPending {
+    Positional,
+    Keyword(String),
+    CallResult,
+}
+
+#[derive(Debug, Clone)]
+struct KpcResolution {
+    k_user: Continuation,
+    kernel: PyShared,
+    metadata: CallMetadata,
+    handlers: Vec<Handler>,
+    args: Vec<KpcArg>,
+    kwargs: Vec<(String, KpcArg)>,
+    arg_idx: usize,
+    kw_idx: usize,
+    resolved_args: Vec<Value>,
+    resolved_kwargs: Vec<(String, Value)>,
+    pending: Option<KpcPending>,
+}
+
+#[derive(Debug)]
+enum KpcPhase {
+    Idle,
+    AwaitHandlers {
+        k_user: Continuation,
+        kpc: KpcCallEffect,
+    },
+    Running(KpcResolution),
+}
+
+#[derive(Debug)]
+struct KpcHandlerProgram {
+    phase: KpcPhase,
+}
+
+impl KpcHandlerProgram {
+    fn new() -> Self {
+        KpcHandlerProgram {
+            phase: KpcPhase::Idle,
+        }
+    }
+
+    fn advance_running(
+        &mut self,
+        mut state: KpcResolution,
+        input: Option<Value>,
+    ) -> RustProgramStep {
+        if let Some(value) = input {
+            match state.pending.take() {
+                Some(KpcPending::Positional) => state.resolved_args.push(value),
+                Some(KpcPending::Keyword(key)) => state.resolved_kwargs.push((key, value)),
+                Some(KpcPending::CallResult) => {
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        continuation: state.k_user,
+                        value,
+                    }));
+                }
+                None => {
+                    return RustProgramStep::Throw(PyException::runtime_error(
+                        "KPC handler resumed without pending step",
+                    ));
+                }
+            }
+        }
+
+        loop {
+            if state.arg_idx < state.args.len() {
+                match state.args[state.arg_idx].clone() {
+                    KpcArg::Value(v) => {
+                        state.arg_idx += 1;
+                        state.resolved_args.push(v);
+                        continue;
+                    }
+                    KpcArg::Expr(expr) => {
+                        state.arg_idx += 1;
+                        state.pending = Some(KpcPending::Positional);
+                        let handlers = state.handlers.clone();
+                        self.phase = KpcPhase::Running(state);
+                        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                            expr,
+                            handlers,
+                        }));
+                    }
+                }
+            }
+
+            if state.kw_idx < state.kwargs.len() {
+                let (key, arg) = state.kwargs[state.kw_idx].clone();
+                match arg {
+                    KpcArg::Value(v) => {
+                        state.kw_idx += 1;
+                        state.resolved_kwargs.push((key, v));
+                        continue;
+                    }
+                    KpcArg::Expr(expr) => {
+                        state.kw_idx += 1;
+                        state.pending = Some(KpcPending::Keyword(key));
+                        let handlers = state.handlers.clone();
+                        self.phase = KpcPhase::Running(state);
+                        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                            expr,
+                            handlers,
+                        }));
+                    }
+                }
+            }
+
+            state.pending = Some(KpcPending::CallResult);
+            let f = state.kernel.clone();
+            let args = state.resolved_args.clone();
+            let kwargs = state.resolved_kwargs.clone();
+            let metadata = state.metadata.clone();
+            self.phase = KpcPhase::Running(state);
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Call {
+                f,
+                args,
+                kwargs,
+                metadata,
+            }));
+        }
+    }
+}
+
+impl RustHandlerProgram for KpcHandlerProgram {
+    fn start(
+        &mut self,
+        effect: Effect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> RustProgramStep {
+        match effect {
+            Effect::KpcCall(kpc) => {
+                self.phase = KpcPhase::AwaitHandlers { k_user: k, kpc };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+            }
+            other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
+        }
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, KpcPhase::Idle) {
+            KpcPhase::AwaitHandlers { k_user, kpc } => {
+                let handlers = match value {
+                    Value::Handlers(hs) => hs,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "KPC handler expected GetHandlers result",
+                        ));
+                    }
+                };
+                let state = KpcResolution {
+                    k_user,
+                    kernel: kpc.kernel,
+                    metadata: kpc.metadata,
+                    handlers,
+                    args: kpc.args,
+                    kwargs: kpc.kwargs,
+                    arg_idx: 0,
+                    kw_idx: 0,
+                    resolved_args: vec![],
+                    resolved_kwargs: vec![],
+                    pending: None,
+                };
+                self.advance_running(state, None)
+            }
+            KpcPhase::Running(state) => self.advance_running(state, Some(value)),
+            KpcPhase::Idle => RustProgramStep::Return(value),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        RustProgramStep::Throw(exc)
     }
 }
 
