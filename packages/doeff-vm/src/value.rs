@@ -191,7 +191,10 @@ impl Value {
 impl Value {
     pub fn from_effect(effect: &crate::effect::Effect) -> Self {
         match effect {
-            crate::effect::Effect::Python(py_obj) => Value::Python(py_obj.clone()),
+            crate::effect::Effect::Python(py_obj) => {
+                let py = unsafe { pyo3::Python::assume_attached() };
+                Value::Python(py_obj.clone_ref(py))
+            }
             _ => Value::None,
         }
     }

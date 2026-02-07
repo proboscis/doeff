@@ -14,6 +14,7 @@ use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
 use crate::ids::{PromiseId, TaskId};
+use crate::py_shared::PyShared;
 use crate::step::{DoCtrl, PyException, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -416,7 +417,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 // Yield CreateContinuation -- the VM will create an unstarted continuation
                 // and resume us with the result
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
-                    expr: program,
+                    expr: PyShared::new(program),
                     handlers,
                 }))
             }
@@ -496,7 +497,7 @@ impl RustHandlerProgram for SchedulerProgram {
             // TODO: Extract fields from Python object and dispatch to typed variants.
             SchedulerEffect::PythonSchedulerEffect(py_obj) => {
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::Python(py_obj),
+                    effect: Effect::Python(PyShared::new(py_obj)),
                 }))
             }
         }

@@ -4,6 +4,7 @@
 
 use pyo3::prelude::*;
 
+use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerEffect;
 use crate::value::Value;
 
@@ -21,7 +22,7 @@ pub enum Effect {
     Put { key: String, value: Value },
 
     /// Modify(key, f) -> old_value
-    Modify { key: String, modifier: Py<PyAny> },
+    Modify { key: String, modifier: PyShared },
 
     /// Ask(key) -> value (Reader effect)
     Ask { key: String },
@@ -34,7 +35,7 @@ pub enum Effect {
 
     // === User-defined effects (Python handlers) ===
     /// Any Python effect object
-    Python(Py<PyAny>),
+    Python(PyShared),
 }
 
 impl Effect {
@@ -90,9 +91,8 @@ impl Effect {
         }
     }
 
-    /// Create a Python effect.
     pub fn python(obj: Py<PyAny>) -> Self {
-        Effect::Python(obj)
+        Effect::Python(PyShared::new(obj))
     }
 
     /// Convert to Python object for passing to Python handlers.

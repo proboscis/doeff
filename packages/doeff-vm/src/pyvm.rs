@@ -12,9 +12,12 @@ use crate::handler::{
     WriterHandlerFactory,
 };
 use crate::ids::{ContId, Marker};
+use crate::py_shared::PyShared;
 use crate::scheduler::{SchedulerEffect, SchedulerHandler};
 use crate::segment::Segment;
-use crate::step::{DoCtrl, Mode, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded};
+use crate::step::{
+    DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
+};
 use crate::value::Value;
 use crate::vm::VM;
 
@@ -400,7 +403,7 @@ impl PyVM {
 
         if let Some(seg) = self.vm.current_segment_mut() {
             seg.push_frame(crate::frame::Frame::PythonGenerator {
-                generator: gen.unbind(),
+                generator: PyShared::new(gen.unbind()),
                 started: false,
                 metadata: None,
             });
@@ -422,7 +425,7 @@ impl PyVM {
         match call {
             PythonCall::StartProgram { program } => {
                 // D5: Strict only — no callable fallback. Spec requires ProgramBase.
-                let gen = self.to_generator_strict(py, program)?;
+                let gen = self.to_generator_strict(py, program.clone_ref(py))?;
                 Ok(PyCallOutcome::Value(Value::Python(gen)))
             }
             PythonCall::CallFunc { func, args, kwargs } => {
@@ -458,12 +461,17 @@ impl PyVM {
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
-            PythonCall::GenNext { gen } => self.step_generator(py, gen, None),
-            PythonCall::GenSend { gen, value } => {
+            PythonCall::GenNext => {
+                let gen = self.pending_generator(py)?;
+                self.step_generator(py, gen, None)
+            }
+            PythonCall::GenSend { value } => {
+                let gen = self.pending_generator(py)?;
                 let py_value = value.to_pyobject(py)?;
                 self.step_generator(py, gen, Some(py_value))
             }
-            PythonCall::GenThrow { gen, exc } => {
+            PythonCall::GenThrow { exc } => {
+                let gen = self.pending_generator(py)?;
                 let exc_bound = exc.bind(py);
                 match gen.bind(py).call_method1("throw", (exc_bound,)) {
                     Ok(yielded) => {
@@ -483,8 +491,15 @@ impl PyVM {
         }
     }
 
-    /// Strict: requires ProgramBase (has `to_generator` method). Rejects raw generators.
-    /// Used for `StartProgram` (when `Yielded::Program` is processed internally).
+    fn pending_generator(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        match &self.vm.pending_python {
+            Some(PendingPython::StepUserGenerator { generator, .. }) => Ok(generator.clone_ref(py)),
+            _ => Err(PyRuntimeError::new_err(
+                "GenNext/GenSend/GenThrow: expected StepUserGenerator in pending_python",
+            )),
+        }
+    }
+
     fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let program_bound = program.bind(py);
         let type_name = program_bound.get_type().name()?;
@@ -534,7 +549,7 @@ impl PyVM {
                 let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
                 Handler::RustProgram(sentinel.factory.clone())
             } else {
-                Handler::Python(wh.handler.clone_ref(_py))
+                Handler::Python(PyShared::new(wh.handler.clone_ref(_py)))
             };
             return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                 handler,
@@ -569,7 +584,7 @@ impl PyVM {
         if obj.is_instance_of::<PyDelegate>() {
             let d: PyRef<'_, PyDelegate> = obj.extract()?;
             let effect = if let Some(ref eff) = d.effect {
-                Effect::Python(eff.clone_ref(_py))
+                Effect::Python(PyShared::new(eff.clone_ref(_py)))
             } else {
                 self.vm
                     .dispatch_stack
@@ -632,7 +647,7 @@ impl PyVM {
                         let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_obj.extract()?;
                         Handler::RustProgram(sentinel.factory.clone())
                     } else {
-                        Handler::Python(handler_obj.unbind())
+                        Handler::Python(PyShared::new(handler_obj.unbind()))
                     };
                     return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                         handler,
@@ -642,7 +657,7 @@ impl PyVM {
                 "Delegate" => {
                     let effect = if let Ok(eff_obj) = obj.getattr("effect") {
                         if !eff_obj.is_none() {
-                            Effect::Python(eff_obj.unbind())
+                            Effect::Python(PyShared::new(eff_obj.unbind()))
                         } else {
                             // No explicit effect — use current dispatch effect
                             self.vm
@@ -681,10 +696,12 @@ impl PyVM {
                     let mut handlers = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
-                        handlers.push(crate::handler::Handler::Python(item.unbind()));
+                        handlers.push(crate::handler::Handler::Python(PyShared::new(
+                            item.unbind(),
+                        )));
                     }
                     return Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
-                        expr: program,
+                        expr: PyShared::new(program),
                         handlers,
                     }));
                 }
@@ -722,7 +739,7 @@ impl PyVM {
                     let modifier = obj.getattr("func")?;
                     return Ok(Yielded::Effect(Effect::Modify {
                         key,
-                        modifier: modifier.unbind(),
+                        modifier: PyShared::new(modifier.unbind()),
                     }));
                 }
                 "AskEffect" | "Ask" => {
@@ -888,7 +905,9 @@ impl PyVM {
                 _ => {}
             }
         }
-        Ok(Yielded::Effect(Effect::Python(obj.clone().unbind())))
+        Ok(Yielded::Effect(Effect::Python(PyShared::new(
+            obj.clone().unbind(),
+        ))))
     }
 
     fn values_to_tuple<'py>(
@@ -961,7 +980,7 @@ impl PyVM {
             function_name,
             source_file,
             source_line,
-            program_call: Some(obj.clone().unbind()),
+            program_call: Some(PyShared::new(obj.clone().unbind())),
         })
     }
 }

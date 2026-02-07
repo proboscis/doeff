@@ -2,11 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use pyo3::prelude::*;
-
 use crate::continuation::Continuation;
 use crate::effect::Effect;
 use crate::ids::SegmentId;
+use crate::py_shared::PyShared;
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -14,7 +13,7 @@ use crate::vm::RustStore;
 #[derive(Debug, Clone)]
 pub enum Handler {
     RustProgram(RustProgramHandlerRef),
-    Python(Py<PyAny>),
+    Python(PyShared),
 }
 
 /// Result of stepping a Rust handler program.
@@ -54,7 +53,7 @@ pub type RustProgramRef = Arc<Mutex<Box<dyn RustHandlerProgram + Send>>>;
 pub struct HandlerEntry {
     pub handler: Handler,
     pub prompt_seg_id: SegmentId,
-    pub py_identity: Option<Py<PyAny>>,
+    pub py_identity: Option<PyShared>,
 }
 
 impl HandlerEntry {
@@ -69,7 +68,7 @@ impl HandlerEntry {
     pub fn with_identity(
         handler: Handler,
         prompt_seg_id: SegmentId,
-        py_identity: Py<PyAny>,
+        py_identity: PyShared,
     ) -> Self {
         HandlerEntry {
             handler,
@@ -304,7 +303,7 @@ enum DoubleCallPhase {
     Init,
     AwaitingFirstResult {
         k: Continuation,
-        modifier: Py<PyAny>,
+        modifier: PyShared,
     },
     AwaitingSecondResult {
         k: Continuation,
@@ -388,6 +387,7 @@ mod tests {
     use super::*;
     use crate::ids::Marker;
     use crate::segment::Segment;
+    use pyo3::IntoPyObject;
 
     fn make_test_continuation() -> Continuation {
         let marker = Marker::fresh();
@@ -500,7 +500,7 @@ mod tests {
                 guard.start(
                     Effect::Modify {
                         key: "key".to_string(),
-                        modifier,
+                        modifier: PyShared::new(modifier),
                     },
                     k,
                     &mut store,
@@ -531,7 +531,7 @@ mod tests {
                 guard.start(
                     Effect::Modify {
                         key: "key".to_string(),
-                        modifier,
+                        modifier: PyShared::new(modifier),
                     },
                     k,
                     &mut store,
@@ -651,7 +651,7 @@ mod tests {
                 guard.start(
                     Effect::Modify {
                         key: "key".to_string(),
-                        modifier,
+                        modifier: PyShared::new(modifier),
                     },
                     k,
                     &mut store,
