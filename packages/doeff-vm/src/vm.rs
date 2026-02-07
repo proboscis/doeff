@@ -298,6 +298,7 @@ impl VM {
                     Effect::Tell { .. } => "HandleYield(Tell)",
                     Effect::Python(_) => "HandleYield(Python)",
                     Effect::Scheduler(_) => "HandleYield(Scheduler)",
+                    Effect::KpcCall(_) => "HandleYield(KpcCall)",
                 },
 Yielded::DoCtrl(p) => match p {
             DoCtrl::Resume { .. } => "HandleYield(Resume)",
@@ -569,9 +570,20 @@ Yielded::DoCtrl(p) => match p {
         };
 
         match yielded {
-            Yielded::Effect(effect) => match self.start_dispatch(effect) {
-                Ok(event) => event,
-                Err(e) => StepEvent::Error(e),
+            Yielded::Effect(effect) => match effect {
+                Effect::KpcCall(kpc) => {
+                    self.mode = Mode::HandleYield(Yielded::DoCtrl(crate::step::DoCtrl::Call {
+                        f: kpc.call,
+                        args: vec![],
+                        kwargs: vec![],
+                        metadata: kpc.metadata,
+                    }));
+                    StepEvent::Continue
+                }
+                other => match self.start_dispatch(other) {
+                    Ok(event) => event,
+                    Err(e) => StepEvent::Error(e),
+                },
             },
 
             Yielded::DoCtrl(prim) => {
@@ -617,12 +629,10 @@ Yielded::DoCtrl(p) => match p {
                         });
                         if args.is_empty() && kwargs.is_empty() {
                             // DoThunk path: f is a DoThunk, driver calls to_generator()
-                            StepEvent::NeedsPython(PythonCall::StartProgram {
-                                program: PyShared::new(f),
-                            })
+                            StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
                         } else {
                             StepEvent::NeedsPython(PythonCall::CallFunc {
-                                func: PyShared::new(f),
+                                func: f,
                                 args,
                                 kwargs,
                             })
@@ -2647,7 +2657,7 @@ mod tests {
             };
 
             vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: dummy_f,
+                f: PyShared::new(dummy_f),
                 args: vec![],
                 kwargs: vec![],
                 metadata: metadata.clone(),
@@ -2694,7 +2704,7 @@ mod tests {
             };
 
             vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: dummy_f,
+                f: PyShared::new(dummy_f),
                 args: vec![Value::Int(42), Value::String("hello".to_string())],
                 kwargs: vec![],
                 metadata,
@@ -2739,7 +2749,7 @@ mod tests {
             };
 
             vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: dummy_f,
+                f: PyShared::new(dummy_f),
                 args: vec![Value::Int(1)],
                 kwargs: vec![
                     ("key1".to_string(), Value::Int(2)),
@@ -2792,7 +2802,7 @@ mod tests {
             };
 
             vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
-                f: dummy_f,
+                f: PyShared::new(dummy_f),
                 args: vec![],
                 kwargs: vec![("name".to_string(), Value::String("test".to_string()))],
                 metadata,
