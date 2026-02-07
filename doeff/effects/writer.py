@@ -13,6 +13,8 @@ from .base import Effect, EffectBase, create_effect_with_trace
 class WriterTellEffect(EffectBase):
     """Appends the message to the writer log without producing a value."""
 
+    __doeff_writer_tell__ = True
+
     message: object
 
 

@@ -573,6 +573,7 @@ class EffectBase:
     """
 
     created_at: EffectCreationContext | None = field(default=None, compare=False)
+    __doeff_effect_base__: bool = field(default=True, init=False, repr=False, compare=False)
 
     def with_created_at(self: E, created_at: EffectCreationContext | None) -> E:
         if created_at is self.created_at:

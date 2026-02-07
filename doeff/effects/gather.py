@@ -19,6 +19,8 @@ class GatherEffect(EffectBase):
     - Waitable (Task/Future): Waited on concurrently
     """
 
+    __doeff_scheduler_gather__ = True
+
     items: tuple[Any, ...]  # Programs or Waitables
     _partial_results: tuple[Any, ...] | None = field(default=None, compare=False)
 

@@ -469,6 +469,8 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
     SPEC-TYPES-001: KPC is handler-dispatched (effect path), not a DoThunk.
     """
 
+    __doeff_kpc__ = True
+
     kleisli_source: Any  # KleisliProgram to execute
     args: tuple
     kwargs: dict[str, Any]

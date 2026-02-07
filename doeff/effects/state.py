@@ -14,6 +14,8 @@ from .base import Effect, EffectBase, create_effect_with_trace
 class StateGetEffect(EffectBase):
     """Retrieves the state value for key and yields it."""
 
+    __doeff_state_get__ = True
+
     key: str
 
     def __post_init__(self) -> None:
@@ -23,6 +25,8 @@ class StateGetEffect(EffectBase):
 @dataclass(frozen=True)
 class StatePutEffect(EffectBase):
     """Updates the stored state for key and completes with no value."""
+
+    __doeff_state_put__ = True
 
     key: str
     value: Any
@@ -34,6 +38,8 @@ class StatePutEffect(EffectBase):
 @dataclass(frozen=True)
 class StateModifyEffect(EffectBase):
     """Applies func to the current state value and yields the updated value."""
+
+    __doeff_state_modify__ = True
 
     key: str
     func: Callable[[Any], Any]

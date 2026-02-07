@@ -133,52 +133,16 @@ pub struct SchedulerState {
     pub current_task: Option<TaskId>,
 }
 
-fn scheduler_effect_type_name(effect: &PyShared) -> Option<String> {
-    Python::attach(|py| {
-        effect
-            .bind(py)
-            .get_type()
-            .name()
-            .ok()?
-            .extract::<String>()
-            .ok()
-    })
-}
-
-fn is_scheduler_effect_type_name(type_name: &str) -> bool {
-    matches!(
-        type_name,
-        "SpawnEffect"
-            | "SchedulerSpawn"
-            | "GatherEffect"
-            | "SchedulerGather"
-            | "RaceEffect"
-            | "SchedulerRace"
-            | "CreatePromise"
-            | "SchedulerCreatePromise"
-            | "CreateExternalPromise"
-            | "SchedulerCreateExternalPromise"
-            | "CompletePromiseEffect"
-            | "SchedulerCompletePromise"
-            | "FailPromiseEffect"
-            | "SchedulerFailPromise"
-            | "TaskCompletedEffect"
-            | "SchedulerTaskCompleted"
-    )
+fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
+    obj.getattr(attr)
+        .and_then(|v| v.extract::<bool>())
+        .unwrap_or(false)
 }
 
 fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let type_name: String = obj
-            .get_type()
-            .name()
-            .map_err(|e| e.to_string())?
-            .extract::<String>()
-            .map_err(|e| e.to_string())?;
-
-        match type_name.as_str() {
-            "SpawnEffect" | "SchedulerSpawn" => {
+        if has_true_attr(obj, "__doeff_scheduler_spawn__") {
                 let program = obj.getattr("program").map_err(|e| e.to_string())?.unbind();
                 let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
                     extract_handlers_from_python(&handlers_obj)?
@@ -195,8 +159,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     handlers,
                     store_mode,
                 }))
-            }
-            "GatherEffect" | "SchedulerGather" => {
+        } else if has_true_attr(obj, "__doeff_scheduler_gather__") {
                 let items_obj = obj.getattr("items").map_err(|e| e.to_string())?;
                 let mut waitables = Vec::new();
                 for item in items_obj.try_iter().map_err(|e| e.to_string())? {
@@ -209,8 +172,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     }
                 }
                 Ok(Some(SchedulerEffect::Gather { items: waitables }))
-            }
-            "RaceEffect" | "SchedulerRace" => {
+        } else if has_true_attr(obj, "__doeff_scheduler_race__") {
                 let items_obj = obj
                     .getattr("futures")
                     .or_else(|_| obj.getattr("items"))
@@ -226,12 +188,11 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     }
                 }
                 Ok(Some(SchedulerEffect::Race { items: waitables }))
-            }
-            "CreatePromise" | "SchedulerCreatePromise" => Ok(Some(SchedulerEffect::CreatePromise)),
-            "CreateExternalPromise" | "SchedulerCreateExternalPromise" => {
-                Ok(Some(SchedulerEffect::CreateExternalPromise))
-            }
-            "CompletePromiseEffect" | "SchedulerCompletePromise" => {
+        } else if has_true_attr(obj, "__doeff_scheduler_create_promise__") {
+            Ok(Some(SchedulerEffect::CreatePromise))
+        } else if has_true_attr(obj, "__doeff_scheduler_create_external_promise__") {
+            Ok(Some(SchedulerEffect::CreateExternalPromise))
+        } else if has_true_attr(obj, "__doeff_scheduler_complete_promise__") {
                 let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
                 let Some(promise) = extract_promise_id(&promise_obj) else {
                     return Err(
@@ -244,8 +205,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     promise,
                     value: Value::from_pyobject(&value),
                 }))
-            }
-            "FailPromiseEffect" | "SchedulerFailPromise" => {
+        } else if has_true_attr(obj, "__doeff_scheduler_fail_promise__") {
                 let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
                 let Some(promise) = extract_promise_id(&promise_obj) else {
                     return Err(
@@ -255,15 +215,18 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                 let error_obj = obj.getattr("error").map_err(|e| e.to_string())?;
                 let error = pyobject_to_exception(py, &error_obj);
                 Ok(Some(SchedulerEffect::FailPromise { promise, error }))
-            }
-            "TaskCompletedEffect" | "SchedulerTaskCompleted" => {
-                let task_obj = obj.getattr("task").map_err(|e| e.to_string())?;
-                let Some(task) = extract_task_id(&task_obj) else {
-                    return Err(
-                        "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id"
-                            .to_string(),
-                    );
-                };
+        } else if has_true_attr(obj, "__doeff_scheduler_task_completed__") {
+                let task = if let Ok(task_obj) = obj.getattr("task") {
+                    extract_task_id(&task_obj)
+                } else if let Ok(raw) = obj.getattr("task_id").and_then(|v| v.extract::<u64>()) {
+                    Some(TaskId::from_raw(raw))
+                } else {
+                    None
+                }
+                .ok_or_else(|| {
+                    "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id or task_id"
+                        .to_string()
+                })?;
 
                 if let Ok(error_obj) = obj.getattr("error") {
                     let error = pyobject_to_exception(py, &error_obj);
@@ -282,8 +245,8 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error"
                         .to_string(),
                 )
-            }
-            _ => Ok(None),
+        } else {
+            Ok(None)
         }
     })
 }
@@ -823,11 +786,9 @@ impl SchedulerHandler {
 
 impl RustProgramHandler for SchedulerHandler {
     fn can_handle(&self, effect: &Effect) -> bool {
-        effect.as_python().is_some_and(|obj| {
-            scheduler_effect_type_name(obj)
-                .as_deref()
-                .is_some_and(is_scheduler_effect_type_name)
-        })
+        effect
+            .as_python()
+            .is_some_and(|obj| parse_scheduler_python_effect(obj).ok().flatten().is_some())
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -953,7 +914,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass CreatePromise(EffectBase):\n    pass\nobj = CreatePromise()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass CreatePromise(EffectBase):\n    __doeff_scheduler_create_promise__ = True\n    pass\nobj = CreatePromise()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -971,7 +932,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -994,7 +955,7 @@ mod tests {
 
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
