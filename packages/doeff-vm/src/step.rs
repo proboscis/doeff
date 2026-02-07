@@ -96,7 +96,6 @@ pub enum PendingPython {
 pub enum Yielded {
     DoCtrl(DoCtrl),
     Effect(Effect),
-    Program(Py<PyAny>),
     Unknown(Py<PyAny>),
 }
 
@@ -240,7 +239,6 @@ impl Yielded {
         match self {
             Yielded::DoCtrl(p) => Yielded::DoCtrl(p.clone_ref(py)),
             Yielded::Effect(e) => Yielded::Effect(e.clone()),
-            Yielded::Program(p) => Yielded::Program(p.clone_ref(py)),
             Yielded::Unknown(p) => Yielded::Unknown(p.clone_ref(py)),
         }
     }
@@ -462,5 +460,15 @@ mod tests {
             DoCtrl::Eval { .. } => {}
             DoCtrl::GetCallStack => {}
         }
+    }
+
+    #[test]
+    fn test_spec_no_yielded_program_variant_in_runtime_source() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/step.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            !runtime_src.contains("Program(Py<PyAny>)"),
+            "SPEC GAP: Yielded::Program variant must be removed from runtime"
+        );
     }
 }

@@ -16,6 +16,17 @@ pub struct CallMetadata {
     pub program_call: Option<PyShared>,
 }
 
+impl CallMetadata {
+    pub fn anonymous() -> Self {
+        CallMetadata {
+            function_name: "<anonymous>".to_string(),
+            source_file: "<unknown>".to_string(),
+            source_line: 0,
+            program_call: None,
+        }
+    }
+}
+
 /// A frame in the continuation stack.
 ///
 /// Frames must be Clone to allow continuation capture (Arc snapshots).

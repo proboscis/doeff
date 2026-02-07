@@ -300,25 +300,24 @@ impl VM {
                     Effect::Scheduler(_) => "HandleYield(Scheduler)",
                     Effect::KpcCall(_) => "HandleYield(KpcCall)",
                 },
-Yielded::DoCtrl(p) => match p {
-            DoCtrl::Resume { .. } => "HandleYield(Resume)",
-            DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
-            DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
-            DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
-            DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
-            DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
-            DoCtrl::CreateContinuation { .. } => {
-                "HandleYield(CreateContinuation)"
-            }
-            DoCtrl::ResumeContinuation { .. } => {
-                "HandleYield(ResumeContinuation)"
-            }
-            DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
-            DoCtrl::Call { .. } => "HandleYield(Call)",
-            DoCtrl::Eval { .. } => "HandleYield(Eval)",
-            DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
+                Yielded::DoCtrl(p) => match p {
+                    DoCtrl::Resume { .. } => "HandleYield(Resume)",
+                    DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
+                    DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
+                    DoCtrl::Delegate { .. } => "HandleYield(Delegate)",
+                    DoCtrl::GetContinuation => "HandleYield(GetContinuation)",
+                    DoCtrl::GetHandlers => "HandleYield(GetHandlers)",
+                    DoCtrl::CreateContinuation { .. } => {
+                        "HandleYield(CreateContinuation)"
+                    }
+                    DoCtrl::ResumeContinuation { .. } => {
+                        "HandleYield(ResumeContinuation)"
+                    }
+                    DoCtrl::PythonAsyncSyntaxEscape { .. } => "HandleYield(AsyncEscape)",
+                    DoCtrl::Call { .. } => "HandleYield(Call)",
+                    DoCtrl::Eval { .. } => "HandleYield(Eval)",
+                    DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
                 },
-                Yielded::Program(_) => "HandleYield(Program)",
                 Yielded::Unknown(_) => "HandleYield(Unknown)",
             },
             Mode::Return(_) => "Return",
@@ -659,16 +658,9 @@ Yielded::DoCtrl(p) => match p {
                 }
             }
 
-            Yielded::Program(prog) => {
-                self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
-                StepEvent::NeedsPython(PythonCall::StartProgram {
-                    program: PyShared::new(prog),
-                })
-            }
-
             Yielded::Unknown(_) => {
                 self.mode = Mode::Throw(PyException::type_error(
-                    "unknown yielded value: expected Effect, DoCtrl, or Program",
+                    "unknown yielded value: expected Effect or DoCtrl",
                 ));
                 StepEvent::Continue
             }
