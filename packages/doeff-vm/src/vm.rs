@@ -570,20 +570,9 @@ Yielded::DoCtrl(p) => match p {
         };
 
         match yielded {
-            Yielded::Effect(effect) => match effect {
-                Effect::KpcCall(kpc) => {
-                    self.mode = Mode::HandleYield(Yielded::DoCtrl(crate::step::DoCtrl::Call {
-                        f: kpc.call,
-                        args: vec![],
-                        kwargs: vec![],
-                        metadata: kpc.metadata,
-                    }));
-                    StepEvent::Continue
-                }
-                other => match self.start_dispatch(other) {
-                    Ok(event) => event,
-                    Err(e) => StepEvent::Error(e),
-                },
+            Yielded::Effect(effect) => match self.start_dispatch(effect) {
+                Ok(event) => event,
+                Err(e) => StepEvent::Error(e),
             },
 
             Yielded::DoCtrl(prim) => {
@@ -609,8 +598,12 @@ Yielded::DoCtrl(p) => match p {
                     DoCtrl::Delegate { effect } => self.handle_delegate(effect),
                     DoCtrl::GetContinuation => self.handle_get_continuation(),
                     DoCtrl::GetHandlers => self.handle_get_handlers(),
-                    DoCtrl::CreateContinuation { expr, handlers } => {
-                        self.handle_create_continuation(expr, handlers)
+                    DoCtrl::CreateContinuation {
+                        expr,
+                        handlers,
+                        handler_identities,
+                    } => {
+                        self.handle_create_continuation(expr, handlers, handler_identities)
                     }
                     DoCtrl::ResumeContinuation {
                         continuation,
@@ -717,7 +710,9 @@ Yielded::DoCtrl(p) => match p {
         let pending = match self.pending_python.take() {
             Some(p) => p,
             None => {
-                self.mode = Mode::Deliver(Value::Unit);
+                self.mode = Mode::Throw(PyException::runtime_error(
+                    "receive_python_result called with no pending_python",
+                ));
                 return;
             }
         };
@@ -1248,8 +1243,13 @@ Yielded::DoCtrl(p) => match p {
         &mut self,
         program: PyShared,
         handlers: Vec<Handler>,
+        handler_identities: Vec<Option<PyShared>>,
     ) -> StepEvent {
-        let k = Continuation::create_unstarted(program, handlers);
+        let k = Continuation::create_unstarted_with_identities(
+            program,
+            handlers,
+            handler_identities,
+        );
         self.register_continuation(k.clone());
         self.mode = Mode::Deliver(Value::Continuation(k));
         StepEvent::Continue
@@ -1278,7 +1278,9 @@ Yielded::DoCtrl(p) => match p {
         let mut outside_seg_id = self.current_segment;
         let mut outside_scope = self.current_scope_chain();
 
-        for handler in k.handlers.iter().rev() {
+        for idx in (0..k.handlers.len()).rev() {
+            let handler = &k.handlers[idx];
+            let py_identity = k.handler_identities.get(idx).cloned().unwrap_or(None);
             let handler_marker = Marker::fresh();
             let prompt_seg = Segment::new_prompt(
                 handler_marker,
@@ -1287,10 +1289,11 @@ Yielded::DoCtrl(p) => match p {
                 handler_marker,
             );
             let prompt_seg_id = self.alloc_segment(prompt_seg);
-            self.handlers.insert(
-                handler_marker,
-                HandlerEntry::new(handler.clone(), prompt_seg_id),
-            );
+            let entry = match py_identity {
+                Some(identity) => HandlerEntry::with_identity(handler.clone(), prompt_seg_id, identity),
+                None => HandlerEntry::new(handler.clone(), prompt_seg_id),
+            };
+            self.handlers.insert(handler_marker, entry);
 
             let mut body_scope = vec![handler_marker];
             body_scope.extend(outside_scope);
@@ -1330,6 +1333,7 @@ mod tests {
             started: true,
             program: None,
             handlers: Vec::new(),
+            handler_identities: Vec::new(),
         }
     }
 
@@ -2343,6 +2347,86 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_g8_pending_python_missing_is_runtime_error() {
+        let mut vm = VM::new();
+        vm.receive_python_result(PyCallOutcome::Value(Value::Unit));
+        assert!(
+            matches!(vm.mode, Mode::Throw(PyException::RuntimeError { .. })),
+            "G8 FAIL: missing pending_python must throw runtime error"
+        );
+    }
+
+    #[test]
+    fn test_g9_kpc_effect_without_handler_is_error_not_call_rewrite() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let call_obj = py.None().into_pyobject(py).unwrap().unbind().into_any();
+            let metadata = CallMetadata {
+                function_name: "kpc".to_string(),
+                source_file: "x.py".to_string(),
+                source_line: 1,
+                program_call: Some(PyShared::new(call_obj.clone_ref(py))),
+            };
+            vm.mode = Mode::HandleYield(Yielded::Effect(Effect::KpcCall(
+                crate::effect::KpcCallEffect {
+                    call: PyShared::new(call_obj.clone_ref(py)),
+                    kernel: PyShared::new(call_obj),
+                    args: vec![],
+                    kwargs: vec![],
+                    metadata,
+                },
+            )));
+
+            let event = vm.step_handle_yield();
+            assert!(
+                matches!(event, StepEvent::Error(_)),
+                "G9 FAIL: KpcCall must not be rewritten directly to DoCtrl::Call"
+            );
+        });
+    }
+
+    #[test]
+    fn test_g10_resume_continuation_preserves_handler_identity() {
+        Python::attach(|py| {
+            let mut vm = VM::new();
+            let marker = Marker::fresh();
+            let seg = Segment::new(marker, None, vec![]);
+            let seg_id = vm.alloc_segment(seg);
+            vm.current_segment = Some(seg_id);
+
+            let id_obj = pyo3::types::PyDict::new(py).into_any().unbind();
+            let handler = Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
+            let program = PyShared::new(py.None().into_pyobject(py).unwrap().unbind().into_any());
+
+            let k = Continuation::create_unstarted_with_identities(
+                program,
+                vec![handler],
+                vec![Some(PyShared::new(id_obj.clone_ref(py)))],
+            );
+
+            let event = vm.handle_resume_continuation(k, Value::Unit);
+            assert!(matches!(event, StepEvent::NeedsPython(PythonCall::StartProgram { .. })));
+
+            let seg_id = vm.current_segment.expect("missing current segment");
+            let seg = vm.segments.get(seg_id).expect("missing segment");
+            let marker = *seg.scope_chain.first().expect("missing handler marker");
+            let entry = vm.handlers.get(&marker).expect("missing handler entry");
+            let identity = entry.py_identity.as_ref().expect(
+                "G10 FAIL: continuation rehydration dropped handler identity",
+            );
+            assert!(
+                identity.bind(py).is(&id_obj.bind(py)),
+                "G10 FAIL: preserved identity does not match original"
+            );
+        });
+    }
+
     /// G2: GetHandlers must return py_identity (original Python sentinel) for Rust handlers.
     #[test]
     fn test_g2_get_handlers_returns_py_identity() {
@@ -2600,6 +2684,7 @@ mod tests {
             started: true,
             program: None,
             handlers: Vec::new(),
+            handler_identities: Vec::new(),
         };
 
         vm.dispatch_stack.push(DispatchContext {

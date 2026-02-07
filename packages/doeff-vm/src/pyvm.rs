@@ -4,11 +4,11 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::effect::Effect;
+use crate::effect::{Effect, KpcArg, KpcCallEffect};
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    Handler, HandlerEntry, ReaderHandlerFactory, RustProgramHandlerRef, StateHandlerFactory,
+    Handler, HandlerEntry, KpcHandlerFactory, ReaderHandlerFactory, RustProgramHandlerRef, StateHandlerFactory,
     WriterHandlerFactory,
 };
 use crate::ids::{ContId, Marker};
@@ -562,8 +562,14 @@ impl PyVM {
                         value: Value::from_pyobject(r.value.bind(_py)),
                     }));
                 }
+                return Err(PyRuntimeError::new_err(format!(
+                    "Resume with unknown continuation id {}",
+                    cont_id.raw()
+                )));
             }
-            // Fall through to string-based parsing if K is not a PyK instance
+            return Err(PyTypeError::new_err(
+                "Resume.continuation must be K (opaque continuation handle)",
+            ));
         }
         if obj.is_instance_of::<PyTransfer>() {
             let t: PyRef<'_, PyTransfer> = obj.extract()?;
@@ -575,7 +581,14 @@ impl PyVM {
                         value: Value::from_pyobject(t.value.bind(_py)),
                     }));
                 }
+                return Err(PyRuntimeError::new_err(format!(
+                    "Transfer with unknown continuation id {}",
+                    cont_id.raw()
+                )));
             }
+            return Err(PyTypeError::new_err(
+                "Transfer.continuation must be K (opaque continuation handle)",
+            ));
         }
         if obj.is_instance_of::<PyDelegate>() {
             let d: PyRef<'_, PyDelegate> = obj.extract()?;
@@ -603,38 +616,42 @@ impl PyVM {
             }
             match type_str {
                 "Resume" => {
-                    if let Ok(k_obj) = obj.getattr("continuation") {
-                        let cont_id_raw = k_obj
-                            .getattr("cont_id")
-                            .or_else(|_| k_obj.get_item("cont_id"))?;
-                        if let Ok(cont_id_val) = cont_id_raw.extract::<u64>() {
-                            let cont_id = ContId::from_raw(cont_id_val);
-                            if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
-                                let value = obj.getattr("value")?;
-                                return Ok(Yielded::DoCtrl(DoCtrl::Resume {
-                                    continuation: k,
-                                    value: Value::from_pyobject(&value),
-                                }));
-                            }
-                        }
-                    }
+                    let k_obj = obj.getattr("continuation")?;
+                    let cont_id_raw = k_obj
+                        .getattr("cont_id")
+                        .or_else(|_| k_obj.get_item("cont_id"))?;
+                    let cont_id_val = cont_id_raw.extract::<u64>()?;
+                    let cont_id = ContId::from_raw(cont_id_val);
+                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                        PyRuntimeError::new_err(format!(
+                            "Resume with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    })?;
+                    let value = obj.getattr("value")?;
+                    return Ok(Yielded::DoCtrl(DoCtrl::Resume {
+                        continuation: k,
+                        value: Value::from_pyobject(&value),
+                    }));
                 }
                 "Transfer" => {
-                    if let Ok(k_obj) = obj.getattr("continuation") {
-                        let cont_id_raw = k_obj
-                            .getattr("cont_id")
-                            .or_else(|_| k_obj.get_item("cont_id"))?;
-                        if let Ok(cont_id_val) = cont_id_raw.extract::<u64>() {
-                            let cont_id = ContId::from_raw(cont_id_val);
-                            if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
-                                let value = obj.getattr("value")?;
-                                return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
-                                    continuation: k,
-                                    value: Value::from_pyobject(&value),
-                                }));
-                            }
-                        }
-                    }
+                    let k_obj = obj.getattr("continuation")?;
+                    let cont_id_raw = k_obj
+                        .getattr("cont_id")
+                        .or_else(|_| k_obj.get_item("cont_id"))?;
+                    let cont_id_val = cont_id_raw.extract::<u64>()?;
+                    let cont_id = ContId::from_raw(cont_id_val);
+                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                        PyRuntimeError::new_err(format!(
+                            "Transfer with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    })?;
+                    let value = obj.getattr("value")?;
+                    return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
+                        continuation: k,
+                        value: Value::from_pyobject(&value),
+                    }));
                 }
                 "WithHandler" => {
                     let handler_obj = obj.getattr("handler")?;
@@ -695,6 +712,7 @@ impl PyVM {
                     let program = obj.getattr("program")?.unbind();
                     let handlers_list = obj.getattr("handlers")?;
                     let mut handlers = Vec::new();
+                    let mut handler_identities = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
                         if item.is_instance_of::<PyRustHandlerSentinel>() {
@@ -702,33 +720,38 @@ impl PyVM {
                             handlers.push(crate::handler::Handler::RustProgram(
                                 sentinel.factory.clone(),
                             ));
+                            handler_identities.push(Some(PyShared::new(item.unbind())));
                         } else {
                             handlers.push(crate::handler::Handler::Python(PyShared::new(
                                 item.unbind(),
                             )));
+                            handler_identities.push(None);
                         }
                     }
                     return Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
                         expr: PyShared::new(program),
                         handlers,
+                        handler_identities,
                     }));
                 }
                 "ResumeContinuation" => {
-                    if let Ok(k_obj) = obj.getattr("continuation") {
-                        let cont_id_raw = k_obj
-                            .getattr("cont_id")
-                            .or_else(|_| k_obj.get_item("cont_id"))?;
-                        if let Ok(cont_id_val) = cont_id_raw.extract::<u64>() {
-                            let cont_id = ContId::from_raw(cont_id_val);
-                            if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
-                                let value = obj.getattr("value")?;
-                                return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
-                                    continuation: k,
-                                    value: Value::from_pyobject(&value),
-                                }));
-                            }
-                        }
-                    }
+                    let k_obj = obj.getattr("continuation")?;
+                    let cont_id_raw = k_obj
+                        .getattr("cont_id")
+                        .or_else(|_| k_obj.get_item("cont_id"))?;
+                    let cont_id_val = cont_id_raw.extract::<u64>()?;
+                    let cont_id = ContId::from_raw(cont_id_val);
+                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                        PyRuntimeError::new_err(format!(
+                            "ResumeContinuation with unknown continuation id {}",
+                            cont_id.raw()
+                        ))
+                    })?;
+                    let value = obj.getattr("value")?;
+                    return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                        continuation: k,
+                        value: Value::from_pyobject(&value),
+                    }));
                 }
                 "StateGetEffect" | "Get" => {
                     let key: String = obj.getattr("key")?.extract()?;
@@ -775,17 +798,8 @@ impl PyVM {
                     return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
                 }
                 "KleisliProgramCall" => {
-                    let metadata = Self::extract_call_metadata(_py, obj)
-                        .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
-                        .ok_or_else(|| {
-                            PyTypeError::new_err(
-                                "KleisliProgramCall missing required metadata for call tracking",
-                            )
-                        })?;
-                    return Ok(Yielded::Effect(Effect::KpcCall(crate::effect::KpcCallEffect {
-                        call: PyShared::new(obj.clone().unbind()),
-                        metadata,
-                    })));
+                    let kpc = Self::extract_kpc_effect(_py, obj)?;
+                    return Ok(Yielded::Effect(Effect::KpcCall(kpc)));
                 }
                 // D6: Scheduler effects — extract fields into typed SchedulerEffect variants.
                 // Must be classified BEFORE to_generator fallback (EffectBase has to_generator).
@@ -1058,6 +1072,110 @@ impl PyVM {
             };
         }
         Ok(StoreMode::Shared)
+    }
+
+    fn extract_kpc_effect(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<KpcCallEffect> {
+        let metadata = Self::extract_call_metadata(_py, obj)
+            .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
+            .ok_or_else(|| {
+                PyTypeError::new_err(
+                    "KleisliProgramCall missing required metadata for call tracking",
+                )
+            })?;
+
+        let kernel_obj = obj
+            .getattr("execution_kernel")
+            .or_else(|_| obj.getattr("kernel"))
+            .map_err(|_| PyTypeError::new_err("KleisliProgramCall missing execution kernel"))?;
+        let kernel = PyShared::new(kernel_obj.unbind());
+
+        let strategy = obj.getattr("auto_unwrap_strategy").ok();
+
+        let mut args = Vec::new();
+        if let Ok(args_obj) = obj.getattr("args") {
+            for (idx, item) in args_obj.try_iter()?.enumerate() {
+                let item = item?;
+                let should_unwrap = Self::strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
+                args.push(Self::extract_kpc_arg(_py, &item, should_unwrap)?);
+            }
+        }
+
+        let mut kwargs = Vec::new();
+        if let Ok(kwargs_obj) = obj.getattr("kwargs") {
+            for (k, v) in kwargs_obj.cast::<pyo3::types::PyDict>()?.iter() {
+                let key: String = k.extract()?;
+                let should_unwrap =
+                    Self::strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
+                kwargs.push((key, Self::extract_kpc_arg(_py, &v, should_unwrap)?));
+            }
+        }
+
+        Ok(KpcCallEffect {
+            call: PyShared::new(obj.clone().unbind()),
+            kernel,
+            args,
+            kwargs,
+            metadata,
+        })
+    }
+
+    fn strategy_should_unwrap_positional(
+        strategy: Option<&Bound<'_, PyAny>>,
+        idx: usize,
+    ) -> PyResult<bool> {
+        let Some(strategy) = strategy else {
+            return Ok(true);
+        };
+        let result = strategy
+            .call_method1("should_unwrap_positional", (idx,))
+            .and_then(|v| v.extract::<bool>());
+        Ok(result.unwrap_or(true))
+    }
+
+    fn strategy_should_unwrap_keyword(
+        strategy: Option<&Bound<'_, PyAny>>,
+        key: &str,
+    ) -> PyResult<bool> {
+        let Some(strategy) = strategy else {
+            return Ok(true);
+        };
+        let result = strategy
+            .call_method1("should_unwrap_keyword", (key,))
+            .and_then(|v| v.extract::<bool>());
+        Ok(result.unwrap_or(true))
+    }
+
+    fn extract_kpc_arg(_py: Python<'_>, obj: &Bound<'_, PyAny>, should_unwrap: bool) -> PyResult<KpcArg> {
+        if should_unwrap && Self::is_do_expr_candidate(obj)? {
+            return Ok(KpcArg::Expr(PyShared::new(obj.clone().unbind())));
+        }
+        Ok(KpcArg::Value(Value::from_pyobject(obj)))
+    }
+
+    fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if obj.hasattr("to_generator")? {
+            return Ok(true);
+        }
+        let Ok(type_name) = obj.get_type().name() else {
+            return Ok(false);
+        };
+        let type_str: &str = type_name.extract()?;
+        Ok(type_str.ends_with("Effect")
+            || matches!(
+                type_str,
+                "Get"
+                    | "Put"
+                    | "Modify"
+                    | "Ask"
+                    | "Tell"
+                    | "WithHandler"
+                    | "Resume"
+                    | "Transfer"
+                    | "Delegate"
+                    | "CreateContinuation"
+                    | "ResumeContinuation"
+                    | "KleisliProgramCall"
+            ))
     }
 
     fn extract_call_metadata_fallback(
@@ -1772,6 +1890,37 @@ mod tests {
             }
         });
     }
+
+    #[test]
+    fn test_g11_resume_with_unknown_continuation_is_error() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let k = Bound::new(
+                py,
+                PyK {
+                    cont_id: crate::ids::ContId::from_raw(999_999),
+                },
+            )
+            .unwrap()
+            .into_any()
+            .unbind();
+            let resume = Bound::new(
+                py,
+                PyResume {
+                    continuation: k,
+                    value: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                },
+            )
+            .unwrap()
+            .into_any();
+
+            let result = pyvm.classify_yielded(py, &resume);
+            assert!(
+                result.is_err(),
+                "G11 FAIL: stale continuation id must error, not fallback classification"
+            );
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1821,6 +1970,22 @@ fn run(
     // handlers=[h0, h1, h2] → WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))
     // Build inside-out: wrap h2 first, then h1, then h0.
     let mut wrapped: Py<PyAny> = program.unbind();
+
+    // Install default KPC handler as innermost wrapper.
+    let kpc_sentinel = Bound::new(
+        py,
+        PyRustHandlerSentinel {
+            factory: Arc::new(KpcHandlerFactory),
+        },
+    )?
+    .into_any()
+    .unbind();
+    let kpc_step = NestingStep {
+        handler: kpc_sentinel,
+        inner: wrapped,
+    };
+    wrapped = Bound::new(py, kpc_step)?.into_any().unbind();
+
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
@@ -1868,6 +2033,22 @@ fn async_run<'py>(
     }
 
     let mut wrapped: Py<PyAny> = program.unbind();
+
+    // Install default KPC handler as innermost wrapper.
+    let kpc_sentinel = Bound::new(
+        py,
+        PyRustHandlerSentinel {
+            factory: Arc::new(KpcHandlerFactory),
+        },
+    )?
+    .into_any()
+    .unbind();
+    let kpc_step = NestingStep {
+        handler: kpc_sentinel,
+        inner: wrapped,
+    };
+    wrapped = Bound::new(py, kpc_step)?.into_any().unbind();
+
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
