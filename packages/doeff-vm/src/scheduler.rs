@@ -47,10 +47,6 @@ pub enum SchedulerEffect {
         task: TaskId,
         result: Result<Value, PyException>,
     },
-    // D6: Raw Python scheduler effect — classified as Effect::Scheduler for dispatch
-    // but field extraction deferred to handler start(). Bridges the gap between
-    // spec-mandated Effect::Scheduler classification and complex field extraction.
-    PythonSchedulerEffect(Py<PyAny>),
 }
 
 /// What a task can wait on.
@@ -491,14 +487,6 @@ impl RustHandlerProgram for SchedulerProgram {
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: k_user,
                     value: Value::ExternalPromise(ExternalPromise { id: pid }),
-                }))
-            }
-
-            // D6: Raw Python scheduler effect — field extraction not yet implemented.
-            // TODO: Extract fields from Python object and dispatch to typed variants.
-            SchedulerEffect::PythonSchedulerEffect(py_obj) => {
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::Python(PyShared::new(py_obj)),
                 }))
             }
         }
