@@ -22,11 +22,6 @@ class GatherEffect(EffectBase):
     items: tuple[Any, ...]  # Programs or Waitables
     _partial_results: tuple[Any, ...] | None = field(default=None, compare=False)
 
-    # Backwards compatibility alias
-    @property
-    def futures(self) -> tuple[Any, ...]:
-        return self.items
-
 
 def _validate_gather_items(items: tuple[Any, ...]) -> tuple[Any, ...]:
     from doeff.program import ProgramBase
