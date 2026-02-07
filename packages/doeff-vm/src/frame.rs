@@ -1,9 +1,8 @@
 //! Frame types for the continuation stack.
 
-use pyo3::prelude::*;
-
 use crate::handler::RustProgramRef;
 use crate::ids::CallbackId;
+use crate::py_shared::PyShared;
 
 /// Metadata about a program call for call stack reconstruction. [SPEC-008 R9-D]
 ///
@@ -11,14 +10,10 @@ use crate::ids::CallbackId;
 /// RustHandlerPrograms that emit Call primitives. Stored on PythonGenerator frames.
 #[derive(Debug, Clone)]
 pub struct CallMetadata {
-    /// Human-readable function name (e.g., "fetch_user")
     pub function_name: String,
-    /// Source file where the @do function is defined
     pub source_file: String,
-    /// Line number in source file
     pub source_line: u32,
-    /// Optional: reference to the full KleisliProgramCall Python object
-    pub program_call: Option<Py<PyAny>>,
+    pub program_call: Option<PyShared>,
 }
 
 /// A frame in the continuation stack.
@@ -34,7 +29,7 @@ pub enum Frame {
         program: RustProgramRef,
     },
     PythonGenerator {
-        generator: Py<PyAny>,
+        generator: PyShared,
         started: bool,
         metadata: Option<CallMetadata>,
     },
@@ -45,7 +40,7 @@ impl Frame {
         Frame::RustReturn { cb }
     }
 
-    pub fn python_generator(generator: Py<PyAny>) -> Self {
+    pub fn python_generator(generator: PyShared) -> Self {
         Frame::PythonGenerator {
             generator,
             started: false,

@@ -7,6 +7,7 @@ use crate::effect::Effect;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
+use crate::py_shared::PyShared;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -35,31 +36,30 @@ pub enum StepEvent {
 #[derive(Debug, Clone)]
 pub enum PythonCall {
     StartProgram {
-        program: Py<PyAny>,
+        program: PyShared,
     },
     CallFunc {
-        func: Py<PyAny>,
+        func: PyShared,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
     },
     CallHandler {
-        handler: Py<PyAny>,
+        handler: PyShared,
         effect: Effect,
         continuation: Continuation,
     },
-    GenNext {
-        gen: Py<PyAny>,
-    },
+    /// Generator next — gen lives in PendingPython::StepUserGenerator (D1 Phase 2).
+    GenNext,
+    /// Generator send — gen lives in PendingPython::StepUserGenerator (D1 Phase 2).
     GenSend {
-        gen: Py<PyAny>,
         value: Value,
     },
+    /// Generator throw — gen lives in PendingPython::StepUserGenerator (D1 Phase 2).
     GenThrow {
-        gen: Py<PyAny>,
-        exc: Py<PyAny>,
+        exc: PyShared,
     },
     CallAsync {
-        func: Py<PyAny>,
+        func: PyShared,
         args: Vec<Value>,
     },
 }
@@ -70,7 +70,7 @@ pub enum PendingPython {
         metadata: Option<CallMetadata>,
     },
     StepUserGenerator {
-        generator: Py<PyAny>,
+        generator: PyShared,
         metadata: Option<CallMetadata>,
     },
     CallPythonHandler {
@@ -112,7 +112,7 @@ pub enum DoCtrl {
     GetContinuation,
     GetHandlers,
     CreateContinuation {
-        expr: Py<PyAny>,
+        expr: PyShared,
         handlers: Vec<Handler>,
     },
     ResumeContinuation {
@@ -129,7 +129,7 @@ pub enum DoCtrl {
         metadata: CallMetadata,
     },
     Eval {
-        expr: Py<PyAny>,
+        expr: PyShared,
         handlers: Vec<Handler>,
     },
     GetCallStack,
@@ -227,7 +227,7 @@ impl DoCtrl {
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
             DoCtrl::GetHandlers => DoCtrl::GetHandlers,
             DoCtrl::CreateContinuation { expr, handlers } => DoCtrl::CreateContinuation {
-                expr: expr.clone_ref(py),
+                expr: PyShared::new(expr.clone_ref(py)),
                 handlers: handlers.clone(),
             },
             DoCtrl::ResumeContinuation {
@@ -252,7 +252,7 @@ impl DoCtrl {
                 metadata: metadata.clone(),
             },
             DoCtrl::Eval { expr, handlers } => DoCtrl::Eval {
-                expr: expr.clone_ref(py),
+                expr: PyShared::new(expr.clone_ref(py)),
                 handlers: handlers.clone(),
             },
             DoCtrl::GetCallStack => DoCtrl::GetCallStack,

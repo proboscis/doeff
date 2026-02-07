@@ -13,6 +13,7 @@ use crate::error::VMError;
 use crate::frame::Frame;
 use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
+use crate::py_shared::PyShared;
 use crate::segment::Segment;
 use crate::step::{
     DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
@@ -401,7 +402,7 @@ Yielded::DoCtrl(p) => match p {
                     PythonCall::StartProgram { .. } => "StartProgram",
                     PythonCall::CallFunc { .. } => "CallFunc",
                     PythonCall::CallHandler { .. } => "CallHandler",
-                    PythonCall::GenNext { .. } => "GenNext",
+                    PythonCall::GenNext => "GenNext",
                     PythonCall::GenSend { .. } => "GenSend",
                     PythonCall::GenThrow { .. } => "GenThrow",
                     PythonCall::CallAsync { .. } => "CallAsync",
@@ -429,9 +430,10 @@ Yielded::DoCtrl(p) => match p {
 
             if !segment.has_frames() {
                 let caller = segment.caller;
-                match &self.mode {
-                    Mode::Deliver(v) => {
-                        let value = v.clone();
+                // Take mode by move — eliminates Py<PyAny> clones (D1 Phase 1).
+                let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
+                match mode {
+                    Mode::Deliver(value) => {
                         self.segments.free(seg_id);
                         self.mode = Mode::Return(value);
                         return StepEvent::Continue;
@@ -439,10 +441,10 @@ Yielded::DoCtrl(p) => match p {
                     Mode::Throw(exc) => {
                         if let Some(caller_id) = caller {
                             self.current_segment = Some(caller_id);
+                            self.mode = Mode::Throw(exc);
                             self.segments.free(seg_id);
                             return StepEvent::Continue;
                         } else {
-                            let exc = exc.clone();
                             self.segments.free(seg_id);
                             return StepEvent::Error(VMError::uncaught_exception(exc));
                         }
@@ -458,6 +460,9 @@ Yielded::DoCtrl(p) => match p {
         };
         let frame = segment.pop_frame().unwrap();
 
+        // Take mode by move — each branch sets self.mode before returning (D1 Phase 1).
+        let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
+
         match frame {
             Frame::RustReturn { cb } => {
                 let callback = match self.callbacks.remove(&cb) {
@@ -465,12 +470,15 @@ Yielded::DoCtrl(p) => match p {
                     None => return StepEvent::Error(VMError::internal("callback not found")),
                 };
 
-                match &self.mode {
-                    Mode::Deliver(v) => {
-                        self.mode = callback(v.clone(), self);
+                match mode {
+                    Mode::Deliver(value) => {
+                        self.mode = callback(value, self);
                         StepEvent::Continue
                     }
-                    Mode::Throw(_) => StepEvent::Continue,
+                    Mode::Throw(exc) => {
+                        self.mode = Mode::Throw(exc);
+                        StepEvent::Continue
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -478,9 +486,9 @@ Yielded::DoCtrl(p) => match p {
             Frame::RustProgram { program } => {
                 let step = {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
-                    match &self.mode {
-                        Mode::Deliver(v) => guard.resume(v.clone(), &mut self.rust_store),
-                        Mode::Throw(e) => guard.throw(e.clone(), &mut self.rust_store),
+                    match mode {
+                        Mode::Deliver(value) => guard.resume(value, &mut self.rust_store),
+                        Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store),
                         _ => unreachable!(),
                     }
                 };
@@ -492,25 +500,23 @@ Yielded::DoCtrl(p) => match p {
                 started,
                 metadata,
             } => {
+                // D1 Phase 2: generator + metadata move into PendingPython (no clone).
+                // Driver (pyvm.rs) reads gen from pending_python with GIL held.
                 self.pending_python = Some(PendingPython::StepUserGenerator {
-                    generator: generator.clone(),
-                    metadata: metadata.clone(),
+                    generator,
+                    metadata,
                 });
 
-                match &self.mode {
-                    Mode::Deliver(v) => {
+                match mode {
+                    Mode::Deliver(value) => {
                         if started {
-                            StepEvent::NeedsPython(PythonCall::GenSend {
-                                gen: generator,
-                                value: v.clone(),
-                            })
+                            StepEvent::NeedsPython(PythonCall::GenSend { value })
                         } else {
-                            StepEvent::NeedsPython(PythonCall::GenNext { gen: generator })
+                            StepEvent::NeedsPython(PythonCall::GenNext)
                         }
                     }
-                    Mode::Throw(e) => StepEvent::NeedsPython(PythonCall::GenThrow {
-                        gen: generator,
-                        exc: e.exc_value.clone(),
+                    Mode::Throw(exc) => StepEvent::NeedsPython(PythonCall::GenThrow {
+                        exc: PyShared::new(exc.exc_value),
                     }),
                     _ => unreachable!(),
                 }
@@ -564,9 +570,13 @@ Yielded::DoCtrl(p) => match p {
     }
 
     fn step_handle_yield(&mut self) -> StepEvent {
-        let yielded = match &self.mode {
-            Mode::HandleYield(y) => y.clone(),
-            _ => return StepEvent::Error(VMError::internal("invalid mode for handle_yield")),
+        // Take mode by move — eliminates Yielded clone containing Py<PyAny> values (D1 Phase 1).
+        let yielded = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
+            Mode::HandleYield(y) => y,
+            other => {
+                self.mode = other;
+                return StepEvent::Error(VMError::internal("invalid mode for handle_yield"));
+            }
         };
 
         match yielded {
@@ -604,7 +614,7 @@ Yielded::DoCtrl(p) => match p {
                     DoCtrl::PythonAsyncSyntaxEscape { action } => {
                         self.pending_python = Some(PendingPython::AsyncEscape);
                         StepEvent::NeedsPython(PythonCall::CallAsync {
-                            func: action,
+                            func: PyShared::new(action),
                             args: vec![],
                         })
                     }
@@ -614,10 +624,12 @@ Yielded::DoCtrl(p) => match p {
                         });
                         if args.is_empty() && kwargs.is_empty() {
                             // DoThunk path: f is a DoThunk, driver calls to_generator()
-                            StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
+                            StepEvent::NeedsPython(PythonCall::StartProgram {
+                                program: PyShared::new(f),
+                            })
                         } else {
                             StepEvent::NeedsPython(PythonCall::CallFunc {
-                                func: f,
+                                func: PyShared::new(f),
                                 args,
                                 kwargs,
                             })
@@ -653,7 +665,9 @@ Yielded::DoCtrl(p) => match p {
 
             Yielded::Program(prog) => {
                 self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
-                StepEvent::NeedsPython(PythonCall::StartProgram { program: prog })
+                StepEvent::NeedsPython(PythonCall::StartProgram {
+                    program: PyShared::new(prog),
+                })
             }
 
             Yielded::Unknown(_) => {
@@ -675,9 +689,13 @@ Yielded::DoCtrl(p) => match p {
     }
 
     fn step_return(&mut self) -> StepEvent {
-        let value = match &self.mode {
-            Mode::Return(v) => v.clone(),
-            _ => return StepEvent::Error(VMError::internal("invalid mode for return")),
+        // Take mode by move — eliminates Value clone containing Py<PyAny> (D1 Phase 1).
+        let value = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
+            Mode::Return(v) => v,
+            other => {
+                self.mode = other;
+                return StepEvent::Error(VMError::internal("invalid mode for return"));
+            }
         };
 
         let seg_id = match self.current_segment {
@@ -716,7 +734,7 @@ Yielded::DoCtrl(p) => match p {
                     Value::Python(gen) => {
                         if let Some(seg) = self.current_segment_mut() {
                             seg.push_frame(Frame::PythonGenerator {
-                                generator: gen,
+                                generator: PyShared::new(gen),
                                 started: false,
                                 metadata,
                             });
@@ -780,14 +798,14 @@ Yielded::DoCtrl(p) => match p {
                 Value::Python(handler_gen) => {
                     let handler_return_cb = self.register_callback(Box::new(|value, vm| {
                         let _ = vm.handle_handler_return(value);
-                        vm.mode.clone()
+                        std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
                     }));
                     if let Some(seg) = self.current_segment_mut() {
                         seg.push_frame(Frame::RustReturn {
                             cb: handler_return_cb,
                         });
                         seg.push_frame(Frame::PythonGenerator {
-                            generator: handler_gen,
+                            generator: PyShared::new(handler_gen),
                             started: false,
                             metadata: None,
                         });
@@ -1123,7 +1141,9 @@ Yielded::DoCtrl(p) => match p {
         self.current_segment = Some(body_seg_id);
 
         self.pending_python = Some(PendingPython::StartProgramFrame { metadata: None });
-        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+        StepEvent::NeedsPython(PythonCall::StartProgram {
+            program: PyShared::new(program),
+        })
     }
 
     fn handle_delegate(&mut self, effect: Effect) -> StepEvent {
@@ -1258,7 +1278,7 @@ Yielded::DoCtrl(p) => match p {
 
     fn handle_create_continuation(
         &mut self,
-        program: Py<PyAny>,
+        program: PyShared,
         handlers: Vec<Handler>,
     ) -> StepEvent {
         let k = Continuation::create_unstarted(program, handlers);
@@ -2376,7 +2396,7 @@ mod tests {
                 HandlerEntry::with_identity(
                     Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
                     prompt_seg_id,
-                    sentinel.clone_ref(py),
+                    PyShared::new(sentinel.clone_ref(py)),
                 ),
             );
 
@@ -2457,7 +2477,7 @@ mod tests {
             // Step 1: start_dispatch sends Modify effect
             let result = vm.start_dispatch(Effect::Modify {
                 key: "key".to_string(),
-                modifier,
+                modifier: PyShared::new(modifier),
             });
             assert!(result.is_ok());
             let event1 = result.unwrap();
@@ -2546,7 +2566,7 @@ mod tests {
             let modifier = py.None().into_pyobject(py).unwrap().unbind().into_any();
             let result = vm.start_dispatch(Effect::Modify {
                 key: "x".to_string(),
-                modifier,
+                modifier: PyShared::new(modifier),
             });
             assert!(result.is_ok());
             let event = result.unwrap();
@@ -2849,7 +2869,7 @@ mod tests {
             let dummy_expr = py.None().into_pyobject(py).unwrap().unbind().into_any();
 
             vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
-                expr: dummy_expr,
+                expr: PyShared::new(dummy_expr),
                 handlers: vec![],
             }));
 
@@ -2888,7 +2908,7 @@ mod tests {
                 Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory));
 
             vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
-                expr: dummy_expr,
+                expr: PyShared::new(dummy_expr),
                 handlers: vec![handler],
             }));
 

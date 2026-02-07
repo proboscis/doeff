@@ -16,6 +16,7 @@ pub mod error;
 pub mod frame;
 pub mod handler;
 pub mod ids;
+pub mod py_shared;
 pub mod pyvm;
 pub mod scheduler;
 pub mod segment;
