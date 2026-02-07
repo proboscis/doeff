@@ -4,9 +4,16 @@
 
 use pyo3::prelude::*;
 
+use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerEffect;
 use crate::value::Value;
+
+#[derive(Debug, Clone)]
+pub struct KpcCallEffect {
+    pub call: PyShared,
+    pub metadata: CallMetadata,
+}
 
 /// An effect that can be yielded by user code.
 ///
@@ -32,6 +39,9 @@ pub enum Effect {
 
     /// Scheduler effect (Spawn, Gather, Race, Promise, etc.)
     Scheduler(SchedulerEffect),
+
+    /// KleisliProgramCall routed through effect-dispatch path.
+    KpcCall(KpcCallEffect),
 
     // === User-defined effects (Python handlers) ===
     /// Any Python effect object
@@ -62,6 +72,7 @@ impl Effect {
             Effect::Ask { .. } => "Ask",
             Effect::Tell { .. } => "Tell",
             Effect::Scheduler(_) => "Scheduler",
+            Effect::KpcCall(_) => "KpcCall",
             Effect::Python(_) => "Python",
         }
     }
@@ -123,6 +134,10 @@ impl Effect {
                         let dict = pyo3::types::PyDict::new(py);
                         dict.set_item("type", "Scheduler")?;
                         return Ok(dict.into_any());
+                    }
+                    Effect::KpcCall(kpc) => {
+                        dict.set_item("type", "KpcCall")?;
+                        dict.set_item("call", kpc.call.bind(py))?;
                     }
                     _ => {}
                 }

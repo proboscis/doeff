@@ -132,7 +132,7 @@ pub enum DoCtrl {
         action: Py<PyAny>,
     },
     Call {
-        f: Py<PyAny>,
+        f: PyShared,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
         metadata: CallMetadata,
@@ -296,7 +296,7 @@ impl DoCtrl {
                 kwargs,
                 metadata,
             } => DoCtrl::Call {
-                f: f.clone_ref(py),
+                f: f.clone(),
                 args: args.clone(),
                 kwargs: kwargs.clone(),
                 metadata: metadata.clone(),
