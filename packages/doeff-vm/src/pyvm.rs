@@ -756,36 +756,6 @@ impl PyVM {
                         value: Value::from_pyobject(&value),
                     }));
                 }
-                "StateGetEffect" | "Get" => {
-                    let key: String = obj.getattr("key")?.extract()?;
-                    return Ok(Yielded::Effect(Effect::Get { key }));
-                }
-                "StatePutEffect" | "Put" => {
-                    let key: String = obj.getattr("key")?.extract()?;
-                    let value = obj.getattr("value")?;
-                    return Ok(Yielded::Effect(Effect::Put {
-                        key,
-                        value: Value::from_pyobject(&value),
-                    }));
-                }
-                "StateModifyEffect" | "Modify" => {
-                    let key: String = obj.getattr("key")?.extract()?;
-                    let modifier = obj.getattr("func")?;
-                    return Ok(Yielded::Effect(Effect::Modify {
-                        key,
-                        modifier: PyShared::new(modifier.unbind()),
-                    }));
-                }
-                "AskEffect" | "Ask" => {
-                    let key: String = obj.getattr("key")?.extract()?;
-                    return Ok(Yielded::Effect(Effect::Ask { key }));
-                }
-                "WriterTellEffect" | "Tell" => {
-                    let message = obj.getattr("message")?;
-                    return Ok(Yielded::Effect(Effect::Tell {
-                        message: Value::from_pyobject(&message),
-                    }));
-                }
                 "CreatePromise" | "SchedulerCreatePromise" => {
                     return Ok(Yielded::Effect(Effect::Scheduler(
                         SchedulerEffect::CreatePromise,
@@ -939,6 +909,12 @@ impl PyVM {
                     }
                 }
             }
+        }
+
+        if Self::is_effect_object(_py, obj)? {
+            return Ok(Yielded::Effect(Effect::Python(PyShared::new(
+                obj.clone().unbind(),
+            ))));
         }
 
         if obj.hasattr("to_generator")? {
@@ -1179,6 +1155,26 @@ impl PyVM {
                     | "CreateContinuation"
                     | "ResumeContinuation"
                     | "KleisliProgramCall"
+            ))
+    }
+
+    fn is_effect_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if let Ok(types_mod) = py.import("doeff.types") {
+            if let Ok(effect_base) = types_mod.getattr("EffectBase") {
+                if obj.is_instance(&effect_base)? {
+                    return Ok(true);
+                }
+            }
+        }
+
+        let Ok(type_name) = obj.get_type().name() else {
+            return Ok(false);
+        };
+        let type_str: &str = type_name.extract()?;
+        Ok(type_str.ends_with("Effect")
+            || matches!(
+                type_str,
+                "Get" | "Put" | "Modify" | "Ask" | "Tell" | "KleisliProgramCall"
             ))
     }
 
@@ -2018,6 +2014,27 @@ mod tests {
             assert!(
                 matches!(yielded, Yielded::DoCtrl(DoCtrl::Call { .. })),
                 "SPEC GAP: raw generators should route via DoCtrl::Call strict path, got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_spec_stdlib_effects_classify_as_opaque_python_effects() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class StateGetEffect:\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "SPEC GAP: stdlib effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
         });
