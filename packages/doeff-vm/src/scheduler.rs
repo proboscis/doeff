@@ -419,6 +419,7 @@ impl RustHandlerProgram for SchedulerProgram {
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
+                    handler_identities: vec![],
                 }))
             }
 

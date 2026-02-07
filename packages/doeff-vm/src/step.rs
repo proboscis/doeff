@@ -123,6 +123,7 @@ pub enum DoCtrl {
     CreateContinuation {
         expr: PyShared,
         handlers: Vec<Handler>,
+        handler_identities: Vec<Option<PyShared>>,
     },
     ResumeContinuation {
         continuation: Continuation,
@@ -276,9 +277,14 @@ impl DoCtrl {
             },
             DoCtrl::GetContinuation => DoCtrl::GetContinuation,
             DoCtrl::GetHandlers => DoCtrl::GetHandlers,
-            DoCtrl::CreateContinuation { expr, handlers } => DoCtrl::CreateContinuation {
+            DoCtrl::CreateContinuation {
+                expr,
+                handlers,
+                handler_identities,
+            } => DoCtrl::CreateContinuation {
                 expr: PyShared::new(expr.clone_ref(py)),
                 handlers: handlers.clone(),
+                handler_identities: handler_identities.clone(),
             },
             DoCtrl::ResumeContinuation {
                 continuation,
@@ -383,6 +389,7 @@ mod tests {
             started: true,
             program: None,
             handlers: Vec::new(),
+            handler_identities: Vec::new(),
         };
 
         // Resume uses `continuation` field
