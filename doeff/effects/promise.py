@@ -13,37 +13,35 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class CreatePromiseEffect(EffectBase):
+    __doeff_scheduler_create_promise__ = True
+
     pass
 
 
 @dataclass(frozen=True)
 class CompletePromiseEffect(EffectBase):
+    __doeff_scheduler_complete_promise__ = True
 
     promise: Promise[Any]
     value: Any
 
     def __post_init__(self) -> None:
         if not isinstance(self.promise, Promise):
-            raise TypeError(
-                f"promise must be Promise, got {type(self.promise).__name__}"
-            )
+            raise TypeError(f"promise must be Promise, got {type(self.promise).__name__}")
 
 
 @dataclass(frozen=True)
 class FailPromiseEffect(EffectBase):
+    __doeff_scheduler_fail_promise__ = True
 
     promise: Promise[Any]
     error: BaseException
 
     def __post_init__(self) -> None:
         if not isinstance(self.promise, Promise):
-            raise TypeError(
-                f"promise must be Promise, got {type(self.promise).__name__}"
-            )
+            raise TypeError(f"promise must be Promise, got {type(self.promise).__name__}")
         if not isinstance(self.error, BaseException):
-            raise TypeError(
-                f"error must be BaseException, got {type(self.error).__name__}"
-            )
+            raise TypeError(f"error must be BaseException, got {type(self.error).__name__}")
 
 
 def CreatePromise() -> Effect:
@@ -57,9 +55,7 @@ def CompletePromise(promise: Promise[T], value: T) -> Effect:
 
 
 def FailPromise(promise: Promise[Any], error: BaseException) -> Effect:
-    return create_effect_with_trace(
-        FailPromiseEffect(promise=promise, error=error), skip_frames=3
-    )
+    return create_effect_with_trace(FailPromiseEffect(promise=promise, error=error), skip_frames=3)
 
 
 __all__ = [

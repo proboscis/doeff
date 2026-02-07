@@ -79,6 +79,8 @@ class SpawnEffect(EffectBase):
     the parent's store.
     """
 
+    __doeff_scheduler_spawn__ = True
+
     program: ProgramLike
     preferred_backend: SpawnBackend | None = None
     options: dict[str, Any] = field(default_factory=dict)

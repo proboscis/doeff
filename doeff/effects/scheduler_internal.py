@@ -138,6 +138,8 @@ class _SchedulerCreatePromise(EffectBase):
     Returns a tuple of (handle_id, Promise).
     """
 
+    __doeff_scheduler_create_promise__ = True
+
     pass
 
 
@@ -170,6 +172,8 @@ class _SchedulerTaskCompleted(EffectBase):
     handle_id: Any
     result: Any = None
     error: BaseException | None = None
+
+    __doeff_scheduler_task_completed__ = True
 
 
 @dataclass(frozen=True, kw_only=True)
