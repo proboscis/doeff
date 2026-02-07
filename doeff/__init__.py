@@ -37,12 +37,6 @@ from doeff.cache import (
 )
 from doeff.cache_policy import CacheLifecycle, CachePolicy, CacheStorage
 from doeff.cesk.errors import MissingEnvKeyError
-from doeff.cesk.run import (
-    async_handlers_preset,
-    async_run,
-    sync_handlers_preset,
-    sync_run,
-)
 from doeff.do import do
 from doeff.effects import (
     Annotate,
@@ -111,6 +105,7 @@ from doeff.graph_snapshot import (
 )
 from doeff.kleisli import KleisliProgram
 from doeff.program import Program
+from doeff.rust_vm import async_run, default_handlers, run
 from doeff.run import ProgramRunResult, run_program
 from doeff.types import (
     DEFAULT_REPR_LIMIT,
@@ -205,7 +200,6 @@ __all__ = [
     "Wait",
     "annotate",
     "ask",
-    "async_handlers_preset",
     "async_run",
     "atomic_get",
     "atomic_update",
@@ -225,6 +219,7 @@ __all__ = [
     "capture_graph",
     "clear_persistent_cache",
     "do",
+    "default_handlers",
     "get",
     "graph_to_html",
     "graph_to_html_async",
@@ -235,12 +230,11 @@ __all__ = [
     "put",
     "race",
     "run_program",
+    "run",
     "safe",
     "slog",
     "spawn",
     "step",
-    "sync_handlers_preset",
-    "sync_run",
     "tell",
     "trace_err",
     "wait",

@@ -80,8 +80,7 @@ doeff is a pragmatic effects system for Python that provides:
 ## Quick Example
 
 ```python
-from doeff import do, Put, Get, Log, Await
-from doeff import sync_run, sync_handlers_preset
+from doeff import do, Put, Get, Tell, run
 
 @do
 def example_workflow():
@@ -89,7 +88,7 @@ def example_workflow():
     yield Put("counter", 0)
 
     # Logging
-    yield Log("Starting computation")
+    yield Tell("Starting computation")
 
     # State updates
     yield Put("result", 42)
@@ -98,7 +97,7 @@ def example_workflow():
     return count
 
 def main():
-    result = sync_run(example_workflow(), sync_handlers_preset)
+    result = run(example_workflow())
     print(f"Result: {result.value}")
 
 main()

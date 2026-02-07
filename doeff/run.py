@@ -303,7 +303,9 @@ def _apply_kleisli(
         func_name = getattr(apply, "__name__", str(apply))
         result = apply(program)
         if not isinstance(result, Program):
-            raise TypeError(f"Kleisli function {func_name} must return a Program, got {type(result)}")
+            raise TypeError(
+                f"Kleisli function {func_name} must return a Program, got {type(result)}"
+            )
         return result, f"<callable: {func_name}>"
 
     raise TypeError(f"apply must be str, KleisliProgram, or callable, got {type(apply)}")
@@ -328,7 +330,9 @@ def _apply_transforms(
             func_name = getattr(t, "__name__", str(t))
             result = t(program)
             if not isinstance(result, Program):
-                raise TypeError(f"Transformer {func_name} must return a Program, got {type(result)}")
+                raise TypeError(
+                    f"Transformer {func_name} must return a Program, got {type(result)}"
+                )
             program = result
             applied.append(f"<callable: {func_name}>")
         else:
@@ -345,8 +349,8 @@ def _apply_envs(
     quiet: bool,
 ) -> tuple[Program[Any], list[str]]:
     from doeff.__main__ import RunServices
-    from doeff.cesk.run import sync_handlers_preset, sync_run
     from doeff.effects import Local
+    from doeff.rust_vm import default_handlers, run as vm_run
 
     env_sources: list[str] = []
     merged_env: dict[str, Any] = {}
@@ -356,7 +360,7 @@ def _apply_envs(
         if default_env_path:
             services = RunServices()
             env_program = services.merger.merge_envs([default_env_path])
-            env_value = sync_run(env_program, sync_handlers_preset).value
+            env_value = vm_run(env_program, handlers=default_handlers()).value
             merged_env.update(env_value)
             env_sources.append("~/.doeff.py:__default_env__")
 
@@ -364,12 +368,12 @@ def _apply_envs(
         if isinstance(env, str):
             services = RunServices()
             env_program = services.merger.merge_envs([env])
-            env_value = sync_run(env_program, sync_handlers_preset).value
+            env_value = vm_run(env_program, handlers=default_handlers()).value
             merged_env.update(env_value)
             env_sources.append(env)
 
         elif isinstance(env, Program):
-            env_value = sync_run(env, sync_handlers_preset).value
+            env_value = vm_run(env, handlers=default_handlers()).value
             if not isinstance(env_value, dict):
                 raise TypeError(f"Environment Program must yield dict, got {type(env_value)}")
             merged_env.update(env_value)
@@ -440,11 +444,10 @@ def _execute_program(
     interpreter_obj: Any,
 ) -> Any:
     from doeff.__main__ import _call_interpreter, _finalize_result
-    from doeff.cesk.run import sync_handlers_preset, sync_run
+    from doeff.rust_vm import default_handlers, run as vm_run
 
     if interpreter_obj is None:
-        # Use default sync_run
-        return sync_run(program, sync_handlers_preset).value
+        return vm_run(program, handlers=default_handlers()).value
 
     if callable(interpreter_obj):
         result = _call_interpreter(interpreter_obj, program)
