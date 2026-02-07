@@ -1,6 +1,25 @@
 # SPEC-TYPES-001: DoExpr Type Hierarchy — Draft Spec
 
-## Status: WIP Discussion Draft (Rev 6)
+## Status: WIP Discussion Draft (Rev 8)
+
+### Rev 8 changes — Effects are data. The VM is a dumb pipe.
+- **Effects are `#[pyclass]` structs**: All Rust-handled effects (`Get`, `Put`, `Ask`,
+  `Tell`, `Modify`, `Spawn`, `Gather`, `Race`, etc.) are `#[pyclass(frozen)]` types
+  defined in Rust and exposed to Python. User-defined effects are plain Python classes
+  subclassing `EffectBase`. See SPEC-008 R11-A.
+- **`Effect` enum REMOVED**: No `Effect::Get { key }`, `Effect::Python(obj)`. Effects
+  flow through the VM as opaque `Py<PyAny>`. The VM never inspects effect fields.
+  Handlers downcast to the concrete `#[pyclass]` type themselves. See SPEC-008 R11-B.
+- **`classify_yielded` is trivial**: One isinstance check for EffectBase →
+  `Yielded::Effect(obj)`. No field extraction. No per-type arms. No string matching.
+  The classifier does not touch effect data. See SPEC-008 R11-C.
+- **Handler traits receive opaque effect**: `RustHandlerProgram::start()` takes
+  `py: Python<'_>, effect: &Bound<'_, PyAny>`. Handler does the downcast.
+  See SPEC-008 R11-D.
+
+### Rev 7 changes (historical)
+Removed `Yielded::Program`, string-based classify, backward-compat shims, hardcoded
+effect switching. Superseded by Rev 8's opaque effect architecture.
 
 ## Context
 
@@ -45,8 +64,10 @@ The Rust VM operates on two fundamental concepts:
   passed to the VM as part of the `Call` primitive. The VM stores it on the
   `PythonGenerator` frame — no GIL needed after classification.
 
-  **Backward compat**: `Yielded::Program` (the existing path with no metadata) is
-  kept for non-KPC programs. The VM handles it identically but with `metadata: None`.
+  **`Yielded::Program` is REMOVED.** The variant MUST be deleted from the Rust
+  enum. All DoThunks go through `DoCtrl::Call` with `CallMetadata`.
+  `classify_yielded` extracts metadata where available, or uses
+  `CallMetadata::anonymous()` otherwise. No fallback path exists.
 
 - **Effects** — dispatched through the handler stack via `start_dispatch`.
   Handlers intercept, handle, delegate, or forward them.
@@ -576,18 +597,16 @@ User code yields DoExpr (KPC, DoThunk, Effect, or DoCtrl)
     │   program_call  = Some(kpc_ref)
     │   → emit Yielded::Effect(kpc)  (dispatched to KPC handler)
     │
-    ├─ Non-KPC DoThunk → no metadata available
-    │   → emit Yielded::Program(obj)  (backward compat, metadata: None)
+    ├─ Non-KPC DoThunk → construct minimal metadata:
+    │   CallMetadata { function_name: "<anonymous>", source_file: "<unknown>", source_line: 0, program_call: None }
+    │   → emit Yielded::DoCtrl(DoCtrl::Call { f: obj, args: [], kwargs: {}, metadata })
+    │   (Yielded::Program is DEPRECATED — never emitted)
     │
     ▼ VM handles Call(f, args, kwargs, metadata):
     1. Emit NeedsPython(CallFunc { f, args, kwargs }) to driver
     2. Driver calls f(*args, **kwargs), gets result (generator or DoThunk)
     3. If DoThunk: driver calls to_generator() → generator
     4. Push Frame::PythonGenerator { generator, started: false, metadata: Some(m) }
-    
-    ▼ VM handles Yielded::Program (legacy):
-    1. Emit StartProgram to driver → get generator
-    2. Push Frame::PythonGenerator { generator, started: false, metadata: None }
 ```
 
 **Key design point**: Metadata extraction happens in the driver (with GIL),
@@ -690,44 +709,73 @@ provided as `RustHandlerProgram`), not a VM-internal component.
 
 ---
 
-## 7. Impact on classify_yielded (Rust VM)
+## 7. Impact on classify_yielded (Rust VM) [Rev 8]
 
 With the DoExpr hierarchy, `classify_yielded` classifies each yielded
-`DoExpr` into its VM handling path:
+`DoExpr` into its VM handling path. **Effects are opaque data — the
+classifier does not inspect them.**
 
 ```
-Phase 1: isinstance for Rust pyclass types
-    ├── DoCtrl: PyWithHandler, PyResume, PyTransfer, PyDelegate, ...
-    ├── Effect: PyGet, PyPut, PyModify, PyAsk, PyTell
-    ├── Effect: PySpawn, PyGather, PyRace, ...
-    └── Effect: PyKleisliProgramCall → Yielded::Effect
+Phase 1: isinstance for DoCtrl pyclasses (finite, VM-level)
+    PyWithHandler  → Yielded::DoCtrl(WithHandler)
+    PyResume       → Yielded::DoCtrl(Resume)
+    PyTransfer     → Yielded::DoCtrl(Transfer)
+    PyDelegate     → Yielded::DoCtrl(Delegate)
+    ...other DoCtrl types...
 
-Phase 2: string-based match (Python classes, backward compat)
-    ├── Effects: "StateGetEffect", "AskEffect", ...
-    ├── Effects: "SpawnEffect", "GatherEffect", ...
-    └── Internal scheduler effects: "_Scheduler*"
+Phase 2: isinstance(EffectBase)? → Yielded::Effect(obj)
+    ONE CHECK. No field extraction. No per-type arms.
+    The VM passes the object through to dispatch as-is.
+    Both Rust #[pyclass] effects (Get, Put, Spawn, etc.) and
+    Python user-defined effects hit this same path.
 
-Phase 3: has to_generator()? → DoThunk → UPGRADE TO Call
-    ├── If has metadata (function_name, kleisli_source):
-    │       Extract CallMetadata (function_name, source_file, source_line)
-    │       → Yielded::DoCtrl(DoCtrl::Call { f: obj, args: [], kwargs: {}, metadata })
-    └── Otherwise (plain DoThunk, no metadata):
-            → Yielded::Program(obj)  (legacy path, metadata: None)
-    NO AMBIGUITY — Effects don't have to_generator() anymore
+Phase 3: has to_generator()? → DoThunk → DoCtrl::Call
+    Extract CallMetadata if available, else anonymous().
+    Yielded::Program is deleted — DoThunks always go through Call.
 
 Phase 4: Reject primitives (int, str, ...) → Unknown
-
-Phase 5: Custom effect fallback → Effect::Python(obj)
 ```
 
-The critical improvements:
-- **Phase 3 is unambiguous**. If something has `to_generator()`, it IS a DoThunk.
-  Effects never have it. No ordering hacks.
-- **KPCs detected in Phase 1 go to Effect dispatch** (not DoThunk path). The KPC
-  handler resolves args and emits `Call` (DoCtrl) for kernel invocation.
-- **Phase 3 extracts metadata** from recognized DoThunk objects before emitting
-  `Call`. DoThunks yielded directly by user code (not via KPC handler) get
-  metadata extracted here by the driver.
+That's it. Four phases. The effect classification phase is a SINGLE isinstance
+check — `isinstance(obj, EffectBase)`. The classifier never reads `.key`,
+`.value`, `.items`, or any effect-specific attribute. Effects are data; the
+handler reads them.
+
+### 7.1 Separation of Concerns — Effects Are Data [Rev 8]
+
+**Principle**: The VM is a dumb pipe for effects. It does not know what `Get`
+means, what `Spawn` does, or what fields `KleisliProgramCall` has. It only
+knows three things: DoCtrl, Effect, DoThunk. For effects, it finds a handler
+and passes the opaque object through.
+
+**Why this works**: All Rust-handled effects (`Get`, `Put`, `Ask`, `Tell`,
+`Modify`, `Spawn`, `Gather`, `Race`, etc.) are `#[pyclass(frozen)]` structs
+defined in Rust (SPEC-008 R11-A). When a Rust handler receives the effect,
+it downcasts to the concrete type it knows — e.g., `effect.downcast::<PyGet>()`
+— and reads the Rust-native fields directly. No string parsing. No `getattr`.
+The data is already in Rust.
+
+**For Python handlers**: They receive the same object. Since `#[pyclass]` types
+are proper Python objects, `isinstance(effect, Get)` works, and attribute access
+(`effect.key`) works via `#[pyo3(get)]`.
+
+**For user-defined effects**: They subclass `EffectBase` (Python) and pass
+through the same `isinstance(EffectBase)` check. Python handlers handle them
+with normal Python attribute access. No Rust involvement needed.
+
+**What was deleted** (vs Rev 7):
+- The `Effect` enum in Rust (`Effect::Get { key }`, `Effect::Python(obj)`, etc.)
+- All field extraction in `classify_yielded` (~300 lines of `match type_str`)
+- The concept of "optimized Rust variants" at the classification level
+- The `effect_type` marker protocol idea (unnecessary — handlers know their types)
+
+CODE-ATTENTION:
+- `pyvm.rs`: Delete entire `match type_str { ... }` block. Replace with
+  single `is_effect_base(py, obj)` → `Yielded::Effect(obj.unbind())`.
+- `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass]` structs.
+- `vm.rs`: `Yielded::Effect(Py<PyAny>)` not `Yielded::Effect(Effect)`.
+- `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>`.
+- All handler impls: downcast in `start()`, not pre-parsed by classifier.
 
 ---
 
@@ -741,7 +789,9 @@ The critical improvements:
 5. Add `Eval { expr, handlers }` as a `DoCtrl` variant
 6. Add `GetCallStack` as a `DoCtrl` variant
 7. Implement metadata extraction in driver's `classify_yielded` (KPC → Call upgrade)
-8. Keep existing `Yielded::Program` handling as fallback (metadata: None)
+8. **REMOVE `Yielded::Program`** — delete the variant from the Rust enum.
+   All DoThunks go through `DoCtrl::Call` with `CallMetadata::anonymous()` when
+   metadata is unavailable. No fallback path.
 
 ### Phase B: Introduce DoExpr type hierarchy
 1. Define `DoExpr[T]` as composable base (map, flat_map, +, pure)
@@ -767,10 +817,26 @@ The critical improvements:
 6. Remove `classify_yielded` ordering hacks (effects-before-programs)
 7. Verify all tests pass
 
-### Phase D: Cleanup
-1. Remove Python CESK v1 and v3 (avoid confusion with Rust VM semantics)
-2. Remove string-based fallback from `classify_yielded` (after full migration)
-3. Remove legacy Python dataclass effect implementations (if Rust path confirmed)
+### Phase D: Cleanup — all items MUST be removed, no "after migration" hedge
+1. ~~Remove Python CESK v1 and v3~~ **DONE** — `doeff/cesk/` directory deleted.
+2. **REMOVE `Effect` enum and string-based `classify_yielded`** [Rev 8]:
+   - `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(frozen)]` structs
+     for all Rust-handled effects (Get, Put, Ask, Tell, Modify, Spawn, Gather, Race,
+     CreatePromise, CompletePromise, FailPromise, CreateExternalPromise, TaskCompleted).
+   - `pyvm.rs`: Delete ~300 lines of `match type_str { ... }`. Replace with
+     single isinstance check: `is_effect_base(obj)` → `Yielded::Effect(obj)`.
+   - `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>` (not `Effect`).
+   - `vm.rs`: `Yielded::Effect(Py<PyAny>)`, `DispatchContext.effect: Py<PyAny>`,
+     `start_dispatch(py, effect: Py<PyAny>)`.
+   - All handler impls: downcast in `start()` via `effect.downcast::<PyGet>()` etc.
+3. **REMOVE deprecated Python effect aliases and compat shims:**
+   - `effects/spawn.py`: `Promise.complete()`, `Promise.fail()`, `Task.join()` — DELETE
+   - `effects/gather.py`: backwards compat alias — DELETE
+   - `effects/future.py`: backwards compat alias — DELETE
+   - `effects/scheduler_internal.py`: backwards compat aliases (2 blocks) — DELETE
+   - `rust_vm.py`: `_LegacyRunResult` class + old PyVM fallback path — DELETE
+   - `core.py`: entire compat re-export module — DELETE (or gut)
+   - `_types_internal.py:35`: vendored type backward compat re-export — DELETE
 
 ---
 
@@ -813,10 +879,10 @@ The critical improvements:
    It returns `Vec<CallMetadata>` from `PythonGenerator` frames — pure Rust,
    no GIL needed.
 
-8. **`Yielded::Program` is kept for backward compat.** Non-KPC programs that
-   don't carry metadata go through the existing `Yielded::Program` → `StartProgram`
-   path with `metadata: None`. Over time, `classify_yielded` can upgrade more
-   program types to `Call` with metadata.
+8. **`Yielded::Program` is REMOVED (Rev 7).** The variant MUST be deleted from
+    the Rust `Yielded` enum. All DoThunks go through `DoCtrl::Call` with
+    `CallMetadata`. `classify_yielded` uses `CallMetadata::anonymous()` when
+    the object carries no introspectable metadata. No fallback. No compat.
 
 9. **DoExpr[T] is the universal composable base (Rev 6).**
    The old design had `EffectBase(ProgramBase)` — all effects inherited
@@ -841,9 +907,20 @@ The critical improvements:
     Users provide it via presets or explicit handler list.
 
 12. **DoExpr.map() uniformly returns DerivedProgram / DoThunk (Rev 6).**
-    `.map()` on ANY DoExpr (Effect, DoCtrl, DoThunk) returns a DerivedProgram.
-    No special cases. The thunk wraps the original DoExpr in a generator
-    that yields it.
+     `.map()` on ANY DoExpr (Effect, DoCtrl, DoThunk) returns a DerivedProgram.
+     No special cases. The thunk wraps the original DoExpr in a generator
+     that yields it.
+
+13. **Effects are opaque data — the VM is a dumb pipe (Rev 8).**
+    The `Effect` enum in Rust (`Effect::Get { key }`, `Effect::Python(obj)`, etc.)
+    is REMOVED. Effects flow through dispatch as `Py<PyAny>`. The VM does not
+    inspect effect fields. `classify_yielded` does ONE isinstance check for
+    EffectBase — no per-type arms, no string matching, no field extraction.
+    Handlers downcast to concrete `#[pyclass]` types themselves. All Rust-handled
+    effects (`Get`, `Put`, `Ask`, `Tell`, `Modify`, scheduler effects) are
+    `#[pyclass(frozen)]` structs defined in Rust and exposed to Python.
+    This is separation of concerns: classification is the classifier's job,
+    effect handling is the handler's job.
 
 ---
 
