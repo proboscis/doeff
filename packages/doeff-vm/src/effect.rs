@@ -23,35 +23,22 @@ pub struct KpcCallEffect {
     pub metadata: CallMetadata,
 }
 
+#[cfg(not(test))]
+#[derive(Debug, Clone)]
+pub struct Effect(pub PyShared);
+
+#[cfg(test)]
 /// An effect that can be yielded by user code.
 ///
-/// Built-in effects have Rust variants for performance.
-/// User-defined effects are wrapped as Python objects.
+/// Test-only enum keeps legacy fixtures for unit tests while runtime uses
+/// opaque Python effects.
 #[derive(Debug, Clone)]
 pub enum Effect {
-    // === Built-in effects (Rust handlers) ===
-    /// Get(key) -> value
-    #[cfg(test)]
     Get { key: String },
-
-    /// Put(key, value) -> ()
-    #[cfg(test)]
     Put { key: String, value: Value },
-
-    /// Modify(key, f) -> old_value
-    #[cfg(test)]
     Modify { key: String, modifier: PyShared },
-
-    /// Ask(key) -> value (Reader effect)
-    #[cfg(test)]
     Ask { key: String },
-
-    /// Tell(message) -> () (Writer effect)
-    #[cfg(test)]
     Tell { message: Value },
-
-    // === User-defined effects (Python handlers) ===
-    /// Any Python effect object
     Python(PyShared),
 }
 
@@ -77,18 +64,57 @@ impl Effect {
         }
     }
 
+    pub fn as_python(&self) -> Option<&PyShared> {
+        #[cfg(test)]
+        {
+            if let Effect::Python(obj) = self {
+                return Some(obj);
+            }
+            return None;
+        }
+        #[cfg(not(test))]
+        {
+            Some(&self.0)
+        }
+    }
+
+    pub fn from_shared(obj: PyShared) -> Self {
+        #[cfg(test)]
+        {
+            return Effect::Python(obj);
+        }
+        #[cfg(not(test))]
+        {
+            Effect(obj)
+        }
+    }
+
+    pub fn into_python(self) -> Option<PyShared> {
+        #[cfg(test)]
+        {
+            if let Effect::Python(obj) = self {
+                return Some(obj);
+            }
+            return None;
+        }
+        #[cfg(not(test))]
+        {
+            Some(self.0)
+        }
+    }
+
     /// Get a string representation of the effect type.
     pub fn type_name(&self) -> &'static str {
+        #[cfg(not(test))]
+        {
+            return "Python";
+        }
+        #[cfg(test)]
         match self {
-            #[cfg(test)]
             Effect::Get { .. } => "Get",
-            #[cfg(test)]
             Effect::Put { .. } => "Put",
-            #[cfg(test)]
             Effect::Modify { .. } => "Modify",
-            #[cfg(test)]
             Effect::Ask { .. } => "Ask",
-            #[cfg(test)]
             Effect::Tell { .. } => "Tell",
             Effect::Python(_) => "Python",
         }
@@ -124,15 +150,17 @@ impl Effect {
     }
 
     pub fn python(obj: Py<PyAny>) -> Self {
-        Effect::Python(PyShared::new(obj))
+        Effect::from_shared(PyShared::new(obj))
     }
 
     /// Convert to Python object for passing to Python handlers.
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         #[cfg(not(test))]
         {
-            let Effect::Python(obj) = self;
-            return Ok(obj.bind(py).clone());
+            if let Some(obj) = self.as_python() {
+                return Ok(obj.bind(py).clone());
+            }
+            unreachable!("runtime Effect is always Python")
         }
 
         #[cfg(test)]

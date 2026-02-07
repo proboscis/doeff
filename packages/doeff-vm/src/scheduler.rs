@@ -618,12 +618,12 @@ impl RustHandlerProgram for SchedulerProgram {
         k_user: Continuation,
         store: &mut RustStore,
     ) -> RustProgramStep {
-        let sched_effect = match effect {
-            Effect::Python(obj) => match parse_scheduler_python_effect(&obj) {
+        let sched_effect = if let Some(obj) = effect.clone().into_python() {
+            match parse_scheduler_python_effect(&obj) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
                     return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                        effect: Effect::Python(obj),
+                        effect: Effect::from_shared(obj),
                     }))
                 }
                 Err(msg) => {
@@ -631,11 +631,15 @@ impl RustHandlerProgram for SchedulerProgram {
                         "failed to parse scheduler effect: {msg}"
                     )))
                 }
-            },
+            }
+        } else {
             #[cfg(test)]
-            other => {
-                // Not our effect, delegate
-                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other }));
+            {
+                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+            }
+            #[cfg(not(test))]
+            {
+                unreachable!("runtime Effect is always Python")
             }
         };
 
@@ -819,13 +823,11 @@ impl SchedulerHandler {
 
 impl RustProgramHandler for SchedulerHandler {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(
-                effect,
-                Effect::Python(obj)
-                    if scheduler_effect_type_name(obj)
-                        .as_deref()
-                        .is_some_and(is_scheduler_effect_type_name)
-            )
+        effect.as_python().is_some_and(|obj| {
+            scheduler_effect_type_name(obj)
+                .as_deref()
+                .is_some_and(is_scheduler_effect_type_name)
+        })
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -957,7 +959,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            assert!(handler.can_handle(&Effect::Python(PyShared::new(obj))));
+            assert!(handler.can_handle(&Effect::from_shared(PyShared::new(obj))));
         });
         assert!(!handler.can_handle(&Effect::Get {
             key: "x".to_string()
@@ -975,7 +977,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
             let handler = SchedulerHandler::new();
             assert!(
                 handler.can_handle(&effect),
@@ -998,7 +1000,7 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::Python(PyShared::new(obj));
+            let effect = Effect::from_shared(PyShared::new(obj));
 
             let handler = SchedulerHandler::new();
             let program = handler.create_program();

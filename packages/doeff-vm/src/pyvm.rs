@@ -593,7 +593,7 @@ impl PyVM {
         if obj.is_instance_of::<PyDelegate>() {
             let d: PyRef<'_, PyDelegate> = obj.extract()?;
             let effect = if let Some(ref eff) = d.effect {
-                Effect::Python(PyShared::new(eff.clone_ref(_py)))
+                Effect::from_shared(PyShared::new(eff.clone_ref(_py)))
             } else {
                 self.vm
                     .dispatch_stack
@@ -675,7 +675,7 @@ impl PyVM {
                 "Delegate" => {
                     let effect = if let Ok(eff_obj) = obj.getattr("effect") {
                         if !eff_obj.is_none() {
-                            Effect::Python(PyShared::new(eff_obj.unbind()))
+                            Effect::from_shared(PyShared::new(eff_obj.unbind()))
                         } else {
                             // No explicit effect — use current dispatch effect
                             self.vm
@@ -765,7 +765,7 @@ impl PyVM {
         }
 
         if Self::is_effect_object(_py, obj)? {
-            return Ok(Yielded::Effect(Effect::Python(PyShared::new(
+            return Ok(Yielded::Effect(Effect::from_shared(PyShared::new(
                 obj.clone().unbind(),
             ))));
         }
