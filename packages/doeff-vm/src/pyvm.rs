@@ -27,7 +27,7 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
         VMError::UncaughtException { exception } => {
             // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
             let py = unsafe { Python::assume_attached() };
-            PyErr::from_value(exception.exc_value.bind(py).clone())
+            exception.to_pyerr(py)
         }
         _ => PyRuntimeError::new_err(e.to_string()),
     }
@@ -64,15 +64,7 @@ impl PyVM {
         self.start_with_generator(gen_bound)?;
 
         loop {
-            // GIL note: We cannot use py.allow_threads(|| self.run_rust_steps())
-            // here because VM.step() clones Py<PyAny> values internally (generator
-            // references, Mode values, Yielded snapshots). On free-threaded Python
-            // (3.14t) with PyO3's py-clone feature, Py::clone() asserts the GIL is
-            // held. To enable allow_threads, step() would need to be refactored to
-            // use move/swap semantics instead of clone for all Py<PyAny> fields.
-            // PyVM is Send+Sync (unsendable removed), so the structural prerequisite
-            // is satisfied -- only the internal clone barrier remains.
-            let event = self.run_rust_steps();
+            let event = py.detach(|| self.run_rust_steps());
 
             match event {
                 StepEvent::Done(value) => {
@@ -268,8 +260,7 @@ impl PyVM {
     }
 
     pub fn step_once(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        // See run() for GIL/allow_threads note.
-        let event = self.run_rust_steps();
+        let event = py.detach(|| self.run_rust_steps());
 
         match event {
             StepEvent::Done(value) => {
@@ -472,7 +463,8 @@ impl PyVM {
             }
             PythonCall::GenThrow { exc } => {
                 let gen = self.pending_generator(py)?;
-                let exc_bound = exc.bind(py);
+                let exc_obj = exc.value_clone_ref(py);
+                let exc_bound = exc_obj.bind(py);
                 match gen.bind(py).call_method1("throw", (exc_bound,)) {
                     Ok(yielded) => {
                         let classified = self.classify_yielded(py, &yielded)?;
@@ -545,15 +537,19 @@ impl PyVM {
         if obj.is_instance_of::<PyWithHandler>() {
             let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
             let handler_bound = wh.handler.bind(_py);
-            let handler = if handler_bound.is_instance_of::<PyRustHandlerSentinel>() {
+            let (handler, py_identity) = if handler_bound.is_instance_of::<PyRustHandlerSentinel>() {
                 let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
-                Handler::RustProgram(sentinel.factory.clone())
+                (
+                    Handler::RustProgram(sentinel.factory.clone()),
+                    Some(PyShared::new(wh.handler.clone_ref(_py))),
+                )
             } else {
-                Handler::Python(PyShared::new(wh.handler.clone_ref(_py)))
+                (Handler::Python(PyShared::new(wh.handler.clone_ref(_py))), None)
             };
             return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                 handler,
                 expr: wh.program.clone_ref(_py),
+                py_identity,
             }));
         }
         if obj.is_instance_of::<PyResume>() {
@@ -643,15 +639,20 @@ impl PyVM {
                 "WithHandler" => {
                     let handler_obj = obj.getattr("handler")?;
                     let program = obj.getattr("program").or_else(|_| obj.getattr("body"))?;
-                    let handler = if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
-                        let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_obj.extract()?;
-                        Handler::RustProgram(sentinel.factory.clone())
-                    } else {
-                        Handler::Python(PyShared::new(handler_obj.unbind()))
-                    };
+                    let (handler, py_identity) =
+                        if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
+                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_obj.extract()?;
+                            (
+                                Handler::RustProgram(sentinel.factory.clone()),
+                                Some(PyShared::new(handler_obj.clone().unbind())),
+                            )
+                        } else {
+                            (Handler::Python(PyShared::new(handler_obj.unbind())), None)
+                        };
                     return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                         handler,
                         expr: program.unbind(),
+                        py_identity,
                     }));
                 }
                 "Delegate" => {
@@ -863,6 +864,20 @@ impl PyVM {
                 | "TaskCancelEffect"
                 | "TaskIsDoneEffect"
                 | "WaitForExternalCompletion" => {
+                    if type_str == "TaskCompletedEffect" || type_str == "SchedulerTaskCompleted" {
+                        if let Ok(task_obj) = obj.getattr("task") {
+                            if let Some(task) = Self::extract_task_id(_py, &task_obj) {
+                                if let Ok(result_obj) = obj.getattr("result") {
+                                    return Ok(Yielded::Effect(Effect::Scheduler(
+                                        SchedulerEffect::TaskCompleted {
+                                            task,
+                                            result: Ok(Value::from_pyobject(&result_obj)),
+                                        },
+                                    )));
+                                }
+                            }
+                        }
+                    }
                     return Ok(Yielded::Effect(Effect::Scheduler(
                         SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
                     )));
@@ -963,6 +978,18 @@ impl PyVM {
         let handle = obj.getattr("_promise_handle").ok()?;
         let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
         Some(crate::ids::PromiseId::from_raw(raw))
+    }
+
+    fn extract_task_id(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<crate::ids::TaskId> {
+        if let Ok(raw) = obj.getattr("task_id").and_then(|v| v.extract::<u64>()) {
+            return Some(crate::ids::TaskId::from_raw(raw));
+        }
+        if let Ok(handle) = obj.getattr("_handle") {
+            if let Ok(raw) = handle.get_item("task_id").and_then(|v| v.extract::<u64>()) {
+                return Some(crate::ids::TaskId::from_raw(raw));
+            }
+        }
+        None
     }
 
     fn extract_call_metadata(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallMetadata> {
@@ -1147,14 +1174,14 @@ impl PyRunResult {
     fn value(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
             Ok(v) => Ok(v.clone_ref(py)),
-            Err(e) => Err(PyErr::from_value(e.exc_value.bind(py).clone())),
+            Err(e) => Err(e.to_pyerr(py)),
         }
     }
 
     #[getter]
     fn error(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match &self.result {
-            Err(e) => Ok(e.exc_value.clone_ref(py)),
+            Err(e) => Ok(e.value_clone_ref(py)),
             Ok(_) => Err(pyo3::exceptions::PyValueError::new_err(
                 "RunResult is Ok, not Err",
             )),
@@ -1178,7 +1205,7 @@ impl PyRunResult {
                 let err_obj = Bound::new(
                     py,
                     PyResultErr {
-                        error: e.exc_value.clone_ref(py),
+                        error: e.value_clone_ref(py),
                     },
                 )?;
                 Ok(err_obj.into_any().unbind())
@@ -1386,6 +1413,115 @@ impl NestingGenerator {
 
     fn throw(&mut self, _py: Python<'_>, exc: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         Err(PyErr::from_value(exc))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::Marker;
+    use crate::segment::Segment;
+    use pyo3::IntoPyObject;
+
+    #[test]
+    fn test_g2_withhandler_rust_sentinel_preserves_py_identity() {
+        Python::attach(|py| {
+            let mut pyvm = PyVM { vm: VM::new() };
+
+            let root_marker = Marker::fresh();
+            let root_seg = Segment::new(root_marker, None, vec![]);
+            let root_seg_id = pyvm.vm.alloc_segment(root_seg);
+            pyvm.vm.current_segment = Some(root_seg_id);
+
+            let sentinel = Bound::new(
+                py,
+                PyRustHandlerSentinel {
+                    factory: Arc::new(StateHandlerFactory),
+                },
+            )
+            .unwrap()
+            .into_any()
+            .unbind();
+
+            let with_handler = Bound::new(
+                py,
+                PyWithHandler {
+                    handler: sentinel.clone_ref(py),
+                    program: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                },
+            )
+            .unwrap()
+            .into_any();
+
+            let yielded = pyvm.classify_yielded(py, &with_handler).unwrap();
+            pyvm.vm.mode = Mode::HandleYield(yielded);
+
+            let event = pyvm.vm.step();
+            assert!(matches!(event, StepEvent::NeedsPython(_)));
+
+            let body_seg_id = pyvm.vm.current_segment.expect("body segment missing");
+            let body_seg = pyvm.vm.segments.get(body_seg_id).expect("segment missing");
+            let handler_marker = *body_seg
+                .scope_chain
+                .first()
+                .expect("handler marker missing on body scope");
+            let entry = pyvm
+                .vm
+                .handlers
+                .get(&handler_marker)
+                .expect("handler entry missing");
+
+            let identity = entry
+                .py_identity
+                .as_ref()
+                .expect("G2 FAIL: rust sentinel identity was not preserved");
+            assert!(
+                identity.bind(py).is(&sentinel.bind(py)),
+                "G2 FAIL: preserved identity does not match original sentinel"
+            );
+        });
+    }
+
+    #[test]
+    fn test_g3_task_completed_classifies_to_typed_scheduler_effect() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect:\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            match yielded {
+                Yielded::Effect(Effect::Scheduler(SchedulerEffect::TaskCompleted {
+                    task,
+                    result,
+                })) => {
+                    assert_eq!(task.raw(), 7);
+                    match result {
+                        Ok(Value::Int(v)) => assert_eq!(v, 123),
+                        other => panic!("G3 FAIL: unexpected TaskCompleted result: {:?}", other),
+                    }
+                }
+                other => panic!(
+                    "G3 FAIL: expected typed TaskCompleted scheduler effect, got {:?}",
+                    other
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_g1_run_loop_should_not_directly_call_run_rust_steps_under_gil() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        assert!(
+            src.contains("let event = py.detach(|| self.run_rust_steps());"),
+            "G1 FAIL: run/step loop is not detached around run_rust_steps"
+        );
     }
 }
 

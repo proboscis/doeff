@@ -4,7 +4,6 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use pyo3::PyTypeInfo;
 
 use crate::arena::SegmentArena;
 use crate::continuation::Continuation;
@@ -261,18 +260,8 @@ impl VM {
     }
 
     /// Set mode to Throw with a RuntimeError and return Continue.
-    /// SAFETY: Caller must hold GIL (always true — called from step() within driver loop).
     fn throw_runtime_error(&mut self, message: &str) -> StepEvent {
-        let py = unsafe { pyo3::Python::assume_attached() };
-        let exc_type = pyo3::exceptions::PyRuntimeError::type_object(py)
-            .into_any()
-            .unbind();
-        let exc_value = pyo3::exceptions::PyRuntimeError::new_err(message.to_string())
-            .value(py)
-            .clone()
-            .into_any()
-            .unbind();
-        self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+        self.mode = Mode::Throw(PyException::runtime_error(message.to_string()));
         StepEvent::Continue
     }
 
@@ -516,7 +505,7 @@ Yielded::DoCtrl(p) => match p {
                         }
                     }
                     Mode::Throw(exc) => StepEvent::NeedsPython(PythonCall::GenThrow {
-                        exc: PyShared::new(exc.exc_value),
+                        exc,
                     }),
                     _ => unreachable!(),
                 }
@@ -598,8 +587,12 @@ Yielded::DoCtrl(p) => match p {
                         continuation,
                         value,
                     } => self.handle_transfer(continuation, value),
-                    DoCtrl::WithHandler { handler, expr } => {
-                        self.handle_with_handler(handler, expr)
+                    DoCtrl::WithHandler {
+                        handler,
+                        expr,
+                        py_identity,
+                    } => {
+                        self.handle_with_handler(handler, expr, py_identity)
                     }
                     DoCtrl::Delegate { effect } => self.handle_delegate(effect),
                     DoCtrl::GetContinuation => self.handle_get_continuation(),
@@ -671,18 +664,9 @@ Yielded::DoCtrl(p) => match p {
             }
 
             Yielded::Unknown(_) => {
-                let py = unsafe { pyo3::Python::assume_attached() };
-                let exc_type = pyo3::exceptions::PyTypeError::type_object(py)
-                    .into_any()
-                    .unbind();
-                let exc_value = pyo3::exceptions::PyTypeError::new_err(
+                self.mode = Mode::Throw(PyException::type_error(
                     "unknown yielded value: expected Effect, DoCtrl, or Program",
-                )
-                .value(py)
-                .clone()
-                .into_any()
-                .unbind();
-                self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+                ));
                 StepEvent::Continue
             }
         }
@@ -742,19 +726,9 @@ Yielded::DoCtrl(p) => match p {
                         self.mode = Mode::Deliver(Value::Unit);
                     }
                     _ => {
-                        // Non-generator value returned from program call
-                        let py = unsafe { Python::assume_attached() };
-                        let exc_type = pyo3::exceptions::PyTypeError::type_object(py)
-                            .into_any()
-                            .unbind();
-                        let exc_value = pyo3::exceptions::PyTypeError::new_err(
+                        self.mode = Mode::Throw(PyException::type_error(
                             "StartProgram: program did not return a generator",
-                        )
-                        .value(py)
-                        .clone()
-                        .into_any()
-                        .unbind();
-                        self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+                        ));
                     }
                 }
             }
@@ -813,19 +787,9 @@ Yielded::DoCtrl(p) => match p {
                     self.mode = Mode::Deliver(Value::Unit);
                 }
                 _ => {
-                    // Non-generator value returned from handler call
-                    let py = unsafe { Python::assume_attached() };
-                    let exc_type = pyo3::exceptions::PyTypeError::type_object(py)
-                        .into_any()
-                        .unbind();
-                    let exc_value = pyo3::exceptions::PyTypeError::new_err(
+                    self.mode = Mode::Throw(PyException::type_error(
                         "CallPythonHandler: handler did not return a generator",
-                    )
-                    .value(py)
-                    .clone()
-                    .into_any()
-                    .unbind();
-                    self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+                    ));
                 }
             },
 
@@ -850,19 +814,9 @@ Yielded::DoCtrl(p) => match p {
             }
 
             _ => {
-                // Unexpected pending/outcome combination
-                let py = unsafe { Python::assume_attached() };
-                let exc_type = pyo3::exceptions::PyRuntimeError::type_object(py)
-                    .into_any()
-                    .unbind();
-                let exc_value = pyo3::exceptions::PyRuntimeError::new_err(
+                self.mode = Mode::Throw(PyException::runtime_error(
                     "unexpected pending/outcome combination in receive_python_result",
-                )
-                .value(py)
-                .clone()
-                .into_any()
-                .unbind();
-                self.mode = Mode::Throw(PyException::new(exc_type, exc_value, None));
+                ));
             }
         }
     }
@@ -1092,7 +1046,12 @@ Yielded::DoCtrl(p) => match p {
         StepEvent::Continue
     }
 
-    fn handle_with_handler(&mut self, handler: Handler, program: Py<PyAny>) -> StepEvent {
+    fn handle_with_handler(
+        &mut self,
+        handler: Handler,
+        program: Py<PyAny>,
+        explicit_py_identity: Option<PyShared>,
+    ) -> StepEvent {
         let handler_marker = Marker::fresh();
         let outside_seg_id = match self.current_segment {
             Some(id) => id,
@@ -1114,11 +1073,10 @@ Yielded::DoCtrl(p) => match p {
         );
         let prompt_seg_id = self.alloc_segment(prompt_seg);
 
-        // Extract py_identity for Python handlers
-        let py_identity = match &handler {
+        let py_identity = explicit_py_identity.or_else(|| match &handler {
             Handler::Python(py_handler) => Some(py_handler.clone()),
             Handler::RustProgram(_) => None,
-        };
+        });
         match py_identity {
             Some(identity) => {
                 self.handlers.insert(
@@ -2930,5 +2888,15 @@ mod tests {
                 "R9-H: Eval must change current_segment to the body segment of installed handlers"
             );
         });
+    }
+
+    #[test]
+    fn test_g1_vm_step_path_has_no_assume_attached_calls() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/vm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            !runtime_src.contains("assume_attached()"),
+            "G1 FAIL: vm.rs step/runtime path still uses assume_attached"
+        );
     }
 }
