@@ -20,6 +20,7 @@ from typing import (
     Protocol,
     TypeAlias,
     TypeVar,
+    cast,
     runtime_checkable,
 )
 
@@ -593,6 +594,38 @@ class EffectBase:
         if created_at is self.created_at:
             return self
         return replace(self, created_at=created_at)
+
+    def map(self, f: Callable[[Any], Any]) -> Program[Any]:
+        if not callable(f):
+            raise TypeError("mapper must be callable")
+
+        from doeff.program import GeneratorProgram
+
+        def factory():
+            value = yield cast(Any, self)
+            return f(value)
+
+        return GeneratorProgram(cast(Any, factory))
+
+    def flat_map(self, f: Callable[[Any], Any]) -> Program[Any]:
+        if not callable(f):
+            raise TypeError("binder must be callable returning Program/Effect")
+
+        from doeff.program import GeneratorProgram, ProgramBase
+
+        def factory():
+            value = yield cast(Any, self)
+            next_prog = f(value)
+            if not isinstance(next_prog, (ProgramBase, EffectBase)):
+                raise TypeError(
+                    f"binder must return Program/Effect; got {type(next_prog).__name__}"
+                )
+            return (yield cast(Any, next_prog))
+
+        return GeneratorProgram(cast(Any, factory))
+
+    def and_then_k(self, binder: Callable[[Any], Any]) -> Program[Any]:
+        return self.flat_map(binder)
 
 
 @dataclass(frozen=True, kw_only=True)

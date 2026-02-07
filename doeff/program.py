@@ -584,48 +584,54 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
             execution_kernel=getattr(kleisli, "func", None),
         )
 
-    @classmethod
-    def create_derived(
-        cls,
-        generator_func: Callable[..., Generator[Effect | Program, Any, T]],
-        parent: KleisliProgramCall,
-        args: tuple | None = None,
-        kwargs: dict[str, Any] | None = None,
-    ) -> KleisliProgramCall[T]:
-        """Create from transforming another KPCall (preserve metadata)."""
-        bound_args = tuple(args) if args is not None else parent.args
-        bound_kwargs = dict(kwargs) if kwargs is not None else parent.kwargs
-        return cls(
-            kleisli_source=parent.kleisli_source,
-            args=bound_args,
-            kwargs=bound_kwargs,
-            function_name=parent.function_name,
-            created_at=parent.created_at,
-            auto_unwrap_strategy=parent.auto_unwrap_strategy,
-            execution_kernel=generator_func,
-        )
+    def map(self, f: Callable[[T], U]) -> Program[U]:
+        """Map over result.
 
-    def map(self, f: Callable[[T], U]) -> KleisliProgramCall[U]:
-        """Map over result."""
+        SPEC-TYPES-001: map on any DoExpr returns a derived DoThunk.
+        """
 
-        def mapped_gen(*_args: Any, **_kwargs: Any) -> Generator[Effect | Program, Any, U]:
+        if not callable(f):
+            raise TypeError("mapper must be callable")
+
+        def mapped_gen() -> Generator[Effect | Program, Any, U]:
             value = yield self
             return f(value)
 
-        return KleisliProgramCall.create_derived(mapped_gen, parent=self)
+        return GeneratorProgram(mapped_gen)
 
-    def flat_map(self, f: Callable[[T], ProgramProtocol[U]]) -> KleisliProgramCall[U]:
-        """Monadic bind operation."""
+    def flat_map(self, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
+        """Monadic bind operation.
 
-        def flatmapped_gen(*_args: Any, **_kwargs: Any) -> Generator[Effect | Program, Any, U]:
+        SPEC-TYPES-001: flat_map on any DoExpr returns a derived DoThunk.
+        """
+
+        if not callable(f):
+            raise TypeError("binder must be callable returning Program/Effect")
+
+        def flatmapped_gen() -> Generator[Effect | Program, Any, U]:
+            from doeff.types import EffectBase
+
             value = yield self
             next_prog = f(value)
+            if not isinstance(next_prog, (ProgramBase, EffectBase)):
+                raise TypeError(
+                    f"binder must return Program/Effect; got {type(next_prog).__name__}"
+                )
             result = yield next_prog
             return result
 
-        return KleisliProgramCall.create_derived(flatmapped_gen, parent=self)
+        return GeneratorProgram(flatmapped_gen)
 
 
-Program = ProgramBase
+DoExpr = ProgramBase
+DoThunk = ProgramBase
+Program = DoExpr
 
-__all__ = ["GeneratorProgram", "KleisliProgramCall", "Program", "ProgramProtocol"]
+__all__ = [
+    "DoExpr",
+    "DoThunk",
+    "GeneratorProgram",
+    "KleisliProgramCall",
+    "Program",
+    "ProgramProtocol",
+]
