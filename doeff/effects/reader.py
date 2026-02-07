@@ -17,6 +17,8 @@ from .base import Effect, EffectBase, create_effect_with_trace
 class AskEffect(EffectBase):
     """Looks up the environment entry for key and yields the resolved value."""
 
+    __doeff_reader_ask__ = True
+
     key: EnvKey
 
     def __post_init__(self) -> None:
@@ -40,9 +42,7 @@ def ask(key: EnvKey) -> AskEffect:
 
 
 def local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> LocalEffect:
-    return create_effect_with_trace(
-        LocalEffect(env_update=env_update, sub_program=sub_program)
-    )
+    return create_effect_with_trace(LocalEffect(env_update=env_update, sub_program=sub_program))
 
 
 def Ask(key: EnvKey) -> Effect:

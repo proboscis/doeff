@@ -90,16 +90,10 @@ impl Handler {
     }
 }
 
-fn python_effect_type_name(effect: &PyShared) -> Option<String> {
-    Python::attach(|py| {
-        effect
-            .bind(py)
-            .get_type()
-            .name()
-            .ok()?
-            .extract::<String>()
-            .ok()
-    })
+fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
+    obj.getattr(attr)
+        .and_then(|v| v.extract::<bool>())
+        .unwrap_or(false)
 }
 
 enum ParsedStateEffect {
@@ -111,106 +105,78 @@ enum ParsedStateEffect {
 fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let type_name: String = obj
-            .get_type()
-            .name()
-            .map_err(|e| e.to_string())?
-            .extract::<String>()
-            .map_err(|e| e.to_string())?;
-
-        match type_name.as_str() {
-            "StateGetEffect" | "Get" => {
-                let key: String = obj
-                    .getattr("key")
-                    .map_err(|e| e.to_string())?
-                    .extract::<String>()
-                    .map_err(|e| e.to_string())?;
-                Ok(Some(ParsedStateEffect::Get { key }))
-            }
-            "StatePutEffect" | "Put" => {
-                let key: String = obj
-                    .getattr("key")
-                    .map_err(|e| e.to_string())?
-                    .extract::<String>()
-                    .map_err(|e| e.to_string())?;
-                let value = obj.getattr("value").map_err(|e| e.to_string())?;
-                Ok(Some(ParsedStateEffect::Put {
-                    key,
-                    value: Value::from_pyobject(&value),
-                }))
-            }
-            "StateModifyEffect" | "Modify" => {
-                let key: String = obj
-                    .getattr("key")
-                    .map_err(|e| e.to_string())?
-                    .extract::<String>()
-                    .map_err(|e| e.to_string())?;
-                let modifier = obj
-                    .getattr("func")
-                    .or_else(|_| obj.getattr("modifier"))
-                    .map_err(|e| e.to_string())?;
-                Ok(Some(ParsedStateEffect::Modify {
-                    key,
-                    modifier: PyShared::new(modifier.unbind()),
-                }))
-            }
-            _ => Ok(None),
+        if has_true_attr(obj, "__doeff_state_get__") {
+            let key: String = obj
+                .getattr("key")
+                .map_err(|e| e.to_string())?
+                .extract::<String>()
+                .map_err(|e| e.to_string())?;
+            return Ok(Some(ParsedStateEffect::Get { key }));
         }
+
+        if has_true_attr(obj, "__doeff_state_put__") {
+            let key: String = obj
+                .getattr("key")
+                .map_err(|e| e.to_string())?
+                .extract::<String>()
+                .map_err(|e| e.to_string())?;
+            let value = obj.getattr("value").map_err(|e| e.to_string())?;
+            return Ok(Some(ParsedStateEffect::Put {
+                key,
+                value: Value::from_pyobject(&value),
+            }));
+        }
+
+        if has_true_attr(obj, "__doeff_state_modify__") {
+            let key: String = obj
+                .getattr("key")
+                .map_err(|e| e.to_string())?
+                .extract::<String>()
+                .map_err(|e| e.to_string())?;
+            let modifier = obj
+                .getattr("func")
+                .or_else(|_| obj.getattr("modifier"))
+                .map_err(|e| e.to_string())?;
+            return Ok(Some(ParsedStateEffect::Modify {
+                key,
+                modifier: PyShared::new(modifier.unbind()),
+            }));
+        }
+
+        Ok(None)
     })
 }
 
 fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let type_name: String = obj
-            .get_type()
-            .name()
-            .map_err(|e| e.to_string())?
-            .extract::<String>()
-            .map_err(|e| e.to_string())?;
-        match type_name.as_str() {
-            "AskEffect" | "Ask" => {
-                let key: String = obj
-                    .getattr("key")
-                    .map_err(|e| e.to_string())?
-                    .extract::<String>()
-                    .map_err(|e| e.to_string())?;
-                Ok(Some(key))
-            }
-            _ => Ok(None),
+        if has_true_attr(obj, "__doeff_reader_ask__") {
+            let key: String = obj
+                .getattr("key")
+                .map_err(|e| e.to_string())?
+                .extract::<String>()
+                .map_err(|e| e.to_string())?;
+            return Ok(Some(key));
         }
+        Ok(None)
     })
 }
 
 fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let type_name: String = obj
-            .get_type()
-            .name()
-            .map_err(|e| e.to_string())?
-            .extract::<String>()
-            .map_err(|e| e.to_string())?;
-        match type_name.as_str() {
-            "WriterTellEffect" | "Tell" => {
-                let message = obj.getattr("message").map_err(|e| e.to_string())?;
-                Ok(Some(Value::from_pyobject(&message)))
-            }
-            _ => Ok(None),
+        if has_true_attr(obj, "__doeff_writer_tell__") {
+            let message = obj.getattr("message").map_err(|e| e.to_string())?;
+            return Ok(Some(Value::from_pyobject(&message)));
         }
+        Ok(None)
     })
 }
 
 fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        let type_name: String = obj
-            .get_type()
-            .name()
-            .map_err(|e| e.to_string())?
-            .extract::<String>()
-            .map_err(|e| e.to_string())?;
-        if type_name != "KleisliProgramCall" {
+        if !has_true_attr(obj, "__doeff_kpc__") {
             return Ok(None);
         }
 
@@ -342,26 +308,15 @@ fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
     if obj.hasattr("to_generator").map_err(|e| e.to_string())? {
         return Ok(true);
     }
-    let Ok(type_name) = obj.get_type().name() else {
-        return Ok(false);
-    };
-    let type_str: String = type_name.extract::<String>().map_err(|e| e.to_string())?;
-    Ok(type_str.ends_with("Effect")
-        || matches!(
-            type_str.as_str(),
-            "Get"
-                | "Put"
-                | "Modify"
-                | "Ask"
-                | "Tell"
-                | "WithHandler"
-                | "Resume"
-                | "Transfer"
-                | "Delegate"
-                | "CreateContinuation"
-                | "ResumeContinuation"
-                | "KleisliProgramCall"
-        ))
+    if has_true_attr(obj, "__doeff_effect_base__") || has_true_attr(obj, "__doeff_kpc__") {
+        return Ok(true);
+    }
+    Ok(
+        (obj.getattr("handler").is_ok() && obj.getattr("inner").is_ok())
+            || (obj.getattr("effect").is_ok() && obj.getattr("continuation").is_err())
+            || (obj.getattr("program").is_ok() && obj.getattr("handlers").is_ok())
+            || (obj.getattr("continuation").is_ok() && obj.getattr("value").is_ok()),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -373,9 +328,9 @@ pub struct KpcHandlerFactory;
 
 impl RustProgramHandler for KpcHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        effect.as_python().is_some_and(|obj| {
-            matches!(python_effect_type_name(obj).as_deref(), Some("KleisliProgramCall"))
-        })
+        effect
+            .as_python()
+            .is_some_and(|obj| parse_kpc_python_effect(obj).ok().flatten().is_some())
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -589,12 +544,9 @@ impl RustProgramHandler for StateHandlerFactory {
             return true;
         }
 
-        effect.as_python().is_some_and(|obj| {
-            matches!(
-                python_effect_type_name(obj).as_deref(),
-                Some("StateGetEffect" | "Get" | "StatePutEffect" | "Put" | "StateModifyEffect" | "Modify")
-            )
-        })
+        effect
+            .as_python()
+            .is_some_and(|obj| parse_state_python_effect(obj).ok().flatten().is_some())
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -740,9 +692,9 @@ impl RustProgramHandler for ReaderHandlerFactory {
             return true;
         }
 
-        effect.as_python().is_some_and(|obj| {
-            matches!(python_effect_type_name(obj).as_deref(), Some("AskEffect" | "Ask"))
-        })
+        effect
+            .as_python()
+            .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -815,12 +767,9 @@ impl RustProgramHandler for WriterHandlerFactory {
             return true;
         }
 
-        effect.as_python().is_some_and(|obj| {
-            matches!(
-                python_effect_type_name(obj).as_deref(),
-                Some("WriterTellEffect" | "Tell")
-            )
-        })
+        effect
+            .as_python()
+            .is_some_and(|obj| parse_writer_python_effect(obj).ok().flatten().is_some())
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -1029,7 +978,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    __doeff_kpc__ = True\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1052,7 +1001,7 @@ mod tests {
 
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    __doeff_kpc__ = True\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1095,7 +1044,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StateGetEffect(EffectBase):\n    def __init__(self):\n        self.key = 'x'\nobj = StateGetEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StateGetEffect(EffectBase):\n    __doeff_state_get__ = True\n    def __init__(self):\n        self.key = 'x'\nobj = StateGetEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1170,7 +1119,7 @@ mod tests {
             let k = make_test_continuation();
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StatePutEffect(EffectBase):\n    def __init__(self):\n        self.key = 'key'\n        self.value = 77\nobj = StatePutEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StatePutEffect(EffectBase):\n    __doeff_state_put__ = True\n    def __init__(self):\n        self.key = 'key'\n        self.value = 77\nobj = StatePutEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1279,7 +1228,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass AskEffect(EffectBase):\n    def __init__(self):\n        self.key = 'cfg'\nobj = AskEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass AskEffect(EffectBase):\n    __doeff_reader_ask__ = True\n    def __init__(self):\n        self.key = 'cfg'\nobj = AskEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1339,7 +1288,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass WriterTellEffect(EffectBase):\n    def __init__(self):\n        self.message = 'log'\nobj = WriterTellEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass WriterTellEffect(EffectBase):\n    __doeff_writer_tell__ = True\n    def __init__(self):\n        self.message = 'log'\nobj = WriterTellEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )

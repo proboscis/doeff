@@ -59,9 +59,7 @@ class ExternalPromise(Generic[T]):
     """
 
     _handle: Any = field(repr=False)
-    _completion_queue: "queue.Queue[tuple[UUID, Any, BaseException | None]]" = field(
-        repr=False
-    )
+    _completion_queue: "queue.Queue[tuple[UUID, Any, BaseException | None]]" = field(repr=False)
     _id: UUID = field(default_factory=uuid4)
 
     @property
@@ -112,6 +110,8 @@ class CreateExternalPromiseEffect(EffectBase):
     Handled by scheduler to create a promise that can be completed
     from outside the CESK machine.
     """
+
+    __doeff_scheduler_create_external_promise__ = True
 
     pass
 

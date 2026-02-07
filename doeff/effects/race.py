@@ -18,6 +18,8 @@ class RaceResult(Generic[T]):
 
 @dataclass(frozen=True)
 class RaceEffect(EffectBase):
+    __doeff_scheduler_race__ = True
+
     futures: tuple[Waitable[Any], ...]
 
     def __post_init__(self) -> None:
@@ -33,9 +35,7 @@ def race(*futures: Waitable[Any]) -> RaceEffect:
 
 
 def Race(*futures: Waitable[Any]) -> Effect:
-    return create_effect_with_trace(
-        RaceEffect(futures=tuple(futures)), skip_frames=3
-    )
+    return create_effect_with_trace(RaceEffect(futures=tuple(futures)), skip_frames=3)
 
 
 __all__ = [
