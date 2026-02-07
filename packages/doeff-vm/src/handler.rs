@@ -102,7 +102,13 @@ fn python_effect_type_name(effect: &PyShared) -> Option<String> {
     })
 }
 
-fn parse_state_python_effect(effect: &PyShared) -> Result<Option<Effect>, String> {
+enum ParsedStateEffect {
+    Get { key: String },
+    Put { key: String, value: Value },
+    Modify { key: String, modifier: PyShared },
+}
+
+fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
         let type_name: String = obj
@@ -119,7 +125,7 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<Effect>, String
                     .map_err(|e| e.to_string())?
                     .extract::<String>()
                     .map_err(|e| e.to_string())?;
-                Ok(Some(Effect::Get { key }))
+                Ok(Some(ParsedStateEffect::Get { key }))
             }
             "StatePutEffect" | "Put" => {
                 let key: String = obj
@@ -128,7 +134,7 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<Effect>, String
                     .extract::<String>()
                     .map_err(|e| e.to_string())?;
                 let value = obj.getattr("value").map_err(|e| e.to_string())?;
-                Ok(Some(Effect::Put {
+                Ok(Some(ParsedStateEffect::Put {
                     key,
                     value: Value::from_pyobject(&value),
                 }))
@@ -143,7 +149,7 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<Effect>, String
                     .getattr("func")
                     .or_else(|_| obj.getattr("modifier"))
                     .map_err(|e| e.to_string())?;
-                Ok(Some(Effect::Modify {
+                Ok(Some(ParsedStateEffect::Modify {
                     key,
                     modifier: PyShared::new(modifier.unbind()),
                 }))
@@ -153,7 +159,7 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<Effect>, String
     })
 }
 
-fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<Effect>, String> {
+fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
         let type_name: String = obj
@@ -169,14 +175,14 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<Effect>, Strin
                     .map_err(|e| e.to_string())?
                     .extract::<String>()
                     .map_err(|e| e.to_string())?;
-                Ok(Some(Effect::Ask { key }))
+                Ok(Some(key))
             }
             _ => Ok(None),
         }
     })
 }
 
-fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Effect>, String> {
+fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
         let type_name: String = obj
@@ -188,13 +194,174 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Effect>, Strin
         match type_name.as_str() {
             "WriterTellEffect" | "Tell" => {
                 let message = obj.getattr("message").map_err(|e| e.to_string())?;
-                Ok(Some(Effect::Tell {
-                    message: Value::from_pyobject(&message),
-                }))
+                Ok(Some(Value::from_pyobject(&message)))
             }
             _ => Ok(None),
         }
     })
+}
+
+fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let type_name: String = obj
+            .get_type()
+            .name()
+            .map_err(|e| e.to_string())?
+            .extract::<String>()
+            .map_err(|e| e.to_string())?;
+        if type_name != "KleisliProgramCall" {
+            return Ok(None);
+        }
+
+        let metadata = extract_kpc_call_metadata(obj)?;
+        let kernel_obj = obj
+            .getattr("execution_kernel")
+            .or_else(|_| obj.getattr("kernel"))
+            .map_err(|e| e.to_string())?;
+        let kernel = PyShared::new(kernel_obj.unbind());
+
+        let strategy = obj.getattr("auto_unwrap_strategy").ok();
+
+        let mut args = Vec::new();
+        if let Ok(args_obj) = obj.getattr("args") {
+            for (idx, item) in args_obj.try_iter().map_err(|e| e.to_string())?.enumerate() {
+                let item = item.map_err(|e| e.to_string())?;
+                let should_unwrap =
+                    kpc_strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
+                args.push(extract_kpc_arg(&item, should_unwrap)?);
+            }
+        }
+
+        let mut kwargs = Vec::new();
+        if let Ok(kwargs_obj) = obj.getattr("kwargs") {
+            let kwargs_dict = kwargs_obj
+                .cast::<pyo3::types::PyDict>()
+                .map_err(|e| e.to_string())?;
+            for (k, v) in kwargs_dict.iter() {
+                let key: String = k.extract::<String>().map_err(|e| e.to_string())?;
+                let should_unwrap =
+                    kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
+                kwargs.push((key, extract_kpc_arg(&v, should_unwrap)?));
+            }
+        }
+
+        Ok(Some(KpcCallEffect {
+            call: PyShared::new(obj.clone().unbind()),
+            kernel,
+            args,
+            kwargs,
+            metadata,
+        }))
+    })
+}
+
+fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, String> {
+    let function_name = obj
+        .getattr("function_name")
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
+        .unwrap_or_else(|| "<anonymous>".to_string());
+
+    if let Ok(kleisli) = obj.getattr("kleisli_source") {
+        if let Ok(func) = kleisli.getattr("original_func") {
+            if let Ok(code) = func.getattr("__code__") {
+                let source_file = code
+                    .getattr("co_filename")
+                    .ok()
+                    .and_then(|v| v.extract::<String>().ok())
+                    .unwrap_or_else(|| "<unknown>".to_string());
+                let source_line = code
+                    .getattr("co_firstlineno")
+                    .ok()
+                    .and_then(|v| v.extract::<u32>().ok())
+                    .unwrap_or(0);
+                return Ok(CallMetadata {
+                    function_name,
+                    source_file,
+                    source_line,
+                    program_call: Some(PyShared::new(obj.clone().unbind())),
+                });
+            }
+        }
+    }
+
+    let source_file = obj
+        .getattr("source_file")
+        .ok()
+        .and_then(|v| v.extract::<String>().ok())
+        .unwrap_or_else(|| "<unknown>".to_string());
+    let source_line = obj
+        .getattr("source_line")
+        .ok()
+        .and_then(|v| v.extract::<u32>().ok())
+        .unwrap_or(0);
+
+    Ok(CallMetadata {
+        function_name,
+        source_file,
+        source_line,
+        program_call: Some(PyShared::new(obj.clone().unbind())),
+    })
+}
+
+fn kpc_strategy_should_unwrap_positional(
+    strategy: Option<&Bound<'_, PyAny>>,
+    idx: usize,
+) -> Result<bool, String> {
+    let Some(strategy) = strategy else {
+        return Ok(true);
+    };
+    Ok(strategy
+        .call_method1("should_unwrap_positional", (idx,))
+        .and_then(|v| v.extract::<bool>())
+        .unwrap_or(true))
+}
+
+fn kpc_strategy_should_unwrap_keyword(
+    strategy: Option<&Bound<'_, PyAny>>,
+    key: &str,
+) -> Result<bool, String> {
+    let Some(strategy) = strategy else {
+        return Ok(true);
+    };
+    Ok(strategy
+        .call_method1("should_unwrap_keyword", (key,))
+        .and_then(|v| v.extract::<bool>())
+        .unwrap_or(true))
+}
+
+fn extract_kpc_arg(obj: &Bound<'_, PyAny>, should_unwrap: bool) -> Result<KpcArg, String> {
+    if should_unwrap && is_do_expr_candidate(obj)? {
+        return Ok(KpcArg::Expr(PyShared::new(obj.clone().unbind())));
+    }
+    Ok(KpcArg::Value(Value::from_pyobject(obj)))
+}
+
+fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
+    if obj.hasattr("to_generator").map_err(|e| e.to_string())? {
+        return Ok(true);
+    }
+    let Ok(type_name) = obj.get_type().name() else {
+        return Ok(false);
+    };
+    let type_str: String = type_name.extract::<String>().map_err(|e| e.to_string())?;
+    Ok(type_str.ends_with("Effect")
+        || matches!(
+            type_str.as_str(),
+            "Get"
+                | "Put"
+                | "Modify"
+                | "Ask"
+                | "Tell"
+                | "WithHandler"
+                | "Resume"
+                | "Transfer"
+                | "Delegate"
+                | "CreateContinuation"
+                | "ResumeContinuation"
+                | "KleisliProgramCall"
+        ))
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +373,11 @@ pub struct KpcHandlerFactory;
 
 impl RustProgramHandler for KpcHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::KpcCall(_))
+        matches!(
+                effect,
+                Effect::Python(obj)
+                    if matches!(python_effect_type_name(obj).as_deref(), Some("KleisliProgramCall"))
+            )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -347,10 +518,19 @@ impl RustHandlerProgram for KpcHandlerProgram {
         _store: &mut RustStore,
     ) -> RustProgramStep {
         match effect {
-            Effect::KpcCall(kpc) => {
-                self.phase = KpcPhase::AwaitHandlers { k_user: k, kpc };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
-            }
+            Effect::Python(obj) => match parse_kpc_python_effect(&obj) {
+                Ok(Some(kpc)) => {
+                    self.phase = KpcPhase::AwaitHandlers { k_user: k, kpc };
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                }
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: Effect::Python(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse KleisliProgramCall effect: {msg}"
+                ))),
+            },
+            #[cfg(test)]
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -400,15 +580,19 @@ pub struct StateHandlerFactory;
 
 impl RustProgramHandler for StateHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. })
-            || matches!(
-                effect,
-                Effect::Python(obj)
-                    if matches!(
-                        python_effect_type_name(obj).as_deref(),
-                        Some("StateGetEffect" | "Get" | "StatePutEffect" | "Put" | "StateModifyEffect" | "Modify")
-                    )
-            )
+        #[cfg(test)]
+        if matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }) {
+            return true;
+        }
+
+        matches!(
+            effect,
+            Effect::Python(obj)
+                if matches!(
+                    python_effect_type_name(obj).as_deref(),
+                    Some("StateGetEffect" | "Get" | "StatePutEffect" | "Put" | "StateModifyEffect" | "Modify")
+                )
+        )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -441,6 +625,7 @@ impl StateHandlerProgram {
 impl RustHandlerProgram for StateHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
         match effect {
+            #[cfg(test)]
             Effect::Get { key } => {
                 let value = store.get(&key).cloned().unwrap_or(Value::None);
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -448,6 +633,7 @@ impl RustHandlerProgram for StateHandlerProgram {
                     value,
                 }))
             }
+            #[cfg(test)]
             Effect::Put { key, value } => {
                 store.put(key, value);
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -455,6 +641,7 @@ impl RustHandlerProgram for StateHandlerProgram {
                     value: Value::Unit,
                 }))
             }
+            #[cfg(test)]
             Effect::Modify { key, modifier } => {
                 let old_value = store.get(&key).cloned().unwrap_or(Value::None);
                 self.pending_key = Some(key);
@@ -467,7 +654,33 @@ impl RustHandlerProgram for StateHandlerProgram {
                 })
             }
             Effect::Python(obj) => match parse_state_python_effect(&obj) {
-                Ok(Some(parsed)) => self.start(parsed, k, store),
+                Ok(Some(parsed)) => match parsed {
+                    ParsedStateEffect::Get { key } => {
+                        let value = store.get(&key).cloned().unwrap_or(Value::None);
+                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                            continuation: k,
+                            value,
+                        }))
+                    }
+                    ParsedStateEffect::Put { key, value } => {
+                        store.put(key, value);
+                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                            continuation: k,
+                            value: Value::Unit,
+                        }))
+                    }
+                    ParsedStateEffect::Modify { key, modifier } => {
+                        let old_value = store.get(&key).cloned().unwrap_or(Value::None);
+                        self.pending_key = Some(key);
+                        self.pending_k = Some(k);
+                        self.pending_old_value = Some(old_value.clone());
+                        RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                            func: modifier,
+                            args: vec![old_value],
+                            kwargs: vec![],
+                        })
+                    }
+                },
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: Effect::Python(obj),
                 })),
@@ -475,6 +688,7 @@ impl RustHandlerProgram for StateHandlerProgram {
                     "failed to parse state effect: {msg}"
                 ))),
             },
+            #[cfg(test)]
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -510,12 +724,16 @@ pub struct ReaderHandlerFactory;
 
 impl RustProgramHandler for ReaderHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Ask { .. })
-            || matches!(
-                effect,
-                Effect::Python(obj)
-                    if matches!(python_effect_type_name(obj).as_deref(), Some("AskEffect" | "Ask"))
-            )
+        #[cfg(test)]
+        if matches!(effect, Effect::Ask { .. }) {
+            return true;
+        }
+
+        matches!(
+            effect,
+            Effect::Python(obj)
+                if matches!(python_effect_type_name(obj).as_deref(), Some("AskEffect" | "Ask"))
+        )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -529,6 +747,7 @@ struct ReaderHandlerProgram;
 impl RustHandlerProgram for ReaderHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
         match effect {
+            #[cfg(test)]
             Effect::Ask { key } => {
                 let value = store.ask(&key).cloned().unwrap_or(Value::None);
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -537,7 +756,13 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                 }))
             }
             Effect::Python(obj) => match parse_reader_python_effect(&obj) {
-                Ok(Some(parsed)) => self.start(parsed, k, store),
+                Ok(Some(key)) => {
+                    let value = store.ask(&key).cloned().unwrap_or(Value::None);
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        continuation: k,
+                        value,
+                    }))
+                }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: Effect::Python(obj),
                 })),
@@ -545,6 +770,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     "failed to parse reader effect: {msg}"
                 ))),
             },
+            #[cfg(test)]
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -568,12 +794,16 @@ pub struct WriterHandlerFactory;
 
 impl RustProgramHandler for WriterHandlerFactory {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Tell { .. })
-            || matches!(
-                effect,
-                Effect::Python(obj)
-                    if matches!(python_effect_type_name(obj).as_deref(), Some("WriterTellEffect" | "Tell"))
-            )
+        #[cfg(test)]
+        if matches!(effect, Effect::Tell { .. }) {
+            return true;
+        }
+
+        matches!(
+            effect,
+            Effect::Python(obj)
+                if matches!(python_effect_type_name(obj).as_deref(), Some("WriterTellEffect" | "Tell"))
+        )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -587,6 +817,7 @@ struct WriterHandlerProgram;
 impl RustHandlerProgram for WriterHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
         match effect {
+            #[cfg(test)]
             Effect::Tell { message } => {
                 store.tell(message);
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
@@ -595,7 +826,13 @@ impl RustHandlerProgram for WriterHandlerProgram {
                 }))
             }
             Effect::Python(obj) => match parse_writer_python_effect(&obj) {
-                Ok(Some(parsed)) => self.start(parsed, k, store),
+                Ok(Some(message)) => {
+                    store.tell(message);
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        continuation: k,
+                        value: Value::Unit,
+                    }))
+                }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: Effect::Python(obj),
                 })),
@@ -603,6 +840,7 @@ impl RustHandlerProgram for WriterHandlerProgram {
                     "failed to parse writer effect: {msg}"
                 ))),
             },
+            #[cfg(test)]
             other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other })),
         }
     }
@@ -763,6 +1001,54 @@ mod tests {
     // --- Factory-based handler tests (R8) ---
 
     #[test]
+    fn test_kpc_factory_can_handle_python_kpc_effect() {
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+            let f = KpcHandlerFactory;
+            assert!(
+                f.can_handle(&effect),
+                "SPEC GAP: KPC handler should claim opaque KPC effect"
+            );
+        });
+    }
+
+    #[test]
+    fn test_kpc_handler_start_from_python_kpc_effect() {
+        Python::attach(|py| {
+            let mut store = RustStore::new();
+            let k = make_test_continuation();
+
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+
+            let program_ref = KpcHandlerFactory.create_program();
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.start(effect, k, &mut store)
+            };
+            assert!(
+                matches!(step, RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))),
+                "SPEC GAP: KPC opaque effect should start via GetHandlers"
+            );
+        });
+    }
+
+    #[test]
     fn test_state_factory_can_handle() {
         let f = StateHandlerFactory;
         assert!(f.can_handle(&Effect::Get {
@@ -785,7 +1071,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class StateGetEffect:\n    def __init__(self):\n        self.key = 'x'\nobj = StateGetEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StateGetEffect(EffectBase):\n    def __init__(self):\n        self.key = 'x'\nobj = StateGetEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -860,7 +1146,7 @@ mod tests {
             let k = make_test_continuation();
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class StatePutEffect:\n    def __init__(self):\n        self.key = 'key'\n        self.value = 77\nobj = StatePutEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StatePutEffect(EffectBase):\n    def __init__(self):\n        self.key = 'key'\n        self.value = 77\nobj = StatePutEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -969,7 +1255,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class AskEffect:\n    def __init__(self):\n        self.key = 'cfg'\nobj = AskEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass AskEffect(EffectBase):\n    def __init__(self):\n        self.key = 'cfg'\nobj = AskEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1029,7 +1315,7 @@ mod tests {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class WriterTellEffect:\n    def __init__(self):\n        self.message = 'log'\nobj = WriterTellEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass WriterTellEffect(EffectBase):\n    def __init__(self):\n        self.message = 'log'\nobj = WriterTellEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )

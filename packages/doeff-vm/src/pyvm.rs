@@ -4,7 +4,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::effect::{Effect, KpcArg, KpcCallEffect};
+use crate::effect::Effect;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
@@ -13,7 +13,7 @@ use crate::handler::{
 };
 use crate::ids::{ContId, Marker};
 use crate::py_shared::PyShared;
-use crate::scheduler::{SchedulerEffect, SchedulerHandler, StoreMergePolicy, StoreMode};
+use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
 use crate::step::{
     DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
@@ -756,158 +756,11 @@ impl PyVM {
                         value: Value::from_pyobject(&value),
                     }));
                 }
-                "CreatePromise" | "SchedulerCreatePromise" => {
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::CreatePromise,
-                    )));
-                }
-                "CreateExternalPromise" | "SchedulerCreateExternalPromise" => {
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::CreateExternalPromise,
-                    )));
-                }
                 "PythonAsyncSyntaxEscape" => {
                     let action = obj.getattr("action")?.unbind();
                     return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
                 }
-                "KleisliProgramCall" => {
-                    let kpc = Self::extract_kpc_effect(_py, obj)?;
-                    return Ok(Yielded::Effect(Effect::KpcCall(kpc)));
-                }
-                // D6: Scheduler effects — extract fields into typed SchedulerEffect variants.
-                // Must be classified BEFORE to_generator fallback (EffectBase has to_generator).
-                "SpawnEffect" | "SchedulerSpawn" => {
-                    let program = obj.getattr("program")?.unbind();
-                    let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
-                        Self::extract_handlers_from_python(_py, &handlers_obj)?
-                    } else {
-                        vec![]
-                    };
-                    let store_mode = if let Ok(mode_obj) = obj.getattr("store_mode") {
-                        Self::parse_store_mode(&mode_obj)?
-                    } else {
-                        StoreMode::Shared
-                    };
-                    return Ok(Yielded::Effect(Effect::Scheduler(SchedulerEffect::Spawn {
-                        program,
-                        handlers,
-                        store_mode,
-                    })));
-                }
-                "GatherEffect" | "SchedulerGather" => {
-                    let items_obj = obj.getattr("items")?;
-                    let mut waitables = Vec::new();
-                    for item in items_obj.try_iter()? {
-                        let item = item?;
-                        match Self::extract_waitable(_py, &item) {
-                            Some(w) => waitables.push(w),
-                            None => {
-                                return Err(PyTypeError::new_err(
-                                    "GatherEffect.items must be waitable handles",
-                                ));
-                            }
-                        }
-                    }
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::Gather { items: waitables },
-                    )));
-                }
-                "RaceEffect" | "SchedulerRace" => {
-                    let futures_obj = obj.getattr("futures")?;
-                    let mut waitables = Vec::new();
-                    for item in futures_obj.try_iter()? {
-                        let item = item?;
-                        match Self::extract_waitable(_py, &item) {
-                            Some(w) => waitables.push(w),
-                            None => {
-                                return Err(PyTypeError::new_err(
-                                    "RaceEffect.futures must be waitable handles",
-                                ));
-                            }
-                        }
-                    }
-                    return Ok(Yielded::Effect(Effect::Scheduler(SchedulerEffect::Race {
-                        items: waitables,
-                    })));
-                }
-                "CompletePromiseEffect" | "SchedulerCompletePromise" => {
-                    let promise_obj = obj.getattr("promise")?;
-                    if let Some(pid) = Self::extract_promise_id(_py, &promise_obj) {
-                        let value = obj.getattr("value")?;
-                        return Ok(Yielded::Effect(Effect::Scheduler(
-                            SchedulerEffect::CompletePromise {
-                                promise: pid,
-                                value: Value::from_pyobject(&value),
-                            },
-                        )));
-                    }
-                    return Err(PyTypeError::new_err(
-                        "CompletePromiseEffect.promise must carry _promise_handle.promise_id",
-                    ));
-                }
-                "FailPromiseEffect" | "SchedulerFailPromise" => {
-                    let promise_obj = obj.getattr("promise")?;
-                    if let Some(pid) = Self::extract_promise_id(_py, &promise_obj) {
-                        let error_obj = obj.getattr("error")?;
-                        let exc = pyerr_to_exception(_py, PyErr::from_value(error_obj))?;
-                        return Ok(Yielded::Effect(Effect::Scheduler(
-                            SchedulerEffect::FailPromise {
-                                promise: pid,
-                                error: exc,
-                            },
-                        )));
-                    }
-                    return Err(PyTypeError::new_err(
-                        "FailPromiseEffect.promise must carry _promise_handle.promise_id",
-                    ));
-                }
-                "WaitEffect" => {
-                    return Err(PyTypeError::new_err(
-                        "WaitEffect is not supported; use GatherEffect or RaceEffect",
-                    ));
-                }
-                "TaskCompletedEffect"
-                | "SchedulerTaskCompleted"
-                | "TaskCancelEffect"
-                | "TaskIsDoneEffect"
-                | "WaitForExternalCompletion" => {
-                    if type_str == "TaskCompletedEffect" || type_str == "SchedulerTaskCompleted" {
-                        if let Ok(task_obj) = obj.getattr("task") {
-                            if let Some(task) = Self::extract_task_id(_py, &task_obj) {
-                                if let Ok(error_obj) = obj.getattr("error") {
-                                    let exc = pyerr_to_exception(
-                                        _py,
-                                        PyErr::from_value(error_obj.clone()),
-                                    )?;
-                                    return Ok(Yielded::Effect(Effect::Scheduler(
-                                        SchedulerEffect::TaskCompleted {
-                                            task,
-                                            result: Err(exc),
-                                        },
-                                    )));
-                                }
-                                if let Ok(result_obj) = obj.getattr("result") {
-                                    return Ok(Yielded::Effect(Effect::Scheduler(
-                                        SchedulerEffect::TaskCompleted {
-                                            task,
-                                            result: Ok(Value::from_pyobject(&result_obj)),
-                                        },
-                                    )));
-                                }
-                            }
-                        }
-                    }
-                    return Err(PyTypeError::new_err(
-                        "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error",
-                    ));
-                }
-                _ => {
-                    if type_str.starts_with("_Scheduler") {
-                        return Err(PyTypeError::new_err(
-                            "Unknown _Scheduler* effect type is not supported",
-                        ));
-                    }
-                }
+                _ => {}
             }
         }
 
@@ -939,7 +792,6 @@ impl PyVM {
         }
 
         // Primitive Python types (int, str, float, bool, None) are not valid effects.
-        // Class instances are treated as custom Python effects for dispatch.
         if let Ok(type_name) = obj.get_type().name() {
             let ts: &str = type_name.extract().unwrap_or("");
             match ts {
@@ -950,9 +802,7 @@ impl PyVM {
                 _ => {}
             }
         }
-        Ok(Yielded::Effect(Effect::Python(PyShared::new(
-            obj.clone().unbind(),
-        ))))
+        Ok(Yielded::Unknown(obj.clone().unbind()))
     }
 
     fn values_to_tuple<'py>(
@@ -967,197 +817,6 @@ impl PyVM {
         Ok(PyTuple::new(py, py_values)?)
     }
 
-    /// Convert a Python Waitable (Task, Future, Promise) to a Rust Waitable.
-    /// Python objects store `_handle` as a dict with `{"type": "Task"/"Promise"/"ExternalPromise", "task_id"/"promise_id": u64}`.
-    fn extract_waitable(
-        _py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> Option<crate::scheduler::Waitable> {
-        let handle = obj.getattr("_handle").ok()?;
-        let type_val = handle.get_item("type").ok()?;
-        let type_str: String = type_val.extract().ok()?;
-        match type_str.as_str() {
-            "Task" => {
-                let raw: u64 = handle.get_item("task_id").ok()?.extract().ok()?;
-                Some(crate::scheduler::Waitable::Task(
-                    crate::ids::TaskId::from_raw(raw),
-                ))
-            }
-            "Promise" => {
-                let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
-                Some(crate::scheduler::Waitable::Promise(
-                    crate::ids::PromiseId::from_raw(raw),
-                ))
-            }
-            "ExternalPromise" => {
-                let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
-                Some(crate::scheduler::Waitable::ExternalPromise(
-                    crate::ids::PromiseId::from_raw(raw),
-                ))
-            }
-            _ => None,
-        }
-    }
-
-    /// Extract a PromiseId from a Python Promise object.
-    /// Promise stores `_promise_handle` as the dict from the VM.
-    fn extract_promise_id(
-        _py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> Option<crate::ids::PromiseId> {
-        let handle = obj.getattr("_promise_handle").ok()?;
-        let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
-        Some(crate::ids::PromiseId::from_raw(raw))
-    }
-
-    fn extract_task_id(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<crate::ids::TaskId> {
-        if let Ok(raw) = obj.getattr("task_id").and_then(|v| v.extract::<u64>()) {
-            return Some(crate::ids::TaskId::from_raw(raw));
-        }
-        if let Ok(handle) = obj.getattr("_handle") {
-            if let Ok(raw) = handle.get_item("task_id").and_then(|v| v.extract::<u64>()) {
-                return Some(crate::ids::TaskId::from_raw(raw));
-            }
-        }
-        None
-    }
-
-    fn extract_handlers_from_python(
-        _py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> PyResult<Vec<Handler>> {
-        let mut handlers = Vec::new();
-        for item in obj.try_iter()? {
-            let item = item?;
-            if item.is_instance_of::<PyRustHandlerSentinel>() {
-                let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                handlers.push(Handler::RustProgram(sentinel.factory.clone()));
-            } else {
-                handlers.push(Handler::Python(PyShared::new(item.unbind())));
-            }
-        }
-        Ok(handlers)
-    }
-
-    fn parse_store_mode(obj: &Bound<'_, PyAny>) -> PyResult<StoreMode> {
-        if let Ok(mode) = obj.extract::<String>() {
-            return match mode.to_lowercase().as_str() {
-                "shared" => Ok(StoreMode::Shared),
-                "isolated" => Ok(StoreMode::Isolated {
-                    merge: StoreMergePolicy::LogsOnly,
-                }),
-                other => Err(PyTypeError::new_err(format!(
-                    "unsupported store_mode '{other}'"
-                ))),
-            };
-        }
-        Ok(StoreMode::Shared)
-    }
-
-    fn extract_kpc_effect(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<KpcCallEffect> {
-        let metadata = Self::extract_call_metadata(_py, obj)
-            .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
-            .ok_or_else(|| {
-                PyTypeError::new_err(
-                    "KleisliProgramCall missing required metadata for call tracking",
-                )
-            })?;
-
-        let kernel_obj = obj
-            .getattr("execution_kernel")
-            .or_else(|_| obj.getattr("kernel"))
-            .map_err(|_| PyTypeError::new_err("KleisliProgramCall missing execution kernel"))?;
-        let kernel = PyShared::new(kernel_obj.unbind());
-
-        let strategy = obj.getattr("auto_unwrap_strategy").ok();
-
-        let mut args = Vec::new();
-        if let Ok(args_obj) = obj.getattr("args") {
-            for (idx, item) in args_obj.try_iter()?.enumerate() {
-                let item = item?;
-                let should_unwrap = Self::strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
-                args.push(Self::extract_kpc_arg(_py, &item, should_unwrap)?);
-            }
-        }
-
-        let mut kwargs = Vec::new();
-        if let Ok(kwargs_obj) = obj.getattr("kwargs") {
-            for (k, v) in kwargs_obj.cast::<pyo3::types::PyDict>()?.iter() {
-                let key: String = k.extract()?;
-                let should_unwrap =
-                    Self::strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
-                kwargs.push((key, Self::extract_kpc_arg(_py, &v, should_unwrap)?));
-            }
-        }
-
-        Ok(KpcCallEffect {
-            call: PyShared::new(obj.clone().unbind()),
-            kernel,
-            args,
-            kwargs,
-            metadata,
-        })
-    }
-
-    fn strategy_should_unwrap_positional(
-        strategy: Option<&Bound<'_, PyAny>>,
-        idx: usize,
-    ) -> PyResult<bool> {
-        let Some(strategy) = strategy else {
-            return Ok(true);
-        };
-        let result = strategy
-            .call_method1("should_unwrap_positional", (idx,))
-            .and_then(|v| v.extract::<bool>());
-        Ok(result.unwrap_or(true))
-    }
-
-    fn strategy_should_unwrap_keyword(
-        strategy: Option<&Bound<'_, PyAny>>,
-        key: &str,
-    ) -> PyResult<bool> {
-        let Some(strategy) = strategy else {
-            return Ok(true);
-        };
-        let result = strategy
-            .call_method1("should_unwrap_keyword", (key,))
-            .and_then(|v| v.extract::<bool>());
-        Ok(result.unwrap_or(true))
-    }
-
-    fn extract_kpc_arg(_py: Python<'_>, obj: &Bound<'_, PyAny>, should_unwrap: bool) -> PyResult<KpcArg> {
-        if should_unwrap && Self::is_do_expr_candidate(obj)? {
-            return Ok(KpcArg::Expr(PyShared::new(obj.clone().unbind())));
-        }
-        Ok(KpcArg::Value(Value::from_pyobject(obj)))
-    }
-
-    fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if obj.hasattr("to_generator")? {
-            return Ok(true);
-        }
-        let Ok(type_name) = obj.get_type().name() else {
-            return Ok(false);
-        };
-        let type_str: &str = type_name.extract()?;
-        Ok(type_str.ends_with("Effect")
-            || matches!(
-                type_str,
-                "Get"
-                    | "Put"
-                    | "Modify"
-                    | "Ask"
-                    | "Tell"
-                    | "WithHandler"
-                    | "Resume"
-                    | "Transfer"
-                    | "Delegate"
-                    | "CreateContinuation"
-                    | "ResumeContinuation"
-                    | "KleisliProgramCall"
-            ))
-    }
-
     fn is_effect_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
         if let Ok(types_mod) = py.import("doeff.types") {
             if let Ok(effect_base) = types_mod.getattr("EffectBase") {
@@ -1167,15 +826,15 @@ impl PyVM {
             }
         }
 
-        let Ok(type_name) = obj.get_type().name() else {
-            return Ok(false);
-        };
-        let type_str: &str = type_name.extract()?;
-        Ok(type_str.ends_with("Effect")
-            || matches!(
-                type_str,
-                "Get" | "Put" | "Modify" | "Ask" | "Tell" | "KleisliProgramCall"
-            ))
+        if obj
+            .getattr("__doeff_effect_base__")
+            .and_then(|v| v.extract::<bool>())
+            .unwrap_or(false)
+        {
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     fn extract_call_metadata_fallback(
@@ -1535,6 +1194,12 @@ pub struct PyRustHandlerSentinel {
     factory: RustProgramHandlerRef,
 }
 
+impl PyRustHandlerSentinel {
+    pub(crate) fn factory_ref(&self) -> RustProgramHandlerRef {
+        self.factory.clone()
+    }
+}
+
 #[pymethods]
 impl PyRustHandlerSentinel {
     fn __repr__(&self) -> String {
@@ -1688,12 +1353,12 @@ mod tests {
     }
 
     #[test]
-    fn test_g3_task_completed_classifies_to_typed_scheduler_effect() {
+    fn test_g3_task_completed_classifies_as_opaque_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect:\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1701,22 +1366,11 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
 
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            match yielded {
-                Yielded::Effect(Effect::Scheduler(SchedulerEffect::TaskCompleted {
-                    task,
-                    result,
-                })) => {
-                    assert_eq!(task.raw(), 7);
-                    match result {
-                        Ok(Value::Int(v)) => assert_eq!(v, 123),
-                        other => panic!("G3 FAIL: unexpected TaskCompleted result: {:?}", other),
-                    }
-                }
-                other => panic!(
-                    "G3 FAIL: expected typed TaskCompleted scheduler effect, got {:?}",
-                    other
-                ),
-            }
+            assert!(
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "G3 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
+                yielded
+            );
         });
     }
 
@@ -1776,25 +1430,23 @@ mod tests {
     }
 
     #[test]
-    fn test_g4_task_completed_error_classifies_to_typed_err() {
+    fn test_g4_task_completed_error_classifies_as_opaque_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect:\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
                 Some(&locals),
                 Some(&locals),
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            match yielded {
-                Yielded::Effect(Effect::Scheduler(SchedulerEffect::TaskCompleted { task, result })) => {
-                    assert_eq!(task.raw(), 9);
-                    assert!(result.is_err(), "G4 FAIL: expected Err result for TaskCompleted.error");
-                }
-                other => panic!("G4 FAIL: expected typed TaskCompleted, got {:?}", other),
-            }
+            assert!(
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "G4 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
+                yielded
+            );
         });
     }
 
@@ -1804,7 +1456,7 @@ mod tests {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall:\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n    def to_generator(self):\n        if False:\n            yield None\n\nobj = KleisliProgramCall()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n    def to_generator(self):\n        if False:\n            yield None\n\nobj = KleisliProgramCall()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1820,48 +1472,49 @@ mod tests {
     }
 
     #[test]
-    fn test_g6_malformed_gather_effect_raises_classification_error() {
+    fn test_g6_malformed_gather_effect_classifies_as_opaque_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class GatherEffect:\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass GatherEffect(EffectBase):\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
-            let res = pyvm.classify_yielded(py, &obj);
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                res.is_err(),
-                "G6 FAIL: malformed GatherEffect should raise classification error, got {:?}",
-                res
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "G6 FAIL: malformed GatherEffect should classify as opaque effect, got {:?}",
+                yielded
             );
         });
     }
 
     #[test]
-    fn test_g12_wait_effect_is_rejected_strictly() {
+    fn test_g12_wait_effect_classifies_as_opaque_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect:\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
-            let res = pyvm.classify_yielded(py, &obj);
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                res.is_err(),
-                "G12 FAIL: WaitEffect should be rejected (no compatibility coercion)"
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "G12 FAIL: WaitEffect should classify as opaque effect, got {:?}",
+                yielded
             );
         });
     }
 
     #[test]
-    fn test_g7_spawn_effect_extracts_handlers_and_store_mode() {
+    fn test_g7_spawn_effect_classifies_as_opaque_effect() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let sentinel = Bound::new(
@@ -1877,37 +1530,18 @@ mod tests {
             let locals = pyo3::types::PyDict::new(py);
             locals.set_item("sentinel", sentinel.bind(py)).unwrap();
             py.run(
-                c"class SpawnEffect:\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
                 Some(&locals),
                 Some(&locals),
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            match yielded {
-                Yielded::Effect(Effect::Scheduler(SchedulerEffect::Spawn {
-                    handlers,
-                    store_mode,
-                    ..
-                })) => {
-                    assert_eq!(handlers.len(), 1, "G7 FAIL: Spawn handlers not extracted");
-                    assert!(
-                        matches!(handlers.first(), Some(crate::handler::Handler::RustProgram(_))),
-                        "G7 FAIL: Spawn handler should preserve rust sentinel protocol"
-                    );
-                    assert!(
-                        matches!(
-                            store_mode,
-                            crate::scheduler::StoreMode::Isolated { merge: _ }
-                        ),
-                        "G7 FAIL: Spawn store_mode should parse isolated"
-                    );
-                }
-                other => panic!(
-                    "G7 FAIL: expected typed Spawn scheduler effect, got {:?}",
-                    other
-                ),
-            }
+            assert!(
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "G7 FAIL: expected opaque Python Spawn effect, got {:?}",
+                yielded
+            );
         });
     }
 
@@ -2025,7 +1659,7 @@ mod tests {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
             py.run(
-                c"class StateGetEffect:\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StateGetEffect(EffectBase):\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2035,6 +1669,48 @@ mod tests {
             assert!(
                 matches!(yielded, Yielded::Effect(Effect::Python(_))),
                 "SPEC GAP: stdlib effects should classify as opaque Python effects, got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_spec_kpc_classifies_as_opaque_python_effect() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n    def to_generator(self):\n        if False:\n            yield None\n\nobj = KleisliProgramCall()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "SPEC GAP: KPC should classify as opaque Python effect, got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_spec_scheduler_spawn_classifies_as_opaque_python_effect() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                "SPEC GAP: scheduler effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
         });
