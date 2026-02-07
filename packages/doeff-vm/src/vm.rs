@@ -290,16 +290,24 @@ impl VM {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
             Mode::HandleYield(y) => match y {
-                Yielded::Effect(e) => match e {
-                    Effect::Get { .. } => "HandleYield(Get)",
-                    Effect::Put { .. } => "HandleYield(Put)",
-                    Effect::Modify { .. } => "HandleYield(Modify)",
-                    Effect::Ask { .. } => "HandleYield(Ask)",
-                    Effect::Tell { .. } => "HandleYield(Tell)",
-                    Effect::Python(_) => "HandleYield(Python)",
-                    Effect::Scheduler(_) => "HandleYield(Scheduler)",
-                    Effect::KpcCall(_) => "HandleYield(KpcCall)",
-                },
+                Yielded::Effect(e) => {
+                    #[cfg(test)]
+                    {
+                        match e {
+                            Effect::Get { .. } => "HandleYield(Get)",
+                            Effect::Put { .. } => "HandleYield(Put)",
+                            Effect::Modify { .. } => "HandleYield(Modify)",
+                            Effect::Ask { .. } => "HandleYield(Ask)",
+                            Effect::Tell { .. } => "HandleYield(Tell)",
+                            Effect::Python(_) => "HandleYield(Python)",
+                        }
+                    }
+                    #[cfg(not(test))]
+                    {
+                        let _ = e;
+                        "HandleYield(Python)"
+                    }
+                }
                 Yielded::DoCtrl(p) => match p {
                     DoCtrl::Resume { .. } => "HandleYield(Resume)",
                     DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
@@ -2358,22 +2366,15 @@ mod tests {
             let seg_id = vm.alloc_segment(seg);
             vm.current_segment = Some(seg_id);
 
-            let call_obj = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            let metadata = CallMetadata {
-                function_name: "kpc".to_string(),
-                source_file: "x.py".to_string(),
-                source_line: 1,
-                program_call: Some(PyShared::new(call_obj.clone_ref(py))),
-            };
-            vm.mode = Mode::HandleYield(Yielded::Effect(Effect::KpcCall(
-                crate::effect::KpcCallEffect {
-                    call: PyShared::new(call_obj.clone_ref(py)),
-                    kernel: PyShared::new(call_obj),
-                    args: vec![],
-                    kwargs: vec![],
-                    metadata,
-                },
-            )));
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class KleisliProgramCall:\n    function_name='kpc'\n    source_file='x.py'\n    source_line=1\n    def __init__(self):\n        self.args=()\n        self.kwargs={}\n        self.execution_kernel=(lambda: None)\n\nobj = KleisliProgramCall()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let call_obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            vm.mode = Mode::HandleYield(Yielded::Effect(Effect::Python(PyShared::new(call_obj))));
 
             let event = vm.step_handle_yield();
             assert!(

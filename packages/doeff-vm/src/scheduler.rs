@@ -15,6 +15,7 @@ use crate::handler::{
 };
 use crate::ids::{PromiseId, TaskId};
 use crate::py_shared::PyShared;
+use crate::pyvm::PyRustHandlerSentinel;
 use crate::step::{DoCtrl, PyException, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -130,6 +131,236 @@ pub struct SchedulerState {
     pub next_task: u64,
     pub next_promise: u64,
     pub current_task: Option<TaskId>,
+}
+
+fn scheduler_effect_type_name(effect: &PyShared) -> Option<String> {
+    Python::attach(|py| {
+        effect
+            .bind(py)
+            .get_type()
+            .name()
+            .ok()?
+            .extract::<String>()
+            .ok()
+    })
+}
+
+fn is_scheduler_effect_type_name(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "SpawnEffect"
+            | "SchedulerSpawn"
+            | "GatherEffect"
+            | "SchedulerGather"
+            | "RaceEffect"
+            | "SchedulerRace"
+            | "CreatePromise"
+            | "SchedulerCreatePromise"
+            | "CreateExternalPromise"
+            | "SchedulerCreateExternalPromise"
+            | "CompletePromiseEffect"
+            | "SchedulerCompletePromise"
+            | "FailPromiseEffect"
+            | "SchedulerFailPromise"
+            | "TaskCompletedEffect"
+            | "SchedulerTaskCompleted"
+    )
+}
+
+fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let type_name: String = obj
+            .get_type()
+            .name()
+            .map_err(|e| e.to_string())?
+            .extract::<String>()
+            .map_err(|e| e.to_string())?;
+
+        match type_name.as_str() {
+            "SpawnEffect" | "SchedulerSpawn" => {
+                let program = obj.getattr("program").map_err(|e| e.to_string())?.unbind();
+                let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
+                    extract_handlers_from_python(&handlers_obj)?
+                } else {
+                    vec![]
+                };
+                let store_mode = if let Ok(mode_obj) = obj.getattr("store_mode") {
+                    parse_store_mode(&mode_obj)?
+                } else {
+                    StoreMode::Shared
+                };
+                Ok(Some(SchedulerEffect::Spawn {
+                    program,
+                    handlers,
+                    store_mode,
+                }))
+            }
+            "GatherEffect" | "SchedulerGather" => {
+                let items_obj = obj.getattr("items").map_err(|e| e.to_string())?;
+                let mut waitables = Vec::new();
+                for item in items_obj.try_iter().map_err(|e| e.to_string())? {
+                    let item = item.map_err(|e| e.to_string())?;
+                    match extract_waitable(&item) {
+                        Some(w) => waitables.push(w),
+                        None => {
+                            return Err("GatherEffect.items must be waitable handles".to_string());
+                        }
+                    }
+                }
+                Ok(Some(SchedulerEffect::Gather { items: waitables }))
+            }
+            "RaceEffect" | "SchedulerRace" => {
+                let items_obj = obj
+                    .getattr("futures")
+                    .or_else(|_| obj.getattr("items"))
+                    .map_err(|e| e.to_string())?;
+                let mut waitables = Vec::new();
+                for item in items_obj.try_iter().map_err(|e| e.to_string())? {
+                    let item = item.map_err(|e| e.to_string())?;
+                    match extract_waitable(&item) {
+                        Some(w) => waitables.push(w),
+                        None => {
+                            return Err("RaceEffect.futures/items must be waitable handles".to_string());
+                        }
+                    }
+                }
+                Ok(Some(SchedulerEffect::Race { items: waitables }))
+            }
+            "CreatePromise" | "SchedulerCreatePromise" => Ok(Some(SchedulerEffect::CreatePromise)),
+            "CreateExternalPromise" | "SchedulerCreateExternalPromise" => {
+                Ok(Some(SchedulerEffect::CreateExternalPromise))
+            }
+            "CompletePromiseEffect" | "SchedulerCompletePromise" => {
+                let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
+                let Some(promise) = extract_promise_id(&promise_obj) else {
+                    return Err(
+                        "CompletePromiseEffect.promise must carry _promise_handle.promise_id"
+                            .to_string(),
+                    );
+                };
+                let value = obj.getattr("value").map_err(|e| e.to_string())?;
+                Ok(Some(SchedulerEffect::CompletePromise {
+                    promise,
+                    value: Value::from_pyobject(&value),
+                }))
+            }
+            "FailPromiseEffect" | "SchedulerFailPromise" => {
+                let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
+                let Some(promise) = extract_promise_id(&promise_obj) else {
+                    return Err(
+                        "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
+                    );
+                };
+                let error_obj = obj.getattr("error").map_err(|e| e.to_string())?;
+                let error = pyobject_to_exception(py, &error_obj);
+                Ok(Some(SchedulerEffect::FailPromise { promise, error }))
+            }
+            "TaskCompletedEffect" | "SchedulerTaskCompleted" => {
+                let task_obj = obj.getattr("task").map_err(|e| e.to_string())?;
+                let Some(task) = extract_task_id(&task_obj) else {
+                    return Err(
+                        "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id"
+                            .to_string(),
+                    );
+                };
+
+                if let Ok(error_obj) = obj.getattr("error") {
+                    let error = pyobject_to_exception(py, &error_obj);
+                    return Ok(Some(SchedulerEffect::TaskCompleted {
+                        task,
+                        result: Err(error),
+                    }));
+                }
+                if let Ok(result_obj) = obj.getattr("result") {
+                    return Ok(Some(SchedulerEffect::TaskCompleted {
+                        task,
+                        result: Ok(Value::from_pyobject(&result_obj)),
+                    }));
+                }
+                Err(
+                    "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error"
+                        .to_string(),
+                )
+            }
+            _ => Ok(None),
+        }
+    })
+}
+
+fn extract_waitable(obj: &Bound<'_, PyAny>) -> Option<Waitable> {
+    let handle = obj.getattr("_handle").ok()?;
+    let type_val = handle.get_item("type").ok()?;
+    let type_str: String = type_val.extract().ok()?;
+    match type_str.as_str() {
+        "Task" => {
+            let raw: u64 = handle.get_item("task_id").ok()?.extract().ok()?;
+            Some(Waitable::Task(TaskId::from_raw(raw)))
+        }
+        "Promise" => {
+            let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
+            Some(Waitable::Promise(PromiseId::from_raw(raw)))
+        }
+        "ExternalPromise" => {
+            let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
+            Some(Waitable::ExternalPromise(PromiseId::from_raw(raw)))
+        }
+        _ => None,
+    }
+}
+
+fn extract_promise_id(obj: &Bound<'_, PyAny>) -> Option<PromiseId> {
+    let handle = obj.getattr("_promise_handle").ok()?;
+    let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
+    Some(PromiseId::from_raw(raw))
+}
+
+fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
+    if let Ok(raw) = obj.getattr("task_id").and_then(|v| v.extract::<u64>()) {
+        return Some(TaskId::from_raw(raw));
+    }
+    if let Ok(handle) = obj.getattr("_handle") {
+        if let Ok(raw) = handle.get_item("task_id").and_then(|v| v.extract::<u64>()) {
+            return Some(TaskId::from_raw(raw));
+        }
+    }
+    None
+}
+
+fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, String> {
+    let mut handlers = Vec::new();
+    for item in obj.try_iter().map_err(|e| e.to_string())? {
+        let item = item.map_err(|e| e.to_string())?;
+        if item.is_instance_of::<PyRustHandlerSentinel>() {
+            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item
+                .extract::<PyRef<'_, PyRustHandlerSentinel>>()
+                .map_err(|e| format!("{e:?}"))?;
+            handlers.push(Handler::RustProgram(sentinel.factory_ref()));
+        } else {
+            handlers.push(Handler::Python(PyShared::new(item.unbind())));
+        }
+    }
+    Ok(handlers)
+}
+
+fn parse_store_mode(obj: &Bound<'_, PyAny>) -> Result<StoreMode, String> {
+    if let Ok(mode) = obj.extract::<String>() {
+        return match mode.to_lowercase().as_str() {
+            "shared" => Ok(StoreMode::Shared),
+            "isolated" => Ok(StoreMode::Isolated {
+                merge: StoreMergePolicy::LogsOnly,
+            }),
+            other => Err(format!("unsupported store_mode '{other}'")),
+        };
+    }
+    Ok(StoreMode::Shared)
+}
+
+fn pyobject_to_exception(py: Python<'_>, error_obj: &Bound<'_, PyAny>) -> PyException {
+    let exc_type = error_obj.get_type().into_any().unbind();
+    let exc_value = error_obj.clone().unbind();
+    let exc_tb = py.None();
+    PyException::new(exc_type, exc_value, Some(exc_tb))
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +619,20 @@ impl RustHandlerProgram for SchedulerProgram {
         store: &mut RustStore,
     ) -> RustProgramStep {
         let sched_effect = match effect {
-            Effect::Scheduler(se) => se,
+            Effect::Python(obj) => match parse_scheduler_python_effect(&obj) {
+                Ok(Some(se)) => se,
+                Ok(None) => {
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                        effect: Effect::Python(obj),
+                    }))
+                }
+                Err(msg) => {
+                    return RustProgramStep::Throw(PyException::type_error(format!(
+                        "failed to parse scheduler effect: {msg}"
+                    )))
+                }
+            },
+            #[cfg(test)]
             other => {
                 // Not our effect, delegate
                 return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect: other }));
@@ -575,7 +819,13 @@ impl SchedulerHandler {
 
 impl RustProgramHandler for SchedulerHandler {
     fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Scheduler(_))
+        matches!(
+                effect,
+                Effect::Python(obj)
+                    if scheduler_effect_type_name(obj)
+                        .as_deref()
+                        .is_some_and(is_scheduler_effect_type_name)
+            )
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -588,6 +838,18 @@ impl RustProgramHandler for SchedulerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pyo3::types::PyDictMethods;
+    use pyo3::Python;
+
+    fn make_test_continuation() -> Continuation {
+        use crate::ids::{Marker, SegmentId};
+        use crate::segment::Segment;
+
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![marker]);
+        let seg_id = SegmentId::from_index(0);
+        Continuation::capture(&seg, seg_id, None)
+    }
 
     #[test]
     fn test_store_mode_shared() {
@@ -686,10 +948,74 @@ mod tests {
     #[test]
     fn test_scheduler_handler_can_handle() {
         let handler = SchedulerHandler::new();
-        assert!(handler.can_handle(&Effect::Scheduler(SchedulerEffect::CreatePromise)));
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass CreatePromise(EffectBase):\n    pass\nobj = CreatePromise()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            assert!(handler.can_handle(&Effect::Python(PyShared::new(obj))));
+        });
         assert!(!handler.can_handle(&Effect::Get {
             key: "x".to_string()
         }));
+    }
+
+    #[test]
+    fn test_scheduler_handler_can_handle_python_spawn_effect() {
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+            let handler = SchedulerHandler::new();
+            assert!(
+                handler.can_handle(&effect),
+                "SPEC GAP: scheduler should claim opaque Python scheduler effects"
+            );
+        });
+    }
+
+    #[test]
+    fn test_scheduler_program_start_from_python_spawn_effect() {
+        Python::attach(|py| {
+            let mut store = RustStore::new();
+            let k = make_test_continuation();
+
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::Python(PyShared::new(obj));
+
+            let handler = SchedulerHandler::new();
+            let program = handler.create_program();
+            let step = {
+                let mut guard = program.lock().unwrap();
+                guard.start(effect, k, &mut store)
+            };
+            assert!(
+                matches!(
+                    step,
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                        ..
+                    }))
+                ),
+                "SPEC GAP: scheduler opaque SpawnEffect should yield CreateContinuation"
+            );
+        });
     }
 
     #[test]
