@@ -1,7 +1,7 @@
 # Rust VM Implementation Plan
 
 **Issue:** #235
-**Spec:** SPEC-008-rust-vm.md (Revision 9), SPEC-009-rust-vm-migration.md (Revision 5)
+**Spec:** SPEC-008-rust-vm.md (Revision 11), SPEC-009-rust-vm-migration.md (Revision 5), SPEC-TYPES-001 (Revision 8)
 **Status:** R9 complete — semantic correctness enforced. SPEC-009 Rev 5 fixes applied (scheduler effects, user-space scheduler, ADR-13 ref). 97 Rust + 63 Python = 160 tests passing. 6 semgrep rules enforcing spec invariants.
 
 ## Overview
@@ -167,7 +167,7 @@ Second spec-vs-impl audit (4 parallel agents) found 5 additional divergences. TD
 Third round addressing remaining audit findings. TDD: failing tests first, then fixes.
 
 - [x] **G14 — Effect::type_name()** (effect.rs): Renamed `effect_type()` → `type_name()` to match spec method name
-- [x] **G15 — WithHandler StartProgram** (vm.rs, pyvm.rs): Changed `handle_with_handler` to emit `PythonCall::StartProgram` (was `CallFunc`). StartProgram now falls back to calling as factory function for raw generator functions, preserving backward compatibility while routing ProgramBase through `to_generator()`
+- [x] **G15 — WithHandler StartProgram** (vm.rs, pyvm.rs): Changed `handle_with_handler` to emit `PythonCall::StartProgram` (was `CallFunc`). StartProgram calls `to_generator()` for ProgramBase objects; raw generator functions are rejected.
 - [x] **G16 — lazy_pop_completed before primitives** (vm.rs): Added `self.lazy_pop_completed()` at top of `Yielded::Primitive` branch in `step_handle_yield`, matching spec's `handle_primitive` pattern. Prevents stale completed dispatches from affecting GetHandlers, Delegate, etc.
 - [x] **Tests:** 87 Rust + 21 Python = 108 total (was 84 + 21)
 
@@ -180,7 +180,7 @@ SPEC-008 Rev 9 / SPEC-009 Rev 3 — correctness-first philosophy. TDD with semgr
 - [x] **NestingStep + NestingGenerator** (pyvm.rs): ProgramBase that yields one `WithHandler(handler, inner)`, creating proper nesting through normal VM `handle_with_handler` mechanism.
 - [x] **run() rewrite** (pyvm.rs): Uses NestingStep chain instead of install_handler bypass. `handlers=[h0, h1, h2]` → `WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))`.
 - [x] **classify_yielded sentinel recognition** (pyvm.rs): WithHandler arms check for PyRustHandlerSentinel → `Handler::RustProgram(factory)`.
-- [x] **classify_yielded completeness (INV-17)** (pyvm.rs): Added 6 scheduler effect arms (SpawnEffect, GatherEffect, RaceEffect, CompletePromiseEffect, FailPromiseEffect, TaskCompletedEffect) BEFORE `to_generator` fallback. Fixes infinite loop bug where EffectBase→ProgramBase inheritance caused scheduler effects to be misclassified as Programs.
+- [x] **classify_yielded completeness (INV-17)** (pyvm.rs): Added scheduler effect classification. NOTE: Per SPEC-008 R11 / SPEC-TYPES-001 Rev 8, the entire string-based `type_str` matching and per-effect-type arms are REMOVED. Effects are opaque `Py<PyAny>` — classified by single isinstance(EffectBase) check. `Effect` enum is deleted. Handlers downcast themselves. CODE-ATTENTION: Delete ~300 lines of classify_yielded, replace with `is_effect_base(obj) → Yielded::Effect(obj)`.
 - [x] **async_run rewrite (API-12)** (pyvm.rs): True `async def` coroutine with `await asyncio.sleep(0)` yield point. Replaces `ensure_future(completed_future)` pattern.
 - [x] **Tests:** 97 Rust + 63 Python = 160 total (was 97 + 53 = 150)
 
@@ -219,7 +219,7 @@ All spec gaps resolved. Only optional optimization work remains.
 | INV-14 | Generator re-push: GenYield re-pushes frame with started=true | ✅ |
 | INV-15 | GIL-safe cloning: plain Clone (Py\<PyAny\> Clone via refcount) | ✅ |
 | INV-16 | Structural equivalence: run() handler nesting = manual WithHandler | ✅ (NestingStep chain) |
-| INV-17 | classify_yielded completeness: all scheduler effects classified before to_generator | ✅ (6 effect arms added) |
+| INV-17 | classify_yielded completeness: single isinstance(EffectBase) check, no per-type arms | ⚠️ NEEDS REWORK per R11 (current impl uses string matching) |
 | API-12 | async_run is true async (yields to event loop) | ✅ (await sleep(0), semgrep enforced) |
 
 ---
