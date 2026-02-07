@@ -942,19 +942,24 @@ impl PyVM {
         }
 
         if obj.hasattr("to_generator")? {
-            if let Some(metadata) = Self::extract_call_metadata(_py, obj) {
-                return Ok(Yielded::DoCtrl(DoCtrl::Call {
-                    f: PyShared::new(obj.clone().unbind()),
-                    args: vec![],
-                    kwargs: vec![],
-                    metadata,
-                }));
-            }
-            return Ok(Yielded::Program(obj.clone().unbind()));
+            let metadata = Self::extract_call_metadata(_py, obj)
+                .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
+                .unwrap_or_else(CallMetadata::anonymous);
+            return Ok(Yielded::DoCtrl(DoCtrl::Call {
+                f: PyShared::new(obj.clone().unbind()),
+                args: vec![],
+                kwargs: vec![],
+                metadata,
+            }));
         }
 
         if obj.hasattr("__iter__")? && obj.hasattr("__next__")? {
-            return Ok(Yielded::Program(obj.clone().unbind()));
+            return Ok(Yielded::DoCtrl(DoCtrl::Call {
+                f: PyShared::new(obj.clone().unbind()),
+                args: vec![],
+                kwargs: vec![],
+                metadata: CallMetadata::anonymous(),
+            }));
         }
 
         // Primitive Python types (int, str, float, bool, None) are not valid effects.
@@ -1957,6 +1962,62 @@ mod tests {
             assert!(
                 matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
                 "SPEC GAP: GetCallStack must classify to DoCtrl::GetCallStack, got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_spec_to_generator_without_metadata_classifies_to_call_with_anonymous_metadata() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class ProgramLike:\n    def to_generator(self):\n        if False:\n            yield None\n        return 1\nobj = ProgramLike()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            match yielded {
+                Yielded::DoCtrl(DoCtrl::Call {
+                    args,
+                    kwargs,
+                    metadata,
+                    ..
+                }) => {
+                    assert!(args.is_empty(), "expected empty args for to_generator call path");
+                    assert!(kwargs.is_empty(), "expected empty kwargs for to_generator call path");
+                    assert_eq!(metadata.function_name, "<anonymous>");
+                    assert_eq!(metadata.source_file, "<unknown>");
+                    assert_eq!(metadata.source_line, 0);
+                    assert!(metadata.program_call.is_none());
+                }
+                other => panic!(
+                    "SPEC GAP: to_generator objects must classify as DoCtrl::Call, got {:?}",
+                    other
+                ),
+            }
+        });
+    }
+
+    #[test]
+    fn test_spec_raw_generator_classifies_to_call_not_program_variant() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"def make_gen():\n    yield 1\nobj = make_gen()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Call { .. })),
+                "SPEC GAP: raw generators should route via DoCtrl::Call strict path, got {:?}",
                 yielded
             );
         });
