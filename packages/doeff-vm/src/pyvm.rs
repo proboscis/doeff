@@ -13,7 +13,7 @@ use crate::handler::{
 };
 use crate::ids::{ContId, Marker};
 use crate::py_shared::PyShared;
-use crate::scheduler::{SchedulerEffect, SchedulerHandler};
+use crate::scheduler::{SchedulerEffect, SchedulerHandler, StoreMergePolicy, StoreMode};
 use crate::segment::Segment;
 use crate::step::{
     DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent, Yielded,
@@ -92,7 +92,7 @@ impl PyVM {
         self.start_with_generator(gen_bound)?;
 
         let result = loop {
-            let event = self.run_rust_steps();
+            let event = py.detach(|| self.run_rust_steps());
             match event {
                 StepEvent::Done(value) => match value.to_pyobject(py) {
                     Ok(v) => break Ok(v.unbind()),
@@ -697,9 +697,16 @@ impl PyVM {
                     let mut handlers = Vec::new();
                     for item in handlers_list.try_iter()? {
                         let item = item?;
-                        handlers.push(crate::handler::Handler::Python(PyShared::new(
-                            item.unbind(),
-                        )));
+                        if item.is_instance_of::<PyRustHandlerSentinel>() {
+                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
+                            handlers.push(crate::handler::Handler::RustProgram(
+                                sentinel.factory.clone(),
+                            ));
+                        } else {
+                            handlers.push(crate::handler::Handler::Python(PyShared::new(
+                                item.unbind(),
+                            )));
+                        }
                     }
                     return Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
                         expr: PyShared::new(program),
@@ -767,16 +774,37 @@ impl PyVM {
                     let action = obj.getattr("action")?.unbind();
                     return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
                 }
+                "KleisliProgramCall" => {
+                    let metadata = Self::extract_call_metadata(_py, obj)
+                        .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
+                        .ok_or_else(|| {
+                            PyTypeError::new_err(
+                                "KleisliProgramCall missing required metadata for call tracking",
+                            )
+                        })?;
+                    return Ok(Yielded::Effect(Effect::KpcCall(crate::effect::KpcCallEffect {
+                        call: PyShared::new(obj.clone().unbind()),
+                        metadata,
+                    })));
+                }
                 // D6: Scheduler effects — extract fields into typed SchedulerEffect variants.
                 // Must be classified BEFORE to_generator fallback (EffectBase has to_generator).
                 "SpawnEffect" | "SchedulerSpawn" => {
                     let program = obj.getattr("program")?.unbind();
-                    // Python SpawnEffect doesn't carry handler chain; use empty + default shared mode.
-                    // The scheduler will use GetHandlers or the current scope chain.
+                    let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
+                        Self::extract_handlers_from_python(_py, &handlers_obj)?
+                    } else {
+                        vec![]
+                    };
+                    let store_mode = if let Ok(mode_obj) = obj.getattr("store_mode") {
+                        Self::parse_store_mode(&mode_obj)?
+                    } else {
+                        StoreMode::Shared
+                    };
                     return Ok(Yielded::Effect(Effect::Scheduler(SchedulerEffect::Spawn {
                         program,
-                        handlers: vec![],
-                        store_mode: crate::scheduler::StoreMode::Shared,
+                        handlers,
+                        store_mode,
                     })));
                 }
                 "GatherEffect" | "SchedulerGather" => {
@@ -787,11 +815,9 @@ impl PyVM {
                         match Self::extract_waitable(_py, &item) {
                             Some(w) => waitables.push(w),
                             None => {
-                                // Item is a Program, not a Waitable — fall back to PythonSchedulerEffect
-                                // so the scheduler handler can deal with mixed items.
-                                return Ok(Yielded::Effect(Effect::Scheduler(
-                                    SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                                )));
+                                return Err(PyTypeError::new_err(
+                                    "GatherEffect.items must be waitable handles",
+                                ));
                             }
                         }
                     }
@@ -807,9 +833,9 @@ impl PyVM {
                         match Self::extract_waitable(_py, &item) {
                             Some(w) => waitables.push(w),
                             None => {
-                                return Ok(Yielded::Effect(Effect::Scheduler(
-                                    SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                                )));
+                                return Err(PyTypeError::new_err(
+                                    "RaceEffect.futures must be waitable handles",
+                                ));
                             }
                         }
                     }
@@ -828,9 +854,9 @@ impl PyVM {
                             },
                         )));
                     }
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                    )));
+                    return Err(PyTypeError::new_err(
+                        "CompletePromiseEffect.promise must carry _promise_handle.promise_id",
+                    ));
                 }
                 "FailPromiseEffect" | "SchedulerFailPromise" => {
                     let promise_obj = obj.getattr("promise")?;
@@ -844,9 +870,9 @@ impl PyVM {
                             },
                         )));
                     }
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                    )));
+                    return Err(PyTypeError::new_err(
+                        "FailPromiseEffect.promise must carry _promise_handle.promise_id",
+                    ));
                 }
                 "WaitEffect" => {
                     let future_obj = obj.getattr("future")?;
@@ -855,9 +881,7 @@ impl PyVM {
                             SchedulerEffect::Gather { items: vec![w] },
                         )));
                     }
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                    )));
+                    return Err(PyTypeError::new_err("WaitEffect.future must be waitable"));
                 }
                 "TaskCompletedEffect"
                 | "SchedulerTaskCompleted"
@@ -867,6 +891,18 @@ impl PyVM {
                     if type_str == "TaskCompletedEffect" || type_str == "SchedulerTaskCompleted" {
                         if let Ok(task_obj) = obj.getattr("task") {
                             if let Some(task) = Self::extract_task_id(_py, &task_obj) {
+                                if let Ok(error_obj) = obj.getattr("error") {
+                                    let exc = pyerr_to_exception(
+                                        _py,
+                                        PyErr::from_value(error_obj.clone()),
+                                    )?;
+                                    return Ok(Yielded::Effect(Effect::Scheduler(
+                                        SchedulerEffect::TaskCompleted {
+                                            task,
+                                            result: Err(exc),
+                                        },
+                                    )));
+                                }
                                 if let Ok(result_obj) = obj.getattr("result") {
                                     return Ok(Yielded::Effect(Effect::Scheduler(
                                         SchedulerEffect::TaskCompleted {
@@ -878,15 +914,15 @@ impl PyVM {
                             }
                         }
                     }
-                    return Ok(Yielded::Effect(Effect::Scheduler(
-                        SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                    )));
+                    return Err(PyTypeError::new_err(
+                        "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error",
+                    ));
                 }
                 _ => {
                     if type_str.starts_with("_Scheduler") {
-                        return Ok(Yielded::Effect(Effect::Scheduler(
-                            SchedulerEffect::PythonSchedulerEffect(obj.clone().unbind()),
-                        )));
+                        return Err(PyTypeError::new_err(
+                            "Unknown _Scheduler* effect type is not supported",
+                        ));
                     }
                 }
             }
@@ -895,7 +931,7 @@ impl PyVM {
         if obj.hasattr("to_generator")? {
             if let Some(metadata) = Self::extract_call_metadata(_py, obj) {
                 return Ok(Yielded::DoCtrl(DoCtrl::Call {
-                    f: obj.clone().unbind(),
+                    f: PyShared::new(obj.clone().unbind()),
                     args: vec![],
                     kwargs: vec![],
                     metadata,
@@ -990,6 +1026,57 @@ impl PyVM {
             }
         }
         None
+    }
+
+    fn extract_handlers_from_python(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<Handler>> {
+        let mut handlers = Vec::new();
+        for item in obj.try_iter()? {
+            let item = item?;
+            if item.is_instance_of::<PyRustHandlerSentinel>() {
+                let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
+                handlers.push(Handler::RustProgram(sentinel.factory.clone()));
+            } else {
+                handlers.push(Handler::Python(PyShared::new(item.unbind())));
+            }
+        }
+        Ok(handlers)
+    }
+
+    fn parse_store_mode(obj: &Bound<'_, PyAny>) -> PyResult<StoreMode> {
+        if let Ok(mode) = obj.extract::<String>() {
+            return match mode.to_lowercase().as_str() {
+                "shared" => Ok(StoreMode::Shared),
+                "isolated" => Ok(StoreMode::Isolated {
+                    merge: StoreMergePolicy::LogsOnly,
+                }),
+                other => Err(PyTypeError::new_err(format!(
+                    "unsupported store_mode '{other}'"
+                ))),
+            };
+        }
+        Ok(StoreMode::Shared)
+    }
+
+    fn extract_call_metadata_fallback(
+        _py: Python<'_>,
+        obj: &Bound<'_, PyAny>,
+    ) -> Option<CallMetadata> {
+        let function_name = obj
+            .getattr("function_name")
+            .ok()?
+            .extract::<String>()
+            .ok()?;
+        let source_file = obj.getattr("source_file").ok()?.extract::<String>().ok()?;
+        let source_line = obj.getattr("source_line").ok()?.extract::<u32>().ok()?;
+        Some(CallMetadata {
+            function_name,
+            source_file,
+            source_line,
+            program_call: Some(PyShared::new(obj.clone().unbind())),
+        })
     }
 
     fn extract_call_metadata(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallMetadata> {
@@ -1522,6 +1609,168 @@ mod tests {
             src.contains("let event = py.detach(|| self.run_rust_steps());"),
             "G1 FAIL: run/step loop is not detached around run_rust_steps"
         );
+    }
+
+    #[test]
+    fn test_g2_run_with_result_loop_is_detached() {
+        let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/pyvm.rs"));
+        let runtime_src = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            !runtime_src.contains("let event = self.run_rust_steps();"),
+            "G2 FAIL: run_with_result loop is not detached around run_rust_steps"
+        );
+    }
+
+    #[test]
+    fn test_g3_create_continuation_keeps_rust_handler_protocol() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let sentinel = Bound::new(
+                py,
+                PyRustHandlerSentinel {
+                    factory: Arc::new(StateHandlerFactory),
+                },
+            )
+            .unwrap()
+            .into_any()
+            .unbind();
+
+            let locals = pyo3::types::PyDict::new(py);
+            locals.set_item("sentinel", sentinel.bind(py)).unwrap();
+            py.run(
+                c"class CreateContinuation:\n    def __init__(self, program, handlers):\n        self.program = program\n        self.handlers = handlers\nobj = CreateContinuation(None, [sentinel])\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            match yielded {
+                Yielded::DoCtrl(DoCtrl::CreateContinuation { handlers, .. }) => {
+                    assert!(
+                        matches!(handlers.first(), Some(crate::handler::Handler::RustProgram(_))),
+                        "G3 FAIL: CreateContinuation converted rust sentinel into Python handler"
+                    );
+                }
+                other => panic!("G3 FAIL: expected CreateContinuation, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_g4_task_completed_error_classifies_to_typed_err() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect:\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            match yielded {
+                Yielded::Effect(Effect::Scheduler(SchedulerEffect::TaskCompleted { task, result })) => {
+                    assert_eq!(task.raw(), 9);
+                    assert!(result.is_err(), "G4 FAIL: expected Err result for TaskCompleted.error");
+                }
+                other => panic!("G4 FAIL: expected typed TaskCompleted, got {:?}", other),
+            }
+        });
+    }
+
+    #[test]
+    fn test_g5_kpc_classifies_as_effect_not_direct_call() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall:\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n    def to_generator(self):\n        if False:\n            yield None\n\nobj = KleisliProgramCall()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            assert!(
+                matches!(yielded, Yielded::Effect(_)),
+                "G5 FAIL: KleisliProgramCall should classify as Effect (handler-dispatched), got {:?}",
+                yielded
+            );
+        });
+    }
+
+    #[test]
+    fn test_g6_malformed_gather_effect_raises_classification_error() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class GatherEffect:\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let res = pyvm.classify_yielded(py, &obj);
+            assert!(
+                res.is_err(),
+                "G6 FAIL: malformed GatherEffect should raise classification error, got {:?}",
+                res
+            );
+        });
+    }
+
+    #[test]
+    fn test_g7_spawn_effect_extracts_handlers_and_store_mode() {
+        Python::attach(|py| {
+            let pyvm = PyVM { vm: VM::new() };
+            let sentinel = Bound::new(
+                py,
+                PyRustHandlerSentinel {
+                    factory: Arc::new(StateHandlerFactory),
+                },
+            )
+            .unwrap()
+            .into_any()
+            .unbind();
+
+            let locals = pyo3::types::PyDict::new(py);
+            locals.set_item("sentinel", sentinel.bind(py)).unwrap();
+            py.run(
+                c"class SpawnEffect:\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            match yielded {
+                Yielded::Effect(Effect::Scheduler(SchedulerEffect::Spawn {
+                    handlers,
+                    store_mode,
+                    ..
+                })) => {
+                    assert_eq!(handlers.len(), 1, "G7 FAIL: Spawn handlers not extracted");
+                    assert!(
+                        matches!(handlers.first(), Some(crate::handler::Handler::RustProgram(_))),
+                        "G7 FAIL: Spawn handler should preserve rust sentinel protocol"
+                    );
+                    assert!(
+                        matches!(
+                            store_mode,
+                            crate::scheduler::StoreMode::Isolated { merge: _ }
+                        ),
+                        "G7 FAIL: Spawn store_mode should parse isolated"
+                    );
+                }
+                other => panic!(
+                    "G7 FAIL: expected typed Spawn scheduler effect, got {:?}",
+                    other
+                ),
+            }
+        });
     }
 }
 
