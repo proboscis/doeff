@@ -6,7 +6,6 @@ use pyo3::prelude::*;
 
 use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
-use crate::scheduler::SchedulerEffect;
 use crate::value::Value;
 
 #[derive(Debug, Clone)]
@@ -32,25 +31,24 @@ pub struct KpcCallEffect {
 pub enum Effect {
     // === Built-in effects (Rust handlers) ===
     /// Get(key) -> value
+    #[cfg(test)]
     Get { key: String },
 
     /// Put(key, value) -> ()
+    #[cfg(test)]
     Put { key: String, value: Value },
 
     /// Modify(key, f) -> old_value
+    #[cfg(test)]
     Modify { key: String, modifier: PyShared },
 
     /// Ask(key) -> value (Reader effect)
+    #[cfg(test)]
     Ask { key: String },
 
     /// Tell(message) -> () (Writer effect)
+    #[cfg(test)]
     Tell { message: Value },
-
-    /// Scheduler effect (Spawn, Gather, Race, Promise, etc.)
-    Scheduler(SchedulerEffect),
-
-    /// KleisliProgramCall routed through effect-dispatch path.
-    KpcCall(KpcCallEffect),
 
     // === User-defined effects (Python handlers) ===
     /// Any Python effect object
@@ -62,36 +60,48 @@ impl Effect {
     /// Check if this is a standard effect (state/reader/writer only).
     /// NOTE: This does NOT mean bypass — all effects still go through dispatch.
     pub fn is_standard(&self) -> bool {
-        matches!(
-            self,
-            Effect::Get { .. }
-                | Effect::Put { .. }
-                | Effect::Modify { .. }
-                | Effect::Ask { .. }
-                | Effect::Tell { .. }
-        )
+        #[cfg(test)]
+        {
+            return matches!(
+                self,
+                Effect::Get { .. }
+                    | Effect::Put { .. }
+                    | Effect::Modify { .. }
+                    | Effect::Ask { .. }
+                    | Effect::Tell { .. }
+            );
+        }
+        #[cfg(not(test))]
+        {
+            false
+        }
     }
 
     /// Get a string representation of the effect type.
     pub fn type_name(&self) -> &'static str {
         match self {
+            #[cfg(test)]
             Effect::Get { .. } => "Get",
+            #[cfg(test)]
             Effect::Put { .. } => "Put",
+            #[cfg(test)]
             Effect::Modify { .. } => "Modify",
+            #[cfg(test)]
             Effect::Ask { .. } => "Ask",
+            #[cfg(test)]
             Effect::Tell { .. } => "Tell",
-            Effect::Scheduler(_) => "Scheduler",
-            Effect::KpcCall(_) => "KpcCall",
             Effect::Python(_) => "Python",
         }
     }
 
     /// Create a Get effect.
+    #[cfg(test)]
     pub fn get(key: impl Into<String>) -> Self {
         Effect::Get { key: key.into() }
     }
 
     /// Create a Put effect.
+    #[cfg(test)]
     pub fn put(key: impl Into<String>, value: impl Into<Value>) -> Self {
         Effect::Put {
             key: key.into(),
@@ -100,11 +110,13 @@ impl Effect {
     }
 
     /// Create an Ask effect.
+    #[cfg(test)]
     pub fn ask(key: impl Into<String>) -> Self {
         Effect::Ask { key: key.into() }
     }
 
     /// Create a Tell effect.
+    #[cfg(test)]
     pub fn tell(message: impl Into<Value>) -> Self {
         Effect::Tell {
             message: message.into(),
@@ -117,6 +129,13 @@ impl Effect {
 
     /// Convert to Python object for passing to Python handlers.
     pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        #[cfg(not(test))]
+        {
+            let Effect::Python(obj) = self;
+            return Ok(obj.bind(py).clone());
+        }
+
+        #[cfg(test)]
         match self {
             Effect::Python(obj) => Ok(obj.bind(py).clone()),
             // For built-in effects, we could create a Python wrapper
@@ -126,27 +145,22 @@ impl Effect {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", self.type_name())?;
                 match self {
+                    #[cfg(test)]
                     Effect::Get { key } => {
                         dict.set_item("key", key)?;
                     }
+                    #[cfg(test)]
                     Effect::Put { key, value } => {
                         dict.set_item("key", key)?;
                         dict.set_item("value", value.to_pyobject(py)?)?;
                     }
+                    #[cfg(test)]
                     Effect::Ask { key } => {
                         dict.set_item("key", key)?;
                     }
+                    #[cfg(test)]
                     Effect::Tell { message } => {
                         dict.set_item("message", message.to_pyobject(py)?)?;
-                    }
-                    Effect::Scheduler(_) => {
-                        let dict = pyo3::types::PyDict::new(py);
-                        dict.set_item("type", "Scheduler")?;
-                        return Ok(dict.into_any());
-                    }
-                    Effect::KpcCall(kpc) => {
-                        dict.set_item("type", "KpcCall")?;
-                        dict.set_item("call", kpc.call.bind(py))?;
                     }
                     _ => {}
                 }
@@ -183,13 +197,14 @@ mod tests {
         assert!(Effect::tell("x").is_standard());
     }
 
-    /// G14: Scheduler effects are NOT standard (state/reader/writer only).
+    /// G14: opaque Python effects are NOT standard (state/reader/writer only).
     #[test]
-    fn test_scheduler_not_standard() {
-        let sched = Effect::Scheduler(crate::scheduler::SchedulerEffect::CreatePromise);
+    fn test_python_effect_not_standard() {
+        let py = Python::attach(|py| py.None().into_any());
+        let sched = Effect::Python(PyShared::new(py));
         assert!(
             !sched.is_standard(),
-            "Scheduler effects should not be standard"
+            "opaque Python effects should not be standard"
         );
     }
 }
