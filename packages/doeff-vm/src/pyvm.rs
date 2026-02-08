@@ -519,8 +519,10 @@ impl PyVM {
             return Ok(program);
         }
 
-        if program_bound.is_instance_of::<PyEffectBase>() {
-            return self.wrap_effect_as_generator(py, program);
+        if program_bound.is_instance_of::<PyEffectBase>()
+            || program_bound.is_instance_of::<PyDoCtrlBase>()
+        {
+            return self.wrap_expr_as_generator(py, program);
         }
 
         Err(pyo3::exceptions::PyTypeError::new_err(
@@ -528,12 +530,12 @@ impl PyVM {
         ))
     }
 
-    fn wrap_effect_as_generator(&self, py: Python<'_>, effect: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn wrap_expr_as_generator(&self, py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
         use pyo3::types::PyModule;
         let code = c"def _wrap(e):\n    v = yield e\n    return v\n";
         let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
         let wrap_fn = module.getattr("_wrap")?;
-        let gen = wrap_fn.call1((effect.bind(py),))?;
+        let gen = wrap_fn.call1((expr.bind(py),))?;
         Ok(gen.unbind())
     }
 
@@ -565,8 +567,7 @@ impl PyVM {
 
     fn classify_yielded(&self, _py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Yielded> {
         // R8-C: Check for Rust pyclass primitives first (fast isinstance check)
-        if obj.is_instance_of::<PyWithHandler>() {
-            let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
+        if let Ok(wh) = obj.extract::<PyRef<'_, PyWithHandler>>() {
             let handler_bound = wh.handler.bind(_py);
             let (handler, py_identity) = if handler_bound.is_instance_of::<PyRustHandlerSentinel>() {
                 let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
@@ -579,12 +580,11 @@ impl PyVM {
             };
             return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                 handler,
-                expr: wh.program.clone_ref(_py),
+                expr: wh.expr.clone_ref(_py),
                 py_identity,
             }));
         }
-        if obj.is_instance_of::<PyResume>() {
-            let r: PyRef<'_, PyResume> = obj.extract()?;
+        if let Ok(r) = obj.extract::<PyRef<'_, PyResume>>() {
             if let Ok(k_pyobj) = r.continuation.bind(_py).cast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
                 if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
@@ -602,8 +602,7 @@ impl PyVM {
                 "Resume.continuation must be K (opaque continuation handle)",
             ));
         }
-        if obj.is_instance_of::<PyTransfer>() {
-            let t: PyRef<'_, PyTransfer> = obj.extract()?;
+        if let Ok(t) = obj.extract::<PyRef<'_, PyTransfer>>() {
             if let Ok(k_pyobj) = t.continuation.bind(_py).cast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
                 if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
@@ -621,8 +620,7 @@ impl PyVM {
                 "Transfer.continuation must be K (opaque continuation handle)",
             ));
         }
-        if obj.is_instance_of::<PyDelegate>() {
-            let d: PyRef<'_, PyDelegate> = obj.extract()?;
+        if let Ok(d) = obj.extract::<PyRef<'_, PyDelegate>>() {
             let effect = if let Some(ref eff) = d.effect {
                 dispatch_from_shared(PyShared::new(eff.clone_ref(_py)))
             } else {
@@ -939,14 +937,35 @@ pub struct PyWithHandler {
     #[pyo3(get)]
     pub handler: Py<PyAny>,
     #[pyo3(get)]
-    pub program: Py<PyAny>,
+    pub expr: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    fn new(handler: Py<PyAny>, program: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (PyWithHandler { handler, program }, PyDoCtrlBase)
+    fn new(py: Python<'_>, handler: Py<PyAny>, expr: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+        let handler_obj = handler.bind(py);
+        if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
+            return Err(PyTypeError::new_err(
+                "WithHandler.handler must be callable or built-in handler sentinel",
+            ));
+        }
+
+        let expr_obj = expr.bind(py);
+        let has_to_generator = expr_obj
+            .getattr("to_generator")
+            .map(|attr| attr.is_callable())
+            .unwrap_or(false);
+        if !(has_to_generator
+            || expr_obj.is_instance_of::<PyDoCtrlBase>()
+            || expr_obj.is_instance_of::<PyEffectBase>())
+        {
+            return Err(PyTypeError::new_err(
+                "WithHandler.expr must be DoExpr (Program/Effect/DoCtrl)",
+            ));
+        }
+
+        Ok((PyWithHandler { handler, expr }, PyDoCtrlBase))
     }
 }
 
@@ -962,14 +981,19 @@ pub struct PyResume {
 #[pymethods]
 impl PyResume {
     #[new]
-    fn new(continuation: Py<PyAny>, value: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (
+    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+        if !continuation.bind(py).is_instance_of::<PyK>() {
+            return Err(PyTypeError::new_err(
+                "Resume.continuation must be K (opaque continuation handle)",
+            ));
+        }
+        Ok((
             PyResume {
                 continuation,
                 value,
             },
             PyDoCtrlBase,
-        )
+        ))
     }
 }
 
@@ -984,8 +1008,15 @@ pub struct PyDelegate {
 impl PyDelegate {
     #[new]
     #[pyo3(signature = (effect=None))]
-    fn new(effect: Option<Py<PyAny>>) -> (Self, PyDoCtrlBase) {
-        (PyDelegate { effect }, PyDoCtrlBase)
+    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<(Self, PyDoCtrlBase)> {
+        if let Some(ref eff) = effect {
+            if !eff.bind(py).is_instance_of::<PyEffectBase>() {
+                return Err(PyTypeError::new_err(
+                    "Delegate.effect must be EffectBase when provided",
+                ));
+            }
+        }
+        Ok((PyDelegate { effect }, PyDoCtrlBase))
     }
 }
 
@@ -1001,14 +1032,19 @@ pub struct PyTransfer {
 #[pymethods]
 impl PyTransfer {
     #[new]
-    fn new(continuation: Py<PyAny>, value: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (
+    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+        if !continuation.bind(py).is_instance_of::<PyK>() {
+            return Err(PyTypeError::new_err(
+                "Transfer.continuation must be K (opaque continuation handle)",
+            ));
+        }
+        Ok((
             PyTransfer {
                 continuation,
                 value,
             },
             PyDoCtrlBase,
-        )
+        ))
     }
 }
 
@@ -1161,7 +1197,7 @@ impl NestingGenerator {
         self.done = true;
         let wh = PyWithHandler {
             handler,
-            program: inner,
+            expr: inner,
         };
         let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
         Ok(Some(bound.into_any().unbind()))

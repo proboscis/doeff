@@ -1321,7 +1321,7 @@ Tests MUST verify end-to-end through `run()`:
 | HP-05 | Handler delegates: `yield Delegate()` forwards effect to outer handler | §1.1 |
 | HP-06 | Nested `WithHandler`: inner handler intercepts before outer | §1.1 |
 | HP-07 | Stateful handler: closure state accumulates across multiple effect dispatches | §1.1 |
-| HP-08 | `WithHandler(handler=h, program=body)` installs handler for scope of `body` | §1.1 |
+| HP-08 | `WithHandler(handler=h, expr=body)` installs handler for scope of `body` | §1.1 |
 | HP-09 | Multiple effects in one body: handler invoked for each | §1.1 |
 | HP-10 | Handler + built-in handlers (`state`, `reader`, `writer`): coexist in same `run()` | §1.1 |
 
@@ -1369,7 +1369,7 @@ Tests MUST verify:
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
 | RC-01 | `run(prog)` with no handlers → effects raise unhandled error | SPEC-009 §1 |
-| RC-02 | `run(prog, handlers=default_handlers())` installs state+reader+writer | SPEC-009 §1 |
+| RC-02 | `run(prog, handlers=default_handlers())` installs state+reader+writer+kpc | SPEC-009 §1 |
 | RC-03 | `RunResult.result` returns `Ok` or `Err` | SPEC-009 §2 |
 | RC-04 | `isinstance(result.result, Ok)` works for successful runs | SPEC-009 §2 |
 | RC-05 | `isinstance(result.result, Err)` works for failed runs | SPEC-009 §2 |

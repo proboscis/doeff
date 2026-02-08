@@ -818,6 +818,9 @@ from doeff import WithHandler
 # Standard handlers
 from doeff.handlers import state, reader, writer, kpc, scheduler
 
+# Canonical location for KPC handler export is doeff.handlers.
+# `kpc` is not required to be re-exported from the top-level doeff namespace.
+
 # Presets
 from doeff.presets import sync_preset, async_preset
 
