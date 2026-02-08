@@ -9,7 +9,6 @@ use crate::effect::DispatchEffect;
 pub enum Yielded {
     DoCtrl(DoCtrl),
     Effect(DispatchEffect),
-    Unknown(Py<PyAny>),
 }
 
 impl Yielded {
@@ -17,7 +16,6 @@ impl Yielded {
         match self {
             Yielded::DoCtrl(p) => Yielded::DoCtrl(p.clone_ref(py)),
             Yielded::Effect(e) => Yielded::Effect(e.clone()),
-            Yielded::Unknown(p) => Yielded::Unknown(p.clone_ref(py)),
         }
     }
 }

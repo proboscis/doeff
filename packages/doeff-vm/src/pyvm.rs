@@ -25,6 +25,9 @@ use crate::vm::VM;
 
 fn vmerror_to_pyerr(e: VMError) -> PyErr {
     match e {
+        VMError::UnhandledEffect { .. } | VMError::NoMatchingHandler { .. } => {
+            PyTypeError::new_err(format!("UnhandledEffect: {}", e))
+        }
         VMError::TypeError { .. } => PyTypeError::new_err(e.to_string()),
         VMError::UncaughtException { exception } => {
             // SAFETY: vmerror_to_pyerr is always called from GIL-holding contexts (run/step_once)
@@ -584,6 +587,18 @@ impl PyVM {
                 py_identity,
             }));
         }
+        if let Ok(m) = obj.extract::<PyRef<'_, PyMap>>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::Map {
+                source: PyShared::new(m.source.clone_ref(_py)),
+                mapper: PyShared::new(m.mapper.clone_ref(_py)),
+            }));
+        }
+        if let Ok(fm) = obj.extract::<PyRef<'_, PyFlatMap>>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::FlatMap {
+                source: PyShared::new(fm.source.clone_ref(_py)),
+                binder: PyShared::new(fm.binder.clone_ref(_py)),
+            }));
+        }
         if let Ok(r) = obj.extract::<PyRef<'_, PyResume>>() {
             if let Ok(k_pyobj) = r.continuation.bind(_py).cast::<PyK>() {
                 let cont_id = k_pyobj.borrow().cont_id;
@@ -682,7 +697,9 @@ impl PyVM {
             ))));
         }
 
-        Ok(Yielded::Unknown(obj.clone().unbind()))
+        Err(PyTypeError::new_err(
+            "yielded value must be EffectBase or DoCtrlBase",
+        ))
     }
 
 
@@ -966,6 +983,44 @@ impl PyWithHandler {
         }
 
         Ok((PyWithHandler { handler, expr }, PyDoCtrlBase))
+    }
+}
+
+#[pyclass(name = "Map", extends=PyDoCtrlBase)]
+pub struct PyMap {
+    #[pyo3(get)]
+    pub source: Py<PyAny>,
+    #[pyo3(get)]
+    pub mapper: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyMap {
+    #[new]
+    fn new(py: Python<'_>, source: Py<PyAny>, mapper: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+        if !mapper.bind(py).is_callable() {
+            return Err(PyTypeError::new_err("Map.mapper must be callable"));
+        }
+        Ok((PyMap { source, mapper }, PyDoCtrlBase))
+    }
+}
+
+#[pyclass(name = "FlatMap", extends=PyDoCtrlBase)]
+pub struct PyFlatMap {
+    #[pyo3(get)]
+    pub source: Py<PyAny>,
+    #[pyo3(get)]
+    pub binder: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyFlatMap {
+    #[new]
+    fn new(py: Python<'_>, source: Py<PyAny>, binder: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+        if !binder.bind(py).is_callable() {
+            return Err(PyTypeError::new_err("FlatMap.binder must be callable"));
+        }
+        Ok((PyFlatMap { source, binder }, PyDoCtrlBase))
     }
 }
 
@@ -1524,9 +1579,8 @@ mod tests {
     }
 
     #[test]
-    fn test_spec_plain_to_generator_without_rust_base_classifies_as_unknown() {
-        // R11-C: Plain Python objects with to_generator but no Rust base class
-        // classify as Unknown. The Python _normalize_program layer wraps these.
+    fn test_spec_plain_to_generator_without_rust_base_is_rejected() {
+        // R11-C: plain Python objects without VM base classes must not classify.
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
@@ -1537,19 +1591,18 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj);
             assert!(
-                matches!(yielded, Yielded::Unknown(_)),
-                "R12-A: plain Python to_generator classifies as Unknown (DoThunkBase removed), got {:?}",
+                yielded.is_err(),
+                "R12-A: plain Python to_generator must be rejected, got {:?}",
                 yielded
             );
         });
     }
 
     #[test]
-    fn test_spec_raw_generator_classifies_as_unknown() {
-        // R11-C: Raw generators without Rust base class classify as Unknown.
-        // The Python _normalize_program layer rejects these.
+    fn test_spec_raw_generator_is_rejected() {
+        // R11-C: raw generators without VM base classes must not classify.
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
@@ -1560,10 +1613,10 @@ mod tests {
             )
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
-            let yielded = pyvm.classify_yielded(py, &obj).unwrap();
+            let yielded = pyvm.classify_yielded(py, &obj);
             assert!(
-                matches!(yielded, Yielded::Unknown(_)),
-                "R12-A: raw generators classify as Unknown (no VM base class), got {:?}",
+                yielded.is_err(),
+                "R12-A: raw generators must be rejected (no VM base class), got {:?}",
                 yielded
             );
         });
@@ -1799,6 +1852,8 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyResultErr>()?;
     m.add_class::<PyK>()?;
     m.add_class::<PyWithHandler>()?;
+    m.add_class::<PyMap>()?;
+    m.add_class::<PyFlatMap>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
     m.add_class::<PyTransfer>()?;

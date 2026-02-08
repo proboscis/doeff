@@ -928,11 +928,11 @@ classifier does not inspect them.**
 ```
 Phase 1: obj.is_instance_of::<DoCtrlBase>()?  → downcast to specific DoCtrl variant
 Phase 2: obj.is_instance_of::<EffectBase>()?  → Yielded::Effect(obj)
-Phase 3: else                                 → Yielded::Unknown
+Phase 3: else                                 → raise TypeError("yielded value is not DoExpr")
 ```
 
 Two C-level pointer comparisons. No Python imports. No `getattr`. No
-`hasattr("to_generator")`. No string matching. No third category.
+`hasattr("to_generator")`. No string matching. No third category. No fallback.
 
 Both bases (`DoCtrlBase`, `EffectBase`) are Rust `#[pyclass(subclass)]` types
 (SPEC-008 R11-F). Concrete types extend their base: `#[pyclass(extends=EffectBase)]`
@@ -1306,6 +1306,7 @@ Tests MUST verify:
 | TH-08 | Effects are NOT `DoCtrl` instances (binary separation enforced) | §2 |
 | TH-09 | `Program` is an alias for `DoExpr` (user-facing name) | §1.5 |
 | TH-10 | No `DoThunk` type exists — there is no third category | §2, R10 |
+| TH-12 | No `DoThunk` alias/export exists in public API | §2, R10 |
 | TH-11 | No `to_generator()` method on any DoExpr subtype | §2, R10 |
 
 ### 11.2 Handler authoring protocol (§1.1, SPEC-008)

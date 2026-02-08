@@ -96,9 +96,20 @@ impl Handler {
 }
 
 fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
-    obj.getattr(attr)
+    obj.getattr (attr)
         .and_then(|v| v.extract::<bool>())
         .unwrap_or(false)
+}
+
+fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
+    let py = obj.py();
+    let Ok(mod_) = py.import(module) else {
+        return false;
+    };
+    let Ok(cls) = mod_.getattr(class_name) else {
+        return false;
+    };
+    obj.is_instance(&cls).unwrap_or(false)
 }
 
 enum ParsedStateEffect {
@@ -110,37 +121,37 @@ enum ParsedStateEffect {
 fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if has_true_attr(obj, "__doeff_state_get__") {
+        if is_instance_from(obj, "doeff.effects.state", "StateGetEffect") {
             let key: String = obj
-                .getattr("key")
+                .getattr ("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
             return Ok(Some(ParsedStateEffect::Get { key }));
         }
 
-        if has_true_attr(obj, "__doeff_state_put__") {
+        if is_instance_from(obj, "doeff.effects.state", "StatePutEffect") {
             let key: String = obj
-                .getattr("key")
+                .getattr ("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
-            let value = obj.getattr("value").map_err(|e| e.to_string())?;
+            let value = obj.getattr ("value").map_err(|e| e.to_string())?;
             return Ok(Some(ParsedStateEffect::Put {
                 key,
                 value: Value::from_pyobject(&value),
             }));
         }
 
-        if has_true_attr(obj, "__doeff_state_modify__") {
+        if is_instance_from(obj, "doeff.effects.state", "StateModifyEffect") {
             let key: String = obj
-                .getattr("key")
+                .getattr ("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
             let modifier = obj
-                .getattr("func")
-                .or_else(|_| obj.getattr("modifier"))
+                .getattr ("func")
+                .or_else(|_| obj.getattr ("modifier"))
                 .map_err(|e| e.to_string())?;
             return Ok(Some(ParsedStateEffect::Modify {
                 key,
@@ -155,9 +166,9 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
 fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if has_true_attr(obj, "__doeff_reader_ask__") {
+        if is_instance_from(obj, "doeff.effects.reader", "AskEffect") {
             let key: String = obj
-                .getattr("key")
+                .getattr ("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
@@ -170,8 +181,8 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, Strin
 fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if has_true_attr(obj, "__doeff_writer_tell__") {
-            let message = obj.getattr("message").map_err(|e| e.to_string())?;
+        if is_instance_from(obj, "doeff.effects.writer", "WriterTellEffect") {
+            let message = obj.getattr ("message").map_err(|e| e.to_string())?;
             return Ok(Some(Value::from_pyobject(&message)));
         }
         Ok(None)
@@ -191,7 +202,7 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
         let strategy = py
             .import("doeff.program")
             .ok()
-            .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
+            .and_then(|mod_program| mod_program.getattr ("_build_auto_unwrap_strategy").ok())
             .and_then(|builder| builder.call1((kpc.kleisli_source.bind(py),)).ok());
 
         let mut args = Vec::new();
@@ -239,15 +250,15 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
 
         let metadata = extract_kpc_call_metadata(obj)?;
         let kernel_obj = obj
-            .getattr("execution_kernel")
-            .or_else(|_| obj.getattr("kernel"))
+            .getattr ("execution_kernel")
+            .or_else(|_| obj.getattr ("kernel"))
             .map_err(|e| e.to_string())?;
         let kernel = PyShared::new(kernel_obj.unbind());
 
-        let strategy = obj.getattr("auto_unwrap_strategy").ok();
+        let strategy = obj.getattr ("auto_unwrap_strategy").ok();
 
         let mut args = Vec::new();
-        if let Ok(args_obj) = obj.getattr("args") {
+        if let Ok(args_obj) = obj.getattr ("args") {
             for (idx, item) in args_obj.try_iter().map_err(|e| e.to_string())?.enumerate() {
                 let item = item.map_err(|e| e.to_string())?;
                 let should_unwrap =
@@ -257,7 +268,7 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
         }
 
         let mut kwargs = Vec::new();
-        if let Ok(kwargs_obj) = obj.getattr("kwargs") {
+        if let Ok(kwargs_obj) = obj.getattr ("kwargs") {
             let kwargs_dict = kwargs_obj
                 .cast::<pyo3::types::PyDict>()
                 .map_err(|e| e.to_string())?;
@@ -281,21 +292,21 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
 
 fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, String> {
     let function_name = obj
-        .getattr("function_name")
+        .getattr ("function_name")
         .ok()
         .and_then(|v| v.extract::<String>().ok())
         .unwrap_or_else(|| "<anonymous>".to_string());
 
-    if let Ok(kleisli) = obj.getattr("kleisli_source") {
-        if let Ok(func) = kleisli.getattr("original_func") {
-            if let Ok(code) = func.getattr("__code__") {
+    if let Ok(kleisli) = obj.getattr ("kleisli_source") {
+        if let Ok(func) = kleisli.getattr ("original_func") {
+            if let Ok(code) = func.getattr ("__code__") {
                 let source_file = code
-                    .getattr("co_filename")
+                    .getattr ("co_filename")
                     .ok()
                     .and_then(|v| v.extract::<String>().ok())
                     .unwrap_or_else(|| "<unknown>".to_string());
                 let source_line = code
-                    .getattr("co_firstlineno")
+                    .getattr ("co_firstlineno")
                     .ok()
                     .and_then(|v| v.extract::<u32>().ok())
                     .unwrap_or(0);
@@ -310,12 +321,12 @@ fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, Str
     }
 
     let source_file = obj
-        .getattr("source_file")
+        .getattr ("source_file")
         .ok()
         .and_then(|v| v.extract::<String>().ok())
         .unwrap_or_else(|| "<unknown>".to_string());
     let source_line = obj
-        .getattr("source_line")
+        .getattr ("source_line")
         .ok()
         .and_then(|v| v.extract::<u32>().ok())
         .unwrap_or(0);
@@ -373,10 +384,10 @@ fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
         return Ok(true);
     }
     Ok(
-        (obj.getattr("handler").is_ok() && obj.getattr("inner").is_ok())
-            || (obj.getattr("effect").is_ok() && obj.getattr("continuation").is_err())
-            || (obj.getattr("program").is_ok() && obj.getattr("handlers").is_ok())
-            || (obj.getattr("continuation").is_ok() && obj.getattr("value").is_ok()),
+        (obj.getattr ("handler").is_ok() && obj.getattr ("inner").is_ok())
+            || (obj.getattr ("effect").is_ok() && obj.getattr ("continuation").is_err())
+            || (obj.getattr ("program").is_ok() && obj.getattr ("handlers").is_ok())
+            || (obj.getattr ("continuation").is_ok() && obj.getattr ("value").is_ok()),
     )
 }
 

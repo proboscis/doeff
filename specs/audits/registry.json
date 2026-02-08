@@ -1,6 +1,21 @@
 {
-  "next_id": 8,
+  "next_id": 9,
   "sessions": [
+    {
+      "id": "SA-008",
+      "date": "2026-02-08",
+      "specs": [
+        "specs/vm-architecture/SPEC-008-rust-vm.md",
+        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
+        "specs/SPEC-TYPES-001-program-effect-separation.md"
+      ],
+      "implementation_directory": [
+        "doeff",
+        "packages/doeff-vm"
+      ],
+      "status": "completed",
+      "result": "SA-008 gaps G01-G11 fixed and semantically reviewed; SA-008 tests+rules green; repo-wide pytest/semgrep still have unrelated pre-existing issues"
+    },
     {
       "id": "SA-007",
       "date": "2026-02-08",

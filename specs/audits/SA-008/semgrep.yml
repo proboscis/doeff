@@ -1,0 +1,60 @@
+rules:
+  - id: spec-gap-SA-008-G01-no-yielded-unknown
+    message: "SA-008-G01: Yielded::Unknown must not exist in strict binary classifier"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/yielded.rs
+    patterns:
+      - pattern-regex: "Unknown"
+
+  - id: spec-gap-SA-008-G02-no-classifier-fallback
+    message: "SA-008-G02: classify_yielded must not emit Yielded::Unknown fallback"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/pyvm.rs
+    patterns:
+      - pattern-regex: "Yielded::Unknown"
+
+  - id: spec-gap-SA-008-G03-no-dothunk-export
+    message: "SA-008-G03: DoThunk alias/export must not exist in public API"
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - doeff/program.py
+    patterns:
+      - pattern-regex: 'DoThunk\s*='
+
+  - id: spec-gap-SA-008-G06-no-getattr-standard-effect-parse
+    message: "SA-008-G06: standard effect parsing should not use __doeff_* marker attributes"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/handler.rs
+    patterns:
+      - pattern-regex: 'has_true_attr\s*\(\s*obj\s*,\s*"__doeff_(state|reader|writer)_'
+
+  - id: spec-gap-SA-008-G07-no-getattr-scheduler-effect-parse
+    message: "SA-008-G07: scheduler effect parsing should not use __doeff_scheduler_* markers"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/scheduler.rs
+    patterns:
+      - pattern-regex: 'has_true_attr\s*\(\s*obj\s*,\s*"__doeff_scheduler_'
+
+  - id: spec-gap-SA-008-G11-no-public-runtime-internal-export
+    message: "SA-008-G11: runtime internal PyVM export should not be public"
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - packages/doeff-vm/doeff_vm/__init__.py
+    patterns:
+      - pattern-regex: "\bPyVM\b"
