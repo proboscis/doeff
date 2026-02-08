@@ -40,6 +40,15 @@ pub struct PyVM {
     vm: VM,
 }
 
+#[pyclass(subclass, name = "EffectBase")]
+pub struct PyEffectBase;
+
+#[pyclass(subclass, name = "DoCtrlBase")]
+pub struct PyDoCtrlBase;
+
+#[pyclass(subclass, name = "DoThunkBase")]
+pub struct PyDoThunkBase;
+
 #[pyclass]
 pub struct PyStdlib {
     state_marker: Option<Marker>,
@@ -853,6 +862,10 @@ impl PyVM {
     }
 
     fn is_effect_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+        if obj.is_instance_of::<PyEffectBase>() {
+            return Ok(true);
+        }
+
         if let Ok(types_mod) = py.import("doeff.types") {
             if let Ok(effect_base) = types_mod.getattr("EffectBase") {
                 if obj.is_instance(&effect_base)? {
@@ -1944,6 +1957,9 @@ fn async_run<'py>(
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
+    m.add_class::<PyEffectBase>()?;
+    m.add_class::<PyDoCtrlBase>()?;
+    m.add_class::<PyDoThunkBase>()?;
     m.add_class::<PyStdlib>()?;
     m.add_class::<PySchedulerHandler>()?;
     m.add_class::<PyRunResult>()?;
