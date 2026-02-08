@@ -194,7 +194,7 @@ result = run(
 def my_program():
     result = yield WithHandler(
         handler=cache_handler,
-        program=sub_program(),
+        expr=sub_program(),
     )
     return result
 ```
@@ -1092,8 +1092,9 @@ unsafe fn read_do_expr_tag(obj: &Py<PyAny>) -> DoExprTag {
     // Implementation detail: use PyO3's internal AsPyPointer + offset calculation.
     // Actual offset depends on PyO3 version — abstract behind a helper.
     //
-    // Fallback: if offset cannot be determined, use is_instance_of with GIL
-    // (degrade to R11-F behavior).
+    // No fallback path is allowed.
+    // If tag offset cannot be determined, this is a hard error in VM setup.
+    // Classification MUST remain tag-based and GIL-free.
     let tag_byte: u8 = /* read from known offset */;
     DoExprTag::try_from(tag_byte).unwrap_or(DoExprTag::Unknown)
 }
@@ -2397,6 +2398,10 @@ impl PyStore {
 ### VM Struct (Unified Definition)
 
 **Note**: Level 1 and Level 2 are logical subsystems; implementation is a single mode-based VM.
+
+**Non-normative memory note**: The concrete arena/free-list strategy (`segments` +
+`free_segments`) is an implementation detail. The normative requirement is semantic
+ownership/lifetime safety for segments and continuations, not a specific allocator shape.
 
 ```rust
 /// The algebraic effects VM.
@@ -4909,6 +4914,8 @@ All segments are owned by VM.segments arena.
 Continuations hold snapshots (Arc<Vec<Frame>>), not segment references.
 Resume materializes snapshot into fresh segment.
 Segment can only be mutated via VM methods.
+
+Arena slot reuse via free-list is allowed but not required by this spec.
 ```
 
 ### INV-3: One-Shot Continuations

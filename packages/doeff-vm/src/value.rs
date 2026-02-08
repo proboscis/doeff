@@ -48,7 +48,7 @@ impl Value {
                             list.append(py_handler.bind(py))?;
                         }
                         Handler::RustProgram(_) => {
-                            list.append(PyString::new(py, "rust_program_handler"))?;
+                            list.append(py.None().into_bound(py))?;
                         }
                     }
                 }

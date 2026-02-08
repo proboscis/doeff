@@ -218,6 +218,9 @@ impl VM {
                     }
                 }
                 Yielded::DoCtrl(p) => match p {
+                    DoCtrl::Pure { .. } => "HandleYield(Pure)",
+                    DoCtrl::Map { .. } => "HandleYield(Map)",
+                    DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
                     DoCtrl::Resume { .. } => "HandleYield(Resume)",
                     DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
                     DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
@@ -507,6 +510,16 @@ impl VM {
                 self.lazy_pop_completed();
                 use crate::step::DoCtrl;
                 match prim {
+                    DoCtrl::Pure { value } => {
+                        self.mode = Mode::Deliver(value);
+                        StepEvent::Continue
+                    }
+                    DoCtrl::Map { .. } | DoCtrl::FlatMap { .. } => {
+                        self.mode = Mode::Throw(PyException::runtime_error(
+                            "Map/FlatMap DoCtrl runtime evaluation is not implemented yet",
+                        ));
+                        StepEvent::Continue
+                    }
                     DoCtrl::Resume {
                         continuation,
                         value,

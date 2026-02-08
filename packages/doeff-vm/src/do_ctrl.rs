@@ -11,6 +11,17 @@ use crate::value::Value;
 
 #[derive(Debug, Clone)]
 pub enum DoCtrl {
+    Pure {
+        value: Value,
+    },
+    Map {
+        source: PyShared,
+        mapper: PyShared,
+    },
+    FlatMap {
+        source: PyShared,
+        binder: PyShared,
+    },
     Resume {
         continuation: Continuation,
         value: Value,
@@ -57,6 +68,17 @@ pub enum DoCtrl {
 impl DoCtrl {
     pub fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
+            DoCtrl::Pure { value } => DoCtrl::Pure {
+                value: value.clone(),
+            },
+            DoCtrl::Map { source, mapper } => DoCtrl::Map {
+                source: source.clone(),
+                mapper: mapper.clone(),
+            },
+            DoCtrl::FlatMap { source, binder } => DoCtrl::FlatMap {
+                source: source.clone(),
+                binder: binder.clone(),
+            },
             DoCtrl::Resume {
                 continuation,
                 value,
