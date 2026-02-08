@@ -811,7 +811,8 @@ CODE-ATTENTION:
 - KPC handler impl: downcast to `PyRef<PyKPC>`, compute auto-unwrap strategy
   from `kleisli_source` annotations at dispatch time. Strategy is handler-internal,
   NOT stored on KPC. [Rev 9]
-- Python side: Delete Python-defined `EffectBase`, import from `doeff_vm`.
+- Python side: Delete Python-defined `EffectBase` and import the Rust base
+  classes from `doeff_vm`. No transitional compatibility layer is allowed.
   Delete Python `KleisliProgramCall` dataclass — replace with `PyKPC` imported
   from `doeff_vm`. Delete `_AutoUnwrapStrategy` from KPC — it moves into the
   KPC handler implementation. [Rev 9]
@@ -1040,6 +1041,100 @@ CODE-ATTENTION:
    push generator frame → generator yields original effect → handler dispatch).
    This adds one extra generator frame but is simple, uniform, and reuses
    existing `DerivedProgram` infrastructure.
+
+---
+
+## 11. Public API Test Requirements
+
+All tests in this section exercise the **public API surface** (`from doeff import ...`) through
+the `run()` / `async_run()` entrypoints. No tests may reach into `doeff_vm` internals, Rust
+source files, or private modules. Tests live in `tests/public_api/`.
+
+### 11.1 Type hierarchy (§1.4, §2)
+
+Tests MUST verify:
+
+| ID | Requirement | Spec Section |
+|----|-------------|-------------|
+| TH-01 | `DoExpr`, `DoThunk`, `DoCtrl` are distinct classes (not aliases) | §1.4 |
+| TH-02 | `EffectBase` is a subclass of `DoExpr` | §1.4 |
+| TH-03 | `ProgramBase` is a subclass of `DoThunk` which is a subclass of `DoExpr` | §1.4 |
+| TH-04 | `KleisliProgramCall` is an instance of `EffectBase` (not `ProgramBase`) | §1.4, §2 |
+| TH-05 | `KleisliProgramCall` does NOT have `to_generator` (it is not a DoThunk) | §2 |
+| TH-06 | `GeneratorProgram` is a `ProgramBase` (DoThunk) | §1.4 |
+| TH-07 | Effects created via `Ask()`, `Get()`, `Tell()`, `Put()` are `EffectBase` instances | §1.4 |
+| TH-08 | Effects are NOT `ProgramBase` instances (separation enforced) | §2 |
+| TH-09 | `Program` is an alias for `ProgramBase` (user-facing name) | §1.4 |
+
+### 11.2 Handler authoring protocol (§1.1, SPEC-008)
+
+Tests MUST verify end-to-end through `run()`:
+
+| ID | Requirement | Spec Section |
+|----|-------------|-------------|
+| HP-01 | Custom handler: `def handler(effect, k)` generator yielding `Resume(k, value)` handles an effect | §1.1 |
+| HP-02 | Handler receives the original effect object (can read attributes) | §1.1 |
+| HP-03 | Handler post-processes: `resume_value = yield Resume(k, value)` captures body result | §1.1 |
+| HP-04 | Handler abandons continuation: returning without `Resume` short-circuits | §1.1 |
+| HP-05 | Handler delegates: `yield Delegate()` forwards effect to outer handler | §1.1 |
+| HP-06 | Nested `WithHandler`: inner handler intercepts before outer | §1.1 |
+| HP-07 | Stateful handler: closure state accumulates across multiple effect dispatches | §1.1 |
+| HP-08 | `WithHandler(handler=h, program=body)` installs handler for scope of `body` | §1.1 |
+| HP-09 | Multiple effects in one body: handler invoked for each | §1.1 |
+| HP-10 | Handler + built-in handlers (`state`, `reader`, `writer`): coexist in same `run()` | §1.1 |
+
+### 11.3 KPC dispatch and auto-unwrap (§3)
+
+Tests MUST verify through `run()`:
+
+| ID | Requirement | Spec Section |
+|----|-------------|-------------|
+| KD-01 | `@do` function call creates a `KleisliProgramCall` (not executed immediately) | §4.1 |
+| KD-02 | KPC is dispatched as an effect through the handler stack (requires KPC handler) | §1.2, §1.3 |
+| KD-03 | `run(kpc, handlers=[])` fails (no KPC handler) | §9 Q11 |
+| KD-04 | `run(kpc, handlers=default_handlers())` succeeds (default handlers include KPC) | §4.1 |
+| KD-05 | Plain-typed args (`int`, `str`) auto-unwrap: DoExpr args are resolved before body | §3.3, §3.4 |
+| KD-06 | `Program[T]`-annotated args are NOT unwrapped: DoExpr passed as-is | §3.3 |
+| KD-07 | `Effect`-annotated args are NOT unwrapped: Effect passed as-is | §3.3 |
+| KD-08 | Unannotated args default to auto-unwrap | §3.3 |
+| KD-09 | Non-generator early return from `@do` function works | §4.2 |
+| KD-10 | `@do` preserves `__name__`, `__doc__`, `__qualname__` | §4.3 |
+| KD-11 | `@do` on class methods works (descriptor protocol via `__get__`) | §4.4 |
+| KD-12 | Kleisli composition `>>` operator produces a composable pipeline | §4.5 |
+| KD-13 | Nested `@do` calls: `@do` function calling another `@do` function resolves correctly | §3.5 |
+
+### 11.4 Composition (§4.7)
+
+Tests MUST verify:
+
+| ID | Requirement | Spec Section |
+|----|-------------|-------------|
+| CP-01 | `effect.map(f)` returns a `GeneratorProgram` (DoThunk), not an Effect | §4.7 |
+| CP-02 | `kpc.map(f)` returns a `GeneratorProgram` (DoThunk), not a KPC | §4.7 |
+| CP-03 | `effect.flat_map(f)` returns a `GeneratorProgram` | §4.7 |
+| CP-04 | Composed effect runs end-to-end: `Ask("key").map(str.upper)` resolves correctly through `run()` | §4.7 |
+| CP-05 | Composed KPC runs end-to-end: `my_func(x).map(f)` resolves correctly through `run()` | §4.7 |
+| CP-06 | Chained composition: `effect.map(f).map(g)` composes correctly | §4.7 |
+| CP-07 | `flat_map` rejects non-Program return from binder | §4.7 |
+| CP-08 | `Program.pure(value)` creates a pure program returning that value | §1.4 |
+
+### 11.5 `run()` contract (SPEC-009)
+
+Tests MUST verify:
+
+| ID | Requirement | Spec Section |
+|----|-------------|-------------|
+| RC-01 | `run(prog)` with no handlers → effects raise unhandled error | SPEC-009 §1 |
+| RC-02 | `run(prog, handlers=default_handlers())` installs state+reader+writer | SPEC-009 §1 |
+| RC-03 | `RunResult.result` returns `Ok` or `Err` | SPEC-009 §2 |
+| RC-04 | `isinstance(result.result, Ok)` works for successful runs | SPEC-009 §2 |
+| RC-05 | `isinstance(result.result, Err)` works for failed runs | SPEC-009 §2 |
+| RC-06 | `RunResult.value` extracts the success value | SPEC-009 §2 |
+| RC-07 | `RunResult.raw_store` reflects final state | SPEC-009 §2 |
+| RC-08 | `RunResult.error` returns the exception for failures | SPEC-009 §2 |
+| RC-09 | Import paths: `from doeff import run, async_run, WithHandler, Resume, Delegate, Transfer, K` | SPEC-009 §8 |
+| RC-10 | Import paths: `from doeff.handlers import state, reader, writer, scheduler` | SPEC-009 §8 |
+| RC-11 | Import paths: `from doeff.presets import sync_preset, async_preset` | SPEC-009 §7 |
 
 ---
 
