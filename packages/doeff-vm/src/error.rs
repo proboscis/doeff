@@ -1,15 +1,15 @@
 //! Error types for the VM.
 
-use crate::effect::Effect;
+use crate::effect::DispatchEffect;
 use crate::ids::{ContId, Marker};
 use crate::step::PyException;
 
 #[derive(Debug, Clone)]
 pub enum VMError {
     OneShotViolation { cont_id: ContId },
-    UnhandledEffect { effect: Effect },
-    NoMatchingHandler { effect: Effect },
-    DelegateNoOuterHandler { effect: Effect },
+    UnhandledEffect { effect: DispatchEffect },
+    NoMatchingHandler { effect: DispatchEffect },
+    DelegateNoOuterHandler { effect: DispatchEffect },
     HandlerNotFound { marker: Marker },
     InvalidSegment { message: String },
     PythonError { message: String },
@@ -56,15 +56,15 @@ impl VMError {
         VMError::OneShotViolation { cont_id }
     }
 
-    pub fn unhandled_effect(effect: Effect) -> Self {
+    pub fn unhandled_effect(effect: DispatchEffect) -> Self {
         VMError::UnhandledEffect { effect }
     }
 
-    pub fn no_matching_handler(effect: Effect) -> Self {
+    pub fn no_matching_handler(effect: DispatchEffect) -> Self {
         VMError::NoMatchingHandler { effect }
     }
 
-    pub fn delegate_no_outer_handler(effect: Effect) -> Self {
+    pub fn delegate_no_outer_handler(effect: DispatchEffect) -> Self {
         VMError::DelegateNoOuterHandler { effect }
     }
 
