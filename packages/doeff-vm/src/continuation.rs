@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString};
+use pyo3::types::{PyDict, PyList};
 
 use crate::frame::Frame;
 use crate::handler::Handler;
@@ -146,7 +146,7 @@ impl Continuation {
                         list.append(py_handler.bind(py))?;
                     }
                     Handler::RustProgram(_) => {
-                        list.append(PyString::new(py, "rust_program_handler"))?;
+                        list.append(py.None().into_bound(py))?;
                     }
                 }
             }

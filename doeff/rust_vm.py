@@ -10,25 +10,27 @@ def _vm() -> Any:
     return importlib.import_module("doeff_vm")
 
 
-class _TopLevelDoExpr:
-    def __init__(self, expr: Any):
-        self._expr = expr
-
-    def to_generator(self):
-        value = yield self._expr
-        return value
-
-
-def _normalize_program(program: Any) -> Any:
+def _coerce_program(program: Any) -> Any:
+    vm = _vm()
     to_gen = inspect.getattr_static(program, "to_generator", None)
     if callable(to_gen):
         return program
 
     from doeff.types import EffectBase
 
-    if isinstance(program, EffectBase):
-        return _TopLevelDoExpr(program)
-    raise TypeError("program must be DoExpr (Program/Effect) and expose doeff semantics")
+    do_ctrl_base = getattr(vm, "DoCtrlBase", None)
+    is_do_ctrl = do_ctrl_base is not None and isinstance(program, do_ctrl_base)
+
+    if isinstance(program, EffectBase) or is_do_ctrl:
+        return program
+
+    if inspect.isgeneratorfunction(program):
+        raise TypeError("program must be DoExpr; got function. Did you mean to call it?")
+    if inspect.isgenerator(program):
+        raise TypeError("program must be DoExpr; got raw generator. Did you mean to wrap with @do?")
+    if callable(program):
+        raise TypeError("program must be DoExpr; got callable. Did you mean to call @do function?")
+    raise TypeError(f"program must be DoExpr (Program/Effect/DoCtrl); got {type(program).__name__}")
 
 
 def default_handlers() -> list[Any]:
@@ -53,7 +55,7 @@ def run(
     run_fn = getattr(vm, "run", None)
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose run()")
-    program = _normalize_program(program)
+    program = _coerce_program(program)
     return run_fn(program, handlers=list(handlers), env=env, store=store)
 
 
@@ -67,7 +69,7 @@ async def async_run(
     run_fn = getattr(vm, "async_run", None)
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
-    program = _normalize_program(program)
+    program = _coerce_program(program)
     return await run_fn(program, handlers=list(handlers), env=env, store=store)
 
 

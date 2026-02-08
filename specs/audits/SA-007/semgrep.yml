@@ -1,0 +1,41 @@
+rules:
+  - id: spec-gap-SA-007-G03-no-raw-any-constructors
+    message: "SA-007-G03: DoCtrl constructors should enforce typed boundary, avoid raw PyAny constructor fields"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/pyvm.rs
+    patterns:
+      - pattern-regex: "fn\\s+new\\([^)]*Bound<'_,\\s*PyAny>"
+
+  - id: spec-gap-SA-007-G04-no-dothunk-class
+    message: "SA-007-G04: DoThunk should be removed from public type hierarchy"
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - doeff/program.py
+    patterns:
+      - pattern-regex: "class\\s+DoThunk\\b"
+
+  - id: spec-gap-SA-007-G08-no-concrete-classifier-branches
+    message: "SA-007-G08: classify_yielded should dispatch by DoExpr tag, not concrete class checks"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/pyvm.rs
+    patterns:
+      - pattern-regex: "is_instance_of::<Py(WithHandler|Resume|Delegate|Transfer)>"
+
+  - id: spec-gap-SA-007-G07-no-placeholder-handler-identity
+    message: "SA-007-G07: handler identity placeholders are forbidden"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/value.rs
+        - packages/doeff-vm/src/continuation.rs
+    patterns:
+      - pattern-regex: '"rust_program_handler"'

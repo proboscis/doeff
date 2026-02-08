@@ -8,11 +8,11 @@ Date: `2026-02-08`
 
 | Unit | Task ID | Status |
 |---|---|---|
-| U1 | bg_59c51198 | running |
-| U2 | bg_fd057c72 | running |
-| U3 | bg_534427fc | running |
-| U4 | bg_2be5e21f | running |
-| U5 | bg_3a7ef6b4 | running |
-| U6 | bg_e7825ef2 | running |
-| U7 | bg_7f18ea68 | running |
-| U8 | bg_2fab787b | running |
+| U1 | bg_59c51198 | completed |
+| U2 | bg_fd057c72 | completed |
+| U3 | bg_534427fc | completed |
+| U4 | bg_2be5e21f | completed |
+| U5 | bg_3a7ef6b4 | completed |
+| U6 | bg_e7825ef2 | completed |
+| U7 | bg_7f18ea68 | completed |
+| U8 | bg_2fab787b | completed |

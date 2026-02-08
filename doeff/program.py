@@ -91,8 +91,6 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
         or normalized.startswith("ProgramLike[")
         or normalized == "ProgramBase"
         or normalized.startswith("ProgramBase[")
-        or normalized == "DoThunk"
-        or normalized.startswith("DoThunk[")
         or normalized == "DoExpr"
         or normalized.startswith("DoExpr[")
     )
@@ -252,19 +250,13 @@ class DoExpr(ABC, Generic[T]):
         return super().__class_getitem__(item)
 
 
-class DoThunk(DoExpr[T]):
-    """Programs with to_generator (computation thunks)."""
-
-    pass
-
-
 class DoCtrl(DoExpr[T]):
     """VM control primitives."""
 
     pass
 
 
-class ProgramBase(DoThunk[T]):
+class ProgramBase(DoExpr[T]):
     """Runtime base class for all doeff programs (effects and Kleisli calls)."""
 
     def __class_getitem__(cls, item):
@@ -277,7 +269,7 @@ class ProgramBase(DoThunk[T]):
         if name.startswith("__"):
             raise AttributeError(name)
         if name == "to_generator":
-            # Preserve DoThunk detection semantics: objects without a real
+            # Preserve generator-detection semantics: objects without a real
             # to_generator method must not fabricate one via projection.
             raise AttributeError(name)
 
@@ -534,9 +526,7 @@ def _kpc_flat_map(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]
         value = yield self
         next_prog = f(value)
         if not isinstance(next_prog, (ProgramBase, EffectBase)):
-            raise TypeError(
-                f"binder must return Program/Effect; got {type(next_prog).__name__}"
-            )
+            raise TypeError(f"binder must return Program/Effect; got {type(next_prog).__name__}")
         result = yield next_prog
         return result
 
@@ -563,6 +553,7 @@ if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
     )
 
 Program = ProgramBase
+DoThunk = ProgramBase
 
 __all__ = [
     "DoCtrl",
