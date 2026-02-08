@@ -1,7 +1,7 @@
-# Spec Alignment Status (Rev8 / Rev11)
+# Spec Alignment Status (Rev9 / Rev11)
 
 Scope checked against:
-- `specs/SPEC-TYPES-001-program-effect-separation.md` (Rev8)
+- `specs/SPEC-TYPES-001-program-effect-separation.md` (Rev9)
 - `specs/vm-architecture/SPEC-008-rust-vm.md` (Rev11)
 
 ## Closed
@@ -17,6 +17,7 @@ Scope checked against:
 1. **R11-A (Effect types in Rust as pyclass structs)**
    - Status: **Open**
    - Current runtime effect transport is opaque Python object, but effect classes still primarily come from Python side modules.
+   - Scope expanded [Rev 9]: `KleisliProgramCall` (`PyKPC`) is now included as a `#[pyclass(frozen, extends=PyEffectBase)]` struct. Auto-unwrap strategy moves from KPC to KPC handler (handler computes from `kleisli_source` annotations at dispatch time).
 
 2. **R11-C (classify_yielded strictness)**
    - Status: **Partial**
@@ -33,6 +34,12 @@ Scope checked against:
    - `DispatchContext.effect`, `Delegate.effect`, `PendingPython` effect payloads are opaque dispatch payloads.
    - Remaining helper conversion scaffolding exists for test compatibility.
 
+7. **Typed test-only effect fixtures (`Effect::{Get,Put,Ask,Tell,Modify}`)**
+   - Status: **Intentional test scaffolding**
+   - Runtime (`cfg(not(test))`) uses opaque transport only.
+   - Test-only variants are retained to keep focused unit tests deterministic
+     without requiring Python object construction in every white-box test.
+
 5. **Module-level runtime API contract (`doeff_vm`)**
    - Status: **Open (packaging/runtime validation still needed)**
    - Source exports may not always match installed artifact behavior; deterministic install-time checks still missing.
@@ -41,3 +48,4 @@ Scope checked against:
    - Status: **Partial**
    - Significant progress on KPC effect-path semantics and map/flat_map behavior.
    - Full type-hierarchy consolidation and annotation strategy cleanup remains.
+   - [Rev 9]: KPC promoted to Rust pyclass. `_AutoUnwrapStrategy` to be removed from KPC and moved into KPC handler implementation.
