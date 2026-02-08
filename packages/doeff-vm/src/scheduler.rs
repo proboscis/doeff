@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
+use crate::effect::{DispatchEffect, dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python};
+#[cfg(test)]
 use crate::effect::Effect;
 use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
@@ -577,16 +579,16 @@ impl SchedulerProgram {
 impl RustHandlerProgram for SchedulerProgram {
     fn start(
         &mut self,
-        effect: Effect,
+        effect: DispatchEffect,
         k_user: Continuation,
         store: &mut RustStore,
     ) -> RustProgramStep {
-        let sched_effect = if let Some(obj) = effect.clone().into_python() {
+        let sched_effect = if let Some(obj) = dispatch_into_python(effect.clone()) {
             match parse_scheduler_python_effect(&obj) {
                 Ok(Some(se)) => se,
                 Ok(None) => {
                     return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                        effect: Effect::from_shared(obj),
+                        effect: dispatch_from_shared(obj),
                     }))
                 }
                 Err(msg) => {
@@ -785,9 +787,8 @@ impl SchedulerHandler {
 }
 
 impl RustProgramHandler for SchedulerHandler {
-    fn can_handle(&self, effect: &Effect) -> bool {
-        effect
-            .as_python()
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        dispatch_ref_as_python(effect)
             .is_some_and(|obj| parse_scheduler_python_effect(obj).ok().flatten().is_some())
     }
 

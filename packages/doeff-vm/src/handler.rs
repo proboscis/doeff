@@ -5,7 +5,12 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
-use crate::effect::{Effect, KpcArg, KpcCallEffect};
+use crate::effect::{
+    DispatchEffect, KpcArg, KpcCallEffect, dispatch_from_shared, dispatch_into_python,
+    dispatch_ref_as_python,
+};
+#[cfg(test)]
+use crate::effect::Effect;
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
 use crate::py_shared::PyShared;
@@ -35,14 +40,19 @@ pub enum RustProgramStep {
 /// A Rust handler program instance (generator-like).
 /// start/resume/throw mirror Python generator protocol but run in Rust.
 pub trait RustHandlerProgram: std::fmt::Debug + Send {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
+    fn start(
+        &mut self,
+        effect: DispatchEffect,
+        k: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
 }
 
 /// Factory for Rust handler programs. Each dispatch creates a fresh instance.
 pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
-    fn can_handle(&self, effect: &Effect) -> bool;
+    fn can_handle(&self, effect: &DispatchEffect) -> bool;
     fn create_program(&self) -> RustProgramRef;
 }
 
@@ -82,7 +92,7 @@ impl HandlerEntry {
 }
 
 impl Handler {
-    pub fn can_handle(&self, effect: &Effect) -> bool {
+    pub fn can_handle(&self, effect: &DispatchEffect) -> bool {
         match self {
             Handler::RustProgram(h) => h.can_handle(effect),
             Handler::Python(_) => true,
@@ -327,9 +337,8 @@ fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
 pub struct KpcHandlerFactory;
 
 impl RustProgramHandler for KpcHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
-        effect
-            .as_python()
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        dispatch_ref_as_python(effect)
             .is_some_and(|obj| parse_kpc_python_effect(obj).ok().flatten().is_some())
     }
 
@@ -466,18 +475,18 @@ impl KpcHandlerProgram {
 impl RustHandlerProgram for KpcHandlerProgram {
     fn start(
         &mut self,
-        effect: Effect,
+        effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
     ) -> RustProgramStep {
-        if let Some(obj) = effect.clone().into_python() {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_kpc_python_effect(&obj) {
                 Ok(Some(kpc)) => {
                     self.phase = KpcPhase::AwaitHandlers { k_user: k, kpc };
                     RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
                 }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::python(obj.into_inner()),
+                    effect: dispatch_from_shared(obj),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse KleisliProgramCall effect: {msg}"
@@ -538,14 +547,13 @@ impl RustHandlerProgram for KpcHandlerProgram {
 pub struct StateHandlerFactory;
 
 impl RustProgramHandler for StateHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
         if matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }) {
             return true;
         }
 
-        effect
-            .as_python()
+        dispatch_ref_as_python(effect)
             .is_some_and(|obj| parse_state_python_effect(obj).ok().flatten().is_some())
     }
 
@@ -577,7 +585,12 @@ impl StateHandlerProgram {
 }
 
 impl RustHandlerProgram for StateHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
+    fn start(
+        &mut self,
+        effect: DispatchEffect,
+        k: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Get { key } = effect.clone() {
             let value = store.get(&key).cloned().unwrap_or(Value::None);
@@ -609,7 +622,7 @@ impl RustHandlerProgram for StateHandlerProgram {
             });
         }
 
-        if let Some(obj) = effect.clone().into_python() {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_state_python_effect(&obj) {
                 Ok(Some(parsed)) => match parsed {
                     ParsedStateEffect::Get { key } => {
@@ -639,7 +652,7 @@ impl RustHandlerProgram for StateHandlerProgram {
                     }
                 },
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::python(obj.into_inner()),
+                    effect: dispatch_from_shared(obj),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse state effect: {msg}"
@@ -686,14 +699,13 @@ impl RustHandlerProgram for StateHandlerProgram {
 pub struct ReaderHandlerFactory;
 
 impl RustProgramHandler for ReaderHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
         if matches!(effect, Effect::Ask { .. }) {
             return true;
         }
 
-        effect
-            .as_python()
+        dispatch_ref_as_python(effect)
             .is_some_and(|obj| parse_reader_python_effect(obj).ok().flatten().is_some())
     }
 
@@ -706,7 +718,12 @@ impl RustProgramHandler for ReaderHandlerFactory {
 struct ReaderHandlerProgram;
 
 impl RustHandlerProgram for ReaderHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
+    fn start(
+        &mut self,
+        effect: DispatchEffect,
+        k: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
             let value = store.ask(&key).cloned().unwrap_or(Value::None);
@@ -716,7 +733,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
             }));
         }
 
-        if let Some(obj) = effect.clone().into_python() {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
                 Ok(Some(key)) => {
                     let value = store.ask(&key).cloned().unwrap_or(Value::None);
@@ -726,7 +743,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     }))
                 }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::python(obj.into_inner()),
+                    effect: dispatch_from_shared(obj),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse reader effect: {msg}"
@@ -761,14 +778,13 @@ impl RustHandlerProgram for ReaderHandlerProgram {
 pub struct WriterHandlerFactory;
 
 impl RustProgramHandler for WriterHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
         if matches!(effect, Effect::Tell { .. }) {
             return true;
         }
 
-        effect
-            .as_python()
+        dispatch_ref_as_python(effect)
             .is_some_and(|obj| parse_writer_python_effect(obj).ok().flatten().is_some())
     }
 
@@ -781,7 +797,12 @@ impl RustProgramHandler for WriterHandlerFactory {
 struct WriterHandlerProgram;
 
 impl RustHandlerProgram for WriterHandlerProgram {
-    fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep {
+    fn start(
+        &mut self,
+        effect: DispatchEffect,
+        k: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Tell { message } = effect.clone() {
             store.tell(message);
@@ -791,7 +812,7 @@ impl RustHandlerProgram for WriterHandlerProgram {
             }));
         }
 
-        if let Some(obj) = effect.clone().into_python() {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_writer_python_effect(&obj) {
                 Ok(Some(message)) => {
                     store.tell(message);
@@ -801,7 +822,7 @@ impl RustHandlerProgram for WriterHandlerProgram {
                     }))
                 }
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                    effect: Effect::python(obj.into_inner()),
+                    effect: dispatch_from_shared(obj),
                 })),
                 Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
                     "failed to parse writer effect: {msg}"
@@ -843,7 +864,7 @@ pub(crate) struct DoubleCallHandlerFactory;
 
 #[cfg(test)]
 impl RustProgramHandler for DoubleCallHandlerFactory {
-    fn can_handle(&self, effect: &Effect) -> bool {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
         matches!(effect, Effect::Modify { .. })
     }
 
@@ -885,7 +906,7 @@ impl std::fmt::Debug for DoubleCallHandlerProgram {
 impl RustHandlerProgram for DoubleCallHandlerProgram {
     fn start(
         &mut self,
-        effect: Effect,
+        effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
     ) -> RustProgramStep {
