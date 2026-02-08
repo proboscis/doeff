@@ -759,7 +759,11 @@ impl RustHandlerProgram for SchedulerProgram {
                                 store: snapshot,
                                 merge,
                             },
-                            None => TaskStore::Shared, // fallback
+                            None => {
+                                return RustProgramStep::Throw(PyException::runtime_error(
+                                    "isolated spawn missing store snapshot".to_string(),
+                                ))
+                            }
                         }
                     }
                 };

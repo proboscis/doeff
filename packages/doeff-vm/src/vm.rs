@@ -251,6 +251,7 @@ impl VM {
             .as_ref()
             .map(|p| match p {
                 PendingPython::StartProgramFrame { .. } => "StartProgramFrame",
+                PendingPython::CallFuncReturn => "CallFuncReturn",
                 PendingPython::StepUserGenerator { .. } => "StepUserGenerator",
                 PendingPython::CallPythonHandler { .. } => "CallPythonHandler",
                 PendingPython::RustProgramContinuation { .. } => "RustProgramContinuation",
@@ -336,11 +337,10 @@ impl VM {
 
             if !segment.has_frames() {
                 let caller = segment.caller;
-                // Take mode by move — eliminates Py<PyAny> clones (D1 Phase 1).
                 let mode = std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit));
                 match mode {
                     Mode::Deliver(value) => {
-                        self.segments.free(seg_id);
+                        // Don't free here — step_return reads the segment's caller.
                         self.mode = Mode::Return(value);
                         return StepEvent::Continue;
                     }
@@ -390,14 +390,14 @@ impl VM {
             }
 
             Frame::RustProgram { program } => {
-                let step = {
+                let step = Python::attach(|_py| {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
                     match mode {
                         Mode::Deliver(value) => guard.resume(value, &mut self.rust_store),
                         Mode::Throw(exc) => guard.throw(exc, &mut self.rust_store),
                         _ => unreachable!(),
                     }
-                };
+                });
                 self.apply_rust_program_step(step, program)
             }
 
@@ -438,9 +438,20 @@ impl VM {
         use crate::handler::RustProgramStep;
         match step {
             RustProgramStep::Yield(yielded) => {
-                // Re-push the RustProgram frame (like re-pushing a Python generator on yield)
-                if let Some(seg) = self.current_segment_mut() {
-                    seg.push_frame(Frame::RustProgram { program });
+                // Terminal DoCtrl variants (Resume, Transfer, Delegate) transfer control
+                // elsewhere — the handler is done and no value flows back. Do NOT re-push
+                // the RustProgram frame for these. Non-terminal variants (Eval, GetHandlers,
+                // GetCallStack) expect a result to be delivered back to this handler.
+                let is_terminal = matches!(
+                    &yielded,
+                    Yielded::DoCtrl(DoCtrl::Resume { .. })
+                        | Yielded::DoCtrl(DoCtrl::Transfer { .. })
+                        | Yielded::DoCtrl(DoCtrl::Delegate { .. })
+                );
+                if !is_terminal {
+                    if let Some(seg) = self.current_segment_mut() {
+                        seg.push_frame(Frame::RustProgram { program });
+                    }
                 }
                 self.mode = Mode::HandleYield(yielded);
                 StepEvent::Continue
@@ -533,13 +544,13 @@ impl VM {
                         })
                     }
                     DoCtrl::Call { f, args, kwargs, metadata } => {
-                        self.pending_python = Some(PendingPython::StartProgramFrame {
-                            metadata: Some(metadata),
-                        });
                         if args.is_empty() && kwargs.is_empty() {
-                            // DoThunk path: f is a DoThunk, driver calls to_generator()
+                            self.pending_python = Some(PendingPython::StartProgramFrame {
+                                metadata: Some(metadata),
+                            });
                             StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
                         } else {
+                            self.pending_python = Some(PendingPython::CallFuncReturn);
                             StepEvent::NeedsPython(PythonCall::CallFunc {
                                 func: f,
                                 args,
@@ -585,7 +596,6 @@ impl VM {
     }
 
     fn step_return(&mut self) -> StepEvent {
-        // Take mode by move — eliminates Value clone containing Py<PyAny> (D1 Phase 1).
         let value = match std::mem::replace(&mut self.mode, Mode::Deliver(Value::Unit)) {
             Mode::Return(v) => v,
             other => {
@@ -648,6 +658,14 @@ impl VM {
             }
 
             (PendingPython::StartProgramFrame { .. }, PyCallOutcome::GenError(e)) => {
+                self.mode = Mode::Throw(e);
+            }
+
+            (PendingPython::CallFuncReturn, PyCallOutcome::Value(value)) => {
+                self.mode = Mode::Deliver(value);
+            }
+
+            (PendingPython::CallFuncReturn, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
             }
 
@@ -1132,18 +1150,13 @@ impl VM {
             ));
         };
         let chain = top.handler_chain.clone();
-        let handlers: Vec<Handler> = chain
-            .iter()
-            .filter_map(|marker| {
-                self.handlers.get(marker).map(|entry| {
-                    if let Some(ref identity) = entry.py_identity {
-                        Handler::Python(identity.clone())
-                    } else {
-                        entry.handler.clone()
-                    }
-                })
-            })
-            .collect();
+        let mut handlers: Vec<Handler> = Vec::with_capacity(chain.len());
+        for marker in &chain {
+            let Some(entry) = self.handlers.get(marker) else {
+                continue;
+            };
+            handlers.push(entry.handler.clone());
+        }
         self.mode = Mode::Deliver(Value::Handlers(handlers));
         StepEvent::Continue
     }
@@ -1187,7 +1200,8 @@ impl VM {
         let mut outside_seg_id = self.current_segment;
         let mut outside_scope = self.current_scope_chain();
 
-        for idx in (0..k.handlers.len()).rev() {
+        let k_handler_count = k.handlers.len();
+        for idx in (0..k_handler_count).rev() {
             let handler = &k.handlers[idx];
             let py_identity = k.handler_identities.get(idx).cloned().unwrap_or(None);
             let handler_marker = Marker::fresh();

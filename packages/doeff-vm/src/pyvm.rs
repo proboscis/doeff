@@ -46,8 +46,6 @@ pub struct PyEffectBase;
 #[pyclass(subclass, frozen, name = "DoCtrlBase")]
 pub struct PyDoCtrlBase;
 
-#[pyclass(subclass, frozen, name = "DoThunkBase")]
-pub struct PyDoThunkBase;
 
 #[pyclass]
 pub struct PyStdlib {
@@ -427,8 +425,10 @@ impl PyVM {
         match call {
             PythonCall::StartProgram { program } => {
                 // D5: Strict only — no callable fallback. Spec requires ProgramBase.
-                let gen = self.to_generator_strict(py, program.clone_ref(py))?;
-                Ok(PyCallOutcome::Value(Value::Python(gen)))
+                match self.to_generator_strict(py, program.clone_ref(py)) {
+                    Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+                    Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                }
             }
             PythonCall::CallFunc { func, args, kwargs } => {
                 let py_args = self.values_to_tuple(py, &args)?;
@@ -456,10 +456,10 @@ impl PyVM {
                 let py_effect = dispatch_to_pyobject(py, &effect)?;
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => {
-                        let gen = self.to_generator_strict(py, result.unbind())?;
-                        Ok(PyCallOutcome::Value(Value::Python(gen)))
-                    }
+                    Ok(result) => match self.to_generator_strict(py, result.unbind()) {
+                        Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                    },
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -488,9 +488,9 @@ impl PyVM {
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
-            PythonCall::CallAsync { .. } => Err(pyo3::exceptions::PyTypeError::new_err(
+            PythonCall::CallAsync { .. } => Ok(PyCallOutcome::GenError(PyException::type_error(
                 "CallAsync requires async_run (PythonAsyncSyntaxEscape not supported in sync mode)",
-            )),
+            ))),
         }
     }
 
@@ -503,18 +503,38 @@ impl PyVM {
         }
     }
 
+    /// R12-B: Accept raw generators (send+throw) or ProgramBase (to_generator).
     fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let program_bound = program.bind(py);
-        let to_generator_method = program_bound.get_type().getattr("to_generator").ok();
 
+        let to_generator_method = program_bound.get_type().getattr("to_generator").ok();
         if let Some(to_gen) = to_generator_method {
             let gen = to_gen.call1((program_bound,))?;
             return Ok(gen.unbind());
         }
 
+        let has_send = program_bound.hasattr("send").unwrap_or(false);
+        let has_throw = program_bound.hasattr("throw").unwrap_or(false);
+        if has_send && has_throw {
+            return Ok(program);
+        }
+
+        if program_bound.is_instance_of::<PyEffectBase>() {
+            return self.wrap_effect_as_generator(py, program);
+        }
+
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "Expected ProgramBase (to_generator).",
+            "Expected generator (send/throw) or ProgramBase (to_generator).",
         ))
+    }
+
+    fn wrap_effect_as_generator(&self, py: Python<'_>, effect: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        use pyo3::types::PyModule;
+        let code = c"def _wrap(e):\n    v = yield e\n    return v\n";
+        let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
+        let wrap_fn = module.getattr("_wrap")?;
+        let gen = wrap_fn.call1((effect.bind(py),))?;
+        Ok(gen.unbind())
     }
 
     fn step_generator(
@@ -664,19 +684,6 @@ impl PyVM {
             ))));
         }
 
-        // R11-C: Program detection via isinstance (DoThunkBase = has to_generator)
-        if obj.is_instance_of::<PyDoThunkBase>() {
-            let metadata = Self::extract_call_metadata(_py, obj)
-                .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
-                .unwrap_or_else(CallMetadata::anonymous);
-            return Ok(Yielded::DoCtrl(DoCtrl::Call {
-                f: PyShared::new(obj.clone().unbind()),
-                args: vec![],
-                kwargs: vec![],
-                metadata,
-            }));
-        }
-
         Ok(Yielded::Unknown(obj.clone().unbind()))
     }
 
@@ -691,44 +698,6 @@ impl PyVM {
             .map(|v| v.to_pyobject(py))
             .collect::<PyResult<_>>()?;
         Ok(PyTuple::new(py, py_values)?)
-    }
-
-    fn extract_call_metadata_fallback(
-        _py: Python<'_>,
-        obj: &Bound<'_, PyAny>,
-    ) -> Option<CallMetadata> {
-        let function_name = obj
-            .getattr("function_name")
-            .ok()?
-            .extract::<String>()
-            .ok()?;
-        let source_file = obj.getattr("source_file").ok()?.extract::<String>().ok()?;
-        let source_line = obj.getattr("source_line").ok()?.extract::<u32>().ok()?;
-        Some(CallMetadata {
-            function_name,
-            source_file,
-            source_line,
-            program_call: Some(PyShared::new(obj.clone().unbind())),
-        })
-    }
-
-    fn extract_call_metadata(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallMetadata> {
-        let function_name = obj
-            .getattr("function_name")
-            .ok()?
-            .extract::<String>()
-            .ok()?;
-        let kleisli = obj.getattr("kleisli_source").ok()?;
-        let func = kleisli.getattr("original_func").ok()?;
-        let code = func.getattr("__code__").ok()?;
-        let source_file = code.getattr("co_filename").ok()?.extract::<String>().ok()?;
-        let source_line = code.getattr("co_firstlineno").ok()?.extract::<u32>().ok()?;
-        Some(CallMetadata {
-            function_name,
-            source_file,
-            source_line,
-            program_call: Some(PyShared::new(obj.clone().unbind())),
-        })
     }
 }
 
@@ -1535,7 +1504,7 @@ mod tests {
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
                 matches!(yielded, Yielded::Unknown(_)),
-                "R11-C: plain Python to_generator without DoThunkBase should be Unknown, got {:?}",
+                "R12-A: plain Python to_generator classifies as Unknown (DoThunkBase removed), got {:?}",
                 yielded
             );
         });
@@ -1558,7 +1527,7 @@ mod tests {
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
                 matches!(yielded, Yielded::Unknown(_)),
-                "R11-C: raw generators without DoThunkBase should be Unknown, got {:?}",
+                "R12-A: raw generators classify as Unknown (no VM base class), got {:?}",
                 yielded
             );
         });
@@ -1786,7 +1755,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
     m.add_class::<PyEffectBase>()?;
     m.add_class::<PyDoCtrlBase>()?;
-    m.add_class::<PyDoThunkBase>()?;
+    // PyDoThunkBase removed [R12-A]: DoThunk is a Python-side concept, not a VM concept.
     m.add_class::<PyStdlib>()?;
     m.add_class::<PySchedulerHandler>()?;
     m.add_class::<PyRunResult>()?;
