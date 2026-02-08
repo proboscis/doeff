@@ -13,6 +13,7 @@ use crate::effect::{
 use crate::effect::Effect;
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
+use crate::pyvm::{PyDoCtrlBase, PyEffectBase};
 use crate::py_shared::PyShared;
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
@@ -373,21 +374,10 @@ fn extract_kpc_arg(obj: &Bound<'_, PyAny>, should_unwrap: bool) -> Result<KpcArg
 }
 
 fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
-    if obj.hasattr("to_generator").map_err(|e| e.to_string())? {
-        return Ok(true);
-    }
-    #[cfg(not(test))]
-    if obj.is_instance_of::<PyKPC>() {
-        return Ok(true);
-    }
-    if has_true_attr(obj, "__doeff_effect_base__") {
-        return Ok(true);
-    }
     Ok(
-        (obj.getattr ("handler").is_ok() && obj.getattr ("inner").is_ok())
-            || (obj.getattr ("effect").is_ok() && obj.getattr ("continuation").is_err())
-            || (obj.getattr ("program").is_ok() && obj.getattr ("handlers").is_ok())
-            || (obj.getattr ("continuation").is_ok() && obj.getattr ("value").is_ok()),
+        obj.is_instance_of::<PyEffectBase>()
+            || obj.is_instance_of::<PyDoCtrlBase>()
+            || obj.is_instance_of::<PyKPC>(),
     )
 }
 

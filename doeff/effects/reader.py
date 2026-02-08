@@ -1,10 +1,12 @@
-"""Reader monad effects."""
+"""Reader monad effects (Rust-backed core ask effect)."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+
+import doeff_vm
 
 from doeff.types import EnvKey
 
@@ -13,16 +15,7 @@ from ._validators import ensure_env_mapping, ensure_hashable, ensure_program_lik
 from .base import Effect, EffectBase, create_effect_with_trace
 
 
-@dataclass(frozen=True)
-class AskEffect(EffectBase):
-    """Looks up the environment entry for key and yields the resolved value."""
-
-    __doeff_reader_ask__ = True
-
-    key: EnvKey
-
-    def __post_init__(self) -> None:
-        ensure_hashable(self.key, name="key")
+AskEffect = doeff_vm.PyAsk
 
 
 @dataclass(frozen=True)
@@ -38,7 +31,8 @@ class LocalEffect(EffectBase):
 
 
 def ask(key: EnvKey) -> AskEffect:
-    return create_effect_with_trace(AskEffect(key=key))
+    ensure_hashable(key, name="key")
+    return create_effect_with_trace(AskEffect(str(key)))
 
 
 def local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> LocalEffect:
@@ -46,7 +40,8 @@ def local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> LocalEf
 
 
 def Ask(key: EnvKey) -> Effect:
-    return create_effect_with_trace(AskEffect(key=key), skip_frames=3)
+    ensure_hashable(key, name="key")
+    return create_effect_with_trace(AskEffect(str(key)), skip_frames=3)
 
 
 def Local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> Effect:

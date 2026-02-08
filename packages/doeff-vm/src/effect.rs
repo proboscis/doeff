@@ -14,19 +14,38 @@ use crate::value::Value;
 // ---------------------------------------------------------------------------
 
 #[pyclass(frozen, name = "PyGet", extends=PyEffectBase)]
-pub struct PyGet;
+pub struct PyGet {
+    #[pyo3(get)]
+    pub key: String,
+}
 
 #[pyclass(frozen, name = "PyPut", extends=PyEffectBase)]
-pub struct PyPut;
+pub struct PyPut {
+    #[pyo3(get)]
+    pub key: String,
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
 
 #[pyclass(frozen, name = "PyModify", extends=PyEffectBase)]
-pub struct PyModify;
+pub struct PyModify {
+    #[pyo3(get)]
+    pub key: String,
+    #[pyo3(get)]
+    pub func: Py<PyAny>,
+}
 
 #[pyclass(frozen, name = "PyAsk", extends=PyEffectBase)]
-pub struct PyAsk;
+pub struct PyAsk {
+    #[pyo3(get)]
+    pub key: String,
+}
 
 #[pyclass(frozen, name = "PyTell", extends=PyEffectBase)]
-pub struct PyTell;
+pub struct PyTell {
+    #[pyo3(get)]
+    pub message: Py<PyAny>,
+}
 
 #[pyclass(frozen, name = "PyKPC", extends=PyEffectBase)]
 pub struct PyKPC {
@@ -47,40 +66,40 @@ pub struct PyKPC {
 #[pymethods]
 impl PyGet {
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyGet, PyEffectBase)
+    fn new(key: String) -> (Self, PyEffectBase) {
+        (PyGet { key }, PyEffectBase)
     }
 }
 
 #[pymethods]
 impl PyPut {
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyPut, PyEffectBase)
+    fn new(key: String, value: Py<PyAny>) -> (Self, PyEffectBase) {
+        (PyPut { key, value }, PyEffectBase)
     }
 }
 
 #[pymethods]
 impl PyModify {
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyModify, PyEffectBase)
+    fn new(key: String, func: Py<PyAny>) -> (Self, PyEffectBase) {
+        (PyModify { key, func }, PyEffectBase)
     }
 }
 
 #[pymethods]
 impl PyAsk {
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyAsk, PyEffectBase)
+    fn new(key: String) -> (Self, PyEffectBase) {
+        (PyAsk { key }, PyEffectBase)
     }
 }
 
 #[pymethods]
 impl PyTell {
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyTell, PyEffectBase)
+    fn new(message: Py<PyAny>) -> (Self, PyEffectBase) {
+        (PyTell { message }, PyEffectBase)
     }
 }
 
