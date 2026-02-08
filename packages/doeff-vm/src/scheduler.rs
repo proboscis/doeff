@@ -136,23 +136,28 @@ pub struct SchedulerState {
     pub current_task: Option<TaskId>,
 }
 
-fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
-    obj.getattr(attr)
-        .and_then(|v| v.extract::<bool>())
-        .unwrap_or(false)
+fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> bool {
+    let py = obj.py();
+    let Ok(mod_) = py.import(module) else {
+        return false;
+    };
+    let Ok(cls) = mod_.getattr(class_name) else {
+        return false;
+    };
+    obj.is_instance(&cls).unwrap_or(false)
 }
 
 fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
-        if has_true_attr(obj, "__doeff_scheduler_spawn__") {
-                let program = obj.getattr("program").map_err(|e| e.to_string())?.unbind();
-                let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
+        if is_instance_from(obj, "doeff.effects.spawn", "SpawnEffect") {
+                let program = obj.getattr ("program").map_err(|e| e.to_string())?.unbind();
+                let handlers = if let Ok(handlers_obj) = obj.getattr ("handlers") {
                     extract_handlers_from_python(&handlers_obj)?
                 } else {
                     vec![]
                 };
-                let store_mode = if let Ok(mode_obj) = obj.getattr("store_mode") {
+                let store_mode = if let Ok(mode_obj) = obj.getattr ("store_mode") {
                     parse_store_mode(&mode_obj)?
                 } else {
                     StoreMode::Shared
@@ -162,8 +167,8 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     handlers,
                     store_mode,
                 }))
-        } else if has_true_attr(obj, "__doeff_scheduler_gather__") {
-                let items_obj = obj.getattr("items").map_err(|e| e.to_string())?;
+        } else if is_instance_from(obj, "doeff.effects.gather", "GatherEffect") {
+                let items_obj = obj.getattr ("items").map_err(|e| e.to_string())?;
                 let mut waitables = Vec::new();
                 for item in items_obj.try_iter().map_err(|e| e.to_string())? {
                     let item = item.map_err(|e| e.to_string())?;
@@ -175,10 +180,10 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     }
                 }
                 Ok(Some(SchedulerEffect::Gather { items: waitables }))
-        } else if has_true_attr(obj, "__doeff_scheduler_race__") {
+        } else if is_instance_from(obj, "doeff.effects.race", "RaceEffect") {
                 let items_obj = obj
-                    .getattr("futures")
-                    .or_else(|_| obj.getattr("items"))
+                    .getattr ("futures")
+                    .or_else(|_| obj.getattr ("items"))
                     .map_err(|e| e.to_string())?;
                 let mut waitables = Vec::new();
                 for item in items_obj.try_iter().map_err(|e| e.to_string())? {
@@ -191,37 +196,41 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     }
                 }
                 Ok(Some(SchedulerEffect::Race { items: waitables }))
-        } else if has_true_attr(obj, "__doeff_scheduler_create_promise__") {
+        } else if is_instance_from(obj, "doeff.effects.promise", "CreatePromiseEffect") {
             Ok(Some(SchedulerEffect::CreatePromise))
-        } else if has_true_attr(obj, "__doeff_scheduler_create_external_promise__") {
+        } else if is_instance_from(
+            obj,
+            "doeff.effects.external_promise",
+            "CreateExternalPromiseEffect",
+        ) {
             Ok(Some(SchedulerEffect::CreateExternalPromise))
-        } else if has_true_attr(obj, "__doeff_scheduler_complete_promise__") {
-                let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
+        } else if is_instance_from(obj, "doeff.effects.promise", "CompletePromiseEffect") {
+                let promise_obj = obj.getattr ("promise").map_err(|e| e.to_string())?;
                 let Some(promise) = extract_promise_id(&promise_obj) else {
                     return Err(
                         "CompletePromiseEffect.promise must carry _promise_handle.promise_id"
                             .to_string(),
                     );
                 };
-                let value = obj.getattr("value").map_err(|e| e.to_string())?;
+                let value = obj.getattr ("value").map_err(|e| e.to_string())?;
                 Ok(Some(SchedulerEffect::CompletePromise {
                     promise,
                     value: Value::from_pyobject(&value),
                 }))
-        } else if has_true_attr(obj, "__doeff_scheduler_fail_promise__") {
-                let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
+        } else if is_instance_from(obj, "doeff.effects.promise", "FailPromiseEffect") {
+                let promise_obj = obj.getattr ("promise").map_err(|e| e.to_string())?;
                 let Some(promise) = extract_promise_id(&promise_obj) else {
                     return Err(
                         "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
                     );
                 };
-                let error_obj = obj.getattr("error").map_err(|e| e.to_string())?;
+                let error_obj = obj.getattr ("error").map_err(|e| e.to_string())?;
                 let error = pyobject_to_exception(py, &error_obj);
                 Ok(Some(SchedulerEffect::FailPromise { promise, error }))
-        } else if has_true_attr(obj, "__doeff_scheduler_task_completed__") {
-                let task = if let Ok(task_obj) = obj.getattr("task") {
+        } else if is_instance_from(obj, "doeff.effects.scheduler_internal", "_SchedulerTaskCompleted") {
+                let task = if let Ok(task_obj) = obj.getattr ("task") {
                     extract_task_id(&task_obj)
-                } else if let Ok(raw) = obj.getattr("task_id").and_then(|v| v.extract::<u64>()) {
+                } else if let Ok(raw) = obj.getattr ("task_id").and_then(|v| v.extract::<u64>()) {
                     Some(TaskId::from_raw(raw))
                 } else {
                     None
@@ -231,14 +240,14 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                         .to_string()
                 })?;
 
-                if let Ok(error_obj) = obj.getattr("error") {
+                if let Ok(error_obj) = obj.getattr ("error") {
                     let error = pyobject_to_exception(py, &error_obj);
                     return Ok(Some(SchedulerEffect::TaskCompleted {
                         task,
                         result: Err(error),
                     }));
                 }
-                if let Ok(result_obj) = obj.getattr("result") {
+                if let Ok(result_obj) = obj.getattr ("result") {
                     return Ok(Some(SchedulerEffect::TaskCompleted {
                         task,
                         result: Ok(Value::from_pyobject(&result_obj)),
@@ -255,7 +264,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
 }
 
 fn extract_waitable(obj: &Bound<'_, PyAny>) -> Option<Waitable> {
-    let handle = obj.getattr("_handle").ok()?;
+    let handle = obj.getattr ("_handle").ok()?;
     let type_val = handle.get_item("type").ok()?;
     let type_str: String = type_val.extract().ok()?;
     match type_str.as_str() {
@@ -276,16 +285,16 @@ fn extract_waitable(obj: &Bound<'_, PyAny>) -> Option<Waitable> {
 }
 
 fn extract_promise_id(obj: &Bound<'_, PyAny>) -> Option<PromiseId> {
-    let handle = obj.getattr("_promise_handle").ok()?;
+    let handle = obj.getattr ("_promise_handle").ok()?;
     let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
     Some(PromiseId::from_raw(raw))
 }
 
 fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
-    if let Ok(raw) = obj.getattr("task_id").and_then(|v| v.extract::<u64>()) {
+    if let Ok(raw) = obj.getattr ("task_id").and_then(|v| v.extract::<u64>()) {
         return Some(TaskId::from_raw(raw));
     }
-    if let Ok(handle) = obj.getattr("_handle") {
+    if let Ok(handle) = obj.getattr ("_handle") {
         if let Ok(raw) = handle.get_item("task_id").and_then(|v| v.extract::<u64>()) {
             return Some(TaskId::from_raw(raw));
         }

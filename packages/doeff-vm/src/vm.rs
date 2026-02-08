@@ -238,7 +238,6 @@ impl VM {
                     DoCtrl::Eval { .. } => "HandleYield(Eval)",
                     DoCtrl::GetCallStack => "HandleYield(GetCallStack)",
                 },
-                Yielded::Unknown(_) => "HandleYield(Unknown)",
             },
             Mode::Return(_) => "Return",
         };
@@ -514,12 +513,8 @@ impl VM {
                         self.mode = Mode::Deliver(value);
                         StepEvent::Continue
                     }
-                    DoCtrl::Map { .. } | DoCtrl::FlatMap { .. } => {
-                        self.mode = Mode::Throw(PyException::runtime_error(
-                            "Map/FlatMap DoCtrl runtime evaluation is not implemented yet",
-                        ));
-                        StepEvent::Continue
-                    }
+                    DoCtrl::Map { source, mapper } => self.handle_map(source, mapper),
+                    DoCtrl::FlatMap { source, binder } => self.handle_flat_map(source, binder),
                     DoCtrl::Resume {
                         continuation,
                         value,
@@ -597,13 +592,6 @@ impl VM {
                         StepEvent::Continue
                     }
                 }
-            }
-
-            Yielded::Unknown(_) => {
-                self.mode = Mode::Throw(PyException::type_error(
-                    "unknown yielded value: expected Effect or DoCtrl",
-                ));
-                StepEvent::Continue
             }
         }
     }
@@ -1141,6 +1129,78 @@ impl VM {
         // D10: Spec says Mode::Deliver, not Mode::Return + explicit segment jump.
         // Natural caller-chain walking handles segment transitions.
         self.mode = Mode::Deliver(value);
+        StepEvent::Continue
+    }
+
+    fn current_visible_handlers(&self) -> Vec<Handler> {
+        let scope_chain = self.current_scope_chain();
+        let visible = self.visible_handlers(&scope_chain);
+        let mut handlers = Vec::with_capacity(visible.len());
+        for marker in visible {
+            if let Some(entry) = self.handlers.get(&marker) {
+                handlers.push(entry.handler.clone());
+            }
+        }
+        handlers
+    }
+
+    fn handle_map(&mut self, source: PyShared, mapper: PyShared) -> StepEvent {
+        let handlers = self.current_visible_handlers();
+        let map_cb = self.register_callback(Box::new(move |value, _vm| {
+            Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+                f: mapper,
+                args: vec![value],
+                kwargs: vec![],
+                metadata: crate::frame::CallMetadata::anonymous(),
+            }))
+        }));
+
+        let Some(seg) = self.current_segment_mut() else {
+            return StepEvent::Error(VMError::internal("Map outside current segment"));
+        };
+        seg.push_frame(Frame::RustReturn { cb: map_cb });
+        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+            expr: source,
+            handlers,
+        }));
+        StepEvent::Continue
+    }
+
+    fn handle_flat_map(&mut self, source: PyShared, binder: PyShared) -> StepEvent {
+        let handlers = self.current_visible_handlers();
+        let handlers_after_bind = handlers.clone();
+
+        let bind_result_cb = self.register_callback(Box::new(move |bound_value, _vm| match bound_value {
+            Value::Python(obj) => Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval {
+                expr: PyShared::new(obj),
+                handlers: handlers_after_bind,
+            })),
+            other => Mode::Throw(PyException::type_error(format!(
+                "flat_map binder must return Program/Effect/DoCtrl; got {:?}",
+                other
+            ))),
+        }));
+
+        let bind_source_cb = self.register_callback(Box::new(move |value, vm| {
+            let Some(seg) = vm.current_segment_mut() else {
+                return Mode::Throw(PyException::runtime_error(
+                    "flat_map binder callback outside current segment",
+                ));
+            };
+            seg.push_frame(Frame::RustReturn { cb: bind_result_cb });
+            Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Call {
+                f: binder,
+                args: vec![value],
+                kwargs: vec![],
+                metadata: crate::frame::CallMetadata::anonymous(),
+            }))
+        }));
+
+        let Some(seg) = self.current_segment_mut() else {
+            return StepEvent::Error(VMError::internal("FlatMap outside current segment"));
+        };
+        seg.push_frame(Frame::RustReturn { cb: bind_source_cb });
+        self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval { expr: source, handlers }));
         StepEvent::Continue
     }
 
@@ -2246,40 +2306,6 @@ mod tests {
 
             assert!(matches!(event, StepEvent::Continue), "G4c: expected Continue, got Error");
             assert!(vm.mode.is_throw(), "G4c: expected Mode::Throw after transfer one-shot");
-        });
-    }
-
-    /// G5: Unknown Yielded should produce Mode::Throw (catchable TypeError),
-    /// not StepEvent::Error (fatal).
-    #[test]
-    fn test_g5_unknown_yielded_is_throwable() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
-
-            let seg = Segment::new(marker, None, vec![marker]);
-            let seg_id = vm.alloc_segment(seg);
-            vm.current_segment = Some(seg_id);
-
-            // Set mode to HandleYield with an Unknown yielded value
-            let unknown_obj = py.None().into_pyobject(py).unwrap().unbind().into_any();
-            vm.mode = Mode::HandleYield(Yielded::Unknown(unknown_obj));
-
-            let event = vm.step();
-
-            match &event {
-                StepEvent::Continue => {
-                    assert!(
-                        vm.mode.is_throw(),
-                        "G5: Expected Mode::Throw for Unknown Yielded, got {:?}",
-                        vm.mode
-                    );
-                }
-                StepEvent::Error(VMError::TypeError { .. }) => {
-                    panic!("G5 REGRESSION: Unknown Yielded is StepEvent::Error (fatal) instead of Mode::Throw (catchable)");
-                }
-                other => panic!("G5: Unexpected event: {:?}", std::mem::discriminant(other)),
-            }
         });
     }
 

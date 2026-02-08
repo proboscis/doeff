@@ -61,7 +61,7 @@ class _AutoUnwrapStrategy:
         return True
 
 
-def _string_annotation_is_program(annotation_text: str) -> bool:
+def _annotation_text_is_program_kind(annotation_text: str) -> bool:
     if not annotation_text:
         return False
     stripped = annotation_text.strip()
@@ -73,15 +73,15 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
     ):
         stripped = stripped[1:-1]
     if "|" in stripped:
-        return any(_string_annotation_is_program(part) for part in stripped.split("|"))
+        return any(_annotation_text_is_program_kind(part) for part in stripped.split("|"))
     if stripped.startswith("Optional[") and stripped.endswith("]"):
-        return _string_annotation_is_program(stripped[9:-1])
+        return _annotation_text_is_program_kind(stripped[9:-1])
     if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
-        return _string_annotation_is_program(stripped[len("typing.Optional[") : -1])
+        return _annotation_text_is_program_kind(stripped[len("typing.Optional[") : -1])
     if stripped.startswith("Annotated[") and stripped.endswith("]"):
         inner = stripped[len("Annotated[") : -1]
         first_part = inner.split(",", 1)[0]
-        return _string_annotation_is_program(first_part)
+        return _annotation_text_is_program_kind(first_part)
     normalized = stripped.replace(" ", "")
     return (
         normalized == "Program"
@@ -96,7 +96,7 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
     )
 
 
-def _string_annotation_is_effect(annotation_text: str) -> bool:
+def _annotation_text_is_effect_kind(annotation_text: str) -> bool:
     if not annotation_text:
         return False
     stripped = annotation_text.strip()
@@ -108,15 +108,15 @@ def _string_annotation_is_effect(annotation_text: str) -> bool:
     ):
         stripped = stripped[1:-1]
     if "|" in stripped:
-        return any(_string_annotation_is_effect(part) for part in stripped.split("|"))
+        return any(_annotation_text_is_effect_kind(part) for part in stripped.split("|"))
     if stripped.startswith("Optional[") and stripped.endswith("]"):
-        return _string_annotation_is_effect(stripped[9:-1])
+        return _annotation_text_is_effect_kind(stripped[9:-1])
     if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
-        return _string_annotation_is_effect(stripped[len("typing.Optional[") : -1])
+        return _annotation_text_is_effect_kind(stripped[len("typing.Optional[") : -1])
     if stripped.startswith("Annotated[") and stripped.endswith("]"):
         inner = stripped[len("Annotated[") : -1]
         first_part = inner.split(",", 1)[0]
-        return _string_annotation_is_effect(first_part)
+        return _annotation_text_is_effect_kind(first_part)
     normalized = stripped.replace(" ", "")
     return (
         normalized == "Effect"
@@ -127,7 +127,7 @@ def _string_annotation_is_effect(annotation_text: str) -> bool:
     )
 
 
-def _annotation_is_program(annotation: Any) -> bool:
+def _is_program_annotation_kind(annotation: Any) -> bool:
     if annotation is inspect._empty:
         return False
 
@@ -142,9 +142,9 @@ def _annotation_is_program(annotation: Any) -> bool:
         if not issubclass(annotation, EffectBaseType):
             return True
     if isinstance(annotation, ForwardRef):
-        return _string_annotation_is_program(annotation.__forward_arg__)
+        return _annotation_text_is_program_kind(annotation.__forward_arg__)
     if isinstance(annotation, str):
-        return _string_annotation_is_program(annotation)
+        return _annotation_text_is_program_kind(annotation)
     origin = get_origin(annotation)
     if origin in (program_type, ProgramBase):
         return True
@@ -155,15 +155,15 @@ def _annotation_is_program(annotation: Any) -> bool:
     if origin is Annotated:
         args = get_args(annotation)
         if args:
-            return _annotation_is_program(args[0])
+            return _is_program_annotation_kind(args[0])
         return False
     union_type = getattr(types, "UnionType", None)
     if origin is Union or (union_type is not None and origin is union_type):
-        return any(_annotation_is_program(arg) for arg in get_args(annotation))
+        return any(_is_program_annotation_kind(arg) for arg in get_args(annotation))
     return False
 
 
-def _annotation_is_effect(annotation: Any) -> bool:
+def _is_effect_annotation_kind(annotation: Any) -> bool:
     if annotation is inspect._empty:
         return False
     from doeff.types import Effect, EffectBase  # Local import to avoid global dependency
@@ -174,9 +174,9 @@ def _annotation_is_effect(annotation: Any) -> bool:
     if isinstance(annotation, type) and issubclass(annotation, EffectBase):
         return True
     if isinstance(annotation, ForwardRef):
-        return _string_annotation_is_effect(annotation.__forward_arg__)
+        return _annotation_text_is_effect_kind(annotation.__forward_arg__)
     if isinstance(annotation, str):
-        return _string_annotation_is_effect(annotation)
+        return _annotation_text_is_effect_kind(annotation)
     origin = get_origin(annotation)
     if origin in (Effect, EffectBase):
         return True
@@ -186,11 +186,11 @@ def _annotation_is_effect(annotation: Any) -> bool:
     if origin is Annotated:
         args = get_args(annotation)
         if args:
-            return _annotation_is_effect(args[0])
+            return _is_effect_annotation_kind(args[0])
         return False
     union_type = getattr(types, "UnionType", None)
     if origin is Union or (union_type is not None and origin is union_type):
-        return any(_annotation_is_effect(arg) for arg in get_args(annotation))
+        return any(_is_effect_annotation_kind(arg) for arg in get_args(annotation))
     return False
 
 
@@ -224,8 +224,8 @@ def _build_auto_unwrap_strategy(kleisli: Any) -> _AutoUnwrapStrategy:
         return strategy
     for param in signature.parameters.values():
         annotation = type_hints.get(param.name, param.annotation)
-        is_program = _annotation_is_program(annotation)
-        is_effect = _annotation_is_effect(annotation)
+        is_program = _is_program_annotation_kind(annotation)
+        is_effect = _is_effect_annotation_kind(annotation)
         should_unwrap = not (is_program or is_effect)
         if param.kind in (
             inspect.Parameter.POSITIONAL_ONLY,
@@ -254,6 +254,12 @@ class DoCtrl(DoExpr[T]):
     """VM control primitives."""
 
     pass
+
+
+def _make_generator_program(
+    factory: Callable[[], Generator[Effect | Program, Any, T]],
+) -> GeneratorProgram[T]:
+    return _GenProgramThunk(factory)
 
 
 class ProgramBase(DoExpr[T]):
@@ -311,13 +317,13 @@ class ProgramBase(DoExpr[T]):
             def call_program() -> Generator[Effect | Program, Any, Any]:
                 from doeff.types import EffectBase
 
-                resolved_args, resolved_kwargs = yield GeneratorProgram(gather_inputs)
+                resolved_args, resolved_kwargs = yield _make_generator_program(gather_inputs)
                 result = func(*resolved_args, **resolved_kwargs)
                 if isinstance(result, (ProgramBase, EffectBase)):
                     return (yield result)
                 return result
 
-            return GeneratorProgram(call_program)
+            return _make_generator_program(call_program)
 
         return self.flat_map(invoke_callable)
 
@@ -326,30 +332,18 @@ class ProgramBase(DoExpr[T]):
 
         if not callable(f):
             raise TypeError("mapper must be callable")
+        from doeff_vm import Map
 
-        def factory() -> Generator[Effect | Program, Any, U]:
-            value = yield self
-            return f(value)
-
-        return GeneratorProgram(factory)
+        return Map(self, f)
 
     def flat_map(self, f: Callable[[T], Program[U]]) -> Program[U]:
         """Monadic bind operation."""
 
         if not callable(f):
             raise TypeError("binder must be callable returning a Program")
+        from doeff_vm import FlatMap
 
-        def factory() -> Generator[Effect | Program, Any, U]:
-            from doeff.types import EffectBase
-
-            value = yield self
-            next_prog = f(value)
-            if not isinstance(next_prog, (ProgramBase, EffectBase)):
-                raise TypeError(f"binder must return a Program; got {type(next_prog).__name__}")
-            result = yield next_prog
-            return result
-
-        return GeneratorProgram(factory)
+        return FlatMap(self, f)
 
     def and_then_k(self, binder: Callable[[T], Program[U]]) -> Program[U]:
         """Alias for flat_map for Kleisli-style composition."""
@@ -396,7 +390,7 @@ class ProgramBase(DoExpr[T]):
 
             return Maybe.from_optional(None)
 
-        return GeneratorProgram(first_some_generator)
+        return _make_generator_program(first_some_generator)
 
     @staticmethod
     def sequence(programs: list[Program[T]]) -> Program[list[T]]:
@@ -407,7 +401,7 @@ class ProgramBase(DoExpr[T]):
             results = yield effect
             return list(results)
 
-        return GeneratorProgram(sequence_generator)
+        return _make_generator_program(sequence_generator)
 
     @staticmethod
     def traverse(
@@ -445,11 +439,11 @@ class ProgramBase(DoExpr[T]):
             values = yield gather(*program_map.values())
             return dict(zip(keys, values, strict=False))
 
-        return GeneratorProgram(dict_generator)
+        return _make_generator_program(dict_generator)
 
 
 @dataclass
-class GeneratorProgram(ProgramBase[T]):
+class _GenProgramThunk(ProgramBase[T]):
     """Program backed by a generator factory."""
 
     factory: Callable[[], Generator[Effect | Program, Any, T]]
@@ -508,29 +502,17 @@ def _kpc_create_from_kleisli(
 def _kpc_map(self: Any, f: Callable[[T], U]) -> Program[U]:
     if not callable(f):
         raise TypeError("mapper must be callable")
+    from doeff_vm import Map
 
-    def mapped_gen() -> Generator[Effect | Program, Any, U]:
-        value = yield self
-        return f(value)
-
-    return GeneratorProgram(mapped_gen)
+    return Map(self, f)
 
 
 def _kpc_flat_map(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
     if not callable(f):
         raise TypeError("binder must be callable returning Program/Effect")
+    from doeff_vm import FlatMap
 
-    def flatmapped_gen() -> Generator[Effect | Program, Any, U]:
-        from doeff.types import EffectBase
-
-        value = yield self
-        next_prog = f(value)
-        if not isinstance(next_prog, (ProgramBase, EffectBase)):
-            raise TypeError(f"binder must return Program/Effect; got {type(next_prog).__name__}")
-        result = yield next_prog
-        return result
-
-    return GeneratorProgram(flatmapped_gen)
+    return FlatMap(self, f)
 
 
 setattr(KleisliProgramCall, "create_from_kleisli", classmethod(_kpc_create_from_kleisli))
@@ -553,12 +535,11 @@ if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
     )
 
 Program = ProgramBase
-DoThunk = ProgramBase
+GeneratorProgram = _GenProgramThunk
 
 __all__ = [
     "DoCtrl",
     "DoExpr",
-    "DoThunk",
     "GeneratorProgram",
     "KleisliProgramCall",
     "Program",

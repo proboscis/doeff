@@ -1129,7 +1129,8 @@ fn classify_yielded(obj: &Py<PyAny>) -> Yielded {
     } else if tag.is_effect() {
         Yielded::Effect(obj.clone())
     } else {
-        Yielded::Unknown(obj.clone())
+        // strict mode: this is a contract violation and must become a clear Python TypeError
+        return classify_type_error("yielded value is not DoExpr")
     }
 }
 ```
@@ -1162,6 +1163,8 @@ fn extract_do_ctrl(tag: DoExprTag, obj: &Py<PyAny>) -> DoCtrl {
 
 No GIL. No Python imports. No getattr. No string matching. No MRO walk.
 The tag read + field extraction is pure Rust memory access on immutable data.
+No fallback path is permitted in strict mode.
+Error signaling for this boundary should surface as Python exceptions whenever possible.
 
 The old `Effect` enum (`Get { key }`, `Put { key, value }`, etc.) is deleted.
 `effect.rs` becomes a module defining the `#[pyclass]` structs above.
