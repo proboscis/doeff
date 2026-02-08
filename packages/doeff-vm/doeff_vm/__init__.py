@@ -4,7 +4,6 @@ from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
 
-PyVM = _ext.PyVM
 EffectBase = _ext.EffectBase
 DoCtrlBase = _ext.DoCtrlBase
 DoThunkBase = getattr(_ext, "DoThunkBase", None)
@@ -15,6 +14,8 @@ ResultOk = getattr(_ext, "ResultOk", None)
 ResultErr = getattr(_ext, "ResultErr", None)
 K = _ext.K
 WithHandler = _ext.WithHandler
+Map = _ext.Map
+FlatMap = _ext.FlatMap
 Resume = _ext.Resume
 Delegate = _ext.Delegate
 Transfer = _ext.Transfer
@@ -43,6 +44,8 @@ __all__ = [
     "K",
     "KleisliProgramCall",
     "Delegate",
+    "Map",
+    "FlatMap",
     "DoCtrlBase",
     "DoThunkBase",
     "EffectBase",
@@ -54,7 +57,6 @@ __all__ = [
     "PySchedulerHandler",
     "PyStdlib",
     "PyTell",
-    "PyVM",
     "Resume",
     "RunResult",
     "RustHandler",

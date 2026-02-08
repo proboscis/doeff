@@ -978,6 +978,14 @@ later when the VM tries to use the value. This eliminates:
 - Deferred validation (accepting `Py<PyAny>` at construction, failing at dispatch)
 - Backward-compatibility shims (accepting both old and new types)
 
+Strict API philosophy (normative):
+
+- Public APIs are strict and explicit. No duck typing for typed parameters.
+- No unspecified wrapping/coercion convenience layers are allowed.
+- Compatibility aliases are not a normative requirement; if they conflict with spec,
+  they must be removed from public API.
+- On boundary violations, fail hard with clear `TypeError` messages.
+
 ### Validation Rules
 
 1. **`isinstance` only** — no `hasattr`, `getattr`, `callable()` as type checks.

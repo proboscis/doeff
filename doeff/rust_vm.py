@@ -33,6 +33,17 @@ def _coerce_program(program: Any) -> Any:
     raise TypeError(f"program must be DoExpr (Program/Effect/DoCtrl); got {type(program).__name__}")
 
 
+def _raise_unhandled_effect_if_present(run_result: Any) -> Any:
+    is_err = getattr(run_result, "is_err", None)
+    if callable(is_err) and is_err():
+        error = getattr(run_result, "error", None)
+        if isinstance(error, TypeError):
+            text = str(error).lower()
+            if "unhandledeffect" in text or "unhandled effect" in text:
+                raise error
+    return run_result
+
+
 def default_handlers() -> list[Any]:
     vm = _vm()
     required = ("state", "reader", "writer", "kpc")
@@ -56,7 +67,8 @@ def run(
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose run()")
     program = _coerce_program(program)
-    return run_fn(program, handlers=list(handlers), env=env, store=store)
+    result = run_fn(program, handlers=list(handlers), env=env, store=store)
+    return _raise_unhandled_effect_if_present(result)
 
 
 async def async_run(
@@ -70,7 +82,8 @@ async def async_run(
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
     program = _coerce_program(program)
-    return await run_fn(program, handlers=list(handlers), env=env, store=store)
+    result = await run_fn(program, handlers=list(handlers), env=env, store=store)
+    return _raise_unhandled_effect_if_present(result)
 
 
 def __getattr__(name: str) -> Any:
