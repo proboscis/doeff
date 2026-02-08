@@ -40,12 +40,7 @@ pub enum RustProgramStep {
 /// A Rust handler program instance (generator-like).
 /// start/resume/throw mirror Python generator protocol but run in Rust.
 pub trait RustHandlerProgram: std::fmt::Debug + Send {
-    fn start(
-        &mut self,
-        effect: DispatchEffect,
-        k: Continuation,
-        store: &mut RustStore,
-    ) -> RustProgramStep;
+    fn start(&mut self, py: Python<'_>, effect: DispatchEffect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
 }
@@ -475,6 +470,7 @@ impl KpcHandlerProgram {
 impl RustHandlerProgram for KpcHandlerProgram {
     fn start(
         &mut self,
+        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
@@ -587,6 +583,7 @@ impl StateHandlerProgram {
 impl RustHandlerProgram for StateHandlerProgram {
     fn start(
         &mut self,
+        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -674,15 +671,15 @@ impl RustHandlerProgram for StateHandlerProgram {
             // Terminal case (Get/Put): handler is done, pass through return value
             return RustProgramStep::Return(value);
         }
-        // Modify case: store modifier result and resume caller with new value
+        // Modify case: store modifier result but resume caller with OLD value.
+        // SPEC-008 L1271: Modify is read-then-modify, returns the old value.
         let key = self.pending_key.take().unwrap();
         let continuation = self.pending_k.take().unwrap();
-        let _old_value = self.pending_old_value.take().unwrap();
-        let new_value = value.clone();
+        let old_value = self.pending_old_value.take().unwrap();
         store.put(key, value);
         RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
             continuation,
-            value: new_value,
+            value: old_value,
         }))
     }
 
@@ -720,6 +717,7 @@ struct ReaderHandlerProgram;
 impl RustHandlerProgram for ReaderHandlerProgram {
     fn start(
         &mut self,
+        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -760,9 +758,8 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _: &mut RustStore) -> RustProgramStep {
-        // Terminal: handler is done, pass through return value
-        RustProgramStep::Return(value)
+    fn resume(&mut self, _value: Value, _: &mut RustStore) -> RustProgramStep {
+        unreachable!("ReaderHandler never yields mid-handling")
     }
 
     fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
@@ -799,6 +796,7 @@ struct WriterHandlerProgram;
 impl RustHandlerProgram for WriterHandlerProgram {
     fn start(
         &mut self,
+        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         store: &mut RustStore,
@@ -839,9 +837,8 @@ impl RustHandlerProgram for WriterHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, value: Value, _: &mut RustStore) -> RustProgramStep {
-        // Terminal: handler is done, pass through return value
-        RustProgramStep::Return(value)
+    fn resume(&mut self, _value: Value, _: &mut RustStore) -> RustProgramStep {
+        unreachable!("WriterHandler never yields mid-handling")
     }
 
     fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
@@ -906,6 +903,7 @@ impl std::fmt::Debug for DoubleCallHandlerProgram {
 impl RustHandlerProgram for DoubleCallHandlerProgram {
     fn start(
         &mut self,
+        _py: Python<'_>,
         effect: DispatchEffect,
         k: Continuation,
         _store: &mut RustStore,
@@ -1033,7 +1031,7 @@ mod tests {
             let program_ref = KpcHandlerFactory.create_program();
             let step = {
                 let mut guard = program_ref.lock().unwrap();
-                guard.start(effect, k, &mut store)
+                guard.start(py, effect, k, &mut store)
             };
             assert!(
                 matches!(step, RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))),
@@ -1082,6 +1080,7 @@ mod tests {
 
     #[test]
     fn test_state_factory_get() {
+        Python::attach(|py| {
         let mut store = RustStore::new();
         store.put("key".to_string(), Value::Int(42));
         let k = make_test_continuation();
@@ -1089,6 +1088,7 @@ mod tests {
         let step = {
             let mut guard = program_ref.lock().unwrap();
             guard.start(
+                py,
                 Effect::Get {
                     key: "key".to_string(),
                 },
@@ -1105,16 +1105,19 @@ mod tests {
                 std::mem::discriminant(&step)
             ),
         }
+        });
     }
 
     #[test]
     fn test_state_factory_put() {
+        Python::attach(|py| {
         let mut store = RustStore::new();
         let k = make_test_continuation();
         let program_ref = StateHandlerFactory.create_program();
         let step = {
             let mut guard = program_ref.lock().unwrap();
             guard.start(
+                py,
                 Effect::Put {
                     key: "key".to_string(),
                     value: Value::Int(99),
@@ -1131,6 +1134,7 @@ mod tests {
             }))
         ));
         assert_eq!(store.get("key").unwrap().as_int(), Some(99));
+        });
     }
 
     #[test]
@@ -1151,7 +1155,7 @@ mod tests {
             let program_ref = StateHandlerFactory.create_program();
             let step = {
                 let mut guard = program_ref.lock().unwrap();
-                guard.start(effect, k, &mut store)
+                guard.start(py, effect, k, &mut store)
             };
             assert!(matches!(
                 step,
@@ -1176,6 +1180,7 @@ mod tests {
             let step = {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
+                    py,
                     Effect::Modify {
                         key: "key".to_string(),
                         modifier: PyShared::new(modifier),
@@ -1207,6 +1212,7 @@ mod tests {
             {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
+                    py,
                     Effect::Modify {
                         key: "key".to_string(),
                         modifier: PyShared::new(modifier),
@@ -1222,9 +1228,9 @@ mod tests {
             };
             match step {
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
-                    assert_eq!(value.as_int(), Some(20)); // new_value returned (modifier result)
+                    assert_eq!(value.as_int(), Some(10)); // old_value returned (SPEC-008 L1271)
                 }
-                _ => panic!("Expected Yield(Resume) with new_value"),
+                _ => panic!("Expected Yield(Resume) with old_value"),
             }
             assert_eq!(store.get("key").unwrap().as_int(), Some(20)); // new value stored
         });
@@ -1266,6 +1272,7 @@ mod tests {
 
     #[test]
     fn test_reader_factory_ask() {
+        Python::attach(|py| {
         let mut store = RustStore::new();
         store
             .env
@@ -1275,6 +1282,7 @@ mod tests {
         let step = {
             let mut guard = program_ref.lock().unwrap();
             guard.start(
+                py,
                 Effect::Ask {
                     key: "config".to_string(),
                 },
@@ -1288,6 +1296,7 @@ mod tests {
             }
             _ => panic!("Expected Yield(Resume)"),
         }
+        });
     }
 
     #[test]
@@ -1326,12 +1335,14 @@ mod tests {
 
     #[test]
     fn test_writer_factory_tell() {
+        Python::attach(|py| {
         let mut store = RustStore::new();
         let k = make_test_continuation();
         let program_ref = WriterHandlerFactory.create_program();
         let step = {
             let mut guard = program_ref.lock().unwrap();
             guard.start(
+                py,
                 Effect::Tell {
                     message: Value::String("log".to_string()),
                 },
@@ -1347,6 +1358,7 @@ mod tests {
             }))
         ));
         assert_eq!(store.logs().len(), 1);
+        });
     }
 
     /// G5/G6 TDD: DoubleCallHandlerProgram requires TWO NeedsPython round-trips.
@@ -1367,6 +1379,7 @@ mod tests {
             let step1 = {
                 let mut guard = program_ref.lock().unwrap();
                 guard.start(
+                    py,
                     Effect::Modify {
                         key: "key".to_string(),
                         modifier: PyShared::new(modifier),

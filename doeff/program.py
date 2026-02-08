@@ -91,6 +91,10 @@ def _string_annotation_is_program(annotation_text: str) -> bool:
         or normalized.startswith("ProgramLike[")
         or normalized == "ProgramBase"
         or normalized.startswith("ProgramBase[")
+        or normalized == "DoThunk"
+        or normalized.startswith("DoThunk[")
+        or normalized == "DoExpr"
+        or normalized.startswith("DoExpr[")
     )
 
 
@@ -241,7 +245,26 @@ def _build_auto_unwrap_strategy(kleisli: Any) -> _AutoUnwrapStrategy:
     return strategy
 
 
-class ProgramBase(ABC, Generic[T]):
+class DoExpr(ABC, Generic[T]):
+    """Universal base for all doeff programs (pure data or computation)."""
+
+    def __class_getitem__(cls, item):
+        return super().__class_getitem__(item)
+
+
+class DoThunk(DoExpr[T]):
+    """Programs with to_generator (computation thunks)."""
+
+    pass
+
+
+class DoCtrl(DoExpr[T]):
+    """VM control primitives."""
+
+    pass
+
+
+class ProgramBase(DoThunk[T]):
     """Runtime base class for all doeff programs (effects and Kleisli calls)."""
 
     def __class_getitem__(cls, item):
@@ -477,7 +500,6 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
 
     function_name: str = "<anonymous>"
     created_at: Any = None
-    auto_unwrap_strategy: _AutoUnwrapStrategy | None = None
     execution_kernel: Callable[..., Generator[Effect | Program, Any, T]] | None = None
 
     @classmethod
@@ -491,14 +513,12 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
     ) -> KleisliProgramCall[T]:
         """Create from KleisliProgram.__call__ (knows its source)."""
 
-        strategy = _build_auto_unwrap_strategy(kleisli)
         return cls(
             kleisli_source=kleisli,
             args=tuple(args),
             kwargs=dict(kwargs),
             function_name=function_name,
             created_at=created_at,
-            auto_unwrap_strategy=strategy,
             execution_kernel=getattr(kleisli, "func", None),
         )
 
@@ -541,11 +561,10 @@ class KleisliProgramCall(ProgramBase, Generic[T]):
         return GeneratorProgram(flatmapped_gen)
 
 
-DoExpr = ProgramBase
-DoThunk = ProgramBase
-Program = DoExpr
+Program = ProgramBase
 
 __all__ = [
+    "DoCtrl",
     "DoExpr",
     "DoThunk",
     "GeneratorProgram",

@@ -95,6 +95,7 @@ from .state import (
     put,
 )
 
+from .scheduler_internal import _SchedulerTaskCompleted as TaskCompleted
 from .writer import (
     Listen,
     Log,
@@ -182,6 +183,7 @@ __all__ = [
     "Task",
     "TaskCancelEffect",
     "TaskCancelledError",
+    "TaskCompleted",
     "TaskIsDoneEffect",
     "Tell",
     "Wait",

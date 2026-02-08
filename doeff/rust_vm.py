@@ -32,7 +32,7 @@ def _normalize_program(program: Any) -> Any:
 
 def default_handlers() -> list[Any]:
     vm = _vm()
-    required = ("state", "reader", "writer")
+    required = ("kpc", "state", "reader", "writer")
     if all(hasattr(vm, name) for name in required):
         return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]
@@ -44,7 +44,7 @@ def default_handlers() -> list[Any]:
 
 def run(
     program: Any,
-    handlers: Sequence[Any] | None = None,
+    handlers: Sequence[Any] = (),
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
 ) -> Any:
@@ -53,13 +53,12 @@ def run(
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose run()")
     program = _normalize_program(program)
-    selected_handlers = list(handlers) if handlers is not None else default_handlers()
-    return run_fn(program, handlers=selected_handlers, env=env, store=store)
+    return run_fn(program, handlers=list(handlers), env=env, store=store)
 
 
 async def async_run(
     program: Any,
-    handlers: Sequence[Any] | None = None,
+    handlers: Sequence[Any] = (),
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
 ) -> Any:
@@ -68,8 +67,7 @@ async def async_run(
     if run_fn is None:
         raise RuntimeError("Installed doeff_vm module does not expose async_run()")
     program = _normalize_program(program)
-    selected_handlers = list(handlers) if handlers is not None else default_handlers()
-    return await run_fn(program, handlers=selected_handlers, env=env, store=store)
+    return await run_fn(program, handlers=list(handlers), env=env, store=store)
 
 
 def __getattr__(name: str) -> Any:

@@ -24,24 +24,52 @@ async_run = _ext.async_run
 state = _ext.state
 reader = _ext.reader
 writer = _ext.writer
+scheduler = _ext.scheduler
+kpc = _ext.kpc
+KleisliProgramCall = _ext.KleisliProgramCall
+CreateContinuation = _ext.CreateContinuation
+GetContinuation = _ext.GetContinuation
+GetHandlers = _ext.GetHandlers
+GetCallStack = _ext.GetCallStack
+AsyncEscape = _ext.AsyncEscape
+PyGet = _ext.PyGet
+PyPut = _ext.PyPut
+PyModify = _ext.PyModify
+PyAsk = _ext.PyAsk
+PyTell = _ext.PyTell
+PyKPC = _ext.PyKPC
 
 __all__ = [
     "K",
+    "KleisliProgramCall",
     "Delegate",
     "DoCtrlBase",
     "DoThunkBase",
     "EffectBase",
+    "PyAsk",
+    "PyGet",
+    "PyKPC",
+    "PyModify",
+    "PyPut",
     "PySchedulerHandler",
     "PyStdlib",
+    "PyTell",
     "PyVM",
     "Resume",
     "RunResult",
     "RustHandler",
     "Transfer",
     "WithHandler",
+    "AsyncEscape",
+    "CreateContinuation",
+    "GetCallStack",
+    "GetContinuation",
+    "GetHandlers",
     "async_run",
+    "kpc",
     "reader",
     "run",
+    "scheduler",
     "state",
     "writer",
 ]

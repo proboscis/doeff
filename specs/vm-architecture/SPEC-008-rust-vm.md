@@ -295,16 +295,16 @@ to `run()` or `WithHandler`, at `id()` level.
 
 **Mechanism**:
 - When a handler is installed (via `WithHandler` or `run()`), the VM stores the
-  original Python object (`Py<PyAny>`) alongside the internal `Handler` variant
+  original Python object (`PyShared`) alongside the internal `Handler` variant
 - For `Handler::RustProgram` handlers recognized from Python sentinel objects
-  (e.g., `state`, `reader`, `writer`), the VM stashes the sentinel's `Py<PyAny>`
-- For `Handler::Python` handlers, the callable is already stored as `Py<PyAny>`
+  (e.g., `state`, `reader`, `writer`), the VM stashes the sentinel's `PyShared`
+- For `Handler::Python` handlers, the callable is already stored as `PyShared`
 - `GetHandlers` traverses the scope chain and returns the stashed Python objects
 
 **Rationale**:
 - Users expect `state in (yield GetHandlers())` to work
 - Handler identity matters for patterns like "am I inside this handler?"
-- The `HandlerEntry` struct gains a `py_identity: Option<Py<PyAny>>` field
+- The `HandlerEntry` struct gains a `py_identity: Option<PyShared>` field
 
 ### ADR-11: Store/Env Initialization and Extraction [R8-E]
 
@@ -373,7 +373,7 @@ All Rust data structures use ownership semantics:
 - Segments owned by VM's segment arena
 - Continuations hold SegmentId + Arc<frames snapshot>
 - Callbacks owned by VM's callback table
-- PyObjects use Py<T> for GIL-independent storage
+- PyObjects use `PyShared` (`Arc<Py<PyAny>>`) for GIL-free clonable storage
 - No `unsafe` in core logic (PyO3 handles FFI safety)
 
 ---
@@ -406,6 +406,18 @@ pub struct DispatchId(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct CallbackId(u32);
 
+/// [Q11] Unique identifier for scheduler runnables (spawned tasks)
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct RunnableId(u64);
+
+/// [Q11] Unique identifier for scheduler tasks
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct TaskId(u64);
+
+/// [Q11] Unique identifier for scheduler promises
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct PromiseId(u64);
+
 impl Marker {
     pub fn fresh() -> Self {
         static COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -414,6 +426,20 @@ impl Marker {
 }
 
 // Marker(0) is reserved for internal placeholders (e.g., unstarted continuations).
+```
+
+### PyShared (GIL-free clonable reference)
+
+```rust
+/// GIL-free clonable Python object reference (`Arc<Py<PyAny>>`).
+/// `.clone()` is atomic increment — no GIL assertion on free-threaded 3.14t.
+///
+/// Used throughout the VM wherever Python objects need to be stored in
+/// Clone-able Rust data structures (frames, continuations, dispatch contexts).
+/// Raw `Py<PyAny>` clone calls `Py::clone_ref()` which asserts GIL on 3.14t;
+/// wrapping in Arc avoids this.
+#[derive(Debug, Clone)]
+pub struct PyShared(Arc<Py<PyAny>>);
 ```
 
 ### Frame (Clone-able via CallbackId)
@@ -439,8 +465,8 @@ pub enum Frame {
     
     /// Python generator frame (user code or Python handlers)
     PythonGenerator {
-        /// The Python generator object (GIL-independent storage)
-        generator: Py<PyAny>,
+        /// The Python generator object (GIL-free clonable reference)
+        generator: PyShared,
         /// Whether this generator has been started (first __next__ called)
         started: bool,
         /// Call stack metadata — always populated via DoCtrl::Call. [R9-C, R10-A]
@@ -466,12 +492,13 @@ pub struct CallMetadata {
     /// Optional: reference to the full KleisliProgramCall Python object.
     /// Enables rich introspection (args, kwargs, kleisli_source) via GIL.
     /// None for non-KPC programs or when metadata is extracted from Rust-side only.
-    pub program_call: Option<Py<PyAny>>,
+    pub program_call: Option<PyShared>,
 }
 
 /// Callback type stored in VM.callbacks table.
 /// Consumed (removed) when executed.
-pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send>;
+/// +Sync required for free-threaded Python 3.14t compatibility.
+pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 ```
 
 ### Segment
@@ -604,10 +631,17 @@ pub struct Continuation {
     pub started: bool,
     
     /// Program object to start when started=false (ProgramBase: KleisliProgramCall or EffectBase).
-    pub program: Option<Py<PyAny>>,
+    pub program: Option<PyShared>,
     
     /// Handlers to install when started=false (innermost first).
     pub handlers: Vec<Handler>,
+
+    /// [Q1] Preserved Rust handler sentinel identities (ADR-14).
+    /// When a captured continuation round-trips through Python (via PyContinuation),
+    /// Rust sentinel identity (pointer equality) would be lost. This field stores
+    /// the original `Option<PyShared>` py_identity from each HandlerEntry in scope
+    /// at capture time, allowing faithful restoration on resume.
+    pub handler_identities: Vec<Option<PyShared>>,
 }
 
 impl Continuation {
@@ -631,7 +665,7 @@ impl Continuation {
     }
     
     /// Create an unstarted continuation from a program and handlers.
-    pub fn create(program: Py<PyAny>, handlers: Vec<Handler>) -> Self {
+    pub fn create_unstarted(program: PyShared, handlers: Vec<Handler>) -> Self {
         Continuation {
             cont_id: ContId::fresh(),
             segment_id: SegmentId(0),  // unused when started=false
@@ -658,7 +692,8 @@ pub struct DispatchContext {
     
     /// The effect being dispatched — opaque Python object. [R11-E]
     /// The VM does not inspect this. Handlers downcast as needed.
-    pub effect: Py<PyAny>,
+    /// DispatchEffect = PyShared in production; Effect enum in tests.
+    pub effect: DispatchEffect,
     
     /// Snapshot of handler markers [innermost, ..., outermost]
     pub handler_chain: Vec<Marker>,
@@ -1061,7 +1096,7 @@ pub enum Handler {
 
     /// Python handler function.
     /// Signature: def handler(effect, k) -> Program[Any]
-    Python(Py<PyAny>),
+    Python(PyShared),
 }
 
 /// Shared reference to a Rust program handler factory.
@@ -1119,6 +1154,33 @@ impl Handler {
         }
     }
 }
+
+/// [Q2] KPC Handler: dispatches KleisliProgramCall effects.
+///
+/// Installed as the innermost handler by run(). When a KPC effect is yielded,
+/// the handler resolves args via Eval (for lazy KPC arguments), then starts
+/// the kleisli_source program with the resolved args.
+///
+/// This handler is required for @do-decorated programs to function, since
+/// @do produces KleisliProgramCall effects that must be caught and executed.
+pub struct KpcHandlerFactory;
+
+impl RustProgramHandler for KpcHandlerFactory {
+    fn can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>) -> bool {
+        // Handles KPC effects (PyKPC or objects with __doeff_kpc__ marker)
+        effect.is_instance_of::<PyKPC>()
+    }
+    fn create_program(&self) -> RustProgramRef { /* KpcHandlerProgram */ }
+}
+
+/// KpcHandlerProgram resolves KPC arg values (some may be lazy DoExprs),
+/// then starts the kleisli_source program. Multi-phase:
+/// 1. start(): extract args, check for lazy args needing Eval
+/// 2. If lazy args: yield DoCtrl::Eval for each, resume() collects results
+/// 3. Once all args resolved: yield DoCtrl::Call to start kleisli_source
+pub struct KpcHandlerProgram {
+    // Internal state machine for arg resolution phases
+}
 ```
 
 ### Handler Entry with Identity Preservation [R8-D]
@@ -1132,7 +1194,22 @@ pub struct HandlerEntry {
     pub prompt_seg_id: SegmentId,
     /// Original Python object passed by the user.
     /// Returned by GetHandlers to preserve id()-level identity.
-    pub py_identity: Option<Py<PyAny>>,
+    pub py_identity: Option<PyShared>,
+}
+
+/// [Q8] Python-visible wrapper for Rust handler sentinels.
+///
+/// Rust handler factories (StateHandlerFactory, ReaderHandlerFactory, etc.) are
+/// not directly visible to Python. PyRustHandlerSentinel wraps them as #[pyclass]
+/// objects that Python code can pass to run(handlers=[...]).
+///
+/// Each sentinel preserves identity: `state is state` is True (same Python object).
+/// This is critical for ADR-14 handler identity preservation — GetHandlers returns
+/// the original sentinel objects so Python code can compare handlers by identity.
+#[pyclass(frozen)]
+pub struct PyRustHandlerSentinel {
+    factory: Box<dyn RustProgramHandler>,
+    // Identity preserved through Python object reference
 }
 ```
 
@@ -1610,7 +1687,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         value: results,
                     }));
                 }
-                state.wait_on_all(&items, k_user);
+                state.wait_on_all(&items, k_user.clone());  // [C3-fix] clone before move
                 state.transfer_next_or(k_user, store)
             }
             SchedulerEffect::Race { items } => {
@@ -1621,7 +1698,7 @@ impl RustHandlerProgram for SchedulerProgram {
                         value: result,
                     }));
                 }
-                state.wait_on_any(&items, k_user);
+                state.wait_on_any(&items, k_user.clone());  // [C3-fix] clone before move
                 state.transfer_next_or(k_user, store)
             }
             SchedulerEffect::CreatePromise => {
@@ -1824,20 +1901,20 @@ pub enum PythonCall {
     },
     
     /// Start a generator (first iteration, equivalent to __next__)
-    GenNext {
-        gen: Py<PyAny>,
-    },
-    
+    /// [C2-fix] Generator is NOT carried here — it lives in PendingPython::StepUserGenerator.
+    /// Driver retrieves it from pending_python when executing the call.
+    GenNext,
+
     /// Send a value to a running generator
+    /// [C2-fix] Generator retrieved from PendingPython, not from this variant.
     GenSend {
-        gen: Py<PyAny>,
         value: Value,
     },
-    
+
     /// Throw an exception into a generator
+    /// [C2-fix] Generator retrieved from PendingPython, not from this variant.
     GenThrow {
-        gen: Py<PyAny>,
-        exc: Py<PyAny>,
+        exc: PyException,
     },
 }
 
@@ -2039,19 +2116,28 @@ impl RustStore {
         let old: HashMap<String, Value> = bindings.keys()
             .filter_map(|k| self.env.get(k).map(|v| (k.clone(), v.clone())))
             .collect();
-        
+        // [C4-fix] Track keys that are NEW (not overwriting existing entries)
+        let new_keys: Vec<String> = bindings.keys()
+            .filter(|k| !old.contains_key(*k))
+            .cloned()
+            .collect();
+
         // Apply new bindings
         for (k, v) in bindings {
             self.env.insert(k, v);
         }
-        
+
         let result = f(self);
-        
+
         // Restore old bindings
         for (k, v) in old {
             self.env.insert(k, v);
         }
-        
+        // [C4-fix] Remove keys that were added (didn't exist before)
+        for k in new_keys {
+            self.env.remove(&k);
+        }
+
         result
     }
     
@@ -2132,6 +2218,12 @@ pub struct VM {
     /// Handler registry: marker -> HandlerEntry
     /// NOTE: Includes prompt_seg_id to avoid linear search
     handlers: HashMap<Marker, HandlerEntry>,
+
+    /// [Q6] Continuation registry for Python-side K lookup.
+    /// Maps ContId to Continuation so that PyContinuation objects (exposed to
+    /// Python handlers via K) can look up the actual Rust Continuation.
+    /// Entries are removed on consumption (one-shot enforcement).
+    continuation_registry: HashMap<ContId, Continuation>,
     
     // === Layer 2: RustStore (user-observable via RunResult.raw_store) ===
 
@@ -2182,7 +2274,7 @@ pub struct HandlerEntry {
     
     /// [D8] Original Python object passed by the user.
     /// Returned by GetHandlers to preserve id()-level identity.
-    pub py_identity: Option<Py<PyAny>>,
+    pub py_identity: Option<PyShared>,
 }
 ```
 
@@ -2426,11 +2518,32 @@ pub enum PyCallOutcome {
 }
 
 /// Wrapper for Python exceptions in Rust.
+/// [Q5] Enum with lazy variants for GIL-free exception creation.
+/// `Materialized` holds a captured Python exception triple (from GIL context).
+/// `RuntimeError`/`TypeError` hold only a message string — the actual Python
+/// exception object is created lazily when materialized on the Python side.
+/// This allows the VM to create and propagate exceptions without holding the GIL.
 #[derive(Debug, Clone)]
-pub struct PyException {
-    pub exc_type: Py<PyAny>,
-    pub exc_value: Py<PyAny>,
-    pub exc_tb: Option<Py<PyAny>>,
+pub enum PyException {
+    /// Captured from a live Python exception (has GIL-independent PyShared refs).
+    Materialized {
+        exc_type: PyShared,
+        exc_value: PyShared,
+        exc_tb: Option<PyShared>,
+    },
+    /// Lazy RuntimeError — message only, no GIL needed to construct.
+    RuntimeError {
+        message: String,
+    },
+    /// Lazy TypeError — message only, no GIL needed to construct.
+    TypeError {
+        message: String,
+    },
+}
+
+impl PyException {
+    pub fn runtime_error(message: String) -> Self { PyException::RuntimeError { message } }
+    pub fn type_error(message: String) -> Self { PyException::TypeError { message } }
 }
 ```
 
@@ -2558,24 +2671,22 @@ fn step_deliver_or_throw(&mut self) -> StepEvent {
                 metadata: metadata.clone(),  // Carry metadata for re-push [R9-C]
             });
             
+            // [C2-fix] Generator is stored in PendingPython::StepUserGenerator (set above),
+            // not carried in the PythonCall variant. Driver retrieves it from pending_python.
             match &self.mode {
                 Mode::Deliver(v) => {
                     if started {
                         StepEvent::NeedsPython(PythonCall::GenSend {
-                            gen: generator,
                             value: v.clone(),
                         })
                     } else {
                         // First call uses GenNext
-                        StepEvent::NeedsPython(PythonCall::GenNext {
-                            gen: generator,
-                        })
+                        StepEvent::NeedsPython(PythonCall::GenNext)
                     }
                 }
-                Mode::Throw(e) => {
+                Mode::Throw(exc) => {
                     StepEvent::NeedsPython(PythonCall::GenThrow {
-                        gen: generator,
-                        exc: e.exc_value.clone(),
+                        exc,
                     })
                 }
                 _ => unreachable!(),
@@ -2646,8 +2757,13 @@ impl VM {
             (PendingPython::CallPythonHandler { k_user, effect }, PyCallOutcome::Value(Value::Python(handler_gen))) => {
                 // Handler returned a Program converted to a generator that yields primitives
                 // Push handler-return hook (implicit Return), then generator frame (started=false)
+                // Register handler-return callback for implicit handler return [C1-fix]
+                let handler_return_cb = self.register_callback(Box::new(|value, vm| {
+                    let _ = vm.handle_handler_return(value);
+                    std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
+                }));
                 let segment = &mut self.segments[self.current_segment.index()];
-                // segment.push_frame(Frame::RustReturn { cb: handler_return_cb });
+                segment.push_frame(Frame::RustReturn { cb: handler_return_cb });
                 segment.push_frame(Frame::PythonGenerator {
                     generator: handler_gen,
                     started: false,
@@ -2960,18 +3076,21 @@ impl PyVM {
                 }
             }
             
-            PythonCall::GenNext { gen } => {
+            PythonCall::GenNext => {
+                let gen = self.pending_generator(py);
                 self.step_generator(py, gen, "__next__", None)
             }
-            
-            PythonCall::GenSend { gen, value } => {
+
+            PythonCall::GenSend { value } => {
+                let gen = self.pending_generator(py);
                 let py_value = value.to_pyobject(py)?;
                 self.step_generator(py, gen, "send", Some(py_value))
             }
-            
-            PythonCall::GenThrow { gen, exc } => {
-                let exc_bound = exc.bind(py);
-                self.step_generator(py, gen, "throw", Some(exc_bound.clone()))
+
+            PythonCall::GenThrow { exc } => {
+                let gen = self.pending_generator(py);
+                let exc_obj = exc.materialize(py);
+                self.step_generator(py, gen, "throw", Some(exc_obj))
             }
         }
     }
@@ -3201,6 +3320,23 @@ it sees effects that `h1` and `h2` delegate. This matches `reversed(handlers)`.
 
 **No default handlers** (SPEC-009 API-1). If `handlers=[]`, the program runs
 with zero handlers. Yielding any effect raises `UnhandledEffect`.
+
+#### NestingStep / NestingGenerator (ADR-13) [Q7]
+
+The `WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))` nesting is
+implemented via a synthetic generator (`NestingGenerator`) that yields one
+`WithHandler` DoCtrl at a time. The driver steps this generator through:
+
+1. `run(program, handlers=[h0, h1, h2])` creates a `NestingGenerator` that
+   will yield `WithHandler(h2, program)`, then `WithHandler(h1, ...)`,
+   then `WithHandler(h0, ...)`.
+2. Each `WithHandler` yield installs the handler and creates a new prompt
+   segment. The NestingGenerator resumes with the next handler.
+3. Once all handlers are installed, the innermost body (the user program)
+   starts executing.
+
+This avoids recursion or special-case nesting in the VM — the handler
+installation loop is just normal generator stepping.
 
 ### RunResult — Execution Output [R8-J]
 
@@ -3865,6 +4001,12 @@ impl VM {
             .collect()
     }
     
+    /// [Q13] Lazy cleanup of completed dispatch contexts.
+    ///
+    /// Called at the start of handle_do_ctrl(), start_dispatch(), handle_resume(),
+    /// and handle_transfer(). Drops completed dispatches from the top of the stack
+    /// so that subsequent handler lookups only see active dispatches.
+    /// This is an optimization over eagerly cleaning up at completion time.
     fn lazy_pop_completed(&mut self) {
         while let Some(top) = self.dispatch_stack.last() {
             if top.completed {
@@ -4119,7 +4261,7 @@ impl VM {
                 StepEvent::Continue
             }
             DoCtrl::CreateContinuation { expr, handlers } => {
-                let cont = Continuation::create(expr, handlers);
+                let cont = Continuation::create_unstarted(expr, handlers);
                 self.mode = Mode::Deliver(Value::Continuation(cont));
                 StepEvent::Continue
             }

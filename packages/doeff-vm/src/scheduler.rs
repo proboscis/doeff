@@ -518,9 +518,18 @@ impl SchedulerState {
     }
 
     /// Transfer to the next ready task, or resume k if no tasks are ready.
-    pub fn transfer_next_or(&mut self, k: Continuation, _store: &mut RustStore) -> RustProgramStep {
+    ///
+    /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
+    /// switching and loads the new task's store after switching.
+    pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> RustProgramStep {
         if let Some(task_id) = self.ready.pop_front() {
             if let Some(task_k) = self.task_cont(task_id) {
+                // Save current task's store before switching away
+                if let Some(old_id) = self.current_task {
+                    self.save_task_store(old_id, store);
+                }
+                // Load new task's store
+                self.load_task_store(task_id, store);
                 self.current_task = Some(task_id);
                 return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
                     continuation: task_k,
@@ -579,6 +588,7 @@ impl SchedulerProgram {
 impl RustHandlerProgram for SchedulerProgram {
     fn start(
         &mut self,
+        _py: Python<'_>,
         effect: DispatchEffect,
         k_user: Continuation,
         store: &mut RustStore,
@@ -716,7 +726,9 @@ impl RustHandlerProgram for SchedulerProgram {
                 let cont = match value {
                     Value::Continuation(c) => c,
                     _ => {
-                        return RustProgramStep::Return(Value::None); // error case
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "expected continuation from CreateContinuation, got unexpected type".to_string(),
+                        ));
                     }
                 };
 
@@ -753,7 +765,9 @@ impl RustHandlerProgram for SchedulerProgram {
 
             SchedulerPhase::Idle => {
                 // Unexpected resume
-                RustProgramStep::Return(Value::None)
+                RustProgramStep::Throw(PyException::runtime_error(
+                    "Unexpected resume in scheduler: no pending operation".to_string(),
+                ))
             }
         }
     }
@@ -968,7 +982,7 @@ mod tests {
             let program = handler.create_program();
             let step = {
                 let mut guard = program.lock().unwrap();
-                guard.start(effect, k, &mut store)
+                guard.start(py, effect, k, &mut store)
             };
             assert!(
                 matches!(

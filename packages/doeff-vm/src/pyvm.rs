@@ -4,7 +4,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::effect::{dispatch_from_shared, dispatch_to_pyobject};
+use crate::effect::{dispatch_from_shared, dispatch_to_pyobject, PyGet, PyPut, PyModify, PyAsk, PyTell, PyKPC};
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::error::VMError;
@@ -40,13 +40,13 @@ pub struct PyVM {
     vm: VM,
 }
 
-#[pyclass(subclass, name = "EffectBase")]
+#[pyclass(subclass, frozen, name = "EffectBase")]
 pub struct PyEffectBase;
 
-#[pyclass(subclass, name = "DoCtrlBase")]
+#[pyclass(subclass, frozen, name = "DoCtrlBase")]
 pub struct PyDoCtrlBase;
 
-#[pyclass(subclass, name = "DoThunkBase")]
+#[pyclass(subclass, frozen, name = "DoThunkBase")]
 pub struct PyDoThunkBase;
 
 #[pyclass]
@@ -681,46 +681,20 @@ impl PyVM {
             return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
         }
 
-        if Self::is_effect_object(_py, obj)? {
-            return Ok(Yielded::Effect(dispatch_from_shared(PyShared::new(
-                obj.clone().unbind(),
-            ))));
-        }
-
-        if obj.getattr("handler").is_ok()
-            && (obj.getattr("program").is_ok() || obj.getattr("body").is_ok())
-        {
-            let handler_obj = obj.getattr("handler")?;
-            let program = obj.getattr("program").or_else(|_| obj.getattr("body"))?;
-            let (handler, py_identity) = if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
-                let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_obj.extract()?;
-                (
-                    Handler::RustProgram(sentinel.factory.clone()),
-                    Some(PyShared::new(handler_obj.clone().unbind())),
-                )
-            } else {
-                (Handler::Python(PyShared::new(handler_obj.unbind())), None)
-            };
-            return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
-                handler,
-                expr: program.unbind(),
-                py_identity,
-            }));
-        }
-
-        if obj.getattr("program").is_ok() && obj.getattr("handlers").is_ok() {
-            let program = obj.getattr("program")?.unbind();
-            let handlers_list = obj.getattr("handlers")?;
+        if obj.is_instance_of::<PyCreateContinuation>() {
+            let cc: PyRef<'_, PyCreateContinuation> = obj.extract()?;
+            let program = cc.program.clone_ref(_py);
+            let handlers_list = cc.handlers.bind(_py);
             let mut handlers = Vec::new();
             let mut handler_identities = Vec::new();
             for item in handlers_list.try_iter()? {
                 let item = item?;
                 if item.is_instance_of::<PyRustHandlerSentinel>() {
                     let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                    handlers.push(crate::handler::Handler::RustProgram(sentinel.factory.clone()));
+                    handlers.push(Handler::RustProgram(sentinel.factory.clone()));
                     handler_identities.push(Some(PyShared::new(item.unbind())));
                 } else {
-                    handlers.push(crate::handler::Handler::Python(PyShared::new(item.unbind())));
+                    handlers.push(Handler::Python(PyShared::new(item.unbind())));
                     handler_identities.push(None);
                 }
             }
@@ -730,91 +704,30 @@ impl PyVM {
                 handler_identities,
             }));
         }
-
-        if obj.getattr("effect").is_ok() && obj.getattr("continuation").is_err() {
-            let effect = if let Ok(eff_obj) = obj.getattr("effect") {
-                if !eff_obj.is_none() {
-                    dispatch_from_shared(PyShared::new(eff_obj.unbind()))
-                } else {
-                    self.vm
-                        .dispatch_stack
-                        .last()
-                        .map(|ctx| ctx.effect.clone())
-                        .ok_or_else(|| {
-                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                                "Delegate without effect called outside dispatch context",
-                            )
-                        })?
-                }
-            } else {
-                self.vm
-                    .dispatch_stack
-                    .last()
-                    .map(|ctx| ctx.effect.clone())
-                    .ok_or_else(|| {
-                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                            "Delegate without effect called outside dispatch context",
-                        )
-                    })?
-            };
-            return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        if obj.is_instance_of::<PyGetContinuation>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::GetContinuation));
         }
-
-        if obj.getattr("action").is_ok() && obj.getattr("continuation").is_err() {
-            let action = obj.getattr("action")?.unbind();
-            return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
+        if obj.is_instance_of::<PyGetHandlers>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::GetHandlers));
         }
-
-        if obj.getattr("continuation").is_ok() && obj.getattr("value").is_ok() {
-            let k_obj = obj.getattr("continuation")?;
-            let cont_id_raw = k_obj
-                .getattr("cont_id")
-                .or_else(|_| k_obj.get_item("cont_id"))?;
-            let cont_id_val = cont_id_raw.extract::<u64>()?;
-            let cont_id = ContId::from_raw(cont_id_val);
-            let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                PyRuntimeError::new_err(format!(
-                    "Continuation with unknown continuation id {}",
-                    cont_id.raw()
-                ))
-            })?;
-            let value = obj.getattr("value")?;
-
-            if obj.getattr("__doeff_transfer__").and_then(|v| v.extract::<bool>()).unwrap_or(false)
-            {
-                return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k,
-                    value: Value::from_pyobject(&value),
-                }));
-            }
-            if obj
-                .getattr("__doeff_resume_continuation__")
-                .and_then(|v| v.extract::<bool>())
-                .unwrap_or(false)
-            {
-                return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
-                    continuation: k,
-                    value: Value::from_pyobject(&value),
-                }));
-            }
-            return Ok(Yielded::DoCtrl(DoCtrl::Resume {
-                continuation: k,
-                value: Value::from_pyobject(&value),
+        if obj.is_instance_of::<PyGetCallStack>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
+        }
+        if obj.is_instance_of::<PyAsyncEscape>() {
+            let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
+            return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape {
+                action: ae.action.clone_ref(_py),
             }));
         }
 
-        // Fallback: tag-only control primitives.
-        if let Ok(type_name) = obj.get_type().name() {
-            let type_str: &str = type_name.extract()?;
-            match type_str {
-                "GetContinuation" => return Ok(Yielded::DoCtrl(DoCtrl::GetContinuation)),
-                "GetHandlers" => return Ok(Yielded::DoCtrl(DoCtrl::GetHandlers)),
-                "GetCallStack" => return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack)),
-                _ => {}
-            }
+        if Self::is_effect_object(_py, obj)? {
+            return Ok(Yielded::Effect(dispatch_from_shared(PyShared::new(
+                obj.clone().unbind(),
+            ))));
         }
 
-        if obj.hasattr("to_generator")? {
+        // R11-C: Program detection via isinstance (DoThunkBase = has to_generator)
+        if obj.is_instance_of::<PyDoThunkBase>() {
             let metadata = Self::extract_call_metadata(_py, obj)
                 .or_else(|| Self::extract_call_metadata_fallback(_py, obj))
                 .unwrap_or_else(CallMetadata::anonymous);
@@ -826,28 +739,9 @@ impl PyVM {
             }));
         }
 
-        if obj.hasattr("__iter__")? && obj.hasattr("__next__")? {
-            return Ok(Yielded::DoCtrl(DoCtrl::Call {
-                f: PyShared::new(obj.clone().unbind()),
-                args: vec![],
-                kwargs: vec![],
-                metadata: CallMetadata::anonymous(),
-            }));
-        }
-
-        // Primitive Python types (int, str, float, bool, None) are not valid effects.
-        if let Ok(type_name) = obj.get_type().name() {
-            let ts: &str = type_name.extract().unwrap_or("");
-            match ts {
-                "int" | "float" | "str" | "bool" | "NoneType" | "bytes" | "list" | "tuple"
-                | "dict" | "set" => {
-                    return Ok(Yielded::Unknown(obj.clone().unbind()));
-                }
-                _ => {}
-            }
-        }
         Ok(Yielded::Unknown(obj.clone().unbind()))
     }
+
 
     fn values_to_tuple<'py>(
         &self,
@@ -1163,7 +1057,7 @@ impl PyK {
 }
 
 /// Composition primitive — usable in any Program.
-#[pyclass(name = "WithHandler")]
+#[pyclass(name = "WithHandler", extends=PyDoCtrlBase)]
 pub struct PyWithHandler {
     #[pyo3(get)]
     pub handler: Py<PyAny>,
@@ -1174,8 +1068,8 @@ pub struct PyWithHandler {
 #[pymethods]
 impl PyWithHandler {
     #[new]
-    fn new(handler: Py<PyAny>, program: Py<PyAny>) -> Self {
-        PyWithHandler { handler, program }
+    fn new(handler: Py<PyAny>, program: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (PyWithHandler { handler, program }, PyDoCtrlBase)
     }
 }
 
@@ -1232,6 +1126,74 @@ impl PyTransfer {
             continuation,
             value,
         }
+    }
+}
+
+/// Create a delimited continuation scope.
+#[pyclass(name = "CreateContinuation", extends=PyDoCtrlBase)]
+pub struct PyCreateContinuation {
+    #[pyo3(get)]
+    pub program: Py<PyAny>,
+    #[pyo3(get)]
+    pub handlers: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyCreateContinuation {
+    #[new]
+    fn new(program: Py<PyAny>, handlers: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (PyCreateContinuation { program, handlers }, PyDoCtrlBase)
+    }
+}
+
+/// Request the current continuation.
+#[pyclass(name = "GetContinuation", extends=PyDoCtrlBase)]
+pub struct PyGetContinuation;
+
+#[pymethods]
+impl PyGetContinuation {
+    #[new]
+    fn new() -> (Self, PyDoCtrlBase) {
+        (PyGetContinuation, PyDoCtrlBase)
+    }
+}
+
+/// Request the current handler stack.
+#[pyclass(name = "GetHandlers", extends=PyDoCtrlBase)]
+pub struct PyGetHandlers;
+
+#[pymethods]
+impl PyGetHandlers {
+    #[new]
+    fn new() -> (Self, PyDoCtrlBase) {
+        (PyGetHandlers, PyDoCtrlBase)
+    }
+}
+
+/// Request the current call stack.
+#[pyclass(name = "GetCallStack", extends=PyDoCtrlBase)]
+pub struct PyGetCallStack;
+
+#[pymethods]
+impl PyGetCallStack {
+    #[new]
+    fn new() -> (Self, PyDoCtrlBase) {
+        (PyGetCallStack, PyDoCtrlBase)
+    }
+}
+
+/// Escape hatch for Python async syntax (await bridge).
+#[pyclass(name = "AsyncEscape", extends=PyDoCtrlBase)]
+pub struct PyAsyncEscape {
+    #[pyo3(get)]
+    pub action: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyAsyncEscape {
+    #[new]
+    fn new(action: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (PyAsyncEscape { action }, PyDoCtrlBase)
     }
 }
 
@@ -1318,7 +1280,7 @@ impl NestingGenerator {
             handler,
             program: inner,
         };
-        let bound = Bound::new(py, wh)?;
+        let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
         Ok(Some(bound.into_any().unbind()))
     }
 
@@ -1369,10 +1331,10 @@ mod tests {
 
             let with_handler = Bound::new(
                 py,
-                PyWithHandler {
+                PyClassInitializer::from(PyDoCtrlBase).add_subclass(PyWithHandler {
                     handler: sentinel.clone_ref(py),
                     program: py.None().into_pyobject(py).unwrap().unbind().into_any(),
-                },
+                }),
             )
             .unwrap()
             .into_any();
@@ -1461,15 +1423,13 @@ mod tests {
             .into_any()
             .unbind();
 
-            let locals = pyo3::types::PyDict::new(py);
-            locals.set_item("sentinel", sentinel.bind(py)).unwrap();
-            py.run(
-                c"class CreateContinuation:\n    def __init__(self, program, handlers):\n        self.program = program\n        self.handlers = handlers\nobj = CreateContinuation(None, [sentinel])\n",
-                Some(&locals),
-                Some(&locals),
+            let handlers_list = pyo3::types::PyList::new(py, [sentinel.bind(py)]).unwrap();
+            let obj = Bound::new(
+                py,
+                PyCreateContinuation::new(py.None().into(), handlers_list.unbind().into()),
             )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap();
+            .unwrap()
+            .into_any();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             match yielded {
                 Yielded::DoCtrl(DoCtrl::CreateContinuation { handlers, .. }) => {
@@ -1634,25 +1594,20 @@ mod tests {
     fn test_spec_get_call_stack_classifies_to_doctrl() {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"class GetCallStack:\n    pass\nobj = GetCallStack()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap();
+            let obj = Bound::new(py, PyGetCallStack::new()).unwrap().into_any();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
                 matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
-                "SPEC GAP: GetCallStack must classify to DoCtrl::GetCallStack, got {:?}",
+                "GetCallStack must classify to DoCtrl::GetCallStack, got {:?}",
                 yielded
             );
         });
     }
 
     #[test]
-    fn test_spec_to_generator_without_metadata_classifies_to_call_with_anonymous_metadata() {
+    fn test_spec_plain_to_generator_without_rust_base_classifies_as_unknown() {
+        // R11-C: Plain Python objects with to_generator but no Rust base class
+        // classify as Unknown. The Python _normalize_program layer wraps these.
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
@@ -1664,30 +1619,18 @@ mod tests {
             .unwrap();
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
-            match yielded {
-                Yielded::DoCtrl(DoCtrl::Call {
-                    args,
-                    kwargs,
-                    metadata,
-                    ..
-                }) => {
-                    assert!(args.is_empty(), "expected empty args for to_generator call path");
-                    assert!(kwargs.is_empty(), "expected empty kwargs for to_generator call path");
-                    assert_eq!(metadata.function_name, "<anonymous>");
-                    assert_eq!(metadata.source_file, "<unknown>");
-                    assert_eq!(metadata.source_line, 0);
-                    assert!(metadata.program_call.is_none());
-                }
-                other => panic!(
-                    "SPEC GAP: to_generator objects must classify as DoCtrl::Call, got {:?}",
-                    other
-                ),
-            }
+            assert!(
+                matches!(yielded, Yielded::Unknown(_)),
+                "R11-C: plain Python to_generator without DoThunkBase should be Unknown, got {:?}",
+                yielded
+            );
         });
     }
 
     #[test]
-    fn test_spec_raw_generator_classifies_to_call_not_program_variant() {
+    fn test_spec_raw_generator_classifies_as_unknown() {
+        // R11-C: Raw generators without Rust base class classify as Unknown.
+        // The Python _normalize_program layer rejects these.
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
@@ -1700,8 +1643,8 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::DoCtrl(DoCtrl::Call { .. })),
-                "SPEC GAP: raw generators should route via DoCtrl::Call strict path, got {:?}",
+                matches!(yielded, Yielded::Unknown(_)),
+                "R11-C: raw generators without DoThunkBase should be Unknown, got {:?}",
                 yielded
             );
         });
@@ -1819,21 +1762,6 @@ fn run(
     // Build inside-out: wrap h2 first, then h1, then h0.
     let mut wrapped: Py<PyAny> = program.unbind();
 
-    // Install default KPC handler as innermost wrapper.
-    let kpc_sentinel = Bound::new(
-        py,
-        PyRustHandlerSentinel {
-            factory: Arc::new(KpcHandlerFactory),
-        },
-    )?
-    .into_any()
-    .unbind();
-    let kpc_step = NestingStep {
-        handler: kpc_sentinel,
-        inner: wrapped,
-    };
-    wrapped = Bound::new(py, kpc_step)?.into_any().unbind();
-
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
@@ -1881,21 +1809,6 @@ fn async_run<'py>(
     }
 
     let mut wrapped: Py<PyAny> = program.unbind();
-
-    // Install default KPC handler as innermost wrapper.
-    let kpc_sentinel = Bound::new(
-        py,
-        PyRustHandlerSentinel {
-            factory: Arc::new(KpcHandlerFactory),
-        },
-    )?
-    .into_any()
-    .unbind();
-    let kpc_step = NestingStep {
-        handler: kpc_sentinel,
-        inner: wrapped,
-    };
-    wrapped = Bound::new(py, kpc_step)?.into_any().unbind();
 
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
@@ -1970,6 +1883,11 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
     m.add_class::<PyTransfer>()?;
+    m.add_class::<PyCreateContinuation>()?;
+    m.add_class::<PyGetContinuation>()?;
+    m.add_class::<PyGetHandlers>()?;
+    m.add_class::<PyGetCallStack>()?;
+    m.add_class::<PyAsyncEscape>()?;
     m.add_class::<PyRustHandlerSentinel>()?;
     m.add_class::<NestingStep>()?;
     m.add_class::<NestingGenerator>()?;
@@ -1990,6 +1908,29 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "writer",
         PyRustHandlerSentinel {
             factory: Arc::new(WriterHandlerFactory),
+        },
+    )?;
+    // R11-A: #[pyclass] effect structs for isinstance checks
+    m.add_class::<PyGet>()?;
+    m.add_class::<PyPut>()?;
+    m.add_class::<PyModify>()?;
+    m.add_class::<PyAsk>()?;
+    m.add_class::<PyTell>()?;
+    m.add_class::<PyKPC>()?;
+    // G09: KleisliProgramCall alias for PyKPC
+    m.add("KleisliProgramCall", m.getattr("PyKPC")?)?;
+    // KPC handler sentinel — explicit, not auto-installed
+    m.add(
+        "kpc",
+        PyRustHandlerSentinel {
+            factory: Arc::new(KpcHandlerFactory),
+        },
+    )?;
+    // G14: scheduler sentinel
+    m.add(
+        "scheduler",
+        PyRustHandlerSentinel {
+            factory: Arc::new(SchedulerHandler::new()),
         },
     )?;
     m.add_function(wrap_pyfunction!(run, m)?)?;
