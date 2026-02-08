@@ -69,7 +69,7 @@ def test_run_rejects_non_program_object(monkeypatch: pytest.MonkeyPatch) -> None
     fake_vm = SimpleNamespace(run=fake_run, state=object(), reader=object(), writer=object())
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
 
-    with pytest.raises(TypeError, match="program must expose to_generator"):
+    with pytest.raises(TypeError, match="program must be DoExpr"):
         rust_vm_module.run(object(), handlers=[])
 
     assert called["run"] is False

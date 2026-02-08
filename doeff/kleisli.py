@@ -87,8 +87,8 @@ class KleisliProgram(Generic[P, T]):
         @wraps(self.func)
         def composed(*args: P.args, **kwargs: P.kwargs) -> Program[U]:
             program = self(*args, **kwargs)
-            if not isinstance(program, ProgramBase):
-                raise TypeError("Kleisli program must return a Program")
+            if not hasattr(program, "and_then_k"):
+                raise TypeError("Kleisli program must return a Program or KPC effect")
             return program.and_then_k(binder)
 
         return KleisliProgram(composed)

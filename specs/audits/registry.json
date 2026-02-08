@@ -1,6 +1,63 @@
 {
-  "next_id": 3,
+  "next_id": 7,
   "sessions": [
+    {
+      "id": "SA-006",
+      "date": "2026-02-08",
+      "specs": [
+        "specs/vm-architecture/SPEC-008-rust-vm.md",
+        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
+        "specs/SPEC-TYPES-001-program-effect-separation.md"
+      ],
+      "implementation_directory": [
+        "doeff",
+        "packages/doeff-vm"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "SA-005",
+      "date": "2026-02-08",
+      "specs": [
+        "specs/vm-architecture/SPEC-008-rust-vm.md",
+        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
+        "specs/SPEC-TYPES-001-program-effect-separation.md"
+      ],
+      "implementation_directory": [
+        "doeff",
+        "packages/doeff-vm"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "SA-004",
+      "date": "2026-02-08",
+      "specs": [
+        "specs/vm-architecture/SPEC-008-rust-vm.md",
+        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
+        "specs/SPEC-TYPES-001-program-effect-separation.md"
+      ],
+      "implementation_directory": [
+        "doeff",
+        "packages/doeff-vm"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": "SA-003",
+      "date": "2026-02-08",
+      "specs": [
+        "specs/vm-architecture/SPEC-008-rust-vm.md",
+        "specs/vm-architecture/SPEC-009-rust-vm-migration.md",
+        "specs/SPEC-TYPES-001-program-effect-separation.md"
+      ],
+      "implementation_directory": [
+        "doeff",
+        "packages/doeff-vm"
+      ],
+      "status": "completed",
+      "result": "SA-003 gaps resolved per resolutions; SA-003 checks green; repo-wide pytest/semgrep have pre-existing unrelated failures"
+    },
     {
       "id": "SA-002",
       "date": "2026-02-08",
