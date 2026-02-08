@@ -12,10 +12,6 @@ def _vm() -> Any:
 
 def _coerce_program(program: Any) -> Any:
     vm = _vm()
-    to_gen = inspect.getattr_static(program, "to_generator", None)
-    if callable(to_gen):
-        return program
-
     from doeff.types import EffectBase
 
     do_ctrl_base = getattr(vm, "DoCtrlBase", None)
@@ -30,7 +26,9 @@ def _coerce_program(program: Any) -> Any:
         raise TypeError("program must be DoExpr; got raw generator. Did you mean to wrap with @do?")
     if callable(program):
         raise TypeError("program must be DoExpr; got callable. Did you mean to call @do function?")
-    raise TypeError(f"program must be DoExpr (Program/Effect/DoCtrl); got {type(program).__name__}")
+    raise TypeError(
+        f"program must be DoExpr backed by Rust runtime bases (EffectBase/DoCtrlBase); got {type(program).__name__}"
+    )
 
 
 def _raise_unhandled_effect_if_present(run_result: Any) -> Any:

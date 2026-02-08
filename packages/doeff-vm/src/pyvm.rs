@@ -459,10 +459,21 @@ impl PyVM {
                 let py_effect = dispatch_to_pyobject(py, &effect)?;
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
-                    Ok(result) => match self.to_generator_strict(py, result.unbind()) {
-                        Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
-                        Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
-                    },
+                    Ok(result) => {
+                        let is_generator = py
+                            .import("types")
+                            .and_then(|m| m.getattr("GeneratorType"))
+                            .and_then(|ty| result.is_instance(&ty))
+                            .unwrap_or(false);
+                        if is_generator {
+                            Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
+                        } else {
+                            match self.to_generator_strict(py, result.unbind()) {
+                                Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
+                                Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
+                            }
+                        }
+                    }
                     Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
                 }
             }
@@ -506,31 +517,44 @@ impl PyVM {
         }
     }
 
-    /// R12-B: Accept raw generators (send+throw) or ProgramBase (to_generator).
+    /// Strict boundary: accept only Rust runtime DoExpr bases.
     fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let program_bound = program.bind(py);
 
-        let to_generator_method = program_bound.get_type().getattr("to_generator").ok();
-        if let Some(to_gen) = to_generator_method {
-            let gen = to_gen.call1((program_bound,))?;
+        let is_nesting_step = program_bound
+            .get_type()
+            .name()
+            .map(|n| n.to_string_lossy().as_ref() == "_NestingStep")
+            .unwrap_or(false);
+        if is_nesting_step || program_bound.is_instance_of::<NestingStep>() {
+            let gen = program_bound.call_method0("to_generator")?;
             return Ok(gen.unbind());
         }
 
-        let has_send = program_bound.hasattr("send").unwrap_or(false);
-        let has_throw = program_bound.hasattr("throw").unwrap_or(false);
-        if has_send && has_throw {
+        let is_python_generator = program_bound
+            .get_type()
+            .name()
+            .map(|n| n.to_string_lossy().as_ref() == "generator")
+            .unwrap_or(false);
+        if is_python_generator {
             return Ok(program);
         }
 
-        if program_bound.is_instance_of::<PyEffectBase>()
+        if program_bound.is_instance_of::<PyKPC>()
+            || program_bound.is_instance_of::<PyEffectBase>()
             || program_bound.is_instance_of::<PyDoCtrlBase>()
         {
             return self.wrap_expr_as_generator(py, program);
         }
 
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "Expected generator (send/throw) or ProgramBase (to_generator).",
-        ))
+        let ty = program_bound
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "<unknown>".to_string());
+        Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "program must be DoExpr backed by Rust runtime bases (EffectBase/DoCtrlBase); got {ty}"
+        )))
     }
 
     fn wrap_expr_as_generator(&self, py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
@@ -969,16 +993,12 @@ impl PyWithHandler {
         }
 
         let expr_obj = expr.bind(py);
-        let has_to_generator = expr_obj
-            .getattr("to_generator")
-            .map(|attr| attr.is_callable())
-            .unwrap_or(false);
-        if !(has_to_generator
+        if !(expr_obj.is_instance_of::<PyKPC>()
             || expr_obj.is_instance_of::<PyDoCtrlBase>()
             || expr_obj.is_instance_of::<PyEffectBase>())
         {
             return Err(PyTypeError::new_err(
-                "WithHandler.expr must be DoExpr (Program/Effect/DoCtrl)",
+                "WithHandler.expr must be Rust DoExpr base (EffectBase/DoCtrlBase)",
             ));
         }
 
@@ -1268,7 +1288,7 @@ impl NestingGenerator {
         }
         // After yielding WithHandler, the inner result comes back via send.
         // Pass through as StopIteration(value).
-        Err(PyStopIteration::new_err(value))
+        Err(PyStopIteration::new_err((value,)))
     }
 
     fn throw(&mut self, _py: Python<'_>, exc: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -1729,19 +1749,18 @@ fn run(
         }
     }
 
-    // ADR-13: Build WithHandler nesting chain.
+    // Build WithHandler nesting chain directly as DoCtrl objects.
     // handlers=[h0, h1, h2] → WithHandler(h0, WithHandler(h1, WithHandler(h2, program)))
-    // Build inside-out: wrap h2 first, then h1, then h0.
     let mut wrapped: Py<PyAny> = program.unbind();
 
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
-            let step = NestingStep {
+            let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
-                inner: wrapped,
+                expr: wrapped,
             };
-            let bound = Bound::new(py, step)?;
+            let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
             wrapped = bound.into_any().unbind();
         }
     }
@@ -1785,11 +1804,11 @@ fn async_run<'py>(
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
-            let step = NestingStep {
+            let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
-                inner: wrapped,
+                expr: wrapped,
             };
-            let bound = Bound::new(py, step)?;
+            let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
             wrapped = bound.into_any().unbind();
         }
     }

@@ -58,3 +58,43 @@ rules:
         - packages/doeff-vm/doeff_vm/__init__.py
     patterns:
       - pattern-regex: "\bPyVM\b"
+
+  - id: spec-gap-SA-008-P0-no-to-generator-duck-path
+    message: "P0: to_generator_strict must not rely on duck-typed to_generator/send/throw checks"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/pyvm.rs
+    patterns:
+      - pattern-regex: 'get_type\(\)\.getattr\("to_generator"\)|hasattr\("send"\)|hasattr\("throw"\)'
+
+  - id: spec-gap-SA-008-P0-no-handler-shape-candidate
+    message: "P0: handler do-expr candidate check must not use shape/attribute heuristics"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/handler.rs
+    patterns:
+      - pattern-regex: 'hasattr\("to_generator"\)|getattr \("handler"\)|getattr \("program"\)|getattr \("continuation"\)'
+
+  - id: spec-gap-SA-008-P0-no-scheduler-field-fallback
+    message: "P0: scheduler parse must not fallback across field names"
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - packages/doeff-vm/src/scheduler.rs
+    patterns:
+      - pattern-regex: 'or_else\(\|_\| obj\.getattr \("items"\)\)|obj\.getattr \("task_id"\)'
+
+  - id: spec-gap-SA-008-P0-no-python-coerce-to-generator
+    message: "P0: Python run boundary must not accept non-Rust DoExpr via to_generator duck typing"
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - doeff/rust_vm.py
+    patterns:
+      - pattern-regex: 'inspect\.getattr_static\(program, "to_generator", None\)|if callable\(to_gen\):'

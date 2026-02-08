@@ -19,9 +19,9 @@ Correctness baseline for next fixes:
 | ID | Issue | Correctness Priority | Status | Evidence |
 |---|---|---|---|---|
 | C0 | **Disconnected/dual hierarchy by design** (Rust runtime bases + Python concrete hierarchy + bridges) | P0 | CONFIRMED | Python-side concrete bases exist in `doeff/program.py` and `doeff/_types_internal.py`; Rust-side bases exist in `packages/doeff-vm/src/pyvm.rs` (`PyEffectBase`, `PyDoCtrlBase`); bridge hacks in `_types_internal.py` (`__subclasscheck__`, dynamic `__bases__`). |
-| C1 | Boundary classification still contains non-strict heuristics (`to_generator`, `hasattr`, `getattr`, shape probing) | P0 | CONFIRMED | `packages/doeff-vm/src/pyvm.rs` (`to_generator_strict`), `packages/doeff-vm/src/handler.rs` and `packages/doeff-vm/src/scheduler.rs` use attribute probing and fallback field paths. |
+| C1 | Boundary classification still contains non-strict heuristics (`to_generator`, `hasattr`, `getattr`, shape probing) | P0 | PARTIAL (narrowed) | Fixed in strict boundary hotspots: `pyvm.rs` (`to_generator_strict`, `WithHandler.expr`), `handler.rs` (`is_do_expr_candidate`), `scheduler.rs` (removed `futures/items` and `task/task_id` fallback parsing). Remaining `getattr` field extraction still exists where class-typed payload access is required. |
 | C2 | `run()` wrapper throws unhandled-effect exceptions instead of pure `RunResult` contract | P1 | CONFIRMED | `doeff/rust_vm.py` `_raise_unhandled_effect_if_present` raises `TypeError` when matching “UnhandledEffect”. |
-| C3 | Store/state integration mismatch in end-to-end behavior | P1 | CONFIRMED | Rust entrypoint seeds store in `packages/doeff-vm/src/pyvm.rs` (run/async_run), but direct smoke checks still show stale `raw_store`/`None` value paths; integration path needs diagnosis. |
+| C3 | Store/state integration mismatch in end-to-end behavior | P1 | RESOLVED (runtime regression green) | Fixed via Rust-backed core effects + direct WithHandler nesting path; verified by formal tests in `tests/core/test_sa008_runtime_contracts.py` and `tests/core/test_sa008_runtime_probes_formalized.py`. |
 | C4 | `EffectBase.map/flat_map` remains generator-wrapper model (not strict DoCtrl-native path) | P1 | CONFIRMED | `doeff/_types_internal.py` `EffectBase.map`/`flat_map` return `GeneratorProgram`. |
 | C5 | `@do` decorator input boundary is not strict (`do(42)` accepted) | P2 | CONFIRMED | `doeff/do.py` lacks callable boundary validation for decorator argument; direct runtime check shows no error on non-callable. |
 | C6 | Stale tests reference legacy DoThunk-era model | P2 | CONFIRMED | `tests/public_api/test_types_001_hierarchy.py`, `tests/public_api/test_types_001_validation.py`, `tests/core/test_sa001_spec_gaps.py`. |
@@ -46,12 +46,13 @@ Therefore C0 remains a **real correctness issue**, not just a historical claim.
 ### P0 Hotspots (exact files)
 
 - `packages/doeff-vm/src/pyvm.rs`
-  - `to_generator_strict` currently accepts by `to_generator` attribute and `send/throw` shape checks.
-  - `WithHandler.expr` validation still mixes strict base checks with `to_generator` attribute check.
+  - ✅ `to_generator_strict` duck paths removed (`to_generator`, `send/throw` shape acceptance removed).
+  - ✅ `WithHandler.expr` now requires Rust runtime bases only.
 - `packages/doeff-vm/src/handler.rs`
-  - KPC/effect parsing still uses broad `getattr`/shape probing and candidate heuristics.
+  - ✅ `is_do_expr_candidate` shape heuristics removed; now strict Rust base/KPC checks.
 - `packages/doeff-vm/src/scheduler.rs`
-  - scheduler effects parse via field probing + fallback field names (`futures/items`, `task/task_id`).
+  - ✅ field-name fallback removed for race/task-completed parsing (`futures/items`, `task/task_id`).
+  - ⏳ class-typed payload extraction via `getattr` still present (tracked as follow-up hardening).
 
 These three files define the real correctness boundary and should be fixed before lower-priority cleanup.
 
@@ -70,7 +71,7 @@ These three files define the real correctness boundary and should be fixed befor
 
 - [ ] T0: Draft explicit architecture note in specs: “Runtime type classes are Rust-owned; Python provides exposure/protocol only.”
 - [ ] T1: Remove Python-side concrete runtime base duplication where applicable; keep only exposure/protocol layers.
-- [ ] T2: Replace duck/fallback boundary checks with strict Rust-base checks.
+- [x] T2: Replace duck/fallback boundary checks with strict Rust-base checks (completed for primary hotspots; remaining payload extraction hardening tracked separately).
 - [ ] T3: Resolve `run()` error contract and align public tests.
 - [ ] T4: Add focused regression tests for store seeding/final state propagation and Modify/Get behavior.
 - [ ] T5: Decide/update `EffectBase.map/flat_map` model and corresponding tests.
@@ -84,6 +85,29 @@ These three files define the real correctness boundary and should be fixed befor
 - Store/state end-to-end regressions are green.
 - Public API contract tests match final decision on error signaling.
 - SA-008 tests remain green while stale legacy tests are either migrated or intentionally retired.
+
+## Latest TDD Evidence (2026-02-08 update)
+
+- Added strict boundary P0 tests:
+  - `tests/core/test_sa008_correctness_p0.py` -> green
+- Added runtime contract regression tests from ad-hoc probes:
+  - `tests/core/test_sa008_runtime_contracts.py`
+  - Current: both tests green
+- Added formalized probe tests:
+  - `tests/core/test_sa008_runtime_probes_formalized.py`
+  - Current: all tests green
+- Core effects migration started (Rust pyclass constructors + Python wrappers):
+  - `packages/doeff-vm/src/effect.rs`
+  - `doeff/effects/state.py`, `doeff/effects/reader.py`, `doeff/effects/writer.py`
+- Boundary strictness patches applied in:
+  - `packages/doeff-vm/src/pyvm.rs`
+  - `packages/doeff-vm/src/handler.rs`
+  - `packages/doeff-vm/src/scheduler.rs`
+  - `doeff/rust_vm.py`
+
+Interpretation:
+- C1 largely narrowed as planned.
+- C3 now has regression coverage and is green in targeted suites.
 
 ## External Design Basis (for this policy)
 

@@ -1,21 +1,17 @@
-"""Writer monad effects."""
+"""Writer monad effects (Rust-backed core tell effect)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+import doeff_vm
 
 from ._program_types import ProgramLike
 from ._validators import ensure_program_like
 from .base import Effect, EffectBase, create_effect_with_trace
 
 
-@dataclass(frozen=True)
-class WriterTellEffect(EffectBase):
-    """Appends the message to the writer log without producing a value."""
-
-    __doeff_writer_tell__ = True
-
-    message: object
+WriterTellEffect = doeff_vm.PyTell
 
 
 @dataclass(frozen=True)
@@ -29,7 +25,7 @@ class WriterListenEffect(EffectBase):
 
 
 def tell(message: object) -> WriterTellEffect:
-    return create_effect_with_trace(WriterTellEffect(message=message))
+    return create_effect_with_trace(WriterTellEffect(message))
 
 
 def listen(sub_program: ProgramLike) -> WriterListenEffect:
@@ -37,7 +33,7 @@ def listen(sub_program: ProgramLike) -> WriterListenEffect:
 
 
 def Tell(message: object) -> Effect:
-    return create_effect_with_trace(WriterTellEffect(message=message), skip_frames=3)
+    return create_effect_with_trace(WriterTellEffect(message), skip_frames=3)
 
 
 # Log is an alias for Tell - commonly used in documentation
@@ -50,12 +46,12 @@ def Listen(sub_program: ProgramLike) -> Effect:
 
 def slog(**entries: object) -> WriterTellEffect:
     payload = dict(entries)
-    return create_effect_with_trace(WriterTellEffect(message=payload))
+    return create_effect_with_trace(WriterTellEffect(payload))
 
 
 def StructuredLog(**entries: object) -> Effect:
     payload = dict(entries)
-    return create_effect_with_trace(WriterTellEffect(message=payload), skip_frames=3)
+    return create_effect_with_trace(WriterTellEffect(payload), skip_frames=3)
 
 
 __all__ = [

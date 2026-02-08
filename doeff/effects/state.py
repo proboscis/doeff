@@ -1,76 +1,51 @@
-"""State monad effects."""
+"""State monad effects (Rust-backed core effects)."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
+import doeff_vm
+
 from ._validators import ensure_callable, ensure_str
-from .base import Effect, EffectBase, create_effect_with_trace
+from .base import Effect, create_effect_with_trace
 
 
-@dataclass(frozen=True)
-class StateGetEffect(EffectBase):
-    """Retrieves the state value for key and yields it."""
-
-    __doeff_state_get__ = True
-
-    key: str
-
-    def __post_init__(self) -> None:
-        ensure_str(self.key, name="key")
-
-
-@dataclass(frozen=True)
-class StatePutEffect(EffectBase):
-    """Updates the stored state for key and completes with no value."""
-
-    __doeff_state_put__ = True
-
-    key: str
-    value: Any
-
-    def __post_init__(self) -> None:
-        ensure_str(self.key, name="key")
-
-
-@dataclass(frozen=True)
-class StateModifyEffect(EffectBase):
-    """Applies func to the current state value and yields the updated value."""
-
-    __doeff_state_modify__ = True
-
-    key: str
-    func: Callable[[Any], Any]
-
-    def __post_init__(self) -> None:
-        ensure_str(self.key, name="key")
-        ensure_callable(self.func, name="func")
+StateGetEffect = doeff_vm.PyGet
+StatePutEffect = doeff_vm.PyPut
+StateModifyEffect = doeff_vm.PyModify
 
 
 def get(key: str) -> StateGetEffect:
-    return create_effect_with_trace(StateGetEffect(key=key))
+    ensure_str(key, name="key")
+    return create_effect_with_trace(StateGetEffect(key))
 
 
 def put(key: str, value: Any) -> StatePutEffect:
-    return create_effect_with_trace(StatePutEffect(key=key, value=value))
+    ensure_str(key, name="key")
+    return create_effect_with_trace(StatePutEffect(key, value))
 
 
 def modify(key: str, f: Callable[[Any], Any]) -> StateModifyEffect:
-    return create_effect_with_trace(StateModifyEffect(key=key, func=f))
+    ensure_str(key, name="key")
+    ensure_callable(f, name="func")
+    return create_effect_with_trace(StateModifyEffect(key, f))
 
 
 def Get(key: str) -> Effect:
-    return create_effect_with_trace(StateGetEffect(key=key), skip_frames=3)
+    ensure_str(key, name="key")
+    return create_effect_with_trace(StateGetEffect(key), skip_frames=3)
 
 
 def Put(key: str, value: Any) -> Effect:
-    return create_effect_with_trace(StatePutEffect(key=key, value=value), skip_frames=3)
+    ensure_str(key, name="key")
+    return create_effect_with_trace(StatePutEffect(key, value), skip_frames=3)
 
 
 def Modify(key: str, f: Callable[[Any], Any]) -> Effect:
-    return create_effect_with_trace(StateModifyEffect(key=key, func=f), skip_frames=3)
+    ensure_str(key, name="key")
+    ensure_callable(f, name="func")
+    return create_effect_with_trace(StateModifyEffect(key, f), skip_frames=3)
 
 
 __all__ = [
