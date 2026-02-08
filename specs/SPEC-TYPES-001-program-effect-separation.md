@@ -716,30 +716,23 @@ With the DoExpr hierarchy, `classify_yielded` classifies each yielded
 classifier does not inspect them.**
 
 ```
-Phase 1: isinstance for DoCtrl pyclasses (finite, VM-level)
-    PyWithHandler  → Yielded::DoCtrl(WithHandler)
-    PyResume       → Yielded::DoCtrl(Resume)
-    PyTransfer     → Yielded::DoCtrl(Transfer)
-    PyDelegate     → Yielded::DoCtrl(Delegate)
-    ...other DoCtrl types...
-
-Phase 2: isinstance(EffectBase)? → Yielded::Effect(obj)
-    ONE CHECK. No field extraction. No per-type arms.
-    The VM passes the object through to dispatch as-is.
-    Both Rust #[pyclass] effects (Get, Put, Spawn, etc.) and
-    Python user-defined effects hit this same path.
-
-Phase 3: has to_generator()? → DoThunk → DoCtrl::Call
-    Extract CallMetadata if available, else anonymous().
-    Yielded::Program is deleted — DoThunks always go through Call.
-
-Phase 4: Reject primitives (int, str, ...) → Unknown
+Phase 1: obj.is_instance_of::<DoCtrlBase>()?  → downcast to specific DoCtrl variant
+Phase 2: obj.is_instance_of::<EffectBase>()?  → Yielded::Effect(obj)
+Phase 3: obj.is_instance_of::<DoThunkBase>()? → DoCtrl::Call with CallMetadata
+Phase 4: else                                 → Yielded::Unknown
 ```
 
-That's it. Four phases. The effect classification phase is a SINGLE isinstance
-check — `isinstance(obj, EffectBase)`. The classifier never reads `.key`,
-`.value`, `.items`, or any effect-specific attribute. Effects are data; the
-handler reads them.
+Three C-level pointer comparisons. No Python imports. No `getattr`. No
+`hasattr("to_generator")`. No string matching.
+
+All three bases (`DoCtrlBase`, `EffectBase`, `DoThunkBase`) are Rust
+`#[pyclass(subclass)]` types (SPEC-008 R11-F). Concrete types extend
+their base: `#[pyclass(extends=EffectBase)]` for Rust effects, normal
+`class MyEffect(EffectBase)` for Python user effects. `is_instance_of`
+is a C-level type pointer check — no MRO walk, no Python overhead.
+
+The classifier never reads `.key`, `.value`, `.items`, or any
+effect-specific attribute. Effects are data; the handler reads them.
 
 ### 7.1 Separation of Concerns — Effects Are Data [Rev 8]
 
@@ -769,13 +762,26 @@ with normal Python attribute access. No Rust involvement needed.
 - The concept of "optimized Rust variants" at the classification level
 - The `effect_type` marker protocol idea (unnecessary — handlers know their types)
 
+**Performance via Rust base classes (R11-F)**: `EffectBase`, `DoCtrlBase`,
+and `DoThunkBase` are all `#[pyclass(subclass)]` in Rust. This means
+`is_instance_of::<PyEffectBase>()` is a C-level pointer comparison — no
+Python module import, no `getattr`, no MRO walk. The current implementation
+does `py.import("doeff.types")?.getattr("EffectBase")` on every call —
+that overhead is eliminated entirely.
+
 CODE-ATTENTION:
-- `pyvm.rs`: Delete entire `match type_str { ... }` block. Replace with
-  single `is_effect_base(py, obj)` → `Yielded::Effect(obj.unbind())`.
-- `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass]` structs.
+- `pyvm.rs`: Delete entire `match type_str { ... }` block. Delete
+  `is_effect_object()` with its Python import path. Replace classify_yielded
+  with three `is_instance_of` checks: `PyDoCtrlBase`, `PyEffectBase`,
+  `PyDoThunkBase`. (R11-F)
+- `effect.rs` (or new `bases.rs`): Add `PyEffectBase`, `PyDoCtrlBase`,
+  `PyDoThunkBase` as `#[pyclass(subclass, frozen)]`. (R11-F)
+- `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(extends=PyEffectBase)]` structs.
+- `pyvm.rs`: Update DoCtrl pyclasses to use `extends=PyDoCtrlBase`.
 - `vm.rs`: `Yielded::Effect(Py<PyAny>)` not `Yielded::Effect(Effect)`.
 - `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>`.
 - All handler impls: downcast in `start()`, not pre-parsed by classifier.
+- Python side: Delete Python-defined `EffectBase`, import from `doeff_vm`.
 
 ---
 

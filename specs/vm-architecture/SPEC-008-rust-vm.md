@@ -13,15 +13,20 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 | **R11-C** | classify_yielded | **Effect classification is a single isinstance check.** `classify_yielded` checks `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No field extraction. No per-effect-type arms. No string matching. The classifier does not touch effect data. |
 | **R11-D** | Handler traits | **Handler receives opaque effect.** `RustHandlerProgram::start()` takes `Py<PyAny>` (not `Effect` enum). `RustProgramHandler::can_handle()` takes `&Bound<'_, PyAny>`. Handlers downcast via `obj.downcast::<Get>()` etc. using `Python::with_gil()`. |
 | **R11-E** | start_dispatch | **Dispatch is opaque.** `start_dispatch(effect: Py<PyAny>)`. `DispatchContext.effect` is `Py<PyAny>`. `Delegate` carries `Py<PyAny>`. |
+| **R11-F** | Dispatch bases | **All type-dispatch bases are Rust `#[pyclass(subclass)]`.** `EffectBase`, `DoCtrlBase`, `DoThunkBase` defined in Rust. `classify_yielded` uses `is_instance_of` (C-level pointer check) instead of Python imports/getattr/hasattr. Concrete types extend their base via `#[pyclass(extends=...)]`. Python user types subclass normally. |
 
 **CODE-ATTENTION items** (implementation work needed — R11):
 - `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Move scheduler effect pyclasses from `scheduler.rs` or add `PySpawn`, `PyGather`, `PyRace`, `PyCreatePromise`, `PyCompletePromise`, `PyFailPromise`, `PyCreateExternalPromise`, `PyTaskCompleted`.
+- `effect.rs` (or new `bases.rs`): Add `#[pyclass(subclass, frozen)]` base classes: `PyEffectBase`, `PyDoCtrlBase`, `PyDoThunkBase`. All concrete types extend their base via `#[pyclass(extends=...)]`. [R11-F]
 - `handler.rs`: Change `RustProgramHandler::can_handle(&self, effect: &Effect)` → `can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>)`. Change `RustHandlerProgram::start(&mut self, effect: Effect, ...)` → `start(&mut self, py: Python<'_>, effect: Py<PyAny>, ...)`.
 - `vm.rs`: Change `start_dispatch(effect: Effect)` → `start_dispatch(py: Python<'_>, effect: Py<PyAny>)`. Change `DispatchContext.effect: Effect` → `effect: Py<PyAny>` (or `PyShared<PyAny>`). Change `find_matching_handler` to pass `py` + `&Bound`. Delete `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`.
-- `pyvm.rs`: Delete entire string-based `match type_str { ... }` block (~300 lines). Delete all effect field extraction. Replace with single isinstance check for EffectBase.
+- `pyvm.rs`: Delete entire string-based `match type_str { ... }` block (~148 lines). Delete all effect field extraction. Delete `is_effect_object()` Python import path. Replace classify_yielded with three `is_instance_of` checks: `PyDoCtrlBase`, `PyEffectBase`, `PyDoThunkBase`. [R11-F]
+- `pyvm.rs`: Delete individual DoCtrl isinstance checks (PyWithHandler, PyResume, etc.) — they become subtypes of DoCtrlBase, checked by one `is_instance_of::<PyDoCtrlBase>()` then downcast.
+- `pyvm.rs`: Update all DoCtrl pyclasses (PyWithHandler, PyResume, PyTransfer, PyDelegate) to use `extends=PyDoCtrlBase`.
 - `step.rs`: Change `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`. Delete `Yielded::Program` variant.
 - State/Reader/Writer handler impls: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyGet>` etc.
 - Scheduler handler impl: Rewrite `start()` to downcast scheduler effect pyclasses.
+- Python side: `doeff/types.py` or wherever `EffectBase` is defined — delete Python class, import from `doeff_vm` instead. Same for any Python-side DoCtrl/DoThunk bases.
 
 **CODE-ATTENTION items** (carried from R10):
 - `frame.rs`: Add `CallMetadata::anonymous()` constructor
@@ -887,20 +892,81 @@ def db_handler(effect, k):
         yield Delegate()
 ```
 
-#### EffectBase marker (Python side)
+### Dispatch Base Classes — Rust `#[pyclass(subclass)]` [R11-F]
 
-All effects — Rust `#[pyclass]` and Python user-defined — share a common
-base class or marker so `classify_yielded` can detect them with a single
-isinstance check:
+Any type hierarchy used for type-based dispatching in `classify_yielded`
+MUST have its base class defined as a Rust `#[pyclass(subclass)]`. This
+makes `isinstance` checks a C-level pointer comparison instead of Python
+module imports + getattr + MRO walks.
+
+```rust
+/// Base for all effect types. [R11-F]
+/// Python user effects subclass this. Rust effects use `extends=EffectBase`.
+/// classify_yielded: obj.is_instance_of::<EffectBase>() — one pointer check.
+#[pyclass(subclass, frozen, name = "EffectBase")]
+pub struct PyEffectBase;
+
+/// Base for all DoCtrl types. [R11-F]
+/// WithHandler, Resume, Transfer, Delegate, etc. all extend this.
+/// classify_yielded: obj.is_instance_of::<DoCtrlBase>() — one pointer check.
+#[pyclass(subclass, frozen, name = "DoCtrlBase")]
+pub struct PyDoCtrlBase;
+
+/// Base for DoThunk types (programs with to_generator). [R11-F]
+/// PureProgram, DerivedProgram, KleisliProgram extend this.
+/// classify_yielded: obj.is_instance_of::<DoThunkBase>() — one pointer check.
+/// Replaces the current `obj.hasattr("to_generator")` duck-type check.
+#[pyclass(subclass, frozen, name = "DoThunkBase")]
+pub struct PyDoThunkBase;
+```
+
+Concrete types extend their base:
+
+```rust
+// Effects
+#[pyclass(frozen, extends=PyEffectBase, name = "Get")]
+pub struct PyGet { #[pyo3(get)] pub key: String }
+
+// DoCtrl primitives
+#[pyclass(frozen, extends=PyDoCtrlBase, name = "WithHandler")]
+pub struct PyWithHandler { ... }
+
+// DoThunks
+#[pyclass(extends=PyDoThunkBase, name = "PureProgram")]
+pub struct PyPureProgram { ... }
+```
+
+Python user-defined types extend the same bases:
 
 ```python
-class EffectBase:
-    """Marker base for all effect types."""
-    pass
+from doeff_vm import EffectBase, DoThunkBase
 
-# Rust pyclasses register as EffectBase subclasses via __init_subclass__
-# or PyO3 #[pyclass(extends=EffectBase)]
+# User effect — isinstance(obj, EffectBase) works
+class MyDatabaseQuery(EffectBase):
+    def __init__(self, sql: str):
+        self.sql = sql
+
+# User program — isinstance(obj, DoThunkBase) works
+class MyCustomProgram(DoThunkBase):
+    def to_generator(self):
+        ...
 ```
+
+With all three bases as Rust pyclasses, `classify_yielded` becomes three
+pointer comparisons:
+
+```rust
+fn classify_yielded(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Yielded {
+    if obj.is_instance_of::<PyDoCtrlBase>() { ... }  // C-level check
+    if obj.is_instance_of::<PyEffectBase>() {         // C-level check
+        return Yielded::Effect(obj.clone().unbind());
+    }
+    if obj.is_instance_of::<PyDoThunkBase>() { ... }  // C-level check
+    Yielded::Unknown(obj.clone().unbind())
+}
+```
+
+No Python imports. No getattr. No string matching. No `hasattr("to_generator")`.
 
 The old `Effect` enum (`Get { key }`, `Put { key, value }`, etc.) is deleted.
 `effect.rs` becomes a module defining the `#[pyclass]` structs above.
@@ -2255,27 +2321,22 @@ impl Yielded {
     /// MUST be called by DRIVER with GIL held.
     /// Result is passed to VM via PyCallOutcome::GenYield(Yielded).
     ///
-    /// The classifier is simple:
-    /// 1. isinstance check for DoCtrl pyclasses (finite set, VM-level)
-    /// 2. isinstance check for EffectBase → Yielded::Effect(obj)  [ONE CHECK]
-    /// 3. has to_generator()? → DoCtrl::Call with metadata
-    /// 4. Reject primitives → Unknown
-    ///
-    /// The classifier NEVER inspects effect fields. Effects are opaque data.
+    /// Three C-level isinstance checks. No Python imports. No getattr. [R11-C] [R11-F]
     pub fn classify(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Self {
-        // Phase 1: DoCtrl pyclasses (WithHandler, Resume, Transfer, Delegate, etc.)
-        if let Ok(prim) = extract_control_primitive(py, obj) {
-            return Yielded::DoCtrl(prim);
+        // Phase 1: DoCtrl — C-level pointer check [R11-F]
+        if obj.is_instance_of::<PyDoCtrlBase>() {
+            return Self::extract_do_ctrl(py, obj);  // downcast to specific variant
         }
         
-        // Phase 2: Effect — single isinstance check [R11-C]
-        // No field extraction. No per-type arms. Just: "is this an effect?"
-        if is_effect_base(py, obj) {
+        // Phase 2: Effect — C-level pointer check [R11-C] [R11-F]
+        // No field extraction. No per-type arms. The VM does not touch effect data.
+        if obj.is_instance_of::<PyEffectBase>() {
             return Yielded::Effect(obj.clone().unbind());
         }
         
-        // Phase 3: DoThunk — upgrade to DoCtrl::Call
-        if is_do_thunk(py, obj) {
+        // Phase 3: DoThunk — C-level pointer check [R11-F]
+        // Replaces hasattr("to_generator") duck-type check.
+        if obj.is_instance_of::<PyDoThunkBase>() {
             let metadata = extract_call_metadata(py, obj)
                 .unwrap_or_else(|| CallMetadata::anonymous());
             return Yielded::DoCtrl(DoCtrl::Call {
@@ -2286,18 +2347,9 @@ impl Yielded {
             });
         }
         
-        // Phase 4: Reject primitives, unknown
+        // Phase 4: Unknown — reject primitives
         Yielded::Unknown(obj.clone().unbind())
     }
-}
-
-/// Check if obj is an EffectBase instance (single isinstance check). [R11-C]
-fn is_effect_base(py: Python<'_>, obj: &Bound<'_, PyAny>) -> bool {
-    // EffectBase is either:
-    // - A Python base class that all effects subclass, OR
-    // - Detected via a marker attribute/protocol
-    // Both Rust #[pyclass] effects and Python user effects share this base.
-    obj.is_instance_of::<PyEffectBase>()  // or: obj.is_instance(effect_base_type)
 }
 
 /// Extract CallMetadata from a Python program object (with GIL). [R9-E]
