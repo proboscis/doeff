@@ -1,6 +1,18 @@
 # SPEC-TYPES-001: DoExpr Type Hierarchy — Draft Spec
 
-## Status: WIP Discussion Draft (Rev 8)
+## Status: WIP Discussion Draft (Rev 9)
+
+### Rev 9 changes — KPC is a Rust `#[pyclass]`, auto-unwrap strategy moves to handler
+- **`KleisliProgramCall` is a `#[pyclass(frozen, extends=PyEffectBase)]` struct** defined
+  in Rust. Fields: `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`,
+  `created_at`. KPC is a proper EffectBase subclass — `classify_yielded` catches it via
+  the EffectBase isinstance check with zero special-casing. The KPC handler downcasts
+  to `PyRef<PyKPC>` and reads Rust-native fields directly. See SPEC-008 R11-A.
+- **Auto-unwrap strategy is the handler's responsibility.** `_AutoUnwrapStrategy` is
+  NOT stored on KPC. The KPC handler computes it from `kleisli_source` annotations at
+  dispatch time. This decouples the effect (KPC) from the resolution policy — different
+  KPC handlers can implement different strategies (sequential, concurrent, cached, etc.)
+  without changing the KPC type.
 
 ### Rev 8 changes — Effects are data. The VM is a dumb pipe.
 - **Effects are `#[pyclass]` structs**: All Rust-handled effects (`Get`, `Put`, `Ask`,
@@ -264,9 +276,10 @@ def inspect_effect(e: Effect) -> Program[str]:
 
 ### 3.3 Classification rules
 
-The `_AutoUnwrapStrategy` is computed at decoration time from type annotations
-and stored on the `KleisliProgramCall`. The KPC handler reads it to decide
-per-arg behavior.
+The auto-unwrap strategy is computed by the **KPC handler** from `kleisli_source`
+annotations at dispatch time [Rev 9]. The strategy is NOT stored on the KPC effect —
+it is internal to the handler. This means different KPC handlers can implement
+different classification policies without changing the KPC type.
 
 **DO unwrap** (`should_unwrap = True`) when annotation is:
 - Plain types: `int`, `str`, `dict`, `User`, etc.
@@ -313,10 +326,11 @@ the callsite handlers via `GetHandlers`, then uses `Eval` for each arg.
 
 ```
 // Default KPC handler (sequential resolution):
-fn start(effect: KPC, k_user: Continuation) -> RustProgramStep:
+fn start(effect: PyKPC, k_user: Continuation) -> RustProgramStep:
     handlers = yield GetHandlers()
-    strategy = effect.auto_unwrap_strategy
-    
+    // Handler computes strategy from kleisli_source annotations [Rev 9]
+    strategy = build_auto_unwrap_strategy(effect.kleisli_source)
+
     resolved_args = []
     for (idx, arg) in effect.args:
         if strategy.should_unwrap(idx) and is_do_expr(arg):
@@ -324,7 +338,7 @@ fn start(effect: KPC, k_user: Continuation) -> RustProgramStep:
             resolved_args.push(value)
         else:
             resolved_args.push(arg)
-    
+
     metadata = extract_call_metadata(effect)
     result = yield Call(effect.kernel, resolved_args, resolved_kwargs, metadata)
     yield Resume(k_user, result)
@@ -353,9 +367,10 @@ wraps args in `Gather`:
 
 ```
 // Concurrent KPC handler variant:
-fn start(effect: KPC, k_user: Continuation) -> RustProgramStep:
+fn start(effect: PyKPC, k_user: Continuation) -> RustProgramStep:
     handlers = yield GetHandlers()
-    exprs_to_resolve = [arg for (idx, arg) if should_unwrap(idx)]
+    strategy = build_auto_unwrap_strategy(effect.kleisli_source)
+    exprs_to_resolve = [arg for (idx, arg) if strategy.should_unwrap(idx)]
     results = yield Eval(Gather(*exprs_to_resolve), handlers)
     // merge resolved values back with non-unwrapped args
     metadata = extract_call_metadata(effect)
@@ -466,15 +481,21 @@ fetch_by_id = fetch_item.partial(category="books")
 
 ### 4.6 KleisliProgramCall metadata
 
-`KleisliProgramCall` carries debugging/observability data:
+`KleisliProgramCall` (`PyKPC`) is a `#[pyclass(frozen, extends=PyEffectBase)]` struct
+defined in Rust [Rev 9]. It carries:
 
-| Field | Purpose |
-|-------|---------|
-| `kleisli_source` | Reference to originating `KleisliProgram` |
-| `function_name` | Human-readable name for tracing |
-| `created_at` | `EffectCreationContext` for call tree reconstruction |
-| `auto_unwrap_strategy` | Annotation-derived arg classification |
-| `execution_kernel` | The actual generator function to call |
+| Field | Type | Purpose |
+|-------|------|---------|
+| `kleisli_source` | `Py<PyAny>` | Reference to originating `KleisliProgram` (has `original_func`, signature) |
+| `args` | `Py<PyTuple>` | Positional arguments |
+| `kwargs` | `Py<PyDict>` | Keyword arguments |
+| `function_name` | `String` | Human-readable name for tracing |
+| `execution_kernel` | `Py<PyAny>` | The actual generator function to call |
+| `created_at` | `Py<PyAny>` | `EffectCreationContext` for call tree reconstruction |
+
+**Note [Rev 9]**: `auto_unwrap_strategy` is NOT a field on KPC. The KPC handler
+computes it from `kleisli_source` annotations at dispatch time. This decouples
+the effect from the resolution policy.
 
 ### 4.7 Composition on Effects returns DoThunk
 
@@ -649,20 +670,24 @@ metadata comes from the `KleisliProgramCall` effect it received. The handler
 extracts it once at `start()` time and attaches it to the final `Call`:
 
 ```rust
-// KPC handler (RustHandlerProgram) pseudo-code:
-fn start(effect: KPC, k_user: Continuation) -> RustProgramStep {
+// KPC handler (RustHandlerProgram) pseudo-code [Rev 9]:
+fn start(py: Python<'_>, effect: &Bound<'_, PyAny>, k_user: Continuation) -> RustProgramStep {
+    let kpc: PyRef<PyKPC> = effect.downcast()?;  // downcast to Rust-native PyKPC
     let metadata = CallMetadata {
-        function_name: effect.function_name.clone(),
-        source_file: effect.source_file.clone(),
-        source_line: effect.source_line,
-        program_call: Some(effect.as_py_ref()),
+        function_name: kpc.function_name.clone(),
+        source_file: extract_source_file(py, &kpc.kleisli_source),
+        source_line: extract_source_line(py, &kpc.kleisli_source),
+        program_call: Some(effect.into_py(py)),
     };
-    
-    // ... resolve args via Eval ...
-    
+
+    // Handler computes auto-unwrap strategy from kleisli_source annotations
+    let strategy = build_auto_unwrap_strategy(py, &kpc.kleisli_source);
+
+    // ... resolve args via Eval using strategy ...
+
     // Call kernel with resolved args and metadata
     RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Call {
-        f: effect.kernel,
+        f: kpc.execution_kernel.clone(),
         args: resolved_args,
         kwargs: resolved_kwargs,
         metadata,
@@ -777,11 +802,19 @@ CODE-ATTENTION:
 - `effect.rs` (or new `bases.rs`): Add `PyEffectBase`, `PyDoCtrlBase`,
   `PyDoThunkBase` as `#[pyclass(subclass, frozen)]`. (R11-F)
 - `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(extends=PyEffectBase)]` structs.
+  Add `PyKPC` as `#[pyclass(frozen, extends=PyEffectBase)]` with fields:
+  `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. [Rev 9]
 - `pyvm.rs`: Update DoCtrl pyclasses to use `extends=PyDoCtrlBase`.
 - `vm.rs`: `Yielded::Effect(Py<PyAny>)` not `Yielded::Effect(Effect)`.
 - `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>`.
 - All handler impls: downcast in `start()`, not pre-parsed by classifier.
+- KPC handler impl: downcast to `PyRef<PyKPC>`, compute auto-unwrap strategy
+  from `kleisli_source` annotations at dispatch time. Strategy is handler-internal,
+  NOT stored on KPC. [Rev 9]
 - Python side: Delete Python-defined `EffectBase`, import from `doeff_vm`.
+  Delete Python `KleisliProgramCall` dataclass — replace with `PyKPC` imported
+  from `doeff_vm`. Delete `_AutoUnwrapStrategy` from KPC — it moves into the
+  KPC handler implementation. [Rev 9]
 
 ---
 
@@ -805,14 +838,17 @@ CODE-ATTENTION:
 3. Define `DoThunk[T]` as `DoExpr` + `to_generator()` (PureProgram, DerivedProgram)
 4. Define `Effect[T]` as `DoExpr` + handler dispatch
 5. Define `DoCtrl[T]` as `DoExpr` + VM control (replaces ControlPrimitive)
-6. Make `KleisliProgramCall` an `Effect` (handler-dispatched + composable)
+6. Make `KleisliProgramCall` a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`)
+   with fields: `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at` [Rev 9]
 7. Make all standard effects (Get, Put, Ask, ...) implement `Effect`
 8. Remove `to_generator()` from `KleisliProgramCall` (it is NOT a DoThunk)
 9. `.map()` on any DoExpr uniformly returns `DerivedProgram` (DoThunk)
-10. Implement default KPC handler as `RustHandlerProgram`
-11. Update `classify_yielded` to classify KPC as `Yielded::Effect`
+10. Implement default KPC handler as `RustHandlerProgram` — handler computes auto-unwrap
+    strategy from `kleisli_source` annotations at dispatch time [Rev 9]
+11. Update `classify_yielded` to classify KPC as `Yielded::Effect` (automatic via EffectBase extends)
 12. Update presets to include KPC handler
-13. Update `@do` decorator — `KleisliProgram.__call__` yields KPC effect
+13. Update `@do` decorator — `KleisliProgram.__call__` constructs `PyKPC` (imported from `doeff_vm`)
+14. Delete Python-side `_AutoUnwrapStrategy` from KPC — it moves into the KPC handler [Rev 9]
 
 ### Phase C: Complete separation (DoExpr hierarchy replaces old ProgramBase/EffectBase)
 1. Remove `EffectBase(ProgramBase)` inheritance
@@ -829,12 +865,19 @@ CODE-ATTENTION:
    - `effect.rs`: Delete `Effect` enum. Replace with `#[pyclass(frozen)]` structs
      for all Rust-handled effects (Get, Put, Ask, Tell, Modify, Spawn, Gather, Race,
      CreatePromise, CompletePromise, FailPromise, CreateExternalPromise, TaskCompleted).
+     Add `PyKPC` as `#[pyclass(frozen, extends=PyEffectBase)]` [Rev 9].
    - `pyvm.rs`: Delete ~300 lines of `match type_str { ... }`. Replace with
      single isinstance check: `is_effect_base(obj)` → `Yielded::Effect(obj)`.
    - `handler.rs`: `can_handle` and `start` receive `&Bound<'_, PyAny>` (not `Effect`).
    - `vm.rs`: `Yielded::Effect(Py<PyAny>)`, `DispatchContext.effect: Py<PyAny>`,
      `start_dispatch(py, effect: Py<PyAny>)`.
    - All handler impls: downcast in `start()` via `effect.downcast::<PyGet>()` etc.
+     KPC handler downcasts to `PyRef<PyKPC>` and computes auto-unwrap strategy from
+     `kleisli_source` annotations [Rev 9].
+   - `doeff/program.py`: Delete Python `KleisliProgramCall` dataclass — replace with
+     `PyKPC` imported from `doeff_vm`. Delete `_AutoUnwrapStrategy` and
+     `_build_auto_unwrap_strategy` from KPC — strategy computation moves into
+     the KPC handler [Rev 9].
 3. **REMOVE deprecated Python effect aliases and compat shims:**
    - `effects/spawn.py`: `Promise.complete()`, `Promise.fail()`, `Task.join()` — DELETE
    - `effects/gather.py`: backwards compat alias — DELETE
@@ -858,9 +901,11 @@ CODE-ATTENTION:
 2. **KPC is an Effect, not a DoCtrl.** Arg resolution scheduling is a
    handler concern. Sequential, concurrent, cached, retried — the handler decides.
 
-3. **Auto-unwrap strategy is carried on the KPC effect.** Computed at `@do`
-   decoration time from type annotations, stored on `KleisliProgramCall`.
-   The KPC handler reads it to classify args.
+3. **Auto-unwrap strategy is the handler's responsibility [Rev 9].** The KPC
+   handler computes the strategy from `kleisli_source` annotations at dispatch
+   time. It is NOT stored on the KPC effect. This decouples the effect from the
+   resolution policy — different KPC handlers can implement different strategies
+   (sequential, concurrent, cached, etc.) without changing the KPC type.
 
 4. **Default KPC handler resolves sequentially** using `Eval(expr, handlers)`
    per arg. `Eval` is a DoCtrl that creates an unstarted continuation
@@ -917,14 +962,16 @@ CODE-ATTENTION:
      No special cases. The thunk wraps the original DoExpr in a generator
      that yields it.
 
-13. **Effects are opaque data — the VM is a dumb pipe (Rev 8).**
+13. **Effects are opaque data — the VM is a dumb pipe (Rev 8, updated Rev 9).**
     The `Effect` enum in Rust (`Effect::Get { key }`, `Effect::Python(obj)`, etc.)
     is REMOVED. Effects flow through dispatch as `Py<PyAny>`. The VM does not
     inspect effect fields. `classify_yielded` does ONE isinstance check for
     EffectBase — no per-type arms, no string matching, no field extraction.
     Handlers downcast to concrete `#[pyclass]` types themselves. All Rust-handled
-    effects (`Get`, `Put`, `Ask`, `Tell`, `Modify`, scheduler effects) are
-    `#[pyclass(frozen)]` structs defined in Rust and exposed to Python.
+    effects (`Get`, `Put`, `Ask`, `Tell`, `Modify`, `KleisliProgramCall`, scheduler
+    effects) are `#[pyclass(frozen)]` structs defined in Rust and exposed to Python.
+    `KleisliProgramCall` (`PyKPC`) extends `PyEffectBase` — it is caught by the
+    single EffectBase isinstance check like any other effect. [Rev 9]
     This is separation of concerns: classification is the classifier's job,
     effect handling is the handler's job.
 
