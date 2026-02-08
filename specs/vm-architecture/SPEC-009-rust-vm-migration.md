@@ -1,6 +1,16 @@
 # SPEC-009: Rust VM Public API
 
-## Status: Draft (Revision 6)
+## Status: Draft (Revision 7)
+
+### Revision 7 Changelog
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R7-A** | §1 Entrypoints | `run()` / `async_run()` accept `DoExpr[T]` (not just `Program[T]`). Any non-DoExpr input MUST raise `TypeError` with informative message. |
+| **R7-B** | §1 Entrypoints | Input normalization is the Rust VM's responsibility. Python `run()` is a thin passthrough — no `_normalize_program`, no `_TopLevelDoExpr`. |
+| **R7-C** | §7 Standard Handlers | `default_handlers()` MUST include `kpc` handler. `sync_preset` and `async_preset` MUST include `kpc`. |
+| **R7-D** | §12 Type Validation (new) | Every public API typed parameter MUST validate at the boundary with `isinstance`. No duck-typing, no `hasattr`/`getattr` fallbacks, no silent coercion. |
+| **R7-E** | §11 Invariants | Added API-13 through API-17. |
 
 ### Revision 6 Changelog
 
@@ -136,7 +146,7 @@ will silently break.
 
 ```python
 def run(
-    program: Program[T],
+    program: DoExpr[T],
     handlers: list[Handler] = [],
     env: dict[str, Any] = {},
     store: dict[str, Any] = {},
@@ -146,6 +156,9 @@ def run(
 Runs `program` synchronously.  Returns a `RunResult` containing the
 final value (or error) and the final store snapshot.
 
+- `program` — Any `DoExpr[T]`: a `DoCtrl` (Pure, Call, Map, Handle/WithHandler,
+  etc.) or an `EffectBase` (Ask, Get, Put, KPC, custom effects).
+  See **Input Contract** below and SPEC-TYPES-001 R10.
 - `handlers` — Explicit list.  **No handlers are installed by default.**
   If the program yields `Get("x")` but no `state` handler is installed,
   the VM raises `UnhandledEffect`.
@@ -171,7 +184,7 @@ body segments with correct `scope_chain`, and deterministic handler ordering.
 
 ```python
 async def async_run(
-    program: Program[T],
+    program: DoExpr[T],
     handlers: list[Handler] = [],
     env: dict[str, Any] = {},
     store: dict[str, Any] = {},
@@ -185,6 +198,62 @@ that must leave the VM to await a Python coroutine).
 loop — not a synchronous function wrapped in `asyncio.ensure_future()`.
 The driver loop must use `await` to execute `PythonAsyncSyntaxEscape`
 actions, yielding the thread between steps. [R3-D]
+
+### Input Contract [R7-A, R7-B]
+
+`run()` and `async_run()` accept any `DoExpr[T]` as the `program` argument.
+The two `DoExpr` subtypes are handled as follows (see SPEC-TYPES-001 R10):
+
+```
+Input type        Example                  VM behavior
+──────────────────────────────────────────────────────────────
+DoCtrl            Pure(v), Call(...),       VM evaluates directly
+                  Handle(h, prog),
+                  Map(expr, f)
+EffectBase        Ask("k"), Get("x"), KPC  dispatched to handler stack
+```
+
+**Anything that is NOT a `DoExpr` MUST raise `TypeError` immediately** with
+an informative message that includes:
+1. The actual type received
+2. What types are accepted (DoExpr subtypes)
+3. A hint if the input looks like a common mistake
+
+```python
+# GOOD — accepted inputs:
+run(my_do_func(1))                  # EffectBase (KPC)
+run(Ask("key"))                      # EffectBase
+run(Get("x").map(str))              # DoCtrl (Map node)
+run(WithHandler(h, prog))           # DoCtrl (Handle node)
+run(Pure(42))                        # DoCtrl (Pure node)
+
+# BAD — must raise TypeError:
+run(42)                              # TypeError: run() requires DoExpr[T] (Program, Effect,
+                                     #   or DoCtrl), got int
+run("hello")                         # TypeError: ... got str
+run(lambda: 42)                      # TypeError: ... got function. Did you mean @do?
+run(my_generator_func)               # TypeError: ... got function. Did you mean to call it?
+run(my_generator_func())             # TypeError: ... got generator. Wrap with @do or
+                                     #   GeneratorProgram.
+```
+
+**No Python-side normalization.** The Python `run()` wrapper is a thin
+passthrough. It performs the `isinstance(program, DoExpr)` check and raises
+`TypeError` for non-DoExpr inputs. The Rust VM evaluates the DoExpr directly —
+DoCtrl nodes are evaluated by the VM, Effects are dispatched to handlers.
+There must be no `_normalize_program()`, no `_TopLevelDoExpr`, and no
+Python-side wrapping logic. [R7-B]
+
+```python
+# Python run() implementation (conceptual):
+def run(program, handlers=(), env=None, store=None):
+    if not isinstance(program, DoExpr):
+        raise TypeError(
+            f"run() requires DoExpr[T] (Program, Effect, or DoCtrl), "
+            f"got {type(program).__name__}"
+        )
+    return doeff_vm.run(program, handlers=list(handlers), env=env, store=store)
+```
 
 ---
 
@@ -304,9 +373,9 @@ result = run(program, handlers=[state], store={})
 f(42)                 ← KleisliProgramCall (this IS a Program[T])
                          body has NOT executed
 
-run(f(42), ...)       ← VM calls to_generator() to get the actual generator
-                         body starts executing
-                         yields/returns flow through VM step machine
+run(f(42), ...)       ← VM dispatches KPC to kpc handler, which calls kernel(42)
+                         kernel returns generator, pushed as frame
+                         body starts executing, yields/returns flow through VM
 ```
 
 `Program[T]` is not the generator itself — it is a `KleisliProgramCall` (`PyKPC`,
@@ -676,6 +745,22 @@ scheduler effect. It is handled by the `sync_await_handler` or
 from doeff.handlers import scheduler
 ```
 
+### kpc [R7-C]
+
+Handles: `KleisliProgramCall`
+
+Provides `@do` function dispatch. When a program yields a KPC, the kpc handler
+resolves arguments (computing auto-unwrap strategy from `kleisli_source`
+annotations), calls the execution kernel, and runs the resulting generator.
+
+```python
+from doeff.handlers import kpc
+```
+
+The `kpc` handler is **required** for any program that uses `@do` functions.
+Without it, yielding a KPC results in `UnhandledEffect`. It is included in
+`default_handlers()` and both presets.
+
 ### Presets
 
 Convenience bundles for common configurations:
@@ -683,16 +768,16 @@ Convenience bundles for common configurations:
 ```python
 from doeff.presets import sync_preset, async_preset
 
-# sync_preset = [scheduler (sync), state, reader, writer, ...]
-# async_preset = [scheduler (async), state, reader, writer, ...]
+# sync_preset = [state, reader, writer, kpc]
+# async_preset = [state, reader, writer, kpc, scheduler]
 
 result = run(my_program(), handlers=sync_preset, store={"x": 0})
 ```
 
-### default_handlers() [Q9]
+### default_handlers() [Q9, R7-C]
 
-Public convenience function returning the standard handler bundle `[state, reader, writer]`.
-Available as `from doeff import default_handlers`.
+Public convenience function returning the standard handler bundle
+`[state, reader, writer, kpc]`. Available as `from doeff import default_handlers`.
 
 ```python
 from doeff import run, default_handlers
@@ -703,6 +788,10 @@ result = run(my_program(), handlers=default_handlers(), store={"x": 0})
 
 **Note**: `run()` defaults to `handlers=[]` (API-1). Users must explicitly
 pass `default_handlers()` or construct their own handler list.
+
+**Note**: `kpc` is included because `@do` is the primary programming model.
+Programs that don't use `@do` (e.g., bare `GeneratorProgram`) don't need it,
+but it is harmless — a handler that never matches has zero overhead.
 
 ---
 
@@ -727,7 +816,7 @@ from doeff.effects import Get, Put, Modify, Ask, Tell
 from doeff import WithHandler
 
 # Standard handlers
-from doeff.handlers import state, reader, writer, scheduler
+from doeff.handlers import state, reader, writer, kpc, scheduler
 
 # Presets
 from doeff.presets import sync_preset, async_preset
@@ -867,6 +956,146 @@ Key differences:
 | API-10 | Standard handlers (`state`, `reader`, `writer`) are opaque `Handler` values with no special dispatch path [R3-D] |
 | API-11 | All effect types (standard + scheduler) must be classifiable — unknown effects are bugs, not graceful degradation [R3-D] |
 | API-12 | `async_run()` must be a true `async def` — it must yield control to the event loop, not block the thread [R3-D] |
+| API-13 | `run()` / `async_run()` MUST raise `TypeError` for non-`DoExpr` program argument (§1 Input Contract) [R7-A] |
+| API-14 | Python `run()` is a thin passthrough — no `_normalize_program`, no `_TopLevelDoExpr`, no duck-typing via `getattr`/`hasattr` [R7-B] |
+| API-15 | `default_handlers()` MUST include `kpc` handler. Both presets MUST include `kpc` [R7-C] |
+| API-16 | Every public API typed parameter MUST validate via `isinstance` at the boundary — no duck-typing, no silent coercion, no deferred validation (§12) [R7-D] |
+| API-17 | Validation errors MUST be `TypeError` with message including: actual type received, expected type, and contextual hint [R7-D] |
+
+---
+
+## 12. Type Validation Contract [R7-D]
+
+Every public API function that accepts typed parameters MUST validate inputs
+at the **call boundary** — the moment the user's code calls the function, not
+later when the VM tries to use the value. This eliminates:
+
+- Duck-typing fallbacks (`hasattr(x, "to_generator")` → call it)
+- Silent coercion (wrapping non-DoExpr in _TopLevelDoExpr)
+- Deferred validation (accepting `Py<PyAny>` at construction, failing at dispatch)
+- Backward-compatibility shims (accepting both old and new types)
+
+### Validation Rules
+
+1. **`isinstance` only** — no `hasattr`, `getattr`, `callable()` as type checks.
+   Exception: `callable()` is acceptable for parameters typed as `Callable`.
+2. **Fail immediately** — validation happens at function entry, before any work.
+3. **`TypeError` always** — wrong type → `TypeError`. Wrong value of correct type
+   → `ValueError`. Never `AttributeError`, `RuntimeError`, or VM-internal errors
+   for type mismatches.
+4. **Informative message** — every `TypeError` MUST include:
+   - What was expected (with concrete type names)
+   - What was received (`type(x).__name__`)
+   - A contextual hint for common mistakes (see §1 Input Contract examples)
+
+### Validation Matrix
+
+Every row is a **spec requirement**. Implementation MUST validate. Tests MUST
+cover both the happy path and the rejection path.
+
+#### §1 Entrypoints: `run()` / `async_run()`
+
+| Parameter | Expected Type | Validation | Error |
+|-----------|---------------|------------|-------|
+| `program` | `DoExpr` | `isinstance(program, DoExpr)` | `TypeError: run() requires DoExpr[T] (Program, Effect, or DoCtrl), got {type}` |
+| `handlers` | `Sequence[Handler]` | `isinstance(handlers, Sequence)` and each element is a handler sentinel or callable | `TypeError: handlers must be a sequence of Handler, got {type}` |
+| `env` | `dict[str, Any] \| None` | `env is None or isinstance(env, dict)` | `TypeError: env must be dict or None, got {type}` |
+| `store` | `dict[str, Any] \| None` | `store is None or isinstance(store, dict)` | `TypeError: store must be dict or None, got {type}` |
+
+Common mistake hints for `program`:
+
+| Input | Hint |
+|-------|------|
+| `function` (not called) | `"Did you mean to call it? Use run(my_func(...))."` |
+| `generator` (raw) | `"Wrap with @do or GeneratorProgram."` |
+| `coroutine` | `"Use async_run() for async programs."` |
+
+#### §3 Decorator: `@do`
+
+| Parameter | Expected Type | Validation | Error |
+|-----------|---------------|------------|-------|
+| `func` | `Callable` | `callable(func)` | `TypeError: @do requires a callable, got {type}` |
+
+Note: `@do` accepts both generator functions and regular functions (non-generator
+early return is a supported pattern per SPEC-TYPES-001 §4.2). The validation is
+that the argument is callable — NOT that it is specifically a generator function.
+
+#### §4 Standard Effects
+
+Already validated (confirmed):
+
+| Effect | Parameter | Expected | Status |
+|--------|-----------|----------|--------|
+| `Get(key)` | `key` | `str` | ✅ `ensure_str` |
+| `Put(key, value)` | `key` | `str` | ✅ `ensure_str` |
+| `Modify(key, fn)` | `key` | `str` | ✅ `ensure_str` |
+| `Modify(key, fn)` | `fn` | `Callable` | ✅ `ensure_callable` |
+| `Ask(key)` | `key` | `Hashable` | ✅ `ensure_hashable` |
+| `Local(env, prog)` | `env` | `Mapping` | ✅ `ensure_env_mapping` |
+| `Local(env, prog)` | `prog` | program-like | ✅ `ensure_program_like` |
+| `Listen(prog)` | `prog` | program-like | ✅ `ensure_program_like` |
+| `Tell(msg)` | `msg` | `Any` | ✅ No validation needed (`Any` is the contract) |
+
+#### §5 Dispatch Primitives: `Resume`, `Transfer`, `Delegate`
+
+These are Rust `#[pyclass]` constructors. Validation MUST happen at
+**construction time**, not deferred to dispatch.
+
+| Constructor | Parameter | Expected Type | Validation | Error |
+|-------------|-----------|---------------|------------|-------|
+| `Resume(k, value)` | `k` | `K` | `isinstance(k, K)` | `TypeError: Resume(k, value) requires k to be K (continuation handle), got {type}` |
+| `Resume(k, value)` | `value` | `Any` | None needed | — |
+| `Transfer(k, value)` | `k` | `K` | `isinstance(k, K)` | `TypeError: Transfer(k, value) requires k to be K (continuation handle), got {type}` |
+| `Transfer(k, value)` | `value` | `Any` | None needed | — |
+| `Delegate()` | (none) | — | — | — |
+| `Delegate(effect)` | `effect` | `EffectBase` | `isinstance(effect, EffectBase)` | `TypeError: Delegate(effect) requires EffectBase, got {type}` |
+
+#### §6 Composition: `WithHandler`
+
+| Constructor | Parameter | Expected Type | Validation | Error |
+|-------------|-----------|---------------|------------|-------|
+| `WithHandler(handler, program)` | `handler` | `Callable` | `callable(handler)` or handler sentinel | `TypeError: WithHandler handler must be callable or handler sentinel, got {type}` |
+| `WithHandler(handler, program)` | `program` | `DoExpr` | `isinstance(program, DoExpr)` | `TypeError: WithHandler program must be DoExpr (Program, Effect, or DoCtrl), got {type}` |
+
+#### §4.7 Composition Methods: `.map()`, `.flat_map()`
+
+Already validated (confirmed):
+
+| Method | Parameter | Expected | Status |
+|--------|-----------|----------|--------|
+| `.map(f)` | `f` | `Callable` | ✅ `callable(f)` check |
+| `.flat_map(f)` | `f` | `Callable` | ✅ `callable(f)` check |
+| `.flat_map(f)` | `f(x)` return | `DoExpr` | ✅ deferred isinstance check (acceptable — can't check before calling `f`) |
+
+### What This Eliminates
+
+```
+BEFORE (duck-typed, fallback-laden)          AFTER (strict isinstance gates)
+═══════════════════════════════════          ═══════════════════════════════
+
+run("hello")                                 run("hello")
+→ _normalize_program checks getattr          → isinstance(x, DoExpr) → NO
+→ getattr_static("to_generator") → None      → TypeError: "...got str"
+→ isinstance(EffectBase) → No                   IMMEDIATE, CLEAR
+→ TypeError (generic)
+
+run(my_gen_func)                             run(my_gen_func)
+→ getattr_static("to_generator") → None      → isinstance(x, DoExpr) → NO
+→ isinstance(EffectBase) → No                → TypeError: "...got function.
+→ TypeError (generic)                           Did you mean to call it?"
+                                                IMMEDIATE, HELPFUL
+
+WithHandler("not_a_handler", prog)           WithHandler("not_a_handler", prog)
+→ accepted at construction                   → callable("not_a_handler") → NO
+→ fails 50 frames deep in VM dispatch        → TypeError at construction
+→ opaque Rust error message                     IMMEDIATE, CLEAR
+
+Resume("not_k", 42)                          Resume("not_k", 42)
+→ accepted at construction                   → isinstance("not_k", K) → NO
+→ fails when VM tries to cast to K           → TypeError at construction
+→ "Resume.continuation must be K"               IMMEDIATE, CLEAR
+   (but only at dispatch time)
+```
 
 ---
 
