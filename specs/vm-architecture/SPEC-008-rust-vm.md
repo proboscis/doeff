@@ -1,6 +1,22 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 12)
+## Status: Draft (Revision 13)
+
+### Revision 13 Changelog
+
+Changes from Rev 12. Binary type hierarchy (DoExpr = DoCtrl | Effect), DoThunk eliminated, Pure/Map/FlatMap added.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R13-A** | Type hierarchy | **Binary DoExpr hierarchy: DoExpr = DoCtrl \| Effect.** DoThunk eliminated. Generators are lazy ASTs — each yielded DoExpr is an expression node. Two categories: DoCtrl (fixed VM syntax) and Effect (open handler-dispatched data). No third category. |
+| **R13-B** | DoCtrl variants | **Added Pure, Map, FlatMap.** `Pure(value)` is the literal value node (evaluates to value immediately, zero cost). `Map(source: DoExpr, f)` is functor map (replaces DerivedProgram). `FlatMap(source: DoExpr, binder)` is monadic bind. These are DoCtrl nodes — VM syntax, not effects. |
+| **R13-C** | Call args | **`Call(f: DoExpr, args: [DoExpr], kwargs, meta)` takes DoExpr args.** VM evaluates args sequentially left-to-right. KPC handler can pre-resolve in parallel and emit Call with Pure(resolved) args. `f` is also a DoExpr — typically Pure(callable) or an effect that resolves to a callable. |
+| **R13-D** | classify_yielded | **Binary classification: DoCtrlBase \| EffectBase.** DoThunkBase deleted. `classify_yielded` checks `isinstance(obj, DoCtrlBase)` → downcast to specific DoCtrl variant, or `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No third path. |
+| **R13-E** | PythonCall::StartProgram | **Renamed to `PythonCall::EvalDoExpr`.** Semantics: driver evaluates a DoExpr node. For Pure(callable), calls `callable()` and expects a generator. For Call nodes, evaluates args first, then calls. For effects, this path is not used (effects go through dispatch). The key insight: DoCtrl is the VM's instruction set, not a Python-level concept. |
+| **R13-F** | Eval framing | **`DoCtrl::Eval(expr: DoExpr, handlers)` evaluates DoExpr nodes.** `expr` can be Pure(callable), Call(...), Map(...), FlatMap(...), or an Effect. VM creates a continuation with the handler chain and evaluates the DoExpr within it. This is the VM's expression evaluator — not a Python call. |
+| **R13-G** | Call arg evaluation | **Full spec for `DoCtrl::Call` with DoExpr args.** Added `PendingPython::CallEvalProgress` with `CallEvalPhase` (EvalF/EvalArg/Invoke) to track multi-step evaluation. Fast path: all Pure args → extract and call directly (ONE NeedsPython for the invocation). Slow path: evaluate f, then args[0..n] sequentially via `eval_do_expr()`. `eval_do_expr()` short-circuits Pure(value) without Python round-trip via GIL-free tag read. `try_call_fast_path()` checks all-Pure condition GIL-free. Also: `FlatMapBinderResult` pending state for two-step binder evaluation. |
+| **R13-H** | Stale references | **Fixed remaining stale StartProgram/DoThunk/to_generator references.** ASCII diagram updated to binary DoCtrl/Effect/Unknown. HandleYield table (INV-14) updated. INV-15 classification updated. `run()` entry point uses `classify_program_input()` instead of `to_generator()`. Legacy Specs section updated to reflect binary hierarchy. `async_run` Python example updated. |
+| **R13-I** | GIL-free tag dispatch | **`DoExprTag` discriminant for GIL-free type checking.** `PyDoCtrlBase` and `PyEffectBase` carry an immutable `tag: u8` field (`#[pyclass(frozen)]`). `DoExprTag` is a `#[repr(u8)]` enum: Pure=0, Call=1, ..., Effect=128, Unknown=255. `classify_yielded` reads the tag without GIL via unsafe pointer access to frozen struct data. `eval_do_expr` and `try_call_fast_path` also use tag-based dispatch — Pure values are extracted GIL-free. `extract_do_ctrl` reads variant-specific fields (`.value`, `.f`, `.args`, etc.) GIL-free from frozen pyclasses. Only actual Python function invocation requires NeedsPython/GIL. |
 
 ### Revision 12 Changelog
 
@@ -8,10 +24,10 @@ Changes from Rev 11. Clarifies Call semantics and eliminates `to_generator()` fr
 
 | Tag | Section | Change |
 |-----|---------|--------|
-| **R12-A** | DoCtrl::Call | **`DoCtrl::Call` is the unified program-start primitive.** It handles two calling conventions: (1) `f()` for DoThunks (zero args), and (2) `f(*args, **kwargs)` for KPC kernels (with args). In both cases the result is a generator pushed as a `PythonGenerator` frame. The VM does NOT distinguish between these — `Call` always means "call `f` with the given args, expect a generator, push as frame". |
-| **R12-B** | `to_generator()` boundary | **`to_generator()` is a Python Program API, not a Rust VM concept.** The Rust VM works with generators. The Python-side driver (`pyvm.rs`) may call `to_generator()` on DoThunks as a convenience for the zero-args path in `PythonCall::StartProgram`, but this is a driver implementation detail — not a VM-level semantic. The VM's `DoCtrl::Call` does not know or care about `to_generator()`. |
-| **R12-C** | KPC kernel type | **KPC `execution_kernel` is `(*args, **kwargs) -> Generator`.** A DoThunk's `to_generator` is `() -> Generator` — a degenerate case of the same signature with no args. Both are callable-that-returns-generator. The KPC handler emits `DoCtrl::Call { f: kernel, args, kwargs }` and the VM calls `f(*args, **kwargs)`, pushes the resulting generator as a frame. |
-| **R12-D** | DoExpr Input Rule | **Updated.** The old rule said "all DoExpr entry points require a DoThunk with `to_generator()`". This is replaced: `DoCtrl::Call` accepts any callable that returns a generator. `StartProgram` (driver-level) may still call `to_generator()` on DoThunks for backward compatibility, but this is a transitional detail. |
+| **R12-A** | DoCtrl::Call | **SUPERSEDED BY R13-C.** `DoCtrl::Call(f: DoExpr, args: [DoExpr], kwargs, meta)` takes DoExpr arguments. VM evaluates args sequentially left-to-right. `f` is a DoExpr (typically Pure(callable)). No distinction between "DoThunk path" and "kernel path" — both are Call with DoExpr args. |
+| **R12-B** | `to_generator()` boundary | **SUPERSEDED BY R13-A.** DoThunk eliminated. Generators are lazy ASTs. The VM evaluates DoExpr nodes (Pure, Call, Map, FlatMap, Effect). No `to_generator()` at VM level. |
+| **R12-C** | KPC kernel type | **SUPERSEDED BY R13-C.** KPC handler emits `Call(f: Pure(kernel), args: [Pure(arg1), Pure(arg2), ...], kwargs, meta)`. VM evaluates each arg DoExpr, then calls `kernel(*resolved_args, **resolved_kwargs)`. |
+| **R12-D** | DoExpr Input Rule | **SUPERSEDED BY R13-A.** DoExpr = DoCtrl \| Effect. No DoThunk. Generators yield DoExpr nodes. VM evaluates them. |
 
 ### Revision 11 Changelog
 
@@ -24,21 +40,21 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 | **R11-C** | classify_yielded | **Effect classification is a single isinstance check.** `classify_yielded` checks `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No field extraction. No per-effect-type arms. No string matching. The classifier does not touch effect data. |
 | **R11-D** | Handler traits | **Handler receives opaque effect.** `RustHandlerProgram::start()` takes `Py<PyAny>` (not `Effect` enum). `RustProgramHandler::can_handle()` takes `&Bound<'_, PyAny>`. Handlers downcast via `obj.downcast::<Get>()` etc. using `Python::with_gil()`. |
 | **R11-E** | start_dispatch | **Dispatch is opaque.** `start_dispatch(effect: Py<PyAny>)`. `DispatchContext.effect` is `Py<PyAny>`. `Delegate` carries `Py<PyAny>`. |
-| **R11-F** | Dispatch bases | **All type-dispatch bases are Rust `#[pyclass(subclass)]`.** `EffectBase`, `DoCtrlBase`, `DoThunkBase` defined in Rust. `classify_yielded` uses `is_instance_of` (C-level pointer check) instead of Python imports/getattr/hasattr. Concrete types extend their base via `#[pyclass(extends=...)]`. Python user types subclass normally. |
+| **R11-F** | Dispatch bases | **All type-dispatch bases are Rust `#[pyclass(subclass)]`.** `EffectBase`, `DoCtrlBase` defined in Rust. [R13-D: DoThunkBase deleted — binary hierarchy only.] [R13-I: GIL-free tag-based dispatch replaces `is_instance_of`. Each base carries an immutable `tag: u8` discriminant. VM reads the tag without GIL for classification and variant dispatch.] Concrete types extend their base via `#[pyclass(extends=...)]`. Python user types subclass normally. |
 
 **CODE-ATTENTION items** (implementation work needed — R11):
 - `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Move scheduler effect pyclasses from `scheduler.rs` or add `PySpawn`, `PyGather`, `PyRace`, `PyCreatePromise`, `PyCompletePromise`, `PyFailPromise`, `PyCreateExternalPromise`, `PyTaskCompleted`. Add `PyKPC` (`#[pyclass(frozen, extends=PyEffectBase)]`) with fields: `kleisli_source: Py<PyAny>`, `args: Py<PyTuple>`, `kwargs: Py<PyDict>`, `function_name: String`, `execution_kernel: Py<PyAny>`, `created_at: Py<PyAny>`. KPC does NOT carry `auto_unwrap_strategy` — the handler computes it from `kleisli_source` annotations.
-- `effect.rs` (or new `bases.rs`): Add `#[pyclass(subclass, frozen)]` base classes: `PyEffectBase`, `PyDoCtrlBase`, `PyDoThunkBase`. All concrete types extend their base via `#[pyclass(extends=...)]`. [R11-F]
+- `effect.rs` (or new `bases.rs`): Add `#[pyclass(subclass, frozen)]` base classes: `PyEffectBase { tag: u8 }`, `PyDoCtrlBase { tag: u8 }`. [R13-D: DoThunkBase deleted — binary hierarchy.] [R13-I: tag field enables GIL-free classification.] Add `DoExprTag` enum (`#[repr(u8)]`). All concrete types extend their base via `#[pyclass(extends=...)]` and set tag at construction. [R11-F]
 - `handler.rs`: Change `RustProgramHandler::can_handle(&self, effect: &Effect)` → `can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>)`. Change `RustHandlerProgram::start(&mut self, effect: Effect, ...)` → `start(&mut self, py: Python<'_>, effect: Py<PyAny>, ...)`.
 - `vm.rs`: Change `start_dispatch(effect: Effect)` → `start_dispatch(py: Python<'_>, effect: Py<PyAny>)`. Change `DispatchContext.effect: Effect` → `effect: Py<PyAny>` (or `PyShared<PyAny>`). Change `find_matching_handler` to pass `py` + `&Bound`. Delete `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`.
-- `pyvm.rs`: Delete entire string-based `match type_str { ... }` block (~148 lines). Delete all effect field extraction. Delete `is_effect_object()` Python import path. Replace classify_yielded with three `is_instance_of` checks: `PyDoCtrlBase`, `PyEffectBase`, `PyDoThunkBase`. [R11-F]
-- `pyvm.rs`: Delete individual DoCtrl isinstance checks (PyWithHandler, PyResume, etc.) — they become subtypes of DoCtrlBase, checked by one `is_instance_of::<PyDoCtrlBase>()` then downcast.
+- `pyvm.rs`: Delete entire string-based `match type_str { ... }` block (~148 lines). Delete all effect field extraction. Delete `is_effect_object()` Python import path. [R13-I: Replace classify_yielded with GIL-free tag read via `read_do_expr_tag()`. No `is_instance_of` needed — tag discriminant replaces MRO-based type checks.] [R13-D: Binary classification only.]
+- `pyvm.rs`: Delete individual DoCtrl isinstance checks (PyWithHandler, PyResume, etc.) — dispatch on `DoExprTag` value instead. [R13-I]
 - `pyvm.rs`: Update all DoCtrl pyclasses (PyWithHandler, PyResume, PyTransfer, PyDelegate) to use `extends=PyDoCtrlBase`.
 - `step.rs`: Change `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`. Delete `Yielded::Program` variant.
 - State/Reader/Writer handler impls: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyGet>` etc.
 - Scheduler handler impl: Rewrite `start()` to downcast scheduler effect pyclasses.
 - KPC handler impl: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyKPC>`. Handler reads `kleisli_source` to compute auto-unwrap strategy from annotations at dispatch time. Strategy computation is handler-internal — different KPC handlers may use different strategies.
-- Python side: `doeff/types.py` or wherever `EffectBase` is defined — delete Python class, import from `doeff_vm` instead. Same for any Python-side DoCtrl/DoThunk bases. Delete Python `KleisliProgramCall` class — replace with `PyKPC` imported from `doeff_vm`. Delete `_AutoUnwrapStrategy` from `KleisliProgramCall` — it moves into the KPC handler.
+- Python side: `doeff/types.py` or wherever `EffectBase` is defined — delete Python class, import from `doeff_vm` instead. Same for any Python-side DoCtrl bases. [R13-D: DoThunkBase deleted — no third base.] Delete Python `KleisliProgramCall` class — replace with `PyKPC` imported from `doeff_vm`. Delete `_AutoUnwrapStrategy` from `KleisliProgramCall` — it moves into the KPC handler.
 
 **CODE-ATTENTION items** (carried from R10):
 - `frame.rs`: Add `CallMetadata::anonymous()` constructor
@@ -372,7 +388,7 @@ trait RustHandlerProgram {
 
 // Python handler (via PyO3)
 // def handler(effect, k) -> Program[Any]
-// VM converts the Program to a generator via to_generator().
+// VM evaluates the handler's return (a DoExpr) as a generator. [R13-E]
 ```
 
 Both produce the same observable behavior: `Resume(k, value)`, `Delegate(effect)`,
@@ -939,81 +955,212 @@ def db_handler(effect, k):
         yield Delegate()
 ```
 
-### Dispatch Base Classes — Rust `#[pyclass(subclass)]` [R11-F]
+### Dispatch Base Classes — Rust `#[pyclass(subclass)]` [R11-F] [R13-D]
 
 Any type hierarchy used for type-based dispatching in `classify_yielded`
 MUST have its base class defined as a Rust `#[pyclass(subclass)]`. This
 makes `isinstance` checks a C-level pointer comparison instead of Python
 module imports + getattr + MRO walks.
 
+**Binary hierarchy [R13-D]**: DoExpr = DoCtrl | Effect. No third category.
+
+**GIL-free type dispatch [R13-I]**: All DoExpr nodes carry an immutable `tag: DoExprTag`
+discriminant set at construction. The VM reads this tag to classify and downcast
+yielded values **without GIL** — it's a Rust field read on `#[pyclass(frozen)]` data.
+No `is_instance_of`, no `PyType_IsSubtype`, no MRO walk.
+
 ```rust
-/// Base for all effect types. [R11-F]
-/// Python user effects subclass this. Rust effects use `extends=EffectBase`.
-/// classify_yielded: obj.is_instance_of::<EffectBase>() — one pointer check.
+/// [R13-I] Discriminant tag for GIL-free type dispatch.
+/// Set once at construction, immutable (frozen pyclass).
+/// VM reads this to classify DoExpr nodes in the step loop without GIL.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoExprTag {
+    // === DoCtrl variants (VM instructions) ===
+    Pure        = 0,
+    Call        = 1,
+    Map         = 2,
+    FlatMap     = 3,
+    WithHandler = 4,
+    Resume      = 5,
+    Transfer    = 6,
+    Delegate    = 7,
+    Eval        = 8,
+    GetHandlers = 9,
+    GetCallStack = 10,
+    GetContinuation = 11,
+    CreateContinuation = 12,
+    ResumeContinuation = 13,
+    PythonAsyncSyntaxEscape = 14,
+
+    // === Effect (handler-dispatched) ===
+    // All effects share a single tag value. The VM doesn't distinguish
+    // between effect types — it dispatches all of them to handlers.
+    Effect      = 128,
+
+    // === Unknown (error) ===
+    Unknown     = 255,
+}
+
+impl DoExprTag {
+    #[inline]
+    pub fn is_do_ctrl(self) -> bool { (self as u8) < 128 }
+    #[inline]
+    pub fn is_effect(self) -> bool { self as u8 == 128 }
+}
+
+/// Base for all effect types. [R11-F] [R13-I]
+/// Python user effects subclass this. Rust effects use `extends=PyEffectBase`.
+/// Tag is always DoExprTag::Effect. VM checks tag for GIL-free classification.
 #[pyclass(subclass, frozen, name = "EffectBase")]
-pub struct PyEffectBase;
+pub struct PyEffectBase {
+    #[pyo3(get)]
+    pub tag: u8,  // Always DoExprTag::Effect (128). Exposed to Python for introspection.
+}
 
-/// Base for all DoCtrl types. [R11-F]
-/// WithHandler, Resume, Transfer, Delegate, etc. all extend this.
-/// classify_yielded: obj.is_instance_of::<DoCtrlBase>() — one pointer check.
+impl PyEffectBase {
+    pub fn new() -> Self {
+        Self { tag: DoExprTag::Effect as u8 }
+    }
+}
+
+/// Base for all DoCtrl types. [R11-F] [R13-I]
+/// WithHandler, Resume, Transfer, Delegate, Pure, Call, Map, FlatMap, etc. all extend this.
+/// Each concrete subtype sets its specific DoExprTag at construction.
+/// VM checks tag for GIL-free classification and variant dispatch.
 #[pyclass(subclass, frozen, name = "DoCtrlBase")]
-pub struct PyDoCtrlBase;
+pub struct PyDoCtrlBase {
+    #[pyo3(get)]
+    pub tag: u8,  // Specific DoExprTag variant. Exposed to Python for introspection.
+}
 
-/// Base for DoThunk types (programs with to_generator). [R11-F]
-/// PureProgram, DerivedProgram, KleisliProgram extend this.
-/// classify_yielded: obj.is_instance_of::<DoThunkBase>() — one pointer check.
-/// Replaces the current `obj.hasattr("to_generator")` duck-type check.
-#[pyclass(subclass, frozen, name = "DoThunkBase")]
-pub struct PyDoThunkBase;
+/// [R13-D] DELETED: DoThunkBase removed. Binary hierarchy only.
+/// DoThunk concept eliminated. Generators yield DoExpr nodes (DoCtrl | Effect).
+/// No `to_generator()` at VM level. Pure(callable) replaces DoThunk.
 ```
 
-Concrete types extend their base:
+Concrete types extend their base and set the tag at construction:
 
 ```rust
-// Effects
+// Effects — tag is always DoExprTag::Effect
 #[pyclass(frozen, extends=PyEffectBase, name = "Get")]
 pub struct PyGet { #[pyo3(get)] pub key: String }
+// PyGet::new() calls PyEffectBase::new() for super → tag = 128
 
-// DoCtrl primitives
+// DoCtrl primitives — each sets its specific tag
 #[pyclass(frozen, extends=PyDoCtrlBase, name = "WithHandler")]
 pub struct PyWithHandler { ... }
+// super = PyDoCtrlBase { tag: DoExprTag::WithHandler as u8 }
 
-// DoThunks
-#[pyclass(extends=PyDoThunkBase, name = "PureProgram")]
-pub struct PyPureProgram { ... }
+#[pyclass(frozen, extends=PyDoCtrlBase, name = "Pure")]
+pub struct PyPure { #[pyo3(get)] pub value: PyObject }
+// super = PyDoCtrlBase { tag: DoExprTag::Pure as u8 }
+
+#[pyclass(frozen, extends=PyDoCtrlBase, name = "Call")]
+pub struct PyCall {
+    #[pyo3(get)] pub f: PyObject,       // DoExpr — the callable
+    #[pyo3(get)] pub args: Vec<PyObject>, // [DoExpr] — arguments
+    #[pyo3(get)] pub kwargs: Option<PyObject>,
+    #[pyo3(get)] pub metadata: PyObject,  // CallMetadata
+}
+// super = PyDoCtrlBase { tag: DoExprTag::Call as u8 }
+
+// [R13-D] DoThunk types deleted — no PyPureProgram, PyDerivedProgram, etc.
+// Pure(value) replaces them.
+```
+
+**GIL-free tag access [R13-I]**: The `tag` field is an immutable `u8` in a `frozen` pyclass.
+To read it from `Py<PyAny>` without GIL, the VM uses unsafe pointer arithmetic to
+reach the Rust struct data inside the Python object. Since the field is frozen (write-once
+at construction, never mutated), this is safe:
+
+```rust
+/// [R13-I] Extract DoExprTag from any PyObject without GIL.
+/// The tag field is at a known offset within the PyDoCtrlBase / PyEffectBase struct.
+/// Since both bases store tag as their first field (u8), and all concrete DoExpr types
+/// extend one of them, we can read the tag from the base class portion.
+///
+/// SAFETY: The object must be a DoExpr (DoCtrl or Effect). If it's an arbitrary Python
+/// object that doesn't extend either base, this returns DoExprTag::Unknown.
+/// The caller (classify_yielded) must handle Unknown gracefully.
+#[inline]
+unsafe fn read_do_expr_tag(obj: &Py<PyAny>) -> DoExprTag {
+    // PyO3 stores #[pyclass] data at a fixed offset from the PyObject header.
+    // For `extends=` types, the base class data comes first.
+    // tag is the first (and only) field of PyDoCtrlBase / PyEffectBase.
+    //
+    // Implementation detail: use PyO3's internal AsPyPointer + offset calculation.
+    // Actual offset depends on PyO3 version — abstract behind a helper.
+    //
+    // Fallback: if offset cannot be determined, use is_instance_of with GIL
+    // (degrade to R11-F behavior).
+    let tag_byte: u8 = /* read from known offset */;
+    DoExprTag::try_from(tag_byte).unwrap_or(DoExprTag::Unknown)
+}
 ```
 
 Python user-defined types extend the same bases:
 
 ```python
-from doeff_vm import EffectBase, DoThunkBase
+from doeff_vm import EffectBase, DoCtrlBase
 
 # User effect — isinstance(obj, EffectBase) works
 class MyDatabaseQuery(EffectBase):
     def __init__(self, sql: str):
         self.sql = sql
 
-# User program — isinstance(obj, DoThunkBase) works
-class MyCustomProgram(DoThunkBase):
-    def to_generator(self):
-        ...
+# [R13-D] DoThunkBase deleted — no third base.
+# User code yields DoCtrl or Effect nodes directly.
+# To create a callable DoExpr, use Pure(callable) or Call(...).
 ```
 
-With all three bases as Rust pyclasses, `classify_yielded` becomes three
-pointer comparisons:
+With tag-based dispatch [R13-I], `classify_yielded` is **GIL-free** — it reads
+the `tag` field directly from the frozen pyclass struct:
 
 ```rust
-fn classify_yielded(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Yielded {
-    if obj.is_instance_of::<PyDoCtrlBase>() { ... }  // C-level check
-    if obj.is_instance_of::<PyEffectBase>() {         // C-level check
-        return Yielded::Effect(obj.clone().unbind());
+/// [R13-I] GIL-free classification. Reads tag from frozen pyclass data.
+/// Called from VM step loop WITHOUT GIL held.
+fn classify_yielded(obj: &Py<PyAny>) -> Yielded {
+    // SAFETY: tag is an immutable u8 in a frozen pyclass. Read-only access is safe.
+    let tag = unsafe { read_do_expr_tag(obj) };
+    if tag.is_do_ctrl() {
+        Yielded::DoCtrl { tag, obj: obj.clone() }
+    } else if tag.is_effect() {
+        Yielded::Effect(obj.clone())
+    } else {
+        Yielded::Unknown(obj.clone())
     }
-    if obj.is_instance_of::<PyDoThunkBase>() { ... }  // C-level check
-    Yielded::Unknown(obj.clone().unbind())
 }
 ```
 
-No Python imports. No getattr. No string matching. No `hasattr("to_generator")`.
+And `handle_do_ctrl` dispatches on the tag to extract variant-specific fields.
+Field extraction (reading `.value`, `.f`, `.args`, etc.) from frozen pyclasses
+is also GIL-free — these are immutable Rust struct fields:
+
+```rust
+/// [R13-I] GIL-free field extraction from DoCtrl variants.
+/// tag has already been read by classify_yielded. Now extract variant-specific data.
+fn extract_do_ctrl(tag: DoExprTag, obj: &Py<PyAny>) -> DoCtrl {
+    match tag {
+        DoExprTag::Pure => {
+            // SAFETY: frozen PyPure { value: PyObject } — read immutable field
+            let value = unsafe { read_field::<PyPure>(obj, |p| p.value.clone()) };
+            DoCtrl::Pure { value }
+        }
+        DoExprTag::Call => {
+            let (f, args, kwargs, metadata) = unsafe {
+                read_field::<PyCall>(obj, |c| (c.f.clone(), c.args.clone(), c.kwargs.clone(), c.metadata.clone()))
+            };
+            DoCtrl::Call { f, args, kwargs, metadata }
+        }
+        // ... other variants
+        _ => unreachable!("tag already validated as is_do_ctrl()")
+    }
+}
+```
+
+No GIL. No Python imports. No getattr. No string matching. No MRO walk.
+The tag read + field extraction is pure Rust memory access on immutable data.
 
 The old `Effect` enum (`Get { key }`, `Put { key, value }`, etc.) is deleted.
 `effect.rs` becomes a module defining the `#[pyclass]` structs above.
@@ -1884,10 +2031,12 @@ to know what to do with the result. Different call types have different result h
 /// distinguishes between calling functions and advancing generators.
 #[derive(Debug, Clone)]
 pub enum PythonCall {
-    /// Start a Program object (ProgramBase: KleisliProgramCall or EffectBase).
-    /// Driver calls to_generator() and returns Value::Python(generator).
-    StartProgram {
-        program: Py<PyAny>,
+    /// [R13-E] Evaluate a DoExpr node (Pure(callable), Call(...), Effect, etc.).
+    /// For Pure(callable): driver calls callable() and expects a generator.
+    /// For Call nodes: driver evaluates args first, then calls.
+    /// For effects: this path is not used (effects go through dispatch).
+    EvalDoExpr {
+        expr: Py<PyAny>,
     },
     
     /// Call a Python function for pure computation (non-program).
@@ -1905,8 +2054,7 @@ pub enum PythonCall {
     
     /// Call a Python handler with effect and continuation.
     /// Driver wraps Effect/Continuation into Python objects (PyEffect/PyContinuation).
-    /// Handler must return a ProgramBase (KleisliProgramCall or EffectBase);
-    /// driver calls to_generator() on it.
+    /// Handler must return a generator (DoExpr evaluation result).
     CallHandler {
         handler: Py<PyAny>,
         effect: Effect,
@@ -1937,11 +2085,11 @@ pub enum PythonCall {
 /// When receive_python_result() is called, VM uses pending_python to route the result.
 #[derive(Debug, Clone)]
 pub enum PendingPython {
-    /// StartProgram for a Program body - result is Value::Python(generator).
-    /// Carries optional CallMetadata to attach to the PythonGenerator frame. [R9-G]
+    /// [R13-E] EvalDoExpr for a DoExpr node - result is Value::Python(generator).
+    /// Carries optional CallMetadata to attach to the PythonGenerator frame.
     /// When metadata is Some, the frame was created via DoCtrl::Call.
     /// When metadata is None, the frame is a WithHandler body (no call context).
-    StartProgramFrame {
+    EvalDoExprFrame {
         metadata: Option<CallMetadata>,
     },
     
@@ -1956,7 +2104,7 @@ pub enum PendingPython {
     },
     
     /// CallHandler for Python handler invocation
-    /// Result is Value::Python(generator) after converting Program via to_generator()
+    /// Result is Value::Python(generator) after evaluating handler's returned DoExpr. [R13-E]
     /// The resulting generator is treated as a handler program; StopIteration
     /// triggers implicit handler return semantics.
     CallPythonHandler {
@@ -1977,15 +2125,59 @@ pub enum PendingPython {
 
     /// PythonAsyncSyntaxEscape awaiting (async_run only)
     AsyncEscape,
+
+    /// [R13-B] Map(source, f) pending — source evaluated, need to apply f
+    MapPending {
+        /// Mapping function (Python callable)
+        f: Py<PyAny>,
+    },
+
+    /// [R13-B] FlatMap(source, binder) pending — source evaluated, need to apply binder
+    FlatMapPending {
+        /// Binder function (Python callable returning DoExpr)
+        binder: Py<PyAny>,
+    },
+
+    /// [R13-B] FlatMap binder called — waiting for binder(source) result.
+    /// Result is a DoExpr to evaluate.
+    FlatMapBinderResult,
+
+    /// [R13-C] Call(f, args, kwargs, meta) — evaluating f or args[i] as DoExpr.
+    /// Tracks progress through the sequential left-to-right evaluation.
+    /// Phase 1: Evaluate f → get callable. Phase 2: Evaluate args[0..n] → get values.
+    /// Phase 3: Invoke callable(*resolved_args, **kwargs).
+    CallEvalProgress {
+        /// Phase of evaluation: EvalF, EvalArg(index), or Invoke.
+        phase: CallEvalPhase,
+        /// The callable (set after f is evaluated). None during EvalF phase.
+        resolved_f: Option<Py<PyAny>>,
+        /// Remaining unevaluated arg DoExprs (consumed left-to-right)
+        remaining_args: Vec<Py<PyAny>>,
+        /// Already-resolved arg values (in order)
+        resolved_args: Vec<Py<PyAny>>,
+        /// kwargs (passed through unchanged — not DoExprs, just Python dict)
+        kwargs: Option<Py<PyAny>>,
+        /// Call metadata for stack traces
+        metadata: CallMetadata,
+    },
 }
 
-**DoExpr Input Rule [R12-D]**: `DoCtrl::Call { f, args, kwargs }` is the
-unified program-start primitive. When args are empty, the driver calls
-`f.to_generator()` (DoThunk convention). When args are non-empty, the driver
-calls `f(*args, **kwargs)` (KPC kernel convention). Both produce a generator
-pushed as a `PythonGenerator` frame. `to_generator()` is a Python Program API
-detail — the VM only cares that the result is a generator. KPC is an Effect
-dispatched to the KPC handler, which emits `Call` with the kernel and args.
+/// [R13-C] Tracks which phase of Call arg evaluation we're in.
+#[derive(Debug, Clone)]
+pub enum CallEvalPhase {
+    /// Evaluating `f` DoExpr — waiting for the callable
+    EvalF,
+    /// Evaluating `args[index]` — waiting for the value
+    EvalArg { index: usize },
+    /// All args resolved, ready to invoke
+    Invoke,
+}
+
+**DoExpr Input Rule [R13-A]**: DoExpr = DoCtrl | Effect. Generators yield
+DoExpr nodes. The VM evaluates them. `Call(f: DoExpr, args: [DoExpr], kwargs, meta)`
+evaluates `f` and each arg, then calls `f(*resolved_args, **resolved_kwargs)`.
+`Pure(value)` evaluates to `value` immediately. `Map(source, f)` and `FlatMap(source, binder)`
+are functor/monad operations. No `to_generator()` at VM level — that's a Python API detail.
 ```
 
 ### Program Frame Re-Push Rule (Python + Rust)
@@ -2423,39 +2615,27 @@ pub enum Yielded {
 }
 
 impl Yielded {
-    /// Classify a Python object yielded by a generator. [R11-C]
+    /// Classify a Python object yielded by a generator. [R11-C] [R13-D] [R13-I]
     /// 
-    /// MUST be called by DRIVER with GIL held.
-    /// Result is passed to VM via PyCallOutcome::GenYield(Yielded).
+    /// GIL-FREE. Reads the tag field from the frozen pyclass struct.
+    /// Can be called from the driver (with GIL) or from the VM step loop (without GIL).
     ///
-    /// Three C-level isinstance checks. No Python imports. No getattr. [R11-C] [R11-F]
-    pub fn classify(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Self {
-        // Phase 1: DoCtrl — C-level pointer check [R11-F]
-        if obj.is_instance_of::<PyDoCtrlBase>() {
-            return Self::extract_do_ctrl(py, obj);  // downcast to specific variant
+    /// Binary classification: DoCtrl | Effect. [R13-D]
+    /// One tag read. No is_instance_of. No Python imports. No getattr.
+    pub fn classify(obj: &Py<PyAny>) -> Self {
+        // [R13-I] Read tag without GIL — frozen u8 field in pyclass struct
+        let tag = unsafe { read_do_expr_tag(obj) };
+        if tag.is_do_ctrl() {
+            // Extract variant-specific fields GIL-free from frozen pyclass data
+            let do_ctrl = extract_do_ctrl(tag, obj);
+            Yielded::DoCtrl(do_ctrl)
+        } else if tag.is_effect() {
+            // Effects are opaque — no field extraction. Handler downcasts later.
+            Yielded::Effect(obj.clone())
+        } else {
+            // [R13-D] No third category. Unknown → type error.
+            Yielded::Unknown(obj.clone())
         }
-        
-        // Phase 2: Effect — C-level pointer check [R11-C] [R11-F]
-        // No field extraction. No per-type arms. The VM does not touch effect data.
-        if obj.is_instance_of::<PyEffectBase>() {
-            return Yielded::Effect(obj.clone().unbind());
-        }
-        
-        // Phase 3: DoThunk — C-level pointer check [R11-F]
-        // Replaces hasattr("to_generator") duck-type check.
-        if obj.is_instance_of::<PyDoThunkBase>() {
-            let metadata = extract_call_metadata(py, obj)
-                .unwrap_or_else(|| CallMetadata::anonymous());
-            return Yielded::DoCtrl(DoCtrl::Call {
-                f: obj.clone().unbind(),
-                args: vec![],
-                kwargs: vec![],
-                metadata,
-            });
-        }
-        
-        // Phase 4: Unknown — reject primitives
-        Yielded::Unknown(obj.clone().unbind())
     }
 }
 
@@ -2483,13 +2663,14 @@ fn extract_call_metadata(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallM
 }
 ```
 
-**Key design points [R11]:**
+**Key design points [R11] [R13]:**
 - `Yielded::Effect` carries `Py<PyAny>`, not a typed `Effect` enum.
-- `Yielded::Program` is deleted. DoThunks go through `DoCtrl::Call`.
+- `Yielded::Program` is deleted. [R13-D: DoThunk eliminated — binary hierarchy.]
 - `classify` does ONE isinstance check for effects — no per-type arms.
 - The classifier NEVER reads effect fields (`.key`, `.value`, `.items`, etc.).
 - Rust program handlers yield `Yielded` directly (already classified),
   so no driver-side classification or GIL is required for those yields.
+- [R13-D] Binary classification: DoCtrl | Effect. No third path.
 
 `extract_control_primitive` uses `Handler::from_pyobject` to decode `WithHandler`
 and `CreateContinuation` handler arguments, and `Continuation::from_pyobject`
@@ -2498,24 +2679,24 @@ It also recognizes `PythonAsyncSyntaxEscape` and extracts the `action` callable.
 
 ### PyCallOutcome (Python Call Results)
 
-**CRITICAL**: StartProgram/CallFunc/CallAsync/CallHandler and Gen* have different semantics:
-- `StartProgram` returns a **Value** (Value::Python(generator) after to_generator())
+**CRITICAL**: EvalDoExpr/CallFunc/CallAsync/CallHandler and Gen* have different semantics:
+- `EvalDoExpr` returns a **Value** (Value::Python(generator) for Pure(callable)) [R13-E]
 - `CallFunc` returns a **Value** (non-generator result)
 - `CallAsync` returns a **Value** (awaited result; async_run only)
-- `CallHandler` returns a **Value** (Value::Python(generator) after to_generator())
+- `CallHandler` returns a **Value** (Value::Python(generator))
 - `GenNext/GenSend/GenThrow` interact with a running generator (yield/return/error)
 
 ```rust
 /// Result of executing a PythonCall.
 /// 
 /// IMPORTANT: This enum correctly separates:
-/// - StartProgram/CallFunc/CallAsync/CallHandler results (a Value)
+/// - EvalDoExpr/CallFunc/CallAsync/CallHandler results (a Value) [R13-E]
 /// - Generator step results (yield/return/error)
 pub enum PyCallOutcome {
-    /// StartProgram returns Value::Python(generator) after to_generator().
+    /// EvalDoExpr returns Value::Python(generator) for Pure(callable). [R13-E]
     /// CallFunc returns Value (non-generator).
     /// CallAsync returns Value (awaited result).
-    /// CallHandler returns Value::Python(generator) after to_generator().
+    /// CallHandler returns Value::Python(generator).
     /// VM should push Frame::PythonGenerator with started=false and metadata for generator Values.
     /// The driver performs Python->Value conversion while holding the GIL.
     Value(Value),
@@ -2527,7 +2708,7 @@ pub enum PyCallOutcome {
     /// Generator returned via StopIteration.
     GenReturn(Value),
     
-    /// Generator (or StartProgram/CallFunc/CallAsync/CallHandler) raised an exception.
+    /// Generator (or EvalDoExpr/CallFunc/CallAsync/CallHandler) raised an exception. [R13-E]
     GenError(PyException),
 }
 
@@ -2588,18 +2769,16 @@ frames.pop()   frames.pop()                                   │   by driver or
    │  callback(v)   │  callback(e)                     │                       │
    ├─RustProg───────┼──────────────────────────────────┤                       │
    │  step()/yield  │                                  │                       │
-   │                │                                  ├─Primitive────────────►│
-   ├─PyGen──────────┼──────────────────────────────────┤  handle_do_ctrl()   │
-   │  NeedsPython   │  NeedsPython(GenThrow)           │                       │
-   │  (GenSend/Next)│                                  ├─Effect───────────────►│
-   │                │                                  │  start_dispatch()     │
-   ▼                ▼                                  │  (all effects)        │
-                                                       │                       │
-                                                       ├─Program──────────────►│
-                                                       │  NeedsPython(StartProgram)│
-                                                       │                       │
-                                                       └─Unknown──────────────►│
-                                                          Throw(TypeError)     │
+    │                │                                  ├─DoCtrl───────────────►│
+    ├─PyGen──────────┼──────────────────────────────────┤  handle_do_ctrl()     │
+    │  NeedsPython   │  NeedsPython(GenThrow)           │  [R13-D: binary]      │
+    │  (GenSend/Next)│                                  │                       │
+    │                │                                  ├─Effect───────────────►│
+    ▼                ▼                                  │  start_dispatch()     │
+                                                        │  (all effects)        │
+                                                        │                       │
+                                                        └─Unknown──────────────►│
+                                                           Throw(TypeError)     │
                                                                                │
                                                                                ▼
                                                                         ┌──────────┐
@@ -2724,8 +2903,8 @@ impl VM {
             .expect("pending_python must be set when receiving result");
         
         match (pending, outcome) {
-            // === StartProgramFrame: StartProgram returned Value::Python(generator) ===
-            (PendingPython::StartProgramFrame { metadata }, PyCallOutcome::Value(Value::Python(gen_obj))) => {
+            // === EvalDoExprFrame: EvalDoExpr returned Value::Python(generator) === [R13-E]
+            (PendingPython::EvalDoExprFrame { metadata }, PyCallOutcome::Value(Value::Python(gen_obj))) => {
                 // Push generator as new frame with started=false and CallMetadata [R9-G]
                 let segment = &mut self.segments[self.current_segment.index()];
                 segment.push_frame(Frame::PythonGenerator {
@@ -2735,13 +2914,13 @@ impl VM {
                 });
                 // Mode stays Deliver (will trigger GenNext on next step)
             }
-            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::Value(_)) => {
+            (PendingPython::EvalDoExprFrame { .. }, PyCallOutcome::Value(_)) => {
                 self.mode = Mode::Throw(PyException::type_error(
-                    "program did not return a generator"
+                    "DoExpr did not return a generator"
                 ));
             }
-            (PendingPython::StartProgramFrame { .. }, PyCallOutcome::GenError(e)) => {
-                // StartProgram raised exception
+            (PendingPython::EvalDoExprFrame { .. }, PyCallOutcome::GenError(e)) => {
+                // EvalDoExpr raised exception [R13-E]
                 self.mode = Mode::Throw(e);
             }
             
@@ -2786,7 +2965,7 @@ impl VM {
             }
             (PendingPython::CallPythonHandler { .. }, PyCallOutcome::Value(_)) => {
                 self.mode = Mode::Throw(PyException::type_error(
-                    "handler did not return a ProgramBase (KleisliProgramCall or EffectBase)"
+                    "handler did not return a generator (DoExpr evaluation result)"  // [R13-E]
                 ));
             }
             (PendingPython::CallPythonHandler { .. }, PyCallOutcome::GenError(e)) => {
@@ -2810,6 +2989,104 @@ impl VM {
             }
             (PendingPython::AsyncEscape, PyCallOutcome::GenError(e)) => {
                 self.mode = Mode::Throw(e);
+            }
+            
+            // === [R13-B] MapPending: source evaluated, apply f ===
+            (PendingPython::MapPending { f }, PyCallOutcome::Value(source_result)) => {
+                // Source DoExpr evaluated. Now call f(source_result) in Python.
+                self.pending_python = None;
+                StepEvent::NeedsPython(PythonCall::CallFunc { func: f, args: vec![source_result] })
+                // Driver returns Value — VM delivers it.
+            }
+            (PendingPython::MapPending { .. }, PyCallOutcome::GenError(e)) => {
+                self.mode = Mode::Throw(e);
+            }
+            
+            // === [R13-B] FlatMapPending: source evaluated, apply binder and evaluate result ===
+            (PendingPython::FlatMapPending { binder }, PyCallOutcome::Value(source_result)) => {
+                // Source DoExpr evaluated. Call binder(source_result) to get a new DoExpr.
+                // Then evaluate the returned DoExpr. Two Python round-trips.
+                self.pending_python = Some(PendingPython::FlatMapBinderResult);
+                StepEvent::NeedsPython(PythonCall::CallFunc { func: binder, args: vec![source_result] })
+                // Next: receive binder result → classify as DoExpr → evaluate it
+            }
+            (PendingPython::FlatMapBinderResult, PyCallOutcome::Value(binder_result)) => {
+                // binder(source) returned a DoExpr. Classify and evaluate it.
+                self.pending_python = None;
+                let classified = Yielded::classify_pyobject(&binder_result);
+                self.mode = Mode::HandleYield(classified);
+                StepEvent::Continue
+            }
+            (PendingPython::FlatMapPending { .. }, PyCallOutcome::GenError(e)) |
+            (PendingPython::FlatMapBinderResult, PyCallOutcome::GenError(e)) => {
+                self.mode = Mode::Throw(e);
+            }
+
+            // === [R13-C] CallEvalProgress: evaluating f / args for Call ===
+            (PendingPython::CallEvalProgress { phase, resolved_f, remaining_args, resolved_args, kwargs, metadata }, outcome) => {
+                match (phase, outcome) {
+                    // Phase 1: f evaluated — got the callable
+                    (CallEvalPhase::EvalF, PyCallOutcome::Value(callable)) => {
+                        if remaining_args.is_empty() {
+                            // No args to evaluate — invoke immediately
+                            self.pending_python = Some(PendingPython::EvalDoExprFrame {
+                                metadata: Some(metadata),
+                            });
+                            StepEvent::NeedsPython(PythonCall::CallFunc {
+                                func: callable,
+                                args: resolved_args.into_iter().map(|v| Value::Python(v)).collect(),
+                            })
+                        } else {
+                            // Start evaluating args[0]
+                            let next_arg = remaining_args.remove(0);
+                            self.pending_python = Some(PendingPython::CallEvalProgress {
+                                phase: CallEvalPhase::EvalArg { index: 0 },
+                                resolved_f: Some(callable),
+                                remaining_args,
+                                resolved_args,
+                                kwargs,
+                                metadata,
+                            });
+                            self.eval_do_expr(next_arg)
+                        }
+                    }
+                    // Phase 2: args[i] evaluated — got the value
+                    (CallEvalPhase::EvalArg { index }, PyCallOutcome::Value(arg_value)) => {
+                        resolved_args.push(arg_value.to_pyobject());
+                        if remaining_args.is_empty() {
+                            // All args resolved — invoke callable(*resolved_args, **kwargs)
+                            let f = resolved_f.expect("f must be resolved before args");
+                            self.pending_python = Some(PendingPython::EvalDoExprFrame {
+                                metadata: Some(metadata),
+                            });
+                            // The result of Call is a generator (the called program's lazy AST).
+                            // Push it as Frame::PythonGenerator via EvalDoExprFrame routing.
+                            StepEvent::NeedsPython(PythonCall::CallFunc {
+                                func: f,
+                                args: resolved_args.into_iter().map(|v| Value::Python(v)).collect(),
+                            })
+                        } else {
+                            // More args to evaluate
+                            let next_arg = remaining_args.remove(0);
+                            self.pending_python = Some(PendingPython::CallEvalProgress {
+                                phase: CallEvalPhase::EvalArg { index: index + 1 },
+                                resolved_f,
+                                remaining_args,
+                                resolved_args,
+                                kwargs,
+                                metadata,
+                            });
+                            self.eval_do_expr(next_arg)
+                        }
+                    }
+                    // Any phase: error
+                    (_, PyCallOutcome::GenError(e)) => {
+                        self.mode = Mode::Throw(e);
+                    }
+                    (phase, outcome) => {
+                        panic!("Unexpected CallEvalProgress phase/outcome: {:?}/{:?}", phase, outcome);
+                    }
+                }
             }
             
             // Unexpected combinations
@@ -2992,10 +3269,16 @@ The sync driver is `run`; async integration is provided by `async_run` (see belo
 ```rust
 impl PyVM {
     /// Run a program to completion.
+    /// [R13-A] program is a DoExpr (DoCtrl | Effect). The VM evaluates it directly.
+    /// For backward compatibility, if program is a ProgramBase with to_generator(),
+    /// the DEPRECATED path extracts the generator. New code should yield DoExpr nodes.
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<PyObject> {
-        // Initialize: convert Program object to generator
-        let gen = self.to_generator(py, program)?;
-        self.vm.start_with_generator(gen.unbind());
+        // [R13-A] Initialize: classify program as DoExpr and start evaluation.
+        // The program itself is the root DoExpr node. If it's a @do generator function,
+        // calling it produces a generator — the generator IS the lazy AST.
+        // Each yield from the generator is a DoExpr node (DoCtrl | Effect).
+        let classified = self.classify_program_input(py, &program)?;
+        self.vm.start(classified);
         
         loop {
             // Release GIL for pure Rust steps
@@ -3029,23 +3312,27 @@ impl PyVM {
     
     /// Execute a Python call and return the outcome.
     /// 
-    /// CRITICAL: This correctly distinguishes StartProgram/CallFunc/CallAsync/CallHandler from Gen* results:
-    /// - StartProgram → Value::Python(generator)
+    /// CRITICAL: This correctly distinguishes EvalDoExpr/CallFunc/CallAsync/CallHandler from Gen* results: [R13-E]
+    /// - EvalDoExpr → Value::Python(generator) for Pure(callable)
     /// - CallFunc → Value (non-generator)
     /// - CallAsync → Value (awaited result; async_run only)
-    /// - CallHandler → Value::Python(generator) after to_generator()
+    /// - CallHandler → Value::Python(generator)
     /// - Gen* → GenYield/GenReturn/GenError (generator step result)
     /// 
     /// Classification of yielded values happens HERE (with GIL).
     fn execute_python_call(&self, py: Python<'_>, call: PythonCall) -> PyResult<PyCallOutcome> {
         match call {
-            PythonCall::StartProgram { program } => {
-                if is_program(py, &program.bind(py)) {
-                    let gen = self.to_generator(py, program.bind(py))?;
+            PythonCall::EvalDoExpr { expr } => {  // [R13-E]
+                // For Pure(callable): extract callable and call it
+                // For Call nodes: evaluate args first, then call
+                // For effects: this path is not used (effects go through dispatch)
+                // Simplified: assume expr is a callable for now (full impl would check DoCtrl type)
+                if is_callable(py, &expr.bind(py)) {
+                    let gen = expr.bind(py).call0()?;
                     Ok(PyCallOutcome::Value(Value::Python(gen.unbind())))
                 } else {
                     Ok(PyCallOutcome::GenError(PyException::type_error(
-                        "StartProgram requires a ProgramBase (KleisliProgramCall or EffectBase)",
+                        "EvalDoExpr requires a callable DoExpr (Pure(callable) or similar)",
                     )))
                 }
             }
@@ -3074,13 +3361,12 @@ impl PyVM {
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
                     Ok(result) => {
-                        // Handler must return a ProgramBase (KleisliProgramCall or EffectBase)
-                        if is_program(py, &result) {
-                            let gen = self.to_generator(py, result)?;
-                            Ok(PyCallOutcome::Value(Value::Python(gen.unbind())))
+                        // Handler must return a generator (DoExpr evaluation result) [R13-E]
+                        if is_generator(py, &result) {
+                            Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
                         } else {
                             Ok(PyCallOutcome::GenError(PyException::type_error(
-                                "handler must return a ProgramBase (KleisliProgramCall or EffectBase)",
+                                "handler must return a generator (DoExpr evaluation result)",
                             )))
                         }
                     }
@@ -3109,19 +3395,50 @@ impl PyVM {
         }
     }
 
-    /// Convert a ProgramBase object to a generator.
-    /// 
-    /// Accepts ProgramBase (KleisliProgramCall or EffectBase) and calls to_generator().
-    /// This preserves the KleisliProgramCall stack for effect debugging.
-    /// Raw generators are rejected here (only allowed by start_with_generator()).
+    /// [R13-A] Classify program input into a form the VM can start evaluating.
+    /// A @do-decorated function produces a generator when called — the generator IS the
+    /// lazy AST. Each yield from it is a DoExpr node. The VM pushes it as a
+    /// Frame::PythonGenerator and enters the step loop.
+    /// For ProgramBase objects: call to_generator() (legacy compat) to get the generator.
+    /// For raw generators: reject (use start_with_generator() explicitly).
+    fn classify_program_input(
+        &self,
+        py: Python<'_>,
+        program: &Bound<'_, PyAny>,
+    ) -> PyResult<VMInput> {
+        if program.is_instance_of::<PyGenerator>() {
+            return Err(PyException::type_error(
+                "DoExpr required; raw generators are not accepted. Use start_with_generator()."
+            ).to_pyerr(py));
+        }
+        // Program objects expose to_generator() which returns the lazy AST generator.
+        // This is a Python API convenience — the VM only sees generators that yield DoExpr nodes.
+        let gen = if program.hasattr("to_generator")? {
+            program.call_method0("to_generator")?
+        } else if program.is_callable() {
+            // Bare callable: call it to get the generator (e.g., @do function object)
+            program.call0()?
+        } else {
+            return Err(PyException::type_error(
+                "Program must be ProgramBase (with to_generator()) or a callable"
+            ).to_pyerr(py));
+        };
+        Ok(VMInput::Generator(gen.unbind()))
+    }
+
+    /// [R13-E] DEPRECATED: to_generator() is a Python API detail, not a VM concept.
+    /// The VM evaluates DoExpr nodes. For Pure(callable), the driver calls callable().
+    /// This function may still exist for backward compatibility but is not part of
+    /// the VM's core semantics.
     fn to_generator(
         &self,
         py: Python<'_>,
         program: Bound<'_, PyAny>,
     ) -> PyResult<Bound<'_, PyAny>> {
+        // Legacy path — may be removed in future revisions
         if program.is_instance_of::<PyGenerator>()? {
             return Err(PyException::type_error(
-                "ProgramBase required; raw generators are not accepted"
+                "DoExpr required; raw generators are not accepted"
             ).to_pyerr(py));
         }
         let to_gen = program.getattr("to_generator")?;
@@ -3148,8 +3465,8 @@ impl PyVM {
         
         match result {
             Ok(yielded_obj) => {
-                // Generator yielded - classify it HERE (with GIL)
-                let classified = Yielded::classify(py, &yielded_obj);
+                // Generator yielded - classify GIL-free via tag read [R13-I]
+                let classified = Yielded::classify(&yielded_obj.unbind());
                 Ok(PyCallOutcome::GenYield(classified))
             }
             Err(e) if e.is_instance_of::<pyo3::exceptions::PyStopIteration>(py) => {
@@ -3181,8 +3498,9 @@ All other PythonCall variants are handled synchronously via `execute_python_call
 
 ```python
 async def async_run(vm, program):
-    gen = program.to_generator()
-    vm.start_with_generator(gen)
+    # [R13-A] classify_program_input extracts the generator (lazy AST) from program
+    vm_input = vm.classify_program_input(program)
+    vm.start(vm_input)
     while True:
         event = vm.step()
         if isinstance(event, Done):
@@ -3451,11 +3769,11 @@ fn build_run_result(
 `@do` is a **Python-side** decorator. It is NOT part of the Rust VM — it lives
 in the `doeff` Python package. SPEC-008 defines how the VM processes its output.
 
-#### What @do Does
+#### What @do Does [R13-E]
 
 ```python
 def do(fn):
-    """Convert a generator function into a Program factory.
+    """Convert a generator function into a DoExpr factory.
 
     @do
     def counter(start: int):
@@ -3463,42 +3781,40 @@ def do(fn):
         yield Put("count", x + start)
         return x + start
 
-    # counter(10) returns a KleisliProgramCall (which is a ProgramBase)
-    # The VM calls to_generator() on it to get the actual generator
+    # counter(10) returns a generator directly (no intermediate wrapper)
+    # The VM evaluates it as a DoExpr node
     """
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        return KleisliProgramCall(fn, args, kwargs)
+        return fn(*args, **kwargs)  # Returns generator directly
     return wrapper
 ```
 
-#### How the VM Processes @do Output
+#### How the VM Processes @do Output [R13-E]
 
-1. User calls `counter(10)` → returns `KleisliProgramCall(counter, (10,), {})`
-2. This is a `ProgramBase` — accepted by `run()`, `WithHandler`, `Resume`, etc.
-3. When the VM needs to step this program, the driver calls `to_generator()`:
-   ```python
-   gen = program_base.to_generator()  # → calls counter(10), returns generator
-   ```
-4. The generator is stepped via `GenNext`/`GenSend`/`GenThrow` PythonCalls.
-5. `yield <effect>` → classified by driver as `Yielded::Effect`/`Yielded::DoCtrl`
-6. `return <value>` → `StopIteration(value)` → `PyCallOutcome::GenReturn(value)`
-7. Generator return produces the final `T` in `Program[T]`.
+1. User calls `counter(10)` → returns a generator directly
+2. This is a DoExpr — accepted by `run()`, `WithHandler`, `Resume`, etc.
+3. The VM evaluates the DoExpr via `EvalDoExpr`:
+   - For generators: steps via `GenNext`/`GenSend`/`GenThrow` PythonCalls
+   - For Pure(value): delivers value immediately
+   - For Call(f, args, kwargs): evaluates f and args, then calls
+4. `yield <effect>` → classified by driver as `Yielded::Effect`/`Yielded::DoCtrl`
+5. `return <value>` → `StopIteration(value)` → `PyCallOutcome::GenReturn(value)`
+6. Generator return produces the final `T` in `Program[T]`.
 
-#### DoExpr Input Rule (Reiterated) [R12-D]
+#### DoExpr Input Rule (Reiterated) [R13-A]
 
-`DoCtrl::Call { f, args, kwargs }` is the unified program-start primitive.
-It accepts any callable that returns a generator:
+DoExpr = DoCtrl | Effect. Generators yield DoExpr nodes. The VM evaluates them.
 
 ```
-Call { f, args=[], kwargs=[] }   → f() returns generator        (DoThunk path)
-Call { f, args=[v], kwargs={} }  → f(v) returns generator       (KPC kernel path)
+Pure(value)                      → evaluates to value immediately
+Call(f: DoExpr, args: [DoExpr])  → evaluates f and args, calls f(*args, **kwargs)
+Map(source: DoExpr, f)           → evaluates source, applies f
+FlatMap(source: DoExpr, binder)  → evaluates source, applies binder, evaluates result
+Effect                           → dispatches through handler stack
 ```
 
-Both paths push the resulting generator as a `PythonGenerator` frame.
-The VM does not distinguish between them — the only difference is whether
-args are empty. `to_generator()` is a Python Program API convenience;
-the driver may use it for the zero-args path, but the VM does not require it.
+No `to_generator()` at VM level — that's a Python API detail for backward compatibility.
 
 KPC (`PyKPC`) is an Effect dispatched to the KPC handler. The handler
 extracts `execution_kernel` and resolved args, then emits
@@ -3621,6 +3937,7 @@ impl PyVM {
 
 ```rust
 /// Control primitives that can be yielded by handlers.
+/// [R13-B] Added Pure, Map, FlatMap. Updated Call to take DoExpr args.
 #[derive(Debug, Clone)]
 pub enum DoCtrl {
     /// Resume(k, v) - Call-resume (returns to handler after k completes)
@@ -3662,7 +3979,7 @@ pub enum DoCtrl {
     
     /// CreateContinuation(expr, handlers) - Create unstarted continuation
     CreateContinuation {
-        /// DoExpr to evaluate (DoThunk or Effect)
+        /// DoExpr to evaluate (Pure, Call, Map, FlatMap, or Effect) [R13-B]
         expr: Py<PyAny>,
         /// Handlers in innermost-first order (as returned by GetHandlers)
         handlers: Vec<Handler>,
@@ -3675,37 +3992,55 @@ pub enum DoCtrl {
         value: Value,
     },
 
-    /// Call(f, args, kwargs, metadata) - Call a function and run the result. [R9-A]
+    /// [R13-B] Pure(value) - Literal value node. Evaluates to value immediately, zero cost.
+    /// This is the VM's literal — not an effect, not a call. Just a value.
+    Pure {
+        value: Value,
+    },
+
+    /// [R13-C] Call(f, args, kwargs, metadata) - Function application with DoExpr args.
     ///
-    /// Semantics: the VM emits NeedsPython(CallFunc { f, args, kwargs }) to the
-    /// driver. The driver calls f(*args, **kwargs), gets a generator or DoThunk.
-    /// If DoThunk, calls to_generator(). Pushes PythonGenerator frame with
-    /// metadata onto current segment. No dispatch, no handler stack involvement.
-    /// This is the doeff equivalent of a function call — not an effect.
+    /// Semantics: VM evaluates `f` (a DoExpr, typically Pure(callable)), then evaluates
+    /// each arg DoExpr sequentially left-to-right, then calls `f(*resolved_args, **resolved_kwargs)`.
+    /// The result is a generator pushed as a PythonGenerator frame.
     ///
-    /// Two usage patterns:
-    /// - DoThunk (no args): Call { f: thunk, args: [], kwargs: {}, metadata }
-    ///   → driver calls to_generator() on the thunk, pushes frame.
-    /// - Kernel call (with args): Call { f: kernel, args, kwargs, metadata }
-    ///   → driver calls kernel(*args, **kwargs), gets result, pushes frame.
+    /// No distinction between "DoThunk path" and "kernel path" — both are Call with DoExpr args.
+    /// KPC handler emits Call(f: Pure(kernel), args: [Pure(arg1), Pure(arg2), ...], kwargs, meta).
+    /// VM evaluates each Pure(arg) → arg, then calls kernel(*args, **kwargs).
     ///
-    /// Metadata is extracted by the driver (with GIL) during classify_yielded
-    /// for user-yielded DoThunks, or constructed by RustHandlerPrograms (e.g.,
-    /// KPC handler) for kernel invocations.
-    ///
-    /// The only path for DoThunk execution. Yielded::Program is removed. [R10-A]
+    /// Metadata is extracted by the driver (with GIL) or constructed by RustHandlerPrograms.
     Call {
-        /// The callable (DoThunk or kernel function)
+        /// The callable DoExpr (typically Pure(callable)) [R13-C]
         f: Py<PyAny>,
-        /// Positional arguments (empty for DoThunk path)
-        args: Vec<Value>,
-        /// Keyword arguments (empty for DoThunk path)
-        kwargs: Vec<(String, Value)>,
+        /// Positional argument DoExprs (evaluated left-to-right) [R13-C]
+        args: Vec<Py<PyAny>>,
+        /// Keyword argument DoExprs [R13-C]
+        kwargs: Vec<(String, Py<PyAny>)>,
         /// Call stack metadata (function name, source location)
         metadata: CallMetadata,
     },
 
-    /// Eval(expr, handlers) - Evaluate a DoExpr in a fresh scope. [R9-H]
+    /// [R13-B] Map(source, f) - Functor map. Replaces DerivedProgram.
+    /// Evaluates source DoExpr, applies f to the result, returns f(result).
+    /// f is a Python callable (not a DoExpr — it's a pure function).
+    Map {
+        /// Source DoExpr to evaluate
+        source: Py<PyAny>,
+        /// Mapping function (Python callable)
+        f: Py<PyAny>,
+    },
+
+    /// [R13-B] FlatMap(source, binder) - Monadic bind. Replaces DerivedProgram.
+    /// Evaluates source DoExpr, applies binder to the result, evaluates binder(result) as a DoExpr.
+    /// binder is a Python callable that returns a DoExpr.
+    FlatMap {
+        /// Source DoExpr to evaluate
+        source: Py<PyAny>,
+        /// Binder function (Python callable returning DoExpr)
+        binder: Py<PyAny>,
+    },
+
+    /// Eval(expr, handlers) - Evaluate a DoExpr in a fresh scope. [R9-H] [R13-F]
     ///
     /// Atomically creates an unstarted continuation with the given handler
     /// chain and evaluates the DoExpr within it. The caller is suspended;
@@ -3713,14 +4048,17 @@ pub enum DoCtrl {
     /// result. Equivalent to CreateContinuation + ResumeContinuation but
     /// as a single atomic step.
     ///
-    /// The DoExpr can be any yieldable value:
-    /// - DoThunk: VM calls to_generator(), runs generator in continuation scope
-    /// - Effect: VM dispatches through continuation's handler stack
+    /// The DoExpr can be any DoExpr node: [R13-F]
+    /// - Pure(value): evaluates to value immediately
+    /// - Call(f, args, kwargs, meta): evaluates f and args, calls f(*args, **kwargs)
+    /// - Map(source, f): evaluates source, applies f
+    /// - FlatMap(source, binder): evaluates source, applies binder, evaluates result
+    /// - Effect: dispatches through continuation's handler stack
     ///
     /// Primary use: KPC handler resolving args with the full callsite handler
     /// chain (captured via GetHandlers), avoiding busy boundary issues.
     Eval {
-        /// The DoExpr to evaluate (Effect or DoThunk)
+        /// The DoExpr to evaluate (Pure, Call, Map, FlatMap, or Effect) [R13-F]
         expr: Py<PyAny>,
         /// Handler chain for the continuation's scope (from GetHandlers)
         handlers: Vec<Handler>,
@@ -3803,8 +4141,8 @@ impl VM {
         // 4. Switch to body segment
         self.current_segment = body_seg_id;
         
-        // 5. Return PythonCall to start body DoExpr
-        PythonCall::StartProgram { program: expr }
+        // 5. Return PythonCall to evaluate body DoExpr [R13-E]
+        PythonCall::EvalDoExpr { expr }
     }
 }
 ```
@@ -4215,10 +4553,10 @@ impl VM {
         
         self.current_segment = outside_seg_id;
         // WithHandler body has no call metadata (it's a handler scope, not a @do call)
-        self.pending_python = Some(PendingPython::StartProgramFrame {
+        self.pending_python = Some(PendingPython::EvalDoExprFrame {  // [R13-E]
             metadata: None,
         });
-        StepEvent::NeedsPython(PythonCall::StartProgram { program })
+        StepEvent::NeedsPython(PythonCall::EvalDoExpr { expr: program })  // [R13-E]
     }
 
     /// Handle a DoCtrl, returning the next StepEvent.
@@ -4239,9 +4577,9 @@ impl VM {
                 self.handle_delegate(effect)
             }
             DoCtrl::WithHandler { handler, expr } => {
-                // WithHandler needs PythonCall to start body DoExpr (no call metadata)
+                // WithHandler needs PythonCall to evaluate body DoExpr (no call metadata) [R13-E]
                 let call = self.handle_with_handler(handler, expr);
-                self.pending_python = Some(PendingPython::StartProgramFrame {
+                self.pending_python = Some(PendingPython::EvalDoExprFrame {  // [R13-E]
                     metadata: None,
                 });
                 StepEvent::NeedsPython(call)
@@ -4294,21 +4632,25 @@ impl VM {
                 self.handle_resume_continuation(continuation, value)
             }
             DoCtrl::Call { f, args, kwargs, metadata } => {
-                // [R9-A] Call f(*args, **kwargs) and push result as generator frame.
-                // Store metadata so receive_python_result attaches it to the frame.
-                self.pending_python = Some(PendingPython::StartProgramFrame {
-                    metadata: Some(metadata),
-                });
-                if args.is_empty() && kwargs.is_empty() {
-                    // DoThunk path: f is a DoThunk, driver calls to_generator()
-                    StepEvent::NeedsPython(PythonCall::StartProgram { program: f })
-                } else {
-                    // Kernel path: driver calls f(*args, **kwargs), gets generator
-                    StepEvent::NeedsPython(PythonCall::CallFunc {
-                        func: f,
-                        args: CallArgs::from_values(args, kwargs),
-                    })
+                // [R13-C] Full DoExpr evaluation for Call.
+                // Evaluate f, then each arg in args, left-to-right, then invoke.
+                //
+                // Fast path: if f is Pure(callable) AND all args are Pure(value),
+                // skip the multi-step dance — extract values and invoke directly.
+                if let Some(fast) = self.try_call_fast_path(&f, &args, &kwargs, &metadata) {
+                    return fast;
                 }
+                // Slow path: evaluate f as DoExpr first.
+                // After f resolves, evaluate args[0], args[1], ... sequentially.
+                self.pending_python = Some(PendingPython::CallEvalProgress {
+                    phase: CallEvalPhase::EvalF,
+                    resolved_f: None,
+                    remaining_args: args,
+                    resolved_args: Vec::new(),
+                    kwargs,
+                    metadata,
+                });
+                self.eval_do_expr(f)  // → NeedsPython or Continue (if Pure/DoCtrl)
             }
             DoCtrl::Eval { expr, handlers } => {
                 // [R9-H] Evaluate a DoExpr in a fresh scope with given handlers.
@@ -4332,6 +4674,24 @@ impl VM {
                 self.mode = Mode::Deliver(Value::CallStack(stack));
                 StepEvent::Continue
             }
+            DoCtrl::Pure { value } => {
+                // [R13-B] Pure(value) — literal value node. Evaluates to value immediately.
+                self.mode = Mode::Deliver(value);
+                StepEvent::Continue
+            }
+            DoCtrl::Map { source, f } => {
+                // [R13-B] Map(source, f) — functor map. Evaluate source DoExpr, apply f.
+                // If source is Pure(v), fast-path: call f(v) directly.
+                // Otherwise, eval_do_expr handles the source; MapPending routes the result.
+                self.pending_python = Some(PendingPython::MapPending { f });
+                self.eval_do_expr(source)
+            }
+            DoCtrl::FlatMap { source, binder } => {
+                // [R13-B] FlatMap(source, binder) — monadic bind.
+                // Evaluate source DoExpr, call binder(result), evaluate binder's return DoExpr.
+                self.pending_python = Some(PendingPython::FlatMapPending { binder });
+                self.eval_do_expr(source)
+            }
             _ => {
                 self.mode = Mode::Throw(PyException::not_implemented(
                     format!("Primitive not yet implemented: {:?}", prim)
@@ -4341,6 +4701,67 @@ impl VM {
         }
     }
     
+    /// [R13-C] [R13-I] Evaluate a DoExpr node. GIL-free. Returns StepEvent.
+    /// Reads the tag to determine the DoExpr variant without GIL.
+    /// Pure(value): delivers immediately — zero Python round-trips.
+    /// Other DoCtrl: extracts fields GIL-free, processes recursively.
+    /// Effect / Unknown: emits NeedsPython for driver to handle.
+    fn eval_do_expr(&mut self, expr: Py<PyAny>) -> StepEvent {
+        let tag = unsafe { read_do_expr_tag(&expr) };
+        match tag {
+            DoExprTag::Pure => {
+                // [R13-I] GIL-free: read .value from frozen PyPure struct
+                let value = unsafe { read_field::<PyPure>(&expr, |p| p.value.clone()) };
+                // Deliver synchronously — the current pending_python state
+                // (MapPending, CallEvalProgress, etc.) receives this as a Value.
+                self.receive_python_result_inline(
+                    PyCallOutcome::Value(Value::Python(value))
+                )
+            }
+            _ if tag.is_do_ctrl() => {
+                // Non-Pure DoCtrl (Call, Map, etc.) — extract and process.
+                // This re-enters handle_do_ctrl, which may emit NeedsPython
+                // for the parts that require Python (e.g., calling a function).
+                let do_ctrl = extract_do_ctrl(tag, &expr);
+                self.handle_do_ctrl(do_ctrl)
+            }
+            _ => {
+                // Effect or Unknown — need Python driver.
+                StepEvent::NeedsPython(PythonCall::EvalDoExpr { expr })
+            }
+        }
+    }
+
+    /// [R13-C] [R13-I] Fast path for Call when f and all args are Pure(value).
+    /// GIL-free: reads tags and extracts .value fields from frozen pyclasses.
+    /// Returns None if any DoExpr is not Pure (caller falls through to slow path).
+    fn try_call_fast_path(
+        &mut self,
+        f: &Py<PyAny>,
+        args: &[Py<PyAny>],
+        kwargs: &Option<Py<PyAny>>,
+        metadata: &CallMetadata,
+    ) -> Option<StepEvent> {
+        // Check f
+        if unsafe { read_do_expr_tag(f) } != DoExprTag::Pure { return None; }
+        let callable = unsafe { read_field::<PyPure>(f, |p| p.value.clone()) };
+        // Check all args
+        let mut resolved = Vec::with_capacity(args.len());
+        for arg in args {
+            if unsafe { read_do_expr_tag(arg) } != DoExprTag::Pure { return None; }
+            resolved.push(unsafe { read_field::<PyPure>(arg, |p| p.value.clone()) });
+        }
+        // All Pure — invoke callable(*resolved_args, **kwargs) via Python.
+        // This is the ONE NeedsPython for the entire Call — just the invocation.
+        self.pending_python = Some(PendingPython::EvalDoExprFrame {
+            metadata: Some(metadata.clone()),
+        });
+        Some(StepEvent::NeedsPython(PythonCall::CallFunc {
+            func: callable,
+            args: resolved.into_iter().map(|v| Value::Python(v)).collect(),
+        }))
+    }
+
     /// Handle Delegate: advance to outer handler in SAME DispatchContext.
     /// 
     /// Unlike start_dispatch (which creates NEW dispatch for perform-site effects),
@@ -4656,10 +5077,9 @@ Mode transitions are deterministic:
     - empty frames + caller: propagate up
     - empty frames + no caller: Error
 
-  HandleYield(y) →
-    - Primitive: handle_do_ctrl returns StepEvent (Continue or NeedsPython)
+  HandleYield(y) →  [R13-D: binary classification]
+    - DoCtrl: handle_do_ctrl returns StepEvent (Continue or NeedsPython)
     - Effect: start_dispatch returns StepEvent (Continue or NeedsPython)
-    - Program: NeedsPython(StartProgram)
     - Unknown: Throw(TypeError)
 
   Return(v) →
@@ -4673,7 +5093,7 @@ Mode transitions are deterministic:
 Python generators have three outcomes:
 
   yield value → PyCallOutcome::GenYield(Yielded)
-    → Driver classifies (with GIL): Primitive/Effect/Program/Unknown
+    → Driver classifies (with GIL): DoCtrl/Effect/Unknown  [R13-D: binary]
     → VM receives pre-classified Yielded
     → Mode::HandleYield(yielded)
 
@@ -4684,8 +5104,8 @@ Python generators have three outcomes:
   raise exception → PyCallOutcome::GenError(exc)
     → Mode::Throw(exc)
 
-StartProgram/CallFunc/CallAsync/CallHandler return PyCallOutcome::Value(value) - NOT a generator step.
-CallHandler returns Value::Python(generator) after to_generator().
+EvalDoExpr/CallFunc/CallAsync/CallHandler return PyCallOutcome::Value(value) - NOT a generator step.  [R13-E]
+CallHandler returns Value::Python(generator) after evaluating the DoExpr.
 VM pushes Frame::PythonGenerator with started=false and metadata (from pending) when value is Value::Python(generator).
 
 Generator start uses GenNext (__next__).
@@ -4718,8 +5138,9 @@ Key differences and decisions in 008:
 - Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
 - `Call(f, args, kwargs, metadata)` is a DoCtrl for function invocation with
   call stack metadata (R9-A). `Eval(expr, handlers)` evaluates a DoExpr in a fresh scope
-  (R9-H). `GetCallStack` walks frames (R9-B). `Yielded::Program` is removed (R10-A) —
-  all DoThunks go through `DoCtrl::Call`.
+  (R9-H). `GetCallStack` walks frames (R9-B). [R13-A] DoThunk eliminated — binary hierarchy
+  `DoExpr = DoCtrl | Effect`. `Pure(value)` replaces PureProgram; `Map`/`FlatMap` replace
+  DerivedProgram. No third category.
 
 ---
 
