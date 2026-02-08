@@ -7,7 +7,7 @@ use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
 use crate::continuation::Continuation;
-use crate::effect::{DispatchEffect, dispatch_clone_as_effect, dispatch_into_effect};
+use crate::effect::DispatchEffect;
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::error::VMError;
@@ -903,7 +903,7 @@ impl VM {
                 }
             }
         }
-        Err(VMError::no_matching_handler(dispatch_clone_as_effect(effect)))
+        Err(VMError::no_matching_handler(effect.clone()))
     }
 
     pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError> {
@@ -913,7 +913,7 @@ impl VM {
         let handler_chain = self.visible_handlers(&scope_chain);
 
         if handler_chain.is_empty() {
-            return Err(VMError::unhandled_effect(dispatch_into_effect(effect)));
+            return Err(VMError::unhandled_effect(effect));
         }
 
         let (handler_idx, handler_marker, entry) =
@@ -1178,7 +1178,7 @@ impl VM {
             }
         }
 
-        StepEvent::Error(VMError::delegate_no_outer_handler(dispatch_into_effect(effect)))
+        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
     }
 
     /// Handle handler return (explicit or implicit).
