@@ -4,6 +4,8 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::effect::{dispatch_from_shared, dispatch_to_pyobject};
+#[cfg(test)]
 use crate::effect::Effect;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
@@ -442,7 +444,7 @@ impl PyVM {
                 effect,
                 continuation,
             } => {
-                let py_effect = effect.to_pyobject(py)?;
+                let py_effect = dispatch_to_pyobject(py, &effect)?;
                 let py_k = continuation.to_pyobject(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
                     Ok(result) => {
@@ -593,7 +595,7 @@ impl PyVM {
         if obj.is_instance_of::<PyDelegate>() {
             let d: PyRef<'_, PyDelegate> = obj.extract()?;
             let effect = if let Some(ref eff) = d.effect {
-                Effect::from_shared(PyShared::new(eff.clone_ref(_py)))
+                dispatch_from_shared(PyShared::new(eff.clone_ref(_py)))
             } else {
                 self.vm
                     .dispatch_stack
@@ -675,7 +677,7 @@ impl PyVM {
                 "Delegate" => {
                     let effect = if let Ok(eff_obj) = obj.getattr("effect") {
                         if !eff_obj.is_none() {
-                            Effect::from_shared(PyShared::new(eff_obj.unbind()))
+                            dispatch_from_shared(PyShared::new(eff_obj.unbind()))
                         } else {
                             // No explicit effect — use current dispatch effect
                             self.vm
@@ -765,7 +767,7 @@ impl PyVM {
         }
 
         if Self::is_effect_object(_py, obj)? {
-            return Ok(Yielded::Effect(Effect::from_shared(PyShared::new(
+            return Ok(Yielded::Effect(dispatch_from_shared(PyShared::new(
                 obj.clone().unbind(),
             ))));
         }

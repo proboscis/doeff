@@ -81,6 +81,42 @@ pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
     }
 }
 
+pub fn dispatch_clone_as_effect(effect: &DispatchEffect) -> Effect {
+    #[cfg(test)]
+    {
+        effect.clone()
+    }
+    #[cfg(not(test))]
+    {
+        Effect(effect.clone())
+    }
+}
+
+pub fn dispatch_into_effect(effect: DispatchEffect) -> Effect {
+    #[cfg(test)]
+    {
+        effect
+    }
+    #[cfg(not(test))]
+    {
+        Effect(effect)
+    }
+}
+
+pub fn dispatch_to_pyobject<'py>(
+    py: Python<'py>,
+    effect: &DispatchEffect,
+) -> PyResult<Bound<'py, PyAny>> {
+    #[cfg(test)]
+    {
+        return effect.to_pyobject(py);
+    }
+    #[cfg(not(test))]
+    {
+        Ok(effect.bind(py).clone())
+    }
+}
+
 impl Effect {
     /// Check if this effect has a built-in Rust handler.
     /// Check if this is a standard effect (state/reader/writer only).

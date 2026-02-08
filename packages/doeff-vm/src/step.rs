@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
-use crate::effect::Effect;
+use crate::effect::DispatchEffect;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::Handler;
@@ -53,7 +53,7 @@ pub enum PythonCall {
     },
     CallHandler {
         handler: PyShared,
-        effect: Effect,
+        effect: DispatchEffect,
         continuation: Continuation,
     },
     /// Generator next — gen lives in PendingPython::StepUserGenerator (D1 Phase 2).
@@ -83,7 +83,7 @@ pub enum PendingPython {
     },
     CallPythonHandler {
         k_user: Continuation,
-        effect: Effect,
+        effect: DispatchEffect,
     },
     RustProgramContinuation {
         marker: crate::ids::Marker,
@@ -95,7 +95,7 @@ pub enum PendingPython {
 #[derive(Debug, Clone)]
 pub enum Yielded {
     DoCtrl(DoCtrl),
-    Effect(Effect),
+    Effect(DispatchEffect),
     Unknown(Py<PyAny>),
 }
 
@@ -115,7 +115,7 @@ pub enum DoCtrl {
         py_identity: Option<PyShared>,
     },
     Delegate {
-        effect: Effect,
+        effect: DispatchEffect,
     },
     GetContinuation,
     GetHandlers,
