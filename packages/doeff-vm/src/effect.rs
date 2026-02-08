@@ -27,6 +27,9 @@ pub struct KpcCallEffect {
 #[derive(Debug, Clone)]
 pub struct Effect(pub PyShared);
 
+#[cfg(not(test))]
+pub type DispatchEffect = PyShared;
+
 #[cfg(test)]
 /// An effect that can be yielded by user code.
 ///
@@ -40,6 +43,42 @@ pub enum Effect {
     Ask { key: String },
     Tell { message: Value },
     Python(PyShared),
+}
+
+#[cfg(test)]
+pub type DispatchEffect = Effect;
+
+pub fn dispatch_from_shared(obj: PyShared) -> DispatchEffect {
+    #[cfg(test)]
+    {
+        return Effect::Python(obj);
+    }
+    #[cfg(not(test))]
+    {
+        obj
+    }
+}
+
+pub fn dispatch_ref_as_python(effect: &DispatchEffect) -> Option<&PyShared> {
+    #[cfg(test)]
+    {
+        return effect.as_python();
+    }
+    #[cfg(not(test))]
+    {
+        Some(effect)
+    }
+}
+
+pub fn dispatch_into_python(effect: DispatchEffect) -> Option<PyShared> {
+    #[cfg(test)]
+    {
+        return effect.into_python();
+    }
+    #[cfg(not(test))]
+    {
+        Some(effect)
+    }
 }
 
 impl Effect {
