@@ -1,0 +1,28 @@
+rules:
+  - id: spec-gap-SA-003-G02-startprogram-no-question-mark
+    message: StartProgram/CallHandler must normalize to PyCallOutcome::GenError instead of bubbling PyErr.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /packages/doeff-vm/src/pyvm.rs
+    patterns:
+      - pattern-regex: 'to_generator_strict\(py,\s*program\.clone_ref\(py\)\)\?'
+
+  - id: spec-gap-SA-003-G03-no-isolated-to-shared-fallback
+    message: Scheduler isolated mode must not fallback to TaskStore::Shared on missing snapshot.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /packages/doeff-vm/src/scheduler.rs
+    pattern-regex: 'None\s*=>\s*TaskStore::Shared'
+
+  - id: spec-gap-SA-003-G04-get-handlers-no-filter-map
+    message: handle_get_handlers must not filter_map away missing handlers.
+    severity: ERROR
+    languages: [rust]
+    paths:
+      include:
+        - /packages/doeff-vm/src/vm.rs
+    pattern-regex: 'fn\s+handle_get_handlers[\s\S]*filter_map'
