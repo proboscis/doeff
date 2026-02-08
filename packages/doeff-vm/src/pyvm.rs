@@ -57,7 +57,18 @@ pub struct PySchedulerHandler {
 impl PyVM {
     #[new]
     pub fn new() -> Self {
-        PyVM { vm: VM::new() }
+        let mut vm = VM::new();
+        let marker = Marker::fresh();
+        let seg = Segment::new(marker, None, vec![]);
+        let prompt_seg_id = vm.alloc_segment(seg);
+        vm.install_handler(
+            marker,
+            HandlerEntry::new(
+                Handler::RustProgram(std::sync::Arc::new(KpcHandlerFactory)),
+                prompt_seg_id,
+            ),
+        );
+        PyVM { vm }
     }
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -496,16 +507,67 @@ impl PyVM {
 
     fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
         let program_bound = program.bind(py);
-        let type_name = program_bound.get_type().name()?;
-        if type_name.to_string().contains("generator") {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Expected ProgramBase (with to_generator method), got raw generator. \
-                 Yield a ProgramBase object (e.g. decorated with @do) instead of a raw generator.",
-            ));
+        let to_generator_method = program_bound.get_type().getattr("to_generator").ok();
+
+        if let Some(to_gen) = to_generator_method {
+            let gen = to_gen.call1((program_bound,))?;
+            return Ok(gen.unbind());
         }
-        let to_gen = program_bound.getattr("to_generator")?;
-        let gen = to_gen.call0()?;
-        Ok(gen.unbind())
+
+        let callable_type = program_bound
+            .get_type()
+            .name()
+            .ok()
+            .and_then(|n| n.extract::<String>().ok())
+            .unwrap_or_default();
+        if (callable_type == "function" || callable_type == "method") && program_bound.is_callable() {
+            if let Ok(next) = program_bound.call0() {
+                return self.to_generator_strict(py, next.unbind());
+            }
+        }
+
+        let is_kpc = if let Ok(program_mod) = py.import("doeff.program") {
+            if let Ok(kpc_cls) = program_mod.getattr("KleisliProgramCall") {
+                program_bound.is_instance(&kpc_cls).unwrap_or(false)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if is_kpc {
+            let ns = pyo3::types::PyDict::new(py);
+            ns.set_item("expr", program_bound)?;
+            py.run(
+                c"def _doexpr_to_generator():\n    value = yield expr\n    return value\n_gen = _doexpr_to_generator()",
+                Some(&ns),
+                Some(&ns),
+            )?;
+            let gen = ns
+                .get_item("_gen")?
+                .ok_or_else(|| PyRuntimeError::new_err("failed to construct top-level KPC generator"))?;
+            return Ok(gen.into_any().unbind());
+        }
+
+        let classified = self.classify_yielded(py, &program_bound)?;
+        match classified {
+            Yielded::DoCtrl(_) | Yielded::Effect(_) => {
+                let ns = pyo3::types::PyDict::new(py);
+                ns.set_item("expr", program_bound)?;
+                py.run(
+                    c"def _doexpr_to_generator():\n    value = yield expr\n    return value\n_gen = _doexpr_to_generator()",
+                    Some(&ns),
+                    Some(&ns),
+                )?;
+                let gen = ns
+                    .get_item("_gen")?
+                    .ok_or_else(|| PyRuntimeError::new_err("failed to construct top-level DoExpr generator"))?;
+                Ok(gen.into_any().unbind())
+            }
+            Yielded::Unknown(_) => Err(pyo3::exceptions::PyTypeError::new_err(
+                "Expected ProgramBase (to_generator) or DoExpr (Effect/DoCtrl).",
+            )),
+        }
     }
 
     fn step_generator(
@@ -610,166 +672,137 @@ impl PyVM {
             return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
         }
 
-        // Fallback: string-based type name parsing (for Python dataclasses)
-        if let Ok(type_name) = obj.get_type().name() {
-            let type_str: &str = type_name.extract()?;
-            if self.vm.debug.is_enabled() {
-                eprintln!("[classify_yielded] type_str = {:?}", type_str);
-            }
-            match type_str {
-                "Resume" => {
-                    let k_obj = obj.getattr("continuation")?;
-                    let cont_id_raw = k_obj
-                        .getattr("cont_id")
-                        .or_else(|_| k_obj.get_item("cont_id"))?;
-                    let cont_id_val = cont_id_raw.extract::<u64>()?;
-                    let cont_id = ContId::from_raw(cont_id_val);
-                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!(
-                            "Resume with unknown continuation id {}",
-                            cont_id.raw()
-                        ))
-                    })?;
-                    let value = obj.getattr("value")?;
-                    return Ok(Yielded::DoCtrl(DoCtrl::Resume {
-                        continuation: k,
-                        value: Value::from_pyobject(&value),
-                    }));
-                }
-                "Transfer" => {
-                    let k_obj = obj.getattr("continuation")?;
-                    let cont_id_raw = k_obj
-                        .getattr("cont_id")
-                        .or_else(|_| k_obj.get_item("cont_id"))?;
-                    let cont_id_val = cont_id_raw.extract::<u64>()?;
-                    let cont_id = ContId::from_raw(cont_id_val);
-                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!(
-                            "Transfer with unknown continuation id {}",
-                            cont_id.raw()
-                        ))
-                    })?;
-                    let value = obj.getattr("value")?;
-                    return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
-                        continuation: k,
-                        value: Value::from_pyobject(&value),
-                    }));
-                }
-                "WithHandler" => {
-                    let handler_obj = obj.getattr("handler")?;
-                    let program = obj.getattr("program").or_else(|_| obj.getattr("body"))?;
-                    let (handler, py_identity) =
-                        if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
-                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_obj.extract()?;
-                            (
-                                Handler::RustProgram(sentinel.factory.clone()),
-                                Some(PyShared::new(handler_obj.clone().unbind())),
-                            )
-                        } else {
-                            (Handler::Python(PyShared::new(handler_obj.unbind())), None)
-                        };
-                    return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
-                        handler,
-                        expr: program.unbind(),
-                        py_identity,
-                    }));
-                }
-                "Delegate" => {
-                    let effect = if let Ok(eff_obj) = obj.getattr("effect") {
-                        if !eff_obj.is_none() {
-                            dispatch_from_shared(PyShared::new(eff_obj.unbind()))
-                        } else {
-                            // No explicit effect — use current dispatch effect
-                            self.vm
-                                .dispatch_stack
-                                .last()
-                                .map(|ctx| ctx.effect.clone())
-                                .ok_or_else(|| {
-                                    PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                                        "Delegate without effect called outside dispatch context",
-                                    )
-                                })?
-                        }
-                    } else {
-                        // No effect attribute — use current dispatch effect
-                        self.vm
-                            .dispatch_stack
-                            .last()
-                            .map(|ctx| ctx.effect.clone())
-                            .ok_or_else(|| {
-                                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
-                                    "Delegate without effect called outside dispatch context",
-                                )
-                            })?
-                    };
-                    return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
-                }
-                "GetContinuation" => {
-                    return Ok(Yielded::DoCtrl(DoCtrl::GetContinuation));
-                }
-                "GetHandlers" => {
-                    return Ok(Yielded::DoCtrl(DoCtrl::GetHandlers));
-                }
-                "GetCallStack" => {
-                    return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
-                }
-                "CreateContinuation" => {
-                    let program = obj.getattr("program")?.unbind();
-                    let handlers_list = obj.getattr("handlers")?;
-                    let mut handlers = Vec::new();
-                    let mut handler_identities = Vec::new();
-                    for item in handlers_list.try_iter()? {
-                        let item = item?;
-                        if item.is_instance_of::<PyRustHandlerSentinel>() {
-                            let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
-                            handlers.push(crate::handler::Handler::RustProgram(
-                                sentinel.factory.clone(),
-                            ));
-                            handler_identities.push(Some(PyShared::new(item.unbind())));
-                        } else {
-                            handlers.push(crate::handler::Handler::Python(PyShared::new(
-                                item.unbind(),
-                            )));
-                            handler_identities.push(None);
-                        }
-                    }
-                    return Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
-                        expr: PyShared::new(program),
-                        handlers,
-                        handler_identities,
-                    }));
-                }
-                "ResumeContinuation" => {
-                    let k_obj = obj.getattr("continuation")?;
-                    let cont_id_raw = k_obj
-                        .getattr("cont_id")
-                        .or_else(|_| k_obj.get_item("cont_id"))?;
-                    let cont_id_val = cont_id_raw.extract::<u64>()?;
-                    let cont_id = ContId::from_raw(cont_id_val);
-                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!(
-                            "ResumeContinuation with unknown continuation id {}",
-                            cont_id.raw()
-                        ))
-                    })?;
-                    let value = obj.getattr("value")?;
-                    return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
-                        continuation: k,
-                        value: Value::from_pyobject(&value),
-                    }));
-                }
-                "PythonAsyncSyntaxEscape" => {
-                    let action = obj.getattr("action")?.unbind();
-                    return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
-                }
-                _ => {}
-            }
-        }
-
         if Self::is_effect_object(_py, obj)? {
             return Ok(Yielded::Effect(dispatch_from_shared(PyShared::new(
                 obj.clone().unbind(),
             ))));
+        }
+
+        if obj.getattr("handler").is_ok()
+            && (obj.getattr("program").is_ok() || obj.getattr("body").is_ok())
+        {
+            let handler_obj = obj.getattr("handler")?;
+            let program = obj.getattr("program").or_else(|_| obj.getattr("body"))?;
+            let (handler, py_identity) = if handler_obj.is_instance_of::<PyRustHandlerSentinel>() {
+                let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_obj.extract()?;
+                (
+                    Handler::RustProgram(sentinel.factory.clone()),
+                    Some(PyShared::new(handler_obj.clone().unbind())),
+                )
+            } else {
+                (Handler::Python(PyShared::new(handler_obj.unbind())), None)
+            };
+            return Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
+                handler,
+                expr: program.unbind(),
+                py_identity,
+            }));
+        }
+
+        if obj.getattr("program").is_ok() && obj.getattr("handlers").is_ok() {
+            let program = obj.getattr("program")?.unbind();
+            let handlers_list = obj.getattr("handlers")?;
+            let mut handlers = Vec::new();
+            let mut handler_identities = Vec::new();
+            for item in handlers_list.try_iter()? {
+                let item = item?;
+                if item.is_instance_of::<PyRustHandlerSentinel>() {
+                    let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
+                    handlers.push(crate::handler::Handler::RustProgram(sentinel.factory.clone()));
+                    handler_identities.push(Some(PyShared::new(item.unbind())));
+                } else {
+                    handlers.push(crate::handler::Handler::Python(PyShared::new(item.unbind())));
+                    handler_identities.push(None);
+                }
+            }
+            return Ok(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                expr: PyShared::new(program),
+                handlers,
+                handler_identities,
+            }));
+        }
+
+        if obj.getattr("effect").is_ok() && obj.getattr("continuation").is_err() {
+            let effect = if let Ok(eff_obj) = obj.getattr("effect") {
+                if !eff_obj.is_none() {
+                    dispatch_from_shared(PyShared::new(eff_obj.unbind()))
+                } else {
+                    self.vm
+                        .dispatch_stack
+                        .last()
+                        .map(|ctx| ctx.effect.clone())
+                        .ok_or_else(|| {
+                            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                                "Delegate without effect called outside dispatch context",
+                            )
+                        })?
+                }
+            } else {
+                self.vm
+                    .dispatch_stack
+                    .last()
+                    .map(|ctx| ctx.effect.clone())
+                    .ok_or_else(|| {
+                        PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                            "Delegate without effect called outside dispatch context",
+                        )
+                    })?
+            };
+            return Ok(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        if obj.getattr("action").is_ok() && obj.getattr("continuation").is_err() {
+            let action = obj.getattr("action")?.unbind();
+            return Ok(Yielded::DoCtrl(DoCtrl::PythonAsyncSyntaxEscape { action }));
+        }
+
+        if obj.getattr("continuation").is_ok() && obj.getattr("value").is_ok() {
+            let k_obj = obj.getattr("continuation")?;
+            let cont_id_raw = k_obj
+                .getattr("cont_id")
+                .or_else(|_| k_obj.get_item("cont_id"))?;
+            let cont_id_val = cont_id_raw.extract::<u64>()?;
+            let cont_id = ContId::from_raw(cont_id_val);
+            let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
+                PyRuntimeError::new_err(format!(
+                    "Continuation with unknown continuation id {}",
+                    cont_id.raw()
+                ))
+            })?;
+            let value = obj.getattr("value")?;
+
+            if obj.getattr("__doeff_transfer__").and_then(|v| v.extract::<bool>()).unwrap_or(false)
+            {
+                return Ok(Yielded::DoCtrl(DoCtrl::Transfer {
+                    continuation: k,
+                    value: Value::from_pyobject(&value),
+                }));
+            }
+            if obj
+                .getattr("__doeff_resume_continuation__")
+                .and_then(|v| v.extract::<bool>())
+                .unwrap_or(false)
+            {
+                return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                    continuation: k,
+                    value: Value::from_pyobject(&value),
+                }));
+            }
+            return Ok(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation: k,
+                value: Value::from_pyobject(&value),
+            }));
+        }
+
+        // Fallback: tag-only control primitives.
+        if let Ok(type_name) = obj.get_type().name() {
+            let type_str: &str = type_name.extract()?;
+            match type_str {
+                "GetContinuation" => return Ok(Yielded::DoCtrl(DoCtrl::GetContinuation)),
+                "GetHandlers" => return Ok(Yielded::DoCtrl(DoCtrl::GetHandlers)),
+                "GetCallStack" => return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack)),
+                _ => {}
+            }
         }
 
         if obj.hasattr("to_generator")? {
@@ -828,11 +861,17 @@ impl PyVM {
             }
         }
 
-        if obj
+        let ty = obj.get_type();
+        let is_effect_base = ty
             .getattr("__doeff_effect_base__")
             .and_then(|v| v.extract::<bool>())
-            .unwrap_or(false)
-        {
+            .unwrap_or(false);
+        let is_kpc = ty
+            .getattr("__doeff_kpc__")
+            .and_then(|v| v.extract::<bool>())
+            .unwrap_or(false);
+
+        if is_effect_base || is_kpc {
             return Ok(true);
         }
 
