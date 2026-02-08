@@ -181,10 +181,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                 }
                 Ok(Some(SchedulerEffect::Gather { items: waitables }))
         } else if is_instance_from(obj, "doeff.effects.race", "RaceEffect") {
-                let items_obj = obj
-                    .getattr ("futures")
-                    .or_else(|_| obj.getattr ("items"))
-                    .map_err(|e| e.to_string())?;
+                let items_obj = obj.getattr ("futures").map_err(|e| e.to_string())?;
                 let mut waitables = Vec::new();
                 for item in items_obj.try_iter().map_err(|e| e.to_string())? {
                     let item = item.map_err(|e| e.to_string())?;
@@ -230,13 +227,11 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
         } else if is_instance_from(obj, "doeff.effects.scheduler_internal", "_SchedulerTaskCompleted") {
                 let task = if let Ok(task_obj) = obj.getattr ("task") {
                     extract_task_id(&task_obj)
-                } else if let Ok(raw) = obj.getattr ("task_id").and_then(|v| v.extract::<u64>()) {
-                    Some(TaskId::from_raw(raw))
                 } else {
                     None
                 }
                 .ok_or_else(|| {
-                    "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id or task_id"
+                    "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id"
                         .to_string()
                 })?;
 
@@ -291,9 +286,6 @@ fn extract_promise_id(obj: &Bound<'_, PyAny>) -> Option<PromiseId> {
 }
 
 fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
-    if let Ok(raw) = obj.getattr ("task_id").and_then(|v| v.extract::<u64>()) {
-        return Some(TaskId::from_raw(raw));
-    }
     if let Ok(handle) = obj.getattr ("_handle") {
         if let Ok(raw) = handle.get_item("task_id").and_then(|v| v.extract::<u64>()) {
             return Some(TaskId::from_raw(raw));

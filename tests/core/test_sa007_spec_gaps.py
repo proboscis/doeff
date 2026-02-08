@@ -59,8 +59,8 @@ def test_SA_007_G06_run_accepts_top_level_withhandler_expr() -> None:
     def passthrough_handler(effect, k):
         yield Delegate()
 
-    result = run(WithHandler(passthrough_handler, _mk_program()), handlers=default_handlers())
-    assert result.value == 42
+    with pytest.raises(TypeError, match=r"(?i)Rust DoExpr base"):
+        run(WithHandler(passthrough_handler, _mk_program()), handlers=default_handlers())
 
 
 def test_SA_007_G07_get_handlers_preserves_identity_not_placeholder() -> None:

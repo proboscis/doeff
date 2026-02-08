@@ -166,6 +166,8 @@ def do(
         Program argument unwrapping.
     """
 
+    if not callable(func):
+        raise TypeError(f"@do expects a callable, got {type(func).__name__}")
     return DoYieldFunction(func)
 
 
