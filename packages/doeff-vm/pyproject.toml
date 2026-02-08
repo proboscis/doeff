@@ -19,3 +19,5 @@ classifiers = [
 [tool.maturin]
 features = ["pyo3/extension-module"]
 strip = true
+module-name = "doeff_vm.doeff_vm"
+python-source = "."
