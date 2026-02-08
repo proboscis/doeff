@@ -951,7 +951,7 @@ impl VM {
                 let program = rust_handler.create_program();
                 let step = {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
-                    guard.start(effect, k_user, &mut self.rust_store)
+                    Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
                 };
                 Ok(self.apply_rust_program_step(step, program))
             }
@@ -1157,7 +1157,7 @@ impl VM {
                             let program = rust_handler.create_program();
                             let step = {
                                 let mut guard = program.lock().expect("Rust program lock poisoned");
-                                guard.start(effect, k_user, &mut self.rust_store)
+                                Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
                             };
                             return self.apply_rust_program_step(step, program);
                         }
@@ -2627,14 +2627,15 @@ mod tests {
             assert!(matches!(event2, StepEvent::Continue));
 
             // The mode should be HandleYield with Resume primitive
-            // The resume value should be 50 (new_value), NOT 5 (old_value)
+            // SPEC-008 L1271: Modify returns OLD value (read-then-modify).
+            // The resume value should be 5 (old_value), NOT 50 (new_value).
             match &vm.mode {
                 Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
                     assert_eq!(
                         value.as_int(),
-                        Some(50),
-                        "G3 FAIL: Modify resumed with {} instead of 50 (new_value). \
-                         It returned old_value instead of the modifier result.",
+                        Some(5),
+                        "G3 FAIL: Modify resumed with {} instead of 5 (old_value). \
+                         SPEC-008 L1271: Modify is read-then-modify, returns old value.",
                         value.as_int().unwrap_or(-1)
                     );
                 }

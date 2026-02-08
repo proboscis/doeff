@@ -27,7 +27,7 @@ pub mod vm;
 // Re-exports for convenience
 pub use arena::SegmentArena;
 pub use continuation::Continuation;
-pub use effect::Effect;
+pub use effect::{Effect, PyGet, PyPut, PyModify, PyAsk, PyTell, PyKPC};
 pub use error::VMError;
 pub use frame::Frame;
 pub use handler::{

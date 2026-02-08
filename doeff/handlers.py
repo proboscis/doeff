@@ -1,0 +1,31 @@
+"""doeff.handlers - Handler sentinels re-exported from doeff_vm.
+
+Provides: state, reader, writer, scheduler.
+"""
+from __future__ import annotations
+
+_HANDLER_SENTINELS = {"state", "reader", "writer", "scheduler"}
+
+
+class _SchedulerSentinel:
+    """Placeholder sentinel until doeff_vm exports scheduler."""
+
+    def __repr__(self) -> str:
+        return "scheduler"
+
+
+def __getattr__(name: str):
+    if name in _HANDLER_SENTINELS:
+        import doeff_vm
+
+        obj = getattr(doeff_vm, name, None)
+        if obj is None and name == "scheduler":
+            obj = _SchedulerSentinel()
+        if obj is None:
+            raise AttributeError(f"module 'doeff_vm' has no attribute {name!r}")
+        globals()[name] = obj
+        return obj
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+__all__ = ["state", "reader", "writer", "scheduler"]

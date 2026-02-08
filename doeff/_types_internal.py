@@ -548,7 +548,7 @@ EffectFailure = EffectFailureError
 # Core Effect Type
 # ============================================
 
-from doeff.program import Program, ProgramBase
+from doeff.program import DoExpr, Program, ProgramBase
 
 E = TypeVar("E", bound="EffectBase")
 
@@ -564,10 +564,10 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase:
+class EffectBase(DoExpr):
     """Base dataclass implementing :class:`Effect` semantics.
 
-    SPEC-TYPES-001: EffectBase is standalone — NOT a ProgramBase subclass.
+    SPEC-TYPES-001: EffectBase subclasses DoExpr (universal program base).
     Effects are requests (pure data), not computation thunks.
     They have no to_generator() — they are yielded directly for dispatch.
     """
@@ -617,6 +617,15 @@ class EffectBase:
 class NullEffect(EffectBase):
     """Placeholder effect for exceptions raised directly (not via yield Fail)."""
 
+
+# R11-F: Wire Python EffectBase to Rust PyEffectBase for isinstance checks.
+try:
+    from doeff_vm import EffectBase as _RustEffectBase  # noqa: E402
+
+    if _RustEffectBase not in EffectBase.__bases__:
+        EffectBase.__bases__ = (*EffectBase.__bases__, _RustEffectBase)
+except ImportError:
+    pass  # Rust extension not available; pure-Python fallback
 
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
@@ -834,10 +843,26 @@ class RunFailureDetails:
 # ============================================
 
 
-@dataclass(frozen=True)
-class RunResult(Generic[T]):
+@runtime_checkable
+class RunResult(Protocol[T]):
+    """Protocol defining the RunResult interface.
+
+    Both the Python concrete implementation and the Rust VM RunResult
+    conform to this protocol.
     """
-    Result from running a Program through the pragmatic engine.
+
+    @property
+    def value(self) -> T: ...
+
+    def is_ok(self) -> bool: ...
+
+    def is_err(self) -> bool: ...
+
+
+@dataclass(frozen=True)
+class PyRunResult(Generic[T]):
+    """
+    Concrete Python RunResult from running a Program through the pragmatic engine.
 
     Contains both the execution context (state, log, graph) and the computation result.
     """
@@ -1322,7 +1347,7 @@ class _DepAskStats:
 class RunResultDisplayContext:
     """Shared context for building RunResult display output."""
 
-    run_result: RunResult[Any]
+    run_result: PyRunResult[Any]
     verbose: bool
     indent_unit: str
     failure_details: RunFailureDetails | None
@@ -2125,6 +2150,15 @@ def _wrap_callable(
     return wrapper
 
 
+# G12: KPC must subclass EffectBase (not just ProgramBase).
+# Patched here because program.py cannot import EffectBase at class-definition time
+# due to circular imports (_types_internal → program → _types_internal).
+from doeff.program import KleisliProgramCall as _KPC
+
+_KPC.__bases__ = (EffectBase,) + tuple(
+    b for b in _KPC.__bases__ if b is not ProgramBase
+)
+
 __all__ = [
     "NOTHING",
     "Effect",
@@ -2143,6 +2177,7 @@ __all__ = [
     "Program",
     "ProgramBase",
     "Result",
+    "PyRunResult",
     "RunResult",
     "Some",
     "TraceError",

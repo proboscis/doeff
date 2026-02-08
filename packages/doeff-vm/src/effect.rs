@@ -8,6 +8,28 @@ use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
 use crate::value::Value;
 
+// ---------------------------------------------------------------------------
+// R11-A: #[pyclass] effect structs for isinstance-based classification
+// ---------------------------------------------------------------------------
+
+#[pyclass(frozen, name = "PyGet")]
+pub struct PyGet;
+
+#[pyclass(frozen, name = "PyPut")]
+pub struct PyPut;
+
+#[pyclass(frozen, name = "PyModify")]
+pub struct PyModify;
+
+#[pyclass(frozen, name = "PyAsk")]
+pub struct PyAsk;
+
+#[pyclass(frozen, name = "PyTell")]
+pub struct PyTell;
+
+#[pyclass(frozen, name = "PyKPC")]
+pub struct PyKPC;
+
 #[derive(Debug, Clone)]
 pub enum KpcArg {
     Value(Value),

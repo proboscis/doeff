@@ -451,3 +451,41 @@ rules:
     severity: ERROR
     metadata:
       category: docs-deprecation
+
+  # ---------------------------------------------------------------------------
+  # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
+  # ---------------------------------------------------------------------------
+
+  - id: spec-gap-SA-001-G06-marker-attr-effects
+    patterns:
+      - pattern-either:
+          - pattern: has_true_attr($OBJ, "__doeff_state_get__")
+          - pattern: has_true_attr($OBJ, "__doeff_state_put__")
+          - pattern: has_true_attr($OBJ, "__doeff_state_modify__")
+          - pattern: has_true_attr($OBJ, "__doeff_reader_ask__")
+          - pattern: has_true_attr($OBJ, "__doeff_writer_tell__")
+    message: |
+      SA-001-G06: Effect detection via marker attributes.
+      Should use isinstance with Rust #[pyclass] types per SPEC-008 R11-A.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: spec-audit-SA-001
+      gap: G06
+
+  - id: spec-gap-SA-001-G08-classify-duck-typing
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ.getattr(...)
+          - pattern: $OBJ.hasattr(...)
+    paths:
+      include:
+        - "packages/doeff-vm/src/pyvm.rs"
+    message: |
+      SA-001-G08: classify_yielded uses duck-typing.
+      Should use is_instance_of checks only per SPEC-008 R11-C.
+    languages: [rust]
+    severity: WARNING
+    metadata:
+      category: spec-audit-SA-001
+      gap: G08
