@@ -4,6 +4,7 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
+use crate::continuation::Continuation;
 use crate::effect::{dispatch_from_shared, dispatch_to_pyobject, PyGet, PyPut, PyModify, PyAsk, PyTell, PyKPC};
 #[cfg(test)]
 use crate::effect::Effect;
@@ -61,6 +62,18 @@ pub struct PyStdlib {
 pub struct PySchedulerHandler {
     handler: SchedulerHandler,
     marker: Option<Marker>,
+}
+
+impl Continuation {
+    pub fn to_pyk<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let k = Bound::new(
+            py,
+            PyK {
+                cont_id: self.cont_id,
+            },
+        )?;
+        Ok(k.into_any())
+    }
 }
 
 #[pymethods]
@@ -457,7 +470,7 @@ impl PyVM {
                 continuation,
             } => {
                 let py_effect = dispatch_to_pyobject(py, &effect)?;
-                let py_k = continuation.to_pyobject(py)?;
+                let py_k = continuation.to_pyk(py)?;
                 match handler.bind(py).call1((py_effect, py_k)) {
                     Ok(result) => {
                         let is_generator = py

@@ -127,7 +127,7 @@ impl Continuation {
         self.started
     }
 
-    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+    pub fn to_debug_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         let dict = PyDict::new(py);
         dict.set_item("cont_id", self.cont_id.raw())?;
         dict.set_item("started", self.started)?;
@@ -153,6 +153,10 @@ impl Continuation {
             dict.set_item("handlers", list)?;
         }
         Ok(dict.into_any())
+    }
+
+    pub fn to_pyobject<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        self.to_debug_dict(py)
     }
 }
 
