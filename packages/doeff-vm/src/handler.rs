@@ -402,7 +402,8 @@ impl RustProgramHandler for KpcHandlerFactory {
 enum KpcPending {
     Positional,
     Keyword(String),
-    CallResult,
+    KernelCall,
+    EvalResult,
 }
 
 #[derive(Debug, Clone)]
@@ -451,7 +452,28 @@ impl KpcHandlerProgram {
             match state.pending.take() {
                 Some(KpcPending::Positional) => state.resolved_args.push(value),
                 Some(KpcPending::Keyword(key)) => state.resolved_kwargs.push((key, value)),
-                Some(KpcPending::CallResult) => {
+                Some(KpcPending::KernelCall) => {
+                    // R12-A Phase 2: kernel returned — Eval the generator with handlers.
+                    match value {
+                        Value::Python(gen) => {
+                            state.pending = Some(KpcPending::EvalResult);
+                            let expr = PyShared::new(gen);
+                            let handlers = state.handlers.clone();
+                            self.phase = KpcPhase::Running(state);
+                            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                                expr,
+                                handlers,
+                            }));
+                        }
+                        other => {
+                            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                                continuation: state.k_user,
+                                value: other,
+                            }));
+                        }
+                    }
+                }
+                Some(KpcPending::EvalResult) => {
                     return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                         continuation: state.k_user,
                         value,
@@ -507,18 +529,18 @@ impl KpcHandlerProgram {
                 }
             }
 
-            state.pending = Some(KpcPending::CallResult);
-            let f = state.kernel.clone();
+            // R12-A: Two-phase kernel invocation.
+            // Phase 1: Call kernel(*args, **kwargs) via NeedsPython to get the generator.
+            state.pending = Some(KpcPending::KernelCall);
+            let func = state.kernel.clone();
             let args = state.resolved_args.clone();
             let kwargs = state.resolved_kwargs.clone();
-            let metadata = state.metadata.clone();
             self.phase = KpcPhase::Running(state);
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Call {
-                f,
+            return RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                func,
                 args,
                 kwargs,
-                metadata,
-            }));
+            });
         }
     }
 }
