@@ -113,13 +113,11 @@ from doeff.types import (
     REPR_LIMIT_KEY,
     Effect,
     EffectGenerator,
-    Err,
     ExecutionContext,
     FrozenDict,
     ListenResult,
     Maybe,
     Nothing,
-    Ok,
     Result,
     RunResult,
     Some,
@@ -134,9 +132,74 @@ __version__ = "0.1.7"
 
 capture = capture_graph
 
+# G8: lazy re-exports of VM dispatch primitives from doeff_vm
+_VM_LAZY_EXPORTS = {"WithHandler", "Resume", "Delegate", "Transfer", "K"}
+
+# G18/G19: Unified types that accept both Rust VM and Python instances.
+# isinstance(rust_ok, doeff.Ok) and isinstance(python_ok, doeff.Ok) both work.
+_VM_UNIFIED_NAMES = {"Ok", "Err"}
+
+
+def _build_unified_types():
+    """Build unified Ok/Err that recognize both Rust and Python instances."""
+    from doeff import types as _t
+
+    py_types = {
+        "Ok": getattr(_t, "Ok", None),
+        "Err": getattr(_t, "Err", None),
+    }
+    rust_types: dict = {}
+    try:
+        from doeff_vm import doeff_vm as _ext
+
+        rust_types = {
+            "Ok": getattr(_ext, "Ok", None),
+            "Err": getattr(_ext, "Err", None),
+        }
+    except ImportError:
+        pass
+
+    unified = {}
+    for name in ("Ok", "Err"):
+        candidates = tuple(
+            t for t in (rust_types.get(name), py_types.get(name)) if t is not None
+        )
+        if len(candidates) <= 1:
+            unified[name] = candidates[0] if candidates else None
+        else:
+
+            class _UnifiedMeta(type):
+                _types = candidates
+
+                def __instancecheck__(cls, instance):
+                    return isinstance(instance, cls._types)
+
+                def __subclasscheck__(cls, subclass):
+                    return issubclass(subclass, cls._types)
+
+            unified[name] = _UnifiedMeta(name, (), {"_types": candidates})
+    return unified
+
+
+def __getattr__(name: str):
+    if name in _VM_LAZY_EXPORTS:
+        import doeff_vm
+
+        obj = getattr(doeff_vm, name)
+        globals()[name] = obj
+        return obj
+    if name in _VM_UNIFIED_NAMES:
+        _unified = _build_unified_types()
+        globals().update(_unified)
+        return _unified[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "CACHE_PATH_ENV_KEY",
     "DEFAULT_REPR_LIMIT",
+    "Delegate",
+    "K",
     "NOTHING",
     "REPR_LIMIT_KEY",
     "Annotate",
@@ -185,6 +248,7 @@ __all__ = [
     "Race",
     "RaceResult",
     "Result",
+    "Resume",
     "RunResult",
     "Safe",
     "Some",
@@ -193,8 +257,10 @@ __all__ = [
     "StructuredLog",
     "Task",
     "Tell",
+    "Transfer",
     "TraceError",
     "WGraph",
+    "WithHandler",
     "WNode",
     "WStep",
     "Wait",

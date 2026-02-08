@@ -689,6 +689,21 @@ from doeff.presets import sync_preset, async_preset
 result = run(my_program(), handlers=sync_preset, store={"x": 0})
 ```
 
+### default_handlers() [Q9]
+
+Public convenience function returning the standard handler bundle `[state, reader, writer]`.
+Available as `from doeff import default_handlers`.
+
+```python
+from doeff import run, default_handlers
+
+# Explicit handler installation (required — run() defaults to handlers=[])
+result = run(my_program(), handlers=default_handlers(), store={"x": 0})
+```
+
+**Note**: `run()` defaults to `handlers=[]` (API-1). Users must explicitly
+pass `default_handlers()` or construct their own handler list.
+
 ---
 
 ## 8. Imports
