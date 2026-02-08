@@ -7,6 +7,8 @@ use pyo3::types::PyDict;
 
 use crate::arena::SegmentArena;
 use crate::continuation::Continuation;
+use crate::effect::{DispatchEffect, dispatch_clone_as_effect, dispatch_into_effect};
+#[cfg(test)]
 use crate::effect::Effect;
 use crate::error::VMError;
 use crate::frame::Frame;
@@ -25,7 +27,7 @@ pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
 #[derive(Debug, Clone)]
 pub struct DispatchContext {
     pub dispatch_id: DispatchId,
-    pub effect: Effect,
+    pub effect: DispatchEffect,
     pub handler_chain: Vec<Marker>,
     pub handler_idx: usize,
     pub k_user: Continuation,
@@ -892,7 +894,7 @@ impl VM {
     pub fn find_matching_handler(
         &self,
         handler_chain: &[Marker],
-        effect: &Effect,
+        effect: &DispatchEffect,
     ) -> Result<(usize, Marker, HandlerEntry), VMError> {
         for (idx, &marker) in handler_chain.iter().enumerate() {
             if let Some(entry) = self.handlers.get(&marker) {
@@ -901,17 +903,17 @@ impl VM {
                 }
             }
         }
-        Err(VMError::no_matching_handler(effect.clone()))
+        Err(VMError::no_matching_handler(dispatch_clone_as_effect(effect)))
     }
 
-    pub fn start_dispatch(&mut self, effect: Effect) -> Result<StepEvent, VMError> {
+    pub fn start_dispatch(&mut self, effect: DispatchEffect) -> Result<StepEvent, VMError> {
         self.lazy_pop_completed();
 
         let scope_chain = self.current_scope_chain();
         let handler_chain = self.visible_handlers(&scope_chain);
 
         if handler_chain.is_empty() {
-            return Err(VMError::unhandled_effect(effect));
+            return Err(VMError::unhandled_effect(dispatch_into_effect(effect)));
         }
 
         let (handler_idx, handler_marker, entry) =
@@ -1109,7 +1111,7 @@ impl VM {
         })
     }
 
-    fn handle_delegate(&mut self, effect: Effect) -> StepEvent {
+    fn handle_delegate(&mut self, effect: DispatchEffect) -> StepEvent {
         let top = match self.dispatch_stack.last_mut() {
             Some(t) => t,
             None => {
@@ -1176,7 +1178,7 @@ impl VM {
             }
         }
 
-        StepEvent::Error(VMError::delegate_no_outer_handler(effect))
+        StepEvent::Error(VMError::delegate_no_outer_handler(dispatch_into_effect(effect)))
     }
 
     /// Handle handler return (explicit or implicit).
