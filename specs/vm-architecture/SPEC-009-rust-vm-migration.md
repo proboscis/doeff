@@ -714,6 +714,9 @@ pass `default_handlers()` or construct their own handler list.
 # Entrypoints
 from doeff import run, async_run
 
+# IMPORTANT: do NOT import runtime internals from doeff_vm in user code.
+# doeff_vm is implementation-layer plumbing, not a public API surface.
+
 # Decorator
 from doeff import do
 
@@ -746,6 +749,9 @@ from doeff import Resume, Delegate, Transfer
 
 The following are **implementation-layer types** of the Rust VM (SPEC-008).
 User code and subpackages must not import or depend on them.
+
+`doeff_vm` itself is implementation-layer. Public user imports must come from
+`doeff`, `doeff.handlers`, `doeff.effects`, and `doeff.presets` only.
 
 These are the Rust/PyO3 classes behind the public API — not the public API
 itself.  For example, `scheduler` (the handler object from `doeff.handlers`)

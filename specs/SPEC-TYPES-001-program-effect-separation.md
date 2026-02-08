@@ -827,7 +827,9 @@ CODE-ATTENTION:
 4. Add `Call { f, args, kwargs, metadata }` as a `DoCtrl` variant
 5. Add `Eval { expr, handlers }` as a `DoCtrl` variant
 6. Add `GetCallStack` as a `DoCtrl` variant
-7. Implement metadata extraction in driver's `classify_yielded` (KPC → Call upgrade)
+7. Implement metadata extraction in driver's `classify_yielded` with **mandatory KPC effect dispatch**:
+   KPC must classify as `Yielded::Effect(kpc)` and be handled by the KPC handler.
+   Only non-KPC `DoThunk` values classify to `DoCtrl::Call`.
 8. **REMOVE `Yielded::Program`** — delete the variant from the Rust enum.
    All DoThunks go through `DoCtrl::Call` with `CallMetadata::anonymous()` when
    metadata is unavailable. No fallback path.
@@ -849,6 +851,8 @@ CODE-ATTENTION:
 12. Update presets to include KPC handler
 13. Update `@do` decorator — `KleisliProgram.__call__` constructs `PyKPC` (imported from `doeff_vm`)
 14. Delete Python-side `_AutoUnwrapStrategy` from KPC — it moves into the KPC handler [Rev 9]
+15. Remove transitional compatibility state: no Python dataclass KPC, no runtime base rebasing,
+    no mixed old/new dispatch paths. Rust-side `PyKPC` + handler path is the single source of truth.
 
 ### Phase C: Complete separation (DoExpr hierarchy replaces old ProgramBase/EffectBase)
 1. Remove `EffectBase(ProgramBase)` inheritance

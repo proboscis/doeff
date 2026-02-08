@@ -553,6 +553,25 @@ from doeff.program import DoExpr, Program, ProgramBase
 E = TypeVar("E", bound="EffectBase")
 
 
+def _is_rust_effect_subclass(subclass: type[Any]) -> bool:
+    try:
+        from doeff_vm import EffectBase as _RustEffectBase
+    except ImportError:
+        return False
+
+    try:
+        return issubclass(subclass, _RustEffectBase)
+    except TypeError:
+        return False
+
+
+class _EffectBaseMeta(type(DoExpr)):
+    def __subclasscheck__(cls, subclass: type[Any]) -> bool:
+        if _is_rust_effect_subclass(subclass):
+            return True
+        return super().__subclasscheck__(subclass)
+
+
 @runtime_checkable
 class Effect(Protocol):
     """Protocol implemented by all effect values."""
@@ -564,7 +583,7 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase(DoExpr):
+class EffectBase(DoExpr, metaclass=_EffectBaseMeta):
     """Base dataclass implementing :class:`Effect` semantics.
 
     SPEC-TYPES-001: EffectBase subclasses DoExpr (universal program base).
@@ -618,14 +637,16 @@ class NullEffect(EffectBase):
     """Placeholder effect for exceptions raised directly (not via yield Fail)."""
 
 
-# R11-F: Wire Python EffectBase to Rust PyEffectBase for isinstance checks.
+# Keep Python EffectBase runtime-compatible with Rust base class.
 try:
     from doeff_vm import EffectBase as _RustEffectBase  # noqa: E402
 
     if _RustEffectBase not in EffectBase.__bases__:
         EffectBase.__bases__ = (*EffectBase.__bases__, _RustEffectBase)
 except ImportError:
-    pass  # Rust extension not available; pure-Python fallback
+    pass
+
+
 
 # Type alias for generators used in @do functions
 # This simplifies the verbose Generator[Union[Effect, Program], Any, T] pattern
@@ -853,6 +874,15 @@ class RunResult(Protocol[T]):
 
     @property
     def value(self) -> T: ...
+
+    @property
+    def result(self) -> Result[T]: ...
+
+    @property
+    def raw_store(self) -> dict[str, Any]: ...
+
+    @property
+    def error(self) -> BaseException: ...
 
     def is_ok(self) -> bool: ...
 
@@ -2150,14 +2180,7 @@ def _wrap_callable(
     return wrapper
 
 
-# G12: KPC must subclass EffectBase (not just ProgramBase).
-# Patched here because program.py cannot import EffectBase at class-definition time
-# due to circular imports (_types_internal → program → _types_internal).
-from doeff.program import KleisliProgramCall as _KPC
 
-_KPC.__bases__ = (EffectBase,) + tuple(
-    b for b in _KPC.__bases__ if b is not ProgramBase
-)
 
 __all__ = [
     "NOTHING",

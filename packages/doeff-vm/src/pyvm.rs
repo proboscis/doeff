@@ -66,18 +66,7 @@ pub struct PySchedulerHandler {
 impl PyVM {
     #[new]
     pub fn new() -> Self {
-        let mut vm = VM::new();
-        let marker = Marker::fresh();
-        let seg = Segment::new(marker, None, vec![]);
-        let prompt_seg_id = vm.alloc_segment(seg);
-        vm.install_handler(
-            marker,
-            HandlerEntry::new(
-                Handler::RustProgram(std::sync::Arc::new(KpcHandlerFactory)),
-                prompt_seg_id,
-            ),
-        );
-        PyVM { vm }
+        PyVM { vm: VM::new() }
     }
 
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
@@ -523,60 +512,9 @@ impl PyVM {
             return Ok(gen.unbind());
         }
 
-        let callable_type = program_bound
-            .get_type()
-            .name()
-            .ok()
-            .and_then(|n| n.extract::<String>().ok())
-            .unwrap_or_default();
-        if (callable_type == "function" || callable_type == "method") && program_bound.is_callable() {
-            if let Ok(next) = program_bound.call0() {
-                return self.to_generator_strict(py, next.unbind());
-            }
-        }
-
-        let is_kpc = if let Ok(program_mod) = py.import("doeff.program") {
-            if let Ok(kpc_cls) = program_mod.getattr("KleisliProgramCall") {
-                program_bound.is_instance(&kpc_cls).unwrap_or(false)
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-        if is_kpc {
-            let ns = pyo3::types::PyDict::new(py);
-            ns.set_item("expr", program_bound)?;
-            py.run(
-                c"def _doexpr_to_generator():\n    value = yield expr\n    return value\n_gen = _doexpr_to_generator()",
-                Some(&ns),
-                Some(&ns),
-            )?;
-            let gen = ns
-                .get_item("_gen")?
-                .ok_or_else(|| PyRuntimeError::new_err("failed to construct top-level KPC generator"))?;
-            return Ok(gen.into_any().unbind());
-        }
-
-        let classified = self.classify_yielded(py, &program_bound)?;
-        match classified {
-            Yielded::DoCtrl(_) | Yielded::Effect(_) => {
-                let ns = pyo3::types::PyDict::new(py);
-                ns.set_item("expr", program_bound)?;
-                py.run(
-                    c"def _doexpr_to_generator():\n    value = yield expr\n    return value\n_gen = _doexpr_to_generator()",
-                    Some(&ns),
-                    Some(&ns),
-                )?;
-                let gen = ns
-                    .get_item("_gen")?
-                    .ok_or_else(|| PyRuntimeError::new_err("failed to construct top-level DoExpr generator"))?;
-                Ok(gen.into_any().unbind())
-            }
-            Yielded::Unknown(_) => Err(pyo3::exceptions::PyTypeError::new_err(
-                "Expected ProgramBase (to_generator) or DoExpr (Effect/DoCtrl).",
-            )),
-        }
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Expected ProgramBase (to_generator).",
+        ))
     }
 
     fn step_generator(
@@ -720,7 +658,7 @@ impl PyVM {
             }));
         }
 
-        if Self::is_effect_object(_py, obj)? {
+        if obj.is_instance_of::<PyEffectBase>() {
             return Ok(Yielded::Effect(dispatch_from_shared(PyShared::new(
                 obj.clone().unbind(),
             ))));
@@ -753,36 +691,6 @@ impl PyVM {
             .map(|v| v.to_pyobject(py))
             .collect::<PyResult<_>>()?;
         Ok(PyTuple::new(py, py_values)?)
-    }
-
-    fn is_effect_object(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if obj.is_instance_of::<PyEffectBase>() {
-            return Ok(true);
-        }
-
-        if let Ok(types_mod) = py.import("doeff.types") {
-            if let Ok(effect_base) = types_mod.getattr("EffectBase") {
-                if obj.is_instance(&effect_base)? {
-                    return Ok(true);
-                }
-            }
-        }
-
-        let ty = obj.get_type();
-        let is_effect_base = ty
-            .getattr("__doeff_effect_base__")
-            .and_then(|v| v.extract::<bool>())
-            .unwrap_or(false);
-        let is_kpc = ty
-            .getattr("__doeff_kpc__")
-            .and_then(|v| v.extract::<bool>())
-            .unwrap_or(false);
-
-        if is_effect_base || is_kpc {
-            return Ok(true);
-        }
-
-        Ok(false)
     }
 
     fn extract_call_metadata_fallback(
@@ -1074,7 +982,7 @@ impl PyWithHandler {
 }
 
 /// Dispatch primitive — handler-only.
-#[pyclass(name = "Resume")]
+#[pyclass(name = "Resume", extends=PyDoCtrlBase)]
 pub struct PyResume {
     #[pyo3(get)]
     pub continuation: Py<PyAny>,
@@ -1085,16 +993,19 @@ pub struct PyResume {
 #[pymethods]
 impl PyResume {
     #[new]
-    fn new(continuation: Py<PyAny>, value: Py<PyAny>) -> Self {
-        PyResume {
-            continuation,
-            value,
-        }
+    fn new(continuation: Py<PyAny>, value: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (
+            PyResume {
+                continuation,
+                value,
+            },
+            PyDoCtrlBase,
+        )
     }
 }
 
 /// Dispatch primitive — handler-only.
-#[pyclass(name = "Delegate")]
+#[pyclass(name = "Delegate", extends=PyDoCtrlBase)]
 pub struct PyDelegate {
     #[pyo3(get)]
     pub effect: Option<Py<PyAny>>,
@@ -1104,13 +1015,13 @@ pub struct PyDelegate {
 impl PyDelegate {
     #[new]
     #[pyo3(signature = (effect=None))]
-    fn new(effect: Option<Py<PyAny>>) -> Self {
-        PyDelegate { effect }
+    fn new(effect: Option<Py<PyAny>>) -> (Self, PyDoCtrlBase) {
+        (PyDelegate { effect }, PyDoCtrlBase)
     }
 }
 
 /// Dispatch primitive — handler-only, one-shot.
-#[pyclass(name = "Transfer")]
+#[pyclass(name = "Transfer", extends=PyDoCtrlBase)]
 pub struct PyTransfer {
     #[pyo3(get)]
     pub continuation: Py<PyAny>,
@@ -1121,11 +1032,14 @@ pub struct PyTransfer {
 #[pymethods]
 impl PyTransfer {
     #[new]
-    fn new(continuation: Py<PyAny>, value: Py<PyAny>) -> Self {
-        PyTransfer {
-            continuation,
-            value,
-        }
+    fn new(continuation: Py<PyAny>, value: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (
+            PyTransfer {
+                continuation,
+                value,
+            },
+            PyDoCtrlBase,
+        )
     }
 }
 

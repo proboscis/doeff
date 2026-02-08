@@ -485,81 +485,82 @@ class ProgramProtocol(Protocol[T]):
         ...
 
 
-@dataclass(frozen=True)
-class KleisliProgramCall(ProgramBase, Generic[T]):
-    """Bound invocation of a KleisliProgram.
+from doeff_vm import KleisliProgramCall as KleisliProgramCall
 
-    SPEC-TYPES-001: KPC is handler-dispatched (effect path), not a DoThunk.
-    """
 
-    __doeff_kpc__ = True
+class _CompatDataclassField:
+    __slots__ = ("name",)
 
-    kleisli_source: Any  # KleisliProgram to execute
-    args: tuple
-    kwargs: dict[str, Any]
+    def __init__(self, name: str) -> None:
+        self.name = name
 
-    function_name: str = "<anonymous>"
-    created_at: Any = None
-    execution_kernel: Callable[..., Generator[Effect | Program, Any, T]] | None = None
 
-    @classmethod
-    def create_from_kleisli(
-        cls,
-        kleisli: Any,  # KleisliProgram
-        args: tuple,
-        kwargs: dict[str, Any],
-        function_name: str,
-        created_at: Any = None,  # EffectCreationContext | None
-    ) -> KleisliProgramCall[T]:
-        """Create from KleisliProgram.__call__ (knows its source)."""
+def _kpc_create_from_kleisli(
+    cls: type[Any],
+    kleisli: Any,
+    args: tuple,
+    kwargs: dict[str, Any],
+    function_name: str,
+    created_at: Any = None,
+) -> Any:
+    return cls(
+        kleisli_source=kleisli,
+        args=tuple(args),
+        kwargs=dict(kwargs),
+        function_name=function_name,
+        execution_kernel=getattr(kleisli, "func", None),
+        created_at=created_at,
+    )
 
-        return cls(
-            kleisli_source=kleisli,
-            args=tuple(args),
-            kwargs=dict(kwargs),
-            function_name=function_name,
-            created_at=created_at,
-            execution_kernel=getattr(kleisli, "func", None),
-        )
 
-    def map(self, f: Callable[[T], U]) -> Program[U]:
-        """Map over result.
+def _kpc_map(self: Any, f: Callable[[T], U]) -> Program[U]:
+    if not callable(f):
+        raise TypeError("mapper must be callable")
 
-        SPEC-TYPES-001: map on any DoExpr returns a derived DoThunk.
-        """
+    def mapped_gen() -> Generator[Effect | Program, Any, U]:
+        value = yield self
+        return f(value)
 
-        if not callable(f):
-            raise TypeError("mapper must be callable")
+    return GeneratorProgram(mapped_gen)
 
-        def mapped_gen() -> Generator[Effect | Program, Any, U]:
-            value = yield self
-            return f(value)
 
-        return GeneratorProgram(mapped_gen)
+def _kpc_flat_map(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
+    if not callable(f):
+        raise TypeError("binder must be callable returning Program/Effect")
 
-    def flat_map(self, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
-        """Monadic bind operation.
+    def flatmapped_gen() -> Generator[Effect | Program, Any, U]:
+        from doeff.types import EffectBase
 
-        SPEC-TYPES-001: flat_map on any DoExpr returns a derived DoThunk.
-        """
+        value = yield self
+        next_prog = f(value)
+        if not isinstance(next_prog, (ProgramBase, EffectBase)):
+            raise TypeError(
+                f"binder must return Program/Effect; got {type(next_prog).__name__}"
+            )
+        result = yield next_prog
+        return result
 
-        if not callable(f):
-            raise TypeError("binder must be callable returning Program/Effect")
+    return GeneratorProgram(flatmapped_gen)
 
-        def flatmapped_gen() -> Generator[Effect | Program, Any, U]:
-            from doeff.types import EffectBase
 
-            value = yield self
-            next_prog = f(value)
-            if not isinstance(next_prog, (ProgramBase, EffectBase)):
-                raise TypeError(
-                    f"binder must return Program/Effect; got {type(next_prog).__name__}"
-                )
-            result = yield next_prog
-            return result
-
-        return GeneratorProgram(flatmapped_gen)
-
+setattr(KleisliProgramCall, "create_from_kleisli", classmethod(_kpc_create_from_kleisli))
+setattr(KleisliProgramCall, "map", _kpc_map)
+setattr(KleisliProgramCall, "flat_map", _kpc_flat_map)
+setattr(KleisliProgramCall, "and_then_k", _kpc_flat_map)
+setattr(KleisliProgramCall, "__doeff_kpc__", True)
+if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
+    setattr(
+        KleisliProgramCall,
+        "__dataclass_fields__",
+        {
+            "kleisli_source": _CompatDataclassField("kleisli_source"),
+            "args": _CompatDataclassField("args"),
+            "kwargs": _CompatDataclassField("kwargs"),
+            "function_name": _CompatDataclassField("function_name"),
+            "execution_kernel": _CompatDataclassField("execution_kernel"),
+            "created_at": _CompatDataclassField("created_at"),
+        },
+    )
 
 Program = ProgramBase
 
