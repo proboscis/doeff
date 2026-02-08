@@ -5,6 +5,9 @@ from importlib import import_module
 _ext = import_module("doeff_vm.doeff_vm")
 
 PyVM = _ext.PyVM
+EffectBase = _ext.EffectBase
+DoCtrlBase = _ext.DoCtrlBase
+DoThunkBase = _ext.DoThunkBase
 PyStdlib = _ext.PyStdlib
 PySchedulerHandler = _ext.PySchedulerHandler
 RunResult = _ext.RunResult
@@ -25,6 +28,9 @@ writer = _ext.writer
 __all__ = [
     "K",
     "Delegate",
+    "DoCtrlBase",
+    "DoThunkBase",
+    "EffectBase",
     "PySchedulerHandler",
     "PyStdlib",
     "PyVM",
