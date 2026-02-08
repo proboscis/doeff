@@ -11,22 +11,31 @@
 
 pub mod arena;
 pub mod continuation;
-pub mod effect;
+mod effect;
+pub mod dispatch;
+pub mod do_ctrl;
+pub mod driver;
 pub mod error;
 pub mod frame;
-pub mod handler;
+mod handler;
 pub mod ids;
+pub mod python_call;
 pub mod py_shared;
 pub mod pyvm;
+pub mod rust_store;
 pub mod scheduler;
 pub mod segment;
-pub mod step;
+mod step;
 pub mod value;
-pub mod vm;
+mod vm;
+pub mod yielded;
 
 // Re-exports for convenience
 pub use arena::SegmentArena;
 pub use continuation::Continuation;
+pub use dispatch::DispatchContext;
+pub use do_ctrl::DoCtrl;
+pub use driver::{Mode, StepEvent};
 pub use effect::{Effect, PyGet, PyPut, PyModify, PyAsk, PyTell, PyKPC};
 pub use error::VMError;
 pub use frame::Frame;
@@ -35,10 +44,10 @@ pub use handler::{
 };
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
 pub use pyvm::{PyStdlib, PyVM};
+pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
+pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
-pub use step::{
-    DoCtrl, Mode, PendingPython, PyCallOutcome, PyException, PythonCall, StepEvent,
-    Yielded,
-};
+pub use step::PyException;
+pub use yielded::Yielded;
 pub use value::Value;
-pub use vm::{Callback, DispatchContext, RustStore, VM};
+pub use vm::{Callback, VM};

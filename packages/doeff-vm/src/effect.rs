@@ -6,29 +6,110 @@ use pyo3::prelude::*;
 
 use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
+use crate::pyvm::PyEffectBase;
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
 // R11-A: #[pyclass] effect structs for isinstance-based classification
 // ---------------------------------------------------------------------------
 
-#[pyclass(frozen, name = "PyGet")]
+#[pyclass(frozen, name = "PyGet", extends=PyEffectBase)]
 pub struct PyGet;
 
-#[pyclass(frozen, name = "PyPut")]
+#[pyclass(frozen, name = "PyPut", extends=PyEffectBase)]
 pub struct PyPut;
 
-#[pyclass(frozen, name = "PyModify")]
+#[pyclass(frozen, name = "PyModify", extends=PyEffectBase)]
 pub struct PyModify;
 
-#[pyclass(frozen, name = "PyAsk")]
+#[pyclass(frozen, name = "PyAsk", extends=PyEffectBase)]
 pub struct PyAsk;
 
-#[pyclass(frozen, name = "PyTell")]
+#[pyclass(frozen, name = "PyTell", extends=PyEffectBase)]
 pub struct PyTell;
 
-#[pyclass(frozen, name = "PyKPC")]
-pub struct PyKPC;
+#[pyclass(frozen, name = "PyKPC", extends=PyEffectBase)]
+pub struct PyKPC {
+    #[pyo3(get)]
+    pub kleisli_source: Py<PyAny>,
+    #[pyo3(get)]
+    pub args: Py<PyAny>,
+    #[pyo3(get)]
+    pub kwargs: Py<PyAny>,
+    #[pyo3(get)]
+    pub function_name: String,
+    #[pyo3(get)]
+    pub execution_kernel: Py<PyAny>,
+    #[pyo3(get)]
+    pub created_at: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyGet {
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyGet, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyPut {
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyPut, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyModify {
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyModify, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyAsk {
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyAsk, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyTell {
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyTell, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyKPC {
+    #[new]
+    #[pyo3(signature = (kleisli_source, args, kwargs, function_name, execution_kernel, created_at=None))]
+    fn new(
+        kleisli_source: Py<PyAny>,
+        args: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        function_name: String,
+        execution_kernel: Py<PyAny>,
+        created_at: Option<Py<PyAny>>,
+        py: Python<'_>,
+    ) -> (Self, PyEffectBase) {
+        (
+            PyKPC {
+                kleisli_source,
+                args,
+                kwargs,
+                function_name,
+                execution_kernel,
+                created_at: created_at.unwrap_or_else(|| py.None()),
+            },
+            PyEffectBase,
+        )
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum KpcArg {

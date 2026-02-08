@@ -3,7 +3,8 @@
 # Centralized commands for development, testing, and linting.
 
 .PHONY: help install lint lint-ruff lint-pyright lint-semgrep lint-semgrep-docs lint-doeff lint-packages \
-        test test-unit test-e2e test-packages test-all format check pre-commit-install clean
+        test test-unit test-e2e test-packages test-all test-spec-audit-sa002 format check pre-commit-install clean \
+        install-opencode-spec-gap-tdd
 
 # Default target
 help:
@@ -29,6 +30,7 @@ help:
 	@echo "  make test-e2e          Run e2e tests only"
 	@echo "  make test-packages     Run tests in all subpackages"
 	@echo "  make test-all          Run ALL tests (core + packages)"
+	@echo "  make test-spec-audit-sa002 Run SA-002 pytest + semgrep checks"
 	@echo ""
 	@echo "Formatting:"
 	@echo "  make format            Format code with ruff"
@@ -36,6 +38,7 @@ help:
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make clean             Remove build artifacts and caches"
+	@echo "  make install-opencode-spec-gap-tdd Install OpenCode spec-gap-tdd symlinks"
 
 # =============================================================================
 # Setup
@@ -137,6 +140,15 @@ test-all: test test-packages
 	@echo ""
 	@echo "All tests passed!"
 
+test-spec-audit-sa002:
+	uv run pytest tests/core/test_sa002_spec_gaps.py
+	@if command -v semgrep >/dev/null 2>&1; then \
+		semgrep --config specs/audits/SA-002/semgrep/rules.yml doeff/ packages/; \
+	else \
+		echo "Warning: semgrep not installed. Install with: uv tool install semgrep"; \
+		exit 1; \
+	fi
+
 # =============================================================================
 # Formatting
 # =============================================================================
@@ -158,3 +170,6 @@ clean:
 	rm -rf dist build *.egg-info
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+install-opencode-spec-gap-tdd:
+	bash scripts/install-opencode-spec-gap-tdd.sh

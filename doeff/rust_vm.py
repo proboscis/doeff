@@ -32,7 +32,7 @@ def _normalize_program(program: Any) -> Any:
 
 def default_handlers() -> list[Any]:
     vm = _vm()
-    required = ("kpc", "state", "reader", "writer")
+    required = ("state", "reader", "writer")
     if all(hasattr(vm, name) for name in required):
         return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]

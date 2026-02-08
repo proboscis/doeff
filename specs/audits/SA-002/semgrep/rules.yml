@@ -1,0 +1,36 @@
+rules:
+  - id: spec-gap-SA-002-G01-no-fallback-introspection
+    languages: [rust]
+    severity: ERROR
+    message: "SA-002-G01: classify_yielded must not use import/getattr fallback paths"
+    paths:
+      include:
+        - packages/doeff-vm/src/pyvm.rs
+    pattern-regex: '(if\s+Self::is_effect_object\(|fn\s+is_effect_object\(|py\.import\("doeff\.types"\))'
+
+  - id: spec-gap-SA-002-G02-no-python-kpc-class
+    languages: [python]
+    severity: ERROR
+    message: "SA-002-G02: transitional Python KPC class must be removed (Rust-side only)"
+    paths:
+      include:
+        - doeff/program.py
+    pattern-regex: '^class\s+KleisliProgramCall\('
+
+  - id: spec-gap-SA-002-G07-doctrl-extends-base
+    languages: [rust]
+    severity: ERROR
+    message: "SA-002-G07: DoCtrl pyclasses must extend PyDoCtrlBase"
+    paths:
+      include:
+        - packages/doeff-vm/src/pyvm.rs
+    pattern-regex: '#\[pyclass\(name\s*=\s*"Py(Resume|Delegate|Transfer)"\)\]'
+
+  - id: spec-gap-SA-002-G08-consolidated-modules-forbidden
+    languages: [rust]
+    severity: ERROR
+    message: "SA-002-G08: consolidated module layout still present"
+    paths:
+      include:
+        - packages/doeff-vm/src/lib.rs
+    pattern-regex: 'pub\s+mod\s+(vm|step|handler|effect);'
