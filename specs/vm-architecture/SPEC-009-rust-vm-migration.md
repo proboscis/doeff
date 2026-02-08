@@ -9,6 +9,7 @@
 | **R6-A** | §1 Entrypoints, §9 Migration | Clarified rust-vm-only public path: `doeff.run` / `doeff.async_run` are the supported entrypoints; legacy CESK `sync_run` presets are retired from top-level exports. |
 | **R6-B** | §7 Scheduler | Removed compatibility coercion note for `WaitEffect`; typed scheduler classification is strict (malformed/unsupported scheduler forms are errors). |
 | **R6-C** | §3 Program, §5 Handlers | Clarified KPC dispatch expectation: KleisliProgramCall must route through effect-handler pipeline, not direct call rewrite bypass. |
+| **R6-D** | §3, §4 | `KleisliProgramCall` is a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`). Auto-unwrap strategy NOT stored on KPC — handler computes from `kleisli_source` annotations at dispatch time. See SPEC-008 R11-A and SPEC-TYPES-001 Rev 9. |
 
 ### Revision 5 Changelog
 
@@ -308,11 +309,12 @@ run(f(42), ...)       ← VM calls to_generator() to get the actual generator
                          yields/returns flow through VM step machine
 ```
 
-`Program[T]` is not the generator itself — it is a `KleisliProgramCall` that
-wraps the generator function and its arguments. The VM calls `to_generator()`
-when it needs to actually step the program. This deferred execution is what
-makes programs composable — they can be passed to `WithHandler`, `Resume`, etc.
-without starting execution.
+`Program[T]` is not the generator itself — it is a `KleisliProgramCall` (`PyKPC`,
+a `#[pyclass(frozen, extends=PyEffectBase)]` struct [R6-D]) that wraps the
+generator function and its arguments. KPC is an effect — it is dispatched to the
+KPC handler, which resolves args and calls the kernel. This deferred execution is
+what makes programs composable — they can be passed to `WithHandler`, `Resume`,
+etc. without starting execution.
 
 ---
 
@@ -327,10 +329,16 @@ A program can yield three categories of values. Each is handled differently:
 ```
 Category             Examples                       What the VM does
 ─────────────────────────────────────────────────────────────────────
-Effect               Get, Put, Ask, Tell, custom    Dispatched through handler stack
+Effect               Get, Put, Ask, Tell, KPC,      Dispatched through handler stack
+                     custom effects
 Composition          WithHandler                    Creates new handler scope
 Dispatch primitive   Resume, Delegate, Transfer     Controls dispatch (handler-only)
 ```
+
+`KleisliProgramCall` (KPC) is an effect [R6-D] — it is a `#[pyclass(frozen,
+extends=PyEffectBase)]` struct dispatched to the KPC handler. The handler
+computes auto-unwrap strategy from `kleisli_source` annotations and resolves
+args via `Eval`. See SPEC-TYPES-001 §3.
 
 Effects are the only category dispatched to handlers. Composition and dispatch
 primitives are processed directly by the VM.
