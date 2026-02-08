@@ -7,7 +7,7 @@ _ext = import_module("doeff_vm.doeff_vm")
 PyVM = _ext.PyVM
 EffectBase = _ext.EffectBase
 DoCtrlBase = _ext.DoCtrlBase
-DoThunkBase = _ext.DoThunkBase
+DoThunkBase = getattr(_ext, "DoThunkBase", None)
 PyStdlib = _ext.PyStdlib
 PySchedulerHandler = _ext.PySchedulerHandler
 RunResult = _ext.RunResult
@@ -31,7 +31,7 @@ CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
 GetHandlers = _ext.GetHandlers
 GetCallStack = _ext.GetCallStack
-AsyncEscape = _ext.AsyncEscape
+PythonAsyncSyntaxEscape = _ext.AsyncEscape
 PyGet = _ext.PyGet
 PyPut = _ext.PyPut
 PyModify = _ext.PyModify
@@ -60,7 +60,7 @@ __all__ = [
     "RustHandler",
     "Transfer",
     "WithHandler",
-    "AsyncEscape",
+    "PythonAsyncSyntaxEscape",
     "CreateContinuation",
     "GetCallStack",
     "GetContinuation",

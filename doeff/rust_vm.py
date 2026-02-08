@@ -23,16 +23,17 @@ def _normalize_program(program: Any) -> Any:
     to_gen = inspect.getattr_static(program, "to_generator", None)
     if callable(to_gen):
         return program
+
     from doeff.types import EffectBase
 
     if isinstance(program, EffectBase):
         return _TopLevelDoExpr(program)
-    raise TypeError("program must expose to_generator")
+    raise TypeError("program must be DoExpr (Program/Effect) and expose doeff semantics")
 
 
 def default_handlers() -> list[Any]:
     vm = _vm()
-    required = ("state", "reader", "writer")
+    required = ("state", "reader", "writer", "kpc")
     if all(hasattr(vm, name) for name in required):
         return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]
@@ -77,6 +78,7 @@ def __getattr__(name: str) -> Any:
         "Resume",
         "Delegate",
         "Transfer",
+        "PythonAsyncSyntaxEscape",
         "K",
         "state",
         "reader",
@@ -98,6 +100,7 @@ __all__ = [
     "Resume",
     "Delegate",
     "Transfer",
+    "PythonAsyncSyntaxEscape",
     "K",
     "state",
     "reader",
