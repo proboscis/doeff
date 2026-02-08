@@ -1,6 +1,17 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 11)
+## Status: Draft (Revision 12)
+
+### Revision 12 Changelog
+
+Changes from Rev 11. Clarifies Call semantics and eliminates `to_generator()` from the Rust VM.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R12-A** | DoCtrl::Call | **`DoCtrl::Call` is the unified program-start primitive.** It handles two calling conventions: (1) `f()` for DoThunks (zero args), and (2) `f(*args, **kwargs)` for KPC kernels (with args). In both cases the result is a generator pushed as a `PythonGenerator` frame. The VM does NOT distinguish between these — `Call` always means "call `f` with the given args, expect a generator, push as frame". |
+| **R12-B** | `to_generator()` boundary | **`to_generator()` is a Python Program API, not a Rust VM concept.** The Rust VM works with generators. The Python-side driver (`pyvm.rs`) may call `to_generator()` on DoThunks as a convenience for the zero-args path in `PythonCall::StartProgram`, but this is a driver implementation detail — not a VM-level semantic. The VM's `DoCtrl::Call` does not know or care about `to_generator()`. |
+| **R12-C** | KPC kernel type | **KPC `execution_kernel` is `(*args, **kwargs) -> Generator`.** A DoThunk's `to_generator` is `() -> Generator` — a degenerate case of the same signature with no args. Both are callable-that-returns-generator. The KPC handler emits `DoCtrl::Call { f: kernel, args, kwargs }` and the VM calls `f(*args, **kwargs)`, pushes the resulting generator as a frame. |
+| **R12-D** | DoExpr Input Rule | **Updated.** The old rule said "all DoExpr entry points require a DoThunk with `to_generator()`". This is replaced: `DoCtrl::Call` accepts any callable that returns a generator. `StartProgram` (driver-level) may still call `to_generator()` on DoThunks for backward compatibility, but this is a transitional detail. |
 
 ### Revision 11 Changelog
 
@@ -1174,10 +1185,12 @@ impl RustProgramHandler for KpcHandlerFactory {
 }
 
 /// KpcHandlerProgram resolves KPC arg values (some may be lazy DoExprs),
-/// then starts the kleisli_source program. Multi-phase:
-/// 1. start(): extract args, check for lazy args needing Eval
-/// 2. If lazy args: yield DoCtrl::Eval for each, resume() collects results
-/// 3. Once all args resolved: yield DoCtrl::Call to start kleisli_source
+/// then calls the execution_kernel with resolved args. Multi-phase:
+/// 1. start(): yield GetHandlers to capture current handler stack
+/// 2. If lazy args (KpcArg::Expr): yield DoCtrl::Eval for each, resume() collects
+/// 3. All args resolved: yield DoCtrl::Call { f: kernel, args, kwargs }
+///    VM calls kernel(*args, **kwargs) → generator → pushed as frame [R12-A]
+/// 4. When kernel generator completes: yield DoCtrl::Resume { k_user, value }
 pub struct KpcHandlerProgram {
     // Internal state machine for arg resolution phases
 }
@@ -1966,12 +1979,13 @@ pub enum PendingPython {
     AsyncEscape,
 }
 
-**DoExpr Input Rule**: `StartProgram`, `CallHandler`, and `DoCtrl::Call`
-require a DoThunk value (has `to_generator()`). The driver calls `to_generator()`
-to obtain the generator. KPC is an Effect (no `to_generator()`) and goes through
-dispatch; only DoThunks pass this rule. `Yielded::Program` is deprecated — all
-DoThunks go through `DoCtrl::Call`. Raw generators are rejected at these entry
-points; only low-level `start_with_generator()` accepts raw generators.
+**DoExpr Input Rule [R12-D]**: `DoCtrl::Call { f, args, kwargs }` is the
+unified program-start primitive. When args are empty, the driver calls
+`f.to_generator()` (DoThunk convention). When args are non-empty, the driver
+calls `f(*args, **kwargs)` (KPC kernel convention). Both produce a generator
+pushed as a `PythonGenerator` frame. `to_generator()` is a Python Program API
+detail — the VM only cares that the result is a generator. KPC is an Effect
+dispatched to the KPC handler, which emits `Call` with the kernel and args.
 ```
 
 ### Program Frame Re-Push Rule (Python + Rust)
@@ -3471,14 +3485,25 @@ def do(fn):
 6. `return <value>` → `StopIteration(value)` → `PyCallOutcome::GenReturn(value)`
 7. Generator return produces the final `T` in `Program[T]`.
 
-#### DoExpr Input Rule (Reiterated)
+#### DoExpr Input Rule (Reiterated) [R12-D]
 
-All DoExpr entry points (`StartProgram`, `CallHandler`, `DoCtrl::Call`)
-require a value with `to_generator()` (a DoThunk). The driver calls
-`to_generator()` to obtain the generator. `Yielded::Program` is removed —
-DoThunks always enter via `DoCtrl::Call`. KleisliProgramCall is an Effect
-(no `to_generator()`) — it goes through dispatch to the KPC handler. Raw
-generators are rejected except via the low-level `start_with_generator()`.
+`DoCtrl::Call { f, args, kwargs }` is the unified program-start primitive.
+It accepts any callable that returns a generator:
+
+```
+Call { f, args=[], kwargs=[] }   → f() returns generator        (DoThunk path)
+Call { f, args=[v], kwargs={} }  → f(v) returns generator       (KPC kernel path)
+```
+
+Both paths push the resulting generator as a `PythonGenerator` frame.
+The VM does not distinguish between them — the only difference is whether
+args are empty. `to_generator()` is a Python Program API convenience;
+the driver may use it for the zero-args path, but the VM does not require it.
+
+KPC (`PyKPC`) is an Effect dispatched to the KPC handler. The handler
+extracts `execution_kernel` and resolved args, then emits
+`DoCtrl::Call { f: kernel, args, kwargs }`. The VM calls the kernel,
+gets a generator, and pushes it as a frame — same as any other `Call`.
 
 ### Store and Env Lifecycle [R8-J]
 
@@ -4413,11 +4438,11 @@ impl VM {
 ### Callback Lifecycle
 
 ```rust
-// Callbacks are stored in Store.callbacks (SlotMap).
+// Callbacks are stored in VM callback table (HashMap<CallbackId, Callback>).
 // 
-// 1. Register: store.register_callback(Box::new(|v, vm| ...)) -> CallbackId
+// 1. Register: vm.register_callback(Box::new(|v, vm| ...)) -> CallbackId
 // 2. Frame holds: Frame::RustReturn { cb: CallbackId }
-// 3. Execute: store.consume_callback(cb) removes and returns the callback
+// 3. Execute: vm.consume_callback(cb) removes and returns the callback
 // 4. Callback is consumed (FnOnce) and dropped after execution
 //
 // This allows Frames to be Clone (CallbackId is Copy) while
@@ -4706,23 +4731,24 @@ doeff-vm/
 ├── pyproject.toml
 ├── src/
 │   ├── lib.rs           # Module root, PyO3 bindings
-│   ├── vm.rs            # VM struct, Mode, step loop
-│   ├── step.rs          # StepEvent, step_* functions
+│   ├── vm.rs            # VM core + step handlers
+│   ├── pyvm.rs          # Python-facing VM wrapper and entrypoints
+│   ├── scheduler.rs     # Built-in scheduler handler
+│   ├── handler.rs       # Standard/KPC handler implementations
+│   ├── step.rs          # PyException and step-related helpers
 │   ├── segment.rs       # Segment, SegmentKind
-│   ├── frame.rs         # Frame enum, Callback type
+│   ├── frame.rs         # Frame enum, call metadata
 │   ├── continuation.rs  # Continuation with Arc snapshot
-│   ├── dispatch.rs      # DispatchContext, visible_handlers
+│   ├── dispatch.rs      # DispatchContext, visibility logic
 │   ├── do_ctrl.rs       # DoCtrl enum
-│   ├── yielded.rs       # Yielded enum, classification
-│   ├── handlers/
-│   │   ├── mod.rs
-│   │   ├── state.rs     # State handler (Get, Put)
-│   │   ├── reader.rs    # Reader handler (Ask)
-│   │   └── writer.rs    # Writer handler (Tell)
-│   ├── rust_store.rs    # RustStore (standard handler state: state, env, log)
+│   ├── yielded.rs       # Yielded enum and routing types
+│   ├── rust_store.rs    # RustStore (state/env/log)
 │   ├── value.rs         # Value enum (Rust/Python interop)
-│   ├── python_call.rs   # PythonCall, PyCallOutcome, PyException
-│   ├── driver.rs        # PyVM wrapper, driver loop
+│   ├── python_call.rs   # PythonCall, PendingPython, PyCallOutcome
+│   ├── effect.rs        # Rust pyclass effects and KPC types
+│   ├── ids.rs           # Marker/cont/segment IDs
+│   ├── arena.rs         # Segment arena
+│   ├── py_shared.rs     # GIL-free shared Python references
 │   └── error.rs         # VMError enum
 └── tests/
     └── ...
