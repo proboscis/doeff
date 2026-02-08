@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
 use crate::effect::{
-    DispatchEffect, KpcArg, KpcCallEffect, dispatch_from_shared, dispatch_into_python,
+    DispatchEffect, KpcArg, KpcCallEffect, PyKPC, dispatch_from_shared, dispatch_into_python,
     dispatch_ref_as_python,
 };
 #[cfg(test)]
@@ -178,6 +178,58 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String
     })
 }
 
+#[cfg(not(test))]
+fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let Ok(kpc) = obj.extract::<PyRef<'_, PyKPC>>() else {
+            return Ok(None);
+        };
+
+        let metadata = extract_kpc_call_metadata(obj)?;
+        let kernel = PyShared::new(kpc.execution_kernel.clone_ref(py));
+        let strategy = py
+            .import("doeff.program")
+            .ok()
+            .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
+            .and_then(|builder| builder.call1((kpc.kleisli_source.bind(py),)).ok());
+
+        let mut args = Vec::new();
+        for (idx, item) in kpc
+            .args
+            .bind(py)
+            .try_iter()
+            .map_err(|e| e.to_string())?
+            .enumerate()
+        {
+            let item = item.map_err(|e| e.to_string())?;
+            let should_unwrap = kpc_strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
+            args.push(extract_kpc_arg(&item, should_unwrap)?);
+        }
+
+        let kwargs_dict = kpc
+            .kwargs
+            .bind(py)
+            .cast::<pyo3::types::PyDict>()
+            .map_err(|e| e.to_string())?;
+        let mut kwargs = Vec::new();
+        for (k, v) in kwargs_dict.iter() {
+            let key: String = k.extract::<String>().map_err(|e| e.to_string())?;
+            let should_unwrap = kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
+            kwargs.push((key, extract_kpc_arg(&v, should_unwrap)?));
+        }
+
+        Ok(Some(KpcCallEffect {
+            call: PyShared::new(obj.clone().unbind()),
+            kernel,
+            args,
+            kwargs,
+            metadata,
+        }))
+    })
+}
+
+#[cfg(test)]
 fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
@@ -313,7 +365,11 @@ fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
     if obj.hasattr("to_generator").map_err(|e| e.to_string())? {
         return Ok(true);
     }
-    if has_true_attr(obj, "__doeff_effect_base__") || has_true_attr(obj, "__doeff_kpc__") {
+    #[cfg(not(test))]
+    if obj.is_instance_of::<PyKPC>() {
+        return Ok(true);
+    }
+    if has_true_attr(obj, "__doeff_effect_base__") {
         return Ok(true);
     }
     Ok(

@@ -127,6 +127,7 @@ pub struct ExternalPromise {
 /// The scheduler's internal state.
 pub struct SchedulerState {
     pub ready: VecDeque<TaskId>,
+    pub ready_waiters: VecDeque<Continuation>,
     pub tasks: HashMap<TaskId, TaskState>,
     pub promises: HashMap<PromiseId, PromiseState>,
     pub waiters: HashMap<Waitable, Vec<Continuation>>,
@@ -336,6 +337,7 @@ impl SchedulerState {
     pub fn new() -> Self {
         SchedulerState {
             ready: VecDeque::new(),
+            ready_waiters: VecDeque::new(),
             tasks: HashMap::new(),
             promises: HashMap::new(),
             waiters: HashMap::new(),
@@ -407,9 +409,20 @@ impl SchedulerState {
     }
 
     pub fn wake_waiters(&mut self, waitable: Waitable) {
-        if let Some(_waiters) = self.waiters.remove(&waitable) {
-            // For now, wake_waiters doesn't need to enqueue anything directly
-            // because gather/race will re-check try_collect/try_race
+        if let Some(waiters) = self.waiters.remove(&waitable) {
+            for waiter in waiters {
+                let waiter_id = waiter.cont_id;
+                for pending in self.waiters.values_mut() {
+                    pending.retain(|k| k.cont_id != waiter_id);
+                }
+                let already_ready = self
+                    .ready_waiters
+                    .iter()
+                    .any(|k| k.cont_id == waiter_id);
+                if !already_ready {
+                    self.ready_waiters.push_back(waiter);
+                }
+            }
         }
     }
 
@@ -536,6 +549,12 @@ impl SchedulerState {
                     value: Value::Unit,
                 }));
             }
+        }
+        if let Some(waiter) = self.ready_waiters.pop_front() {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
+                continuation: waiter,
+                value: Value::Unit,
+            }));
         }
         // No ready tasks, resume the caller
         RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {

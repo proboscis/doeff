@@ -10,17 +10,28 @@ from typing import Any
 _cache: dict[str, list[Any]] = {}
 
 
-def _get_preset() -> list[Any]:
-    if "default" not in _cache:
+def _get_sync_preset() -> list[Any]:
+    if "sync" not in _cache:
         from doeff.rust_vm import default_handlers
 
-        _cache["default"] = default_handlers()
-    return list(_cache["default"])
+        _cache["sync"] = default_handlers()
+    return list(_cache["sync"])
+
+
+def _get_async_preset() -> list[Any]:
+    if "async" not in _cache:
+        from doeff.handlers import scheduler
+        from doeff.rust_vm import default_handlers
+
+        _cache["async"] = [*default_handlers(), scheduler]
+    return list(_cache["async"])
 
 
 def __getattr__(name: str) -> Any:
-    if name in ("sync_preset", "async_preset"):
-        return _get_preset()
+    if name == "sync_preset":
+        return _get_sync_preset()
+    if name == "async_preset":
+        return _get_async_preset()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
