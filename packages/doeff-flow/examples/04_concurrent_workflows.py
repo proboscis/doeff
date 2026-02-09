@@ -19,8 +19,8 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
 import random
-import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from doeff_flow import run_workflow
@@ -72,7 +72,13 @@ def worker_workflow(worker_id: str, num_tasks: int):
         task_id = f"{worker_id}-task-{i:02d}"
         complexity = random.randint(2, 5)
 
-        yield slog(step="worker", worker_id=worker_id, status="processing", task_id=task_id, complexity=complexity)
+        yield slog(
+            step="worker",
+            worker_id=worker_id,
+            status="processing",
+            task_id=task_id,
+            complexity=complexity,
+        )
         result = yield process_task(task_id, complexity)
         completed_tasks.append(result)
         yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
@@ -107,7 +113,6 @@ def run_worker(worker_id: str, num_tasks: int, results: dict):
 def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
     """Run multiple workers concurrently."""
     results = {}
-    threads = []
 
     print("\n" + "=" * 60)
     print(f"Starting {num_workers} concurrent workers")
@@ -117,18 +122,14 @@ def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
     # Start all workers
     start_time = datetime.now()
 
-    for i in range(num_workers):
-        worker_id = f"{i + 1:03d}"
-        t = threading.Thread(
-            target=run_worker,
-            args=(worker_id, tasks_per_worker, results),
-        )
-        threads.append(t)
-        t.start()
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = []
+        for i in range(num_workers):
+            worker_id = f"{i + 1:03d}"
+            futures.append(executor.submit(run_worker, worker_id, tasks_per_worker, results))
 
-    # Wait for all workers to complete
-    for t in threads:
-        t.join()
+        for future in futures:
+            future.result()
 
     elapsed = (datetime.now() - start_time).total_seconds()
 
