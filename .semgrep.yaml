@@ -453,6 +453,90 @@ rules:
       category: docs-deprecation
 
   # ---------------------------------------------------------------------------
+  # DOEFF DOEXPR HIERARCHY ENFORCEMENT
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-doexpr-root-boundary-python
+    patterns:
+      - pattern-inside: |
+          def _coerce_program($PROGRAM):
+              ...
+      - pattern-either:
+          - pattern: isinstance($PROGRAM, ($VM.EffectBase, $VM.DoCtrlBase))
+          - pattern: isinstance($PROGRAM, ($VM.DoCtrlBase, $VM.EffectBase))
+    paths:
+      include:
+        - "**/doeff/rust_vm.py"
+    message: |
+      Boundary validation must use unified DoExpr root.
+      Use: isinstance(program, vm.DoExpr)
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: doexpr-hierarchy
+      rationale: "run()/async_run() boundary must validate against single DoExpr root"
+
+  - id: doeff-withhandler-no-program-keyword
+    pattern: WithHandler(..., program=$EXPR, ...)
+    paths:
+      include:
+        - "**/doeff/**/*.py"
+        - "**/packages/doeff-vm/doeff_vm/**/*.py"
+        - "**/tests/public_api/**/*.py"
+    message: |
+      WithHandler must use `expr=` keyword (or positional expr), not `program=`.
+      Use: WithHandler(handler=..., expr=...)
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: doexpr-hierarchy
+      rationale: "canonical WithHandler signature is (handler, expr: DoExpr)"
+
+  - id: doeff-doexpr-root-check-to-generator-strict
+    patterns:
+      - pattern-inside: |
+          fn to_generator_strict($...ARGS) -> $RET {
+              ...
+          }
+      - pattern-either:
+          - pattern: $OBJ.is_instance_of::<PyEffectBase>()
+          - pattern: $OBJ.is_instance_of::<PyDoCtrlBase>()
+          - pattern: $OBJ.is_instance_of::<PyKPC>()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      to_generator_strict must classify using unified PyDoExprBase root check.
+      Use: obj.is_instance_of::<PyDoExprBase>()
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: doexpr-hierarchy
+      rationale: "single-root DoExpr boundary avoids split classification logic"
+
+  - id: doeff-doexpr-root-check-withhandler-constructor
+    patterns:
+      - pattern-inside: |
+          impl PyWithHandler {
+              ...
+          }
+      - pattern-either:
+          - pattern: $OBJ.is_instance_of::<PyEffectBase>()
+          - pattern: $OBJ.is_instance_of::<PyDoCtrlBase>()
+          - pattern: $OBJ.is_instance_of::<PyKPC>()
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      WithHandler constructor must validate expr via PyDoExprBase root.
+      Use: expr_obj.is_instance_of::<PyDoExprBase>()
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: doexpr-hierarchy
+      rationale: "WithHandler expr is DoExpr, not a disjunction of concrete bases"
+
+  # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------
 
