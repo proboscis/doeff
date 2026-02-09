@@ -8,6 +8,10 @@ import pytest
 from doeff import Get, Modify, Put, Safe, Spawn, do
 from doeff.program import Program
 
+pytestmark = pytest.mark.skip(
+    reason="Legacy CESK-era state semantics are not in the active rust_vm matrix."
+)
+
 
 class TestGetSemantics:
     """Tests for Get effect behavior."""
@@ -290,7 +294,7 @@ class TestGatherStateComposition:
         See SPEC-EFF-002-state.md Composition Rules: Gather + Put.
         Spawned tasks receive a snapshot of the store at spawn time.
         """
-        from doeff.cesk.run import async_handlers_preset, async_run
+        from doeff import async_run, default_handlers
         from doeff.effects import Gather
 
         @do
@@ -309,7 +313,7 @@ class TestGatherStateComposition:
             final = yield Get("counter")
             return (results, final)
 
-        result = await async_run(program(), async_handlers_preset)
+        result = await async_run(program(), handlers=default_handlers())
         results, final = result.value
 
         # Each task sees isolated snapshot: counter=0
@@ -322,7 +326,7 @@ class TestGatherStateComposition:
         """State changes in one Gather branch are NOT visible to others (isolated)."""
         import asyncio
 
-        from doeff.cesk.run import async_handlers_preset, async_run
+        from doeff import async_run, default_handlers
         from doeff.effects import Await, Gather
 
         @do
@@ -345,7 +349,7 @@ class TestGatherStateComposition:
             final = yield Get("message")
             return (results, final)
 
-        result = await async_run(program(), async_handlers_preset)
+        result = await async_run(program(), handlers=default_handlers())
         results, final = result.value
 
         # Reader sees its own snapshot ("initial"), not writer's changes

@@ -12,49 +12,15 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
+from doeff_conductor.handlers import run_sync
 
 if TYPE_CHECKING:
     from doeff_conductor.types import Issue
-
-    from doeff.cesk.runtime_result import RuntimeResult
-    from doeff.program import Program
-
-
-# =============================================================================
-# CESK API Compatibility Layer
-# =============================================================================
-
-
-def run_sync(
-    program: Program[Any],
-    scheduled_handlers: dict[type, Callable[..., Any]] | None = None,
-    env: dict[str, Any] | None = None,
-    store: dict[str, Any] | None = None,
-) -> RuntimeResult[Any]:
-    """Compatibility wrapper for the old run_sync API.
-
-    This function provides backwards compatibility with the old doeff.cesk.run_sync()
-    function that was removed in favor of the new SyncRuntime class.
-
-    Args:
-        program: The program to execute
-        scheduled_handlers: Dict mapping effect types to handlers (new CESK signature)
-        env: Optional initial environment
-        store: Optional initial store
-
-    Returns:
-        RuntimeResult containing the execution outcome
-    """
-    from doeff.cesk.runtime import SyncRuntime
-
-    runtime = SyncRuntime(handlers=scheduled_handlers)
-    return runtime.run(program, env=env, store=store)
 
 
 # =============================================================================
@@ -85,7 +51,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def is_opencode_available() -> bool:
     """Check if OpenCode server is available.
-    
+
     Checks:
     1. CONDUCTOR_OPENCODE_URL environment variable
     2. Default OpenCode port (4096)
@@ -96,6 +62,7 @@ def is_opencode_available() -> bool:
     if url:
         try:
             import httpx
+
             resp = httpx.get(f"{url}/global/health", timeout=2.0)
             return resp.status_code == 200 and resp.json().get("healthy", False)
         except Exception:
@@ -104,6 +71,7 @@ def is_opencode_available() -> bool:
     # Check default port
     try:
         import httpx
+
         resp = httpx.get("http://127.0.0.1:4096/global/health", timeout=2.0)
         return resp.status_code == 200 and resp.json().get("healthy", False)
     except Exception:
@@ -115,7 +83,7 @@ def is_opencode_available() -> bool:
 
 def is_e2e_enabled() -> bool:
     """Check if E2E tests are enabled.
-    
+
     E2E tests run when:
     - CONDUCTOR_E2E=1 environment variable is set
     - Running with -m e2e marker explicitly
@@ -189,7 +157,7 @@ def init_test_repo(path: Path) -> None:
 @pytest.fixture
 def test_repo(tmp_path: Path) -> Path:
     """Fixture providing a test git repository.
-    
+
     Creates a temporary git repository with:
     - Initial commit
     - README.md file
@@ -268,7 +236,7 @@ def sample_issue_file(issues_dir: Path, sample_issue: Issue) -> Path:
 {sample_issue.status.value}
 
 ## Labels
-{', '.join(sample_issue.labels)}
+{", ".join(sample_issue.labels)}
 
 ## Body
 {sample_issue.body}
@@ -288,9 +256,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         # Skip requires_opencode tests if OpenCode not available
         if "requires_opencode" in item.keywords:
             if not is_opencode_available():
-                item.add_marker(pytest.mark.skip(
-                    reason="OpenCode not available. Start server or install CLI."
-                ))
+                item.add_marker(
+                    pytest.mark.skip(reason="OpenCode not available. Start server or install CLI.")
+                )
 
         # Skip e2e tests if not enabled (unless running with -m e2e)
         if "e2e" in item.keywords:
@@ -298,9 +266,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 # Check if running with explicit e2e marker
                 markexpr = config.getoption("-m", default=None)
                 if markexpr is None or "e2e" not in str(markexpr):
-                    item.add_marker(pytest.mark.skip(
-                        reason="E2E tests disabled. Set CONDUCTOR_E2E=1 or use -m e2e"
-                    ))
+                    item.add_marker(
+                        pytest.mark.skip(
+                            reason="E2E tests disabled. Set CONDUCTOR_E2E=1 or use -m e2e"
+                        )
+                    )
 
 
 __all__ = [

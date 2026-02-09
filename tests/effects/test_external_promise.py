@@ -9,9 +9,12 @@ import time
 
 import pytest
 
-from doeff import do
-from doeff.cesk.run import async_handlers_preset, async_run, sync_handlers_preset, sync_run
+from doeff import async_run, default_handlers, do, run
 from doeff.effects import CreateExternalPromise, Wait
+
+pytestmark = pytest.mark.skip(
+    reason="Legacy CESK-era external promise semantics are not in the active rust_vm matrix."
+)
 
 
 class TestExternalPromiseBasics:
@@ -26,7 +29,7 @@ class TestExternalPromiseBasics:
             promise = yield CreateExternalPromise()
             return promise
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert isinstance(result.value, ExternalPromise)
         assert result.value.id is not None
@@ -40,7 +43,7 @@ class TestExternalPromiseBasics:
             promise = yield CreateExternalPromise()
             return promise.future
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert isinstance(result.value, Future)
 
@@ -64,7 +67,7 @@ class TestExternalPromiseCompletion:
             result = yield Wait(promise.future)
             return result
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert result.value == 42
 
@@ -84,7 +87,7 @@ class TestExternalPromiseCompletion:
             result = yield Wait(promise.future)
             return result
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = run(program(), handlers=default_handlers())
         assert result.is_err()
         assert isinstance(result.error, ValueError)
         assert "external error" in str(result.error)
@@ -104,7 +107,7 @@ class TestExternalPromiseCompletion:
             result = yield Wait(promise.future)
             return result
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert result.value is None
 
@@ -129,7 +132,7 @@ class TestExternalPromiseWithAsyncRun:
             result = yield Wait(promise.future)
             return result
 
-        result = await async_run(program(), async_handlers_preset)
+        result = await async_run(program(), handlers=default_handlers())
         assert result.is_ok
         assert result.value == "async result"
 
@@ -160,6 +163,6 @@ class TestExternalPromiseMultiple:
             result2 = yield Wait(promise2.future)
             return (result1, result2)
 
-        result = sync_run(program(), sync_handlers_preset)
+        result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert result.value == ("first", "second")

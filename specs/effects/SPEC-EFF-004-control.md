@@ -401,20 +401,19 @@ class Frame(Protocol):
         ...
 ```
 
-### FrameResult Options
+### Handler Control Options
 
-| Type | When to use |
+| Primitive | When to use |
 |------|-------------|
-| `ContinueValue(value, env, store, k)` | Pass transformed value to next frame |
-| `ContinueError(error, env, store, k)` | Pass error to next frame |
-| `ContinueProgram(program, env, store, k)` | Execute a new program |
-| `ContinueGenerator(gen, send, throw, env, store, k)` | Resume a generator |
+| `yield Resume(k, value)` | Resume continuation with a value |
+| `yield Delegate()` | Delegate effect handling to the outer handler |
+| `yield <Program>` | Execute a nested program in handler logic |
 
 ### Example: Custom Timeout Effect
 
 ```python
 from dataclasses import dataclass
-from doeff.cesk.frames import FrameResult, ContinueProgram, ContinueValue, ContinueError
+from doeff import Delegate, EffectBase, Resume, do
 
 # 1. Define the Effect
 @dataclass(frozen=True)
@@ -422,31 +421,15 @@ class TimeoutEffect(EffectBase):
     program: Program
     timeout_seconds: float
 
-# 2. Define the Frame
-@dataclass
-class TimeoutFrame:
-    deadline: datetime
-    saved_env: Environment
-    
-    def on_value(self, value, env, store, k_rest) -> FrameResult:
-        # Success - just pass through
-        return ContinueValue(value, self.saved_env, store, k_rest)
-    
-    def on_error(self, error, env, store, k_rest) -> FrameResult:
-        # Check if we timed out
-        if datetime.now() > self.deadline:
-            return ContinueError(TimeoutError("Operation timed out"), self.saved_env, store, k_rest)
-        return ContinueError(error, self.saved_env, store, k_rest)
-
-# 3. Define the Handler
-def handle_timeout(effect: TimeoutEffect, task_state, store) -> FrameResult:
-    deadline = datetime.now() + timedelta(seconds=effect.timeout_seconds)
-    return ContinueProgram(
-        program=effect.program,
-        env=task_state.env,
-        store=store,
-        k=[TimeoutFrame(deadline, task_state.env)] + task_state.kontinuation,
-    )
+# 2. Define the Handler
+@do
+def handle_timeout(effect, k):
+    if isinstance(effect, TimeoutEffect):
+        # Add timeout policy around nested execution in normal Python code.
+        # (details omitted for brevity)
+        result = yield effect.program
+        return (yield Resume(k, result))
+    yield Delegate()
 
 # 4. Register with Runtime
 runtime = AsyncRuntime(handlers={

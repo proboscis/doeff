@@ -36,6 +36,9 @@ rules:
 
   - id: doeff-no-async-in-do-function
     pattern-regex: '@do\s*\n\s*async\s+def\s+\w+'
+    paths:
+      exclude:
+        - "**/examples/marker_patterns.py"
     message: |
       @do functions should not be async. The @do decorator handles async execution
       through the effect system. Remove 'async' keyword and use Await effect for
@@ -190,38 +193,6 @@ rules:
       category: dependency-injection
 
   # ---------------------------------------------------------------------------
-  # CESK ARCHITECTURE
-  # ---------------------------------------------------------------------------
-
-  - id: doeff-no-hardcoded-effect-handling-in-step
-    patterns:
-      - pattern-inside: |
-          def step($...PARAMS):
-              $...BODY
-      - pattern-either:
-          - pattern: |
-              if isinstance($VAR, Ask):
-                  $...THEN
-          - pattern: |
-              if isinstance($VAR, Get):
-                  $...THEN
-          - pattern: |
-              if isinstance($VAR, Put):
-                  $...THEN
-    paths:
-      include:
-        - "**/doeff/cesk/step.py"
-        - "**/doeff/step.py"
-    message: |
-      The step() function should not contain hardcoded effect handling logic.
-      Effect-specific behavior must be implemented via extensible handlers.
-      See SPEC-CESK-001: Separation of Concerns.
-    languages: [python]
-    severity: ERROR
-    metadata:
-      category: cesk-architecture
-
-  # ---------------------------------------------------------------------------
   # CONCURRENCY API MIGRATION (SPEC-EFF-005 Redesign)
   # ---------------------------------------------------------------------------
   # These rules detect old concurrency patterns that need migration to the new
@@ -272,47 +243,6 @@ rules:
     metadata:
       category: deprecated-names
       rationale: "FutureAwaitEffect is misleading - it's Python asyncio specific"
-
-  # ---------------------------------------------------------------------------
-  # PYTHON ASYNC SYNTAX ESCAPE - EXCLUSIVE PRODUCER ENFORCEMENT
-  # ---------------------------------------------------------------------------
-  # PythonAsyncSyntaxEscape may ONLY be produced by python_async_syntax_escape_handler.
-  # This is an architectural constraint. See SPEC-CESK-004-handler-owned-blocking.md.
-
-  - id: doeff-no-python-async-escape-in-handlers
-    patterns:
-      - pattern-either:
-          - pattern: PythonAsyncSyntaxEscape(...)
-          - pattern: python_async_escape(...)
-          - pattern: from doeff.cesk.result import PythonAsyncSyntaxEscape
-          - pattern: from doeff.cesk.result import python_async_escape
-    paths:
-      # ONLY enforce in handlers directory - that's where the constraint matters
-      include:
-        - "**/doeff/cesk/handlers/**"
-      exclude:
-        # SOLE AUTHORIZED PRODUCER
-        - "**/doeff/cesk/handlers/python_async_syntax_escape_handler.py"
-    message: |
-      ARCHITECTURAL VIOLATION: PythonAsyncSyntaxEscape is EXCLUSIVELY for
-      python_async_syntax_escape_handler. No other handler may produce this type.
-
-      PythonAsyncSyntaxEscape exists ONLY because Python's `await` is SYNTAX,
-      not a function call. It bridges doeff's sync CESK machine to Python's
-      async runtime for users who explicitly choose async_run.
-
-      If you think you need to produce PythonAsyncSyntaxEscape:
-      1. You are wrong
-      2. Rethink your approach
-      3. If blocking is needed, do it directly in your handler's generator:
-         result = blocking_call()  # next(gen) blocks until this returns
-
-      See: specs/cesk-architecture/SPEC-CESK-004-handler-owned-blocking.md
-    languages: [python]
-    severity: ERROR
-    metadata:
-      category: cesk-architecture
-      rationale: "PythonAsyncSyntaxEscape must only be produced by python_async_syntax_escape_handler"
 
   # ---------------------------------------------------------------------------
   # TESTING PATTERNS
@@ -624,13 +554,9 @@ rules:
       include:
         - "**/tests/public_api/**/*.py"
         - "**/examples/**/*.py"
-      exclude:
-        - "**/examples/cesk/**"
-        - "**/examples/custom_handlers.py"
     message: |
       Public-facing migration policy: import from top-level `doeff` only.
       Replace `from doeff.<subpackage> import ...` with `from doeff import ...`.
-      CESK examples are excluded (planned deletion).
     languages: [python]
     severity: ERROR
     metadata:

@@ -398,8 +398,12 @@ def _load_default_env(quiet: bool) -> str | None:
     This replicates the behavior of `doeff run` CLI command.
     """
     import importlib.util
+    import os
     import sys
     from pathlib import Path
+
+    if os.environ.get("DOEFF_DISABLE_DEFAULT_ENV") == "1":
+        return None
 
     doeff_config_file = Path.home() / ".doeff.py"
     if not doeff_config_file.exists():

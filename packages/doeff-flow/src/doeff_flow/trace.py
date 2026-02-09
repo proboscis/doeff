@@ -11,11 +11,11 @@ Public API:
     - trace_observer: Context manager for creating an on_step callback
 
 Example usage:
-    from doeff.cesk import run_sync
+    from doeff import run
     from doeff_flow.trace import trace_observer
 
     with trace_observer("wf-001", Path(".doeff-flow")) as on_step:
-        result = run_sync(my_workflow(), on_step=on_step)
+        result = run(my_workflow())
 """
 
 from __future__ import annotations
@@ -28,10 +28,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from doeff.cesk_observability import ExecutionSnapshot
+from typing import Any
 
 
 def get_default_trace_dir() -> Path:
@@ -139,9 +136,7 @@ def validate_workflow_id(workflow_id: str) -> str:
     if len(workflow_id) > 255:
         raise ValueError(f"workflow_id too long: {len(workflow_id)} > 255 characters")
     if not re.match(r"^[a-zA-Z0-9_-]+$", workflow_id):
-        raise ValueError(
-            f"Invalid workflow_id: {workflow_id!r}. Must match [a-zA-Z0-9_-]+"
-        )
+        raise ValueError(f"Invalid workflow_id: {workflow_id!r}. Must match [a-zA-Z0-9_-]+")
     return workflow_id
 
 
@@ -190,11 +185,57 @@ def _write_trace(trace_file: Path, trace: LiveTrace) -> None:
         f.write(json.dumps(trace_dict) + "\n")
 
 
+def write_terminal_trace(
+    workflow_id: str,
+    trace_dir: Path | str | None,
+    run_result: Any,
+) -> None:
+    """Write a single terminal trace snapshot from a completed run result."""
+    workflow_id = _validate_workflow_id(workflow_id)
+    if trace_dir is None:
+        trace_dir = get_default_trace_dir()
+    elif isinstance(trace_dir, str):
+        trace_dir = Path(trace_dir)
+
+    trace_file = trace_dir / workflow_id / "trace.jsonl"
+    trace_file.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now().isoformat()
+    is_ok = bool(run_result.is_ok()) if hasattr(run_result, "is_ok") else True
+    error = None
+    result_repr = None
+
+    if is_ok:
+        try:
+            result_repr = _safe_repr(run_result.value)
+        except Exception:
+            result_repr = None
+    else:
+        try:
+            err = run_result.error
+            error = f"{type(err).__name__}: {err}"
+        except Exception:
+            error = "UnknownError"
+
+    trace = LiveTrace(
+        workflow_id=workflow_id,
+        step=0,
+        status="completed" if is_ok else "failed",
+        current_effect=None,
+        trace=[],
+        started_at=now,
+        updated_at=now,
+        error=error,
+        result=result_repr,
+    )
+    _write_trace(trace_file, trace)
+
+
 @contextmanager
 def trace_observer(
     workflow_id: str,
     trace_dir: Path | str | None = None,
-) -> Generator[Callable[[ExecutionSnapshot], None], None, None]:
+) -> Generator[Callable[[Any], None], None, None]:
     """Context manager that creates an on_step callback for live trace.
 
     Creates a callback function that writes execution snapshots to a JSONL
@@ -206,15 +247,15 @@ def trace_observer(
             If None, uses XDG-compliant default (~/.local/state/doeff-flow).
 
     Yields:
-        A callback function suitable for passing to run_sync(on_step=...).
+        A callback function that can be wired to interpreter step hooks.
 
     Example:
-        from doeff.cesk import run_sync
+        from doeff import run
         from doeff_flow.trace import trace_observer
 
         # Uses default XDG directory
         with trace_observer("wf-001") as on_step:
-            result = run_sync(my_workflow(), on_step=on_step)
+            result = run(my_workflow())
     """
     workflow_id = _validate_workflow_id(workflow_id)
     if trace_dir is None:
@@ -226,7 +267,7 @@ def trace_observer(
 
     started_at = datetime.now().isoformat()
 
-    def on_step(snapshot: ExecutionSnapshot) -> None:
+    def on_step(snapshot: Any) -> None:
         # For error cases, use the captured effect trace and error location
         if snapshot.error is not None and snapshot.error.effect_trace:
             # Build frames from the captured effect trace
@@ -339,4 +380,5 @@ __all__ = [
     "get_default_trace_dir",
     "trace_observer",
     "validate_workflow_id",
+    "write_terminal_trace",
 ]
