@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
-from doeff import Ask, Get, Perform, Program, Put, Tell, do
-from doeff.program import DoCtrl, DoExpr, GeneratorProgram, KleisliProgramCall, ProgramBase
-from doeff.types import EffectBase
+from doeff import (
+    Ask,
+    DoCtrl,
+    DoExpr,
+    EffectBase,
+    GeneratorProgram,
+    Get,
+    KleisliProgramCall,
+    Perform,
+    Program,
+    ProgramBase,
+    Put,
+    Tell,
+    do,
+)
 
 
 class TestTH01DistinctTypes:

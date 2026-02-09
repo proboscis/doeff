@@ -8,6 +8,7 @@ from __future__ import annotations
 from doeff import (
     Ask,
     Delegate,
+    EffectBase,
     Get,
     Program,
     Put,
@@ -18,7 +19,6 @@ from doeff import (
     do,
     run,
 )
-from doeff.types import EffectBase
 
 
 class _CustomEffect(EffectBase):

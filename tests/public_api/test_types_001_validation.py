@@ -12,9 +12,19 @@ from typing import Any, cast
 
 import pytest
 
-from doeff import Ask, Delegate, Get, K, Perform, Resume, Transfer, WithHandler
-from doeff.do import do
-from doeff.rust_vm import default_handlers, run
+from doeff import (
+    Ask,
+    Delegate,
+    Get,
+    K,
+    Perform,
+    Resume,
+    Transfer,
+    WithHandler,
+    default_handlers,
+    do,
+    run,
+)
 
 
 def test_run_rejects_generator_function_input() -> None:
