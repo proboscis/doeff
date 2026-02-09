@@ -1,11 +1,11 @@
 """
 Multi-agent PR workflow template.
 
-Workflow: issue -> parallel agents -> merge -> PR
+Workflow: issue -> split agents -> merge -> PR
 
-A workflow with parallel agents:
+A workflow with separate implementation and test agents:
 1. Create separate worktrees for implementation and tests
-2. Run agents in parallel to implement and write tests
+2. Run agents for implementation and test creation
 3. Merge the branches
 4. Run a review on the merged code
 5. Create PR
@@ -15,31 +15,30 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from doeff import EffectGenerator, Gather, Spawn, do
+from doeff import EffectGenerator, do
 
 if TYPE_CHECKING:
     from ..types import Issue, PRHandle, WorktreeEnv
 
 
-# Helper functions to wrap effects as Programs for Spawn
 @do
 def _create_worktree(issue: Issue, suffix: str) -> EffectGenerator["WorktreeEnv"]:
-    """Create a worktree (wrapper for Spawn compatibility)."""
     from ..effects import CreateWorktree
+
     return (yield CreateWorktree(issue=issue, suffix=suffix))
 
 
 @do
 def _run_agent(env: "WorktreeEnv", prompt: str, name: str) -> EffectGenerator[str]:
-    """Run an agent (wrapper for Spawn compatibility)."""
     from ..effects import RunAgent
+
     return (yield RunAgent(env=env, prompt=prompt, name=name))
 
 
 @do
 def _commit(env: "WorktreeEnv", message: str) -> EffectGenerator[str]:
-    """Create a commit (wrapper for Spawn compatibility)."""
     from ..effects import Commit
+
     return (yield Commit(env=env, message=message))
 
 
@@ -62,12 +61,11 @@ def multi_agent(issue: Issue) -> EffectGenerator[PRHandle]:
         RunAgent,
     )
 
-    # Step 1: Create parallel worktrees (spawn to get futures, then gather)
-    impl_task = yield Spawn(_create_worktree(issue, "impl"))
-    test_task = yield Spawn(_create_worktree(issue, "tests"))
-    impl_env, test_env = yield Gather(impl_task, test_task)
+    # Step 1: Create separate worktrees
+    impl_env = yield _create_worktree(issue, "impl")
+    test_env = yield _create_worktree(issue, "tests")
 
-    # Step 2: Run agents in parallel
+    # Step 2: Run implementation and test agents
     impl_prompt = f"""
 Implement the following issue:
 
@@ -94,14 +92,12 @@ Focus on writing comprehensive tests:
 Do NOT implement the feature - just write the tests.
 """
 
-    impl_agent_task = yield Spawn(_run_agent(impl_env, impl_prompt, "implementer"))
-    test_agent_task = yield Spawn(_run_agent(test_env, test_prompt, "tester"))
-    yield Gather(impl_agent_task, test_agent_task)
+    yield _run_agent(impl_env, impl_prompt, "implementer")
+    yield _run_agent(test_env, test_prompt, "tester")
 
-    # Step 3: Commit changes in parallel environments
-    impl_commit_task = yield Spawn(_commit(impl_env, f"feat: implement {issue.title}"))
-    test_commit_task = yield Spawn(_commit(test_env, f"test: add tests for {issue.title}"))
-    yield Gather(impl_commit_task, test_commit_task)
+    # Step 3: Commit changes in branch worktrees
+    yield _commit(impl_env, f"feat: implement {issue.title}")
+    yield _commit(test_env, f"test: add tests for {issue.title}")
 
     # Step 4: Merge branches
     merged_env = yield MergeBranches(envs=(impl_env, test_env))
