@@ -1,6 +1,18 @@
 # SPEC-008: Rust VM for Algebraic Effects
 
-## Status: Draft (Revision 13)
+## Status: Draft (Revision 14)
+
+### Revision 14 Changelog
+
+Changes from Rev 13. Introduces explicit `Perform` control node and separates effect values from control IR.
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R14-A** | Core hierarchy | **DoExpr is control IR only.** Effects are user-space data (`EffectValue`), not DoExpr nodes. The VM evaluates DoCtrl; effect resolution is represented explicitly with `Perform(effect)`. This supersedes Rev 13 binary statement `DoExpr = DoCtrl \| Effect`. |
+| **R14-B** | DoCtrl variants | **Added `Perform(effect)` as a first-class DoCtrl variant.** `Perform` is the only control instruction that requests handler dispatch. `Delegate(effect?)` passes effect data outward; outer scope performs it. |
+| **R14-C** | Lowering boundary | **Source-level `yield effect` lowers to `yield Perform(effect)`.** Python UX stays unchanged while IR remains explicit. `run(effect_value)` is normalized to `run(Perform(effect_value))` at API boundary. |
+| **R14-D** | Invocation model | **`Call` remains canonical application node; no `Apply` node is introduced.** KPC lowering and handler invocation semantics target `Call(...)` directly. |
+| **R14-E** | Dispatch contract | **Handler invocation returns DoExpr control.** If host handler returns an effect value, runtime normalization wraps it as `Perform(effect)` before continuation. |
 
 ### Revision 13 Changelog
 
@@ -351,6 +363,25 @@ to `run()` or `WithHandler`, at `id()` level.
 - The `run()` function (SPEC-009) takes `env={}` and `store={}` parameters
 - It needs to seed the VM before running and extract results after
 - These methods are implementation details — users never call them directly
+
+### ADR-15: Explicit Perform Boundary (EffectValue vs DoExpr) [R14-A, R14-B]
+
+**Decision**: Separate effect data from control evaluation.
+
+- `EffectValue` is user-space data (open world; stdlib and custom effects).
+- `DoExpr` is control IR evaluated by the VM.
+- Effect dispatch is represented explicitly as `Perform(effect: EffectValue)`.
+
+**Rationale**:
+- Removes ambiguity between "an effect object exists" and "an effect is being resolved now".
+- Clarifies handler semantics: handlers consume effect data and return control expressions.
+- Preserves user ergonomics (`yield Ask("x")`) while keeping IR explicit via lowering.
+
+**Normative consequences**:
+- Source-level `yield effect` lowers to `yield Perform(effect)`.
+- `run(effect_value)` normalizes to `run(Perform(effect_value))`.
+- `Call` remains the single invocation primitive; no parallel `Apply` node.
+- `Delegate(effect?)` carries effect data only; outer scope performs dispatch.
 
 ---
 
@@ -962,7 +993,8 @@ MUST have its base class defined as a Rust `#[pyclass(subclass)]`. This
 makes `isinstance` checks a C-level pointer comparison instead of Python
 module imports + getattr + MRO walks.
 
-**Binary hierarchy [R13-D]**: DoExpr = DoCtrl | Effect. No third category.
+**Explicit Perform hierarchy [R14-A]**: `DoExpr` is control IR only. Effects are
+`EffectValue` data and are resolved via `DoCtrl::Perform(effect)`.
 
 **GIL-free type dispatch [R13-I]**: All DoExpr nodes carry an immutable `tag: DoExprTag`
 discriminant set at construction. The VM reads this tag to classify and downcast
@@ -1034,8 +1066,9 @@ pub struct PyDoCtrlBase {
     pub tag: u8,  // Specific DoExprTag variant. Exposed to Python for introspection.
 }
 
-/// [R13-D] DELETED: DoThunkBase removed. Binary hierarchy only.
-/// DoThunk concept eliminated. Generators yield DoExpr nodes (DoCtrl | Effect).
+/// [R13-D] DELETED: DoThunkBase removed.
+/// [R14-A] Effects are not DoExpr nodes; source-level `yield effect` lowers to
+/// `yield Perform(effect)` before VM evaluation.
 /// No `to_generator()` at VM level. Pure(callable) replaces DoThunk.
 ```
 
@@ -2177,8 +2210,9 @@ pub enum CallEvalPhase {
     Invoke,
 }
 
-**DoExpr Input Rule [R13-A]**: DoExpr = DoCtrl | Effect. Generators yield
-DoExpr nodes. The VM evaluates them. `Call(f: DoExpr, args: [DoExpr], kwargs, meta)`
+**DoExpr Input Rule [R14-A]**: DoExpr is control IR. Effects are data lifted by
+`Perform(effect)` at lowering/boundary. Generators yield DoCtrl nodes. The VM
+evaluates them. `Call(f: DoExpr, args: [DoExpr], kwargs, meta)`
 evaluates `f` and each arg, then calls `f(*resolved_args, **resolved_kwargs)`.
 `Pure(value)` evaluates to `value` immediately. `Map(source, f)` and `FlatMap(source, binder)`
 are functor/monad operations. No `to_generator()` at VM level — that's a Python API detail.
@@ -2628,7 +2662,8 @@ impl Yielded {
     /// GIL-FREE. Reads the tag field from the frozen pyclass struct.
     /// Can be called from the driver (with GIL) or from the VM step loop (without GIL).
     ///
-    /// Binary classification: DoCtrl | Effect. [R13-D]
+    /// [R14-A] Classification output is DoCtrl only.
+    /// EffectValue inputs are normalized to DoCtrl::Perform(effect).
     /// One tag read. No is_instance_of. No Python imports. No getattr.
     pub fn classify(obj: &Py<PyAny>) -> Self {
         // [R13-I] Read tag without GIL — frozen u8 field in pyclass struct
@@ -2638,8 +2673,8 @@ impl Yielded {
             let do_ctrl = extract_do_ctrl(tag, obj);
             Yielded::DoCtrl(do_ctrl)
         } else if tag.is_effect() {
-            // Effects are opaque — no field extraction. Handler downcasts later.
-            Yielded::Effect(obj.clone())
+            // [R14-B] Effects are data. Lift to explicit Perform control node.
+            Yielded::DoCtrl(DoCtrl::Perform { effect: obj.clone() })
         } else {
             // [R13-D] No third category. Unknown → type error.
             Yielded::Unknown(obj.clone())
@@ -2672,13 +2707,13 @@ fn extract_call_metadata(py: Python<'_>, obj: &Bound<'_, PyAny>) -> Option<CallM
 ```
 
 **Key design points [R11] [R13]:**
-- `Yielded::Effect` carries `Py<PyAny>`, not a typed `Effect` enum.
+- [R14-B] Effect values are lifted to `Yielded::DoCtrl(Perform { effect })`.
 - `Yielded::Program` is deleted. [R13-D: DoThunk eliminated — binary hierarchy.]
 - `classify` does ONE isinstance check for effects — no per-type arms.
 - The classifier NEVER reads effect fields (`.key`, `.value`, `.items`, etc.).
 - Rust program handlers yield `Yielded` directly (already classified),
   so no driver-side classification or GIL is required for those yields.
-- [R13-D] Binary classification: DoCtrl | Effect. No third path.
+- [R14-A] Classification output is DoCtrl-only; effect resolution is explicit via Perform.
 
 `extract_control_primitive` uses `Handler::from_pyobject` to decode `WithHandler`
 and `CreateContinuation` handler arguments, and `Continuation::from_pyobject`
@@ -3277,14 +3312,15 @@ The sync driver is `run`; async integration is provided by `async_run` (see belo
 ```rust
 impl PyVM {
     /// Run a program to completion.
-    /// [R13-A] program is a DoExpr (DoCtrl | Effect). The VM evaluates it directly.
+    /// [R14-A] program is DoExpr control IR. Raw effect values are normalized to
+    /// Perform(effect) at API/lowering boundary.
     /// For backward compatibility, if program is a ProgramBase with to_generator(),
     /// the DEPRECATED path extracts the generator. New code should yield DoExpr nodes.
     pub fn run(&mut self, py: Python<'_>, program: Bound<'_, PyAny>) -> PyResult<PyObject> {
-        // [R13-A] Initialize: classify program as DoExpr and start evaluation.
+        // [R14-A] Initialize: normalize/classify program as DoExpr control IR and start evaluation.
         // The program itself is the root DoExpr node. If it's a @do generator function,
         // calling it produces a generator — the generator IS the lazy AST.
-        // Each yield from the generator is a DoExpr node (DoCtrl | Effect).
+        // Source-level `yield effect` is lowered to `yield Perform(effect)`.
         let classified = self.classify_program_input(py, &program)?;
         self.vm.start(classified);
         
@@ -3810,16 +3846,17 @@ def do(fn):
 5. `return <value>` → `StopIteration(value)` → `PyCallOutcome::GenReturn(value)`
 6. Generator return produces the final `T` in `Program[T]`.
 
-#### DoExpr Input Rule (Reiterated) [R13-A]
+#### DoExpr Input Rule (Reiterated) [R14-A]
 
-DoExpr = DoCtrl | Effect. Generators yield DoExpr nodes. The VM evaluates them.
+DoExpr is control IR. Effects are data resolved via explicit `Perform(effect)`.
+Generators yield DoCtrl nodes (or source-level effect values lowered to Perform).
 
 ```
 Pure(value)                      → evaluates to value immediately
 Call(f: DoExpr, args: [DoExpr])  → evaluates f and args, calls f(*args, **kwargs)
 Map(source: DoExpr, f)           → evaluates source, applies f
 FlatMap(source: DoExpr, binder)  → evaluates source, applies binder, evaluates result
-Effect                           → dispatches through handler stack
+Perform(effect)                  → dispatches effect through handler stack
 ```
 
 No `to_generator()` at VM level — that's a Python API detail for backward compatibility.
@@ -5148,9 +5185,10 @@ Key differences and decisions in 008:
 - Rust program handlers (RustProgramHandler/RustHandlerProgram) are first-class.
 - `Call(f, args, kwargs, metadata)` is a DoCtrl for function invocation with
   call stack metadata (R9-A). `Eval(expr, handlers)` evaluates a DoExpr in a fresh scope
-  (R9-H). `GetCallStack` walks frames (R9-B). [R13-A] DoThunk eliminated — binary hierarchy
-  `DoExpr = DoCtrl | Effect`. `Pure(value)` replaces PureProgram; `Map`/`FlatMap` replace
-  DerivedProgram. No third category.
+  (R9-H). `GetCallStack` walks frames (R9-B). [R13-A] DoThunk eliminated.
+  [R14-A] DoExpr is control IR and effect values dispatch via explicit
+  `Perform(effect)`. `Pure(value)` replaces PureProgram; `Map`/`FlatMap` replace
+  DerivedProgram.
 
 ---
 
