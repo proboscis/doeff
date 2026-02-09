@@ -567,7 +567,8 @@ def _is_rust_effect_subclass(subclass: type[Any]) -> bool:
 
 class _EffectBaseMeta(type(DoExpr)):
     def __subclasscheck__(cls, subclass: type[Any]) -> bool:
-        if _is_rust_effect_subclass(subclass):
+        effect_base = globals().get("EffectBase")
+        if effect_base is not None and cls is effect_base and _is_rust_effect_subclass(subclass):
             return True
         return super().__subclasscheck__(subclass)
 
@@ -645,7 +646,6 @@ try:
         EffectBase.__bases__ = (*EffectBase.__bases__, _RustEffectBase)
 except ImportError:
     pass
-
 
 
 # Type alias for generators used in @do functions
@@ -2178,8 +2178,6 @@ def _wrap_callable(
         return _intercept_value(result, transform)
 
     return wrapper
-
-
 
 
 __all__ = [

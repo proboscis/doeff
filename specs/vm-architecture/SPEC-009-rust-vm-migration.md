@@ -606,7 +606,7 @@ def outer_handler(effect, k):
     if isinstance(effect, ComplexEffect):
         inner_result = yield WithHandler(
             handler=inner_handler,
-            program=sub_program(effect),
+            expr=sub_program(effect),
         )
         result = yield Resume(k, inner_result)
         return result
@@ -619,12 +619,12 @@ def outer_handler(effect, k):
 ## 6. Composition: WithHandler
 
 ```python
-WithHandler(handler: Handler, program: Program[T])
+WithHandler(handler: Handler, expr: DoExpr[T])
 ```
 
 `WithHandler` is a **composition primitive** — not an effect, not a dispatch
-primitive (see §4 taxonomy). Yielding it installs `handler` around `program`
-and returns the program's result. [R4-E]
+primitive (see §4 taxonomy). Yielding it installs `handler` around `expr`
+and returns the expression's result. [R4-E]
 
 Usable from **any** `Program`:
 - In user programs
@@ -637,7 +637,7 @@ def my_program():
     # Install a handler around a sub-program
     result = yield WithHandler(
         handler=my_handler,
-        program=sub_program(),
+        expr=sub_program(),
     )
     return result
 ```
@@ -1065,8 +1065,8 @@ These are Rust `#[pyclass]` constructors. Validation MUST happen at
 
 | Constructor | Parameter | Expected Type | Validation | Error |
 |-------------|-----------|---------------|------------|-------|
-| `WithHandler(handler, program)` | `handler` | `Callable` | `callable(handler)` or handler sentinel | `TypeError: WithHandler handler must be callable or handler sentinel, got {type}` |
-| `WithHandler(handler, program)` | `program` | `DoExpr` | `isinstance(program, DoExpr)` | `TypeError: WithHandler program must be DoExpr (Program, Effect, or DoCtrl), got {type}` |
+| `WithHandler(handler, expr)` | `handler` | `Callable` | `callable(handler)` or handler sentinel | `TypeError: WithHandler handler must be callable or handler sentinel, got {type}` |
+| `WithHandler(handler, expr)` | `expr` | `DoExpr` | `isinstance(expr, DoExpr)` | `TypeError: WithHandler expr must be DoExpr (Program, Effect, or DoCtrl), got {type}` |
 
 #### §4.7 Composition Methods: `.map()`, `.flat_map()`
 

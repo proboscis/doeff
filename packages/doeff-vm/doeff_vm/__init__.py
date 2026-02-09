@@ -9,16 +9,21 @@ DoCtrlBase = _ext.DoCtrlBase
 DoThunkBase = getattr(_ext, "DoThunkBase", None)
 PyStdlib = _ext.PyStdlib
 PySchedulerHandler = _ext.PySchedulerHandler
+PyVM = _ext.PyVM
 RunResult = _ext.RunResult
 ResultOk = getattr(_ext, "ResultOk", None)
 ResultErr = getattr(_ext, "ResultErr", None)
 K = _ext.K
 WithHandler = _ext.WithHandler
+Pure = _ext.Pure
+Call = _ext.Call
 Map = _ext.Map
 FlatMap = _ext.FlatMap
+Eval = _ext.Eval
 Resume = _ext.Resume
 Delegate = _ext.Delegate
 Transfer = _ext.Transfer
+ResumeContinuation = _ext.ResumeContinuation
 RustHandler = _ext.RustHandler
 run = _ext.run
 async_run = _ext.async_run
@@ -39,11 +44,31 @@ PyModify = _ext.PyModify
 PyAsk = _ext.PyAsk
 PyTell = _ext.PyTell
 PyKPC = _ext.PyKPC
+SpawnEffect = _ext.SpawnEffect
+GatherEffect = _ext.GatherEffect
+RaceEffect = _ext.RaceEffect
+CreatePromiseEffect = _ext.CreatePromiseEffect
+CompletePromiseEffect = _ext.CompletePromiseEffect
+FailPromiseEffect = _ext.FailPromiseEffect
+CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
+_SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
+
+# SPEC-008 names
+PySpawn = SpawnEffect
+PyGather = GatherEffect
+PyRace = RaceEffect
+PyCreatePromise = CreatePromiseEffect
+PyCompletePromise = CompletePromiseEffect
+PyFailPromise = FailPromiseEffect
+PyCreateExternalPromise = CreateExternalPromiseEffect
+PyTaskCompleted = _SchedulerTaskCompleted
 
 __all__ = [
     "K",
     "KleisliProgramCall",
     "Delegate",
+    "Call",
+    "Eval",
     "Map",
     "FlatMap",
     "DoCtrlBase",
@@ -52,12 +77,31 @@ __all__ = [
     "PyAsk",
     "PyGet",
     "PyKPC",
+    "PySpawn",
+    "PyGather",
+    "PyRace",
+    "PyCreatePromise",
+    "PyCompletePromise",
+    "PyFailPromise",
+    "PyCreateExternalPromise",
+    "PyTaskCompleted",
+    "SpawnEffect",
+    "GatherEffect",
+    "RaceEffect",
+    "CreatePromiseEffect",
+    "CompletePromiseEffect",
+    "FailPromiseEffect",
+    "CreateExternalPromiseEffect",
+    "_SchedulerTaskCompleted",
     "PyModify",
     "PyPut",
     "PySchedulerHandler",
+    "PyVM",
     "PyStdlib",
     "PyTell",
+    "Pure",
     "Resume",
+    "ResumeContinuation",
     "RunResult",
     "RustHandler",
     "Transfer",
