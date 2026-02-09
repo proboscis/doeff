@@ -17,7 +17,7 @@ use crate::handler::{
     Handler, HandlerEntry, KpcHandlerFactory, ReaderHandlerFactory, RustProgramHandlerRef, StateHandlerFactory,
     WriterHandlerFactory,
 };
-use crate::ids::{ContId, Marker};
+use crate::ids::Marker;
 use crate::py_shared::PyShared;
 use crate::scheduler::SchedulerHandler;
 use crate::segment::Segment;
@@ -47,10 +47,13 @@ pub struct PyVM {
     vm: VM,
 }
 
-#[pyclass(subclass, frozen, name = "EffectBase")]
+#[pyclass(subclass, frozen, name = "DoExpr")]
+pub struct PyDoExprBase;
+
+#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "EffectBase")]
 pub struct PyEffectBase;
 
-#[pyclass(subclass, frozen, name = "DoCtrlBase")]
+#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
 pub struct PyDoCtrlBase;
 
 
@@ -560,10 +563,7 @@ impl PyVM {
             return Ok(program);
         }
 
-        if program_bound.is_instance_of::<PyKPC>()
-            || program_bound.is_instance_of::<PyEffectBase>()
-            || program_bound.is_instance_of::<PyDoCtrlBase>()
-        {
+        if program_bound.is_instance_of::<PyDoExprBase>() {
             return self.wrap_expr_as_generator(py, program);
         }
 
@@ -1080,7 +1080,7 @@ pub struct PyWithHandler {
 impl PyWithHandler {
     #[new]
     #[pyo3(signature = (handler, expr))]
-    fn new(py: Python<'_>, handler: Py<PyAny>, expr: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, handler: Py<PyAny>, expr: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         let handler_obj = handler.bind(py);
         if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
             return Err(PyTypeError::new_err(
@@ -1089,16 +1089,17 @@ impl PyWithHandler {
         }
 
         let expr_obj = expr.bind(py);
-        if !(expr_obj.is_instance_of::<PyKPC>()
-            || expr_obj.is_instance_of::<PyDoCtrlBase>()
-            || expr_obj.is_instance_of::<PyEffectBase>())
-        {
+        if !expr_obj.is_instance_of::<PyDoExprBase>() {
             return Err(PyTypeError::new_err(
                 "WithHandler.expr must be DoExpr",
             ));
         }
 
-        Ok((PyWithHandler { handler, expr }, PyDoCtrlBase))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyWithHandler { handler, expr }),
+        )
     }
 }
 
@@ -1119,8 +1120,10 @@ pub struct PyPure {
 #[pymethods]
 impl PyPure {
     #[new]
-    fn new(value: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (PyPure { value }, PyDoCtrlBase)
+    fn new(value: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyPure { value })
     }
 }
 
@@ -1146,7 +1149,7 @@ impl PyCall {
         args: Py<PyAny>,
         kwargs: Py<PyAny>,
         meta: Option<Py<PyAny>>,
-    ) -> PyResult<(Self, PyDoCtrlBase)> {
+    ) -> PyResult<PyClassInitializer<Self>> {
         if !f.bind(py).is_callable() {
             return Err(PyTypeError::new_err("Call.f must be callable"));
         }
@@ -1156,7 +1159,11 @@ impl PyCall {
         if !kwargs.bind(py).is_instance_of::<PyDict>() {
             return Err(PyTypeError::new_err("Call.kwargs must be dict"));
         }
-        Ok((PyCall { f, args, kwargs, meta }, PyDoCtrlBase))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyCall { f, args, kwargs, meta }),
+        )
     }
 }
 
@@ -1171,19 +1178,25 @@ pub struct PyEval {
 #[pymethods]
 impl PyEval {
     #[new]
-    fn new(expr: Py<PyAny>, handlers: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (PyEval { expr, handlers }, PyDoCtrlBase)
+    fn new(expr: Py<PyAny>, handlers: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyEval { expr, handlers })
     }
 }
 
 #[pymethods]
 impl PyMap {
     #[new]
-    fn new(py: Python<'_>, source: Py<PyAny>, mapper: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, source: Py<PyAny>, mapper: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         if !mapper.bind(py).is_callable() {
             return Err(PyTypeError::new_err("Map.mapper must be callable"));
         }
-        Ok((PyMap { source, mapper }, PyDoCtrlBase))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyMap { source, mapper }),
+        )
     }
 }
 
@@ -1198,11 +1211,15 @@ pub struct PyFlatMap {
 #[pymethods]
 impl PyFlatMap {
     #[new]
-    fn new(py: Python<'_>, source: Py<PyAny>, binder: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, source: Py<PyAny>, binder: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         if !binder.bind(py).is_callable() {
             return Err(PyTypeError::new_err("FlatMap.binder must be callable"));
         }
-        Ok((PyFlatMap { source, binder }, PyDoCtrlBase))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyFlatMap { source, binder }),
+        )
     }
 }
 
@@ -1218,19 +1235,20 @@ pub struct PyResume {
 #[pymethods]
 impl PyResume {
     #[new]
-    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         if !continuation.bind(py).is_instance_of::<PyK>() {
             return Err(PyTypeError::new_err(
                 "Resume.continuation must be K (opaque continuation handle)",
             ));
         }
-        Ok((
-            PyResume {
-                continuation,
-                value,
-            },
-            PyDoCtrlBase,
-        ))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyResume {
+                    continuation,
+                    value,
+                }),
+        )
     }
 }
 
@@ -1245,7 +1263,7 @@ pub struct PyDelegate {
 impl PyDelegate {
     #[new]
     #[pyo3(signature = (effect=None))]
-    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<PyClassInitializer<Self>> {
         if let Some(ref eff) = effect {
             if !eff.bind(py).is_instance_of::<PyEffectBase>() {
                 return Err(PyTypeError::new_err(
@@ -1253,7 +1271,11 @@ impl PyDelegate {
                 ));
             }
         }
-        Ok((PyDelegate { effect }, PyDoCtrlBase))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyDelegate { effect }),
+        )
     }
 }
 
@@ -1278,38 +1300,40 @@ pub struct PyResumeContinuation {
 #[pymethods]
 impl PyResumeContinuation {
     #[new]
-    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         if !continuation.bind(py).is_instance_of::<PyK>() {
             return Err(PyTypeError::new_err(
                 "ResumeContinuation.continuation must be K (opaque continuation handle)",
             ));
         }
-        Ok((
-            PyResumeContinuation {
-                continuation,
-                value,
-            },
-            PyDoCtrlBase,
-        ))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyResumeContinuation {
+                    continuation,
+                    value,
+                }),
+        )
     }
 }
 
 #[pymethods]
 impl PyTransfer {
     #[new]
-    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
         if !continuation.bind(py).is_instance_of::<PyK>() {
             return Err(PyTypeError::new_err(
                 "Transfer.continuation must be K (opaque continuation handle)",
             ));
         }
-        Ok((
-            PyTransfer {
-                continuation,
-                value,
-            },
-            PyDoCtrlBase,
-        ))
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyTransfer {
+                    continuation,
+                    value,
+                }),
+        )
     }
 }
 
@@ -1325,8 +1349,10 @@ pub struct PyCreateContinuation {
 #[pymethods]
 impl PyCreateContinuation {
     #[new]
-    fn new(program: Py<PyAny>, handlers: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (PyCreateContinuation { program, handlers }, PyDoCtrlBase)
+    fn new(program: Py<PyAny>, handlers: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyCreateContinuation { program, handlers })
     }
 }
 
@@ -1337,8 +1363,10 @@ pub struct PyGetContinuation;
 #[pymethods]
 impl PyGetContinuation {
     #[new]
-    fn new() -> (Self, PyDoCtrlBase) {
-        (PyGetContinuation, PyDoCtrlBase)
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyGetContinuation)
     }
 }
 
@@ -1349,8 +1377,10 @@ pub struct PyGetHandlers;
 #[pymethods]
 impl PyGetHandlers {
     #[new]
-    fn new() -> (Self, PyDoCtrlBase) {
-        (PyGetHandlers, PyDoCtrlBase)
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyGetHandlers)
     }
 }
 
@@ -1361,8 +1391,10 @@ pub struct PyGetCallStack;
 #[pymethods]
 impl PyGetCallStack {
     #[new]
-    fn new() -> (Self, PyDoCtrlBase) {
-        (PyGetCallStack, PyDoCtrlBase)
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyGetCallStack)
     }
 }
 
@@ -1376,8 +1408,10 @@ pub struct PyAsyncEscape {
 #[pymethods]
 impl PyAsyncEscape {
     #[new]
-    fn new(action: Py<PyAny>) -> (Self, PyDoCtrlBase) {
-        (PyAsyncEscape { action }, PyDoCtrlBase)
+    fn new(action: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyAsyncEscape { action })
     }
 }
 
@@ -1464,7 +1498,12 @@ impl NestingGenerator {
             handler,
             expr: inner,
         };
-        let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
+        let bound = Bound::new(
+            py,
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(wh),
+        )?;
         Ok(Some(bound.into_any().unbind()))
     }
 
@@ -1515,7 +1554,9 @@ mod tests {
 
             let with_handler = Bound::new(
                 py,
-                PyClassInitializer::from(PyDoCtrlBase).add_subclass(PyWithHandler {
+                PyClassInitializer::from(PyDoExprBase)
+                    .add_subclass(PyDoCtrlBase)
+                    .add_subclass(PyWithHandler {
                     handler: sentinel.clone_ref(py),
                     expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
                 }),
@@ -1950,7 +1991,12 @@ fn run(
                 handler: handler_obj.unbind(),
                 expr: wrapped,
             };
-            let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
+            let bound = Bound::new(
+                py,
+                PyClassInitializer::from(PyDoExprBase)
+                    .add_subclass(PyDoCtrlBase)
+                    .add_subclass(wh),
+            )?;
             wrapped = bound.into_any().unbind();
         }
     }
@@ -1998,7 +2044,12 @@ fn async_run<'py>(
                 handler: handler_obj.unbind(),
                 expr: wrapped,
             };
-            let bound = Bound::new(py, PyClassInitializer::from(PyDoCtrlBase).add_subclass(wh))?;
+            let bound = Bound::new(
+                py,
+                PyClassInitializer::from(PyDoExprBase)
+                    .add_subclass(PyDoCtrlBase)
+                    .add_subclass(wh),
+            )?;
             wrapped = bound.into_any().unbind();
         }
     }
@@ -2051,6 +2102,7 @@ fn async_run<'py>(
 #[pymodule]
 pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyVM>()?;
+    m.add_class::<PyDoExprBase>()?;
     m.add_class::<PyEffectBase>()?;
     m.add_class::<PyDoCtrlBase>()?;
     // PyDoThunkBase removed [R12-A]: DoThunk is a Python-side concept, not a VM concept.
