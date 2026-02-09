@@ -14,6 +14,8 @@ from typing import Any
 
 import pytest
 from doeff import Delegate, Resume, WithHandler, default_handlers, run
+from doeff.effects import GatherEffect, SpawnEffect
+from doeff.program import ProgramBase
 from doeff_conductor import (
     Commit,
     CreatePR,
@@ -50,7 +52,31 @@ def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any]
 
 
 def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
-    wrapped = _wrap_with_effect_handlers(program, handlers)
+    runtime_handlers = dict(handlers)
+
+    def _resolve_item(item: Any) -> Any:
+        if isinstance(item, ProgramBase):
+            sub = _run_with_effect_handlers(item, runtime_handlers)
+            if sub.is_err():
+                raise sub.error
+            return sub.value
+
+        handle = getattr(item, "_handle", None)
+        if isinstance(handle, ProgramBase):
+            return _resolve_item(handle)
+
+        return item
+
+    def _handle_spawn(effect: SpawnEffect) -> Any:
+        return effect.program
+
+    def _handle_gather(effect: GatherEffect) -> tuple[Any, ...]:
+        return tuple(_resolve_item(item) for item in effect.items)
+
+    runtime_handlers.setdefault(SpawnEffect, _handle_spawn)
+    runtime_handlers.setdefault(GatherEffect, _handle_gather)
+
+    wrapped = _wrap_with_effect_handlers(program, runtime_handlers)
     return run(wrapped, handlers=default_handlers())
 
 
@@ -555,9 +581,6 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
 
     def test_multi_agent_effects_include_spawn_and_gather(self, mock_issue: Issue):
         """Verify multi_agent executes both parallel branches and merge path."""
-        pytest.skip(
-            "multi_agent Spawn/Gather execution path is not available in current runtime setup"
-        )
         calls: list[str] = []
 
         def handle_create_worktree(effect: CreateWorktree) -> WorktreeEnv:
@@ -642,12 +665,8 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
     ):
         """Run multi_agent template with mocked effects.
 
-        Note: Gather/Spawn are handled by default runtime handlers;
-        this test injects only domain effect handlers.
+        Gather/Spawn are handled by the local test harness.
         """
-        pytest.skip(
-            "multi_agent Spawn/Gather execution path is not available in current runtime setup"
-        )
 
         def handle_create_worktree(e):
             return mock_worktree_env

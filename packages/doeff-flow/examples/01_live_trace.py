@@ -134,7 +134,7 @@ def workflow_b():
 
 def example_multiple_workflows():
     """Run multiple workflows and observe them."""
-    import threading
+    from concurrent.futures import ThreadPoolExecutor
 
     print("=== Example 3: Multiple Concurrent Workflows ===")
     print("Run 'doeff-flow watch' or 'doeff-flow ps' in another terminal\n")
@@ -144,16 +144,14 @@ def example_multiple_workflows():
         run_workflow(wf(), workflow_id=wf_id)
         print(f"  {wf_id} finished")
 
-    # Start both workflows in threads
-    t1 = threading.Thread(target=run_wf, args=(workflow_a, "multi-wf-a"))
-    t2 = threading.Thread(target=run_wf, args=(workflow_b, "multi-wf-b"))
-
     print("Starting workflows...")
-    t1.start()
-    t2.start()
-
-    t1.join()
-    t2.join()
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(run_wf, workflow_a, "multi-wf-a"),
+            executor.submit(run_wf, workflow_b, "multi-wf-b"),
+        ]
+        for future in futures:
+            future.result()
 
     print("\nAll workflows completed!")
     print()
