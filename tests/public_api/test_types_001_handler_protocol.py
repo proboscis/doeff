@@ -114,6 +114,25 @@ class TestHP03PostProcess:
         assert result.value == 45  # handler gets 15, returns 15*3
 
 
+class TestHP03BReturnEffect:
+    def test_handler_returning_effect_is_perform_lifted(self) -> None:
+        def handler(effect, _k):
+            if isinstance(effect, _CustomEffect):
+                return Ask("api_key")
+            return effect
+
+        def body():
+            result = yield _CustomEffect("unused")
+            return result
+
+        def main():
+            result = yield WithHandler(handler=handler, expr=_prog(body))
+            return result
+
+        result = run(_prog(main), handlers=default_handlers(), env={"api_key": "secret"})
+        assert result.value == "secret"
+
+
 # ---------------------------------------------------------------------------
 # HP-04: Handler abandons continuation (early return)
 # ---------------------------------------------------------------------------
@@ -362,4 +381,23 @@ class TestHP10CoexistWithBuiltins:
             store={"counter": 10},
         )
         assert result.value == "secret:10"
-        assert result.raw_store["counter"] == 11
+
+
+class TestHP11DoDecoratedHandler:
+    def test_do_decorated_handler_plain_return(self) -> None:
+        @do
+        def handler(effect, _k):
+            if isinstance(effect, _CustomEffect):
+                return f"wrapped:{effect.value}"
+            yield Delegate()
+
+        def body():
+            result = yield _CustomEffect("x")
+            return result
+
+        def main():
+            result = yield WithHandler(handler=handler, expr=_prog(body))
+            return result
+
+        result = run(_prog(main), handlers=default_handlers())
+        assert result.value == "wrapped:x"

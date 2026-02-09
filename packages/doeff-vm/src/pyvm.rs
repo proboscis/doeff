@@ -9,8 +9,6 @@ use crate::effect::{
     PyCreatePromise, PyFailPromise, PyGather, PyGet, PyKPC, PyModify, PyPut, PyRace, PySpawn,
     PyTaskCompleted, PyTell,
 };
-#[cfg(test)]
-use crate::effect::Effect;
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
@@ -42,6 +40,33 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
     }
 }
 
+fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+    if obj.is_instance_of::<PyEffectBase>() {
+        return Ok(true);
+    }
+
+    if let Ok(flag) = obj.getattr("__doeff_effect_base__") {
+        return flag.is_truthy();
+    }
+
+    Ok(false)
+}
+
+fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    if !is_effect_base_like(py, expr.bind(py))? {
+        return Ok(expr);
+    }
+    let perform = Bound::new(
+        py,
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase)
+            .add_subclass(PyPerform {
+                effect: expr.clone_ref(py),
+            }),
+    )?;
+    Ok(perform.into_any().unbind())
+}
+
 #[pyclass]
 pub struct PyVM {
     vm: VM,
@@ -50,7 +75,7 @@ pub struct PyVM {
 #[pyclass(subclass, frozen, name = "DoExpr")]
 pub struct PyDoExprBase;
 
-#[pyclass(subclass, frozen, extends=PyDoExprBase, name = "EffectBase")]
+#[pyclass(subclass, frozen, name = "EffectBase")]
 pub struct PyEffectBase;
 
 #[pyclass(subclass, frozen, extends=PyDoExprBase, name = "DoCtrlBase")]
@@ -481,8 +506,13 @@ impl PyVM {
                         if is_generator {
                             Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
                         } else {
+                            if is_effect_base_like(py, &result)? {
+                                let lifted = lift_effect_to_perform_expr(py, result.unbind())?;
+                                let gen = self.wrap_expr_as_generator(py, lifted)?;
+                                return Ok(PyCallOutcome::Value(Value::Python(gen)));
+                            }
+
                             let is_doexpr_like = result.is_instance_of::<PyKPC>()
-                                || result.is_instance_of::<PyEffectBase>()
                                 || result.is_instance_of::<PyDoCtrlBase>()
                                 || result.is_callable();
 
@@ -542,6 +572,7 @@ impl PyVM {
 
     /// Strict boundary: accept only Rust runtime DoExpr bases.
     fn to_generator_strict(&self, py: Python<'_>, program: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        let program = lift_effect_to_perform_expr(py, program)?;
         let program_bound = program.bind(py);
 
         let is_nesting_step = program_bound
@@ -565,11 +596,6 @@ impl PyVM {
 
         if program_bound.is_instance_of::<PyDoExprBase>() {
             return self.wrap_expr_as_generator(py, program);
-        }
-
-        if program_bound.is_callable() {
-            let called = program_bound.call0()?;
-            return self.to_generator_strict(py, called.unbind());
         }
 
         let ty = program_bound
@@ -680,6 +706,11 @@ impl PyVM {
             return Ok(Yielded::DoCtrl(DoCtrl::FlatMap {
                 source: PyShared::new(fm.source.clone_ref(_py)),
                 binder: PyShared::new(fm.binder.clone_ref(_py)),
+            }));
+        }
+        if let Ok(pf) = obj.extract::<PyRef<'_, PyPerform>>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::Perform {
+                effect: dispatch_from_shared(PyShared::new(pf.effect.clone_ref(_py))),
             }));
         }
         if let Ok(r) = obj.extract::<PyRef<'_, PyResume>>() {
@@ -810,14 +841,14 @@ impl PyVM {
             }));
         }
 
-        if obj.is_instance_of::<PyEffectBase>() {
-            return Ok(Yielded::Effect(dispatch_from_shared(PyShared::new(
-                obj.clone().unbind(),
-            ))));
+        if is_effect_base_like(_py, obj)? {
+            return Ok(Yielded::DoCtrl(DoCtrl::Perform {
+                effect: dispatch_from_shared(PyShared::new(obj.clone().unbind())),
+            }));
         }
 
         Err(PyTypeError::new_err(
-            "yielded value must be EffectBase or DoCtrlBase",
+            "yielded value must be EffectBase or DoExpr",
         ))
     }
 
@@ -1088,6 +1119,8 @@ impl PyWithHandler {
             ));
         }
 
+        let expr = lift_effect_to_perform_expr(py, expr)?;
+
         let expr_obj = expr.bind(py);
         if !expr_obj.is_instance_of::<PyDoExprBase>() {
             return Err(PyTypeError::new_err(
@@ -1178,10 +1211,34 @@ pub struct PyEval {
 #[pymethods]
 impl PyEval {
     #[new]
-    fn new(expr: Py<PyAny>, handlers: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase)
-            .add_subclass(PyEval { expr, handlers })
+    fn new(py: Python<'_>, expr: Py<PyAny>, handlers: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let expr = lift_effect_to_perform_expr(py, expr)?;
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyEval { expr, handlers }),
+        )
+    }
+}
+
+#[pyclass(name = "Perform", extends=PyDoCtrlBase)]
+pub struct PyPerform {
+    #[pyo3(get)]
+    pub effect: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyPerform {
+    #[new]
+    fn new(py: Python<'_>, effect: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        if !is_effect_base_like(py, effect.bind(py))? {
+            return Err(PyTypeError::new_err("Perform.effect must be EffectBase"));
+        }
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyPerform { effect }),
+        )
     }
 }
 
@@ -1265,7 +1322,7 @@ impl PyDelegate {
     #[pyo3(signature = (effect=None))]
     fn new(py: Python<'_>, effect: Option<Py<PyAny>>) -> PyResult<PyClassInitializer<Self>> {
         if let Some(ref eff) = effect {
-            if !eff.bind(py).is_instance_of::<PyEffectBase>() {
+            if !is_effect_base_like(py, eff.bind(py))? {
                 return Err(PyTypeError::new_err(
                     "Delegate.effect must be EffectBase when provided",
                 ));
@@ -1349,10 +1406,13 @@ pub struct PyCreateContinuation {
 #[pymethods]
 impl PyCreateContinuation {
     #[new]
-    fn new(program: Py<PyAny>, handlers: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase)
-            .add_subclass(PyCreateContinuation { program, handlers })
+    fn new(py: Python<'_>, program: Py<PyAny>, handlers: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+        let program = lift_effect_to_perform_expr(py, program)?;
+        Ok(
+            PyClassInitializer::from(PyDoExprBase)
+                .add_subclass(PyDoCtrlBase)
+                .add_subclass(PyCreateContinuation { program, handlers }),
+        )
     }
 }
 
@@ -1493,6 +1553,7 @@ impl NestingGenerator {
             .inner
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("NestingGenerator already consumed"))?;
+        let inner = lift_effect_to_perform_expr(py, inner)?;
         self.done = true;
         let wh = PyWithHandler {
             handler,
@@ -1608,7 +1669,7 @@ mod tests {
 
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "G3 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
                 yielded
             );
@@ -1682,7 +1743,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "G4 FAIL: expected opaque Python TaskCompleted effect, got {:?}",
                 yielded
             );
@@ -1703,7 +1764,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(_)),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "G5 FAIL: KleisliProgramCall should classify as Effect (handler-dispatched), got {:?}",
                 yielded
             );
@@ -1724,7 +1785,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "G6 FAIL: malformed GatherEffect should classify as opaque effect, got {:?}",
                 yielded
             );
@@ -1745,7 +1806,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "G12 FAIL: WaitEffect should classify as opaque effect, got {:?}",
                 yielded
             );
@@ -1777,7 +1838,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "G7 FAIL: expected opaque Python Spawn effect, got {:?}",
                 yielded
             );
@@ -1799,10 +1860,12 @@ mod tests {
             .unbind();
             let resume = Bound::new(
                 py,
-                PyResume {
-                    continuation: k,
-                    value: py.None().into_pyobject(py).unwrap().unbind().into_any(),
-                },
+                PyClassInitializer::from(PyDoExprBase)
+                    .add_subclass(PyDoCtrlBase)
+                    .add_subclass(PyResume {
+                        continuation: k,
+                        value: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                    }),
             )
             .unwrap()
             .into_any();
@@ -1887,7 +1950,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "SPEC GAP: stdlib effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
@@ -1908,7 +1971,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "SPEC GAP: KPC should classify as opaque Python effect, got {:?}",
                 yielded
             );
@@ -1929,7 +1992,7 @@ mod tests {
             let obj = locals.get_item("obj").unwrap().unwrap();
             let yielded = pyvm.classify_yielded(py, &obj).unwrap();
             assert!(
-                matches!(yielded, Yielded::Effect(Effect::Python(_))),
+                matches!(yielded, Yielded::DoCtrl(DoCtrl::Perform { .. })),
                 "SPEC GAP: scheduler effects should classify as opaque Python effects, got {:?}",
                 yielded
             );
@@ -1987,6 +2050,7 @@ fn run(
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
+            wrapped = lift_effect_to_perform_expr(py, wrapped)?;
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
@@ -2040,6 +2104,7 @@ fn async_run<'py>(
     if let Some(handler_list) = handlers {
         let items: Vec<_> = handler_list.iter().collect();
         for handler_obj in items.into_iter().rev() {
+            wrapped = lift_effect_to_perform_expr(py, wrapped)?;
             let wh = PyWithHandler {
                 handler: handler_obj.unbind(),
                 expr: wrapped,
@@ -2118,6 +2183,7 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMap>()?;
     m.add_class::<PyFlatMap>()?;
     m.add_class::<PyEval>()?;
+    m.add_class::<PyPerform>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
     m.add_class::<PyTransfer>()?;

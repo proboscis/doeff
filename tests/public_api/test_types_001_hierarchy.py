@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from doeff import Ask, Get, Program, Put, Tell, do
+from doeff import Ask, Get, Perform, Program, Put, Tell, do
 from doeff.program import DoCtrl, DoExpr, GeneratorProgram, KleisliProgramCall, ProgramBase
 from doeff.types import EffectBase
 
@@ -14,10 +14,15 @@ class TestTH01DistinctTypes:
 
 class TestTH02EffectBaseExtendsDoExpr:
     def test_subclass(self) -> None:
-        assert issubclass(EffectBase, DoExpr)
+        assert not issubclass(EffectBase, DoExpr)
 
     def test_ask_instance_is_doexpr(self) -> None:
-        assert isinstance(Ask("key"), DoExpr)
+        assert not isinstance(Ask("key"), DoExpr)
+
+    def test_perform_lifts_effect_to_doexpr(self) -> None:
+        import doeff_vm
+
+        assert isinstance(Perform(Ask("key")), doeff_vm.DoExpr)
 
 
 class TestTH03ProgramBaseChain:

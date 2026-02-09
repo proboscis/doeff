@@ -262,6 +262,8 @@ class Delegate:
 class CustomEffect:
     """Custom effect for testing Python handlers."""
 
+    __doeff_effect_base__ = True
+
     def __init__(self, value):
         self.value = value
 
@@ -928,7 +930,14 @@ def test_get_handlers_uses_dispatch_handler_chain():
     Currently fails because handle_get_handlers uses current_scope_chain()
     instead of the dispatch context's handler_chain.
     """
-    from doeff_vm import PyVM
+    from doeff_vm import (
+        Delegate as VMDelegate,
+        GetHandlers as VMGetHandlers,
+        Perform as VMPerform,
+        PyVM,
+        Resume as VMResume,
+        WithHandler as VMWithHandler,
+    )
 
     vm = PyVM()
 
@@ -936,26 +945,18 @@ def test_get_handlers_uses_dispatch_handler_chain():
         if isinstance(effect, CustomEffect):
             # Install a temporary inner handler during handler execution
             def temp_handler(eff, k2):
-                yield Delegate()
+                yield VMDelegate()
 
-            def temp_body():
-                # GetHandlers here: if using scope_chain, result includes
-                # temp_handler; if using handler_chain, it does not.
-                handlers = yield GetHandlers()
-                return handlers
-
-            inner_result = yield WithHandler(temp_handler, temp_body)
+            # GetHandlers here: if using scope_chain, result includes
+            # temp_handler; if using handler_chain, it does not.
+            inner_result = yield VMWithHandler(temp_handler, VMGetHandlers())
             # inner_result is the handler list from GetHandlers
-            resume_value = yield Resume(k, inner_result)
+            resume_value = yield VMResume(k, inner_result)
             return resume_value
-        yield Delegate()
-
-    def body():
-        result = yield CustomEffect(42)
-        return result
+        yield VMDelegate()
 
     def main():
-        result = yield WithHandler(outer_handler, body)
+        result = yield VMWithHandler(outer_handler, VMPerform(CustomEffect(42)))
         return result
 
     result = vm.run(main())
@@ -1391,33 +1392,29 @@ print("OK" if result.is_err() else "WRONG_OK")
         )
 
     def test_classify_yielded_must_check_effects_before_to_generator(self):
-        """R9 INV-17: classify_yielded must check for effect type names BEFORE
-        checking for to_generator.
+        """R9 INV-17: scheduler effects remain effect values, not programs.
 
-        EffectBase extends ProgramBase, so all effects have to_generator().
-        If classify_yielded checks to_generator first, scheduler effects get
-        misclassified as Yielded::Program and the VM tries to start them as
-        programs — causing hangs or wrong behavior.
-
-        The correct order is:
-        1. Check pyclass types (Resume, WithHandler, etc.)
-        2. Check type name strings (GatherEffect, RaceEffect, SpawnEffect, etc.)
-        3. THEN check to_generator (for actual Programs)
+        SPEC-TYPES-001 Rev 11 separates EffectValue data from DoExpr control,
+        so scheduler effect classes must not expose program-only conversion
+        methods such as ``to_generator``.
         """
-        # Verify the fundamental issue: all EffectBase subclasses have to_generator
         from doeff.effects.race import RaceEffect
         from doeff.effects.gather import GatherEffect
         from doeff.effects.spawn import SpawnEffect
         from doeff.effects.promise import CompletePromiseEffect, FailPromiseEffect
 
-        for cls in [GatherEffect, RaceEffect, SpawnEffect]:
-            assert hasattr(cls, "to_generator"), (
-                f"{cls.__name__} should have to_generator (from ProgramBase)"
+        for cls in [
+            GatherEffect,
+            RaceEffect,
+            SpawnEffect,
+            CompletePromiseEffect,
+            FailPromiseEffect,
+        ]:
+            assert not hasattr(cls, "to_generator"), (
+                f"{cls.__name__} should be EffectValue-only and not expose to_generator"
             )
 
-        # The gather test above proves the bug exists for GatherEffect.
-        # This test documents that ALL scheduler effect classes have the same
-        # vulnerability and need explicit classify_yielded arms.
+        # The gather test above verifies runtime classify behavior directly.
 
 
 class TestR9AsyncRunSemantics:
