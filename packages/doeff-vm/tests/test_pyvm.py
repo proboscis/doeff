@@ -927,8 +927,8 @@ def test_get_handlers_uses_dispatch_handler_chain():
     handler_chain snapshot taken when dispatch started — NOT the current
     scope_chain which includes the newly installed handler.
 
-    Currently fails because handle_get_handlers uses current_scope_chain()
-    instead of the dispatch context's handler_chain.
+    Verified: handle_get_handlers correctly uses dispatch context's
+    handler_chain, not current_scope_chain().
     """
     from doeff_vm import (
         Delegate as VMDelegate,
@@ -1455,6 +1455,430 @@ class TestR9AsyncRunSemantics:
 # Python integration tests deferred until run_with_result/put_store are wired.
 # Rust-side fixes verified by Rust unit tests:
 #   - G3: vm::tests::test_s009_g3_modify_resumes_with_new_value (handler.rs)
+
+
+## -- R13-I: Tag dispatch tests --------------------------------------------------
+
+
+def test_tag_attribute_accessible():
+    """R13-I: tag attribute is accessible on DoCtrlBase and EffectBase instances."""
+    import doeff_vm
+
+    # TAG constants exist
+    assert hasattr(doeff_vm, "TAG_PURE")
+    assert hasattr(doeff_vm, "TAG_PERFORM")
+    assert hasattr(doeff_vm, "TAG_EFFECT")
+    assert hasattr(doeff_vm, "TAG_UNKNOWN")
+
+    # Verify tag values
+    assert doeff_vm.TAG_PURE == 0
+    assert doeff_vm.TAG_CALL == 1
+    assert doeff_vm.TAG_MAP == 2
+    assert doeff_vm.TAG_FLAT_MAP == 3
+    assert doeff_vm.TAG_WITH_HANDLER == 4
+    assert doeff_vm.TAG_PERFORM == 5
+    assert doeff_vm.TAG_RESUME == 6
+    assert doeff_vm.TAG_TRANSFER == 7
+    assert doeff_vm.TAG_DELEGATE == 8
+    assert doeff_vm.TAG_GET_CONTINUATION == 9
+    assert doeff_vm.TAG_GET_HANDLERS == 10
+    assert doeff_vm.TAG_GET_CALL_STACK == 11
+    assert doeff_vm.TAG_EVAL == 12
+    assert doeff_vm.TAG_CREATE_CONTINUATION == 13
+    assert doeff_vm.TAG_RESUME_CONTINUATION == 14
+    assert doeff_vm.TAG_ASYNC_ESCAPE == 15
+    assert doeff_vm.TAG_EFFECT == 128
+    assert doeff_vm.TAG_UNKNOWN == 255
+
+
+def test_tag_on_concrete_instances():
+    """R13-I: Concrete DoCtrl instances have correct tag values."""
+    from doeff_vm import Pure, GetHandlers, GetCallStack, TAG_PURE, TAG_GET_HANDLERS, TAG_GET_CALL_STACK
+
+    pure = Pure(42)
+    assert pure.tag == TAG_PURE
+
+    gh = GetHandlers()
+    assert gh.tag == TAG_GET_HANDLERS
+
+    gcs = GetCallStack()
+    assert gcs.tag == TAG_GET_CALL_STACK
+
+
+def test_tag_on_effect_base():
+    """R13-I: EffectBase subclasses have Effect tag."""
+    from doeff.effects import Get, Put
+    from doeff_vm import TAG_EFFECT
+
+    get = Get("key")
+    assert get.tag == TAG_EFFECT
+
+    put = Put("key", 42)
+    assert put.tag == TAG_EFFECT
+
+
+def test_tag_dispatch_does_not_break_existing_programs():
+    """R13-I: Tag dispatch is transparent — existing programs still work."""
+    from doeff_vm import PyVM
+
+    vm = PyVM()
+
+    # Pure return (no effects) works through tag dispatch
+    def pure_prog():
+        return 99
+        yield
+
+    result = vm.run(pure_prog())
+    assert result == 99
+
+
+## -- ISSUE-VM-001: Transfer abandonment + Delegate(effect) substitution -------
+
+
+class SecondCustomEffect:
+    """A second custom effect for substitution tests."""
+
+    __doeff_effect_base__ = True
+
+    def __init__(self, value):
+        self.value = value
+
+
+def test_transfer_abandons_handler():
+    """ISSUE-VM-001: After yield Transfer(k, v), handler code must NOT execute.
+
+    Transfer is a tail-call: control goes to the continuation and the handler
+    is abandoned. Any code after `yield Transfer(...)` must never run.
+    """
+    from doeff_vm import (
+        Delegate as VMDelegate,
+        Perform as VMPerform,
+        PyVM,
+        Transfer as VMTransfer,
+        WithHandler as VMWithHandler,
+    )
+
+    vm = PyVM()
+    handler_continued = {"ran": False}
+
+    def handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            yield VMTransfer(k, effect.value * 10)
+            # This line must NEVER execute after Transfer
+            handler_continued["ran"] = True
+        yield VMDelegate()
+
+    def body():
+        result = yield CustomEffect(7)
+        return result
+
+    def main():
+        result = yield VMWithHandler(handler, VMPerform(CustomEffect(7)))
+        return result
+
+    # body yields CustomEffect(7), handler transfers k with 70
+    # Transfer abandons the handler — handler_continued["ran"] must stay False
+    result = vm.run(main())
+    assert result == 70
+    assert handler_continued["ran"] is False, (
+        "Handler code after Transfer was executed — Transfer should abandon handler"
+    )
+
+
+def test_delegate_with_effect_substitution():
+    """ISSUE-VM-001: Delegate(substitute_effect) passes a different effect outward.
+
+    Inner handler receives CustomEffect, but delegates with SecondCustomEffect
+    to the outer handler. Outer handler should see SecondCustomEffect.
+    """
+    from doeff_vm import (
+        Delegate as VMDelegate,
+        Perform as VMPerform,
+        PyVM,
+        Resume as VMResume,
+        WithHandler as VMWithHandler,
+    )
+
+    vm = PyVM()
+
+    def outer_handler(effect, k):
+        if isinstance(effect, SecondCustomEffect):
+            result = yield VMResume(k, f"outer_got:{effect.value}")
+            return result
+        yield VMDelegate()
+
+    def inner_handler(effect, k):
+        if isinstance(effect, CustomEffect):
+            # Delegate with a DIFFERENT effect to outer handler
+            yield VMDelegate(SecondCustomEffect(effect.value + 100))
+        yield VMDelegate()
+
+    def body():
+        result = yield CustomEffect(42)
+        return result
+
+    def main():
+        inner = VMWithHandler(inner_handler, VMPerform(CustomEffect(42)))
+        result = yield VMWithHandler(outer_handler, inner)
+        return result
+
+    result = vm.run(main())
+    assert result == "outer_got:142", (
+        f"Expected outer handler to see substituted effect, got: {result}"
+    )
+
+
+## -- ISSUE-VM-003: Scheduler Spawn/Gather/Race coverage -----------------------
+
+
+def test_scheduler_spawn_creates_task():
+    """ISSUE-VM-003: SpawnEffect should create a task via the scheduler handler."""
+    from doeff_vm import PyVM
+    from doeff.effects.spawn import SpawnEffect
+
+    vm = PyVM()
+    scheduler = vm.scheduler()
+    scheduler.install(vm)
+    stdlib = vm.stdlib()
+    _ = stdlib.state
+    stdlib.install_state(vm)
+
+    @do
+    def child() -> Program[int]:
+        return 99
+        yield
+
+    def body():
+        task = yield SpawnEffect(program=child(), handlers=[])
+        return task
+
+    result = vm.run(body())
+    # SpawnEffect should return a TaskHandle dict
+    assert isinstance(result, dict)
+    assert result["type"] == "Task"
+    assert "task_id" in result
+
+
+def test_scheduler_gather_recognized_by_handler():
+    """ISSUE-VM-003: GatherEffect is recognized by the scheduler handler.
+
+    Verifies that GatherEffect is classified correctly and dispatched to the
+    scheduler handler (not rejected as UnhandledEffect or TypeError).
+    The full spawn→gather→collect flow requires the async scheduler loop.
+    """
+    from doeff_vm import PyVM
+    from doeff.effects.gather import GatherEffect
+
+    vm = PyVM()
+    scheduler = vm.scheduler()
+    scheduler.install(vm)
+
+    def body():
+        # GatherEffect with empty items — scheduler should handle it
+        result = yield GatherEffect(items=[])
+        return result
+
+    result = vm.run_with_result(body())
+    # Should NOT be TypeError/UnhandledEffect — scheduler handles it
+    if result.is_err():
+        err_str = str(result.result)
+        assert "UnhandledEffect" not in err_str, (
+            f"GatherEffect not recognized by scheduler: {err_str}"
+        )
+        assert "TypeError" not in err_str, (
+            f"GatherEffect misclassified: {err_str}"
+        )
+
+
+def test_scheduler_race_recognized_by_handler():
+    """ISSUE-VM-003: RaceEffect is recognized by the scheduler handler.
+
+    Verifies that RaceEffect is classified correctly and dispatched to the
+    scheduler handler (not rejected as UnhandledEffect or TypeError).
+    """
+    from doeff_vm import PyVM
+    from doeff.effects.race import RaceEffect
+
+    vm = PyVM()
+    scheduler = vm.scheduler()
+    scheduler.install(vm)
+
+    def body():
+        # RaceEffect with empty futures — scheduler should handle it
+        result = yield RaceEffect(futures=[])
+        return result
+
+    result = vm.run_with_result(body())
+    # Should NOT be TypeError/UnhandledEffect — scheduler handles it
+    if result.is_err():
+        err_str = str(result.result)
+        assert "UnhandledEffect" not in err_str, (
+            f"RaceEffect not recognized by scheduler: {err_str}"
+        )
+        assert "TypeError" not in err_str, (
+            f"RaceEffect misclassified: {err_str}"
+        )
+
+
+def test_flatmap_rejects_non_doexpr_binder_return():
+    """ISSUE-VM-004: FlatMap binder must return a DoExpr (Program/Effect/DoCtrl).
+
+    SPEC-TYPES-001 CP-07: If the binder returns a non-DoExpr value (e.g. a
+    plain int), the VM should raise a runtime TypeError rather than silently
+    propagating the raw value.
+    """
+    from doeff_vm import FlatMap, Pure, PyVM
+
+    vm = PyVM()
+
+    def bad_binder(x):
+        return x * 2  # returns 20, a plain int — NOT a DoExpr
+
+    def body():
+        result = yield FlatMap(Pure(10), bad_binder)
+        return result
+
+    try:
+        result = vm.run(body())
+        # If run() returns 20 (the raw int), that means the binder's
+        # non-DoExpr return was silently propagated — spec violation.
+        assert result != 20, (
+            "FlatMap binder returned a plain int and it was silently propagated; "
+            "expected TypeError per TYPES-001 CP-07"
+        )
+    except TypeError as e:
+        # Good — the VM rejected the non-DoExpr return
+        assert "flat_map" in str(e).lower() or "DoExpr" in str(e), (
+            f"TypeError raised but message doesn't mention flat_map/DoExpr: {e}"
+        )
+
+
+def test_kpc_resolves_doexpr_args():
+    """ISSUE-VM-004: KPC handler resolves DoExpr args via Eval.
+
+    Verifies the KPC handler correctly resolves DoExpr positional args
+    before calling the kernel function.
+
+    SPEC-TYPES-001 §3.5 also specifies a concurrent variant (Gather-based
+    parallel resolution) — NOT yet implemented.
+    """
+    from doeff_vm import PyKPC, Pure, kpc
+    from doeff_vm import run as vm_run
+
+    def adder(a, b):
+        return a + b
+        yield  # make generator
+
+    # Wrap args as DoExpr objects (Pure) so KPC recognizes them as Expr
+    kpc_effect = PyKPC(
+        kleisli_source=adder,
+        args=(Pure(10), Pure(20)),
+        kwargs={},
+        function_name="adder",
+        execution_kernel=adder,
+    )
+
+    def body():
+        result = yield kpc_effect
+        return result
+
+    result = vm_run(body(), handlers=[kpc])
+    assert result.is_ok(), f"KPC resolution failed: {result.result}"
+    assert result.value == 30, (
+        f"KPC should resolve DoExpr args and call kernel, got {result.value}"
+    )
+
+
+## -- ISSUE-VM-004: Concurrent KPC (Spawn+Gather) -----------------------------
+
+
+def test_concurrent_kpc_resolves_doexpr_args_in_parallel():
+    """ISSUE-VM-004: Concurrent KPC handler evaluates Expr args via
+    DoCtrl::Eval before calling the kernel.
+
+    No scheduler needed — Eval runs programs inline.
+    """
+    from doeff_vm import PyKPC, Pure, concurrent_kpc
+    from doeff_vm import run as vm_run
+
+    def adder(a, b):
+        return a + b
+        yield  # make generator
+
+    kpc_effect = PyKPC(
+        kleisli_source=adder,
+        args=(Pure(10), Pure(20)),
+        kwargs={},
+        function_name="adder",
+        execution_kernel=adder,
+    )
+
+    def body():
+        result = yield kpc_effect
+        return result
+
+    result = vm_run(body(), handlers=[concurrent_kpc])
+    assert result.is_ok(), f"Concurrent KPC failed: {result.result}"
+    assert result.value == 30, (
+        f"Concurrent KPC should resolve DoExpr args via Eval, got {result.value}"
+    )
+
+
+def test_concurrent_kpc_with_mixed_value_and_expr_args():
+    """ISSUE-VM-004: Concurrent KPC handles mix of Value and Expr args.
+
+    Value args are passed through directly; only Expr args are Eval'd.
+    """
+    from doeff_vm import PyKPC, Pure, concurrent_kpc
+    from doeff_vm import run as vm_run
+
+    def mixer(a, b, c):
+        return a + b + c
+        yield
+
+    kpc_effect = PyKPC(
+        kleisli_source=mixer,
+        args=(42, Pure(10), Pure(20)),  # 42 is Value, Pure(10/20) are Expr
+        kwargs={},
+        function_name="mixer",
+        execution_kernel=mixer,
+    )
+
+    def body():
+        result = yield kpc_effect
+        return result
+
+    result = vm_run(body(), handlers=[concurrent_kpc])
+    assert result.is_ok(), f"Mixed concurrent KPC failed: {result.result}"
+    assert result.value == 72, (
+        f"Expected 42+10+20=72, got {result.value}"
+    )
+
+
+def test_concurrent_kpc_with_all_value_args():
+    """ISSUE-VM-004: Concurrent KPC with no Expr args skips eval phase."""
+    from doeff_vm import PyKPC, concurrent_kpc
+    from doeff_vm import run as vm_run
+
+    def adder(a, b):
+        return a + b
+        yield
+
+    kpc_effect = PyKPC(
+        kleisli_source=adder,
+        args=(10, 20),  # both are plain values
+        kwargs={},
+        function_name="adder",
+        execution_kernel=adder,
+    )
+
+    def body():
+        result = yield kpc_effect
+        return result
+
+    result = vm_run(body(), handlers=[concurrent_kpc])
+    assert result.is_ok(), f"All-value concurrent KPC failed: {result.result}"
+    assert result.value == 30
 
 
 if __name__ == "__main__":

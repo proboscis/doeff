@@ -47,7 +47,7 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 
 | Tag | Section | Change |
 |-----|---------|--------|
-| **R11-A** | Effect types | **All Rust-handled effects are `#[pyclass]` structs.** `Get`, `Put`, `Ask`, `Tell`, `Modify` defined in Rust, exposed to Python. Scheduler effects (`Spawn`, `Gather`, `Race`, `CreatePromise`, `CompletePromise`, `FailPromise`, `CreateExternalPromise`, `TaskCompleted`) likewise `#[pyclass]`. **`KleisliProgramCall` (KPC) is also a `#[pyclass(frozen, extends=PyEffectBase)]` struct** — it carries `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. Auto-unwrap strategy is NOT stored on KPC — it is the handler's responsibility to compute from `kleisli_source` annotations at dispatch time (see SPEC-TYPES-001 §3). Python imports these types from the Rust crate. |
+| **R11-A** | Effect types | **All Rust-handled effects are `#[pyclass]` structs.** `Get`, `Put`, `Ask`, `Tell`, `Modify` defined in Rust, exposed to Python. Scheduler effect pyclasses defined in SPEC-SCHED-001. **`KleisliProgramCall` (KPC) is also a `#[pyclass(frozen, extends=PyEffectBase)]` struct** — it carries `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at`. Auto-unwrap strategy is NOT stored on KPC — it is the handler's responsibility to compute from `kleisli_source` annotations at dispatch time (see SPEC-TYPES-001 §3). Python imports these types from the Rust crate. |
 | **R11-B** | Effect enum | **`Effect` typed enum REMOVED.** No `Effect::Get { key }`, `Effect::Put { .. }`, etc. Effects flow through dispatch as opaque `Py<PyAny>`. The VM does not know effect internals. Handlers downcast to concrete `#[pyclass]` types themselves. |
 | **R11-C** | classify_yielded | **Effect classification is a single isinstance check.** `classify_yielded` checks `isinstance(obj, EffectBase)` → `Yielded::Effect(obj)`. No field extraction. No per-effect-type arms. No string matching. The classifier does not touch effect data. |
 | **R11-D** | Handler traits | **Handler receives opaque effect.** `RustHandlerProgram::start()` takes `Py<PyAny>` (not `Effect` enum). `RustProgramHandler::can_handle()` takes `&Bound<'_, PyAny>`. Handlers downcast via `obj.downcast::<Get>()` etc. using `Python::with_gil()`. |
@@ -55,7 +55,7 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 | **R11-F** | Dispatch bases | **All type-dispatch bases are Rust `#[pyclass(subclass)]`.** `EffectBase`, `DoCtrlBase` defined in Rust. [R13-D: DoThunkBase deleted — binary hierarchy only.] [R13-I: GIL-free tag-based dispatch replaces `is_instance_of`. Each base carries an immutable `tag: u8` discriminant. VM reads the tag without GIL for classification and variant dispatch.] Concrete types extend their base via `#[pyclass(extends=...)]`. Python user types subclass normally. |
 
 **CODE-ATTENTION items** (implementation work needed — R11):
-- `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Move scheduler effect pyclasses from `scheduler.rs` or add `PySpawn`, `PyGather`, `PyRace`, `PyCreatePromise`, `PyCompletePromise`, `PyFailPromise`, `PyCreateExternalPromise`, `PyTaskCompleted`. Add `PyKPC` (`#[pyclass(frozen, extends=PyEffectBase)]`) with fields: `kleisli_source: Py<PyAny>`, `args: Py<PyTuple>`, `kwargs: Py<PyDict>`, `function_name: String`, `execution_kernel: Py<PyAny>`, `created_at: Py<PyAny>`. KPC does NOT carry `auto_unwrap_strategy` — the handler computes it from `kleisli_source` annotations.
+- `effect.rs`: Delete `Effect` enum entirely. Add `#[pyclass(frozen)]` structs: `PyGet`, `PyPut`, `PyAsk`, `PyTell`, `PyModify`. Scheduler effect pyclasses are defined in SPEC-SCHED-001 (implemented in `scheduler.rs`). Add `PyKPC` (`#[pyclass(frozen, extends=PyEffectBase)]`) with fields: `kleisli_source: Py<PyAny>`, `args: Py<PyTuple>`, `kwargs: Py<PyDict>`, `function_name: String`, `execution_kernel: Py<PyAny>`, `created_at: Py<PyAny>`. KPC does NOT carry `auto_unwrap_strategy` — the handler computes it from `kleisli_source` annotations.
 - `effect.rs` (or new `bases.rs`): Add `#[pyclass(subclass, frozen)]` base classes: `PyEffectBase { tag: u8 }`, `PyDoCtrlBase { tag: u8 }`. [R13-D: DoThunkBase deleted — binary hierarchy.] [R13-I: tag field enables GIL-free classification.] Add `DoExprTag` enum (`#[repr(u8)]`). All concrete types extend their base via `#[pyclass(extends=...)]` and set tag at construction. [R11-F]
 - `handler.rs`: Change `RustProgramHandler::can_handle(&self, effect: &Effect)` → `can_handle(&self, py: Python<'_>, effect: &Bound<'_, PyAny>)`. Change `RustHandlerProgram::start(&mut self, effect: Effect, ...)` → `start(&mut self, py: Python<'_>, effect: Py<PyAny>, ...)`.
 - `vm.rs`: Change `start_dispatch(effect: Effect)` → `start_dispatch(py: Python<'_>, effect: Py<PyAny>)`. Change `DispatchContext.effect: Effect` → `effect: Py<PyAny>` (or `PyShared<PyAny>`). Change `find_matching_handler` to pass `py` + `&Bound`. Delete `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`.
@@ -64,7 +64,7 @@ Changes from Rev 10. Effects are data — the VM is a dumb pipe.
 - `pyvm.rs`: Update all DoCtrl pyclasses (PyWithHandler, PyResume, PyTransfer, PyDelegate) to use `extends=PyDoCtrlBase`.
 - `step.rs`: Change `Yielded::Effect(Effect)` → `Yielded::Effect(Py<PyAny>)`. Delete `Yielded::Program` variant.
 - State/Reader/Writer handler impls: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyGet>` etc.
-- Scheduler handler impl: Rewrite `start()` to downcast scheduler effect pyclasses.
+- Scheduler handler impl: See SPEC-SCHED-001 for effect pyclasses and handler implementation.
 - KPC handler impl: Rewrite `start()` to downcast `Py<PyAny>` → `PyRef<PyKPC>`. Handler reads `kleisli_source` to compute auto-unwrap strategy from annotations at dispatch time. Strategy computation is handler-internal — different KPC handlers may use different strategies.
 - Python side: `doeff/types.py` or wherever `EffectBase` is defined — delete Python class, import from `doeff_vm` instead. Same for any Python-side DoCtrl bases. [R13-D: DoThunkBase deleted — no third base.] Delete Python `KleisliProgramCall` class — replace with `PyKPC` imported from `doeff_vm`. Delete `_AutoUnwrapStrategy` from `KleisliProgramCall` — it moves into the KPC handler.
 
@@ -175,8 +175,8 @@ enum has exactly two variants: `RustProgram` and `Python`.
 - Algebraic effects principle: "handlers give meaning to effects"
 - Users can intercept, override, or replace any effect (logging, persistence, testing)
 - Single dispatch path simplifies spec and implementation
-- Rust-native handlers (state, reader, writer, scheduler) are an **optimization**,
-  not a protocol difference — they implement the same `RustProgramHandler` trait
+- Rust-native handlers (state, reader, writer, and the scheduler per SPEC-SCHED-001)
+  are an **optimization**, not a protocol difference — they implement the same `RustProgramHandler` trait
 - No hard-coded effect→handler matching; each handler's `can_handle()` decides
 
 **Performance**: Rust-native handlers avoid Python calls and GIL acquisition.
@@ -211,7 +211,7 @@ def my_program():
     return result
 ```
 
-**Built-in Scheduler (Explicit)**:
+**Built-in Scheduler (Explicit, see SPEC-SCHED-001)**:
 ```python
 from doeff.handlers import scheduler
 result = run(my_program(), handlers=[scheduler, state, reader, writer])
@@ -286,7 +286,7 @@ result = run(my_program(), handlers=[scheduler, state, reader, writer])
 **Decision**: The `Handler` enum has exactly two variants: `RustProgram` and
 `Python`. The former `Handler::Stdlib` variant is removed. State, Reader, and
 Writer handlers become `RustProgramHandler` implementations — the same trait
-the scheduler already uses.
+the scheduler (SPEC-SCHED-001) already uses.
 
 **Rationale**:
 - `Handler::Stdlib` had a separate dispatch path: hard-coded `can_handle()` matching,
@@ -297,7 +297,7 @@ the scheduler already uses.
   mid-handler (the `Modify` modifier callback).
 - Unifying to two variants means one dispatch path, one matching mechanism
   (`can_handle()`), and one handler-invocation protocol per variant.
-- The scheduler is already a `RustProgram` handler and works correctly. State, Reader,
+- The scheduler (SPEC-SCHED-001) is already a `RustProgram` handler. State, Reader,
   and Writer are simpler — they're a subset of what the scheduler does.
 
 **What is deleted**: `StdlibHandler` enum, `HandlerAction` enum,
@@ -410,7 +410,7 @@ Handlers (Rust or Python) receive continuations explicitly. There is one
 handler protocol with two implementations:
 
 ```rust
-// Rust handler (generator-like, used by state/reader/writer/scheduler)
+// Rust handler (generator-like, used by state/reader/writer/scheduler per SPEC-SCHED-001)
 trait RustHandlerProgram {
     fn start(&mut self, effect: Effect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
@@ -464,17 +464,13 @@ pub struct DispatchId(u64);
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct CallbackId(u32);
 
-/// [Q11] Unique identifier for scheduler runnables (spawned tasks)
+/// [Q11] Unique identifier for spawned tasks (see SPEC-SCHED-001)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct RunnableId(u64);
+pub struct TaskId(pub u64);
 
-/// [Q11] Unique identifier for scheduler tasks
+/// [Q11] Unique identifier for promises (see SPEC-SCHED-001)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct TaskId(u64);
-
-/// [Q11] Unique identifier for scheduler promises
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct PromiseId(u64);
+pub struct PromiseId(pub u64);
 
 impl Marker {
     pub fn fresh() -> Self {
@@ -680,7 +676,7 @@ pub struct Continuation {
     
     /// Which dispatch created this (for completion detection).
     /// RULE: Only callsite continuations (k_user) have Some here.
-    /// Handler-local and scheduler continuations have None.
+    /// Handler-local continuations have None.
     pub dispatch_id: Option<DispatchId>,
     
     /// Whether this continuation is already started.
@@ -788,14 +784,14 @@ pub enum Value {
     /// Handler list (innermost first)
     Handlers(Vec<Handler>),
 
-    /// Task handle (scheduler)
-    Task(TaskHandle),
+    /// Task handle (see SPEC-SCHED-001)
+    Task(Py<PyAny>),
 
-    /// Promise handle (scheduler)
-    Promise(PromiseHandle),
+    /// Promise handle (see SPEC-SCHED-001)
+    Promise(Py<PyAny>),
 
-    /// External promise handle (scheduler)
-    ExternalPromise(ExternalPromise),
+    /// External promise handle (see SPEC-SCHED-001)
+    ExternalPromise(Py<PyAny>),
     
     /// Rust unit (for primitives that don't return meaningful values)
     Unit,
@@ -815,7 +811,7 @@ pub enum Value {
     /// [D8] Call stack metadata (returned by GetCallStack)
     CallStack(Vec<CallMetadata>),
     
-    /// [D11] List of values (returned by Gather/try_collect)
+    /// [D11] List of values (e.g. Gather results)
     List(Vec<Value>),
 }
 
@@ -832,9 +828,8 @@ impl Value {
                 }
                 Ok(py_list.into_any())
             }
-            Value::Task(handle) => handle.to_pyobject(py),
-            Value::Promise(handle) => handle.to_pyobject(py),
-            Value::ExternalPromise(handle) => handle.to_pyobject(py),
+            Value::Task(obj) | Value::Promise(obj) | Value::ExternalPromise(obj)
+                => Ok(obj.bind(py).clone()),
             Value::Unit => Ok(py.None().into_bound(py)),
             Value::Int(i) => Ok(i.into_pyobject(py)?.into_any()),
             Value::String(s) => Ok(s.into_pyobject(py)?.into_any()),
@@ -849,8 +844,6 @@ impl Value {
         if obj.is_none() {
             return Value::None;
         }
-        // Scheduler handle wrappers are left as Value::Python; effect extraction
-        // is responsible for decoding them when needed.
         // Check bool before int (bool is subclass of int in Python)
         if let Ok(b) = obj.extract::<bool>() {
             return Value::Bool(b);
@@ -919,51 +912,11 @@ pub struct PyTell {
 
 #### Scheduler Effects
 
-```rust
-/// Spawn a concurrent task.
-#[pyclass(frozen, name = "Spawn")]
-pub struct PySpawn {
-    #[pyo3(get)] pub program: PyObject,
-    #[pyo3(get)] pub handlers: PyObject,  // list of handlers
-    #[pyo3(get)] pub store_mode: PyObject, // StoreMode enum or None (default: Shared)
-}
-
-/// Gather results from multiple waitables.
-#[pyclass(frozen, name = "Gather")]
-pub struct PyGather {
-    #[pyo3(get)] pub items: PyObject,  // list of Task/Promise/ExternalPromise
-}
-
-/// Race multiple waitables, return first.
-#[pyclass(frozen, name = "Race")]
-pub struct PyRace {
-    #[pyo3(get)] pub futures: PyObject,
-}
-
-#[pyclass(frozen, name = "CreatePromise")]
-pub struct PyCreatePromise;
-
-#[pyclass(frozen, name = "CreateExternalPromise")]
-pub struct PyCreateExternalPromise;
-
-#[pyclass(frozen, name = "CompletePromise")]
-pub struct PyCompletePromise {
-    #[pyo3(get)] pub promise: PyObject,
-    #[pyo3(get)] pub value: PyObject,
-}
-
-#[pyclass(frozen, name = "FailPromise")]
-pub struct PyFailPromise {
-    #[pyo3(get)] pub promise: PyObject,
-    #[pyo3(get)] pub error: PyObject,
-}
-
-#[pyclass(frozen, name = "TaskCompleted")]
-pub struct PyTaskCompleted {
-    #[pyo3(get)] pub task: PyObject,
-    #[pyo3(get)] pub result: PyObject,  // value or error
-}
-```
+> Scheduler effect types (Spawn, Wait, Gather, Race, Cancel, CreatePromise,
+> CompletePromise, FailPromise, CreateExternalPromise, SchedulerYield,
+> TaskCompleted), user-facing handle types (Task, Future, Promise,
+> ExternalPromise, RaceResult), Waitable protocol, and TaskCancelledError
+> are defined in **SPEC-SCHED-001**.
 
 #### User-defined effects
 
@@ -1576,438 +1529,15 @@ impl RustHandlerProgram for WriterHandlerProgram {
 }
 ```
 
-### Built-in Scheduler Handler (Rust, Explicit Installation)
+### Built-in Scheduler Handler
 
-This is a built-in Rust program handler that implements cooperative scheduling for
-Spawn/Race/Gather/Task/Promise/ExternalPromise using **Transfer-only** semantics.
-It is **not** auto-installed; users must install it explicitly via `WithHandler`.
-It can be replaced by custom Python or Rust handlers.
-The VM ships this as the default scheduler implementation (explicit installation only).
+> See **SPEC-SCHED-001** for the complete scheduler specification.
 
-Assumptions for the reference implementation:
-- Spawn effects carry the callsite handler chain (`handlers: Vec<Handler>`) so the
-  scheduler can create child continuations without calling `GetHandlers` in Rust.
-- Spawn includes `store_mode` to opt into RustStore isolation.
-- Task/Promise handles are opaque IDs exposed to Python via `Value` variants and
-  PyO3 wrappers.
-- Scheduling decisions **always** yield `DoCtrl::Transfer` to avoid stack growth.
-
-Integration note:
-- Driver `extract_effect` maps built-in Python scheduler classes
-  (Spawn/Gather/Race/Promise/ExternalPromise/...) to `Effect::Scheduler`.
-  Spawn defaults `store_mode` to `StoreMode::Shared` if not specified.
-- `Effect::to_pyobject` maps `Effect::Scheduler` back to Python scheduler objects
-  so Python handlers can intercept or override scheduling.
-
-```rust
-#[derive(Debug, Clone)]
-pub enum SchedulerEffect {
-    Spawn {
-        program: Py<PyAny>,
-        handlers: Vec<Handler>,
-        /// Default is StoreMode::Shared if not specified by the Python effect.
-        store_mode: StoreMode,
-    },
-    Gather {
-        items: Vec<Waitable>,
-    },
-    Race {
-        items: Vec<Waitable>,
-    },
-    CreatePromise,
-    CompletePromise { promise: PromiseId, value: Value },
-    FailPromise { promise: PromiseId, error: PyException },
-    CreateExternalPromise,
-    TaskCompleted { task: TaskId, result: Result<Value, PyException> },
-    /// [D6] Raw Python scheduler effect — classified as Effect::Scheduler for dispatch,
-    /// field extraction deferred to handler start().
-    PythonSchedulerEffect(Py<PyAny>),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct TaskId(u64);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PromiseId(u64);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Waitable {
-    Task(TaskId),
-    Promise(PromiseId),
-    ExternalPromise(PromiseId),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum StoreMode {
-    Shared,
-    /// Isolated RustStore per task (PyStore remains shared).
-    Isolated { merge: StoreMergePolicy },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum StoreMergePolicy {
-    /// Merge only logs (append in Gather items order). State/env changes are not merged.
-    LogsOnly,
-    // Future: add policies for metrics/caches, or custom merges.
-}
-
-#[derive(Debug, Clone)]
-pub enum TaskStore {
-    Shared,
-    Isolated { store: RustStore, merge: StoreMergePolicy },
-}
-
-#[derive(Debug)]
-enum TaskState {
-    Pending { cont: Continuation, store: TaskStore },
-    Done { result: Result<Value, PyException>, store: TaskStore },
-}
-
-#[derive(Debug)]
-enum PromiseState {
-    Pending,
-    Done(Result<Value, PyException>),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TaskHandle {
-    pub id: TaskId,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PromiseHandle {
-    pub id: PromiseId,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ExternalPromise {
-    pub id: PromiseId,
-}
-
-pub struct SchedulerState {
-    ready: VecDeque<TaskId>,
-    tasks: HashMap<TaskId, TaskState>,
-    promises: HashMap<PromiseId, PromiseState>,
-    waiters: HashMap<Waitable, Vec<Continuation>>,
-    next_task: u64,
-    next_promise: u64,
-    current_task: Option<TaskId>,
-}
-
-impl SchedulerState {
-    fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> RustProgramStep {
-        if let Some(task_id) = self.ready.pop_front() {
-            return self.transfer_task(task_id, store);
-        }
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-            continuation: k,
-            value: Value::Unit,
-        }))
-    }
-
-    fn transfer_task(&mut self, task_id: TaskId, store: &mut RustStore) -> RustProgramStep {
-        // Save current store into current task (if isolated) before switching.
-        if let Some(current_id) = self.current_task {
-            self.save_task_store(current_id, store);
-        }
-        self.load_task_store(task_id, store);
-        self.current_task = Some(task_id);
-        // transfer_task should return Transfer to the task continuation.
-        // (implementation omitted in this spec snippet)
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-            continuation: self.task_cont(task_id),
-            value: Value::Unit,
-        }))
-    }
-
-    fn save_task_store(&mut self, task_id: TaskId, store: &RustStore) {
-        let Some(state) = self.tasks.get_mut(&task_id) else { return; };
-        match state {
-            TaskState::Pending { store: TaskStore::Isolated { store: task_store, .. }, .. }
-            | TaskState::Done { store: TaskStore::Isolated { store: task_store, .. }, .. } => {
-                *task_store = store.clone();
-            }
-            _ => {}
-        }
-    }
-
-    fn load_task_store(&mut self, task_id: TaskId, store: &mut RustStore) {
-        let Some(state) = self.tasks.get(&task_id) else { return; };
-        let task_store = match state {
-            TaskState::Pending { store, .. } => store,
-            TaskState::Done { store, .. } => store,
-        };
-        if let TaskStore::Isolated { store: task_store, .. } = task_store {
-            *store = task_store.clone();
-        }
-    }
-
-    fn merge_task_logs(&mut self, task_id: TaskId, store: &mut RustStore) {
-        let Some(state) = self.tasks.get(&task_id) else { return; };
-        let task_store = match state {
-            TaskState::Pending { store, .. } => store,
-            TaskState::Done { store, .. } => store,
-        };
-        if let TaskStore::Isolated { store: task_store, merge: StoreMergePolicy::LogsOnly } =
-            task_store
-        {
-            store.log.extend(task_store.log.iter().cloned());
-        }
-    }
-
-    fn mark_task_done(&mut self, task_id: TaskId, result: Result<Value, PyException>) {
-        let Some(state) = self.tasks.get(&task_id) else { return; };
-        let task_store = match state {
-            TaskState::Pending { store, .. } => store.clone(),
-            TaskState::Done { store, .. } => store.clone(),
-        };
-        self.tasks.insert(task_id, TaskState::Done { result, store: task_store });
-    }
-
-    fn merge_gather_logs(&mut self, items: &[Waitable], store: &mut RustStore) {
-        for item in items {
-            if let Waitable::Task(task_id) = item {
-                self.merge_task_logs(*task_id, store);
-            }
-        }
-    }
-
-    fn task_cont(&self, task_id: TaskId) -> Continuation {
-        // Retrieve task continuation from TaskState (pending only).
-        match self.tasks.get(&task_id) {
-            Some(TaskState::Pending { cont, .. }) => cont.clone(),
-            _ => panic!("task continuation not available"),
-        }
-    }
-
-    // helper methods omitted: try_collect, try_race, wait_on_all, wait_on_any, wake_waiters
-}
-
-#[derive(Clone)]
-pub struct SchedulerHandler {
-    state: Arc<Mutex<SchedulerState>>,
-}
-
-impl SchedulerHandler {
-    pub fn new() -> Self {
-        SchedulerHandler {
-            state: Arc::new(Mutex::new(SchedulerState {
-                ready: VecDeque::new(),
-                tasks: HashMap::new(),
-                promises: HashMap::new(),
-                waiters: HashMap::new(),
-                next_task: 0,
-                next_promise: 0,
-                current_task: None,
-            })),
-        }
-    }
-}
-
-impl RustProgramHandler for SchedulerHandler {
-    fn can_handle(&self, effect: &Effect) -> bool {
-        matches!(effect, Effect::Scheduler(_))
-    }
-
-    fn create_program(&self) -> RustProgramRef {
-        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
-            self.state.clone(),
-        ))))
-    }
-}
-
-#[derive(Debug)]
-enum SchedulerPhase {
-    Idle,
-    SpawnPending {
-        k_user: Continuation,
-        store_mode: StoreMode,
-        store_snapshot: Option<RustStore>,
-    },
-}
-
-pub struct SchedulerProgram {
-    state: Arc<Mutex<SchedulerState>>,
-    phase: SchedulerPhase,
-}
-
-impl SchedulerProgram {
-    pub fn new(state: Arc<Mutex<SchedulerState>>) -> Self {
-        SchedulerProgram {
-            state,
-            phase: SchedulerPhase::Idle,
-        }
-    }
-}
-
-impl RustHandlerProgram for SchedulerProgram {
-    fn start(
-        &mut self,
-        effect: Effect,
-        k_user: Continuation,
-        store: &mut RustStore,
-    ) -> RustProgramStep {
-        let Effect::Scheduler(effect) = effect else {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
-                effect,
-            }));
-        };
-        match effect {
-            SchedulerEffect::Spawn { program, handlers, store_mode } => {
-                let store_snapshot = match store_mode {
-                    StoreMode::Shared => None,
-                    StoreMode::Isolated { .. } => Some(store.clone()),
-                };
-                self.phase = SchedulerPhase::SpawnPending {
-                    k_user,
-                    store_mode,
-                    store_snapshot,
-                };
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
-                    program,
-                    handlers,
-                }))
-            }
-            SchedulerEffect::TaskCompleted { task, result } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.save_task_store(task, store);
-                state.mark_task_done(task, result);
-                state.wake_waiters(Waitable::Task(task));
-                state.transfer_next_or(k_user, store)
-            }
-            SchedulerEffect::Gather { items } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                if let Some(results) = state.try_collect(&items) {
-                    state.merge_gather_logs(&items, store);
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                        continuation: k_user,
-                        value: results,
-                    }));
-                }
-                state.wait_on_all(&items, k_user.clone());  // [C3-fix] clone before move
-                state.transfer_next_or(k_user, store)
-            }
-            SchedulerEffect::Race { items } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                if let Some(result) = state.try_race(&items) {
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                        continuation: k_user,
-                        value: result,
-                    }));
-                }
-                state.wait_on_any(&items, k_user.clone());  // [C3-fix] clone before move
-                state.transfer_next_or(k_user, store)
-            }
-            SchedulerEffect::CreatePromise => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                let pid = PromiseId(state.next_promise);
-                state.next_promise += 1;
-                state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k_user,
-                    value: Value::Promise(PromiseHandle { id: pid }),
-                }))
-            }
-            SchedulerEffect::CompletePromise { promise, value } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.promises.insert(promise, PromiseState::Done(Ok(value)));
-                state.wake_waiters(Waitable::Promise(promise));
-                state.transfer_next_or(k_user, store)
-            }
-            SchedulerEffect::FailPromise { promise, error } => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state.promises.insert(promise, PromiseState::Done(Err(error)));
-                state.wake_waiters(Waitable::Promise(promise));
-                state.transfer_next_or(k_user, store)
-            }
-            SchedulerEffect::CreateExternalPromise => {
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                let pid = PromiseId(state.next_promise);
-                state.next_promise += 1;
-                state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k_user,
-                    value: Value::ExternalPromise(ExternalPromise { id: pid }),
-                }))
-            }
-        }
-    }
-
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
-        match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
-            SchedulerPhase::SpawnPending { k_user, store_mode, store_snapshot } => {
-                let cont = match value {
-                    Value::Continuation(c) => c,
-                    _ => {
-                        return RustProgramStep::Throw(PyException::type_error(
-                            "expected continuation",
-                        ));
-                    }
-                };
-                let task_store = match store_mode {
-                    StoreMode::Shared => TaskStore::Shared,
-                    StoreMode::Isolated { merge } => {
-                        let Some(store_snapshot) = store_snapshot else {
-                            return RustProgramStep::Throw(PyException::runtime_error(
-                                "missing store snapshot for isolated task",
-                            ));
-                        };
-                        TaskStore::Isolated {
-                            store: store_snapshot,
-                            merge,
-                        }
-                    }
-                };
-                let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                let task_id = TaskId(state.next_task);
-                state.next_task += 1;
-                state.tasks.insert(
-                    task_id,
-                    TaskState::Pending { cont, store: task_store },
-                );
-                state.ready.push_back(task_id);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k_user,
-                    value: Value::Task(TaskHandle { id: task_id }),
-                }))
-            }
-            SchedulerPhase::Idle => RustProgramStep::Throw(PyException::runtime_error(
-                "Unexpected resume in scheduler",
-            )),
-        }
-    }
-
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
-    }
-}
-```
-
-**Notes**:
-- This handler assumes `Value::Task/Promise/ExternalPromise` variants with
-  `Value::to_pyobject` mappings to PyO3 wrapper classes.
-- Stores are shared by default (RustStore + PyStore). Spawn can request
-  `StoreMode::Isolated` to give the child a RustStore snapshot.
-- PyStore remains shared unless a GIL-aware copy/merge path is added.
-- On Gather, logs from isolated tasks are merged into the current RustStore
-  according to `StoreMergePolicy` (default: append logs).
-- Child programs should be wrapped to emit `TaskCompleted` on return/throw so the
-  scheduler can record results and wake waiters.
-
-### Python API for Scheduler (Explicit)
-
-Users install the built-in scheduler explicitly:
-
-```python
-vm = doeff.VM()
-scheduler = vm.scheduler()  # PyRustProgramHandler
-prog = with_handler(scheduler, user_program())
-result = vm.run(prog)
-```
-
-Spawn can request `store_mode=Isolated` (RustStore snapshot). Gather merges logs
-back into the current RustStore according to `StoreMergePolicy`.
-Standard handlers can be layered inside or outside the scheduler with `with_handler`.
+The built-in scheduler is a `RustProgramHandler` that handles concurrency effects
+(Spawn, Wait, Gather, Race, Cancel, Promise, ExternalPromise). It is **not**
+auto-installed; users install it explicitly via `WithHandler`. It can be replaced
+by custom Python or Rust handlers. All types, state machine, effect handling, and
+implementation details are defined in SPEC-SCHED-001.
 
 ### Python API for Standard Handlers [R8-H]
 
@@ -2282,8 +1812,8 @@ The VM state is organized into three layers with clear separation of concerns:
 3. **PyStore is an escape hatch**: Python handlers can store arbitrary data; VM doesn't read it
 4. **No synchronization**: RustStore and PyStore are independent; no mirroring or sync
 5. **Continuations don't snapshot S**: State is global (no backtracking by default).
-   Stores are shared by default; Spawn may request isolated RustStore with explicit
-   merge policies (PyStore remains shared unless a GIL-aware copy path is added).
+   Spawned tasks get an isolated RustStore snapshot by default (SPEC-SCHED-001).
+   PyStore remains shared unless a GIL-aware copy path is added.
 
 ### Layer 1: Internals (VM-internal, invisible to users)
 
@@ -2303,7 +1833,7 @@ modifiable by user code directly.
 /// Python handlers can access via PyO3-exposed read/write APIs.
 /// 
 /// Key design: Value can hold Py<PyAny>, so Python objects flow through.
-/// StoreMode::Isolated requires RustStore to be cloneable.
+/// SPEC-SCHED-001: isolated store requires RustStore to be cloneable.
 #[derive(Clone)]
 pub struct RustStore {
     /// State for Get/Put/Modify effects
@@ -3281,27 +2811,6 @@ def bad_handler(effect, k_user):
     return (yield Resume(k_user, outer_ret))  # runtime error
 ```
 
-### Scheduler Pattern: Spawn with Transfer (Reference)
-
-User-space schedulers can avoid stack growth without a special primitive by
-returning the task handle via `Transfer` and enqueueing the child continuation.
-
-```
-handler --Transfer--> parent (Task handle)
-queue   --ResumeContinuation--> child (later)
-```
-
-```python
-def spawn_handler(effect, k_user):
-    def program():
-        if isinstance(effect, Spawn):
-            task_k = (yield CreateContinuation(effect.expr, effect.handlers))
-            queue.append(task_k)
-            return (yield Transfer(k_user, Task(task_k)))
-        return (yield Delegate(effect))
-    return program()
-```
-
 ---
 
 ## Driver Loop (PyO3 Side)
@@ -3575,7 +3084,7 @@ Argument conversion uses the same `Value` → Python path as `CallFunc`.
 
 ### Await Effect (Reference)
 
-`Await(awaitable)` is a Python-level effect (see SPEC-EFF-005). The Rust VM
+`Await(awaitable)` is a Python-level effect (see SPEC-EFF-011). The Rust VM
 treats it as `Effect::Python` and dispatches to user handlers.
 
 Two reference handlers are provided:
@@ -3995,6 +3504,15 @@ pub enum DoCtrl {
     Transfer {
         continuation: Continuation,
         value: Value,
+    },
+
+    /// TransferThrow(k, exc) - Tail-transfer with exception (non-returning).
+    /// Like Transfer but throws `exc` into continuation `k` via gen.throw().
+    /// Used by scheduler to deliver errors to waiting continuations
+    /// (e.g., TaskCancelledError, Gather fail-fast). See SPEC-SCHED-001.
+    TransferThrow {
+        continuation: Continuation,
+        exception: PyException,
     },
     
     /// Delegate(effect) - Delegate to outer handler.
@@ -4617,6 +4135,12 @@ impl VM {
                 self.mode = self.handle_transfer(continuation, value);
                 StepEvent::Continue
             }
+            DoCtrl::TransferThrow { continuation, exception } => {
+                // Like handle_transfer but enters Mode::Throw instead of Mode::Value.
+                // Materializes continuation frames then throws exception via gen.throw().
+                self.mode = self.handle_transfer_throw(continuation, exception);
+                StepEvent::Continue
+            }
             DoCtrl::Delegate { effect } => {
                 // Delegate to OUTER handler (advance in SAME dispatch, not new dispatch)
                 self.handle_delegate(effect)
@@ -5013,7 +4537,7 @@ start_dispatch creates:
 
 ```
 dispatch_id is Some IFF continuation is callsite (k_user).
-All other continuations (handler-local, scheduler) have dispatch_id = None.
+All other continuations (handler-local) have dispatch_id = None.
 
 Completion check requires BOTH:
   k.dispatch_id == Some(top.dispatch_id) AND

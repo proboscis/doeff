@@ -76,7 +76,9 @@ async def test_pure_effect_in_composition(parameterized_interpreter):
         greeting = yield Pure(f"Hello, {name}!")
         return greeting
 
-    run_result = await parameterized_interpreter.run_async(composed_program(), env={"name": "World"})
+    run_result = await parameterized_interpreter.run_async(
+        composed_program(), env={"name": "World"}
+    )
 
     assert run_result.is_ok
     assert run_result.value == "Hello, World!"
@@ -85,5 +87,8 @@ async def test_pure_effect_in_composition(parameterized_interpreter):
 def test_pure_effect_immutable():
     effect = PureEffect(value=42)
 
-    with pytest.raises(AttributeError, match=r"can't set attribute|cannot assign to field"):
+    with pytest.raises(
+        AttributeError,
+        match=r"can't set attribute|cannot assign to field|not writable",
+    ):
         effect.value = 100  # type: ignore

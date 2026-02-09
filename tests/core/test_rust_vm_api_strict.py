@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import doeff_vm
 
 from doeff import Program
 from doeff import rust_vm as rust_vm_module
@@ -51,12 +52,20 @@ def test_run_normalizes_top_level_expr(monkeypatch: pytest.MonkeyPatch) -> None:
         captured["store"] = store
         return "ok"
 
-    fake_vm = SimpleNamespace(run=fake_run, state=object(), reader=object(), writer=object())
+    fake_vm = SimpleNamespace(
+        run=fake_run,
+        state=object(),
+        reader=object(),
+        writer=object(),
+        EffectBase=doeff_vm.EffectBase,
+        DoExpr=doeff_vm.DoExpr,
+        Perform=doeff_vm.Perform,
+    )
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
 
     result = rust_vm_module.run(Program.pure(2), handlers=[])
     assert result == "ok"
-    assert hasattr(captured["program"], "to_generator")
+    assert isinstance(captured["program"], doeff_vm.DoExpr)
 
 
 def test_run_rejects_non_program_object(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -66,10 +75,18 @@ def test_run_rejects_non_program_object(monkeypatch: pytest.MonkeyPatch) -> None
         called["run"] = True
         return "ok"
 
-    fake_vm = SimpleNamespace(run=fake_run, state=object(), reader=object(), writer=object())
+    fake_vm = SimpleNamespace(
+        run=fake_run,
+        state=object(),
+        reader=object(),
+        writer=object(),
+        EffectBase=doeff_vm.EffectBase,
+        DoExpr=doeff_vm.DoExpr,
+        Perform=doeff_vm.Perform,
+    )
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
 
-    with pytest.raises(TypeError, match="program must be DoExpr"):
+    with pytest.raises(TypeError, match=r"requires DoExpr\[T\] or EffectValue\[T\]"):
         rust_vm_module.run(object(), handlers=[])
 
     assert called["run"] is False
