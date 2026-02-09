@@ -44,7 +44,7 @@ print(result.env_sources)       # discovered environments
 
 ```python
 from doeff import Program, do, run_program
-from doeff.effects import Ask
+from doeff import Ask
 
 @do
 def greet():
