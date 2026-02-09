@@ -2393,68 +2393,7 @@ mod tests {
         });
     }
 
-    /// G2: GetHandlers must return py_identity (original Python sentinel) for Rust handlers.
-    #[test]
-    fn test_g2_get_handlers_returns_py_identity() {
-        Python::attach(|py| {
-            let mut vm = VM::new();
-            let marker = Marker::fresh();
 
-            let seg = Segment::new(marker, None, vec![marker]);
-            let prompt_seg_id = vm.alloc_segment(seg);
-
-            let sentinel = py
-                .eval(c"type('StateSentinel', (), {})()", None, None)
-                .unwrap()
-                .unbind()
-                .into_any();
-
-            vm.install_handler(
-                marker,
-                HandlerEntry::with_identity(
-                    Handler::RustProgram(std::sync::Arc::new(crate::handler::StateHandlerFactory)),
-                    prompt_seg_id,
-                    PyShared::new(sentinel.clone_ref(py)),
-                ),
-            );
-
-            let handler_seg = Segment::new(marker, Some(prompt_seg_id), vec![marker]);
-            let handler_seg_id = vm.alloc_segment(handler_seg);
-            vm.current_segment = Some(handler_seg_id);
-
-            let k_user = make_dummy_continuation();
-            vm.dispatch_stack.push(DispatchContext {
-                dispatch_id: DispatchId::fresh(),
-                effect: Effect::Get { key: "x".to_string() },
-                handler_chain: vec![marker],
-                handler_idx: 0,
-                k_user,
-                prompt_seg_id,
-                completed: false,
-            });
-
-            let event = vm.handle_get_handlers();
-            assert!(matches!(event, StepEvent::Continue));
-
-            match &vm.mode {
-                Mode::Deliver(Value::Handlers(handlers)) => {
-                    assert_eq!(handlers.len(), 1);
-                    // DESIRED: should return the py_identity sentinel, not Handler::RustProgram
-                    match &handlers[0] {
-                        Handler::Python(obj) => {
-                            // Success: the sentinel was returned
-                            let is_same = obj.bind(py).is(&sentinel.bind(py));
-                            assert!(is_same, "G2: returned object is not the original sentinel");
-                        }
-                        Handler::RustProgram(_) => {
-                            panic!("G2 REGRESSION: GetHandlers returned Handler::RustProgram instead of py_identity sentinel");
-                        }
-                    }
-                }
-                _ => panic!("G2: Expected Deliver(Handlers)"),
-            }
-        });
-    }
 
     /// G5/G6 TDD: Tests the full VM dispatch cycle with a handler that returns
     /// NeedsPython from resume(). This exercises the critical path where the

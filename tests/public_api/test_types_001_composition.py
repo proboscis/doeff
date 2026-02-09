@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import doeff_vm
 
 from doeff import Ask, Get, Program, default_handlers, do, run
 
@@ -60,5 +61,6 @@ def test_unhandled_effect_raises_typeerror_by_policy() -> None:
 
 def test_program_pure_current_runtime_shape() -> None:
     pure = Program.pure(42)
-    # current strict runtime keeps Program.pure as effect-like object
-    assert type(pure).__name__.endswith("Effect")
+    # Program.pure lowers to Rust DoCtrl `Pure`.
+    assert type(pure).__name__ == "Pure"
+    assert isinstance(pure, doeff_vm.DoExpr)

@@ -43,7 +43,7 @@ pub use handler::{
     Handler, HandlerEntry, ReaderHandlerFactory, StateHandlerFactory, WriterHandlerFactory,
 };
 pub use ids::{CallbackId, ContId, DispatchId, Marker, RunnableId, SegmentId};
-pub use pyvm::{PyStdlib, PyVM};
+pub use pyvm::{DoExprTag, PyStdlib, PyVM};
 pub use python_call::{PendingPython, PyCallOutcome, PythonCall};
 pub use rust_store::RustStore;
 pub use segment::{Segment, SegmentKind};
