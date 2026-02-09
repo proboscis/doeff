@@ -1,6 +1,19 @@
 # SPEC-TYPES-001: DoExpr Type Hierarchy — Draft Spec
 
-## Status: WIP Discussion Draft (Rev 10)
+## Status: WIP Discussion Draft (Rev 11)
+
+### Rev 11 changes — Explicit `Perform` boundary (DoExpr control, EffectValue data)
+
+- **DoExpr is control IR only.** Effects are user-space values (`EffectValue`), not
+  DoExpr nodes. Dispatch is represented by explicit `Perform(effect)` DoCtrl.
+- **Source-level compatibility via lowering.** Python UX remains `yield effect`, but
+  lowering inserts `Perform(effect)` before VM evaluation.
+- **`Call` remains canonical invocation node.** No separate `Apply` node is introduced.
+  KPC lowering and handler invocation both target `Call`.
+- **Handler contract clarified.** Handler value is invocation target `(effect, k) -> DoExpr`.
+  If host handler returns an effect value, runtime wraps it to `Perform(effect)`.
+- **Effects remain user-space (including scheduler).** Rust `#[pyclass]` is a runtime
+  representation/perf decision, not language-level builtin status.
 
 ### Rev 10 changes — Binary type hierarchy: DoExpr = DoCtrl | Effect
 
@@ -76,11 +89,24 @@ and have effects auto-unwrap. But this conflates concepts through inheritance:
 3. The Rust VM needs special-case logic for what should be a clean type distinction
 4. Type-level reasoning breaks (an Effect is not a "thunk")
 
-This spec proposes `DoExpr[T]` as the universal base type for everything
-yieldable in `@do` generators. All DoExprs are composable (`map`, `flat_map`,
-`pure`). `Program[T]` is a user-facing alias for `DoExpr[T]`. Two subtypes:
-`DoCtrl` (VM syntax — fixed semantics) and `Effect` (handler dispatch — open
-semantics). See Section 1.1 for the binary type hierarchy.
+This spec defines `DoExpr[T]` as control IR and `EffectValue[T]` as user-space
+effect data. Effects are resolved only via explicit `Perform(effect)` control
+nodes. `Program[T]` remains a user-facing alias for `DoExpr[T]` (control IR).
+Source-level `yield effect` is preserved via lowering to `yield Perform(effect)`.
+
+---
+
+### ADR-T11: Effect data is separate from control dispatch [Rev 11]
+
+**Decision**:
+- Effects are user-space values (`EffectValue`) and not DoExpr nodes.
+- Dispatch is explicit via `DoCtrl::Perform(effect)`.
+- `Call` remains the only invocation IR node; no additional `Apply` node.
+
+**Rationale**:
+- Disambiguates value existence from execution request.
+- Keeps handler semantics precise (`(effect, k) -> DoExpr`).
+- Preserves Python ergonomics through lowering (`yield effect` → `yield Perform(effect)`).
 
 ---
 
@@ -89,8 +115,9 @@ semantics). See Section 1.1 for the binary type hierarchy.
 ### 1.0 Generator as lazy AST [R10]
 
 From the VM's perspective, calling `gen.__next__()` / `gen.send(value)` is
-**parsing the next token from a lazy AST**. Each yielded `DoExpr` is an
-expression node. The VM is the evaluator. The generator IS the program text.
+**parsing the next token from a lazy AST**. Each yielded control token is a
+`DoExpr` node (after lowering, effect values are wrapped by `Perform`).
+The VM is the evaluator. The generator IS the program text.
 
 ```
 gen.__next__()  →  Expr node      (parse next token from AST)
@@ -109,30 +136,40 @@ Where `yield` emits the `expr` node and the generator's internal state
 captures the continuation `λresult. ...`. The VM evaluates `expr`, feeds
 the result back, and the generator produces the next node.
 
-### 1.1 Binary type hierarchy: DoCtrl | Effect [R10]
+### 1.1 Explicit boundary: DoExpr control, EffectValue data [R11]
 
-`DoExpr[T]` is the expression node type — everything yieldable inside a `@do`
-generator. The VM classifies each DoExpr into exactly **two categories**:
+`DoExpr[T]` is the control expression type evaluated by the VM.
+`EffectValue[T]` is user-space operation data. Dispatch is explicit:
 
 ```
 DoExpr[T]
-  ├── DoCtrl[T]    -- syntax (VM evaluates directly)
-  └── Effect[T]    -- data (dispatched to handlers)
+  └── DoCtrl[T]                 -- VM-evaluated control IR
+
+EffectValue[T]                  -- user-space data (open world)
+
+DoCtrl::Perform(effect: EffectValue[T])
+  └── requests handler dispatch for effect
 ```
 
-- **DoCtrl**: The VM **knows how to evaluate** these. Fixed semantics.
-  `Pure(42)` always delivers 42. `Call(f, args)` always evaluates args and
-  invokes f. `Map(expr, f)` always applies f to the result. No user-defined
-  behavior. DoCtrl is the **complete instruction set** of the doeff language.
+- **DoCtrl**: fixed language semantics (`Pure`, `Call`, `Map`, `FlatMap`,
+  `WithHandler`, `Perform`, `Resume`, `Delegate`, ...).
+- **EffectValue**: open user-space payloads (stdlib effects, scheduler effects,
+  KPC, custom effects). The VM does not interpret their fields.
 
-- **Effect**: The VM **doesn't know** what these mean. `Get("x")` means nothing
-  to the VM — it finds a handler and passes the opaque data through. The
-  semantics come from the handler, not the VM. Effects are **extensible
-  operations** — users define new effects by subclassing `EffectBase`.
+Source-level ergonomics are preserved:
 
-The doeff language is: **fixed syntax** (DoCtrl) + **extensible operations**
-(Effect). The VM is the evaluator for the syntax. Handlers are the interpreters
-for the operations.
+```
+yield Ask("k")
+```
+
+is lowered to:
+
+```
+yield Perform(Ask("k"))
+```
+
+So the language model is: fixed control syntax + open effect data, joined by
+`Perform`.
 
 ### 1.2 DoCtrl — the instruction set [R10]
 
@@ -148,6 +185,7 @@ DoCtrl[T] ::=
     | Eval(expr: DoExpr, handlers: [Handler])       -- scoped evaluation
     | Map(source: DoExpr[S], f: S → T)              -- functor map
     | FlatMap(source: DoExpr[S], f: S → DoExpr[T])  -- monadic bind
+    | Perform(effect: EffectValue[T])               -- explicit effect dispatch
 
     -- handler scoping
     | Handle(handler, body: DoExpr[T])              -- WithHandler
@@ -205,14 +243,18 @@ Note: `Map` can be derived from `FlatMap` + `Pure`:
 `x.map(f) ≡ x.flat_map(λv. Pure(f(v)))`. Having `Map` as a separate node is an
 optimization — avoids `Pure` wrapping in the common `.map()` case.
 
-### 1.3 Call is syntax, KleisliProgramCall is an effect
+**`Perform(effect)`** — explicit effect resolution. The VM dispatches `effect`
+through the active handler stack. Effect values are data; only `Perform` causes
+dispatch.
+
+### 1.3 Call is syntax, KleisliProgramCall is effect data
 
 These are at different levels:
 
 | Concept | Type | Who handles | Example |
 |---------|------|-------------|---------|
 | Evaluate args + invoke | `Call(f, args, kwargs, meta)` (DoCtrl) | VM directly | Sequential arg eval, push frame |
-| Resolve @do func args | `KleisliProgramCall` (Effect) | KPC handler | `my_do_func(x, y)` |
+| Resolve @do func args | `Perform(KleisliProgramCall(...))` | KPC handler | `my_do_func(x, y)` |
 
 The VM provides `Call` with sequential arg evaluation as the **correct default**.
 The KPC handler exists to override this default — it can pre-resolve args in
@@ -230,7 +272,7 @@ the VM.
 //                     args are Pure — VM evals trivially
 ```
 
-### 1.4 Why KPC is an effect, not syntax
+### 1.4 Why KPC is effect data, not syntax
 
 Arg resolution scheduling is a **handler concern**:
 
@@ -245,58 +287,54 @@ Arg resolution scheduling is a **handler concern**:
 The handler decides. Different strategies for different contexts.
 Users who want custom resolution install a different KPC handler.
 
-### 1.5 DoExpr, Program, and composability
+### 1.5 DoExpr, Program, EffectValue, and composability
 
-**`DoExpr[T]`** (root type): Everything yieldable inside a `@do` generator.
-"A do-expression." Every DoExpr produces a value `T` when the VM runs it,
-and every DoExpr is composable (`map`, `flat_map`, `pure`). There is
-no yieldable thing that isn't composable — if it returns T, you can `.map()` it.
+**`DoExpr[T]`** is control IR. It is composable (`map`, `flat_map`, `pure`) and
+evaluated by the VM.
 
-**`Program[T]`** = **`DoExpr[T]`** (alias): User-facing name for `DoExpr[T]`.
-Users write `Program[T]` in type hints. Internally it's `DoExpr[T]`.
+**`Program[T]`** is the user-facing alias for `DoExpr[T]`.
+
+**`EffectValue[T]`** is user-space data. It is not directly composable as IR
+until lifted by `Perform`.
 
 ```python
 class DoExpr(Generic[T]):
-    """Root: anything yieldable in @do. Always composable."""
+    """Control expression evaluated by the VM."""
     def map(self, f: Callable[[T], U]) -> DoCtrl[U]:
-        return Map(self, f)          # returns a DoCtrl node
+        return Map(self, f)
     def flat_map(self, f: Callable[[T], DoExpr[U]]) -> DoCtrl[U]:
-        return FlatMap(self, f)      # returns a DoCtrl node
+        return FlatMap(self, f)
     @staticmethod
     def pure(value: T) -> DoCtrl[T]:
-        return Pure(value)           # returns a DoCtrl node
+        return Pure(value)
 
-# User-facing alias
 Program = DoExpr
 ```
 
-`.map()` on **any** DoExpr (Effect or DoCtrl) returns a `Map` DoCtrl. The user
-only sees `Program[T]` (= `DoExpr[T]`) — the concrete subtype doesn't matter.
+Effect lifting rule:
 
-```
-DoExpr[T]  (= Program[T])    ← root: yieldable + composable
-  │
-  ├── DoCtrl[T]               ← VM syntax (fixed semantics)
-  │   ├── Pure[T]
-  │   ├── Call, Eval, Map, FlatMap
-  │   ├── Handle (WithHandler), Resume, Transfer, Delegate
-  │   └── GetHandlers, GetCallStack, ...
-  │
-  └── Effect[T]               ← handler dispatch (open semantics)
-      ├── Ask, Get, Put, Tell, Modify, ...
-      ├── Spawn, Gather, Race, ...
-      ├── KleisliProgramCall
-      └── user-defined effects
+```python
+effect: EffectValue[T]
+expr: DoExpr[T] = Perform(effect)
 ```
 
-| Type | DoExpr | DoCtrl | Effect |
-|------|--------|--------|--------|
-| Pure(value) | yes | **yes** | no |
-| Map(source, f) | yes | **yes** | no |
-| Call(f, args, ...) | yes | **yes** | no |
-| Handle(h, body) | yes | **yes** | no |
-| KleisliProgramCall | yes | no | **yes** |
-| Ask, Get, Put, ... | yes | no | **yes** |
+Source-level sugar:
+
+```python
+yield Ask("key")
+# lowers to
+yield Perform(Ask("key"))
+```
+
+| Type | DoExpr | EffectValue |
+|------|--------|-------------|
+| Pure(value) | **yes** | no |
+| Map(source, f) | **yes** | no |
+| Call(f, args, ...) | **yes** | no |
+| WithHandler(h, expr) | **yes** | no |
+| Perform(effect) | **yes** | no |
+| KleisliProgramCall | no | **yes** |
+| Ask, Get, Put, ... | no | **yes** |
 
 ---
 
@@ -312,59 +350,40 @@ EffectBase(ProgramBase)        ← ALSO has to_generator() (inherits)
 Get  Put  Ask  SpawnEffect ... ← every effect IS-A program
 ```
 
-### Proposed (correct) — DoExpr = DoCtrl | Effect [R10]
+### Proposed (correct) — DoExpr control + EffectValue data [R11]
 
 ```
-DoExpr[T]  (= Program[T])    ← root: yieldable + composable
+DoExpr[T] (= Program[T])       ← control expressions evaluated by VM
   │
-  ├── DoCtrl[T]               ← VM syntax (fixed semantics, VM evaluates directly)
-  │   ├── Pure[T]             ← literal value (replaces PureProgram)
-  │   ├── Call[T]             ← function application (args are DoExpr)
-  │   ├── Eval[T]             ← scoped evaluation
-  │   ├── Map[T]              ← functor (replaces DerivedProgram for .map())
-  │   ├── FlatMap[T]          ← monad bind (replaces DerivedProgram for .flat_map())
-  │   ├── Handle[T]           ← install handler (WithHandler)
-  │   ├── Resume[T]           ← resume continuation
-  │   ├── Transfer[Never]     ← tail-resume (composable vacuously)
-  │   ├── Delegate            ← re-dispatch to outer handler
-  │   ├── GetHandlers, GetCallStack, GetContinuation
-  │   ├── CreateContinuation, ResumeContinuation
-  │   └── PythonAsyncSyntaxEscape
-  │
-  └── Effect[T]               ← handler dispatch (open semantics)
-      ├── Ask[T], Get[T], Put, Tell, Modify, ...
-      ├── Spawn, Gather, Race, ...
-      ├── KleisliProgramCall[T]
-      └── user-defined effects
+  └── DoCtrl[T]
+      ├── Pure[T]
+      ├── Call[T]
+      ├── Eval[T]
+      ├── Map[T]
+      ├── FlatMap[T]
+      ├── WithHandler[T]
+      ├── Perform[T]                 ← explicit effect dispatch
+      ├── Resume[T], Transfer[Never], Delegate
+      ├── GetHandlers/GetCallStack/GetContinuation
+      ├── CreateContinuation/ResumeContinuation
+      └── PythonAsyncSyntaxEscape
+
+EffectValue[T]                 ← user-space operation data (open world)
+  ├── Ask/Get/Put/Tell/Modify/...
+  ├── Spawn/Gather/Race/...
+  ├── KleisliProgramCall[T]
+  └── user-defined effects
 ```
 
-**DoThunk is eliminated [R10].** It was a surface-level concept that `classify_yielded`
-immediately lowered to `DoCtrl::Call`. The VM never processed it as a distinct category.
-Its concrete subtypes are replaced by DoCtrl nodes:
-- `PureProgram(value)` → `Pure(value)` — DoCtrl
-- `DerivedProgram(.map(f))` → `Map(source, f)` — DoCtrl
-- `DerivedProgram(.flat_map(f))` → `FlatMap(source, f)` — DoCtrl
-- `GeneratorProgram(gen_fn)` → `Call(Pure(gen_fn), [], {}, meta)` — DoCtrl
+`DoThunk` remains eliminated [R10].
 
-Every DoExpr is composable. `Program[T]` is a user-facing alias for `DoExpr[T]`.
+Lowering rules [R11]:
+- `yield effect_value` → `yield Perform(effect_value)`
+- handler returns `effect_value` → normalize to `Perform(effect_value)`
+- `run(effect_value)` → normalize to `run(Perform(effect_value))`
 
-The VM handles DoExprs through **two** paths:
-- **DoCtrl path**: VM evaluates directly (no dispatch, no handler involvement)
-- **Effect path**: dispatch through handler stack via `start_dispatch`
-
-Both paths produce a value T, so both support `.map()`:
-
-```python
-@do
-def fetch_user(id: int) -> Program[User]: ...
-
-# Effects — yieldable and composable:
-name_prog = fetch_user(1).map(lambda u: u.name)   # KPC.map → Map (DoCtrl)
-upper_key = Ask("api_key").map(str.upper)          # Effect.map → Map (DoCtrl)
-
-# DoCtrl — also composable:
-result = Handle(h, prog).map(lambda x: x + 1)     # DoCtrl.map → Map (DoCtrl)
-```
+Composability applies to `DoExpr` control expressions.
+Effect values become composable once lifted by `Perform`.
 
 ---
 
@@ -1019,17 +1038,17 @@ CODE-ATTENTION:
 4. Add `Call { f, args, kwargs, metadata }` as a `DoCtrl` variant
 5. Add `Eval { expr, handlers }` as a `DoCtrl` variant
 6. Add `GetCallStack` as a `DoCtrl` variant
-7. Implement metadata extraction in driver's `classify_yielded` with **mandatory KPC effect dispatch**:
-   KPC must classify as `Yielded::Effect(kpc)` and be handled by the KPC handler.
+7. Implement metadata extraction in driver's `classify_yielded` with **mandatory KPC dispatch**:
+   KPC must normalize to `Yielded::DoCtrl(Perform(kpc))` and be handled by the KPC handler.
    Legacy GeneratorProgram objects classify as `DoCtrl::Call(Pure(gen_fn), ...)`.
 8. **REMOVE `Yielded::Program`** — delete the variant from the Rust enum.
-   `classify_yielded` is binary: DoCtrlBase → VM, EffectBase → handler. No fallback path.
+   `classify_yielded` returns DoCtrl; effect values are wrapped as `Perform`.
 
-### Phase B: Introduce binary DoExpr type hierarchy [R10]
+### Phase B: Introduce explicit Perform boundary [R11]
 1. Define `DoExpr[T]` as composable base (map, flat_map, pure)
 2. Define `Program[T]` as user-facing alias for `DoExpr[T]`
 3. Define `DoCtrl[T]` as `DoExpr` + VM syntax (replaces ControlPrimitive AND DoThunk)
-4. Define `Effect[T]` as `DoExpr` + handler dispatch
+4. Define `EffectValue[T]` as user-space data (not DoExpr)
 5. **No `DoThunk[T]`** — eliminated. Its subtypes become DoCtrl nodes:
    - `PureProgram` → `Pure` (DoCtrl)
    - `DerivedProgram` → `Map` / `FlatMap` (DoCtrl)
@@ -1040,15 +1059,15 @@ CODE-ATTENTION:
    VM evaluates args sequentially left-to-right by default
 9. Make `KleisliProgramCall` a `#[pyclass(frozen, extends=PyEffectBase)]` struct in Rust (`PyKPC`)
    with fields: `kleisli_source`, `args`, `kwargs`, `function_name`, `execution_kernel`, `created_at` [Rev 9]
-10. Make all standard effects (Get, Put, Ask, ...) implement `Effect`
-11. `.map()` on any DoExpr returns `Map(source, f)` (DoCtrl) — no generator overhead
-12. `.flat_map()` on any DoExpr returns `FlatMap(source, f)` (DoCtrl) — no generator overhead
+10. Make all standard effects (Get, Put, Ask, ...) implement `EffectValue`
+11. Add `Perform(effect)` DoCtrl node; source-level `yield effect` lowers to `Perform(effect)`
+12. `.map()` / `.flat_map()` are defined on DoExpr control, not raw EffectValue
 13. `DoExpr.pure(value)` returns `Pure(value)` (DoCtrl)
 14. Implement default KPC handler as `RustHandlerProgram` — handler computes auto-unwrap
     strategy from `kleisli_source` annotations at dispatch time. Handler emits `Call` with
     `Pure`-wrapped resolved args [Rev 9, R10]
-15. Update `classify_yielded` to **binary**: DoCtrlBase → VM, EffectBase → handler dispatch.
-    No third category. No `DoThunkBase` check.
+15. Update `classify_yielded` to normalize effect values as `DoCtrl::Perform(effect)`.
+    VM evaluation path remains DoCtrl-only.
 16. Update presets to include KPC handler
 17. Update `@do` decorator — `KleisliProgram.__call__` constructs `PyKPC` (imported from `doeff_vm`)
 18. Delete Python-side `_AutoUnwrapStrategy` from KPC — it moves into the KPC handler [Rev 9]
@@ -1143,24 +1162,24 @@ CODE-ATTENTION:
 8. **`Yielded::Program` is REMOVED (Rev 7).** The variant MUST be deleted from
     the Rust `Yielded` enum. There is no DoThunk category [R10]. All former
     DoThunks are now DoCtrl nodes (`Pure`, `Map`, `FlatMap`, `Call`).
-    `classify_yielded` is binary: DoCtrlBase → VM, EffectBase → handler.
+    `classify_yielded` normalizes effect values as `DoCtrl::Perform(effect)`.
 
-9. **DoExpr[T] = DoCtrl[T] | Effect[T] — binary hierarchy (R10).**
-   The old design had three categories (DoThunk, Effect, DoCtrl). The new
-   design has two — DoCtrl (VM syntax) and Effect (handler data):
+9. **DoExpr[T] is control IR; effects are EffectValue data with explicit Perform (R11).**
+   The old design had DoThunk/Effect/DoCtrl. Rev 10 reduced to binary; Rev 11
+   makes the dispatch boundary explicit with `Perform(effect)`:
 
-   - `DoExpr[T]`: root — yieldable + composable (map, flat_map, pure)
+   - `DoExpr[T]`: control expressions — composable (map, flat_map, pure)
    - `Program[T]`: user-facing alias for `DoExpr[T]`
    - `DoCtrl[T]`: VM syntax — fixed semantics (Pure, Call, Eval, Map, FlatMap,
-     Handle, Resume, Transfer, Delegate, introspection)
-   - `Effect[T]`: handler dispatch — open semantics (user-extensible)
+     Handle, Perform, Resume, Transfer, Delegate, introspection)
+   - `EffectValue[T]`: user-space operation data (user-extensible)
 
    DoThunk is eliminated. Its subtypes become DoCtrl nodes:
    `PureProgram` → `Pure`, `DerivedProgram` → `Map`/`FlatMap`,
    `GeneratorProgram` → `Call(Pure(gen_fn), ...)`.
 
    Every DoExpr produces a value T, so every DoExpr supports `.map()`.
-   There is no non-composable yieldable — if it returns T, you can compose it.
+   EffectValue is composable only after lifting via `Perform(effect)`.
    `Transfer` is `DoCtrl[Never]` (composable vacuously).
 
 10. **Naming conventions (Rev 6, updated R10).** `DoExpr`, `DoCtrl` use the
@@ -1290,20 +1309,20 @@ All tests in this section exercise the **public API surface** (`from doeff impor
 the `run()` / `async_run()` entrypoints. No tests may reach into `doeff_vm` internals, Rust
 source files, or private modules. Tests live in `tests/public_api/`.
 
-### 11.1 Type hierarchy (§1.1, §1.5, §2) [R10]
+### 11.1 Type hierarchy (§1.1, §1.5, §2) [R11]
 
 Tests MUST verify:
 
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
 | TH-01 | `DoExpr` and `DoCtrl` are distinct classes; `DoCtrl` is a subclass of `DoExpr` | §1.1 |
-| TH-02 | `EffectBase` is a subclass of `DoExpr` | §1.1 |
-| TH-03 | `DoCtrl` and `EffectBase` are the only two direct subtype categories of `DoExpr` | §1.1 |
-| TH-04 | `KleisliProgramCall` is an instance of `EffectBase` (not `DoCtrl`) | §1.1, §2 |
+| TH-02 | `EffectBase` is **not** a subclass of `DoExpr` (effects are data values) | §1.1 |
+| TH-03 | `Perform(effect)` is `DoExpr` and is the required lift from EffectValue to control IR | §1.1, §1.2 |
+| TH-04 | `KleisliProgramCall` is an instance of `EffectBase` (EffectValue), not `DoCtrl` | §1.1, §2 |
 | TH-05 | `Pure`, `Map`, `FlatMap`, `Call` are instances of `DoCtrl` | §1.2, §2 |
 | TH-06 | `Pure(value)` is a `DoCtrl` and a `DoExpr` | §1.2 |
-| TH-07 | Effects created via `Ask()`, `Get()`, `Tell()`, `Put()` are `EffectBase` instances | §1.1 |
-| TH-08 | Effects are NOT `DoCtrl` instances (binary separation enforced) | §2 |
+| TH-07 | Effects created via `Ask()`, `Get()`, `Tell()`, `Put()` are `EffectBase` EffectValue instances | §1.1 |
+| TH-08 | Effects are NOT `DoCtrl` instances (value/control separation enforced) | §2 |
 | TH-09 | `Program` is an alias for `DoExpr` (user-facing name) | §1.5 |
 | TH-10 | No `DoThunk` type exists — there is no third category | §2, R10 |
 | TH-12 | No `DoThunk` alias/export exists in public API | §2, R10 |
@@ -1333,7 +1352,7 @@ Tests MUST verify through `run()`:
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
 | KD-01 | `@do` function call creates a `KleisliProgramCall` (not executed immediately) | §4.1 |
-| KD-02 | KPC is dispatched as an effect through the handler stack (requires KPC handler) | §1.2, §1.3 |
+| KD-02 | KPC is dispatched via `Perform(KPC(...))` through the handler stack (requires KPC handler) | §1.2, §1.3 |
 | KD-03 | `run(kpc, handlers=[])` fails (no KPC handler) | §9 Q11 |
 | KD-04 | `run(kpc, handlers=default_handlers())` succeeds (default handlers include KPC) | §4.1 |
 | KD-05 | Plain-typed args (`int`, `str`) auto-unwrap: DoExpr args are resolved before body | §3.3, §3.4 |
@@ -1346,18 +1365,18 @@ Tests MUST verify through `run()`:
 | KD-12 | Kleisli composition `>>` operator produces a composable pipeline | §4.5 |
 | KD-13 | Nested `@do` calls: `@do` function calling another `@do` function resolves correctly | §3.5 |
 
-### 11.4 Composition (§4.7) [R10]
+### 11.4 Composition (§4.7) [R11]
 
 Tests MUST verify:
 
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
-| CP-01 | `effect.map(f)` returns a `Map` (DoCtrl), not an Effect | §4.7 |
+| CP-01 | Effect values do **not** expose `.map()` / `.flat_map()` methods directly | §1.5 |
 | CP-02 | `kpc.map(f)` returns a `Map` (DoCtrl), not a KPC | §4.7 |
-| CP-03 | `effect.flat_map(f)` returns a `FlatMap` (DoCtrl) | §4.7 |
-| CP-04 | Composed effect runs end-to-end: `Ask("key").map(str.upper)` resolves correctly through `run()` | §4.7 |
+| CP-03 | `Perform(effect).flat_map(f)` returns a `FlatMap` (DoCtrl) | §1.2, §4.7 |
+| CP-04 | `run(effect_value)` boundary-lifts to `Perform(effect_value)` and resolves correctly | §1.1, SPEC-009 §1 |
 | CP-05 | Composed KPC runs end-to-end: `my_func(x).map(f)` resolves correctly through `run()` | §4.7 |
-| CP-06 | Chained composition: `effect.map(f).map(g)` composes correctly (nested Map nodes) | §4.7 |
+| CP-06 | Chained composition: `Perform(effect).map(f).map(g)` composes correctly (nested Map nodes) | §4.7 |
 | CP-07 | `flat_map` rejects non-DoExpr return from binder | §4.7 |
 | CP-08 | `DoExpr.pure(value)` creates a `Pure` (DoCtrl) returning that value | §1.2, §1.5 |
 | CP-09 | `Pure(42)` evaluates to 42 through `run()` — no generator overhead | §1.2 |
@@ -1392,7 +1411,7 @@ no silent coercion, no deferred errors.
 
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
-| TV-01 | `run(42)` raises `TypeError` mentioning "DoExpr" and "int" | SPEC-009 §12 |
+| TV-01 | `run(42)` raises `TypeError` mentioning "DoExpr"/"EffectValue" and "int" | SPEC-009 §12 |
 | TV-02 | `run("hello")` raises `TypeError` mentioning "str" | SPEC-009 §12 |
 | TV-03 | `run(lambda: 42)` raises `TypeError` with hint "Did you mean @do?" | SPEC-009 §12 |
 | TV-04 | `run(my_gen_func)` (uncalled) raises `TypeError` with hint "Did you mean to call it?" | SPEC-009 §12 |
@@ -1435,7 +1454,7 @@ no silent coercion, no deferred errors.
 ## References
 
 - SPEC-008: Rust VM internals (handler stacking, busy boundary, visible_handlers)
-- SPEC-009: Public API (Rev 7)
+- SPEC-009: Public API (Rev 8)
 - SPEC-EFF-005: Concurrency effects
 - `doeff/program.py`: Current _AutoUnwrapStrategy, _build_auto_unwrap_strategy,
   _annotation_is_program, _annotation_is_effect implementations
