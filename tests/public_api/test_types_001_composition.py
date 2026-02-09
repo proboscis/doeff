@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Ask, Get, Program, do
-from doeff.rust_vm import default_handlers, run
+from doeff import Ask, Get, Program, default_handlers, do, run
 
 
 def test_effects_do_not_expose_python_side_map_flatmap() -> None:

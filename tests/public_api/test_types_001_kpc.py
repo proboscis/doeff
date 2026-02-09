@@ -7,10 +7,20 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Ask, Get, Program, Put, default_handlers, do, run
-from doeff.kleisli import KleisliProgram
-from doeff.program import GeneratorProgram, KleisliProgramCall, ProgramBase
-from doeff.types import EffectBase
+from doeff import (
+    Ask,
+    EffectBase,
+    GeneratorProgram,
+    Get,
+    KleisliProgram,
+    KleisliProgramCall,
+    Program,
+    ProgramBase,
+    Put,
+    default_handlers,
+    do,
+    run,
+)
 
 
 def _prog(gen_factory):
