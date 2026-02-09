@@ -13,7 +13,7 @@ def _vm() -> Any:
 def _coerce_program(program: Any) -> Any:
     vm = _vm()
 
-    if isinstance(program, (vm.EffectBase, vm.DoCtrlBase)):
+    if isinstance(program, vm.DoExpr):
         return program
 
     if inspect.isgeneratorfunction(program):

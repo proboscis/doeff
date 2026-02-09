@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 
 use crate::frame::CallMetadata;
 use crate::py_shared::PyShared;
-use crate::pyvm::PyEffectBase;
+use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::value::Value;
 
 // ---------------------------------------------------------------------------
@@ -130,40 +130,50 @@ pub struct PyTaskCompleted {
 #[pymethods]
 impl PyGet {
     #[new]
-    fn new(key: String) -> (Self, PyEffectBase) {
-        (PyGet { key }, PyEffectBase)
+    fn new(key: String) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyGet { key })
     }
 }
 
 #[pymethods]
 impl PyPut {
     #[new]
-    fn new(key: String, value: Py<PyAny>) -> (Self, PyEffectBase) {
-        (PyPut { key, value }, PyEffectBase)
+    fn new(key: String, value: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyPut { key, value })
     }
 }
 
 #[pymethods]
 impl PyModify {
     #[new]
-    fn new(key: String, func: Py<PyAny>) -> (Self, PyEffectBase) {
-        (PyModify { key, func }, PyEffectBase)
+    fn new(key: String, func: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyModify { key, func })
     }
 }
 
 #[pymethods]
 impl PyAsk {
     #[new]
-    fn new(key: String) -> (Self, PyEffectBase) {
-        (PyAsk { key }, PyEffectBase)
+    fn new(key: String) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyAsk { key })
     }
 }
 
 #[pymethods]
 impl PyTell {
     #[new]
-    fn new(message: Py<PyAny>) -> (Self, PyEffectBase) {
-        (PyTell { message }, PyEffectBase)
+    fn new(message: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyTell { message })
     }
 }
 
@@ -179,18 +189,17 @@ impl PyKPC {
         execution_kernel: Py<PyAny>,
         created_at: Option<Py<PyAny>>,
         py: Python<'_>,
-    ) -> (Self, PyEffectBase) {
-        (
-            PyKPC {
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyKPC {
                 kleisli_source,
                 args,
                 kwargs,
                 function_name,
                 execution_kernel,
                 created_at: created_at.unwrap_or_else(|| py.None()),
-            },
-            PyEffectBase,
-        )
+            })
     }
 }
 
@@ -208,9 +217,10 @@ impl PySpawn {
         options: Option<Py<PyAny>>,
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
-    ) -> (Self, PyEffectBase) {
-        (
-            PySpawn {
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PySpawn {
                 program,
                 preferred_backend,
                 options: options
@@ -218,9 +228,7 @@ impl PySpawn {
                 handlers: handlers
                     .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
                 store_mode: store_mode.unwrap_or_else(|| py.None()),
-            },
-            PyEffectBase,
-        )
+            })
     }
 }
 
@@ -235,14 +243,13 @@ impl PyGather {
         py: Python<'_>,
         items: Py<PyAny>,
         _partial_results: Option<Py<PyAny>>,
-    ) -> (Self, PyEffectBase) {
-        (
-            PyGather {
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyGather {
                 items,
                 _partial_results: _partial_results.unwrap_or_else(|| py.None()),
-            },
-            PyEffectBase,
-        )
+            })
     }
 }
 
@@ -252,8 +259,10 @@ impl PyRace {
     const __doeff_scheduler_race__: bool = true;
 
     #[new]
-    fn new(futures: Py<PyAny>) -> (Self, PyEffectBase) {
-        (PyRace { futures }, PyEffectBase)
+    fn new(futures: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyRace { futures })
     }
 }
 
@@ -263,8 +272,10 @@ impl PyCreatePromise {
     const __doeff_scheduler_create_promise__: bool = true;
 
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyCreatePromise, PyEffectBase)
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyCreatePromise)
     }
 }
 
@@ -274,8 +285,10 @@ impl PyCompletePromise {
     const __doeff_scheduler_complete_promise__: bool = true;
 
     #[new]
-    fn new(promise: Py<PyAny>, value: Py<PyAny>) -> (Self, PyEffectBase) {
-        (PyCompletePromise { promise, value }, PyEffectBase)
+    fn new(promise: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyCompletePromise { promise, value })
     }
 }
 
@@ -285,8 +298,10 @@ impl PyFailPromise {
     const __doeff_scheduler_fail_promise__: bool = true;
 
     #[new]
-    fn new(promise: Py<PyAny>, error: Py<PyAny>) -> (Self, PyEffectBase) {
-        (PyFailPromise { promise, error }, PyEffectBase)
+    fn new(promise: Py<PyAny>, error: Py<PyAny>) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyFailPromise { promise, error })
     }
 }
 
@@ -296,8 +311,10 @@ impl PyCreateExternalPromise {
     const __doeff_scheduler_create_external_promise__: bool = true;
 
     #[new]
-    fn new() -> (Self, PyEffectBase) {
-        (PyCreateExternalPromise, PyEffectBase)
+    fn new() -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyCreateExternalPromise)
     }
 }
 
@@ -315,17 +332,16 @@ impl PyTaskCompleted {
         handle_id: Option<Py<PyAny>>,
         result: Option<Py<PyAny>>,
         error: Option<Py<PyAny>>,
-    ) -> (Self, PyEffectBase) {
-        (
-            PyTaskCompleted {
+    ) -> PyClassInitializer<Self> {
+        PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyEffectBase)
+            .add_subclass(PyTaskCompleted {
                 task: task.unwrap_or_else(|| py.None()),
                 task_id: task_id.unwrap_or_else(|| py.None()),
                 handle_id: handle_id.unwrap_or_else(|| py.None()),
                 result: result.unwrap_or_else(|| py.None()),
                 error: error.unwrap_or_else(|| py.None()),
-            },
-            PyEffectBase,
-        )
+            })
     }
 }
 

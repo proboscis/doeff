@@ -4,6 +4,7 @@ from importlib import import_module
 
 _ext = import_module("doeff_vm.doeff_vm")
 
+DoExpr = _ext.DoExpr
 EffectBase = _ext.EffectBase
 DoCtrlBase = _ext.DoCtrlBase
 DoThunkBase = getattr(_ext, "DoThunkBase", None)
@@ -72,6 +73,7 @@ __all__ = [
     "Map",
     "FlatMap",
     "DoCtrlBase",
+    "DoExpr",
     "DoThunkBase",
     "EffectBase",
     "PyAsk",

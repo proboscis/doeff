@@ -117,3 +117,11 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
     assert transfer_result.value == "via-transfer"
     assert delegate_seen["is_k"] is True
     assert delegate_result.value == "original"
+
+
+def test_vm_doexpr_hierarchy_is_exposed() -> None:
+    import doeff_vm
+
+    assert hasattr(doeff_vm, "DoExpr")
+    assert issubclass(doeff_vm.EffectBase, doeff_vm.DoExpr)
+    assert issubclass(doeff_vm.DoCtrlBase, doeff_vm.DoExpr)
