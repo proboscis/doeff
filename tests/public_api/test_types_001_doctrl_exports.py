@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from doeff import Ask, Call, Eval, Perform, Pure, ResumeContinuation, run
-from doeff.rust_vm import default_handlers
+from doeff import Ask, Call, Eval, Perform, Pure, ResumeContinuation, default_handlers, run
 
 
 def test_doctrl_exports_are_available() -> None:
