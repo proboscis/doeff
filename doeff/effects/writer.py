@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import doeff_vm
+from doeff.types import ListenResult
+from doeff.utils import BoundedLog
 
 from ._program_types import ProgramLike
 from ._validators import ensure_program_like
@@ -28,8 +30,25 @@ def tell(message: object) -> WriterTellEffect:
     return create_effect_with_trace(WriterTellEffect(message))
 
 
-def listen(sub_program: ProgramLike) -> WriterListenEffect:
-    return create_effect_with_trace(WriterListenEffect(sub_program=sub_program))
+def listen(sub_program: ProgramLike):
+    ensure_program_like(sub_program, name="sub_program")
+
+    from doeff import do
+
+    @do
+    def _listen_program():
+        captured = BoundedLog()
+
+        def handle_listen_tell(effect, k):
+            if isinstance(effect, WriterTellEffect):
+                captured.append(effect.message)
+                return (yield doeff_vm.Resume(k, None))
+            yield doeff_vm.Delegate()
+
+        value = yield doeff_vm.WithHandler(handle_listen_tell, sub_program)
+        return ListenResult(value=value, log=captured)
+
+    return _listen_program()
 
 
 def Tell(message: object) -> Effect:
@@ -41,7 +60,24 @@ Log = Tell
 
 
 def Listen(sub_program: ProgramLike) -> Effect:
-    return create_effect_with_trace(WriterListenEffect(sub_program=sub_program), skip_frames=3)
+    ensure_program_like(sub_program, name="sub_program")
+
+    from doeff import do
+
+    @do
+    def _listen_program():
+        captured = BoundedLog()
+
+        def handle_listen_tell(effect, k):
+            if isinstance(effect, WriterTellEffect):
+                captured.append(effect.message)
+                return (yield doeff_vm.Resume(k, None))
+            yield doeff_vm.Delegate()
+
+        value = yield doeff_vm.WithHandler(handle_listen_tell, sub_program)
+        return ListenResult(value=value, log=captured)
+
+    return _listen_program()
 
 
 def slog(**entries: object) -> WriterTellEffect:

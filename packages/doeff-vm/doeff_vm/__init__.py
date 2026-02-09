@@ -34,6 +34,7 @@ reader = _ext.reader
 writer = _ext.writer
 scheduler = _ext.scheduler
 kpc = _ext.kpc
+concurrent_kpc = _ext.concurrent_kpc
 KleisliProgramCall = _ext.KleisliProgramCall
 CreateContinuation = _ext.CreateContinuation
 GetContinuation = _ext.GetContinuation
@@ -54,6 +55,26 @@ CompletePromiseEffect = _ext.CompletePromiseEffect
 FailPromiseEffect = _ext.FailPromiseEffect
 CreateExternalPromiseEffect = _ext.CreateExternalPromiseEffect
 _SchedulerTaskCompleted = _ext._SchedulerTaskCompleted
+
+# R13-I: DoExprTag constants
+TAG_PURE = _ext.TAG_PURE
+TAG_CALL = _ext.TAG_CALL
+TAG_MAP = _ext.TAG_MAP
+TAG_FLAT_MAP = _ext.TAG_FLAT_MAP
+TAG_WITH_HANDLER = _ext.TAG_WITH_HANDLER
+TAG_PERFORM = _ext.TAG_PERFORM
+TAG_RESUME = _ext.TAG_RESUME
+TAG_TRANSFER = _ext.TAG_TRANSFER
+TAG_DELEGATE = _ext.TAG_DELEGATE
+TAG_GET_CONTINUATION = _ext.TAG_GET_CONTINUATION
+TAG_GET_HANDLERS = _ext.TAG_GET_HANDLERS
+TAG_GET_CALL_STACK = _ext.TAG_GET_CALL_STACK
+TAG_EVAL = _ext.TAG_EVAL
+TAG_CREATE_CONTINUATION = _ext.TAG_CREATE_CONTINUATION
+TAG_RESUME_CONTINUATION = _ext.TAG_RESUME_CONTINUATION
+TAG_ASYNC_ESCAPE = _ext.TAG_ASYNC_ESCAPE
+TAG_EFFECT = _ext.TAG_EFFECT
+TAG_UNKNOWN = _ext.TAG_UNKNOWN
 
 # SPEC-008 names
 PySpawn = SpawnEffect
@@ -116,12 +137,31 @@ __all__ = [
     "GetContinuation",
     "GetHandlers",
     "async_run",
+    "concurrent_kpc",
     "kpc",
     "reader",
     "run",
     "scheduler",
     "state",
     "writer",
+    "TAG_PURE",
+    "TAG_CALL",
+    "TAG_MAP",
+    "TAG_FLAT_MAP",
+    "TAG_WITH_HANDLER",
+    "TAG_PERFORM",
+    "TAG_RESUME",
+    "TAG_TRANSFER",
+    "TAG_DELEGATE",
+    "TAG_GET_CONTINUATION",
+    "TAG_GET_HANDLERS",
+    "TAG_GET_CALL_STACK",
+    "TAG_EVAL",
+    "TAG_CREATE_CONTINUATION",
+    "TAG_RESUME_CONTINUATION",
+    "TAG_ASYNC_ESCAPE",
+    "TAG_EFFECT",
+    "TAG_UNKNOWN",
 ]
 
 if ResultOk is not None:

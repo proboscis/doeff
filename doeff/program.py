@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import inspect
 import types
-from abc import ABC
+from abc import ABC, ABCMeta
 from collections.abc import Callable, Generator, Iterable, Mapping
 from dataclasses import dataclass
 from typing import (
@@ -253,13 +253,36 @@ class DoCtrl(DoExpr[T]):
     pass
 
 
+def _is_rust_program_subclass(subclass: type[Any]) -> bool:
+    try:
+        import doeff_vm
+    except ImportError:
+        return False
+
+    try:
+        return issubclass(subclass, (doeff_vm.DoExpr, doeff_vm.KleisliProgramCall))
+    except TypeError:
+        return False
+
+
+class _ProgramBaseMeta(ABCMeta):
+    def __subclasscheck__(cls, subclass: type[Any]) -> bool:
+        program_base = globals().get("ProgramBase")
+        if program_base is not None and cls is program_base and _is_rust_program_subclass(subclass):
+            return True
+        return super().__subclasscheck__(subclass)
+
+    def __instancecheck__(cls, instance: Any) -> bool:
+        return cls.__subclasscheck__(instance.__class__) or super().__instancecheck__(instance)
+
+
 def _make_generator_program(
     factory: Callable[[], Generator[Effect | Program, Any, T]],
 ) -> GeneratorProgram[T]:
     return _GenProgramThunk(factory)
 
 
-class ProgramBase(DoExpr[T]):
+class ProgramBase(DoExpr[T], metaclass=_ProgramBaseMeta):
     """Runtime base class for all doeff programs (effects and Kleisli calls)."""
 
     def __class_getitem__(cls, item):
@@ -349,9 +372,9 @@ class ProgramBase(DoExpr[T]):
 
     @staticmethod
     def pure(value: T) -> Program[T]:
-        from doeff.effects.pure import PureEffect
+        from doeff_vm import Pure
 
-        return PureEffect(value=value)
+        return Pure(value=value)
 
     @staticmethod
     def of(value: T) -> Program[T]:
@@ -360,8 +383,11 @@ class ProgramBase(DoExpr[T]):
     @staticmethod
     def lift(value: Program[U] | U) -> Program[U]:
         from doeff.types import EffectBase
+        from doeff_vm import DoExpr
 
         if isinstance(value, ProgramBase):
+            return value  # type: ignore[return-value]
+        if isinstance(value, DoExpr):
             return value  # type: ignore[return-value]
         if isinstance(value, EffectBase):
             from doeff.rust_vm import Perform

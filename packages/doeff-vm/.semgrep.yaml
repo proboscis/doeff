@@ -142,3 +142,141 @@ rules:
       category: spec-enforcement
       spec: SPEC-008
       invariants: ["ADR-13"]
+
+  # ---------------------------------------------------------------------------
+  # R13-I: GIL-free tag dispatch enforcement
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-doctrl-base-must-have-tag
+    pattern-regex: 'pub struct PyDoCtrlBase\s*;'
+    message: |
+      SPEC VIOLATION (R13-I): PyDoCtrlBase must have a `tag: u8` field for
+      GIL-free tag dispatch. Empty unit struct `PyDoCtrlBase;` is not allowed.
+
+      Use: pub struct PyDoCtrlBase { pub tag: u8 }
+
+      See: SPEC-008 R13-I
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R13-I"]
+
+  - id: doeff-vm-effect-base-must-have-tag
+    pattern-regex: 'pub struct PyEffectBase\s*;'
+    message: |
+      SPEC VIOLATION (R13-I): PyEffectBase must have a `tag: u8` field for
+      GIL-free tag dispatch. Empty unit struct `PyEffectBase;` is not allowed.
+
+      Use: pub struct PyEffectBase { pub tag: u8 }
+
+      See: SPEC-008 R13-I
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R13-I"]
+
+  - id: doeff-vm-no-isinstance-chain-in-classify
+    pattern-regex: '(?s)fn classify_yielded\b.*?extract::<PyRef.*?extract::<PyRef.*?extract::<PyRef'
+    message: |
+      SPEC VIOLATION (R13-I): classify_yielded contains 3+ sequential
+      extract::<PyRef<_>> calls. Use tag-based dispatch instead.
+
+      Read PyDoCtrlBase.tag first, then match on DoExprTag to do a single
+      targeted extract for the specific variant.
+
+      See: SPEC-008 R13-I
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R13-I"]
+
+  - id: doeff-vm-classify-must-read-tag-first
+    pattern-regex: "(?s)fn classify_yielded\\b[^}]*?extract::<PyRef<'_, Py(?:WithHandler|Pure|Call|Map|FlatMap|Perform|Resume)>>[^}]*?extract::<PyRef<'_, PyDoCtrlBase>>"
+    message: |
+      SPEC VIOLATION (R13-I): classify_yielded extracts a concrete variant
+      before extracting PyDoCtrlBase. The tag must be read from PyDoCtrlBase
+      first, then a single targeted extract based on the tag value.
+
+      See: SPEC-008 R13-I
+    languages: [generic]
+    severity: WARNING
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R13-I"]
+
+  - id: doeff-vm-doctrl-constructor-must-set-tag
+    pattern-regex: '\.add_subclass\(PyDoCtrlBase\)'
+    message: |
+      SPEC VIOLATION (R13-I): PyDoCtrlBase constructed without tag field.
+      Every .add_subclass(PyDoCtrlBase) must set the tag field:
+      .add_subclass(PyDoCtrlBase { tag: DoExprTag::Xxx as u8 })
+
+      See: SPEC-008 R13-I
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/pyvm.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R13-I"]
+
+  - id: doeff-vm-effect-constructor-must-set-tag
+    pattern-regex: 'PyClassInitializer::from\(PyEffectBase\)\.'
+    message: |
+      SPEC VIOLATION (R13-I): PyEffectBase constructed without tag field.
+      Every PyClassInitializer::from(PyEffectBase) must set the tag:
+      PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 })
+
+      See: SPEC-008 R13-I
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/effect.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R13-I"]
+
+  # ---------------------------------------------------------------------------
+  # R14-C: Perform lowering enforcement
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-vm-no-yielded-effect-variant
+    pattern-regex: 'Yielded::Effect'
+    message: |
+      SPEC VIOLATION (R14-C): Yielded::Effect variant must not exist.
+      All bare effects must be lowered to Perform(effect) at the IR boundary.
+      classify_yielded wraps bare EffectBase instances as DoCtrl::Perform.
+
+      See: SPEC-008 R14-C
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "**/doeff-vm/src/yielded.rs"
+    metadata:
+      category: spec-enforcement
+      spec: SPEC-008
+      invariants: ["R14-C"]

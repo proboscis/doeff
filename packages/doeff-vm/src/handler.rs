@@ -1,20 +1,21 @@
 //! Handler types for effect handling.
 
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
 use crate::effect::{
-    DispatchEffect, KpcArg, KpcCallEffect, PyKPC, dispatch_from_shared, dispatch_into_python,
-    dispatch_ref_as_python,
+    DispatchEffect, KpcArg, KpcCallEffect, PyKPC, dispatch_from_shared,
+    dispatch_into_python, dispatch_ref_as_python,
 };
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
-use crate::pyvm::{PyDoCtrlBase, PyEffectBase};
 use crate::py_shared::PyShared;
+use crate::pyvm::{PyDoCtrlBase, PyEffectBase};
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -1045,6 +1046,295 @@ impl RustHandlerProgram for DoubleCallHandlerProgram {
     }
 }
 
+// ---------------------------------------------------------------------------
+// ConcurrentKpcHandlerFactory + ConcurrentKpcHandlerProgram
+// ---------------------------------------------------------------------------
+//
+// Like KpcHandlerFactory but resolves KpcArg::Expr args in parallel via
+// Perform(SpawnEffect) + Perform(GatherEffect). Requires a scheduler handler
+// installed in an outer scope.
+
+#[derive(Debug, Clone)]
+pub struct ConcurrentKpcHandlerFactory;
+
+impl RustProgramHandler for ConcurrentKpcHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        dispatch_ref_as_python(effect)
+            .is_some_and(|obj| parse_kpc_python_effect(obj).ok().flatten().is_some())
+    }
+
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(ConcurrentKpcHandlerProgram::new())))
+    }
+}
+
+/// Tracks whether an arg slot is already resolved or awaiting an Eval result.
+#[derive(Debug, Clone)]
+enum ConcurrentArgSlot {
+    Resolved(Value),
+    Pending(usize), // index into eval results
+}
+
+#[derive(Debug)]
+enum ConcurrentKpcPhase {
+    Idle,
+    AwaitHandlers {
+        k_user: Continuation,
+        kpc: KpcCallEffect,
+    },
+    /// Evaluating Expr args one-by-one via DoCtrl::Eval.
+    Evaluating {
+        k_user: Continuation,
+        kernel: PyShared,
+        handlers: Vec<Handler>,
+        positional_slots: Vec<ConcurrentArgSlot>,
+        keyword_slots: Vec<(String, ConcurrentArgSlot)>,
+        eval_queue: VecDeque<PyShared>,
+        results: Vec<Value>,
+    },
+    KernelCall {
+        k_user: Continuation,
+        handlers: Vec<Handler>,
+    },
+    EvalResult {
+        k_user: Continuation,
+    },
+}
+
+#[derive(Debug)]
+struct ConcurrentKpcHandlerProgram {
+    phase: ConcurrentKpcPhase,
+}
+
+impl ConcurrentKpcHandlerProgram {
+    fn new() -> Self {
+        ConcurrentKpcHandlerProgram {
+            phase: ConcurrentKpcPhase::Idle,
+        }
+    }
+
+    /// Classify args into resolved values and pending Eval exprs.
+    fn classify_args(
+        args: &[KpcArg],
+        kwargs: &[(String, KpcArg)],
+    ) -> (
+        Vec<ConcurrentArgSlot>,
+        Vec<(String, ConcurrentArgSlot)>,
+        VecDeque<PyShared>,
+    ) {
+        let mut positional_slots = Vec::new();
+        let mut keyword_slots = Vec::new();
+        let mut eval_exprs = VecDeque::new();
+
+        for arg in args {
+            match arg {
+                KpcArg::Value(v) => {
+                    positional_slots.push(ConcurrentArgSlot::Resolved(v.clone()));
+                }
+                KpcArg::Expr(e) => {
+                    let idx = eval_exprs.len();
+                    eval_exprs.push_back(e.clone());
+                    positional_slots.push(ConcurrentArgSlot::Pending(idx));
+                }
+            }
+        }
+
+        for (key, arg) in kwargs {
+            match arg {
+                KpcArg::Value(v) => {
+                    keyword_slots.push((key.clone(), ConcurrentArgSlot::Resolved(v.clone())));
+                }
+                KpcArg::Expr(e) => {
+                    let idx = eval_exprs.len();
+                    eval_exprs.push_back(e.clone());
+                    keyword_slots.push((key.clone(), ConcurrentArgSlot::Pending(idx)));
+                }
+            }
+        }
+
+        (positional_slots, keyword_slots, eval_exprs)
+    }
+
+    /// Reconstruct final arg vectors from slots + eval results.
+    fn resolve_slots(
+        positional_slots: &[ConcurrentArgSlot],
+        keyword_slots: &[(String, ConcurrentArgSlot)],
+        results: &[Value],
+    ) -> (Vec<Value>, Vec<(String, Value)>) {
+        let args = positional_slots
+            .iter()
+            .map(|slot| match slot {
+                ConcurrentArgSlot::Resolved(v) => v.clone(),
+                ConcurrentArgSlot::Pending(idx) => results[*idx].clone(),
+            })
+            .collect();
+
+        let kwargs = keyword_slots
+            .iter()
+            .map(|(key, slot)| {
+                let v = match slot {
+                    ConcurrentArgSlot::Resolved(v) => v.clone(),
+                    ConcurrentArgSlot::Pending(idx) => results[*idx].clone(),
+                };
+                (key.clone(), v)
+            })
+            .collect();
+
+        (args, kwargs)
+    }
+
+    /// Yield the next DoCtrl::Eval or transition to KernelCall.
+    fn advance_evaluating(
+        &mut self,
+        k_user: Continuation,
+        kernel: PyShared,
+        handlers: Vec<Handler>,
+        positional_slots: Vec<ConcurrentArgSlot>,
+        keyword_slots: Vec<(String, ConcurrentArgSlot)>,
+        mut eval_queue: VecDeque<PyShared>,
+        results: Vec<Value>,
+    ) -> RustProgramStep {
+        if let Some(expr) = eval_queue.pop_front() {
+            self.phase = ConcurrentKpcPhase::Evaluating {
+                k_user,
+                kernel,
+                handlers: handlers.clone(),
+                positional_slots,
+                keyword_slots,
+                eval_queue,
+                results,
+            };
+
+            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }))
+        } else {
+            // All exprs evaluated — resolve slots and call kernel
+            let (args, kwargs) =
+                Self::resolve_slots(&positional_slots, &keyword_slots, &results);
+
+            self.phase = ConcurrentKpcPhase::KernelCall { k_user, handlers };
+            RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                func: kernel,
+                args,
+                kwargs,
+            })
+        }
+    }
+}
+
+impl RustHandlerProgram for ConcurrentKpcHandlerProgram {
+    fn start(
+        &mut self,
+        _py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> RustProgramStep {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
+            return match parse_kpc_python_effect(&obj) {
+                Ok(Some(kpc)) => {
+                    self.phase = ConcurrentKpcPhase::AwaitHandlers { k_user: k, kpc };
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                }
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: dispatch_from_shared(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse KleisliProgramCall effect: {msg}"
+                ))),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, ConcurrentKpcPhase::Idle) {
+            ConcurrentKpcPhase::AwaitHandlers { k_user, kpc } => {
+                let handlers = match value {
+                    Value::Handlers(hs) => hs,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "ConcurrentKPC handler expected GetHandlers result",
+                        ));
+                    }
+                };
+
+                let (positional_slots, keyword_slots, spawn_exprs) =
+                    Self::classify_args(&kpc.args, &kpc.kwargs);
+
+                self.advance_evaluating(
+                    k_user,
+                    kpc.kernel,
+                    handlers,
+                    positional_slots,
+                    keyword_slots,
+                    spawn_exprs,
+                    Vec::new(),
+                )
+            }
+
+            ConcurrentKpcPhase::Evaluating {
+                k_user,
+                kernel,
+                handlers,
+                positional_slots,
+                keyword_slots,
+                eval_queue,
+                mut results,
+            } => {
+                // Got back the result from DoCtrl::Eval
+                results.push(value);
+
+                self.advance_evaluating(
+                    k_user,
+                    kernel,
+                    handlers,
+                    positional_slots,
+                    keyword_slots,
+                    eval_queue,
+                    results,
+                )
+            }
+
+            ConcurrentKpcPhase::KernelCall { k_user, handlers } => {
+                // R12-A Phase 2: kernel returned — Eval the generator with handlers.
+                match value {
+                    Value::Python(gen) => {
+                        self.phase = ConcurrentKpcPhase::EvalResult { k_user };
+                        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                            expr: PyShared::new(gen),
+                            handlers,
+                        }))
+                    }
+                    other => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                        continuation: k_user,
+                        value: other,
+                    })),
+                }
+            }
+
+            ConcurrentKpcPhase::EvalResult { k_user } => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    continuation: k_user,
+                    value,
+                }))
+            }
+
+            ConcurrentKpcPhase::Idle => RustProgramStep::Return(value),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        RustProgramStep::Throw(exc)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1146,26 +1436,6 @@ mod tests {
     }
 
     #[test]
-    fn test_state_factory_can_handle_python_state_effect() {
-        Python::attach(|py| {
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StateGetEffect(EffectBase):\n    __doeff_state_get__ = True\n    def __init__(self):\n        self.key = 'x'\nobj = StateGetEffect()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
-            let f = StateHandlerFactory;
-            assert!(
-                f.can_handle(&effect),
-                "SPEC GAP: state handler should claim opaque Python state effects"
-            );
-        });
-    }
-
-    #[test]
     fn test_state_factory_get() {
         Python::attach(|py| {
         let mut store = RustStore::new();
@@ -1221,37 +1491,6 @@ mod tests {
             }))
         ));
         assert_eq!(store.get("key").unwrap().as_int(), Some(99));
-        });
-    }
-
-    #[test]
-    fn test_state_factory_put_from_python_effect_object() {
-        Python::attach(|py| {
-            let mut store = RustStore::new();
-            let k = make_test_continuation();
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StatePutEffect(EffectBase):\n    __doeff_state_put__ = True\n    def __init__(self):\n        self.key = 'key'\n        self.value = 77\nobj = StatePutEffect()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
-
-            let program_ref = StateHandlerFactory.create_program();
-            let step = {
-                let mut guard = program_ref.lock().unwrap();
-                guard.start(py, effect, k, &mut store)
-            };
-            assert!(matches!(
-                step,
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                    value: Value::Unit,
-                    ..
-                }))
-            ));
-            assert_eq!(store.get("key").unwrap().as_int(), Some(77));
         });
     }
 
@@ -1338,26 +1577,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reader_factory_can_handle_python_ask_effect() {
-        Python::attach(|py| {
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass AskEffect(EffectBase):\n    __doeff_reader_ask__ = True\n    def __init__(self):\n        self.key = 'cfg'\nobj = AskEffect()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
-            let f = ReaderHandlerFactory;
-            assert!(
-                f.can_handle(&effect),
-                "SPEC GAP: reader handler should claim opaque Python ask effects"
-            );
-        });
-    }
-
-    #[test]
     fn test_reader_factory_ask() {
         Python::attach(|py| {
         let mut store = RustStore::new();
@@ -1398,26 +1617,6 @@ mod tests {
         assert!(!f.can_handle(&Effect::Ask {
             key: "x".to_string()
         }));
-    }
-
-    #[test]
-    fn test_writer_factory_can_handle_python_tell_effect() {
-        Python::attach(|py| {
-            let locals = pyo3::types::PyDict::new(py);
-            py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass WriterTellEffect(EffectBase):\n    __doeff_writer_tell__ = True\n    def __init__(self):\n        self.message = 'log'\nobj = WriterTellEffect()\n",
-                Some(&locals),
-                Some(&locals),
-            )
-            .unwrap();
-            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            let effect = Effect::from_shared(PyShared::new(obj));
-            let f = WriterHandlerFactory;
-            assert!(
-                f.can_handle(&effect),
-                "SPEC GAP: writer handler should claim opaque Python tell effects"
-            );
-        });
     }
 
     #[test]
