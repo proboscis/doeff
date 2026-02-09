@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff import Delegate, Resume, WithHandler, default_handlers, run
+from doeff import Delegate, Resume, default_handlers, run
 from doeff_conductor import (
     Commit,
     CreatePR,
@@ -36,22 +36,17 @@ from doeff_conductor.templates import (
 )
 
 
-def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]) -> Any:
-    wrapped = program
-    for effect_type, effect_handler in reversed(list(handlers.items())):
+def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
+    runtime_handlers = []
+    for effect_type, effect_handler in handlers.items():
 
         def typed_handler(effect, k, _effect_type=effect_type, _handler=effect_handler):
             if isinstance(effect, _effect_type):
                 return (yield Resume(k, _handler(effect)))
             yield Delegate()
 
-        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
-    return wrapped
-
-
-def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
-    wrapped = _wrap_with_effect_handlers(program, handlers)
-    return run(wrapped, handlers=default_handlers())
+        runtime_handlers.append(typed_handler)
+    return run(program, handlers=[*default_handlers(), *runtime_handlers])
 
 
 from doeff_conductor.types import (
@@ -553,11 +548,8 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
         program = multi_agent(mock_issue)
         assert program is not None
 
-    def test_multi_agent_effects_include_spawn_and_gather(self, mock_issue: Issue):
-        """Verify multi_agent executes both parallel branches and merge path."""
-        pytest.skip(
-            "multi_agent Spawn/Gather execution path is not available in current runtime setup"
-        )
+    def test_multi_agent_effects_include_branch_and_merge_path(self, mock_issue: Issue):
+        """Verify multi_agent executes both branch paths and merge/finalization."""
         calls: list[str] = []
 
         def handle_create_worktree(effect: CreateWorktree) -> WorktreeEnv:
@@ -642,12 +634,8 @@ class TestMultiAgentTemplate(MockHandlerFixtures):
     ):
         """Run multi_agent template with mocked effects.
 
-        Note: Gather/Spawn are handled by default runtime handlers;
-        this test injects only domain effect handlers.
+        This test injects domain effect handlers using the current runtime handler protocol.
         """
-        pytest.skip(
-            "multi_agent Spawn/Gather execution path is not available in current runtime setup"
-        )
 
         def handle_create_worktree(e):
             return mock_worktree_env
