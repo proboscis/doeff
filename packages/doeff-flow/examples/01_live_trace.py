@@ -21,7 +21,7 @@ from time import sleep
 # Import from doeff_flow
 from doeff_flow import run_workflow, trace_observer
 
-from doeff import do
+from doeff import default_handlers, do, run as run_sync
 from doeff.effects.writer import slog
 
 # =============================================================================
@@ -92,7 +92,6 @@ def example_run_workflow():
 
 def example_trace_observer():
     """Run workflow with trace_observer context manager."""
-    from doeff import run as run_sync
     from doeff_flow.trace import write_terminal_trace
 
     print("=== Example 2: Using trace_observer ===")
@@ -101,7 +100,7 @@ def example_trace_observer():
     # Uses XDG default trace directory
     with trace_observer("example-wf-002") as on_step:
         _ = on_step
-        result = run_sync(main_workflow())
+        result = run_sync(main_workflow(), handlers=default_handlers())
         write_terminal_trace("example-wf-002", None, result)
 
     print(f"\nResult: {result.value}")
@@ -132,29 +131,34 @@ def workflow_b():
     return "B completed"
 
 
+def run_traced_workflow(workflow_factory, workflow_id: str):
+    """Run one workflow and return its ID."""
+    result = run_workflow(workflow_factory(), workflow_id=workflow_id)
+    if not result.is_ok:
+        raise RuntimeError(f"Workflow {workflow_id} failed: {result.error}")
+    return workflow_id
+
+
 def example_multiple_workflows():
     """Run multiple workflows and observe them."""
-    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     print("=== Example 3: Multiple Concurrent Workflows ===")
     print("Run 'doeff-flow watch' or 'doeff-flow ps' in another terminal\n")
 
-    def run_wf(wf, wf_id):
-        # Uses XDG default trace directory
-        run_workflow(wf(), workflow_id=wf_id)
-        print(f"  {wf_id} finished")
-
-    # Start both workflows in threads
-    t1 = threading.Thread(target=run_wf, args=(workflow_a, "multi-wf-a"))
-    t2 = threading.Thread(target=run_wf, args=(workflow_b, "multi-wf-b"))
-
     print("Starting workflows...")
-    t1.start()
-    t2.start()
 
-    t1.join()
-    t2.join()
+    completed_workflows = []
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(run_traced_workflow, workflow_a, "multi-wf-a"),
+            executor.submit(run_traced_workflow, workflow_b, "multi-wf-b"),
+        ]
+        for future in as_completed(futures):
+            completed_workflows.append(future.result())
 
+    for workflow_id in sorted(completed_workflows):
+        print(f"  {workflow_id} finished")
     print("\nAll workflows completed!")
     print()
 

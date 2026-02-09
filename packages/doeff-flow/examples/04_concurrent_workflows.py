@@ -19,7 +19,6 @@ Note: By default, traces are written to ~/.local/state/doeff-flow/ (XDG spec).
 """
 
 import random
-import threading
 import time
 from datetime import datetime
 
@@ -72,7 +71,13 @@ def worker_workflow(worker_id: str, num_tasks: int):
         task_id = f"{worker_id}-task-{i:02d}"
         complexity = random.randint(2, 5)
 
-        yield slog(step="worker", worker_id=worker_id, status="processing", task_id=task_id, complexity=complexity)
+        yield slog(
+            step="worker",
+            worker_id=worker_id,
+            status="processing",
+            task_id=task_id,
+            complexity=complexity,
+        )
         result = yield process_task(task_id, complexity)
         completed_tasks.append(result)
         yield slog(step="worker", worker_id=worker_id, status="completed", task_id=task_id)
@@ -95,40 +100,37 @@ def worker_workflow(worker_id: str, num_tasks: int):
 # =============================================================================
 
 
-def run_worker(worker_id: str, num_tasks: int, results: dict):
-    """Run a single worker in a thread."""
+def run_worker(worker_id: str, num_tasks: int):
+    """Run one worker workflow."""
     result = run_workflow(
         worker_workflow(worker_id, num_tasks),
         workflow_id=f"worker-{worker_id}",
     )
-    results[worker_id] = result
+    return worker_id, result
 
 
 def run_concurrent_workers(num_workers: int, tasks_per_worker: int):
     """Run multiple workers concurrently."""
-    results = {}
-    threads = []
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     print("\n" + "=" * 60)
     print(f"Starting {num_workers} concurrent workers")
     print(f"Each worker will process {tasks_per_worker} tasks")
     print("=" * 60 + "\n")
 
-    # Start all workers
+    # Start workers in parallel and collect completion as they finish
     start_time = datetime.now()
+    results = {}
 
-    for i in range(num_workers):
-        worker_id = f"{i + 1:03d}"
-        t = threading.Thread(
-            target=run_worker,
-            args=(worker_id, tasks_per_worker, results),
-        )
-        threads.append(t)
-        t.start()
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = []
+        for i in range(num_workers):
+            worker_id = f"{i + 1:03d}"
+            futures.append(executor.submit(run_worker, worker_id, tasks_per_worker))
 
-    # Wait for all workers to complete
-    for t in threads:
-        t.join()
+        for future in as_completed(futures):
+            worker_id, result = future.result()
+            results[worker_id] = result
 
     elapsed = (datetime.now() - start_time).total_seconds()
 
