@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import pytest
 
-from doeff import Ask, Delegate, Get, K, Resume, Transfer, WithHandler
+from doeff import Ask, Delegate, Get, K, Perform, Resume, Transfer, WithHandler
 from doeff.do import do
 from doeff.rust_vm import default_handlers, run
 
@@ -60,7 +60,7 @@ def test_withhandler_accepts_rust_effect_expr() -> None:
     def handler(_effect, _k):
         yield Delegate()
 
-    ctrl = WithHandler(handler, Ask("key"))
+    ctrl = WithHandler(handler, Perform(Ask("key")))
     assert type(ctrl).__name__ == "WithHandler"
 
 
@@ -79,7 +79,7 @@ def test_python_handler_receives_k_for_resume() -> None:
         return (yield Resume(k, "override"))
 
     result = run(
-        WithHandler(handler, Ask("x")),
+        WithHandler(handler, Perform(Ask("x"))),
         handlers=default_handlers(),
         env={"x": "original"},
     )
@@ -96,7 +96,7 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
         yield Transfer(k, "via-transfer")
 
     transfer_result = run(
-        WithHandler(transfer_handler, Ask("x")),
+        WithHandler(transfer_handler, Perform(Ask("x"))),
         handlers=default_handlers(),
         env={"x": "original"},
     )
@@ -108,7 +108,7 @@ def test_python_handler_transfer_and_delegate_with_k() -> None:
         yield Delegate()
 
     delegate_result = run(
-        WithHandler(delegate_handler, Ask("x")),
+        WithHandler(delegate_handler, Perform(Ask("x"))),
         handlers=default_handlers(),
         env={"x": "original"},
     )
@@ -123,5 +123,5 @@ def test_vm_doexpr_hierarchy_is_exposed() -> None:
     import doeff_vm
 
     assert hasattr(doeff_vm, "DoExpr")
-    assert issubclass(doeff_vm.EffectBase, doeff_vm.DoExpr)
+    assert not issubclass(doeff_vm.EffectBase, doeff_vm.DoExpr)
     assert issubclass(doeff_vm.DoCtrlBase, doeff_vm.DoExpr)

@@ -13,6 +13,9 @@ def _vm() -> Any:
 def _coerce_program(program: Any) -> Any:
     vm = _vm()
 
+    if isinstance(program, vm.EffectBase):
+        return vm.Perform(program)
+
     if isinstance(program, vm.DoExpr):
         return program
 
@@ -22,9 +25,7 @@ def _coerce_program(program: Any) -> Any:
         raise TypeError("program must be DoExpr; got raw generator. Did you mean to wrap with @do?")
     if callable(program):
         raise TypeError("program must be DoExpr; got callable. Did you mean to call @do function?")
-    raise TypeError(
-        f"run() requires DoExpr[T] (Program, Effect, or DoCtrl), got {type(program).__name__}"
-    )
+    raise TypeError(f"run() requires DoExpr[T] or EffectValue[T], got {type(program).__name__}")
 
 
 def _raise_unhandled_effect_if_present(run_result: Any) -> Any:
@@ -87,6 +88,7 @@ def __getattr__(name: str) -> Any:
         "Pure",
         "Call",
         "Eval",
+        "Perform",
         "Resume",
         "Delegate",
         "Transfer",
@@ -113,6 +115,7 @@ __all__ = [
     "Pure",
     "Call",
     "Eval",
+    "Perform",
     "Resume",
     "Delegate",
     "Transfer",
