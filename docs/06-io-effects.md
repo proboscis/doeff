@@ -231,8 +231,7 @@ def trackable_side_effects():
 Mock IO effects in tests by providing custom handlers:
 
 ```python
-from doeff import run, default_handlers
-from doeff.program import Program
+from doeff import Program, default_handlers, run
 
 # Create a mock IO handler
 def mock_io_handler(effect, k, env, store):
