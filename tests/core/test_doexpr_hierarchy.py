@@ -1,40 +1,53 @@
 from __future__ import annotations
 
 import pytest
+from dataclasses import dataclass
 
-from doeff import Ask, do
-from doeff.program import GeneratorProgram, KleisliProgramCall, ProgramBase
+from doeff import Ask, Program, do
+from doeff.program import KleisliProgramCall
+from doeff.rust_vm import default_handlers, run
+from doeff.types import EffectBase
 
 
 def test_kpc_is_not_thunk_but_is_composable() -> None:
     @do
     def add_one(x: int):
+        if False:
+            yield Ask("unused")
         return x + 1
 
     kpc = add_one(1)
     assert isinstance(kpc, KleisliProgramCall)
     assert not hasattr(kpc, "to_generator")
 
-    mapped = kpc.map(lambda v: v + 1)
-    assert isinstance(mapped, GeneratorProgram)
-    assert isinstance(mapped, ProgramBase)
+    result = run(kpc, handlers=default_handlers())
+    assert result.value == 2
 
 
-def test_effect_map_and_flat_map_return_program() -> None:
+def test_effects_do_not_expose_direct_composition_methods() -> None:
     effect = Ask("token")
 
-    mapped = effect.map(lambda token: str(token).upper())
-    assert isinstance(mapped, GeneratorProgram)
-
-    chained = effect.flat_map(lambda token: Ask(str(token)))
-    assert isinstance(chained, GeneratorProgram)
+    assert not hasattr(effect, "map")
+    assert not hasattr(effect, "flat_map")
 
 
-def test_effect_flat_map_rejects_non_program_effect() -> None:
-    effect = Ask("token")
+def test_program_lift_wraps_effect_with_perform() -> None:
+    lifted = Program.lift(Ask("token"))
+    assert type(lifted).__name__ == "Perform"
 
-    program = effect.flat_map(lambda _token: 123)
-    gen = program.to_generator()
-    next(gen)
-    with pytest.raises(TypeError):
-        gen.send("abc")
+    result = run(lifted, handlers=default_handlers(), env={"token": "abc"})
+    assert result.value == "abc"
+
+
+@dataclass(frozen=True)
+class _LocalEffect(EffectBase):
+    value: int
+
+
+def test_custom_effect_direct_composition_is_deprecated() -> None:
+    effect = _LocalEffect(1)
+
+    with pytest.raises(TypeError, match=r"Perform\(effect\)|Program\.lift\(effect\)"):
+        effect.map(lambda x: x)
+    with pytest.raises(TypeError, match=r"Perform\(effect\)|Program\.lift\(effect\)"):
+        effect.flat_map(lambda x: x)

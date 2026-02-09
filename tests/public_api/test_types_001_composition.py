@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
-
 import pytest
 
 from doeff import Ask, Get, Program, do
@@ -16,26 +14,33 @@ def test_effects_do_not_expose_python_side_map_flatmap() -> None:
     assert not hasattr(Get("x"), "map")
 
 
-def test_kpc_map_returns_rust_map_docontrol() -> None:
+def test_kpc_does_not_expose_effect_level_map_or_flat_map() -> None:
     @do
     def identity(x: int):
         if False:
             yield Ask("unused")
         return x
 
-    mapped = identity(1).map(lambda v: v + 1)
-    assert type(mapped).__name__ == "Map"
+    kpc = identity(1)
+    assert not hasattr(kpc, "map")
+    assert not hasattr(kpc, "flat_map")
 
 
-def test_kpc_flat_map_returns_rust_flatmap_docontrol() -> None:
+def test_kpc_composition_uses_lowered_control_path() -> None:
     @do
     def identity(x: int):
         if False:
             yield Ask("unused")
         return x
 
-    chained = identity(1).flat_map(lambda v: cast(Any, Ask(str(v))))
-    assert type(chained).__name__ == "FlatMap"
+    @do
+    def composed():
+        base = yield identity(1)
+        env = yield Ask("suffix")
+        return f"{base}:{env}"
+
+    result = run(composed(), handlers=default_handlers(), env={"suffix": "ok"})
+    assert result.value == "1:ok"
 
 
 def test_two_gets_returns_tuple_through_run() -> None:

@@ -565,12 +565,15 @@ def _is_rust_effect_subclass(subclass: type[Any]) -> bool:
         return False
 
 
-class _EffectBaseMeta(type(DoExpr)):
+class _EffectBaseMeta(type):
     def __subclasscheck__(cls, subclass: type[Any]) -> bool:
         effect_base = globals().get("EffectBase")
         if effect_base is not None and cls is effect_base and _is_rust_effect_subclass(subclass):
             return True
         return super().__subclasscheck__(subclass)
+
+    def __instancecheck__(cls, instance: Any) -> bool:
+        return cls.__subclasscheck__(instance.__class__) or super().__instancecheck__(instance)
 
 
 @runtime_checkable
@@ -584,12 +587,12 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase(DoExpr, metaclass=_EffectBaseMeta):
+class EffectBase(metaclass=_EffectBaseMeta):
     """Base dataclass implementing :class:`Effect` semantics.
 
-    SPEC-TYPES-001: EffectBase subclasses DoExpr (universal program base).
-    Effects are requests (pure data), not computation thunks.
-    They have no to_generator() — they are yielded directly for dispatch.
+    SPEC-TYPES-001 Rev 11: EffectBase is effect data (EffectValue), not DoExpr.
+    Effects are requests (pure data), not control computations.
+    Dispatch occurs when lifted into control IR via Perform(effect).
     """
 
     created_at: EffectCreationContext | None = field(default=None, compare=False)
@@ -601,51 +604,27 @@ class EffectBase(DoExpr, metaclass=_EffectBaseMeta):
         return replace(self, created_at=created_at)
 
     def map(self, f: Callable[[Any], Any]) -> Program[Any]:
-        if not callable(f):
-            raise TypeError("mapper must be callable")
-
-        from doeff.program import GeneratorProgram
-
-        def factory():
-            value = yield cast(Any, self)
-            return f(value)
-
-        return GeneratorProgram(cast(Any, factory))
+        raise TypeError(
+            "Effect values do not support direct map(); lift with Perform(effect) "
+            "or Program.lift(effect) before composition"
+        )
 
     def flat_map(self, f: Callable[[Any], Any]) -> Program[Any]:
-        if not callable(f):
-            raise TypeError("binder must be callable returning Program/Effect")
-
-        from doeff.program import GeneratorProgram, ProgramBase
-
-        def factory():
-            value = yield cast(Any, self)
-            next_prog = f(value)
-            if not isinstance(next_prog, (ProgramBase, EffectBase)):
-                raise TypeError(
-                    f"binder must return Program/Effect; got {type(next_prog).__name__}"
-                )
-            return (yield cast(Any, next_prog))
-
-        return GeneratorProgram(cast(Any, factory))
+        raise TypeError(
+            "Effect values do not support direct flat_map(); lift with Perform(effect) "
+            "or Program.lift(effect) before composition"
+        )
 
     def and_then_k(self, binder: Callable[[Any], Any]) -> Program[Any]:
-        return self.flat_map(binder)
+        raise TypeError(
+            "Effect values do not support direct and_then_k(); lift with Perform(effect) "
+            "or Program.lift(effect) before composition"
+        )
 
 
 @dataclass(frozen=True, kw_only=True)
 class NullEffect(EffectBase):
     """Placeholder effect for exceptions raised directly (not via yield Fail)."""
-
-
-# Keep Python EffectBase runtime-compatible with Rust base class.
-try:
-    from doeff_vm import EffectBase as _RustEffectBase  # noqa: E402
-
-    if _RustEffectBase not in EffectBase.__bases__:
-        EffectBase.__bases__ = (*EffectBase.__bases__, _RustEffectBase)
-except ImportError:
-    pass
 
 
 # Type alias for generators used in @do functions

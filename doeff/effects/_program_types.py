@@ -14,9 +14,9 @@ if TYPE_CHECKING:
     # result type. ProgramBase is invariant in T, so ProgramBase[object] would
     # reject ProgramBase[str] etc. Using Any avoids this variance issue.
     #
-    # Effect is included because while EffectBase extends ProgramBase, the Effect
-    # protocol is used in some type annotations. At runtime, effects are validated
-    # via isinstance checks against EffectBase (which is a ProgramBase subclass).
+    # Effect is included because effect values are accepted as data at API
+    # boundaries and normalized via Perform(effect). EffectBase is not ProgramBase
+    # under explicit EffectValue/DoExpr separation semantics.
     ProgramLike: TypeAlias = ProgramBase[Any] | Effect
 else:  # pragma: no cover - runtime fallback for type-only alias
     ProgramLike = object  # type: ignore[assignment]

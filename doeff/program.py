@@ -361,8 +361,12 @@ class ProgramBase(DoExpr[T]):
     def lift(value: Program[U] | U) -> Program[U]:
         from doeff.types import EffectBase
 
-        if isinstance(value, (ProgramBase, EffectBase)):
+        if isinstance(value, ProgramBase):
             return value  # type: ignore[return-value]
+        if isinstance(value, EffectBase):
+            from doeff.rust_vm import Perform
+
+            return Perform(value)  # type: ignore[return-value]
         return ProgramBase.pure(value)  # type: ignore[return-value]
 
     @staticmethod
@@ -496,15 +500,7 @@ def _kpc_create_from_kleisli(
     )
 
 
-def _kpc_map(self: Any, f: Callable[[T], U]) -> Program[U]:
-    if not callable(f):
-        raise TypeError("mapper must be callable")
-    from doeff_vm import Map
-
-    return Map(self, f)
-
-
-def _kpc_flat_map(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
+def _kpc_and_then_k(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]:
     if not callable(f):
         raise TypeError("binder must be callable returning Program/Effect")
     from doeff_vm import FlatMap
@@ -513,9 +509,7 @@ def _kpc_flat_map(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[U]
 
 
 setattr(KleisliProgramCall, "create_from_kleisli", classmethod(_kpc_create_from_kleisli))
-setattr(KleisliProgramCall, "map", _kpc_map)
-setattr(KleisliProgramCall, "flat_map", _kpc_flat_map)
-setattr(KleisliProgramCall, "and_then_k", _kpc_flat_map)
+setattr(KleisliProgramCall, "and_then_k", _kpc_and_then_k)
 setattr(KleisliProgramCall, "__doeff_kpc__", True)
 if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
     setattr(
