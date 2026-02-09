@@ -12,12 +12,8 @@ def _vm() -> Any:
 
 def _coerce_program(program: Any) -> Any:
     vm = _vm()
-    from doeff.types import EffectBase
 
-    do_ctrl_base = getattr(vm, "DoCtrlBase", None)
-    is_do_ctrl = do_ctrl_base is not None and isinstance(program, do_ctrl_base)
-
-    if isinstance(program, EffectBase) or is_do_ctrl:
+    if isinstance(program, (vm.EffectBase, vm.DoCtrlBase)):
         return program
 
     if inspect.isgeneratorfunction(program):
@@ -27,7 +23,7 @@ def _coerce_program(program: Any) -> Any:
     if callable(program):
         raise TypeError("program must be DoExpr; got callable. Did you mean to call @do function?")
     raise TypeError(
-        f"program must be DoExpr backed by Rust runtime bases (EffectBase/DoCtrlBase); got {type(program).__name__}"
+        f"run() requires DoExpr[T] (Program, Effect, or DoCtrl), got {type(program).__name__}"
     )
 
 
@@ -88,9 +84,13 @@ def __getattr__(name: str) -> Any:
     if name in {
         "RunResult",
         "WithHandler",
+        "Pure",
+        "Call",
+        "Eval",
         "Resume",
         "Delegate",
         "Transfer",
+        "ResumeContinuation",
         "PythonAsyncSyntaxEscape",
         "K",
         "state",
@@ -110,9 +110,13 @@ __all__ = [
     "default_handlers",
     "RunResult",
     "WithHandler",
+    "Pure",
+    "Call",
+    "Eval",
     "Resume",
     "Delegate",
     "Transfer",
+    "ResumeContinuation",
     "PythonAsyncSyntaxEscape",
     "K",
     "state",

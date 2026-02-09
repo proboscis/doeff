@@ -16,7 +16,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from uuid import UUID, uuid4
 
-from doeff._types_internal import EffectBase
+import doeff_vm
+
 from doeff.effects.base import Effect, create_effect_with_trace
 
 if TYPE_CHECKING:
@@ -103,17 +104,7 @@ class ExternalPromise(Generic[T]):
         self._completion_queue.put((self._id, None, error))
 
 
-@dataclass(frozen=True)
-class CreateExternalPromiseEffect(EffectBase):
-    """Effect to create an ExternalPromise.
-
-    Handled by scheduler to create a promise that can be completed
-    from outside the CESK machine.
-    """
-
-    __doeff_scheduler_create_external_promise__ = True
-
-    pass
+CreateExternalPromiseEffect = doeff_vm.CreateExternalPromiseEffect
 
 
 def CreateExternalPromise() -> Effect:
