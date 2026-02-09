@@ -8,30 +8,30 @@ This specification defines the semantics for Control effects in doeff: `Pure`, `
 
 ---
 
-## Core Design: Effect IS Program
+## Core Design: EffectValue and DoExpr are separated
 
-In doeff, **Effect is a subtype of Program**. This is a deliberate design choice that enables uniform composition:
+In doeff, **Effect is data (EffectValue), not Program control**. Runtime dispatch is explicit through `Perform(effect)`:
 
 ```python
 @do
 def example():
-    x = yield Ask("key")      # Effect IS-A Program
-    y = yield some_kleisli()  # KleisliProgramCall IS-A Program
+    x = yield Ask("key")      # lowered to Perform(Ask("key"))
+    y = yield some_kleisli()   # lowered to Perform(KPC(...))
     return x + y
 ```
 
 **Implications:**
 
-1. **Uniform `yield`**: Both effects and programs are yielded the same way
-2. **Unified `intercept`**: There is ONE `intercept` method on `ProgramBase`, inherited by all effects
-3. **Composable**: Effects can be mapped, flat_mapped, and intercepted like any program
+1. **Uniform `yield` syntax**: Users can `yield Ask(...)`, but runtime lowers to `Perform(effect)`.
+2. **Explicit control IR**: Composition methods (`map`, `flat_map`) live on DoExpr control nodes.
+3. **Effect payload semantics**: Effects are handler payload data, not executable control nodes.
 
 ```python
-# All of these work uniformly:
-Ask("key").map(str.upper)
-Ask("key").intercept(transform)
-some_kleisli().intercept(transform)
-Gather(p1, p2).intercept(transform)
+# Composition/interception on DoExpr control nodes:
+Perform(Ask("key")).map(str.upper)
+some_kleisli().map(str.upper)
+Intercept(Perform(Ask("key")), transform)
+Intercept(some_kleisli(), transform)
 ```
 
 **`intercept` is syntactic sugar:**
