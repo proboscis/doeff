@@ -35,32 +35,6 @@ U = TypeVar("U")
 V = TypeVar("V")
 
 
-class _AutoUnwrapStrategy:
-    """Describe which arguments should be auto-unwrapped for a Kleisli call."""
-
-    __slots__ = ("keyword", "positional", "var_keyword", "var_positional")
-
-    def __init__(self) -> None:
-        self.positional: list[bool] = []
-        self.var_positional: bool | None = None
-        self.keyword: dict[str, bool] = {}
-        self.var_keyword: bool | None = None
-
-    def should_unwrap_positional(self, index: int) -> bool:
-        if index < len(self.positional):
-            return self.positional[index]
-        if self.var_positional is not None:
-            return self.var_positional
-        return True
-
-    def should_unwrap_keyword(self, name: str) -> bool:
-        if name in self.keyword:
-            return self.keyword[name]
-        if self.var_keyword is not None:
-            return self.var_keyword
-        return True
-
-
 def _annotation_text_is_program_kind(annotation_text: str) -> bool:
     if not annotation_text:
         return False
@@ -211,8 +185,31 @@ def _safe_signature(target: Any) -> inspect.Signature | None:
         return None
 
 
-def _build_auto_unwrap_strategy(kleisli: Any) -> _AutoUnwrapStrategy:
-    strategy = _AutoUnwrapStrategy()
+def _build_auto_unwrap_strategy(kleisli: Any) -> Any:
+    class _Strategy:
+        __slots__ = ("keyword", "positional", "var_keyword", "var_positional")
+
+        def __init__(self) -> None:
+            self.positional: list[bool] = []
+            self.var_positional: bool | None = None
+            self.keyword: dict[str, bool] = {}
+            self.var_keyword: bool | None = None
+
+        def should_unwrap_positional(self, index: int) -> bool:
+            if index < len(self.positional):
+                return self.positional[index]
+            if self.var_positional is not None:
+                return self.var_positional
+            return True
+
+        def should_unwrap_keyword(self, name: str) -> bool:
+            if name in self.keyword:
+                return self.keyword[name]
+            if self.var_keyword is not None:
+                return self.var_keyword
+            return True
+
+    strategy = _Strategy()
     signature = getattr(kleisli, "__signature__", None)
     if signature is None:
         signature = _safe_signature(getattr(kleisli, "func", None))

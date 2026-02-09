@@ -9,7 +9,11 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
-use crate::effect::{DispatchEffect, dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python};
+use crate::effect::{
+    DispatchEffect, PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise,
+    PyGather, PyRace, PySpawn, PyTaskCompleted, dispatch_from_shared, dispatch_into_python,
+    dispatch_ref_as_python,
+};
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::handler::{
@@ -150,6 +154,119 @@ fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> b
 fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
+
+        if let Ok(spawn) = obj.extract::<PyRef<'_, PySpawn>>() {
+            let handlers = extract_handlers_from_python(spawn.handlers.bind(py))?;
+            let store_mode = parse_store_mode(spawn.store_mode.bind(py))?;
+            return Ok(Some(SchedulerEffect::Spawn {
+                program: spawn.program.clone_ref(py),
+                handlers,
+                store_mode,
+            }));
+        }
+
+        if let Ok(gather) = obj.extract::<PyRef<'_, PyGather>>() {
+            let mut waitables = Vec::new();
+            for item in gather.items.bind(py).try_iter().map_err(|e| e.to_string())? {
+                let item = item.map_err(|e| e.to_string())?;
+                match extract_waitable(&item) {
+                    Some(w) => waitables.push(w),
+                    None => return Err("GatherEffect.items must be waitable handles".to_string()),
+                }
+            }
+            return Ok(Some(SchedulerEffect::Gather { items: waitables }));
+        }
+
+        if let Ok(race) = obj.extract::<PyRef<'_, PyRace>>() {
+            let mut waitables = Vec::new();
+            for item in race.futures.bind(py).try_iter().map_err(|e| e.to_string())? {
+                let item = item.map_err(|e| e.to_string())?;
+                match extract_waitable(&item) {
+                    Some(w) => waitables.push(w),
+                    None => {
+                        return Err("RaceEffect.futures/items must be waitable handles".to_string());
+                    }
+                }
+            }
+            return Ok(Some(SchedulerEffect::Race { items: waitables }));
+        }
+
+        if obj.extract::<PyRef<'_, PyCreatePromise>>().is_ok() {
+            return Ok(Some(SchedulerEffect::CreatePromise));
+        }
+
+        if obj.extract::<PyRef<'_, PyCreateExternalPromise>>().is_ok() {
+            return Ok(Some(SchedulerEffect::CreateExternalPromise));
+        }
+
+        if let Ok(complete) = obj.extract::<PyRef<'_, PyCompletePromise>>() {
+            let promise_obj = complete.promise.bind(py);
+            let Some(promise) = extract_promise_id(promise_obj) else {
+                return Err(
+                    "CompletePromiseEffect.promise must carry _promise_handle.promise_id"
+                        .to_string(),
+                );
+            };
+            return Ok(Some(SchedulerEffect::CompletePromise {
+                promise,
+                value: Value::from_pyobject(complete.value.bind(py)),
+            }));
+        }
+
+        if let Ok(fail) = obj.extract::<PyRef<'_, PyFailPromise>>() {
+            let promise_obj = fail.promise.bind(py);
+            let Some(promise) = extract_promise_id(promise_obj) else {
+                return Err("FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string());
+            };
+            let error = pyobject_to_exception(py, fail.error.bind(py));
+            return Ok(Some(SchedulerEffect::FailPromise { promise, error }));
+        }
+
+        if let Ok(done) = obj.extract::<PyRef<'_, PyTaskCompleted>>() {
+            let task = {
+                let task_obj = done.task.bind(py);
+                if task_obj.is_none() {
+                    None
+                } else {
+                    extract_task_id(task_obj)
+                }
+            }
+            .or_else(|| {
+                let task_id_obj = done.task_id.bind(py);
+                if task_id_obj.is_none() {
+                    None
+                } else {
+                    task_id_obj.extract::<u64>().ok().map(TaskId::from_raw)
+                }
+            })
+            .ok_or_else(|| {
+                "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id or task_id"
+                    .to_string()
+            })?;
+
+            let error_obj = done.error.bind(py);
+            if !error_obj.is_none() {
+                let error = pyobject_to_exception(py, error_obj);
+                return Ok(Some(SchedulerEffect::TaskCompleted {
+                    task,
+                    result: Err(error),
+                }));
+            }
+
+            let result_obj = done.result.bind(py);
+            if !result_obj.is_none() {
+                return Ok(Some(SchedulerEffect::TaskCompleted {
+                    task,
+                    result: Ok(Value::from_pyobject(result_obj)),
+                }));
+            }
+
+            return Err(
+                "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error"
+                    .to_string(),
+            );
+        }
+
         if is_instance_from(obj, "doeff.effects.spawn", "SpawnEffect") {
                 let program = obj.getattr ("program").map_err(|e| e.to_string())?.unbind();
                 let handlers = if let Ok(handlers_obj) = obj.getattr ("handlers") {
@@ -295,6 +412,9 @@ fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
 }
 
 fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, String> {
+    if obj.is_none() {
+        return Ok(vec![]);
+    }
     let mut handlers = Vec::new();
     for item in obj.try_iter().map_err(|e| e.to_string())? {
         let item = item.map_err(|e| e.to_string())?;
@@ -311,6 +431,9 @@ fn extract_handlers_from_python(obj: &Bound<'_, PyAny>) -> Result<Vec<Handler>, 
 }
 
 fn parse_store_mode(obj: &Bound<'_, PyAny>) -> Result<StoreMode, String> {
+    if obj.is_none() {
+        return Ok(StoreMode::Shared);
+    }
     if let Ok(mode) = obj.extract::<String>() {
         return match mode.to_lowercase().as_str() {
             "shared" => Ok(StoreMode::Shared),

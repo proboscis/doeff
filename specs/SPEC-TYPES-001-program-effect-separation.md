@@ -1418,9 +1418,9 @@ no silent coercion, no deferred errors.
 
 | ID | Requirement | Spec Section |
 |----|-------------|-------------|
-| TV-17 | `WithHandler("not_callable", prog)` raises `TypeError` | SPEC-009 §12 |
+| TV-17 | `WithHandler("not_callable", expr)` raises `TypeError` | SPEC-009 §12 |
 | TV-18 | `WithHandler(handler, 42)` raises `TypeError` mentioning "DoExpr" | SPEC-009 §12 |
-| TV-19 | `WithHandler(handler, prog)` with valid handler+program is accepted | SPEC-009 §12 |
+| TV-19 | `WithHandler(handler, expr)` with valid handler+expr is accepted | SPEC-009 §12 |
 
 #### @do decorator
 

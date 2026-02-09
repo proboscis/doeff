@@ -1,28 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .base import Effect, EffectBase, create_effect_with_trace
+import doeff_vm
+
+from .base import Effect, create_effect_with_trace
 from .spawn import Waitable
 
 if TYPE_CHECKING:
     from doeff.program import ProgramBase
 
 
-@dataclass(frozen=True)
-class GatherEffect(EffectBase):
-    """Effect to gather results from multiple items (Programs or Waitables).
-
-    The `items` field accepts:
-    - ProgramBase: Executed sequentially in sync runtime, concurrently in async
-    - Waitable (Task/Future): Waited on concurrently
-    """
-
-    __doeff_scheduler_gather__ = True
-
-    items: tuple[Any, ...]  # Programs or Waitables
-    _partial_results: tuple[Any, ...] | None = field(default=None, compare=False)
+GatherEffect = doeff_vm.GatherEffect
 
 
 def _validate_gather_items(items: tuple[Any, ...]) -> tuple[Any, ...]:

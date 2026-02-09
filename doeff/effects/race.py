@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
-from .base import Effect, EffectBase, create_effect_with_trace
+import doeff_vm
+
+from .base import Effect, create_effect_with_trace
 from .spawn import Waitable
 
 T = TypeVar("T")
@@ -16,26 +18,26 @@ class RaceResult(Generic[T]):
     rest: tuple[Waitable[T], ...]
 
 
-@dataclass(frozen=True)
-class RaceEffect(EffectBase):
-    __doeff_scheduler_race__ = True
+RaceEffect = doeff_vm.RaceEffect
 
-    futures: tuple[Waitable[Any], ...]
 
-    def __post_init__(self) -> None:
-        if not self.futures:
-            raise ValueError("Race requires at least one Waitable")
-        for i, f in enumerate(self.futures):
-            if not isinstance(f, Waitable):
-                raise TypeError(f"Race argument {i} must be Waitable, got {type(f).__name__}")
+def _validate_race_items(futures: tuple[Waitable[Any], ...]) -> tuple[Waitable[Any], ...]:
+    if not futures:
+        raise ValueError("Race requires at least one Waitable")
+    for i, f in enumerate(futures):
+        if not isinstance(f, Waitable):
+            raise TypeError(f"Race argument {i} must be Waitable, got {type(f).__name__}")
+    return futures
 
 
 def race(*futures: Waitable[Any]) -> RaceEffect:
-    return create_effect_with_trace(RaceEffect(futures=tuple(futures)))
+    validated = _validate_race_items(tuple(futures))
+    return create_effect_with_trace(RaceEffect(validated))
 
 
 def Race(*futures: Waitable[Any]) -> Effect:
-    return create_effect_with_trace(RaceEffect(futures=tuple(futures)), skip_frames=3)
+    validated = _validate_race_items(tuple(futures))
+    return create_effect_with_trace(RaceEffect(validated), skip_frames=3)
 
 
 __all__ = [

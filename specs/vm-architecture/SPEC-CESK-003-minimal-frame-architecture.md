@@ -11,7 +11,7 @@ This spec proposes reducing the Frame system to just two types: `ReturnFrame` an
 The current `WithHandler` mechanism already provides complete algebraic effects capabilities:
 
 ```python
-result = yield WithHandler(handler=my_handler, program=computation)
+result = yield WithHandler(handler=my_handler, expr=computation)
 #        ↑                         ↑                    ↑
 #   final value              effect clause         scoped block
 #   (return clause)          (intercept OUT)       (computation)
@@ -88,7 +88,7 @@ def with_safe(program: Program[T], default: T) -> Program[T]:
     try:
         result = yield WithHandler(
             handler=forward_all_effects,
-            program=program,
+            expr=program,
         )
         return result
     except Exception:
@@ -125,7 +125,7 @@ def with_listen(program: Program[T]) -> Program[tuple[T, list]]:
             return CESKState.with_value(result, ctx.env, ctx.store, ctx.delimited_k)
         return forward()
 
-    result = yield WithHandler(handler=tell_handler, program=program)
+    result = yield WithHandler(handler=tell_handler, expr=program)
     return (result, log)
 ```
 
@@ -154,7 +154,7 @@ def with_local(env_updates: dict, program: Program[T]) -> Program[T]:
             return CESKState.with_value(result, ctx.env, ctx.store, ctx.delimited_k)
         return forward()
 
-    return (yield WithHandler(handler=ask_handler, program=program))
+    return (yield WithHandler(handler=ask_handler, expr=program))
 ```
 
 ### Intercept → `with_intercept()`
@@ -184,7 +184,7 @@ def with_intercept(
             return CESKState.with_value(result, ctx.env, ctx.store, ctx.delimited_k)
         return forward()
 
-    return (yield WithHandler(handler=intercept_handler, program=program))
+    return (yield WithHandler(handler=intercept_handler, expr=program))
 ```
 
 ## Scheduler Effect Implementations
@@ -259,7 +259,7 @@ def with_transaction(program: Program[T]) -> Program[T]:
         return forward(effect)
 
     try:
-        result = yield WithHandler(handler=tx_handler, program=program)
+    result = yield WithHandler(handler=tx_handler, expr=program)
         commit(buffer)
         return result
     except Exception as e:
@@ -277,7 +277,7 @@ def with_timeout(seconds: float, program: Program[T]) -> Program[T]:
             return CESKState.with_value(None, ...)
         return forward(effect)
 
-    return (yield WithHandler(handler=timeout_handler, program=program))
+    return (yield WithHandler(handler=timeout_handler, expr=program))
 ```
 
 ### 3. Clear Separation of Concerns

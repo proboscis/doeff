@@ -451,7 +451,7 @@ Note:
 ─────────────────────────────────────────────────────────────
 ```
 
-### Primitive 4: WithHandler(handler, program) — Install Handler
+### Primitive 4: WithHandler(handler, expr) — Install Handler
 
 **Semantics**: Install handler in registry, create PromptSegment boundary, run program.
 
@@ -1136,7 +1136,7 @@ Nested effects from handler code dispatch to outer handlers only.
 - [ ] Implement consumed_runnable_ids tracking (`S["consumed_runnable_ids"]`)
 
 ### VM Primitives
-- [ ] Implement `WithHandler(handler, program)` — create PromptSegment boundary
+- [ ] Implement `WithHandler(handler, expr)` — create PromptSegment boundary
 - [ ] Implement `Resume(k, v)` — check dispatch_id + cont_id match
 - [ ] Implement `Transfer(k, v)` — scope_chain restored via segment
 - [ ] Implement `ResumeThenTransfer(k_return, v, k_next)` — create RunnableContinuation with runnable_id

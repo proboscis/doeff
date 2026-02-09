@@ -133,7 +133,17 @@ __version__ = "0.1.7"
 capture = capture_graph
 
 # G8: lazy re-exports of VM dispatch primitives from doeff_vm
-_VM_LAZY_EXPORTS = {"WithHandler", "Resume", "Delegate", "Transfer", "K"}
+_VM_LAZY_EXPORTS = {
+    "WithHandler",
+    "Pure",
+    "Call",
+    "Eval",
+    "Resume",
+    "Delegate",
+    "Transfer",
+    "ResumeContinuation",
+    "K",
+}
 
 # G18/G19: Unified types that accept both Rust VM and Python instances.
 # isinstance(rust_ok, doeff.Ok) and isinstance(python_ok, doeff.Ok) both work.
@@ -161,9 +171,7 @@ def _build_unified_types():
 
     unified = {}
     for name in ("Ok", "Err"):
-        candidates = tuple(
-            t for t in (rust_types.get(name), py_types.get(name)) if t is not None
-        )
+        candidates = tuple(t for t in (rust_types.get(name), py_types.get(name)) if t is not None)
         if len(candidates) <= 1:
             unified[name] = candidates[0] if candidates else None
         else:
@@ -248,7 +256,11 @@ __all__ = [
     "Race",
     "RaceResult",
     "Result",
+    "Pure",
+    "Call",
+    "Eval",
     "Resume",
+    "ResumeContinuation",
     "RunResult",
     "Safe",
     "Some",

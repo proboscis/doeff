@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
+import doeff_vm
+
 from doeff._types_internal import EffectBase
 
 T = TypeVar("T")
@@ -153,27 +155,7 @@ class _SchedulerGetCurrentTaskId(EffectBase):
     pass
 
 
-@dataclass(frozen=True, kw_only=True)
-class _SchedulerTaskCompleted(EffectBase):
-    """Spawned task completed - handler intercepts to switch to next task.
-
-    Spawned programs are wrapped to yield this effect instead of returning.
-    The task_scheduler_handler intercepts this, records the result, wakes waiters,
-    and uses ResumeK to switch to the next task.
-
-    Attributes:
-        task_id: The task that completed
-        handle_id: The task's handle for waiter lookup
-        result: The task's return value
-        error: The task's exception (None on success)
-    """
-
-    task_id: Any
-    handle_id: Any
-    result: Any = None
-    error: BaseException | None = None
-
-    __doeff_scheduler_task_completed__ = True
+_SchedulerTaskCompleted = doeff_vm._SchedulerTaskCompleted
 
 
 @dataclass(frozen=True, kw_only=True)

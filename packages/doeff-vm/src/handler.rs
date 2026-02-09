@@ -256,7 +256,15 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
             .map_err(|e| e.to_string())?;
         let kernel = PyShared::new(kernel_obj.unbind());
 
-        let strategy = obj.getattr ("auto_unwrap_strategy").ok();
+        let strategy = obj
+            .getattr("kleisli_source")
+            .ok()
+            .and_then(|kleisli| {
+                py.import("doeff.program")
+                    .ok()
+                    .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
+                    .and_then(|builder| builder.call1((kleisli,)).ok())
+            });
 
         let mut args = Vec::new();
         if let Ok(args_obj) = obj.getattr ("args") {

@@ -4,7 +4,11 @@ use pyo3::exceptions::{PyRuntimeError, PyStopIteration, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple};
 
-use crate::effect::{dispatch_from_shared, dispatch_to_pyobject, PyGet, PyPut, PyModify, PyAsk, PyTell, PyKPC};
+use crate::effect::{
+    dispatch_from_shared, dispatch_to_pyobject, PyAsk, PyCompletePromise, PyCreateExternalPromise,
+    PyCreatePromise, PyFailPromise, PyGather, PyGet, PyKPC, PyModify, PyPut, PyRace, PySpawn,
+    PyTaskCompleted, PyTell,
+};
 #[cfg(test)]
 use crate::effect::Effect;
 use crate::error::VMError;
@@ -457,7 +461,13 @@ impl PyVM {
                 continuation,
             } => {
                 let py_effect = dispatch_to_pyobject(py, &effect)?;
-                let py_k = continuation.to_pyobject(py)?;
+                let py_k = Bound::new(
+                    py,
+                    PyK {
+                        cont_id: continuation.cont_id,
+                    },
+                )?
+                .into_any();
                 match handler.bind(py).call1((py_effect, py_k)) {
                     Ok(result) => {
                         let is_generator = py
@@ -468,6 +478,16 @@ impl PyVM {
                         if is_generator {
                             Ok(PyCallOutcome::Value(Value::Python(result.unbind())))
                         } else {
+                            let is_doexpr_like = result.is_instance_of::<PyKPC>()
+                                || result.is_instance_of::<PyEffectBase>()
+                                || result.is_instance_of::<PyDoCtrlBase>()
+                                || result.is_callable();
+
+                            if !is_doexpr_like {
+                                let gen = self.wrap_return_value_as_generator(py, result.unbind())?;
+                                return Ok(PyCallOutcome::Value(Value::Python(gen)));
+                            }
+
                             match self.to_generator_strict(py, result.unbind()) {
                                 Ok(gen) => Ok(PyCallOutcome::Value(Value::Python(gen))),
                                 Err(e) => Ok(PyCallOutcome::GenError(pyerr_to_exception(py, e)?)),
@@ -547,13 +567,18 @@ impl PyVM {
             return self.wrap_expr_as_generator(py, program);
         }
 
+        if program_bound.is_callable() {
+            let called = program_bound.call0()?;
+            return self.to_generator_strict(py, called.unbind());
+        }
+
         let ty = program_bound
             .get_type()
             .name()
             .map(|n| n.to_string())
             .unwrap_or_else(|_| "<unknown>".to_string());
         Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "program must be DoExpr backed by Rust runtime bases (EffectBase/DoCtrlBase); got {ty}"
+            "program must be DoExpr; got {ty}"
         )))
     }
 
@@ -563,6 +588,15 @@ impl PyVM {
         let module = PyModule::from_code(py, code, c"_effect_wrap", c"_effect_wrap")?;
         let wrap_fn = module.getattr("_wrap")?;
         let gen = wrap_fn.call1((expr.bind(py),))?;
+        Ok(gen.unbind())
+    }
+
+    fn wrap_return_value_as_generator(&self, py: Python<'_>, value: Py<PyAny>) -> PyResult<Py<PyAny>> {
+        use pyo3::types::PyModule;
+        let code = c"def _ret(v):\n    if False:\n        yield v\n    return v\n";
+        let module = PyModule::from_code(py, code, c"_value_wrap", c"_value_wrap")?;
+        let wrap_fn = module.getattr("_ret")?;
+        let gen = wrap_fn.call1((value.bind(py),))?;
         Ok(gen.unbind())
     }
 
@@ -617,6 +651,31 @@ impl PyVM {
                 mapper: PyShared::new(m.mapper.clone_ref(_py)),
             }));
         }
+        if let Ok(p) = obj.extract::<PyRef<'_, PyPure>>() {
+            return Ok(Yielded::DoCtrl(DoCtrl::Pure {
+                value: Value::from_pyobject(p.value.bind(_py)),
+            }));
+        }
+        if let Ok(c) = obj.extract::<PyRef<'_, PyCall>>() {
+            let mut args = Vec::new();
+            for item in c.args.bind(_py).try_iter()? {
+                args.push(Value::from_pyobject(item?.as_any()));
+            }
+
+            let kwargs_dict = c.kwargs.bind(_py).cast::<PyDict>()?;
+            let mut kwargs = Vec::new();
+            for (k, v) in kwargs_dict.iter() {
+                let key = k.str()?.to_str()?.to_string();
+                kwargs.push((key, Value::from_pyobject(v.as_any())));
+            }
+
+            return Ok(Yielded::DoCtrl(DoCtrl::Call {
+                f: PyShared::new(c.f.clone_ref(_py)),
+                args,
+                kwargs,
+                metadata: CallMetadata::anonymous(),
+            }));
+        }
         if let Ok(fm) = obj.extract::<PyRef<'_, PyFlatMap>>() {
             return Ok(Yielded::DoCtrl(DoCtrl::FlatMap {
                 source: PyShared::new(fm.source.clone_ref(_py)),
@@ -657,6 +716,24 @@ impl PyVM {
             }
             return Err(PyTypeError::new_err(
                 "Transfer.continuation must be K (opaque continuation handle)",
+            ));
+        }
+        if let Ok(rc) = obj.extract::<PyRef<'_, PyResumeContinuation>>() {
+            if let Ok(k_pyobj) = rc.continuation.bind(_py).cast::<PyK>() {
+                let cont_id = k_pyobj.borrow().cont_id;
+                if let Some(k) = self.vm.lookup_continuation(cont_id).cloned() {
+                    return Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+                        continuation: k,
+                        value: Value::from_pyobject(rc.value.bind(_py)),
+                    }));
+                }
+                return Err(PyRuntimeError::new_err(format!(
+                    "ResumeContinuation with unknown continuation id {}",
+                    cont_id.raw()
+                )));
+            }
+            return Err(PyTypeError::new_err(
+                "ResumeContinuation.continuation must be K (opaque continuation handle)",
             ));
         }
         if let Ok(d) = obj.extract::<PyRef<'_, PyDelegate>>() {
@@ -707,6 +784,24 @@ impl PyVM {
         }
         if obj.is_instance_of::<PyGetCallStack>() {
             return Ok(Yielded::DoCtrl(DoCtrl::GetCallStack));
+        }
+        if let Ok(eval) = obj.extract::<PyRef<'_, PyEval>>() {
+            let expr = eval.expr.clone_ref(_py);
+            let handlers_list = eval.handlers.bind(_py);
+            let mut handlers = Vec::new();
+            for item in handlers_list.try_iter()? {
+                let item = item?;
+                if item.is_instance_of::<PyRustHandlerSentinel>() {
+                    let sentinel: PyRef<'_, PyRustHandlerSentinel> = item.extract()?;
+                    handlers.push(Handler::RustProgram(sentinel.factory.clone()));
+                } else {
+                    handlers.push(Handler::Python(PyShared::new(item.unbind())));
+                }
+            }
+            return Ok(Yielded::DoCtrl(DoCtrl::Eval {
+                expr: PyShared::new(expr),
+                handlers,
+            }));
         }
         if obj.is_instance_of::<PyAsyncEscape>() {
             let ae: PyRef<'_, PyAsyncEscape> = obj.extract()?;
@@ -984,6 +1079,7 @@ pub struct PyWithHandler {
 #[pymethods]
 impl PyWithHandler {
     #[new]
+    #[pyo3(signature = (handler, expr))]
     fn new(py: Python<'_>, handler: Py<PyAny>, expr: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
         let handler_obj = handler.bind(py);
         if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
@@ -998,7 +1094,7 @@ impl PyWithHandler {
             || expr_obj.is_instance_of::<PyEffectBase>())
         {
             return Err(PyTypeError::new_err(
-                "WithHandler.expr must be Rust DoExpr base (EffectBase/DoCtrlBase)",
+                "WithHandler.expr must be DoExpr",
             ));
         }
 
@@ -1012,6 +1108,72 @@ pub struct PyMap {
     pub source: Py<PyAny>,
     #[pyo3(get)]
     pub mapper: Py<PyAny>,
+}
+
+#[pyclass(name = "Pure", extends=PyDoCtrlBase)]
+pub struct PyPure {
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyPure {
+    #[new]
+    fn new(value: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (PyPure { value }, PyDoCtrlBase)
+    }
+}
+
+#[pyclass(name = "Call", extends=PyDoCtrlBase)]
+pub struct PyCall {
+    #[pyo3(get)]
+    pub f: Py<PyAny>,
+    #[pyo3(get)]
+    pub args: Py<PyAny>,
+    #[pyo3(get)]
+    pub kwargs: Py<PyAny>,
+    #[pyo3(get)]
+    pub meta: Option<Py<PyAny>>,
+}
+
+#[pymethods]
+impl PyCall {
+    #[new]
+    #[pyo3(signature = (f, args, kwargs, meta=None))]
+    fn new(
+        py: Python<'_>,
+        f: Py<PyAny>,
+        args: Py<PyAny>,
+        kwargs: Py<PyAny>,
+        meta: Option<Py<PyAny>>,
+    ) -> PyResult<(Self, PyDoCtrlBase)> {
+        if !f.bind(py).is_callable() {
+            return Err(PyTypeError::new_err("Call.f must be callable"));
+        }
+        if args.bind(py).try_iter().is_err() {
+            return Err(PyTypeError::new_err("Call.args must be iterable"));
+        }
+        if !kwargs.bind(py).is_instance_of::<PyDict>() {
+            return Err(PyTypeError::new_err("Call.kwargs must be dict"));
+        }
+        Ok((PyCall { f, args, kwargs, meta }, PyDoCtrlBase))
+    }
+}
+
+#[pyclass(name = "Eval", extends=PyDoCtrlBase)]
+pub struct PyEval {
+    #[pyo3(get)]
+    pub expr: Py<PyAny>,
+    #[pyo3(get)]
+    pub handlers: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyEval {
+    #[new]
+    fn new(expr: Py<PyAny>, handlers: Py<PyAny>) -> (Self, PyDoCtrlBase) {
+        (PyEval { expr, handlers }, PyDoCtrlBase)
+    }
 }
 
 #[pymethods]
@@ -1102,6 +1264,34 @@ pub struct PyTransfer {
     pub continuation: Py<PyAny>,
     #[pyo3(get)]
     pub value: Py<PyAny>,
+}
+
+/// Resume an unstarted continuation produced by CreateContinuation.
+#[pyclass(name = "ResumeContinuation", extends=PyDoCtrlBase)]
+pub struct PyResumeContinuation {
+    #[pyo3(get)]
+    pub continuation: Py<PyAny>,
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
+
+#[pymethods]
+impl PyResumeContinuation {
+    #[new]
+    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<(Self, PyDoCtrlBase)> {
+        if !continuation.bind(py).is_instance_of::<PyK>() {
+            return Err(PyTypeError::new_err(
+                "ResumeContinuation.continuation must be K (opaque continuation handle)",
+            ));
+        }
+        Ok((
+            PyResumeContinuation {
+                continuation,
+                value,
+            },
+            PyDoCtrlBase,
+        ))
+    }
 }
 
 #[pymethods]
@@ -1327,7 +1517,7 @@ mod tests {
                 py,
                 PyClassInitializer::from(PyDoCtrlBase).add_subclass(PyWithHandler {
                     handler: sentinel.clone_ref(py),
-                    program: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                    expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
                 }),
             )
             .unwrap()
@@ -1871,11 +2061,15 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyResultErr>()?;
     m.add_class::<PyK>()?;
     m.add_class::<PyWithHandler>()?;
+    m.add_class::<PyPure>()?;
+    m.add_class::<PyCall>()?;
     m.add_class::<PyMap>()?;
     m.add_class::<PyFlatMap>()?;
+    m.add_class::<PyEval>()?;
     m.add_class::<PyResume>()?;
     m.add_class::<PyDelegate>()?;
     m.add_class::<PyTransfer>()?;
+    m.add_class::<PyResumeContinuation>()?;
     m.add_class::<PyCreateContinuation>()?;
     m.add_class::<PyGetContinuation>()?;
     m.add_class::<PyGetHandlers>()?;
@@ -1910,6 +2104,14 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAsk>()?;
     m.add_class::<PyTell>()?;
     m.add_class::<PyKPC>()?;
+    m.add_class::<PySpawn>()?;
+    m.add_class::<PyGather>()?;
+    m.add_class::<PyRace>()?;
+    m.add_class::<PyCreatePromise>()?;
+    m.add_class::<PyCompletePromise>()?;
+    m.add_class::<PyFailPromise>()?;
+    m.add_class::<PyCreateExternalPromise>()?;
+    m.add_class::<PyTaskCompleted>()?;
     // G09: KleisliProgramCall alias for PyKPC
     m.add("KleisliProgramCall", m.getattr("PyKPC")?)?;
     // KPC handler sentinel — explicit, not auto-installed

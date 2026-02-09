@@ -63,6 +63,70 @@ pub struct PyKPC {
     pub created_at: Py<PyAny>,
 }
 
+#[pyclass(frozen, name = "SpawnEffect", extends=PyEffectBase)]
+pub struct PySpawn {
+    #[pyo3(get)]
+    pub program: Py<PyAny>,
+    #[pyo3(get)]
+    pub preferred_backend: Option<String>,
+    #[pyo3(get)]
+    pub options: Py<PyAny>,
+    #[pyo3(get)]
+    pub handlers: Py<PyAny>,
+    #[pyo3(get)]
+    pub store_mode: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "GatherEffect", extends=PyEffectBase)]
+pub struct PyGather {
+    #[pyo3(get)]
+    pub items: Py<PyAny>,
+    #[pyo3(get)]
+    pub _partial_results: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "RaceEffect", extends=PyEffectBase)]
+pub struct PyRace {
+    #[pyo3(get)]
+    pub futures: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "CreatePromiseEffect", extends=PyEffectBase)]
+pub struct PyCreatePromise;
+
+#[pyclass(frozen, name = "CompletePromiseEffect", extends=PyEffectBase)]
+pub struct PyCompletePromise {
+    #[pyo3(get)]
+    pub promise: Py<PyAny>,
+    #[pyo3(get)]
+    pub value: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "FailPromiseEffect", extends=PyEffectBase)]
+pub struct PyFailPromise {
+    #[pyo3(get)]
+    pub promise: Py<PyAny>,
+    #[pyo3(get)]
+    pub error: Py<PyAny>,
+}
+
+#[pyclass(frozen, name = "CreateExternalPromiseEffect", extends=PyEffectBase)]
+pub struct PyCreateExternalPromise;
+
+#[pyclass(frozen, name = "_SchedulerTaskCompleted", extends=PyEffectBase)]
+pub struct PyTaskCompleted {
+    #[pyo3(get)]
+    pub task: Py<PyAny>,
+    #[pyo3(get)]
+    pub task_id: Py<PyAny>,
+    #[pyo3(get)]
+    pub handle_id: Py<PyAny>,
+    #[pyo3(get)]
+    pub result: Py<PyAny>,
+    #[pyo3(get)]
+    pub error: Py<PyAny>,
+}
+
 #[pymethods]
 impl PyGet {
     #[new]
@@ -124,6 +188,141 @@ impl PyKPC {
                 function_name,
                 execution_kernel,
                 created_at: created_at.unwrap_or_else(|| py.None()),
+            },
+            PyEffectBase,
+        )
+    }
+}
+
+#[pymethods]
+impl PySpawn {
+    #[classattr]
+    const __doeff_scheduler_spawn__: bool = true;
+
+    #[new]
+    #[pyo3(signature = (program, preferred_backend=None, options=None, handlers=None, store_mode=None))]
+    fn new(
+        py: Python<'_>,
+        program: Py<PyAny>,
+        preferred_backend: Option<String>,
+        options: Option<Py<PyAny>>,
+        handlers: Option<Py<PyAny>>,
+        store_mode: Option<Py<PyAny>>,
+    ) -> (Self, PyEffectBase) {
+        (
+            PySpawn {
+                program,
+                preferred_backend,
+                options: options
+                    .unwrap_or_else(|| pyo3::types::PyDict::new(py).into_any().unbind()),
+                handlers: handlers
+                    .unwrap_or_else(|| pyo3::types::PyList::empty(py).into_any().unbind()),
+                store_mode: store_mode.unwrap_or_else(|| py.None()),
+            },
+            PyEffectBase,
+        )
+    }
+}
+
+#[pymethods]
+impl PyGather {
+    #[classattr]
+    const __doeff_scheduler_gather__: bool = true;
+
+    #[new]
+    #[pyo3(signature = (items, _partial_results=None))]
+    fn new(
+        py: Python<'_>,
+        items: Py<PyAny>,
+        _partial_results: Option<Py<PyAny>>,
+    ) -> (Self, PyEffectBase) {
+        (
+            PyGather {
+                items,
+                _partial_results: _partial_results.unwrap_or_else(|| py.None()),
+            },
+            PyEffectBase,
+        )
+    }
+}
+
+#[pymethods]
+impl PyRace {
+    #[classattr]
+    const __doeff_scheduler_race__: bool = true;
+
+    #[new]
+    fn new(futures: Py<PyAny>) -> (Self, PyEffectBase) {
+        (PyRace { futures }, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyCreatePromise {
+    #[classattr]
+    const __doeff_scheduler_create_promise__: bool = true;
+
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyCreatePromise, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyCompletePromise {
+    #[classattr]
+    const __doeff_scheduler_complete_promise__: bool = true;
+
+    #[new]
+    fn new(promise: Py<PyAny>, value: Py<PyAny>) -> (Self, PyEffectBase) {
+        (PyCompletePromise { promise, value }, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyFailPromise {
+    #[classattr]
+    const __doeff_scheduler_fail_promise__: bool = true;
+
+    #[new]
+    fn new(promise: Py<PyAny>, error: Py<PyAny>) -> (Self, PyEffectBase) {
+        (PyFailPromise { promise, error }, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyCreateExternalPromise {
+    #[classattr]
+    const __doeff_scheduler_create_external_promise__: bool = true;
+
+    #[new]
+    fn new() -> (Self, PyEffectBase) {
+        (PyCreateExternalPromise, PyEffectBase)
+    }
+}
+
+#[pymethods]
+impl PyTaskCompleted {
+    #[classattr]
+    const __doeff_scheduler_task_completed__: bool = true;
+
+    #[new]
+    #[pyo3(signature = (*, task=None, task_id=None, handle_id=None, result=None, error=None))]
+    fn new(
+        py: Python<'_>,
+        task: Option<Py<PyAny>>,
+        task_id: Option<Py<PyAny>>,
+        handle_id: Option<Py<PyAny>>,
+        result: Option<Py<PyAny>>,
+        error: Option<Py<PyAny>>,
+    ) -> (Self, PyEffectBase) {
+        (
+            PyTaskCompleted {
+                task: task.unwrap_or_else(|| py.None()),
+                task_id: task_id.unwrap_or_else(|| py.None()),
+                handle_id: handle_id.unwrap_or_else(|| py.None()),
+                result: result.unwrap_or_else(|| py.None()),
+                error: error.unwrap_or_else(|| py.None()),
             },
             PyEffectBase,
         )

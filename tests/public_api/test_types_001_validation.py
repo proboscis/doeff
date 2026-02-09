@@ -12,7 +12,7 @@ from typing import Any, cast
 
 import pytest
 
-from doeff import Ask, Delegate, Get, Resume, Transfer, WithHandler
+from doeff import Ask, Delegate, Get, K, Resume, Transfer, WithHandler
 from doeff.do import do
 from doeff.rust_vm import default_handlers, run
 
@@ -52,7 +52,7 @@ def test_withhandler_expr_requires_rust_runtime_bases() -> None:
     def handler(_effect, _k):
         yield Delegate()
 
-    with pytest.raises(TypeError, match=r"Rust DoExpr base"):
+    with pytest.raises(TypeError, match=r"DoExpr"):
         WithHandler(handler, object())
 
 
@@ -69,3 +69,51 @@ def test_resume_transfer_require_real_k() -> None:
         Resume("not_k", Ask("x"))
     with pytest.raises(TypeError, match=r"K"):
         Transfer("not_k", Ask("x"))
+
+
+def test_python_handler_receives_k_for_resume() -> None:
+    seen: dict[str, bool] = {"is_k": False}
+
+    def handler(_effect, k):
+        seen["is_k"] = isinstance(k, K)
+        return (yield Resume(k, "override"))
+
+    result = run(
+        WithHandler(handler, Ask("x")),
+        handlers=default_handlers(),
+        env={"x": "original"},
+    )
+
+    assert seen["is_k"] is True
+    assert result.value == "override"
+
+
+def test_python_handler_transfer_and_delegate_with_k() -> None:
+    transfer_seen: dict[str, bool] = {"is_k": False}
+
+    def transfer_handler(_effect, k):
+        transfer_seen["is_k"] = isinstance(k, K)
+        yield Transfer(k, "via-transfer")
+
+    transfer_result = run(
+        WithHandler(transfer_handler, Ask("x")),
+        handlers=default_handlers(),
+        env={"x": "original"},
+    )
+
+    delegate_seen: dict[str, bool] = {"is_k": False}
+
+    def delegate_handler(_effect, k):
+        delegate_seen["is_k"] = isinstance(k, K)
+        yield Delegate()
+
+    delegate_result = run(
+        WithHandler(delegate_handler, Ask("x")),
+        handlers=default_handlers(),
+        env={"x": "original"},
+    )
+
+    assert transfer_seen["is_k"] is True
+    assert transfer_result.value == "via-transfer"
+    assert delegate_seen["is_k"] is True
+    assert delegate_result.value == "original"

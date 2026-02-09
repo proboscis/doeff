@@ -5,6 +5,8 @@ All tests exercise @do, KPC dispatch, and auto-unwrap through run().
 
 from __future__ import annotations
 
+import pytest
+
 from doeff import Ask, Get, Program, Put, default_handlers, do, run
 from doeff.kleisli import KleisliProgram
 from doeff.program import GeneratorProgram, KleisliProgramCall, ProgramBase
@@ -68,8 +70,8 @@ class TestKD03NoKPCHandler:
         def identity(x: int):
             return x
 
-        result = run(identity(1), handlers=[])
-        assert result.is_err(), "KPC with no handler should fail"
+        with pytest.raises(TypeError, match=r"UnhandledEffect|unhandled effect"):
+            run(identity(1), handlers=[])
 
 
 # ---------------------------------------------------------------------------
