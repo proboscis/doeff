@@ -82,6 +82,7 @@ from doeff.effects import (
     cache_get,
     cache_put,
     capture_graph,
+    gather,
     get,
     listen,
     local,
@@ -104,7 +105,7 @@ from doeff.graph_snapshot import (
     write_graph_html_async,
 )
 from doeff.kleisli import KleisliProgram
-from doeff.program import Program
+from doeff.program import DoCtrl, DoExpr, GeneratorProgram, KleisliProgramCall, Program, ProgramBase
 from doeff.run import ProgramRunResult, run_program
 from doeff.rust_vm import async_run, default_handlers, run
 from doeff.types import (
@@ -112,6 +113,7 @@ from doeff.types import (
     NOTHING,
     REPR_LIMIT_KEY,
     Effect,
+    EffectBase,
     EffectGenerator,
     ExecutionContext,
     FrozenDict,
@@ -229,7 +231,10 @@ __all__ = [
     "CaptureGraph",
     "CompletePromise",
     "CreatePromise",
+    "DoCtrl",
+    "DoExpr",
     "Effect",
+    "EffectBase",
     "EffectCallTree",
     "EffectGenerator",
     "Err",
@@ -239,8 +244,10 @@ __all__ = [
     "Future",
     "Gather",
     "Get",
+    "GeneratorProgram",
     "Intercept",
     "KleisliProgram",
+    "KleisliProgramCall",
     "Listen",
     "ListenResult",
     "Local",
@@ -251,6 +258,7 @@ __all__ = [
     "Nothing",
     "Ok",
     "Program",
+    "ProgramBase",
     "ProgramRunResult",
     "Promise",
     "Put",
@@ -301,6 +309,7 @@ __all__ = [
     "do",
     "default_handlers",
     "get",
+    "gather",
     "graph_to_html",
     "graph_to_html_async",
     "listen",
