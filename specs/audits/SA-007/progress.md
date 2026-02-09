@@ -88,5 +88,5 @@ Specs:
   - `uv run pytest -q tests/core/test_sa007_spec_gaps.py` -> pass
   - `uv run semgrep --config specs/audits/SA-007/semgrep.yml /Users/s22625/repos/doeff` -> pass
 - Repo-wide checks (informational):
-  - `uv run pytest -q` -> fails in pre-existing CESK test modules (`doeff.cesk.*` import errors)
+- `uv run pytest -q` -> fails in pre-existing legacy CESK test modules (removed runtime import path errors)
   - `uv run semgrep --config .semgrep.yaml /Users/s22625/repos/doeff` -> pre-existing unrelated findings outside SA-007 scope

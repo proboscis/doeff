@@ -144,14 +144,14 @@ result = run_workflow(
 ### Option B: `trace_observer` (Composable)
 
 ```python
-from doeff.cesk import run_sync
+from doeff import run
 from doeff_flow import trace_observer
 
 with trace_observer("wf-001", ".doeff-flow") as on_step:
-    result = run_sync(
+    _ = on_step
+    result = run(
         my_workflow(),
         env={"config": "value"},  # Custom environment
-        on_step=on_step,
     )
 ```
 

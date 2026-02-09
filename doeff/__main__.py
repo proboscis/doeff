@@ -6,6 +6,7 @@ import importlib
 import importlib.util
 import inspect
 import json
+import os
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -18,6 +19,18 @@ from doeff.cli.runbox import maybe_create_runbox_record
 from doeff.kleisli import KleisliProgram
 from doeff.rust_vm import default_handlers, run as vm_run
 from doeff.types import capture_traceback
+
+sync_handlers_preset = default_handlers()
+
+
+def sync_run(
+    program: Program[Any],
+    handlers: list[Any] | None = None,
+    env: dict[str, Any] | None = None,
+    store: dict[str, Any] | None = None,
+) -> RunResult[Any]:
+    selected_handlers = sync_handlers_preset if handlers is None else handlers
+    return vm_run(program, handlers=selected_handlers, env=env, store=store)
 
 
 @dataclass
@@ -262,6 +275,9 @@ class RunCommand:
 
     def _load_default_env(self) -> str | None:
         from pathlib import Path
+
+        if os.environ.get("DOEFF_DISABLE_DEFAULT_ENV") == "1":
+            return None
 
         doeff_config_file = Path.home() / ".doeff.py"
         if not doeff_config_file.exists():

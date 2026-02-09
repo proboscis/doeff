@@ -34,10 +34,10 @@ subpackage imports when needed for white-box/runtime verification.
 
 In scope now:
 - `tests/public_api/**/*.py`
-- non-CESK consumer-facing examples and docs
+- `examples/**/*.py`
+- consumer-facing docs
 
-Out of scope now:
-- CESK files scheduled for deletion (`examples/cesk/**` and CESK-specific docs)
+CESK user-facing surfaces have been removed under ISSUE-CORE-492.
 
 ## Enforcement
 

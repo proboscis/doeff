@@ -920,7 +920,7 @@ framework-internal.
 
 | Before (Python CESK) | After (Rust VM) |
 |---|---|
-| `from doeff.cesk.run import sync_run` | `from doeff import run` |
+| `from legacy runtime import sync_run` | `from doeff import run` |
 | `sync_run(prog, sync_handlers_preset)` | `run(prog, handlers=sync_preset)` |
 | `result.value` | `result.value` (same) |
 | `result.raw_store` | `result.raw_store` (same) |

@@ -6,17 +6,14 @@ to the console using rich, while still accumulating them in the writer log.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from doeff import Delegate
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from doeff.cesk.frames import ContinueValue, FrameResult
 from doeff.effects.writer import WriterTellEffect
-
-if TYPE_CHECKING:
-    from doeff.cesk.runtime.context import HandlerContext
 
 # Global console for log output
 _console = Console(stderr=True)
@@ -24,10 +21,10 @@ _console = Console(stderr=True)
 
 def format_slog(message: dict[str, Any]) -> Panel | Text:
     """Format a structured log message for rich display.
-    
+
     Args:
         message: The slog payload dictionary.
-        
+
     Returns:
         A rich renderable (Panel or Text) for console output.
     """
@@ -36,26 +33,26 @@ def format_slog(message: dict[str, Any]) -> Panel | Text:
     msg = message.get("msg", message.get("message", ""))
     step = message.get("step", "")
     status = message.get("status", "")
-    
+
     # Build display text
     parts: list[str] = []
-    
+
     if step:
         parts.append(f"[bold cyan]{step}[/bold cyan]")
     if status:
         parts.append(f"[bold magenta]{status}[/bold magenta]")
     if msg:
         parts.append(str(msg))
-    
+
     # Add remaining fields (excluding already processed ones)
     processed = {"level", "msg", "message", "step", "status"}
     extras = {k: v for k, v in message.items() if k not in processed}
     if extras:
         extra_strs = [f"[dim]{k}=[/dim]{v}" for k, v in extras.items()]
         parts.append(" ".join(extra_strs))
-    
+
     display_text = " | ".join(parts) if parts else str(message)
-    
+
     # Color based on level
     level_colors = {
         "debug": "dim",
@@ -66,58 +63,49 @@ def format_slog(message: dict[str, Any]) -> Panel | Text:
         "critical": "bold red",
     }
     color = level_colors.get(level, "blue")
-    
+
     level_badge = f"[{color}]{level.upper():>8}[/{color}]"
-    
+
     return Text.from_markup(f"{level_badge} {display_text}")
 
 
 def handle_tell_with_display(
     effect: WriterTellEffect,
-    ctx: HandlerContext,
-) -> FrameResult:
+    _k,
+):
     """Handle WriterTellEffect with console display for slog messages.
-    
+
     If the message is a dict (structured log), displays it to console using rich.
     Always appends the message to the writer log (normal WriterTellEffect behavior).
-    
+
     Args:
         effect: The WriterTellEffect to handle.
         ctx: Handler context containing task_state and store.
-        
+
     Returns:
-        FrameResult continuing with None value and updated store.
+        Delegation to the outer Writer handler after optional display.
     """
     message = effect.message
-    
+
     # Display structured logs (dicts) to console
     if isinstance(message, dict):
         formatted = format_slog(message)
         _console.print(formatted)
-    
-    # Normal WriterTellEffect behavior: append to log
-    current_log = ctx.store.get("__log__", [])
-    new_log = list(current_log) + [message]
-    new_store = {**ctx.store, "__log__": new_log}
-    
-    return ContinueValue(
-        value=None,
-        env=ctx.task_state.env,
-        store=new_store,
-        k=ctx.task_state.kontinuation,
-    )
+
+    # Delegate to outer Writer handler for normal log accumulation.
+    yield Delegate()
 
 
 def log_display_handlers() -> dict[type, Any]:
     """Return handlers for slog display.
-    
+
     Returns:
         Handler dict with WriterTellEffect -> handle_tell_with_display.
-        
+
     Example:
         >>> from doeff import SyncRuntime
         >>> from doeff_preset import log_display_handlers
-        >>> 
+        >>>
         >>> runtime = SyncRuntime(handlers=log_display_handlers())
         >>> # slog messages will now display to console
     """
