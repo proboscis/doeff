@@ -1,6 +1,16 @@
 # SPEC-009: Rust VM Public API
 
-## Status: Draft (Revision 7)
+## Status: Draft (Revision 8)
+
+### Revision 8 Changelog
+
+| Tag | Section | Change |
+|-----|---------|--------|
+| **R8-A** | §1 Entrypoints | Clarified boundary normalization: `run()` / `async_run()` accept `DoExpr[T]` and also raw effect values by normalizing `effect` to `Perform(effect)` before VM execution. |
+| **R8-B** | §4 Effects taxonomy | Effects are user-space data (`EffectValue`), not control instructions. Dispatch occurs via explicit control node `Perform(effect)`. Source-level `yield effect` is lowered to `yield Perform(effect)`. |
+| **R8-C** | §5 Handlers | Handler contract clarified: `(effect, k) -> DoExpr`. If handler returns effect data, runtime wraps it as `Perform(effect)` before continuation. |
+| **R8-D** | §6 Composition | `WithHandler(handler, expr)` remains canonical; `expr` must be DoExpr control IR. |
+| **R8-E** | §12 Type validation | Validation table updated to distinguish DoExpr control from effect values and to codify Perform-lifting behavior. |
 
 ### Revision 7 Changelog
 
@@ -138,6 +148,19 @@ will silently break.
    is "which is wrong?" — not "does it work?". Fix the spec first if it is
    wrong, then fix the code.
 
+### ADR-API-1: Explicit Perform Boundary for Public API [R8-A, R8-B]
+
+**Decision**:
+- Public API accepts `DoExpr` control expressions.
+- For ergonomics, bare effect values are accepted at entrypoints and normalized
+  to `Perform(effect)`.
+- Handler-facing and VM-facing semantics remain explicit control IR.
+
+**Rationale**:
+- Preserves Python UX (`yield Ask("k")`) while keeping IR semantics explicit.
+- Disambiguates effect data from effect resolution.
+- Keeps `WithHandler(..., expr=...)` typed to DoExpr control expressions.
+
 ---
 
 ## 1. Entrypoints
@@ -146,7 +169,7 @@ will silently break.
 
 ```python
 def run(
-    program: DoExpr[T],
+    program: DoExpr[T] | EffectValue[T],
     handlers: list[Handler] = [],
     env: dict[str, Any] = {},
     store: dict[str, Any] = {},
@@ -156,9 +179,9 @@ def run(
 Runs `program` synchronously.  Returns a `RunResult` containing the
 final value (or error) and the final store snapshot.
 
-- `program` — Any `DoExpr[T]`: a `DoCtrl` (Pure, Call, Map, Handle/WithHandler,
-  etc.) or an `EffectBase` (Ask, Get, Put, KPC, custom effects).
-  See **Input Contract** below and SPEC-TYPES-001 R10.
+- `program` — A `DoExpr[T]` control node, or a raw `EffectValue[T]`
+  (normalized to `Perform(effect)` at the boundary). See **Input Contract**
+  below and SPEC-TYPES-001 Rev 11.
 - `handlers` — Explicit list.  **No handlers are installed by default.**
   If the program yields `Get("x")` but no `state` handler is installed,
   the VM raises `UnhandledEffect`.
@@ -184,7 +207,7 @@ body segments with correct `scope_chain`, and deterministic handler ordering.
 
 ```python
 async def async_run(
-    program: DoExpr[T],
+    program: DoExpr[T] | EffectValue[T],
     handlers: list[Handler] = [],
     env: dict[str, Any] = {},
     store: dict[str, Any] = {},
@@ -201,35 +224,36 @@ actions, yielding the thread between steps. [R3-D]
 
 ### Input Contract [R7-A, R7-B]
 
-`run()` and `async_run()` accept any `DoExpr[T]` as the `program` argument.
-The two `DoExpr` subtypes are handled as follows (see SPEC-TYPES-001 R10):
+`run()` and `async_run()` accept either a `DoExpr[T]` control expression or a
+raw effect value. Raw effect values are normalized to `Perform(effect)` before
+VM execution (see SPEC-TYPES-001 Rev 11):
 
 ```
 Input type        Example                  VM behavior
 ──────────────────────────────────────────────────────────────
-DoCtrl            Pure(v), Call(...),       VM evaluates directly
-                  Handle(h, prog),
-                  Map(expr, f)
-EffectBase        Ask("k"), Get("x"), KPC  dispatched to handler stack
+DoExpr (control)  Pure(v), Call(...),       VM evaluates directly
+                  WithHandler(h, expr),
+                  Map(expr, f), Perform(e)
+EffectValue       Ask("k"), Get("x"), KPC   normalized to Perform(effect),
+                                             then dispatched via handler stack
 ```
 
-**Anything that is NOT a `DoExpr` MUST raise `TypeError` immediately** with
+**Anything that is neither `DoExpr` nor `EffectValue` MUST raise `TypeError` immediately** with
 an informative message that includes:
 1. The actual type received
-2. What types are accepted (DoExpr subtypes)
+2. What types are accepted (DoExpr control or EffectValue)
 3. A hint if the input looks like a common mistake
 
 ```python
 # GOOD — accepted inputs:
-run(my_do_func(1))                  # EffectBase (KPC)
-run(Ask("key"))                      # EffectBase
-run(Get("x").map(str))              # DoCtrl (Map node)
+run(my_do_func(1))                  # EffectValue (KPC), boundary-normalized to Perform
+run(Ask("key"))                      # EffectValue, boundary-normalized to Perform
+run(Pure(1).map(str))                # DoCtrl (Map node)
 run(WithHandler(h, prog))           # DoCtrl (Handle node)
 run(Pure(42))                        # DoCtrl (Pure node)
 
 # BAD — must raise TypeError:
-run(42)                              # TypeError: run() requires DoExpr[T] (Program, Effect,
-                                     #   or DoCtrl), got int
+run(42)                              # TypeError: run() requires DoExpr[T] or EffectValue[T], got int
 run("hello")                         # TypeError: ... got str
 run(lambda: 42)                      # TypeError: ... got function. Did you mean @do?
 run(my_generator_func)               # TypeError: ... got function. Did you mean to call it?
@@ -237,19 +261,20 @@ run(my_generator_func())             # TypeError: ... got generator. Wrap with @
                                      #   GeneratorProgram.
 ```
 
-**No Python-side normalization.** The Python `run()` wrapper is a thin
-passthrough. It performs the `isinstance(program, DoExpr)` check and raises
-`TypeError` for non-DoExpr inputs. The Rust VM evaluates the DoExpr directly —
-DoCtrl nodes are evaluated by the VM, Effects are dispatched to handlers.
-There must be no `_normalize_program()`, no `_TopLevelDoExpr`, and no
-Python-side wrapping logic. [R7-B]
+**Boundary normalization only.** The Python `run()` wrapper is a thin
+passthrough except for one normalization rule: raw effect values are wrapped as
+`Perform(effect)` before entering the VM. It still performs strict type checks
+and raises `TypeError` for unsupported inputs. The Rust VM evaluates DoExpr
+control nodes directly.
 
 ```python
 # Python run() implementation (conceptual):
 def run(program, handlers=(), env=None, store=None):
+    if isinstance(program, EffectValue):
+        program = Perform(program)
     if not isinstance(program, DoExpr):
         raise TypeError(
-            f"run() requires DoExpr[T] (Program, Effect, or DoCtrl), "
+            f"run() requires DoExpr[T] or EffectValue[T], "
             f"got {type(program).__name__}"
         )
     return doeff_vm.run(program, handlers=list(handlers), env=env, store=store)
@@ -389,17 +414,19 @@ etc. without starting execution.
 
 ## 4. Effects
 
-An effect is a value yielded from a `Program` to request an operation.
+An effect is user-space data (`EffectValue`) describing an operation request.
+Resolution/dispatch is represented by `Perform(effect)` in control IR.
 
 ### Yield Taxonomy [R4-C]
 
-A program can yield three categories of values. Each is handled differently:
+A program can yield control expressions. At source level, `yield effect` is
+lowered to `yield Perform(effect)`:
 
 ```
 Category             Examples                       What the VM does
 ─────────────────────────────────────────────────────────────────────
-Effect               Get, Put, Ask, Tell, KPC,      Dispatched through handler stack
-                     custom effects
+Effect dispatch      Perform(Get("x")),             Dispatched through handler stack
+                     Perform(KPC(...))
 Composition          WithHandler                    Creates new handler scope
 Dispatch primitive   Resume, Delegate, Transfer     Controls dispatch (handler-only)
 ```
@@ -409,8 +436,9 @@ extends=PyEffectBase)]` struct dispatched to the KPC handler. The handler
 computes auto-unwrap strategy from `kleisli_source` annotations and resolves
 args via `Eval`. See SPEC-TYPES-001 §3.
 
-Effects are the only category dispatched to handlers. Composition and dispatch
-primitives are processed directly by the VM.
+Effect values are never executed directly; only `Perform(effect)` triggers
+handler dispatch. Composition and dispatch primitives are processed directly by
+the VM.
 
 ### Standard Effects
 
@@ -455,15 +483,18 @@ it.  If no handler handles it → `UnhandledEffect` error.
 ### Protocol
 
 ```python
-Handler = Callable[[Effect, K], Program[T]]
+Handler = Callable[[EffectValue, K], DoExpr[T]]
 ```
 
 A handler is a callable (typically `@do`-decorated) that receives:
 - `effect` — the effect being dispatched
 - `k` — the delimited continuation (opaque handle, see below)
 
-And returns a `Program[T]` that yields dispatch primitives, effects, or
-composition primitives. The handler's return value becomes the result of the
+And returns a `DoExpr[T]` control expression. If a host handler returns a raw
+effect value, runtime normalization wraps it as `Perform(effect)` before
+continuing.
+
+The handler's evaluated return value becomes the result of the
 `WithHandler(...)` expression that installed it.
 
 ### K — Opaque Continuation Handle
@@ -580,6 +611,9 @@ Handlers are programs. They can yield anything a program can yield:
 | Effect | `yield Tell("log msg")` | Outer handler stack |
 | Composition | `yield WithHandler(h, prog)` | VM creates new scope |
 | Nested program | `yield sub_program()` | VM runs sub-program |
+
+Source-level effect yields (`yield Tell(...)`) are lowered to
+`yield Perform(Tell(...))` in IR; dispatch semantics are unchanged.
 
 Effects yielded by a handler are dispatched to handlers **outside** the
 current handler's scope — never to the handler itself.
@@ -1008,7 +1042,7 @@ cover both the happy path and the rejection path.
 
 | Parameter | Expected Type | Validation | Error |
 |-----------|---------------|------------|-------|
-| `program` | `DoExpr` | `isinstance(program, DoExpr)` | `TypeError: run() requires DoExpr[T] (Program, Effect, or DoCtrl), got {type}` |
+| `program` | `DoExpr \| EffectValue` | if `EffectValue`, wrap with `Perform(effect)`; else `isinstance(program, DoExpr)` | `TypeError: run() requires DoExpr[T] or EffectValue[T], got {type}` |
 | `handlers` | `Sequence[Handler]` | `isinstance(handlers, Sequence)` and each element is a handler sentinel or callable | `TypeError: handlers must be a sequence of Handler, got {type}` |
 | `env` | `dict[str, Any] \| None` | `env is None or isinstance(env, dict)` | `TypeError: env must be dict or None, got {type}` |
 | `store` | `dict[str, Any] \| None` | `store is None or isinstance(store, dict)` | `TypeError: store must be dict or None, got {type}` |
@@ -1059,14 +1093,14 @@ These are Rust `#[pyclass]` constructors. Validation MUST happen at
 | `Transfer(k, value)` | `k` | `K` | `isinstance(k, K)` | `TypeError: Transfer(k, value) requires k to be K (continuation handle), got {type}` |
 | `Transfer(k, value)` | `value` | `Any` | None needed | — |
 | `Delegate()` | (none) | — | — | — |
-| `Delegate(effect)` | `effect` | `EffectBase` | `isinstance(effect, EffectBase)` | `TypeError: Delegate(effect) requires EffectBase, got {type}` |
+| `Delegate(effect)` | `effect` | `EffectValue` | `isinstance(effect, EffectBase)` (runtime base for EffectValue) | `TypeError: Delegate(effect) requires EffectValue, got {type}` |
 
 #### §6 Composition: `WithHandler`
 
 | Constructor | Parameter | Expected Type | Validation | Error |
 |-------------|-----------|---------------|------------|-------|
 | `WithHandler(handler, expr)` | `handler` | `Callable` | `callable(handler)` or handler sentinel | `TypeError: WithHandler handler must be callable or handler sentinel, got {type}` |
-| `WithHandler(handler, expr)` | `expr` | `DoExpr` | `isinstance(expr, DoExpr)` | `TypeError: WithHandler expr must be DoExpr (Program, Effect, or DoCtrl), got {type}` |
+| `WithHandler(handler, expr)` | `expr` | `DoExpr` | `isinstance(expr, DoExpr)` | `TypeError: WithHandler expr must be DoExpr (control expression), got {type}` |
 
 #### §4.7 Composition Methods: `.map()`, `.flat_map()`
 
@@ -1085,13 +1119,13 @@ BEFORE (duck-typed, fallback-laden)          AFTER (strict isinstance gates)
 ═══════════════════════════════════          ═══════════════════════════════
 
 run("hello")                                 run("hello")
-→ _normalize_program checks getattr          → isinstance(x, DoExpr) → NO
+→ _normalize_program checks getattr          → isinstance(x, DoExpr|EffectValue) → NO
 → getattr_static("to_generator") → None      → TypeError: "...got str"
-→ isinstance(EffectBase) → No                   IMMEDIATE, CLEAR
+→ isinstance(EffectBase) → No                IMMEDIATE, CLEAR
 → TypeError (generic)
 
 run(my_gen_func)                             run(my_gen_func)
-→ getattr_static("to_generator") → None      → isinstance(x, DoExpr) → NO
+→ getattr_static("to_generator") → None      → isinstance(x, DoExpr|EffectValue) → NO
 → isinstance(EffectBase) → No                → TypeError: "...got function.
 → TypeError (generic)                           Did you mean to call it?"
                                                 IMMEDIATE, HELPFUL
