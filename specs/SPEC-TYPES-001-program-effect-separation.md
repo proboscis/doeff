@@ -657,18 +657,18 @@ defined in Rust [Rev 9]. It carries:
 computes it from `kleisli_source` annotations at dispatch time. This decouples
 the effect from the resolution policy.
 
-### 4.7 Composition on any DoExpr returns DoCtrl [R10]
+### 4.7 Composition on DoExpr control nodes returns DoCtrl [R11]
 
-`.map()` and `.flat_map()` on ANY DoExpr (Effect or DoCtrl) return a `Map`
-or `FlatMap` DoCtrl node. This is uniform — no special cases, no generator
-overhead:
+`.map()` and `.flat_map()` operate on DoExpr control nodes (`Perform`, `Pure`,
+`Map`, `FlatMap`, `Call`, `Eval`, ...). Effect values are data and must be
+lifted first via `Perform(effect)` (or equivalent lowering boundary):
 
 ```python
 mapped = my_program().map(lambda x: x + 1)
 # → Map(source=KPC(...), f=lambda x: x+1)  (DoCtrl)
 
-mapped = Ask("key").map(str.upper)
-# → Map(source=Ask("key"), f=str.upper)  (DoCtrl)
+mapped = Perform(Ask("key")).map(str.upper)
+# → Map(source=Perform(Ask("key")), f=str.upper)  (DoCtrl)
 ```
 
 The full composability chain:
@@ -685,8 +685,8 @@ user = yield result
 ```
 
 Every intermediate result is a `DoCtrl` (therefore a `DoExpr`) — always
-yieldable, always composable. The `.map()` crosses from Effect to DoCtrl,
-but the user only sees `Program[T]`.
+yieldable, always composable. User syntax can still `yield Ask(...)`; runtime
+lowering lifts that EffectValue into explicit `Perform(effect)` control.
 
 **VM evaluation of `Map`**:
 ```rust
@@ -1278,8 +1278,9 @@ CODE-ATTENTION:
 
 4. ~~**Effect.map() return type**~~
 
-   **RESOLVED (R10)**: `Effect.map(f)` returns a `Map(source, f)` DoCtrl node.
-   No generator. No DerivedProgram. No DoThunk.
+   **RESOLVED (R11)**: `EffectValue` does not expose direct composition methods.
+   Composition starts at DoExpr nodes by explicit lift (`Perform(effect)`) or
+   boundary lowering.
 
    ```python
    class DoExpr(Generic[T]):
@@ -1289,13 +1290,13 @@ CODE-ATTENTION:
            return FlatMap(self, f)
    ```
 
-   This applies uniformly to ALL DoExprs, including Effects and DoCtrl nodes.
+    This applies uniformly to DoExpr control nodes.
 
    ```
-   Ask("key").map(f)       → Map(Ask("key"), f)         (DoCtrl)
-   fetch_user(42).map(f)   → Map(KPC(...), f)           (DoCtrl)
-   Get("k").map(f)         → Map(Get("k"), f)           (DoCtrl)
-   Pure(42).map(f)         → Map(Pure(42), f)           (DoCtrl)
+    Perform(Ask("key")).map(f) → Map(Perform(Ask("key")), f) (DoCtrl)
+    fetch_user(42).map(f)   → Map(KPC(...), f)           (DoCtrl)
+    Perform(Get("k")).map(f) → Map(Perform(Get("k")), f)  (DoCtrl)
+    Pure(42).map(f)         → Map(Pure(42), f)           (DoCtrl)
    ```
 
    The VM evaluates `Map` directly: eval source → apply f → deliver result.
