@@ -536,6 +536,40 @@ rules:
       category: doexpr-hierarchy
       rationale: "WithHandler expr is DoExpr, not a disjunction of concrete bases"
 
+  - id: doeff-no-yielded-effect-variant
+    patterns:
+      - pattern: Yielded::Effect($X)
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/**/*.rs"
+    message: |
+      Perform architecture: direct Yielded::Effect is forbidden.
+      Effects must be lifted into DoCtrl::Perform(effect) and handled via DoCtrl path.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: doexpr-perform
+      rationale: "Dispatch entry must be explicit via DoCtrl::Perform"
+
+  - id: doeff-classify-effect-must-lift-to-perform
+    patterns:
+      - pattern-inside: |
+          fn classify_yielded($...ARGS) -> $RET {
+              ...
+          }
+      - pattern: return Ok(Yielded::Effect($E));
+    paths:
+      include:
+        - "**/packages/doeff-vm/src/pyvm.rs"
+    message: |
+      classify_yielded must lift effect values to DoCtrl::Perform(effect),
+      not return Yielded::Effect.
+    languages: [rust]
+    severity: ERROR
+    metadata:
+      category: doexpr-perform
+      rationale: "Effect data and dispatch control must be explicitly separated"
+
   # ---------------------------------------------------------------------------
   # SPEC AUDIT SA-001: GAP ENFORCEMENT RULES
   # ---------------------------------------------------------------------------
@@ -564,7 +598,7 @@ rules:
           - pattern: $OBJ.hasattr(...)
     paths:
       include:
-        - "packages/doeff-vm/src/pyvm.rs"
+        - "**/packages/doeff-vm/src/pyvm.rs"
     message: |
       SA-001-G08: classify_yielded uses duck-typing.
       Should use is_instance_of checks only per SPEC-008 R11-C.

@@ -22,6 +22,9 @@ pub enum DoCtrl {
         source: PyShared,
         binder: PyShared,
     },
+    Perform {
+        effect: DispatchEffect,
+    },
     Resume {
         continuation: Continuation,
         value: Value,
@@ -78,6 +81,9 @@ impl DoCtrl {
             DoCtrl::FlatMap { source, binder } => DoCtrl::FlatMap {
                 source: source.clone(),
                 binder: binder.clone(),
+            },
+            DoCtrl::Perform { effect } => DoCtrl::Perform {
+                effect: effect.clone(),
             },
             DoCtrl::Resume {
                 continuation,

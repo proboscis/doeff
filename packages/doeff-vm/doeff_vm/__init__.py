@@ -21,6 +21,7 @@ Call = _ext.Call
 Map = _ext.Map
 FlatMap = _ext.FlatMap
 Eval = _ext.Eval
+Perform = _ext.Perform
 Resume = _ext.Resume
 Delegate = _ext.Delegate
 Transfer = _ext.Transfer
@@ -70,6 +71,7 @@ __all__ = [
     "Delegate",
     "Call",
     "Eval",
+    "Perform",
     "Map",
     "FlatMap",
     "DoCtrlBase",

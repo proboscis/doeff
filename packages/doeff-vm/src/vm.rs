@@ -16,6 +16,7 @@ use crate::error::VMError;
 use crate::frame::Frame;
 use crate::handler::{Handler, HandlerEntry};
 use crate::ids::{CallbackId, ContId, DispatchId, Marker, SegmentId};
+use crate::pyvm::{PyDoExprBase, PyEffectBase};
 use crate::py_shared::PyShared;
 use crate::python_call::{PendingPython, PyCallOutcome, PythonCall};
 use crate::segment::Segment;
@@ -199,28 +200,11 @@ impl VM {
             Mode::Deliver(_) => "Deliver",
             Mode::Throw(_) => "Throw",
             Mode::HandleYield(y) => match y {
-                Yielded::Effect(e) => {
-                    #[cfg(test)]
-                    {
-                        match e {
-                            Effect::Get { .. } => "HandleYield(Get)",
-                            Effect::Put { .. } => "HandleYield(Put)",
-                            Effect::Modify { .. } => "HandleYield(Modify)",
-                            Effect::Ask { .. } => "HandleYield(Ask)",
-                            Effect::Tell { .. } => "HandleYield(Tell)",
-                            Effect::Python(_) => "HandleYield(Python)",
-                        }
-                    }
-                    #[cfg(not(test))]
-                    {
-                        let _ = e;
-                        "HandleYield(Python)"
-                    }
-                }
                 Yielded::DoCtrl(p) => match p {
                     DoCtrl::Pure { .. } => "HandleYield(Pure)",
                     DoCtrl::Map { .. } => "HandleYield(Map)",
                     DoCtrl::FlatMap { .. } => "HandleYield(FlatMap)",
+                    DoCtrl::Perform { .. } => "HandleYield(Perform)",
                     DoCtrl::Resume { .. } => "HandleYield(Resume)",
                     DoCtrl::Transfer { .. } => "HandleYield(Transfer)",
                     DoCtrl::WithHandler { .. } => "HandleYield(WithHandler)",
@@ -499,11 +483,6 @@ impl VM {
         };
 
         match yielded {
-            Yielded::Effect(effect) => match self.start_dispatch(effect) {
-                Ok(event) => event,
-                Err(e) => StepEvent::Error(e),
-            },
-
             Yielded::DoCtrl(prim) => {
                 // Spec: Drop completed dispatches before inspecting handler context.
                 self.lazy_pop_completed();
@@ -515,6 +494,10 @@ impl VM {
                     }
                     DoCtrl::Map { source, mapper } => self.handle_map(source, mapper),
                     DoCtrl::FlatMap { source, binder } => self.handle_flat_map(source, binder),
+                    DoCtrl::Perform { effect } => match self.start_dispatch(effect) {
+                        Ok(event) => event,
+                        Err(e) => StepEvent::Error(e),
+                    },
                     DoCtrl::Resume {
                         continuation,
                         value,
@@ -1113,6 +1096,33 @@ impl VM {
     /// walk deliver the value back. Does NOT explicitly jump to prompt_seg_id.
     /// If the handler's caller is the prompt boundary, marks dispatch completed.
     fn handle_handler_return(&mut self, value: Value) -> StepEvent {
+        if let Value::Python(obj) = &value {
+            let should_eval = Python::attach(|py| {
+                let bound = obj.bind(py);
+                if bound.is_instance_of::<PyDoExprBase>() || bound.is_instance_of::<PyEffectBase>() {
+                    return true;
+                }
+                bound
+                    .getattr("__doeff_effect_base__")
+                    .and_then(|v| v.is_truthy())
+                    .unwrap_or(false)
+            });
+
+            if should_eval {
+                let handlers = self.current_visible_handlers();
+                let expr = PyShared::new(obj.clone());
+                let cb = self.register_callback(Box::new(|resolved, vm| {
+                    let _ = vm.handle_handler_return(resolved);
+                    std::mem::replace(&mut vm.mode, Mode::Deliver(Value::Unit))
+                }));
+                if let Some(seg) = self.current_segment_mut() {
+                    seg.push_frame(Frame::RustReturn { cb });
+                }
+                self.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }));
+                return StepEvent::Continue;
+            }
+        }
+
         let Some(top) = self.dispatch_stack.last_mut() else {
             return StepEvent::Error(VMError::internal("Return outside of dispatch"));
         };
@@ -2336,7 +2346,8 @@ mod tests {
             )
             .unwrap();
             let call_obj = locals.get_item("obj").unwrap().unwrap().unbind();
-            vm.mode = Mode::HandleYield(Yielded::Effect(Effect::Python(PyShared::new(call_obj))));
+            let effect = crate::effect::dispatch_from_shared(PyShared::new(call_obj));
+            vm.mode = Mode::HandleYield(Yielded::DoCtrl(DoCtrl::Perform { effect }));
 
             let event = vm.step_handle_yield();
             assert!(
