@@ -9,13 +9,12 @@ Run with: uv run doeff run --program examples.sample_entrypoints.hello_world_pro
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from doeff import EffectGenerator, Program, do
-from doeff.effects import ask, gather
-from doeff.effects.log import slog
+from doeff import EffectGenerator, Program, ask, do, gather, slog
 
 # ============================================================
 # KLEISLI FUNCTIONS - Building blocks that create Programs
 # ============================================================
+
 
 @do
 def greet(name: str) -> EffectGenerator[str]:
@@ -42,6 +41,7 @@ def process_item(item: dict) -> EffectGenerator[dict]:
 @do
 def process_items(items: list[dict]) -> EffectGenerator[list[dict]]:
     """Process multiple items using gather."""
+
     @do
     def process_single(item: dict) -> EffectGenerator[dict]:
         return (yield process_item(item))
@@ -99,6 +99,7 @@ full_pipeline_program: Program[dict] = data_metrics
 # USING Program.pure FOR SIMPLE FUNCTIONS
 # ============================================================
 
+
 def double(x: int) -> int:
     """Pure function - no effects needed."""
     return x * 2
@@ -121,9 +122,11 @@ formatted_result: Program[str] = Program.pure(format_result)(value=double_10_pro
 # PROTOCOL-BASED INJECTION EXAMPLE
 # ============================================================
 
+
 @runtime_checkable
 class ProcessorFn(Protocol):
     """Injection point for item processor."""
+
     def __call__(self, item: dict) -> dict: ...
 
 
@@ -144,6 +147,7 @@ strategy_pipeline: Program[list[dict]] = process_with_strategy(
 # ============================================================
 # TRANSFORMS - Program -> Program modifications
 # ============================================================
+
 
 @do
 def with_logging(  # doeff: transform
@@ -176,6 +180,7 @@ def with_retry(  # doeff: transform
 # KLEISLI TOOLS - Post-processing tools for IDE
 # ============================================================
 
+
 @do
 def visualize_metrics(  # doeff: kleisli
     metrics: dict,
@@ -194,6 +199,7 @@ def export_to_json(  # doeff: kleisli
 ) -> EffectGenerator[Path]:
     """Export data to JSON file. Kleisli tool for IDE."""
     import json
+
     yield slog(msg=f"Exporting to {output_path}")
     output_path.write_text(json.dumps(data, indent=2))
     return output_path

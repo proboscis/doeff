@@ -21,6 +21,9 @@ rules:
               ...
               yield from $EXPR
               ...
+    paths:
+      exclude:
+        - "**/tests/**"
     message: |
       Do not use `yield from` in @do functions. Each effect should be yielded individually
       to maintain proper effect tracking and call tree construction.
@@ -607,3 +610,44 @@ rules:
     metadata:
       category: spec-audit-SA-001
       gap: G08
+
+  # ---------------------------------------------------------------------------
+  # PUBLIC API LOCATION GUARDS
+  # ---------------------------------------------------------------------------
+
+  - id: doeff-public-api-no-subpackage-imports
+    patterns:
+      - pattern-either:
+          - pattern-regex: '^from\\s+doeff\\.[A-Za-z0-9_.]+\\s+import\\s+'
+          - pattern-regex: '^import\\s+doeff\\.[A-Za-z0-9_.]+'
+    paths:
+      include:
+        - "**/tests/public_api/**/*.py"
+        - "**/examples/**/*.py"
+      exclude:
+        - "**/examples/cesk/**"
+        - "**/examples/custom_handlers.py"
+    message: |
+      Public-facing migration policy: import from top-level `doeff` only.
+      Replace `from doeff.<subpackage> import ...` with `from doeff import ...`.
+      CESK examples are excluded (planned deletion).
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: public-api-location
+      rationale: "Public API location is fixed at top-level doeff"
+
+  - id: doeff-public-docs-no-subpackage-imports
+    patterns:
+      - pattern-regex: 'from\\s+doeff\\.[A-Za-z0-9_.]+\\s+import\\s+'
+    paths:
+      include:
+        - "**/docs/06-io-effects.md"
+        - "**/docs/16-run-program-api.md"
+    message: |
+      Consumer-facing docs must use top-level imports: `from doeff import ...`.
+    languages: [generic]
+    severity: ERROR
+    metadata:
+      category: public-api-location
+      rationale: "Docs should reflect stable top-level public API"
