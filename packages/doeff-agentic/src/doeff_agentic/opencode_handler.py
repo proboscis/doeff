@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Coroutine, Protocol
 
-from doeff import Await, Delay, do
+from doeff import Await, do
 from doeff.effects.writer import slog
 
 from .effects import (
@@ -155,6 +155,11 @@ def generate_environment_id(name: str | None = None) -> str:
     """Generate environment ID."""
     data = f"env-{name or 'default'}-{time.time()}"
     return hashlib.sha256(data.encode()).hexdigest()[:8]
+
+
+def _utc_now() -> datetime:
+    """Return current UTC timestamp."""
+    return datetime.now(timezone.utc)
 
 
 # =============================================================================
@@ -504,7 +509,7 @@ class OpenCodeHandler:
                 workflow_id=workflow.id,
                 environment_id=env_id,
                 status=AgenticSessionStatus.PENDING,
-                created_at=datetime.now(timezone.utc),
+                created_at=_utc_now(),
                 title=effect.title or effect.name,
                 agent=effect.agent,
                 model=effect.model,
@@ -558,7 +563,7 @@ class OpenCodeHandler:
                 workflow_id=workflow.id,
                 environment_id=source.environment_id,
                 status=AgenticSessionStatus.PENDING,
-                created_at=datetime.now(timezone.utc),
+                created_at=_utc_now(),
                 title=effect.name,
                 agent=source.agent,
                 model=source.model,
@@ -697,7 +702,7 @@ class OpenCodeHandler:
                     id=info.get("id", f"msg-{time.time_ns()}"),
                     session_id=effect.session_id,
                     role=info.get("role", "user"),
-                    created_at=datetime.now(timezone.utc),
+                    created_at=_utc_now(),
                 )
             else:
                 yield slog(status="sending-async", session=session_name or effect.session_id[:8])
@@ -708,7 +713,7 @@ class OpenCodeHandler:
                     id=f"msg-{time.time_ns()}",
                     session_id=effect.session_id,
                     role="user",
-                    created_at=datetime.now(timezone.utc),
+                    created_at=_utc_now(),
                 )
 
         return _send_message()
@@ -743,7 +748,7 @@ class OpenCodeHandler:
 
                 created_at_str = info.get("createdAt") if isinstance(info, dict) else None
                 if not created_at_str:
-                    created_at_str = datetime.now(timezone.utc).isoformat()
+                    created_at_str = _utc_now().isoformat()
 
                 messages.append(
                     AgenticMessage(
