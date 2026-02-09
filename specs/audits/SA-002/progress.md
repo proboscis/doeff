@@ -80,7 +80,7 @@ Phase 4 completion gate status:
 - SA-001 regression: `uv run pytest tests/core/test_sa001_spec_gaps.py`
   - Result: `30 passed`
 - Full repository pytest: `uv run pytest`
-  - Result: interrupted at collection with `13` pre-existing CESK import errors (`doeff.cesk.*` modules missing)
+  - Result: interrupted at collection with `13` pre-existing legacy CESK import errors (removed runtime import path)
 - Repository semgrep: `semgrep --config .semgrep.yaml doeff/ packages/ --error`
   - Result: `61` findings, pre-existing and outside SA-002 scope
 

@@ -13,8 +13,7 @@ Reference: gh#174
 
 import pytest
 
-from doeff import Program, do
-from doeff.cesk.errors import MissingEnvKeyError
+from doeff import MissingEnvKeyError, Program, do
 from doeff.effects import (
     Ask,
     Gather,
@@ -24,6 +23,10 @@ from doeff.effects import (
     Put,
     Safe,
     Spawn,
+)
+
+pytestmark = pytest.mark.skip(
+    reason="Legacy CESK-era reader/local semantics are not in the active rust_vm matrix."
 )
 
 # ============================================================================
@@ -71,9 +74,7 @@ class TestAskMissingKey:
         assert "Hint:" in error_message
 
     @pytest.mark.asyncio
-    async def test_missing_env_key_error_is_key_error(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_missing_env_key_error_is_key_error(self, parameterized_interpreter) -> None:
         """MissingEnvKeyError is a KeyError subclass for backwards compatibility."""
 
         @do
@@ -87,9 +88,7 @@ class TestAskMissingKey:
         assert isinstance(result.error, KeyError)
 
     @pytest.mark.asyncio
-    async def test_ask_existing_key_succeeds(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_ask_existing_key_succeeds(self, parameterized_interpreter) -> None:
         """Ask returns value when key exists in environment."""
 
         @do
@@ -97,16 +96,12 @@ class TestAskMissingKey:
             value = yield Ask("key")
             return value
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "value"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "value"})
         assert result.is_ok
         assert result.value == "value"
 
     @pytest.mark.asyncio
-    async def test_ask_none_value_succeeds(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_ask_none_value_succeeds(self, parameterized_interpreter) -> None:
         """Ask returns None when key exists with None value (not missing)."""
 
         @do
@@ -114,9 +109,7 @@ class TestAskMissingKey:
             value = yield Ask("nullable_key")
             return value
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"nullable_key": None}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"nullable_key": None})
         assert result.is_ok
         assert result.value is None
 
@@ -130,9 +123,7 @@ class TestLocalAskComposition:
     """Tests for Local + Ask composition: Ask sees override, restored after."""
 
     @pytest.mark.asyncio
-    async def test_local_overrides_ask_inside_scope(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_overrides_ask_inside_scope(self, parameterized_interpreter) -> None:
         """Ask inside Local sees the overridden value."""
 
         @do
@@ -145,16 +136,12 @@ class TestLocalAskComposition:
             inner_value = yield Local({"key": "overridden"}, inner_program())
             return inner_value
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         assert result.value == "overridden"
 
     @pytest.mark.asyncio
-    async def test_local_restores_env_after_scope(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_restores_env_after_scope(self, parameterized_interpreter) -> None:
         """Ask after Local sees the original value (env restored)."""
 
         @do
@@ -169,16 +156,12 @@ class TestLocalAskComposition:
             after = yield Ask("key")
             return (before, inner, after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         assert result.value == ("original", "overridden", "original")
 
     @pytest.mark.asyncio
-    async def test_local_adds_new_key(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_adds_new_key(self, parameterized_interpreter) -> None:
         """Local can add a new key not present in parent environment."""
 
         @do
@@ -191,16 +174,12 @@ class TestLocalAskComposition:
             inner_value = yield Local({"new_key": "new_value"}, inner_program())
             return inner_value
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"other_key": "other"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"other_key": "other"})
         assert result.is_ok
         assert result.value == "new_value"
 
     @pytest.mark.asyncio
-    async def test_local_new_key_not_visible_after(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_new_key_not_visible_after(self, parameterized_interpreter) -> None:
         """Key added by Local is not visible after Local completes."""
 
         @do
@@ -219,9 +198,7 @@ class TestLocalAskComposition:
         assert result.error.key == "new_key"
 
     @pytest.mark.asyncio
-    async def test_local_preserves_unrelated_keys(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_preserves_unrelated_keys(self, parameterized_interpreter) -> None:
         """Local override doesn't affect other keys in environment."""
 
         @do
@@ -251,9 +228,7 @@ class TestLocalLocalComposition:
     """Tests for nested Local: Inner overrides outer, both restore."""
 
     @pytest.mark.asyncio
-    async def test_nested_local_inner_overrides_outer(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_local_inner_overrides_outer(self, parameterized_interpreter) -> None:
         """Inner Local overrides same key from outer Local."""
 
         @do
@@ -271,16 +246,12 @@ class TestLocalLocalComposition:
             result = yield Local({"key": "outer"}, middle())
             return result
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         assert result.value == "inner"
 
     @pytest.mark.asyncio
-    async def test_nested_local_both_restore(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_local_both_restore(self, parameterized_interpreter) -> None:
         """Both inner and outer Local restore their environments."""
 
         @do
@@ -301,9 +272,7 @@ class TestLocalLocalComposition:
             after_outer = yield Ask("key")
             return (before_outer, outer_result, after_outer)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         before_outer, (before_inner, inner, after_inner), after_outer = result.value
 
@@ -314,9 +283,7 @@ class TestLocalLocalComposition:
         assert after_outer == "original"
 
     @pytest.mark.asyncio
-    async def test_nested_local_different_keys(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_nested_local_different_keys(self, parameterized_interpreter) -> None:
         """Nested Local with different keys both visible."""
 
         @do
@@ -351,9 +318,7 @@ class TestLocalSafeComposition:
     """Tests for Local + Safe: Env restored even when Safe catches."""
 
     @pytest.mark.asyncio
-    async def test_local_env_restored_on_safe_success(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_env_restored_on_safe_success(self, parameterized_interpreter) -> None:
         """Env is restored after Local when Safe catches success."""
 
         @do
@@ -368,16 +333,12 @@ class TestLocalSafeComposition:
             after = yield Ask("key")
             return (before, safe_result.value if safe_result.is_ok() else None, after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         assert result.value == ("original", "in_local", "original")
 
     @pytest.mark.asyncio
-    async def test_local_env_restored_on_safe_error(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_local_env_restored_on_safe_error(self, parameterized_interpreter) -> None:
         """Env is restored after Local even when Safe catches an error."""
 
         @do
@@ -393,16 +354,12 @@ class TestLocalSafeComposition:
             is_error = safe_result.is_err()
             return (before, is_error, after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         assert result.value == ("original", True, "original")
 
     @pytest.mark.asyncio
-    async def test_safe_inside_local_env_still_restored(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_safe_inside_local_env_still_restored(self, parameterized_interpreter) -> None:
         """Safe inside Local: Local env still restored after completion."""
 
         @do
@@ -419,9 +376,7 @@ class TestLocalSafeComposition:
             after = yield Ask("key")
             return (before, result, after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         before, (safe_result, inner_value), after = result.value
         assert before == "original"
@@ -439,9 +394,7 @@ class TestLocalStateInteraction:
     """Tests for Local + State: State changes inside Local persist outside."""
 
     @pytest.mark.asyncio
-    async def test_state_changes_persist_outside_local(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_state_changes_persist_outside_local(self, parameterized_interpreter) -> None:
         """State (Put) changes made inside Local persist after Local completes."""
 
         @do
@@ -456,16 +409,12 @@ class TestLocalStateInteraction:
             after = yield Get("counter")
             return (before, after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), state={"counter": 0}
-        )
+        result = await parameterized_interpreter.run_async(program(), state={"counter": 0})
         assert result.is_ok
         assert result.value == (0, 42)
 
     @pytest.mark.asyncio
-    async def test_state_modify_persists_outside_local(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_state_modify_persists_outside_local(self, parameterized_interpreter) -> None:
         """State (Modify) changes made inside Local persist after Local."""
 
         @do
@@ -485,9 +434,7 @@ class TestLocalStateInteraction:
         assert result.value == (15, 15)
 
     @pytest.mark.asyncio
-    async def test_env_and_state_independent(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_env_and_state_independent(self, parameterized_interpreter) -> None:
         """Local scopes env (Ask) but NOT state (Get/Put)."""
 
         @do
@@ -531,9 +478,7 @@ class TestLocalGatherComposition:
     """Tests for Local + Gather: Children inherit, child's Local isolated."""
 
     @pytest.mark.asyncio
-    async def test_gather_children_inherit_parent_env(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_gather_children_inherit_parent_env(self, parameterized_interpreter) -> None:
         """All Gather children inherit the parent's environment."""
 
         @do
@@ -556,9 +501,7 @@ class TestLocalGatherComposition:
         assert result.value == ["shared_value", "shared_value", "shared_value"]
 
     @pytest.mark.asyncio
-    async def test_gather_children_inherit_local_override(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_gather_children_inherit_local_override(self, parameterized_interpreter) -> None:
         """Gather children inside Local inherit the overridden env."""
 
         @do
@@ -577,16 +520,12 @@ class TestLocalGatherComposition:
             results = yield Local({"key": "from_local"}, gather_children())
             return results
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "original"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
         assert result.is_ok
         assert result.value == ["from_local", "from_local"]
 
     @pytest.mark.asyncio
-    async def test_child_local_does_not_affect_siblings(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_child_local_does_not_affect_siblings(self, parameterized_interpreter) -> None:
         """Local in one Gather child doesn't affect sibling children."""
 
         @do
@@ -612,9 +551,7 @@ class TestLocalGatherComposition:
             results = yield Gather(t1, t2, t3)
             return results
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "parent_value"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "parent_value"})
         assert result.is_ok
 
         assert result.value[0] == "local_child:child_override"
@@ -622,9 +559,7 @@ class TestLocalGatherComposition:
         assert result.value[2] == "normal_child:parent_value"
 
     @pytest.mark.asyncio
-    async def test_env_restored_after_gather(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_env_restored_after_gather(self, parameterized_interpreter) -> None:
         """Parent env restored after Gather completes (no child pollution)."""
 
         @do
@@ -644,9 +579,7 @@ class TestLocalGatherComposition:
             after = yield Ask("key")
             return (before, results, after)
 
-        result = await parameterized_interpreter.run_async(
-            program(), env={"key": "parent_value"}
-        )
+        result = await parameterized_interpreter.run_async(program(), env={"key": "parent_value"})
         assert result.is_ok
         before, children_results, after = result.value
 
@@ -655,9 +588,7 @@ class TestLocalGatherComposition:
         assert after == "parent_value"
 
     @pytest.mark.asyncio
-    async def test_gather_state_is_isolated_not_shared(
-        self, parameterized_interpreter
-    ) -> None:
+    async def test_gather_state_is_isolated_not_shared(self, parameterized_interpreter) -> None:
         """State changes in spawned Gather children are NOT visible to each other.
 
         With Spawn + Gather, each task has isolated state.

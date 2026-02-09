@@ -29,11 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Coroutine, Protocol
 
 from doeff import Await, Delay, do
-from doeff.cesk.frames import ContinueProgram, ContinueValue, FrameResult
 from doeff.effects.writer import slog
-
-if TYPE_CHECKING:
-    from doeff.cesk.runtime.context import HandlerContext
 
 from .effects import (
     AgenticAbortSession,
@@ -170,7 +166,7 @@ class OpenCodeHandler:
     """Handler using OpenCode's HTTP API with async I/O via Await effect.
 
     Architecture:
-    - Handlers return ContinueProgram containing a @do program
+    - Handlers return @do programs directly when async I/O is required
     - The @do program yields Await(coroutine) for async HTTP calls
     - AsyncRuntime intercepts Await and handles the actual async execution
 
@@ -237,6 +233,7 @@ class OpenCodeHandler:
         # Close the underlying httpx client directly (not via the @do method)
         if self._client:
             import asyncio
+
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._client._client.aclose())
@@ -256,6 +253,7 @@ class OpenCodeHandler:
     def _check_health_sync(self) -> None:
         """Check if server is healthy (sync, for startup only)."""
         import httpx
+
         try:
             resp = httpx.get(f"{self._server_url}/global/health", timeout=5.0)
             result = resp.json()
@@ -292,6 +290,7 @@ class OpenCodeHandler:
         while time.time() < deadline:
             try:
                 import httpx
+
                 resp = httpx.get(f"{url}/global/health", timeout=1.0)
                 if resp.status_code == 200 and resp.json().get("healthy"):
                     self._server_url = url
@@ -304,17 +303,13 @@ class OpenCodeHandler:
         # Timeout
         if self._server_process:
             self._server_process.terminate()
-        raise AgenticServerError(
-            f"Server failed to start within {self._startup_timeout}s"
-        )
+        raise AgenticServerError(f"Server failed to start within {self._startup_timeout}s")
 
     # -------------------------------------------------------------------------
     # Workflow Effects
     # -------------------------------------------------------------------------
 
-    def handle_create_workflow(
-        self, effect: AgenticCreateWorkflow, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_create_workflow(self, effect: AgenticCreateWorkflow):
         """Handle AgenticCreateWorkflow effect."""
         self.initialize()
 
@@ -328,9 +323,7 @@ class OpenCodeHandler:
         )
 
         # Log workflow creation
-        self._event_log.log_workflow_created(
-            workflow_id, effect.name, effect.metadata
-        )
+        self._event_log.log_workflow_created(workflow_id, effect.name, effect.metadata)
         self._workflow_index.add(workflow_id, effect.name)
 
         result = AgenticWorkflowHandle(
@@ -340,16 +333,9 @@ class OpenCodeHandler:
             created_at=self._workflow.created_at,
             metadata=effect.metadata,
         )
-        return ContinueValue(
-            value=result,
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return result
 
-    def handle_get_workflow(
-        self, effect: AgenticGetWorkflow, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_get_workflow(self, effect: AgenticGetWorkflow):
         """Handle AgenticGetWorkflow effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -361,20 +347,13 @@ class OpenCodeHandler:
             created_at=self._workflow.created_at,
             metadata=self._workflow.metadata,
         )
-        return ContinueValue(
-            value=result,
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return result
 
     # -------------------------------------------------------------------------
     # Environment Effects
     # -------------------------------------------------------------------------
 
-    def handle_create_environment(
-        self, effect: AgenticCreateEnvironment, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_create_environment(self, effect: AgenticCreateEnvironment):
         """Handle AgenticCreateEnvironment effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -422,13 +401,9 @@ class OpenCodeHandler:
         # Log environment creation
         self._event_log.log_environment_created(self._workflow.id, result)
 
-        return ContinueValue(
-            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-        )
+        return result
 
-    def handle_get_environment(
-        self, effect: AgenticGetEnvironment, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_get_environment(self, effect: AgenticGetEnvironment):
         """Handle AgenticGetEnvironment effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -436,13 +411,9 @@ class OpenCodeHandler:
         result = self._workflow.environments.get(effect.environment_id)
         if not result:
             raise AgenticEnvironmentNotFoundError(effect.environment_id)
-        return ContinueValue(
-            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-        )
+        return result
 
-    def handle_delete_environment(
-        self, effect: AgenticDeleteEnvironment, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_delete_environment(self, effect: AgenticDeleteEnvironment):
         """Handle AgenticDeleteEnvironment effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -473,17 +444,13 @@ class OpenCodeHandler:
         )
 
         del self._workflow.environments[effect.environment_id]
-        return ContinueValue(
-            value=True, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-        )
+        return True
 
     # -------------------------------------------------------------------------
     # Session Effects
     # -------------------------------------------------------------------------
 
-    def handle_create_session(
-        self, effect: AgenticCreateSession, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_create_session(self, effect: AgenticCreateSession):
         """Handle AgenticCreateSession effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -547,22 +514,13 @@ class OpenCodeHandler:
             workflow.session_by_id[session_id] = effect.name
 
             event_log.log_session_created(workflow.id, result)
-            event_log.log_session_bound_to_environment(
-                workflow.id, env_id, effect.name
-            )
+            event_log.log_session_bound_to_environment(workflow.id, env_id, effect.name)
 
             return result
 
-        return ContinueProgram(
-            program=_create_session(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _create_session()
 
-    def handle_fork_session(
-        self, effect: AgenticForkSession, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_fork_session(self, effect: AgenticForkSession):
         """Handle AgenticForkSession effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -610,16 +568,9 @@ class OpenCodeHandler:
             workflow.session_by_id[new_session_id] = effect.name
             return result
 
-        return ContinueProgram(
-            program=_fork_session(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _fork_session()
 
-    def handle_get_session(
-        self, effect: AgenticGetSession, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_get_session(self, effect: AgenticGetSession):
         """Handle AgenticGetSession effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -628,24 +579,18 @@ class OpenCodeHandler:
             result = self._workflow.sessions.get(effect.name)
             if not result:
                 raise AgenticSessionNotFoundError(effect.name, by_name=True)
-            return ContinueValue(
-                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-            )
+            return result
 
         if effect.session_id:
             name = self._workflow.session_by_id.get(effect.session_id)
             if not name:
                 raise AgenticSessionNotFoundError(effect.session_id)
             result = self._workflow.sessions[name]
-            return ContinueValue(
-                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-            )
+            return result
 
         raise ValueError("Either session_id or name must be provided")
 
-    def handle_abort_session(
-        self, effect: AgenticAbortSession, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_abort_session(self, effect: AgenticAbortSession):
         """Handle AgenticAbortSession effect."""
         self._ensure_workflow()
         assert self._client is not None
@@ -676,16 +621,9 @@ class OpenCodeHandler:
 
             return None
 
-        return ContinueProgram(
-            program=_abort_session(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _abort_session()
 
-    def handle_delete_session(
-        self, effect: AgenticDeleteSession, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_delete_session(self, effect: AgenticDeleteSession):
         """Handle AgenticDeleteSession effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -705,20 +643,13 @@ class OpenCodeHandler:
 
             return bool(api_result)
 
-        return ContinueProgram(
-            program=_delete_session(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _delete_session()
 
     # -------------------------------------------------------------------------
     # Message Effects
     # -------------------------------------------------------------------------
 
-    def handle_send_message(
-        self, effect: AgenticSendMessage, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_send_message(self, effect: AgenticSendMessage):
         """Handle AgenticSendMessage effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -744,18 +675,14 @@ class OpenCodeHandler:
 
         # Log message sent
         if session_name:
-            event_log.log_message_sent(
-                workflow.id, session_name, effect.content, effect.wait
-            )
+            event_log.log_message_sent(workflow.id, session_name, effect.content, effect.wait)
 
         @do
         def _send_message():
             if effect.wait:
                 yield slog(status="sending", session=session_name or effect.session_id[:8])
 
-                api_result = yield client.post(
-                    f"/session/{effect.session_id}/message", json=body
-                )
+                api_result = yield client.post(f"/session/{effect.session_id}/message", json=body)
                 assert api_result is not None
                 info = api_result.get("info", {})
 
@@ -784,16 +711,9 @@ class OpenCodeHandler:
                     created_at=datetime.now(timezone.utc),
                 )
 
-        return ContinueProgram(
-            program=_send_message(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _send_message()
 
-    def handle_get_messages(
-        self, effect: AgenticGetMessages, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_get_messages(self, effect: AgenticGetMessages):
         """Handle AgenticGetMessages effect."""
         self._ensure_workflow()
         assert self._client is not None
@@ -806,9 +726,7 @@ class OpenCodeHandler:
             if effect.limit:
                 params["limit"] = effect.limit
 
-            api_result = yield client.get(
-                f"/session/{effect.session_id}/message", params=params
-            )
+            api_result = yield client.get(f"/session/{effect.session_id}/message", params=params)
 
             messages = []
             # api_result is a list of message dicts
@@ -840,20 +758,13 @@ class OpenCodeHandler:
 
             return messages
 
-        return ContinueProgram(
-            program=_get_messages(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _get_messages()
 
     # -------------------------------------------------------------------------
     # Event Effects
     # -------------------------------------------------------------------------
 
-    def handle_next_event(
-        self, effect: AgenticNextEvent, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_next_event(self, effect: AgenticNextEvent):
         """Handle AgenticNextEvent effect."""
         self._ensure_workflow()
         assert self._client is not None
@@ -906,9 +817,7 @@ class OpenCodeHandler:
                                 reason=f"session_{status}",
                                 final_status=final_status,
                             )
-                            return ContinueValue(
-                                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-                            )
+                            return result
 
                 result = AgenticEvent(
                     event_type=event_type,
@@ -916,9 +825,7 @@ class OpenCodeHandler:
                     data=props if isinstance(props, dict) else {},
                     timestamp=datetime.now(timezone.utc),
                 )
-                return ContinueValue(
-                    value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-                )
+                return result
 
         except StopIteration:
             self._close_sse(effect.session_id)
@@ -926,15 +833,11 @@ class OpenCodeHandler:
                 reason="connection_closed",
                 final_status=None,
             )
-            return ContinueValue(
-                value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-            )
+            return result
 
         # Should not reach here
         result = AgenticEndOfEvents(reason="connection_closed", final_status=None)
-        return ContinueValue(
-            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-        )
+        return result
 
     def _close_sse(self, session_id: str) -> None:
         """Close SSE connection for session."""
@@ -950,9 +853,7 @@ class OpenCodeHandler:
     # Status Effects
     # -------------------------------------------------------------------------
 
-    def handle_get_session_status(
-        self, effect: AgenticGetSessionStatus, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_get_session_status(self, effect: AgenticGetSessionStatus):
         """Handle AgenticGetSessionStatus effect."""
         self._ensure_workflow()
         assert self._workflow is not None
@@ -970,21 +871,12 @@ class OpenCodeHandler:
 
             return workflow.sessions[name].status
 
-        return ContinueProgram(
-            program=_get_status(),
-            env=ctx.task_state.env,
-            store=ctx.store,
-            k=ctx.task_state.kontinuation,
-        )
+        return _get_status()
 
-    def handle_supports_capability(
-        self, effect: AgenticSupportsCapability, ctx: HandlerContext
-    ) -> FrameResult:
+    def handle_supports_capability(self, effect: AgenticSupportsCapability):
         """Handle AgenticSupportsCapability effect."""
         result = effect.capability in self.SUPPORTED_CAPABILITIES
-        return ContinueValue(
-            value=result, env=ctx.task_state.env, store=ctx.store, k=ctx.task_state.kontinuation
-        )
+        return result
 
     # -------------------------------------------------------------------------
     # Helper Methods
@@ -1039,9 +931,7 @@ class OpenCodeHandler:
         shutil.copytree(source, dest)
         return str(dest)
 
-    def _update_session_status(
-        self, session_id: str, status: AgenticSessionStatus
-    ) -> None:
+    def _update_session_status(self, session_id: str, status: AgenticSessionStatus) -> None:
         """Update local session status."""
         if self._workflow is None:
             return

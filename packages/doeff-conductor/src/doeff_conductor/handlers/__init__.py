@@ -8,18 +8,19 @@ Each handler implements the logic for a category of effects:
 - GitHandler: Git operations
 
 Handler utilities:
-- make_scheduled_handler: Wrap sync handlers for scheduled_handlers API
-- make_async_scheduled_handler: Wrap async handlers
-- make_blocking_scheduled_handler: Wrap blocking handlers (runs in thread)
+- make_scheduled_handler
+- make_async_scheduled_handler
+- make_blocking_scheduled_handler
 
-Testing utilities:
-- run_sync: Backwards-compatible wrapper for running programs with handlers
+Execution utilities:
+- run_sync: direct synchronous execution with default handlers
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+
+from doeff import default_handlers, run
 
 from .agent_handler import AgentHandler
 from .git_handler import GitHandler
@@ -35,39 +36,31 @@ from .utils import (
 from .worktree_handler import WorktreeHandler
 
 if TYPE_CHECKING:
-    from doeff.cesk.runtime_result import RuntimeResult
     from doeff.program import Program
+    from doeff.types import RunResult
 
 
 def run_sync(
     program: Program[Any],
-    scheduled_handlers: dict[type, Callable[..., Any]] | None = None,
     env: dict[str, Any] | None = None,
     store: dict[str, Any] | None = None,
-) -> RuntimeResult[Any]:
+) -> RunResult[Any]:
     """Run a program synchronously with custom handlers.
-
-    This function provides backwards compatibility with the old doeff.cesk.run_sync()
-    function that was removed in favor of the new SyncRuntime class.
 
     Args:
         program: The program to execute
-        scheduled_handlers: Dict mapping effect types to CESK handlers
         env: Optional initial environment
         store: Optional initial store
 
     Returns:
-        RuntimeResult containing the execution outcome
+        RunResult containing the execution outcome
 
     Example:
-        result = run_sync(my_workflow(), scheduled_handlers=handlers)
+        result = run_sync(my_workflow())
         if result.is_ok():
             print(result.value)
     """
-    from doeff.cesk.runtime import SyncRuntime
-
-    runtime = SyncRuntime(handlers=scheduled_handlers)
-    return runtime.run(program, env=env, store=store)
+    return run(program, handlers=default_handlers(), env=env, store=store)
 
 
 __all__ = [

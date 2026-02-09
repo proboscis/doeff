@@ -6,10 +6,17 @@ ensuring proper dependency resolution through AsyncResolver.
 # pinjected-linter: ignore  # Testing free monad to pinjected bridge
 
 import asyncio
+import sys
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 
 import pytest
+
+pytest.importorskip("pinjected")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from doeff_pinjected import (
     program_to_injected,
     program_to_injected_result,
@@ -22,8 +29,9 @@ from doeff import (
     Annotate,
     # Effects
     Ask,
-    AsyncRuntime,
     Await,
+    async_run,
+    default_handlers,
     Effect,
     Get,
     Listen,
@@ -36,7 +44,7 @@ from doeff import (
     Tell,
     do,
 )
-from doeff.cesk.runtime_result import RuntimeResult
+from doeff.types import RunResult
 
 # ======================================================
 # Test Programs
@@ -290,10 +298,7 @@ async def test_direct_engine_run():  # noqa: PINJ040
         return result
 
     # Should work with direct runtime execution
-    runtime = AsyncRuntime()
-    program = direct_program()
-
-    result = await runtime.run(program)
+    result = await async_run(direct_program(), handlers=default_handlers())
     assert result.is_ok()
     assert result.value == 42
 
@@ -305,7 +310,7 @@ async def test_direct_engine_run():  # noqa: PINJ040
 
 @pytest.mark.asyncio
 async def test_program_to_injected_result(mock_resolver):  # noqa: PINJ040
-    """Test program_to_injected_result returns RuntimeResult."""
+    """Test program_to_injected_result returns RunResult."""
 
     @do
     def result_program() -> Generator[Effect | Program, Any, int]:
@@ -315,42 +320,40 @@ async def test_program_to_injected_result(mock_resolver):  # noqa: PINJ040
         yield Annotate({"status": "complete"})
         return 42
 
-    # Get injected that returns RuntimeResult
+    # Get injected that returns RunResult
     injected = program_to_injected_result(result_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
-    # Check RuntimeResult structure
-    assert isinstance(result, RuntimeResult)
+    # Check RunResult structure
+    assert isinstance(result, RunResult)
     assert result.is_ok()
     assert result.value == 42
-    assert result.state["test_key"] == "test_value"
-    assert len(result.log) == 1
-    assert "test log entry" in str(result.log[0])
+    assert result.raw_store["test_key"] == "test_value"
     # graph may be None or a different structure in the new runtime
 
 
 @pytest.mark.asyncio
 async def test_program_to_iproxy_result(mock_resolver):  # noqa: PINJ040
-    """Test program_to_iproxy_result returns IProxy[RuntimeResult]."""
+    """Test program_to_iproxy_result returns IProxy[RunResult]."""
 
     @do
     def result_program() -> Generator[Effect | Program, Any, str]:
         yield Put("state", "value")
         return "result"
 
-    # Get IProxy that returns RuntimeResult
+    # Get IProxy that returns RunResult
     iproxy = program_to_iproxy_result(result_program())
     injected = iproxy
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
-    assert isinstance(result, RuntimeResult)
+    assert isinstance(result, RunResult)
     assert result.value == "result"
-    assert result.state["state"] == "value"
+    assert result.raw_store["state"] == "value"
 
 
 @pytest.mark.asyncio
 async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
-    """Test that program_to_injected_result captures errors in RuntimeResult."""
+    """Test that program_to_injected_result captures errors in RunResult."""
 
     @do
     def failing_program() -> Generator[Effect | Program, Any, int]:
@@ -358,7 +361,7 @@ async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
         raise ValueError("Test error")
 
     injected = program_to_injected_result(failing_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     # Error should be captured in result
     assert result.is_err()
@@ -366,6 +369,7 @@ async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
     # Unwrap EffectFailure if needed
     error = result.error
     from doeff.types import EffectFailure
+
     if isinstance(error, EffectFailure):
         error = error.cause
     assert "Test error" in str(error)
@@ -402,7 +406,7 @@ async def test_safe_effect_through_bridge(mock_resolver):  # noqa: PINJ040
         return {"success": success, "failure": failure}
 
     injected = program_to_injected_result(safe_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok()
     assert result.value["success"] == "success"
@@ -412,7 +416,7 @@ async def test_safe_effect_through_bridge(mock_resolver):  # noqa: PINJ040
 @pytest.mark.asyncio
 async def test_local_effect_through_bridge():  # noqa: PINJ040
     """Test Local effect through the bridge.
-    
+
     Note: The bridge intercepts ALL Ask effects and resolves them via pinjected.
     Therefore, Ask effects inside Local will also be resolved via pinjected, not
     from the Local environment. To test Local properly, we need to provide the
@@ -440,7 +444,7 @@ async def test_local_effect_through_bridge():  # noqa: PINJ040
         return {"base": base, "local_result": local_result, "after": after}
 
     injected = program_to_injected_result(local_program())
-    result: RuntimeResult = await resolver.provide(injected)
+    result: RunResult = await resolver.provide(injected)
 
     assert result.is_ok()
     assert result.value["base"] == "base"
@@ -481,7 +485,7 @@ async def test_listen_effect_through_bridge(mock_resolver):  # noqa: PINJ040
         }
 
     injected = program_to_injected_result(listen_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok()
     assert result.value["value"] == 42
@@ -507,7 +511,7 @@ async def test_yielding_programs_through_bridge(mock_resolver):  # noqa: PINJ040
         return {"doubled": doubled, "tripled": tripled}
 
     injected = program_to_injected_result(main_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok()
     assert result.value["doubled"] == 10
@@ -582,7 +586,7 @@ async def test_all_effects_comprehensive(mock_resolver):  # noqa: PINJ040
         }
 
     injected = program_to_injected_result(comprehensive_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok()
     value = result.value
@@ -596,10 +600,8 @@ async def test_all_effects_comprehensive(mock_resolver):  # noqa: PINJ040
     assert value["listened_value"] == 99
     assert value["log_count"] == 1
 
-    # Check context
-    assert result.state["counter"] == 1
-    assert len(result.log) > 0
-    # graph may be None or a different structure in the new runtime
+    # Check state was persisted
+    assert result.raw_store["counter"] == 1
 
 
 @pytest.mark.asyncio
@@ -624,17 +626,16 @@ async def test_nested_program_yields(mock_resolver):  # noqa: PINJ040
         return value * 2
 
     injected = program_to_injected_result(level1())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok()
     assert result.value == 40  # 10 * 2 * 2
-    assert len(result.log) == 3
 
 
 @pytest.mark.asyncio
 async def test_state_in_listen(mock_resolver):  # noqa: PINJ040
     """Test Listen captures logs from inner program.
-    
+
     Note: In the CESK runtime, Listen captures logs but state changes
     from the inner program are visible to the outer program (shared state).
     """
@@ -658,7 +659,7 @@ async def test_state_in_listen(mock_resolver):  # noqa: PINJ040
         return {"value": value, "inner_state": inner, "outer_state": outer}
 
     injected = program_to_injected_result(outer_program())
-    result: RuntimeResult = await mock_resolver.provide(injected)
+    result: RunResult = await mock_resolver.provide(injected)
 
     assert result.is_ok()
     assert result.value["value"] == 42

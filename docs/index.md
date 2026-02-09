@@ -32,21 +32,12 @@ Welcome to the comprehensive documentation for doeff - a pragmatic free monad im
 12. **[Patterns](12-patterns.md)** - Best practices and common patterns
 13. **[API Reference](13-api-reference.md)** - Complete API documentation
 
-### Runtime & Scheduling
-
-20. **[Runtime Scheduler](20-runtime-scheduler.md)** - Single-shot continuations, pluggable schedulers, and simulation effects
-
 ### CLI Tools
 
 14. **[CLI Auto-Discovery](14-cli-auto-discovery.md)** - Automatic interpreter and environment discovery
 15. **[CLI Script Execution](15-cli-script-execution.md)** - Execute Python scripts with program execution results
 16. **[Python run_program API](16-run-program-api.md)** - Use CLI-equivalent discovery from Python tests or scripts
-17. **[Workflow Observability](17-workflow-observability.md)** - Live effect tracing with doeff-flow
-
-### Agent Session Management
-
-18. **[Agent Session Management](18-agent-session-management.md)** - Managing coding agents (Claude, Codex, Gemini) in tmux
-19. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
+17. **[Agent Tutorial](19-agent-tutorial.md)** - Building an automated code review system
 
 ### Specialized Topics
 

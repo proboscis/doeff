@@ -87,14 +87,13 @@ def program():
 The `SimulationRuntime` maintains an internal clock that starts at either the provided `start_time` or `datetime.now()`. This enables deterministic testing of time-dependent programs.
 
 ```python
-from doeff.cesk.runtime import SimulationRuntime
 from datetime import datetime
+from doeff import run
 
 start = datetime(2025, 1, 1, 12, 0, 0)
-runtime = SimulationRuntime(start_time=start)
-
-# After Delay(60) or WaitUntil(datetime(2025, 1, 1, 12, 1, 0)):
-# runtime.current_time == datetime(2025, 1, 1, 12, 1, 0)
+# Deterministic-time tests should inject a fixed clock through environment
+# and run programs with explicit handlers.
+result = run(my_program, env={"clock_start": start})
 ```
 
 ### AsyncRuntime
@@ -186,7 +185,7 @@ A future version may:
 All time effects are registered in `default_handlers()`:
 
 ```python
-from doeff.cesk.handlers import default_handlers
+from doeff import default_handlers
 
 handlers = default_handlers()
 # handlers[DelayEffect] == handle_delay
@@ -198,7 +197,7 @@ handlers = default_handlers()
 
 ### Store-Based Time Tracking
 
-The CESK handlers track time through a special store key `__current_time__`:
+Legacy runtime variants tracked time through a special store key `__current_time__`:
 
 - When present: Handlers use and update this value
 - When absent: Handlers use `datetime.now()` directly
