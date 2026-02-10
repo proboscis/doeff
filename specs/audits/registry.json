@@ -1,6 +1,28 @@
 {
-  "next_id": 9,
+  "next_id": 10,
   "sessions": [
+    {
+      "id": "SA-009",
+      "date": "2026-02-10",
+      "specs": [
+        "specs/effects/SPEC-EFF-001-reader.md",
+        "specs/effects/SPEC-EFF-002-state.md",
+        "specs/effects/SPEC-EFF-003-writer.md",
+        "specs/effects/SPEC-EFF-004-control.md",
+        "specs/effects/SPEC-EFF-006-time.md",
+        "specs/effects/SPEC-EFF-011-await.md",
+        "specs/effects/SPEC-EFF-012-safe.md",
+        "specs/effects/SPEC-EFF-013-result-types.md",
+        "specs/effects/SPEC-EFF-100-combinations.md",
+"specs/vm-architecture/SPEC-SCHED-001-cooperative-scheduling.md",
+        "specs/core/SPEC-CORE-001-effect-boundaries.md"
+      ],
+      "implementation_directory": [
+        "doeff",
+        "packages/doeff-vm"
+      ],
+      "status": "in_progress"
+    },
     {
       "id": "SA-008",
       "date": "2026-02-08",
