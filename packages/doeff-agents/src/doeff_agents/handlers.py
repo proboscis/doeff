@@ -12,13 +12,17 @@ Handler Design:
 
 from __future__ import annotations
 
+import inspect
 import re
 import shlex
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+from doeff import Delegate, Resume
 
 from . import tmux
 from .adapters.base import AgentAdapter, AgentType, InjectionMethod
@@ -46,6 +50,20 @@ from .monitor import (
     detect_status,
     hash_content,
     is_waiting_for_input,
+)
+
+# Keys kept for compatibility with persisted metadata naming.
+AGENT_SESSIONS_KEY = "__agent_sessions__"
+MOCK_AGENT_STATE_KEY = "__mock_agent_state__"
+
+# Supported effect types for doeff-agents handlers.
+AGENT_EFFECT_TYPES = (
+    LaunchEffect,
+    MonitorEffect,
+    CaptureEffect,
+    SendEffect,
+    StopEffect,
+    SleepEffect,
 )
 
 # =============================================================================
@@ -308,6 +326,19 @@ class MockSessionScript:
         return obs
 
 
+@dataclass
+class MockAgentState:
+    """Serializable snapshot of mock handler state."""
+
+    scripts: dict[str, MockSessionScript] = field(default_factory=dict)
+    handles: dict[str, SessionHandle] = field(default_factory=dict)
+    statuses: dict[str, SessionStatus] = field(default_factory=dict)
+    outputs: dict[str, str] = field(default_factory=dict)
+    sends: list[tuple[str, str]] = field(default_factory=list)
+    sleep_calls: list[float] = field(default_factory=list)
+    next_pane_id: int = 0
+
+
 class MockAgentHandler(AgentHandler):
     """Mock handler for testing without tmux.
 
@@ -419,9 +450,21 @@ class MockAgentHandler(AgentHandler):
         """Get total sleep time requested."""
         return sum(self._sleep_calls)
 
+    def snapshot(self) -> MockAgentState:
+        """Return a copyable state snapshot for compatibility/debugging."""
+        return MockAgentState(
+            scripts=dict(self._sessions),
+            handles=dict(self._handles),
+            statuses=dict(self._statuses),
+            outputs=dict(self._outputs),
+            sends=list(self._sends),
+            sleep_calls=list(self._sleep_calls),
+            next_pane_id=self._next_pane_id,
+        )
+
 
 # =============================================================================
-# Handler dispatch
+# Effect dispatch
 # =============================================================================
 
 
@@ -445,13 +488,109 @@ def dispatch_effect(handler: AgentHandler, effect: Any) -> Any:
     raise TypeError(f"Unknown effect type: {type(effect)}")
 
 
+# =============================================================================
+# doeff_vm protocol adapters
+# =============================================================================
+
+SimpleHandler = Callable[[Any], Any]
+ProtocolHandler = Callable[[Any, Any], Any]
+
+
+def make_scheduled_handler(handler: SimpleHandler) -> ProtocolHandler:
+    """Wrap a plain `(effect) -> value` callable into `(effect, k) -> DoExpr`."""
+
+    def scheduled_handler(effect: Any, k):
+        return (yield Resume(k, handler(effect)))
+
+    return scheduled_handler
+
+
+def make_typed_handler(effect_type: type[Any], handler: ProtocolHandler) -> ProtocolHandler:
+    """Restrict a protocol handler to one effect type and delegate otherwise."""
+
+    def typed_handler(effect: Any, k):
+        if isinstance(effect, effect_type):
+            result = handler(effect, k)
+            if inspect.isgenerator(result):
+                return (yield from result)
+            return result
+        yield Delegate()
+
+    return typed_handler
+
+
+def _make_protocol_handler(agent_handler: AgentHandler) -> ProtocolHandler:
+    """Convert an AgentHandler object to doeff_vm handler protocol."""
+
+    scheduled_dispatch = make_scheduled_handler(lambda effect: dispatch_effect(agent_handler, effect))
+
+    def protocol_handler(effect: Any, k):
+        if not isinstance(effect, AGENT_EFFECT_TYPES):
+            yield Delegate()
+            return
+        return (yield from scheduled_dispatch(effect, k))
+
+    return protocol_handler
+
+
+_tmux_effect_handler = TmuxAgentHandler()
+_mock_effect_handler = MockAgentHandler()
+_tmux_protocol_handler = _make_protocol_handler(_tmux_effect_handler)
+_mock_protocol_handler = _make_protocol_handler(_mock_effect_handler)
+
+
+def agent_effectful_handler() -> ProtocolHandler:
+    """Return the real tmux handler in `(effect, k) -> DoExpr` form."""
+    return _tmux_protocol_handler
+
+
+def mock_agent_handler() -> ProtocolHandler:
+    """Return the mock testing handler in `(effect, k) -> DoExpr` form."""
+    return _mock_protocol_handler
+
+
+def agent_effectful_handlers() -> tuple[ProtocolHandler, ...]:
+    """Compatibility shim returning protocol handlers for real tmux effects."""
+    return (agent_effectful_handler(),)
+
+
+def mock_agent_handlers() -> tuple[ProtocolHandler, ...]:
+    """Compatibility shim returning protocol handlers for mock effects."""
+    return (mock_agent_handler(),)
+
+
+def configure_mock_session(
+    session_name: str,
+    script: MockSessionScript | None = None,
+    initial_output: str = "",
+) -> None:
+    """Configure a mock session before program execution."""
+    _mock_effect_handler.configure_session(session_name, script, initial_output)
+
+
+def get_mock_agent_state() -> MockAgentState:
+    """Return current mock state snapshot."""
+    return _mock_effect_handler.snapshot()
+
+
 __all__ = [
+    "AGENT_SESSIONS_KEY",
     "AgentHandler",
+    "MockAgentState",
     "MockAgentHandler",
+    "MOCK_AGENT_STATE_KEY",
     "MockSessionScript",
     "SessionState",
     "TmuxAgentHandler",
+    "agent_effectful_handler",
+    "agent_effectful_handlers",
+    "configure_mock_session",
     "dispatch_effect",
     "get_adapter",
+    "get_mock_agent_state",
+    "make_scheduled_handler",
+    "make_typed_handler",
+    "mock_agent_handler",
+    "mock_agent_handlers",
     "register_adapter",
 ]
