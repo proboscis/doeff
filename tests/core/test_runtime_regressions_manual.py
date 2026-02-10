@@ -14,6 +14,8 @@ from doeff import (
     Local,
     MissingEnvKeyError,
     Ok,
+    Program,
+    Put,
     Safe,
     Spawn,
     async_run,
@@ -184,6 +186,297 @@ def test_lazy_ask_local_override_is_enabled_and_cached() -> None:
     assert result.value == ("outer", ("inner", "inner"), "outer")
     assert calls["outer"] == 1
     assert calls["inner"] == 1
+
+
+def test_ask_existing_and_none_values_succeed() -> None:
+    @do
+    def program():
+        value = yield Ask("key")
+        nullable = yield Ask("nullable_key")
+        return (value, nullable)
+
+    result = run(
+        program(),
+        handlers=default_handlers(),
+        env={"key": "value", "nullable_key": None},
+    )
+    assert result.is_ok()
+    assert result.value == ("value", None)
+
+
+def test_local_adds_new_key_and_preserves_unrelated_values() -> None:
+    @do
+    def inner_program():
+        new_key = yield Ask("new_key")
+        other = yield Ask("other_key")
+        return (new_key, other)
+
+    @do
+    def program():
+        return (yield Local({"new_key": "new_value"}, inner_program()))
+
+    result = run(program(), handlers=default_handlers(), env={"other_key": "other"})
+    assert result.is_ok()
+    assert result.value == ("new_value", "other")
+
+
+def test_local_added_key_not_visible_after_scope() -> None:
+    @do
+    def inner_program():
+        if False:
+            yield
+        return "done"
+
+    @do
+    def program():
+        _ = yield Local({"new_key": "value"}, inner_program())
+        return (yield Ask("new_key"))
+
+    result = run(program(), handlers=default_handlers(), env={})
+    assert result.is_err()
+    assert isinstance(result.error, MissingEnvKeyError)
+    assert result.error.key == "new_key"
+
+
+def test_nested_local_with_different_keys() -> None:
+    @do
+    def innermost():
+        key1 = yield Ask("key1")
+        key2 = yield Ask("key2")
+        return (key1, key2)
+
+    @do
+    def middle():
+        return (yield Local({"key2": "inner2"}, innermost()))
+
+    @do
+    def program():
+        return (yield Local({"key1": "outer1"}, middle()))
+
+    result = run(
+        program(),
+        handlers=default_handlers(),
+        env={"key1": "orig1", "key2": "orig2"},
+    )
+    assert result.is_ok()
+    assert result.value == ("outer1", "inner2")
+
+
+def test_gather_children_inherit_parent_env() -> None:
+    @do
+    def child():
+        return (yield Ask("shared_key"))
+
+    @do
+    def program():
+        t1 = yield Spawn(child())
+        t2 = yield Spawn(child())
+        t3 = yield Spawn(child())
+        return (yield Gather(t1, t2, t3))
+
+    result = run(
+        program(),
+        handlers=default_handlers(),
+        env={"shared_key": "shared_value"},
+    )
+    assert result.is_ok()
+    assert result.value == ["shared_value", "shared_value", "shared_value"]
+
+
+def test_child_local_override_is_isolated_from_siblings_and_parent() -> None:
+    @do
+    def child_with_local():
+        @do
+        def inner():
+            return (yield Ask("key"))
+
+        result = yield Local({"key": "child_override"}, inner())
+        return f"local_child:{result}"
+
+    @do
+    def child_normal():
+        value = yield Ask("key")
+        return f"normal_child:{value}"
+
+    @do
+    def program():
+        before = yield Ask("key")
+        t1 = yield Spawn(child_with_local())
+        t2 = yield Spawn(child_normal())
+        t3 = yield Spawn(child_normal())
+        results = yield Gather(t1, t2, t3)
+        after = yield Ask("key")
+        return (before, results, after)
+
+    result = run(program(), handlers=default_handlers(), env={"key": "parent_value"})
+    assert result.is_ok()
+    assert result.value == (
+        "parent_value",
+        [
+            "local_child:child_override",
+            "normal_child:parent_value",
+            "normal_child:parent_value",
+        ],
+        "parent_value",
+    )
+
+
+def test_lazy_ask_program_with_effects_updates_state() -> None:
+    @do
+    def program_with_effects():
+        _ = yield Put("counter", 100)
+        counter = yield Get("counter")
+        return counter * 2
+
+    @do
+    def program():
+        result = yield Ask("compute")
+        final_counter = yield Get("counter")
+        return (result, final_counter)
+
+    result = run(program(), handlers=default_handlers(), env={"compute": program_with_effects()})
+    assert result.is_ok()
+    assert result.value == (200, 100)
+
+
+def test_lazy_ask_different_keys_cached_independently() -> None:
+    calls = {"a": 0, "b": 0}
+
+    @do
+    def program_a():
+        calls["a"] += 1
+        if False:
+            yield
+        return "result_a"
+
+    @do
+    def program_b():
+        calls["b"] += 1
+        if False:
+            yield
+        return "result_b"
+
+    @do
+    def program():
+        a1 = yield Ask("key_a")
+        b1 = yield Ask("key_b")
+        a2 = yield Ask("key_a")
+        b2 = yield Ask("key_b")
+        return (a1, b1, a2, b2)
+
+    result = run(
+        program(),
+        handlers=default_handlers(),
+        env={"key_a": program_a(), "key_b": program_b()},
+    )
+    assert result.is_ok()
+    assert result.value == ("result_a", "result_b", "result_a", "result_b")
+    assert calls == {"a": 1, "b": 1}
+
+
+def test_lazy_ask_failed_evaluation_not_cached_after_replacement() -> None:
+    attempts = {"service": 0}
+
+    @do
+    def sometimes_fails():
+        attempts["service"] += 1
+        if attempts["service"] == 1:
+            raise ValueError("First attempt fails")
+        if False:
+            yield
+        return "success"
+
+    first_program = sometimes_fails()
+    second_program = sometimes_fails()
+
+    @do
+    def program():
+        first = yield Safe(Ask("service"))
+        if first.is_err():
+
+            @do
+            def inner():
+                return (yield Ask("service"))
+
+            return (yield Local({"service": second_program}, inner()))
+        return "unexpected"
+
+    result = run(program(), handlers=default_handlers(), env={"service": first_program})
+    assert result.is_ok()
+    assert result.value == "success"
+    assert attempts["service"] == 2
+
+
+def test_lazy_ask_nested_dependency_resolves() -> None:
+    @do
+    def inner_service():
+        if False:
+            yield
+        return 10
+
+    @do
+    def outer_service():
+        inner = yield Ask("inner")
+        return inner * 2
+
+    @do
+    def program():
+        return (yield Ask("outer"))
+
+    result = run(
+        program(),
+        handlers=default_handlers(),
+        env={"inner": inner_service(), "outer": outer_service()},
+    )
+    assert result.is_ok()
+    assert result.value == 20
+
+
+def test_lazy_ask_none_result_is_cached_once() -> None:
+    calls = {"nullable": 0}
+
+    @do
+    def returns_none():
+        calls["nullable"] += 1
+        if False:
+            yield
+        return None
+
+    @do
+    def program():
+        first = yield Ask("nullable")
+        second = yield Ask("nullable")
+        return (first, second)
+
+    result = run(program(), handlers=default_handlers(), env={"nullable": returns_none()})
+    assert result.is_ok()
+    assert result.value == (None, None)
+    assert calls["nullable"] == 1
+
+
+def test_lazy_ask_program_returning_program_can_be_resolved() -> None:
+    @do
+    def inner():
+        if False:
+            yield
+        return 42
+
+    @do
+    def outer():
+        if False:
+            yield
+        return inner()
+
+    @do
+    def program():
+        result = yield Ask("service")
+        if isinstance(result, Program):
+            return (yield result)
+        return result
+
+    result = run(program(), handlers=default_handlers(), env={"service": outer()})
+    assert result.is_ok()
+    assert result.value == 42
 
 
 def test_lazy_ask_spawned_tasks_share_single_evaluation() -> None:
