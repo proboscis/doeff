@@ -10,9 +10,9 @@ Run:
     uv run python examples/04_granular_handlers.py
 """
 
-from doeff import Ask, SyncRuntime, do
-from doeff.effects.writer import slog
-from doeff_preset import config_handlers, log_display_handlers, preset_handlers
+from doeff_preset import config_handlers, log_display_handlers
+
+from doeff import Ask, do, run_with_handler_map, slog
 
 
 @do
@@ -24,7 +24,7 @@ def workflow_with_slog():
     return "done"
 
 
-@do  
+@do
 def workflow_with_config():
     """Workflow that only uses config."""
     show_logs = yield Ask("preset.show_logs")
@@ -36,18 +36,16 @@ def main():
     """Run granular handler examples."""
     # Example 1: Only slog display (no config)
     print("=== Only Log Display Handlers ===\n")
-    runtime1 = SyncRuntime(handlers=log_display_handlers())
-    result1 = runtime1.run(workflow_with_slog())
+    result1 = run_with_handler_map(workflow_with_slog(), log_display_handlers())
     print(f"Result: {result1.value}")
     print(f"Log entries: {len(result1.log)}")
-    
+
     # Example 2: Only config handlers (slog won't display but will accumulate)
     # Note: Without log_display_handlers, slog still works but won't show rich output
     print("\n=== Only Config Handlers ===\n")
-    runtime2 = SyncRuntime(handlers=config_handlers())
-    result2 = runtime2.run(workflow_with_config())
+    result2 = run_with_handler_map(workflow_with_config(), config_handlers())
     print(f"Config values: {result2.value}")
-    
+
     # Example 3: Custom combination
     print("\n=== Custom Handler Combination ===\n")
     # Just slog display + custom config
@@ -57,15 +55,14 @@ def main():
         "preset.log_format": "simple",
     })
     handlers = {**log_display_handlers(), **custom_config}
-    runtime3 = SyncRuntime(handlers=handlers)
-    
+
     @do
     def combined_workflow():
         config = yield Ask("preset.log_level")
         yield slog(level=config, msg="Using custom log level")
         return config
-    
-    result3 = runtime3.run(combined_workflow())
+
+    result3 = run_with_handler_map(combined_workflow(), handlers)
     print(f"Log level used: {result3.value}")
 
 

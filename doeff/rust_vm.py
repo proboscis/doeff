@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 import importlib
 import inspect
 from typing import Any
@@ -120,6 +120,59 @@ def default_handlers() -> list[Any]:
     )
 
 
+def wrap_with_handler_map(program: Any, handler_map: Mapping[type, Callable[[Any, Any], Any]]) -> Any:
+    """Wrap a program with typed WithHandler layers from an effect->handler mapping."""
+    vm = _vm()
+    with_handler = getattr(vm, "WithHandler")
+    delegate = getattr(vm, "Delegate")
+
+    wrapped = _coerce_program(program)
+    for effect_type, handler in reversed(list(handler_map.items())):
+
+        def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
+            if isinstance(effect, _effect_type):
+                result = _handler(effect, k)
+                if inspect.isgenerator(result):
+                    return (yield from result)
+                return result
+            yield delegate()
+
+        wrapped = with_handler(typed_handler, wrapped)
+    return wrapped
+
+
+def run_with_handler_map(
+    program: Any,
+    handler_map: Mapping[type, Callable[[Any, Any], Any]],
+    *,
+    env: dict[Any, Any] | None = None,
+    store: dict[str, Any] | None = None,
+    trace: bool = False,
+) -> Any:
+    """Run with typed Python handlers plus the standard default handler sentinels."""
+    wrapped = wrap_with_handler_map(program, handler_map)
+    return run(wrapped, handlers=default_handlers(), env=env, store=store, trace=trace)
+
+
+async def async_run_with_handler_map(
+    program: Any,
+    handler_map: Mapping[type, Callable[[Any, Any], Any]],
+    *,
+    env: dict[Any, Any] | None = None,
+    store: dict[str, Any] | None = None,
+    trace: bool = False,
+) -> Any:
+    """Async counterpart to run_with_handler_map."""
+    wrapped = wrap_with_handler_map(program, handler_map)
+    return await async_run(
+        wrapped,
+        handlers=default_handlers(),
+        env=env,
+        store=store,
+        trace=trace,
+    )
+
+
 def run(
     program: Any,
     handlers: Sequence[Any] = (),
@@ -196,6 +249,9 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "run",
     "async_run",
+    "run_with_handler_map",
+    "async_run_with_handler_map",
+    "wrap_with_handler_map",
     "default_handlers",
     "RunResult",
     "WithHandler",

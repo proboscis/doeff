@@ -10,7 +10,7 @@ Progressive examples demonstrating doeff-preset usage.
 | [02_configuration.py](./02_configuration.py) | Configuration via Ask | preset.* config, custom defaults |
 | [03_merge_handlers.py](./03_merge_handlers.py) | Merging with domain handlers | Handler composition, dict merge |
 | [04_granular_handlers.py](./04_granular_handlers.py) | Selective handler usage | log_display_handlers, config_handlers |
-| [05_async_runtime.py](./05_async_runtime.py) | Async runtime support | SyncRuntime, AsyncRuntime |
+| [05_async_runtime.py](./05_async_runtime.py) | Async runtime support | run_with_handler_map, async_run_with_handler_map |
 
 ## Running Examples
 
@@ -89,19 +89,17 @@ handlers = {**log_display_handlers(), **config_handlers()}
 
 ## Example 05: Async Runtime Support
 
-**Concepts:** SyncRuntime, AsyncRuntime, runtime compatibility
+**Concepts:** run_with_handler_map, async_run_with_handler_map, runtime compatibility
 
 Shows that the same handlers work with both runtimes:
 ```python
 handlers = preset_handlers()
 
 # Sync
-runtime = SyncRuntime(handlers=handlers)
-result = runtime.run(workflow())
+result = run_with_handler_map(workflow(), handlers)
 
 # Async
-runtime = AsyncRuntime(handlers=handlers)
-result = await runtime.run(workflow())
+result = await async_run_with_handler_map(workflow(), handlers)
 ```
 
 ## Key Patterns
@@ -109,8 +107,7 @@ result = await runtime.run(workflow())
 ### Basic Usage
 
 ```python
-from doeff import SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import do, run_with_handler_map, slog
 from doeff_preset import preset_handlers
 
 @do
@@ -120,8 +117,7 @@ def my_workflow():
     yield slog(step="done", msg="Complete")
     return "success"
 
-runtime = SyncRuntime(handlers=preset_handlers())
-result = runtime.run(my_workflow())
+result = run_with_handler_map(my_workflow(), preset_handlers())
 # slog messages displayed AND accumulated in result.log
 ```
 
@@ -132,8 +128,8 @@ from doeff_preset import preset_handlers
 from my_app import domain_handlers
 
 # Merge handlers (domain handlers take precedence)
-handlers = {**preset_handlers(), **domain_handlers}
-runtime = SyncRuntime(handlers=handlers)
+handler_map = {**preset_handlers(), **domain_handlers}
+result = run_with_handler_map(my_workflow(), handler_map)
 ```
 
 ### Custom Configuration
