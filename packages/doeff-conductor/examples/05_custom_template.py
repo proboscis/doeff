@@ -32,12 +32,12 @@ from doeff_conductor import (
     WorktreeEnv,
     # Handler utility
     make_scheduled_handler,
+    make_typed_handlers,
 )
 from doeff_conductor.effects.base import ConductorEffectBase
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import EffectGenerator, default_handlers, do, run, slog
 
 
 # Custom effect for running tests
@@ -290,8 +290,10 @@ Implement API rate limiting to prevent abuse.
     handlers = {**preset_handlers(), **domain_handlers}
 
     # Run the workflow
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(quality_assured_pr(issue))
+    result = run(
+        quality_assured_pr(issue),
+        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    )
 
     print(f"Final PR: {result.value.to_dict()}")
 

@@ -105,6 +105,7 @@ from .handlers import (
     # Handler utilities
     make_scheduled_handler,
     make_scheduled_handler_with_store,
+    make_typed_handlers,
 )
 
 # Templates
@@ -198,6 +199,7 @@ __all__ = [
     # Handler utilities
     "make_scheduled_handler",
     "make_scheduled_handler_with_store",
+    "make_typed_handlers",
     "multi_agent",
     "reviewed_pr",
 ]
