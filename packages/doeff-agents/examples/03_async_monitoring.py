@@ -2,11 +2,11 @@
 """
 Async Monitoring Example - Using doeff Effects API
 
-This example demonstrates using the doeff AsyncRuntime for monitoring
+This example demonstrates using doeff async_run for monitoring
 agent sessions with async/await patterns.
 
 Features shown:
-- AsyncRuntime for non-blocking execution
+- async_run for non-blocking execution
 - Parallel session execution with Gather-like patterns
 - Fine-grained effects for monitoring multiple sessions
 - Integration with preset_handlers for logging
@@ -16,13 +16,15 @@ import asyncio
 import time
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
+from doeff import do
 from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
 
+from _runtime import run_program
 from doeff_agents import (
     AgentType,
     Capture,
+    MockSessionScript,
     Launch,
     LaunchConfig,
     Monitor,
@@ -34,7 +36,6 @@ from doeff_agents import (
     agent_effectful_handlers,
     mock_agent_handlers,
     configure_mock_session,
-    CeskMockSessionScript,
 )
 
 
@@ -42,7 +43,7 @@ from doeff_agents import (
 def single_session_workflow(session_name: str, config: LaunchConfig):
     """Run a single session using effects.
     
-    Yields effects that are handled by the AsyncRuntime.
+    Yields effects interpreted by doeff_vm handlers.
     """
     yield slog(step="start", session_name=session_name)
     
@@ -186,17 +187,14 @@ def interleaved_monitoring_workflow(configs: list[tuple[str, LaunchConfig]]):
 
 
 async def run_with_mock_runtime() -> None:
-    """Run the example with mock handlers via AsyncRuntime."""
+    """Run the example with mock handlers."""
     print("=" * 60)
-    print("Running single session with mock AsyncRuntime")
+    print("Running single session with mock handlers")
     print("=" * 60)
-    
-    # Create initial store with mock configuration
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         "async-demo",  # Will be overwritten by actual session name
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Writing haiku..."),
             (SessionStatus.DONE, "Code flows like water\nBugs emerge then disappear\nTests pass, peace returns"),
         ]),
@@ -205,9 +203,8 @@ async def run_with_mock_runtime() -> None:
     # For mock, we need to pre-configure the session name
     session_name = f"async-demo-{int(time.time())}"
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Writing haiku..."),
             (SessionStatus.DONE, "Code flows like water\nBugs emerge then disappear\nTests pass, peace returns"),
         ]),
@@ -218,15 +215,12 @@ async def run_with_mock_runtime() -> None:
         work_dir=Path.cwd(),
         prompt="Write a haiku about programming.",
     )
-    
-    # Create runtime with combined handlers
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),  # Mock handlers for testing
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(single_session_workflow(session_name, config))
+
+    result = await run_program(
+        single_session_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -234,7 +228,7 @@ async def run_truly_parallel() -> None:
     """Run multiple sessions truly in parallel using asyncio.gather.
     
     This demonstrates how to achieve true parallelism by running
-    multiple AsyncRuntime instances concurrently.
+    multiple async_run invocations concurrently.
     """
     print("\n" + "=" * 60)
     print("Running truly parallel sessions")
@@ -251,11 +245,9 @@ async def run_truly_parallel() -> None:
         session_name = f"parallel-{suffix}-{int(time.time())}"
         
         # Each task gets its own mock configuration
-        initial_store = {}
         configure_mock_session(
-            initial_store,
             session_name,
-            CeskMockSessionScript([
+            MockSessionScript([
                 (SessionStatus.RUNNING, f"Working on {suffix}..."),
                 (SessionStatus.DONE, f"Completed {suffix}!"),
             ]),
@@ -266,14 +258,12 @@ async def run_truly_parallel() -> None:
             work_dir=Path.cwd(),
             prompt=prompt,
         )
-        
-        handlers = {
-            **preset_handlers(),
-            **mock_agent_handlers(),
-        }
-        runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-        
-        return await runtime.run(single_session_workflow(session_name, config))
+
+        return await run_program(
+            single_session_workflow(session_name, config),
+            handler_maps=(preset_handlers(),),
+            custom_handlers=mock_agent_handlers(),
+        )
     
     # Run all tasks truly in parallel
     start_time = time.time()
@@ -308,13 +298,11 @@ async def run_with_real_tmux() -> None:
     
     session_name = f"async-real-{int(time.time())}"
     
-    handlers = {
-        **preset_handlers(),
-        **agent_effectful_handlers(),  # Real tmux handlers
-    }
-    runtime = AsyncRuntime(handlers=handlers)
-    
-    result = await runtime.run(single_session_workflow(session_name, config))
+    result = await run_program(
+        single_session_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=agent_effectful_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
