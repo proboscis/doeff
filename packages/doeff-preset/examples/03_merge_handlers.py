@@ -12,10 +12,9 @@ Run:
 
 from dataclasses import dataclass
 
-from doeff import Delegate, Resume, SyncRuntime, do
-from doeff.effects.base import EffectBase
-from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
+
+from doeff import Delegate, EffectBase, Resume, do, run_with_handler_map, slog
 
 
 # Define a custom domain effect
@@ -38,6 +37,10 @@ class SendEmailEffect(EffectBase):
 # Create mock handlers for our domain effects
 def handle_fetch_user(effect, k):
     """Mock handler that returns fake user data."""
+    if not isinstance(effect, FetchUserEffect):
+        yield Delegate()
+        return
+
     users = {
         1: {"id": 1, "name": "Alice", "email": "alice@example.com"},
         2: {"id": 2, "name": "Bob", "email": "bob@example.com"},
@@ -92,15 +95,17 @@ def main():
     # Later handlers win on conflict (domain handlers override preset)
     handlers = {**preset_handlers(), **domain_handlers}
 
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(notification_workflow(user_id=1, message="Hello from doeff!"))
+    result = run_with_handler_map(
+        notification_workflow(user_id=1, message="Hello from doeff!"),
+        handlers,
+    )
 
-    print(f"\n=== Results ===")
+    print("\n=== Results ===")
     print(f"Email sent: {result.value}")
 
     print("\n=== Alternative: Preset handlers win ===")
     # If you want preset handlers to win on conflict:
-    handlers2 = {**domain_handlers, **preset_handlers()}
+    _ = {**domain_handlers, **preset_handlers()}
     # This reverses priority (not usually needed, but possible)
 
 

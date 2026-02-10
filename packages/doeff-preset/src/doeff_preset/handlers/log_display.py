@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Delegate
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from doeff.effects.writer import WriterTellEffect
+from doeff import Delegate, WriterTellEffect
 
 # Global console for log output
 _console = Console(stderr=True)
@@ -70,7 +69,7 @@ def format_slog(message: dict[str, Any]) -> Panel | Text:
 
 
 def handle_tell_with_display(
-    effect: WriterTellEffect,
+    effect: Any,
     _k,
 ):
     """Handle WriterTellEffect with console display for slog messages.
@@ -85,6 +84,10 @@ def handle_tell_with_display(
     Returns:
         Delegation to the outer Writer handler after optional display.
     """
+    if not isinstance(effect, WriterTellEffect):
+        yield Delegate()
+        return
+
     message = effect.message
 
     # Display structured logs (dicts) to console
@@ -103,11 +106,11 @@ def log_display_handlers() -> dict[type, Any]:
         Handler dict with WriterTellEffect -> handle_tell_with_display.
 
     Example:
-        >>> from doeff import SyncRuntime
+        >>> from doeff import run_with_handler_map
         >>> from doeff_preset import log_display_handlers
         >>>
-        >>> runtime = SyncRuntime(handlers=log_display_handlers())
-        >>> # slog messages will now display to console
+        >>> result = run_with_handler_map(workflow(), log_display_handlers())
+        >>> # slog messages will display to console while still accumulating in result.log
     """
     return {
         WriterTellEffect: handle_tell_with_display,
