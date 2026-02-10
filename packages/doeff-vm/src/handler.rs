@@ -276,16 +276,8 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     Python::attach(|py| {
         let bound = obj.bind(py);
 
-        let is_doexpr = bound.is_instance_of::<PyDoExprBase>()
-            || bound
-                .getattr("__doeff_do_expr_base__")
-                .and_then(|flag| flag.is_truthy())
-                .unwrap_or(false);
-        let is_effect = bound.is_instance_of::<PyEffectBase>()
-            || bound
-                .getattr("__doeff_effect_base__")
-                .and_then(|flag| flag.is_truthy())
-                .unwrap_or(false);
+        let is_doexpr = bound.is_instance_of::<PyDoExprBase>();
+        let is_effect = bound.is_instance_of::<PyEffectBase>();
 
         if is_doexpr || is_effect {
             Some(PyShared::new(obj.clone_ref(py)))
@@ -457,7 +449,6 @@ impl RustHandlerProgram for AwaitHandlerProgram {
     }
 }
 
-#[cfg(not(test))]
 fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
@@ -497,60 +488,6 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
             let should_unwrap =
                 kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
             kwargs.push((key, extract_kpc_arg(&v, should_unwrap)?));
-        }
-
-        Ok(Some(KpcCallEffect {
-            call: PyShared::new(obj.clone().unbind()),
-            kernel,
-            args,
-            kwargs,
-            metadata,
-        }))
-    })
-}
-
-#[cfg(test)]
-fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, String> {
-    Python::attach(|py| {
-        let obj = effect.bind(py);
-        if !has_true_attr(obj, "__doeff_kpc__") {
-            return Ok(None);
-        }
-
-        let metadata = extract_kpc_call_metadata(obj)?;
-        let kernel_obj = obj
-            .getattr("execution_kernel")
-            .or_else(|_| obj.getattr("kernel"))
-            .map_err(|e| e.to_string())?;
-        let kernel = PyShared::new(kernel_obj.unbind());
-
-        let strategy = obj.getattr("kleisli_source").ok().and_then(|kleisli| {
-            py.import("doeff.program")
-                .ok()
-                .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
-                .and_then(|builder| builder.call1((kleisli,)).ok())
-        });
-
-        let mut args = Vec::new();
-        if let Ok(args_obj) = obj.getattr("args") {
-            for (idx, item) in args_obj.try_iter().map_err(|e| e.to_string())?.enumerate() {
-                let item = item.map_err(|e| e.to_string())?;
-                let should_unwrap = kpc_strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
-                args.push(extract_kpc_arg(&item, should_unwrap)?);
-            }
-        }
-
-        let mut kwargs = Vec::new();
-        if let Ok(kwargs_obj) = obj.getattr("kwargs") {
-            let kwargs_dict = kwargs_obj
-                .cast::<pyo3::types::PyDict>()
-                .map_err(|e| e.to_string())?;
-            for (k, v) in kwargs_dict.iter() {
-                let key: String = k.extract::<String>().map_err(|e| e.to_string())?;
-                let should_unwrap =
-                    kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
-                kwargs.push((key, extract_kpc_arg(&v, should_unwrap)?));
-            }
         }
 
         Ok(Some(KpcCallEffect {
@@ -1909,8 +1846,9 @@ mod tests {
     fn test_kpc_factory_can_handle_python_kpc_effect() {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
+            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    __doeff_kpc__ = True\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
+                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -1932,8 +1870,9 @@ mod tests {
             let k = make_test_continuation();
 
             let locals = pyo3::types::PyDict::new(py);
+            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    __doeff_kpc__ = True\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n\nobj = KleisliProgramCall()\n",
+                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2190,8 +2129,11 @@ mod tests {
     fn test_result_safe_factory_can_handle_python_effect() {
         Python::attach(|py| {
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2213,8 +2155,11 @@ mod tests {
             let k = make_test_continuation();
 
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                c"class ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
                 Some(&locals),
                 Some(&locals),
             )
