@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+import doeff_vm
 from doeff import do, Program
 from doeff.effects import Get, Put, Modify, Ask, Tell, Pure
 
@@ -259,10 +260,8 @@ class Delegate:
     pass
 
 
-class CustomEffect:
+class CustomEffect(doeff_vm.EffectBase):
     """Custom effect for testing Python handlers."""
-
-    __doeff_effect_base__ = True
 
     def __init__(self, value):
         self.value = value
@@ -1550,10 +1549,8 @@ def test_tag_dispatch_does_not_break_existing_programs():
 ## -- ISSUE-VM-001: Transfer abandonment + Delegate(effect) substitution -------
 
 
-class SecondCustomEffect:
+class SecondCustomEffect(doeff_vm.EffectBase):
     """A second custom effect for substitution tests."""
-
-    __doeff_effect_base__ = True
 
     def __init__(self, value):
         self.value = value
