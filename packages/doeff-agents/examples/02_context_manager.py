@@ -17,15 +17,16 @@ import asyncio
 import time
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
+from doeff import do
 from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
 
+from _runtime import run_program
 from doeff_agents import (
     AgentType,
     Capture,
-    CeskMockSessionScript,
     LaunchConfig,
+    MockSessionScript,
     Monitor,
     Send,
     SessionHandle,
@@ -160,13 +161,11 @@ async def run_interactive_example() -> None:
     print("=" * 60)
     
     session_name = f"factorial-demo-{int(time.time())}"
-    
+
     # Configure mock behavior
-    initial_store = {}
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Creating factorial function..."),
             (SessionStatus.BLOCKED, "Function created. What next?"),
             (SessionStatus.RUNNING, "Adding docstring and type hints..."),
@@ -182,14 +181,12 @@ async def run_interactive_example() -> None:
         work_dir=Path.cwd(),
         prompt="Create a simple Python function that calculates the factorial of a number.",
     )
-    
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(run_with_bracket(session_name, config))
+
+    result = await run_program(
+        run_with_bracket(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -198,14 +195,12 @@ async def run_exception_demo() -> None:
     print("\n" + "=" * 60)
     print("Exception Safety Demo")
     print("=" * 60)
-    
+
     session_name = f"exception-demo-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Working..."),
             (SessionStatus.RUNNING, "Still working..."),
         ]),
@@ -216,14 +211,12 @@ async def run_exception_demo() -> None:
         work_dir=Path.cwd(),
         prompt="Say hello",
     )
-    
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(demonstrate_exception_safety(session_name, config))
+
+    result = await run_program(
+        demonstrate_exception_safety(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -247,13 +240,11 @@ async def run_with_real_tmux() -> None:
     
     session_name = f"factorial-{int(time.time())}"
     
-    handlers = {
-        **preset_handlers(),
-        **agent_effectful_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers)
-    
-    result = await runtime.run(run_with_bracket(session_name, config))
+    result = await run_program(
+        run_with_bracket(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=agent_effectful_handlers(),
+    )
     print(f"\nResult: {result}")
 
 

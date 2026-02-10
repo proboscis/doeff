@@ -3,7 +3,7 @@
 Basic Session Example - Using doeff Effects API
 
 This example demonstrates the fundamental operations of doeff-agents
-using the effects-based approach with doeff AsyncRuntime:
+using the effects-based approach with doeff's async_run entrypoint:
 - Launching an agent session with Launch effect
 - Monitoring session status with Monitor effect
 - Capturing output with Capture effect
@@ -19,17 +19,18 @@ import asyncio
 import time
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
+from doeff import do
 from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
 
+from _runtime import run_program
 from doeff_agents import (
     AgentType,
     Capture,
-    CeskMockSessionScript,
     Launch,
     LaunchConfig,
     Monitor,
+    MockSessionScript,
     SessionHandle,
     SessionStatus,
     Sleep,
@@ -103,17 +104,15 @@ def basic_session_workflow(session_name: str, config: LaunchConfig):
 async def run_with_mock_handlers() -> None:
     """Run the example with mock handlers (no real tmux needed)."""
     print("=" * 60)
-    print("Running with AsyncRuntime + mock handlers")
+    print("Running with mock handlers")
     print("=" * 60)
     
     session_name = f"demo-{int(time.time())}"
-    
-    # Configure mock session behavior in initial store
-    initial_store = {}
+
+    # Configure mock session behavior
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.BOOTING, "Agent starting..."),
             (SessionStatus.RUNNING, "Processing request..."),
             (SessionStatus.RUNNING, "Listing files..."),
@@ -126,16 +125,12 @@ async def run_with_mock_handlers() -> None:
         work_dir=Path.cwd(),
         prompt="List the files in the current directory and describe what you see.",
     )
-    
-    # Create runtime with combined handlers
-    handlers = {
-        **preset_handlers(),  # slog display and config
-        **mock_agent_handlers(),  # mock agent effects
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    # Run the program
-    result = await runtime.run(basic_session_workflow(session_name, config))
+
+    result = await run_program(
+        basic_session_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -152,7 +147,7 @@ async def run_with_real_tmux() -> None:
         return
     
     print("\n" + "=" * 60)
-    print("Running with AsyncRuntime + real tmux")
+    print("Running with real tmux")
     print("=" * 60)
     
     config = LaunchConfig(
@@ -163,15 +158,11 @@ async def run_with_real_tmux() -> None:
     
     session_name = f"demo-{int(time.time())}"
     
-    # Create runtime with combined handlers
-    handlers = {
-        **preset_handlers(),  # slog display and config
-        **agent_effectful_handlers(),  # real tmux agent effects
-    }
-    runtime = AsyncRuntime(handlers=handlers)
-    
-    # Run the program
-    result = await runtime.run(basic_session_workflow(session_name, config))
+    result = await run_program(
+        basic_session_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=agent_effectful_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
