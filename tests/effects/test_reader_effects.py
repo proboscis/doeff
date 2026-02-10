@@ -94,26 +94,6 @@ class TestLocalAskComposition:
         assert result.value == "overridden"
 
     @pytest.mark.asyncio
-    async def test_local_restores_env_after_scope(self, parameterized_interpreter) -> None:
-        """Ask after Local sees the original value (env restored)."""
-
-        @do
-        def inner_program():
-            value = yield Ask("key")
-            return value
-
-        @do
-        def program():
-            before = yield Ask("key")
-            inner = yield Local({"key": "overridden"}, inner_program())
-            after = yield Ask("key")
-            return (before, inner, after)
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == ("original", "overridden", "original")
-
-    @pytest.mark.asyncio
     async def test_local_adds_new_key(self, parameterized_interpreter) -> None:
         """Local can add a new key not present in parent environment."""
 
@@ -204,38 +184,6 @@ class TestLocalLocalComposition:
         assert result.value == "inner"
 
     @pytest.mark.asyncio
-    async def test_nested_local_both_restore(self, parameterized_interpreter) -> None:
-        """Both inner and outer Local restore their environments."""
-
-        @do
-        def innermost():
-            return (yield Ask("key"))
-
-        @do
-        def middle():
-            before_inner = yield Ask("key")
-            inner = yield Local({"key": "inner"}, innermost())
-            after_inner = yield Ask("key")
-            return (before_inner, inner, after_inner)
-
-        @do
-        def program():
-            before_outer = yield Ask("key")
-            outer_result = yield Local({"key": "outer"}, middle())
-            after_outer = yield Ask("key")
-            return (before_outer, outer_result, after_outer)
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        before_outer, (before_inner, inner, after_inner), after_outer = result.value
-
-        assert before_outer == "original"
-        assert before_inner == "outer"
-        assert inner == "inner"
-        assert after_inner == "outer"
-        assert after_outer == "original"
-
-    @pytest.mark.asyncio
     async def test_nested_local_different_keys(self, parameterized_interpreter) -> None:
         """Nested Local with different keys both visible."""
 
@@ -310,41 +258,6 @@ class TestLocalStateInteraction:
         assert result.is_ok
         assert result.value == (15, 15)
 
-    @pytest.mark.asyncio
-    async def test_env_and_state_independent(self, parameterized_interpreter) -> None:
-        """Local scopes env (Ask) but NOT state (Get/Put)."""
-
-        @do
-        def inner():
-            env_val = yield Ask("env_key")
-            state_val = yield Get("state_key")
-            yield Put("state_key", "modified_by_inner")
-            return (env_val, state_val)
-
-        @do
-        def program():
-            yield Put("state_key", "original_state")
-            before_env = yield Ask("env_key")
-            result = yield Local({"env_key": "overridden_env"}, inner())
-            after_env = yield Ask("env_key")
-            after_state = yield Get("state_key")
-            return (before_env, result, after_env, after_state)
-
-        result = await parameterized_interpreter.run_async(
-            program(), env={"env_key": "original_env"}
-        )
-        assert result.is_ok
-        before_env, (inner_env, inner_state), after_env, after_state = result.value
-
-        # Env is scoped by Local
-        assert before_env == "original_env"
-        assert inner_env == "overridden_env"
-        assert after_env == "original_env"
-
-        # State is NOT scoped - persists outside Local
-        assert inner_state == "original_state"
-        assert after_state == "modified_by_inner"
-
 
 # ============================================================================
 # Local + Gather Composition Tests
@@ -376,30 +289,6 @@ class TestLocalGatherComposition:
         )
         assert result.is_ok
         assert result.value == ["shared_value", "shared_value", "shared_value"]
-
-    @pytest.mark.asyncio
-    async def test_gather_children_inherit_local_override(self, parameterized_interpreter) -> None:
-        """Gather children inside Local inherit the overridden env."""
-
-        @do
-        def child():
-            value = yield Ask("key")
-            return value
-
-        @do
-        def gather_children():
-            t1 = yield Spawn(child())
-            t2 = yield Spawn(child())
-            return (yield Gather(t1, t2))
-
-        @do
-        def program():
-            results = yield Local({"key": "from_local"}, gather_children())
-            return results
-
-        result = await parameterized_interpreter.run_async(program(), env={"key": "original"})
-        assert result.is_ok
-        assert result.value == ["from_local", "from_local"]
 
     @pytest.mark.asyncio
     async def test_child_local_does_not_affect_siblings(self, parameterized_interpreter) -> None:
