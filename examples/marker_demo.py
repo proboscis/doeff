@@ -7,36 +7,40 @@ for better IDE integration and indexing.
 
 from typing import Any
 
-from doeff import Program, do
+from doeff import Program, async_run, default_handlers, do, run
 
 # ============================================================================
 # INTERPRETERS - Functions that execute/interpret Program objects
 # ============================================================================
+
 
 def simple_interpreter(program: Program):  # doeff: interpreter
     """
     A basic interpreter marked with doeff comment.
     This will be recognized as an interpreter by the IDE plugin.
     """
-    return program.run()
+    return run(program, handlers=default_handlers())
 
 
 def async_interpreter(  # doeff: interpreter
-    program: Program,
-    timeout: float | None = None
+    program: Program, timeout: float | None = None
 ):
     """
     An async interpreter with the marker on the function definition line.
     Supports multi-line function signatures.
     """
     import asyncio
-    return asyncio.run(program.async_run(timeout=timeout))
+
+    async_program = async_run(program, handlers=default_handlers())
+    if timeout is None:
+        return asyncio.run(async_program)
+    return asyncio.run(asyncio.wait_for(async_program, timeout=timeout))
 
 
 def debug_interpreter(
     program: Program,  # doeff: interpreter
     verbose: bool = False,
-    trace: bool = False
+    trace: bool = False,
 ):
     """
     Debug interpreter with marker inline with parameters.
@@ -54,9 +58,10 @@ def debug_interpreter(
 # TRANSFORMERS - Functions that transform Program objects
 # ============================================================================
 
+
 @do
 def optimize_transform(  # doeff: transform
-    target: Program
+    target: Program,
 ) -> Program:
     """
     A transform function that optimizes a Program.
@@ -69,7 +74,7 @@ def optimize_transform(  # doeff: transform
 @do
 def parallelize_transform(
     program: Program,  # doeff: transform
-    num_workers: int = 4
+    num_workers: int = 4,
 ) -> Program:
     """
     Transform that parallelizes program execution.
@@ -79,7 +84,7 @@ def parallelize_transform(
 
 
 def chain_transform(  # doeff: transform
-    *programs: Program
+    *programs: Program,
 ) -> Program:
     """
     Chains multiple programs together.
@@ -95,6 +100,7 @@ def chain_transform(  # doeff: transform
 # KLEISLI FUNCTIONS - Composable effect-handling functions
 # ============================================================================
 
+
 @do
 def fetch_data():  # doeff: kleisli
     """
@@ -106,7 +112,7 @@ def fetch_data():  # doeff: kleisli
 
 @do
 def process_data(  # doeff: kleisli
-    data: dict[str, Any]
+    data: dict[str, Any],
 ):
     """
     Processes fetched data in a Kleisli composition.
@@ -120,13 +126,14 @@ def process_data(  # doeff: kleisli
 @do
 def save_results(
     results: dict[str, Any],  # doeff: kleisli
-    path: str = "/tmp/results.json"
+    path: str = "/tmp/results.json",
 ):
     """
     Saves results to disk as part of Kleisli chain.
     Marker placed with parameters for clarity.
     """
     import json
+
     yield Effect("write_file", path=path, content=json.dumps(results))
     return path
 
@@ -135,9 +142,10 @@ def save_results(
 # MIXED MARKERS - Functions with multiple roles
 # ============================================================================
 
+
 @do
 def hybrid_function(  # doeff: kleisli, transform
-    program: Program
+    program: Program,
 ):
     """
     A function that acts as both a Kleisli function and a transformer.
@@ -151,6 +159,7 @@ def hybrid_function(  # doeff: kleisli, transform
 # ============================================================================
 # UNMARKED FUNCTIONS - Rely on type analysis for detection
 # ============================================================================
+
 
 def unmarked_interpreter(program: Program):
     """
@@ -181,17 +190,17 @@ def regular_function(x: int, y: int) -> int:
 # COMPLEX EXAMPLES
 # ============================================================================
 
+
 class ProgramExecutor:
     """Class containing methods with doeff markers."""
 
     def execute(self, program: Program):  # doeff: interpreter
         """Class method interpreter with marker."""
-        return program.run()
+        return run(program, handlers=default_handlers())
 
     @do
     def transform(  # doeff: transform
-        self,
-        program: Program
+        self, program: Program
     ) -> Program:
         """Class method transformer with marker."""
         return program.with_context(self.get_context())
@@ -211,8 +220,9 @@ class ProgramExecutor:
 # EDGE CASES AND SPECIAL PATTERNS
 # ============================================================================
 
+
 def interpreter_with_comment(
-    program: Program  # This is a regular comment, not a marker
+    program: Program,  # This is a regular comment, not a marker
 ):  # doeff: interpreter
     """
     Shows that only special marker comments are recognized.
@@ -222,24 +232,24 @@ def interpreter_with_comment(
 
 
 async def async_marked_interpreter(  # doeff: interpreter
-    program: Program
+    program: Program,
 ):
     """
     Async function with doeff marker.
     The marker system works with async functions too.
     """
-    return await program.async_run()
+    return await async_run(program, handlers=default_handlers())
 
 
-def factory_interpreter(
-    config: dict[str, Any]
-):  # doeff: interpreter
+def factory_interpreter(config: dict[str, Any]):  # doeff: interpreter
     """
     A factory that returns an interpreter function.
     The marker indicates this factory produces interpreters.
     """
+
     def inner(program: Program):
         return program.run_with_config(config)
+
     return inner
 
 
