@@ -146,7 +146,8 @@ def get_seedream_client() -> EffectGenerator[SeedreamClient]:
     if isinstance(candidate, SeedreamClient):
         return candidate
 
-    state_client = yield Get("seedream_client")
+    safe_state_client = yield Safe(Get("seedream_client"))
+    state_client = safe_state_client.value if safe_state_client.is_ok() else None
     if isinstance(state_client, SeedreamClient):
         return state_client
 
