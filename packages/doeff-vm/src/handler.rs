@@ -58,6 +58,7 @@ pub trait RustHandlerProgram: std::fmt::Debug + Send {
 pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
     fn can_handle(&self, effect: &DispatchEffect) -> bool;
     fn create_program(&self) -> RustProgramRef;
+    fn clone_for_install(&self) -> RustProgramHandlerRef;
 }
 
 /// Shared reference to a Rust program handler factory.
@@ -379,6 +380,10 @@ impl RustProgramHandler for AwaitHandlerFactory {
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(AwaitHandlerProgram::new())))
     }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
+    }
 }
 
 #[derive(Debug)]
@@ -667,6 +672,10 @@ impl RustProgramHandler for KpcHandlerFactory {
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(KpcHandlerProgram::new())))
     }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -918,6 +927,10 @@ impl RustProgramHandler for StateHandlerFactory {
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(StateHandlerProgram::new())))
     }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
+    }
 }
 
 struct StateHandlerProgram {
@@ -1074,6 +1087,10 @@ impl RustProgramHandler for ReaderHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
+    }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
     }
 }
 
@@ -1277,6 +1294,10 @@ impl RustProgramHandler for WriterHandlerFactory {
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(WriterHandlerProgram)))
     }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
+    }
 }
 
 #[derive(Debug)]
@@ -1354,6 +1375,10 @@ impl RustProgramHandler for ResultSafeHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ResultSafeHandlerProgram::new())))
+    }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
     }
 }
 
@@ -1495,6 +1520,10 @@ impl RustProgramHandler for DoubleCallHandlerFactory {
             phase: DoubleCallPhase::Init,
         })))
     }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
+    }
 }
 
 #[cfg(test)]
@@ -1602,6 +1631,10 @@ impl RustProgramHandler for ConcurrentKpcHandlerFactory {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(ConcurrentKpcHandlerProgram::new())))
+    }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(Self)
     }
 }
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
 import doeff_vm
+import pytest
 
 from doeff import Program
 from doeff import rust_vm as rust_vm_module
@@ -22,6 +22,7 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         "state": object(),
         "reader": object(),
         "writer": object(),
+        "result_safe": object(),
         "scheduler": object(),
         "kpc": object(),
         "await_handler": object(),
@@ -35,10 +36,17 @@ def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPa
         sentinels["state"],
         sentinels["reader"],
         sentinels["writer"],
+        sentinels["result_safe"],
         sentinels["scheduler"],
         sentinels["kpc"],
         sentinels["await_handler"],
     ]
+
+
+def test_handlers_module_exports_result_safe() -> None:
+    from doeff.handlers import result_safe
+
+    assert result_safe is doeff_vm.result_safe
 
 
 def test_run_requires_module_level_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,7 +60,7 @@ def test_run_requires_module_level_run(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_async_run_requires_module_level_async_run(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_vm = SimpleNamespace(
-        run=lambda *args, **kwargs: None, state=object(), reader=object(), writer=object()
+        run=lambda *_args, **_kwargs: None, state=object(), reader=object(), writer=object()
     )
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
 

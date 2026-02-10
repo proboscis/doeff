@@ -18,7 +18,8 @@ use crate::effect::{
     PySpawn, PyTaskCompleted,
 };
 use crate::handler::{
-    Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
+    Handler, RustHandlerProgram, RustProgramHandler, RustProgramHandlerRef, RustProgramRef,
+    RustProgramStep,
 };
 use crate::ids::{PromiseId, TaskId};
 use crate::py_shared::PyShared;
@@ -1523,6 +1524,10 @@ impl RustProgramHandler for SchedulerHandler {
         Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
             self.state.clone(),
         ))))
+    }
+
+    fn clone_for_install(&self) -> RustProgramHandlerRef {
+        Arc::new(SchedulerHandler::new())
     }
 }
 
