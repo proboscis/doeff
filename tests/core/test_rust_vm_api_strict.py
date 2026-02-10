@@ -17,6 +17,30 @@ def test_default_handlers_requires_module_sentinels(monkeypatch: pytest.MonkeyPa
         rust_vm_module.default_handlers()
 
 
+def test_default_handlers_are_module_sentinels_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    sentinels = {
+        "state": object(),
+        "reader": object(),
+        "writer": object(),
+        "scheduler": object(),
+        "kpc": object(),
+        "await_handler": object(),
+    }
+    fake_vm = SimpleNamespace(**sentinels)
+    monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)
+
+    handlers = rust_vm_module.default_handlers()
+
+    assert handlers == [
+        sentinels["state"],
+        sentinels["reader"],
+        sentinels["writer"],
+        sentinels["scheduler"],
+        sentinels["kpc"],
+        sentinels["await_handler"],
+    ]
+
+
 def test_run_requires_module_level_run(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_vm = SimpleNamespace(state=object(), reader=object(), writer=object())
     monkeypatch.setattr(rust_vm_module, "_vm", lambda: fake_vm)

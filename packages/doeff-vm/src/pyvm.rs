@@ -71,8 +71,8 @@ impl TryFrom<u8> for DoExprTag {
 use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
-    ConcurrentKpcHandlerFactory, Handler, HandlerEntry, KpcHandlerFactory, ReaderHandlerFactory,
-    RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
+    AwaitHandlerFactory, ConcurrentKpcHandlerFactory, Handler, HandlerEntry, KpcHandlerFactory,
+    ReaderHandlerFactory, RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
@@ -2537,6 +2537,12 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         "scheduler",
         PyRustHandlerSentinel {
             factory: Arc::new(SchedulerHandler::new()),
+        },
+    )?;
+    m.add(
+        "await_handler",
+        PyRustHandlerSentinel {
+            factory: Arc::new(AwaitHandlerFactory),
         },
     )?;
     // R13-I: DoExprTag constants for Python introspection

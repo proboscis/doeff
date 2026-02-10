@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
+use pyo3::types::PyModule;
 
 use crate::continuation::Continuation;
 use crate::effect::{
@@ -267,6 +268,127 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String
         }
         Ok(None)
     })
+}
+
+fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        if is_instance_from(obj, "doeff.effects.future", "PythonAsyncioAwaitEffect") {
+            let awaitable = obj.getattr("awaitable").map_err(|e| e.to_string())?;
+            return Ok(Some(awaitable.unbind()));
+        }
+        Ok(None)
+    })
+}
+
+fn get_blocking_await_runner() -> Result<PyShared, String> {
+    Python::attach(|py| {
+        let module = PyModule::from_code(
+            py,
+            c"import asyncio\nimport concurrent.futures\n\ndef _run_awaitable_blocking(awaitable):\n    def _runner():\n        return asyncio.run(awaitable)\n\n    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:\n        return executor.submit(_runner).result()\n",
+            c"_doeff_await_bridge",
+            c"_doeff_await_bridge",
+        )
+        .map_err(|e| e.to_string())?;
+        let runner = module
+            .getattr("_run_awaitable_blocking")
+            .map_err(|e| e.to_string())?;
+        Ok(PyShared::new(runner.unbind()))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// AwaitHandlerFactory + AwaitHandlerProgram
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct AwaitHandlerFactory;
+
+impl RustProgramHandler for AwaitHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        dispatch_ref_as_python(effect)
+            .is_some_and(|obj| parse_await_python_effect(obj).ok().flatten().is_some())
+    }
+
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(AwaitHandlerProgram::new())))
+    }
+}
+
+#[derive(Debug)]
+struct AwaitHandlerProgram {
+    pending_k: Option<Continuation>,
+}
+
+impl AwaitHandlerProgram {
+    fn new() -> Self {
+        AwaitHandlerProgram { pending_k: None }
+    }
+}
+
+impl RustHandlerProgram for AwaitHandlerProgram {
+    fn start(
+        &mut self,
+        _py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> RustProgramStep {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
+            return match parse_await_python_effect(&obj) {
+                Ok(Some(awaitable)) => {
+                    let runner = match get_blocking_await_runner() {
+                        Ok(func) => func,
+                        Err(msg) => {
+                            return RustProgramStep::Throw(PyException::type_error(format!(
+                                "failed to initialize await runner: {msg}"
+                            )));
+                        }
+                    };
+                    self.pending_k = Some(k);
+                    RustProgramStep::NeedsPython(PythonCall::CallFunc {
+                        func: runner,
+                        args: vec![Value::Python(awaitable)],
+                        kwargs: vec![],
+                    })
+                }
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: dispatch_from_shared(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse await effect: {msg}"
+                ))),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+        if let Some(continuation) = self.pending_k.take() {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value,
+            }));
+        }
+        RustProgramStep::Return(value)
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        if let Some(continuation) = self.pending_k.take() {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+                continuation,
+                exception: exc,
+            }));
+        }
+        RustProgramStep::Throw(exc)
+    }
 }
 
 #[cfg(not(test))]
