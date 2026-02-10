@@ -5,6 +5,7 @@ through Effects, supporting Pydantic models, GPT-5 thinking modes, and
 comprehensive cost/token tracking.
 """
 
+import asyncio
 import base64
 import io
 import json
@@ -15,10 +16,8 @@ from pydantic import BaseModel
 
 from doeff import (
     Await,
-    Delay,
     EffectGenerator,
     Safe,
-    Step,
     Tell,
     do,
 )
@@ -411,8 +410,6 @@ def process_structured_response(
     raw_content_for_log = _stringify_for_log(parse_source)
 
     # Parse the JSON response
-    from doeff import Safe
-
     @do
     def parse_json():
         yield Tell(f"Parsing JSON response for {response_format.__name__}")
@@ -535,10 +532,9 @@ def structured_llm__openai(
     """
     yield Tell(f"structured_llm__openai called with model={model}, response_format={response_format}")
 
-    # Track in graph
-    yield Step(
-        value={"operation": "structured_llm", "model": model},
-        meta={"type": "llm_call", "has_images": images is not None, "structured": response_format is not None}
+    yield Tell(
+        f"Structured LLM tracking: operation=structured_llm, model={model}, "
+        f"has_images={images is not None}, structured={response_format is not None}"
     )
 
     # Phase 1: Build messages
@@ -612,7 +608,7 @@ def structured_llm__openai(
         last_error = safe_result.error
         if attempt < max_retries - 1:
             yield Tell(f"OpenAI API call failed (attempt {attempt + 1}/{max_retries}), retrying in {delay_seconds}s...")
-            yield Delay(seconds=delay_seconds)
+            yield Await(asyncio.sleep(delay_seconds))
     else:
         assert last_error is not None, "Should have an error if all retries failed"
         raise last_error
@@ -630,10 +626,9 @@ def structured_llm__openai(
     else:
         result = yield process_unstructured_response(response)
 
-    # Track result in graph
-    yield Step(
-        value={"result_type": type(result).__name__ if response_format else "str"},
-        meta={"tokens_used": response.usage.total_tokens if response.usage else 0}
+    yield Tell(
+        f"Structured LLM result tracking: result_type={type(result).__name__ if response_format else 'str'}, "
+        f"tokens_used={response.usage.total_tokens if response.usage else 0}"
     )
 
     return result

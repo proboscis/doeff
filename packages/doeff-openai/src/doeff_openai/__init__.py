@@ -10,7 +10,7 @@ enabling full observability through Graph and Log effects for:
 - Streaming support
 
 Example:
-    >>> from doeff import do, run_with_env
+    >>> from doeff import do, run
     >>> from doeff_openai import chat_completion, get_total_cost
     >>> 
     >>> @do
@@ -28,7 +28,7 @@ Example:
     >>>     return response
     >>> 
     >>> # Run with API key in environment
-    >>> result = run_with_env(
+    >>> result = run(
     >>>     my_ai_workflow(),
     >>>     env={"openai_api_key": "sk-..."}
     >>> )
@@ -49,6 +49,7 @@ from doeff_openai.client import (
     OpenAIClient,
     extract_request_id,
     extract_token_usage,
+    get_api_calls,
     get_model_cost,
     get_openai_client,
     get_total_cost,
@@ -148,6 +149,7 @@ __all__ = [
     "extract_token_usage",
     # Cost calculation
     "get_encoding",
+    "get_api_calls",
     "get_model_cost",
     "get_model_pricing",
     "get_openai_client",
