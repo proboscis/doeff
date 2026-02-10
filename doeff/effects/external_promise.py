@@ -11,10 +11,8 @@ See SPEC-EFF-010-external-promise.md for full design documentation.
 
 from __future__ import annotations
 
-import queue
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
-from uuid import UUID, uuid4
 
 import doeff_vm
 
@@ -39,7 +37,7 @@ class ExternalPromise(Generic[T]):
     Attributes:
         _handle: Internal handle for scheduler waiter tracking
         _completion_queue: Reference to scheduler's thread-safe queue
-        _id: Universal identifier (serializable for cross-process use)
+        _id: Scheduler promise identifier
 
     Example:
         @do
@@ -60,16 +58,12 @@ class ExternalPromise(Generic[T]):
     """
 
     _handle: Any = field(repr=False)
-    _completion_queue: "queue.Queue[tuple[UUID, Any, BaseException | None]]" = field(repr=False)
-    _id: UUID = field(default_factory=uuid4)
+    _completion_queue: Any = field(repr=False)
+    _id: int = field(repr=False)
 
     @property
-    def id(self) -> UUID:
-        """Unique ID for this promise.
-
-        Can be serialized (str(promise.id)) for cross-process communication.
-        External code can use this ID to identify which promise to complete.
-        """
+    def id(self) -> int:
+        """Scheduler promise ID for this promise."""
         return self._id
 
     @property
@@ -139,9 +133,22 @@ def CreateExternalPromise() -> Any:
             return raw_handle
 
         if isinstance(raw_handle, dict) and raw_handle.get("type") == "ExternalPromise":
+            promise_id = raw_handle.get("promise_id")
+            if not isinstance(promise_id, int):
+                raise TypeError(
+                    "CreateExternalPromise expected ExternalPromise handle with integer promise_id"
+                )
+
+            completion_queue = raw_handle.get("completion_queue")
+            if completion_queue is None:
+                raise TypeError(
+                    "CreateExternalPromise expected ExternalPromise handle with completion_queue"
+                )
+
             return ExternalPromise(
                 _handle=raw_handle,
-                _completion_queue=queue.Queue(),
+                _completion_queue=completion_queue,
+                _id=promise_id,
             )
 
         raise TypeError(
