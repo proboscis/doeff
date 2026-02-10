@@ -1,11 +1,13 @@
 """Tests for structured LLM implementation with doeff effects."""
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from doeff_openai import (
+    get_api_calls,
     gpt5_structured,
     is_gpt5_model,
     requires_max_completion_tokens,
@@ -240,12 +242,15 @@ async def test_process_structured_response_success():
     """Test processing successful structured response."""
 
     # Mock response
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = json.dumps({
-        "answer": "42",
-        "confidence": 0.95
-    })
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=json.dumps({"answer": "42", "confidence": 0.95})
+                )
+            )
+        ]
+    )
 
     @do
     def test_flow() -> EffectGenerator[SimpleResponse]:
@@ -265,17 +270,20 @@ async def test_process_structured_response_success():
 async def test_process_structured_response_list_payload():
     """Structured responses may return JSON payload inside message parts."""
 
-    mock_response = MagicMock()
-    mock_message = MagicMock()
-    mock_message.content = [
-        {
-            "type": "output_json",
-            "json": {"answer": "42", "confidence": 0.99},
-        }
-    ]
-    mock_choice = MagicMock()
-    mock_choice.message = mock_message
-    mock_response.choices = [mock_choice]
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=[
+                        {
+                            "type": "output_json",
+                            "json": {"answer": "42", "confidence": 0.99},
+                        }
+                    ]
+                )
+            )
+        ]
+    )
 
     @do
     def test_flow() -> EffectGenerator[SimpleResponse]:
@@ -294,15 +302,18 @@ async def test_process_structured_response_list_payload():
 async def test_process_unstructured_response_with_parts():
     """Unstructured responses should concatenate multipart content."""
 
-    mock_response = MagicMock()
-    mock_message = MagicMock()
-    mock_message.content = [
-        {"type": "output_text", "text": "Hello"},
-        {"type": "output_text", "text": "world"},
-    ]
-    mock_choice = MagicMock()
-    mock_choice.message = mock_message
-    mock_response.choices = [mock_choice]
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=[
+                        {"type": "output_text", "text": "Hello"},
+                        {"type": "output_text", "text": "world"},
+                    ]
+                )
+            )
+        ]
+    )
 
     @do
     def test_flow() -> EffectGenerator[str]:
@@ -321,9 +332,13 @@ async def test_process_structured_response_invalid_json():
     """Test processing structured response with invalid JSON."""
 
     # Mock response with invalid JSON
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "not valid json"
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="not valid json")
+            )
+        ]
+    )
 
     @do
     def test_flow() -> EffectGenerator[Any]:
@@ -335,7 +350,7 @@ async def test_process_structured_response_invalid_json():
     print(result.format())
 
     assert result.is_err()
-    assert "Expecting value" in str(result.result.error)
+    assert "Expecting value" in str(result.error)
 
 
 @pytest.mark.asyncio
@@ -343,9 +358,13 @@ async def test_process_unstructured_response():
     """Test processing unstructured text response."""
 
     # Mock response
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "This is a test response."
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="This is a test response.")
+            )
+        ]
+    )
 
     @do
     def test_flow() -> EffectGenerator[str]:
@@ -369,33 +388,35 @@ async def test_structured_llm_text_only():
     mock_async_client = AsyncMock()
     mock_client.async_client = mock_async_client
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "Test response"
-    mock_response.usage = MagicMock()
-    mock_response.usage.total_tokens = 100
-    mock_response.usage.prompt_tokens = 20
-    mock_response.usage.completion_tokens = 80
+    mock_response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="Test response"))],
+        usage=SimpleNamespace(
+            total_tokens=100,
+            prompt_tokens=20,
+            completion_tokens=80,
+        ),
+    )
 
     mock_async_client.chat.completions.create.return_value = mock_response
 
     @do
-    def test_flow() -> EffectGenerator[str]:
+    def test_flow() -> EffectGenerator[dict[str, object]]:
         # Provide mock client in environment
         yield Ask("openai_client")  # This will be provided by context
 
-        result = yield structured_llm__openai(
+        text_result = yield structured_llm__openai(
             text="What is 2+2?",
             model="gpt-4o",
             max_tokens=100,
         )
-        return result
+        api_calls = yield get_api_calls()
+        return {"text": text_result, "api_calls": api_calls}
 
     runtime = AsyncRuntime()
     result = await runtime.run(test_flow(), env={"openai_client": mock_client})
 
     assert result.is_ok()
-    assert result.value == "Test response"
+    assert result.value["text"] == "Test response"
 
     # Check API was called
     mock_async_client.chat.completions.create.assert_called_once()
@@ -403,8 +424,7 @@ async def test_structured_llm_text_only():
     assert call_args["model"] == "gpt-4o"
     assert call_args["max_tokens"] == 100
 
-    api_calls = result.state.get("openai_api_calls")
-    assert api_calls is not None
+    api_calls = result.value["api_calls"]
     call_record = api_calls[0]
     assert call_record["prompt_text"] == "What is 2+2?"
     assert call_record["prompt_images"] == []
@@ -420,16 +440,20 @@ async def test_structured_llm_with_pydantic():
     mock_async_client = AsyncMock()
     mock_client.async_client = mock_async_client
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = json.dumps({
-        "answer": "4",
-        "confidence": 1.0
-    })
-    mock_response.usage = MagicMock()
-    mock_response.usage.total_tokens = 150
-    mock_response.usage.prompt_tokens = 50
-    mock_response.usage.completion_tokens = 100
+    mock_response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=json.dumps({"answer": "4", "confidence": 1.0})
+                )
+            )
+        ],
+        usage=SimpleNamespace(
+            total_tokens=150,
+            prompt_tokens=50,
+            completion_tokens=100,
+        ),
+    )
 
     mock_async_client.chat.completions.create.return_value = mock_response
 
@@ -470,18 +494,18 @@ async def test_gpt5_structured_convenience():
     mock_async_client = AsyncMock()
     mock_client.async_client = mock_async_client
 
-    mock_response = MagicMock()
-    mock_response.choices = [MagicMock()]
-    mock_response.choices[0].message.content = "GPT-5 response"
-    mock_response.usage = MagicMock()
-    mock_response.usage.total_tokens = 200
-    mock_response.usage.prompt_tokens = 50
-    mock_response.usage.completion_tokens = 150
-
-    # Mock GPT-5 specific details
-    mock_response.usage.completion_tokens_details = MagicMock()
-    mock_response.usage.completion_tokens_details.reasoning_tokens = 100
-    mock_response.usage.completion_tokens_details.output_tokens = 50
+    mock_response = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="GPT-5 response"))],
+        usage=SimpleNamespace(
+            total_tokens=200,
+            prompt_tokens=50,
+            completion_tokens=150,
+            completion_tokens_details=SimpleNamespace(
+                reasoning_tokens=100,
+                output_tokens=50,
+            ),
+        ),
+    )
 
     mock_async_client.chat.completions.create.return_value = mock_response
 

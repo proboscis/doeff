@@ -1,5 +1,6 @@
 """Chat completion operations with comprehensive observability."""
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -9,9 +10,8 @@ from openai.types.chat.chat_completion_message_param import ChatCompletionMessag
 
 from doeff import (
     Await,
-    Delay,
     EffectGenerator,
-    Step,
+    Safe,
     Tell,
     do,
 )
@@ -97,8 +97,6 @@ def chat_completion(
 
     # Get OpenAI client
     client = yield get_openai_client()
-
-    from doeff import Safe
 
     # Define the main operation with retry support
     @do
@@ -190,7 +188,7 @@ def chat_completion(
             last_error = safe_result.error
             if attempt < max_attempts - 1:
                 yield Tell(f"API call failed (attempt {attempt + 1}/{max_attempts}), retrying in {delay_seconds}s...")
-                yield Delay(seconds=delay_seconds)
+                yield Await(asyncio.sleep(delay_seconds))
         else:
             assert last_error is not None, "Should have an error if all retries failed"
             raise last_error
@@ -224,8 +222,6 @@ def chat_completion_async(
 
     # Track start time
     start_time = time.time()
-
-    from doeff import Safe
 
     # Define the main operation as a sub-program
     @do
@@ -322,20 +318,9 @@ def process_stream_chunks(
         # Calculate cost
         cost_info = calculate_cost(model, token_usage)
 
-        # Add final graph step with accumulated data
-        yield Step(
-            {
-                "stream_complete": True,
-                "total_chunks": total_chunks,
-                "content_length": len(full_content),
-            },
-            {
-                "type": "openai_stream_complete",
-                "model": model,
-                "output_tokens": output_tokens,
-                "cost_usd": cost_info.total_cost,
-                "chunks": total_chunks,
-            }
+        yield Tell(
+            f"Stream complete metadata: chunks={total_chunks}, output_tokens={output_tokens}, "
+            f"cost=${cost_info.total_cost:.6f}"
         )
 
         yield Tell(f"Stream complete: chunks={total_chunks}, tokens={output_tokens}, cost=${cost_info.total_cost:.6f}")

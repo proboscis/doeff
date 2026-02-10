@@ -12,11 +12,10 @@ from openai.types.chat import ChatCompletion
 
 from doeff import (
     Ask,
-    AtomicUpdate,
     EffectGenerator,
     Get,
     Put,
-    Step,
+    Safe,
     Tell,
     do,
 )
@@ -142,10 +141,20 @@ class OpenAIClient:
 
 
 @do
+def _get_state_or_none(key: str) -> EffectGenerator[Any | None]:
+    """Read a state key, returning None when it does not exist."""
+
+    @do
+    def _read() -> EffectGenerator[Any]:
+        return (yield Get(key))
+
+    safe_result = yield Safe(_read())
+    return safe_result.value if safe_result.is_ok() else None
+
+
+@do
 def get_openai_client() -> EffectGenerator[OpenAIClient]:
     """Get OpenAI client from environment or create new one."""
-    from doeff import Safe, do
-
     # Create a program that asks for the client
     @do
     def try_ask_client():
@@ -158,7 +167,7 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
         return client
 
     # Try to get from State
-    client = yield Get("openai_client")
+    client = yield _get_state_or_none("openai_client")
     if client:
         return client
 
@@ -173,7 +182,7 @@ def get_openai_client() -> EffectGenerator[OpenAIClient]:
 
     # If not found, try State
     if not api_key:
-        api_key = yield Get("openai_api_key")
+        api_key = yield _get_state_or_none("openai_api_key")
 
     # Create client (api_key might be None, which is ok - OpenAI client will use its own defaults)
     client = OpenAIClient(api_key=api_key)
@@ -264,55 +273,7 @@ def track_api_call(
             log_msg += f", cost=${cost_info.total_cost:.6f}"
         yield Tell(log_msg)
 
-    # Create Graph step with full metadata
-    graph_metadata = metadata.to_graph_metadata()
-
-    # Include request summary in graph (not full request to avoid bloat)
-    request_summary = {
-        "operation": operation,
-        "model": model,
-    }
-    if operation == "chat.completion":
-        request_summary["messages_count"] = len(sanitized_payload.get("messages", []))
-        request_summary["temperature"] = sanitized_payload.get("temperature")
-        request_summary["max_tokens"] = sanitized_payload.get("max_tokens")
-    elif operation == "embedding":
-        input_data = sanitized_payload.get("input", "")
-        if isinstance(input_data, list):
-            request_summary["input_count"] = len(input_data)
-        else:
-            request_summary["input_length"] = len(input_data)
-
-    # Add request as graph step
-    yield Step(
-        {"request_payload": sanitized_payload, "timestamp": graph_metadata["timestamp"]},
-        {**graph_metadata, "phase": "request_payload"}
-    )
-    yield Step(
-        {"request": request_summary, "timestamp": graph_metadata["timestamp"]},
-        {**graph_metadata, "phase": "request"}
-    )
-
-    # Add response as graph step
-    if not error:
-        response_summary = {
-            "success": True,
-            "model": model,
-        }
-        if operation == "chat.completion" and hasattr(response, "choices"):
-            response_summary["finish_reason"] = response.choices[0].finish_reason if response.choices else None
-
-        yield Step(
-            {"response": response_summary, "timestamp": graph_metadata["timestamp"]},
-            {**graph_metadata, "phase": "response"}
-        )
-    else:
-        yield Step(
-            {"error": str(error), "timestamp": graph_metadata["timestamp"]},
-            {**graph_metadata, "phase": "error"}
-        )
-
-    # Track API call in state using AtomicUpdate for thread-safe parallel execution
+    # Track API call metadata in state
     call_entry = {
         "operation": operation,
         "model": model,
@@ -332,35 +293,20 @@ def track_api_call(
         "prompt_messages": prompt_messages,
     }
 
-    def _append_call(current: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-        entries = list(current) if current else []
-        entries.append(call_entry)
-        return entries
+    current_calls = yield _get_state_or_none("openai_api_calls")
+    call_entries = list(current_calls) if current_calls else []
+    call_entries.append(call_entry)
+    yield Put("openai_api_calls", call_entries)
 
-    yield AtomicUpdate("openai_api_calls", _append_call, default_factory=list)
-
-    # Track cumulative cost in state using AtomicUpdate for thread-safe parallel execution
+    # Track cumulative and per-model costs in state
     if cost_info:
-        def _increment_total(current: float | None) -> float:
-            return (current or 0.0) + cost_info.total_cost
+        current_total = yield _get_state_or_none("total_openai_cost")
+        yield Put("total_openai_cost", (current_total or 0.0) + cost_info.total_cost)
 
-        yield AtomicUpdate(
-            "total_openai_cost",
-            _increment_total,
-            default_factory=lambda: 0.0,
-        )
-
-        # Also track per-model costs
+        # Track per-model costs
         model_cost_key = f"openai_cost_{model}"
-
-        def _increment_model(current: float | None) -> float:
-            return (current or 0.0) + cost_info.total_cost
-
-        yield AtomicUpdate(
-            model_cost_key,
-            _increment_model,
-            default_factory=lambda: 0.0,
-        )
+        model_total = yield _get_state_or_none(model_cost_key)
+        yield Put(model_cost_key, (model_total or 0.0) + cost_info.total_cost)
 
     return metadata
 
@@ -368,15 +314,24 @@ def track_api_call(
 @do
 def get_total_cost() -> EffectGenerator[float]:
     """Get the total accumulated OpenAI API cost."""
-    total_cost = yield Get("total_openai_cost")
+    total_cost = yield _get_state_or_none("total_openai_cost")
     return total_cost or 0.0
 
 
 @do
 def get_model_cost(model: str) -> EffectGenerator[float]:
     """Get the accumulated cost for a specific model."""
-    model_cost = yield Get(f"openai_cost_{model}")
+    model_cost = yield _get_state_or_none(f"openai_cost_{model}")
     return model_cost or 0.0
+
+
+@do
+def get_api_calls() -> EffectGenerator[list[dict[str, Any]]]:
+    """Get tracked OpenAI API call metadata entries."""
+    api_calls = yield _get_state_or_none("openai_api_calls")
+    if not api_calls:
+        return []
+    return list(api_calls)
 
 
 @do
