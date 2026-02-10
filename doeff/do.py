@@ -145,6 +145,13 @@ def do(
     into:        KleisliProgram[P, T] where P is the parameter spec
     This preserves type information and enables automatic Program unwrapping.
 
+    IMPORTANT — async def is NOT supported:
+        @do requires a generator function (def with yield). Applying @do to an
+        async def is always a bug — there is no "async kleisli" concept. async def
+        returns a coroutine, not a generator, so the isgenerator() check fails and
+        the coroutine is silently returned without executing the body.
+        For async I/O, use a regular @do generator with yield Await(coroutine).
+
     Usage:
         @do
         def my_program(x: int) -> EffectGenerator[str]:
