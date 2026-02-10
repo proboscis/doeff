@@ -16,10 +16,6 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-pytestmark = pytest.mark.skip(
-    reason="Legacy CLI interpreter fixtures rely on pre-rust_vm program semantics."
-)
-
 
 def run_cli(
     *args: str, env_override: dict[str, str] | None = None
