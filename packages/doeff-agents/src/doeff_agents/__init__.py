@@ -29,17 +29,16 @@ Effects API Example:
 
 from .adapters.base import AgentAdapter, AgentType, InjectionMethod, LaunchConfig
 
-# CESK handler imports (for doeff integration)
-from .cesk_handlers import (
+# Effect handler imports (for doeff_vm integration)
+from .handlers import (
     AGENT_SESSIONS_KEY,
     MOCK_AGENT_STATE_KEY,
     MockAgentState,
+    agent_effectful_handler,
     agent_effectful_handlers,
     configure_mock_session,
+    mock_agent_handler,
     mock_agent_handlers,
-)
-from .cesk_handlers import (
-    MockSessionScript as CeskMockSessionScript,
 )
 
 # Effects API imports
@@ -74,6 +73,8 @@ from .handlers import (
     MockSessionScript,
     TmuxAgentHandler,
     dispatch_effect,
+    make_scheduled_handler,
+    make_typed_handler,
 )
 from .monitor import MonitorState, OnStatusChange, SessionStatus
 
@@ -132,7 +133,6 @@ __all__ = [
     "AgentType",
     "Capture",
     "CaptureEffect",
-    "CeskMockSessionScript",
     "InjectionMethod",
     # Effects API - Constructors
     "Launch",
@@ -166,7 +166,8 @@ __all__ = [
     "TmuxError",
     "TmuxNotAvailableError",
     "WithSessionEffect",
-    # CESK Handlers (doeff integration)
+    # Effect handlers (doeff_vm protocol)
+    "agent_effectful_handler",
     "agent_effectful_handlers",
     "async_monitor_session",
     "async_session_scope",
@@ -177,6 +178,9 @@ __all__ = [
     "get_adapter",
     "interactive_session",
     "launch_session",
+    "make_scheduled_handler",
+    "make_typed_handler",
+    "mock_agent_handler",
     "mock_agent_handlers",
     "monitor_once",
     "monitor_session",

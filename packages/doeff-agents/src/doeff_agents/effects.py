@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from doeff.types import EffectBase
+from doeff import EffectBase
 
 from .adapters.base import AgentType, LaunchConfig
 from .monitor import SessionStatus
@@ -82,7 +82,7 @@ class Observation:
 class AgentEffectBase(EffectBase):
     """Base class for agent effects.
 
-    Inherits from doeff's EffectBase for CESK interpreter compatibility.
+    Inherits from doeff's public EffectBase type.
     """
 
     pass
