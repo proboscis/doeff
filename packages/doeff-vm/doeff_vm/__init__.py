@@ -12,8 +12,10 @@ PyStdlib = _ext.PyStdlib
 PySchedulerHandler = _ext.PySchedulerHandler
 PyVM = _ext.PyVM
 RunResult = _ext.RunResult
-ResultOk = getattr(_ext, "ResultOk", None)
-ResultErr = getattr(_ext, "ResultErr", None)
+Ok = getattr(_ext, "Ok", None)
+Err = getattr(_ext, "Err", None)
+ResultOk = Ok
+ResultErr = Err
 K = _ext.K
 WithHandler = _ext.WithHandler
 Pure = _ext.Pure
@@ -165,6 +167,8 @@ __all__ = [
 ]
 
 if ResultOk is not None:
+    __all__.append("Ok")
     __all__.append("ResultOk")
 if ResultErr is not None:
+    __all__.append("Err")
     __all__.append("ResultErr")

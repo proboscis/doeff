@@ -77,7 +77,7 @@ class ExternalPromise(Generic[T]):
         """The waitable side. Use `yield Wait(promise.future)` in doeff."""
         from doeff.effects.spawn import Future
 
-        return Future(_handle=self._handle)
+        return Future(_handle=self._handle, _completion_queue=self._completion_queue)
 
     def complete(self, value: T) -> None:
         """Complete the promise with a value.
@@ -107,7 +107,7 @@ class ExternalPromise(Generic[T]):
 CreateExternalPromiseEffect = doeff_vm.CreateExternalPromiseEffect
 
 
-def CreateExternalPromise() -> Effect:
+def CreateExternalPromise() -> Any:
     """Create a promise that can be completed from outside doeff.
 
     Returns an ExternalPromise with complete()/fail() methods that can be
@@ -129,7 +129,26 @@ def CreateExternalPromise() -> Effect:
 
             return (yield Wait(promise.future))
     """
-    return create_effect_with_trace(CreateExternalPromiseEffect(), skip_frames=3)
+    from doeff import do
+
+    @do
+    def _program():
+        raw_handle = yield create_effect_with_trace(CreateExternalPromiseEffect(), skip_frames=3)
+
+        if isinstance(raw_handle, ExternalPromise):
+            return raw_handle
+
+        if isinstance(raw_handle, dict) and raw_handle.get("type") == "ExternalPromise":
+            return ExternalPromise(
+                _handle=raw_handle,
+                _completion_queue=queue.Queue(),
+            )
+
+        raise TypeError(
+            f"CreateExternalPromise expected ExternalPromise handle, got {type(raw_handle).__name__}"
+        )
+
+    return _program()
 
 
 __all__ = [

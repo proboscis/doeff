@@ -3,9 +3,9 @@
 **Date:** 2026-02-08
 **Session:** SA-002
 **Specs audited:**
-- `specs/vm-architecture/SPEC-008-rust-vm.md`
-- `specs/vm-architecture/SPEC-009-rust-vm-migration.md`
-- `specs/SPEC-TYPES-001-program-effect-separation.md`
+- `specs/vm/SPEC-008-rust-vm.md`
+- `specs/vm/SPEC-009-rust-vm-migration.md`
+- `specs/core/SPEC-TYPES-001-program-effect-separation.md`
 
 **Implementation scope:**
 - `doeff/`
@@ -58,7 +58,7 @@ Gap severity split:
 
 | ID | Description | Spec refs | Why contradiction | Current impl behavior |
 |---|---|---|---|---|
-| SA-002-C01 | SPEC-TYPES-001 describes KPC as effect-dispatch path, but migration checklist says classify_yielded should upgrade KPC to Call. | `specs/SPEC-TYPES-001-program-effect-separation.md:619`, `specs/SPEC-TYPES-001-program-effect-separation.md:830` | Both cannot be primary semantics at once (effect-dispatch vs call-upgrade in classifier). | Impl follows effect-dispatch path (`packages/doeff-vm/src/pyvm.rs:723`). |
+| SA-002-C01 | SPEC-TYPES-001 describes KPC as effect-dispatch path, but migration checklist says classify_yielded should upgrade KPC to Call. | `specs/core/SPEC-TYPES-001-program-effect-separation.md:619`, `specs/core/SPEC-TYPES-001-program-effect-separation.md:830` | Both cannot be primary semantics at once (effect-dispatch vs call-upgrade in classifier). | Impl follows effect-dispatch path (`packages/doeff-vm/src/pyvm.rs:723`). |
 
 ---
 
@@ -68,25 +68,25 @@ Gap severity split:
 
 | ID | Description | Spec refs | Impl refs | Enforcement |
 |---|---|---|---|---|
-| SA-002-G01 | `classify_yielded` still relies on import/getattr/marker fallback instead of pure base-type dispatch path. | `specs/vm-architecture/SPEC-008-rust-vm.md:991`, `specs/vm-architecture/SPEC-008-rust-vm.md:1005`, `specs/SPEC-TYPES-001-program-effect-separation.md:737` | `packages/doeff-vm/src/pyvm.rs:608`, `packages/doeff-vm/src/pyvm.rs:758` | test + semgrep |
-| SA-002-G02 | KPC representation remains transitional: Rust `PyKPC` lacks required fielded shape/extends model and dispatch still reads optional strategy from object. | `specs/SPEC-TYPES-001-program-effect-separation.md:5`, `specs/SPEC-TYPES-001-program-effect-separation.md:482`, `specs/vm-architecture/SPEC-009-rust-vm-migration.md:44` | `packages/doeff-vm/src/effect.rs:30`, `packages/doeff-vm/src/handler.rs:195`, `doeff/program.py:489` | test + semgrep |
+| SA-002-G01 | `classify_yielded` still relies on import/getattr/marker fallback instead of pure base-type dispatch path. | `specs/vm/SPEC-008-rust-vm.md:991`, `specs/vm/SPEC-008-rust-vm.md:1005`, `specs/core/SPEC-TYPES-001-program-effect-separation.md:737` | `packages/doeff-vm/src/pyvm.rs:608`, `packages/doeff-vm/src/pyvm.rs:758` | test + semgrep |
+| SA-002-G02 | KPC representation remains transitional: Rust `PyKPC` lacks required fielded shape/extends model and dispatch still reads optional strategy from object. | `specs/core/SPEC-TYPES-001-program-effect-separation.md:5`, `specs/core/SPEC-TYPES-001-program-effect-separation.md:482`, `specs/vm/SPEC-009-rust-vm-migration.md:44` | `packages/doeff-vm/src/effect.rs:30`, `packages/doeff-vm/src/handler.rs:195`, `doeff/program.py:489` | test + semgrep |
 
 ### Moderate
 
 | ID | Description | Spec refs | Impl refs | Enforcement |
 |---|---|---|---|---|
-| SA-002-G03 | Implicit KPC install path remains in VM init (`PyVM::new`) despite explicit-install direction. | `specs/SPEC-TYPES-001-program-effect-separation.md:956`, `specs/vm-architecture/SPEC-009-rust-vm-migration.md:123` | `packages/doeff-vm/src/pyvm.rs:69` | test |
-| SA-002-G04 | Public `doeff.RunResult` protocol surface is narrower than spec contract (`result/raw_store/error` missing from protocol). | `specs/vm-architecture/SPEC-009-rust-vm-migration.md:191` | `doeff/_types_internal.py:847`, `doeff/__init__.py:110` | test |
-| SA-002-G05 | `default_handlers`/presets diverge from SPEC-009 section 7 expectations (bundle composition and sync/async distinction). | `specs/vm-architecture/SPEC-009-rust-vm-migration.md:679`, `specs/vm-architecture/SPEC-009-rust-vm-migration.md:692` | `doeff/rust_vm.py:35`, `doeff/presets.py:23` | test |
-| SA-002-G06 | Scheduler completion path appears to remove waiters without explicit wake/resume enqueue in reviewed scheduler state path. | `specs/vm-architecture/SPEC-008-rust-vm.md:1797` | `packages/doeff-vm/src/scheduler.rs:409` | test |
-| SA-002-G07 | DoCtrl pyclass inheritance is inconsistent with unified `DoCtrlBase` extension model (some controls do not extend). | `specs/vm-architecture/SPEC-008-rust-vm.md:946` | `packages/doeff-vm/src/pyvm.rs:1077`, `packages/doeff-vm/src/pyvm.rs:1097`, `packages/doeff-vm/src/pyvm.rs:1113` | test + semgrep |
+| SA-002-G03 | Implicit KPC install path remains in VM init (`PyVM::new`) despite explicit-install direction. | `specs/core/SPEC-TYPES-001-program-effect-separation.md:956`, `specs/vm/SPEC-009-rust-vm-migration.md:123` | `packages/doeff-vm/src/pyvm.rs:69` | test |
+| SA-002-G04 | Public `doeff.RunResult` protocol surface is narrower than spec contract (`result/raw_store/error` missing from protocol). | `specs/vm/SPEC-009-rust-vm-migration.md:191` | `doeff/_types_internal.py:847`, `doeff/__init__.py:110` | test |
+| SA-002-G05 | `default_handlers`/presets diverge from SPEC-009 section 7 expectations (bundle composition and sync/async distinction). | `specs/vm/SPEC-009-rust-vm-migration.md:679`, `specs/vm/SPEC-009-rust-vm-migration.md:692` | `doeff/rust_vm.py:35`, `doeff/presets.py:23` | test |
+| SA-002-G06 | Scheduler completion path appears to remove waiters without explicit wake/resume enqueue in reviewed scheduler state path. | `specs/vm/SPEC-008-rust-vm.md:1797` | `packages/doeff-vm/src/scheduler.rs:409` | test |
+| SA-002-G07 | DoCtrl pyclass inheritance is inconsistent with unified `DoCtrlBase` extension model (some controls do not extend). | `specs/vm/SPEC-008-rust-vm.md:946` | `packages/doeff-vm/src/pyvm.rs:1077`, `packages/doeff-vm/src/pyvm.rs:1097`, `packages/doeff-vm/src/pyvm.rs:1113` | test + semgrep |
 
 ### Minor
 
 | ID | Description | Spec refs | Impl refs | Enforcement |
 |---|---|---|---|---|
-| SA-002-G08 | Legacy crate/file structure section in SPEC-008 does not match current consolidated implementation modules. | `specs/vm-architecture/SPEC-008-rust-vm.md:4701` | `packages/doeff-vm/src/lib.rs:12` | semgrep |
-| SA-002-G09 | Strict Program input rule text diverges from current permissive `to_generator_strict` callable/DoExpr handling. | `specs/vm-architecture/SPEC-008-rust-vm.md:4690` | `packages/doeff-vm/src/pyvm.rs:517`, `packages/doeff-vm/src/pyvm.rs:532` | test |
+| SA-002-G08 | Legacy crate/file structure section in SPEC-008 does not match current consolidated implementation modules. | `specs/vm/SPEC-008-rust-vm.md:4701` | `packages/doeff-vm/src/lib.rs:12` | semgrep |
+| SA-002-G09 | Strict Program input rule text diverges from current permissive `to_generator_strict` callable/DoExpr handling. | `specs/vm/SPEC-008-rust-vm.md:4690` | `packages/doeff-vm/src/pyvm.rs:517`, `packages/doeff-vm/src/pyvm.rs:532` | test |
 
 ---
 

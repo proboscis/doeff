@@ -329,7 +329,7 @@ result.result  # Ok(1) or Err(ValueError("..."))
 - `Ok(value)` — program returned successfully
 - `Err(exception)` — program raised an exception
 
-This is the doeff `Result` type (see SPEC-CESK-002), not a Rust `Result`.
+This is the doeff `Result` type, not a Rust `Result`.
 
 ### raw_store contents [R4-A]
 
@@ -1147,5 +1147,3 @@ Resume("not_k", 42)                          Resume("not_k", 42)
 ## References
 
 - SPEC-008: Rust VM for Algebraic Effects (VM internals)
-- SPEC-CESK-007: Segment-Based Continuation Architecture
-- SPEC-CESK-002: RuntimeResult Protocol

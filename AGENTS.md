@@ -15,5 +15,8 @@ Write Python 3.10+ with four-space indentation, rich type hints, and generator-b
 ## Testing Guidelines
 Pytest with strict asyncio mode powers the suite, so mark coroutines with `@pytest.mark.asyncio` or use async fixtures. Name new tests `test_<feature>.py` and structure coroutine assertions with `await` rather than event loops. Add regression coverage near related tests (for example, extend `tests/test_program_monadic_methods.py` when touching `Program`). If you introduce long-running integrations, guard them with `pytest.mark.e2e` per the configured marker list.
 
+## Task Management
+When a request is provided, always use the Task tool (TaskCreate) to break the request into concrete todo items before starting work. Mark each task as `in_progress` when you begin it and `completed` when done. This ensures progress is visible and nothing is missed.
+
 ## Commit & Pull Request Guidelines
 Recent history favors concise, imperative summaries (for example, `Fix cache invalidation` or `Add Gemini structured support`). Reference related issues in the body, note behavioral risks, and list validation commands you ran. Pull requests should describe the effect on core `doeff/` APIs versus optional `packages/` integrations, attach screenshots or traces when diagnostics change, and mention follow-up work in a checklist so maintainers can track it.

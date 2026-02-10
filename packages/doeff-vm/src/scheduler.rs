@@ -9,19 +9,19 @@ use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
 
 use crate::continuation::Continuation;
-use crate::effect::{
-    DispatchEffect, PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise,
-    PyGather, PyRace, PySpawn, PyTaskCompleted, dispatch_from_shared, dispatch_into_python,
-    dispatch_ref_as_python,
-};
 #[cfg(test)]
 use crate::effect::Effect;
+use crate::effect::{
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect,
+    PyCompletePromise, PyCreateExternalPromise, PyCreatePromise, PyFailPromise, PyGather, PyRace,
+    PySpawn, PyTaskCompleted,
+};
 use crate::handler::{
     Handler, RustHandlerProgram, RustProgramHandler, RustProgramRef, RustProgramStep,
 };
 use crate::ids::{PromiseId, TaskId};
 use crate::py_shared::PyShared;
-use crate::pyvm::PyRustHandlerSentinel;
+use crate::pyvm::{PyResultErr, PyResultOk, PyRustHandlerSentinel};
 use crate::step::{DoCtrl, PyException, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -128,13 +128,51 @@ pub struct ExternalPromise {
     pub id: PromiseId,
 }
 
+#[derive(Clone, Debug)]
+enum WaitMode {
+    All,
+    Any,
+}
+
+#[derive(Clone, Debug)]
+struct WaitRequest {
+    continuation: Continuation,
+    items: Vec<Waitable>,
+    mode: WaitMode,
+    waiting_task: Option<TaskId>,
+    waiting_store: RustStore,
+}
+
+fn jump_to_continuation(k: Continuation, value: Value) -> RustProgramStep {
+    if k.started {
+        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            continuation: k,
+            value,
+        }));
+    }
+    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
+        continuation: k,
+        value,
+    }))
+}
+
+fn throw_to_continuation(k: Continuation, error: PyException) -> RustProgramStep {
+    if k.started {
+        return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+            continuation: k,
+            exception: error,
+        }));
+    }
+    RustProgramStep::Throw(error)
+}
+
 /// The scheduler's internal state.
 pub struct SchedulerState {
     pub ready: VecDeque<TaskId>,
-    pub ready_waiters: VecDeque<Continuation>,
+    ready_waiters: VecDeque<WaitRequest>,
     pub tasks: HashMap<TaskId, TaskState>,
     pub promises: HashMap<PromiseId, PromiseState>,
-    pub waiters: HashMap<Waitable, Vec<Continuation>>,
+    waiters: HashMap<Waitable, Vec<WaitRequest>>,
     pub next_task: u64,
     pub next_promise: u64,
     pub current_task: Option<TaskId>,
@@ -149,6 +187,29 @@ fn is_instance_from(obj: &Bound<'_, PyAny>, module: &str, class_name: &str) -> b
         return false;
     };
     obj.is_instance(&cls).unwrap_or(false)
+}
+
+fn parse_task_completed_result(
+    py: Python<'_>,
+    result_obj: &Bound<'_, PyAny>,
+) -> Result<Result<Value, PyException>, String> {
+    if result_obj.is_none() {
+        return Err(
+            "TaskCompletedEffect/SchedulerTaskCompleted requires task + result".to_string(),
+        );
+    }
+
+    if result_obj.extract::<PyRef<'_, PyResultOk>>().is_ok() {
+        let value_obj = result_obj.getattr("value").map_err(|e| e.to_string())?;
+        return Ok(Ok(Value::from_pyobject(&value_obj)));
+    }
+
+    if result_obj.extract::<PyRef<'_, PyResultErr>>().is_ok() {
+        let error_obj = result_obj.getattr("error").map_err(|e| e.to_string())?;
+        return Ok(Err(pyobject_to_exception(py, &error_obj)));
+    }
+
+    Err("TaskCompleted.result must be Ok(...) or Err(...)".to_string())
 }
 
 fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEffect>, String> {
@@ -167,7 +228,12 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
 
         if let Ok(gather) = obj.extract::<PyRef<'_, PyGather>>() {
             let mut waitables = Vec::new();
-            for item in gather.items.bind(py).try_iter().map_err(|e| e.to_string())? {
+            for item in gather
+                .items
+                .bind(py)
+                .try_iter()
+                .map_err(|e| e.to_string())?
+            {
                 let item = item.map_err(|e| e.to_string())?;
                 match extract_waitable(&item) {
                     Some(w) => waitables.push(w),
@@ -179,7 +245,12 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
 
         if let Ok(race) = obj.extract::<PyRef<'_, PyRace>>() {
             let mut waitables = Vec::new();
-            for item in race.futures.bind(py).try_iter().map_err(|e| e.to_string())? {
+            for item in race
+                .futures
+                .bind(py)
+                .try_iter()
+                .map_err(|e| e.to_string())?
+            {
                 let item = item.map_err(|e| e.to_string())?;
                 match extract_waitable(&item) {
                     Some(w) => waitables.push(w),
@@ -216,7 +287,9 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
         if let Ok(fail) = obj.extract::<PyRef<'_, PyFailPromise>>() {
             let promise_obj = fail.promise.bind(py);
             let Some(promise) = extract_promise_id(promise_obj) else {
-                return Err("FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string());
+                return Err(
+                    "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
+                );
             };
             let error = pyobject_to_exception(py, fail.error.bind(py));
             return Ok(Some(SchedulerEffect::FailPromise { promise, error }));
@@ -244,72 +317,54 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
                     .to_string()
             })?;
 
-            let error_obj = done.error.bind(py);
-            if !error_obj.is_none() {
-                let error = pyobject_to_exception(py, error_obj);
-                return Ok(Some(SchedulerEffect::TaskCompleted {
-                    task,
-                    result: Err(error),
-                }));
-            }
-
             let result_obj = done.result.bind(py);
-            if !result_obj.is_none() {
-                return Ok(Some(SchedulerEffect::TaskCompleted {
-                    task,
-                    result: Ok(Value::from_pyobject(result_obj)),
-                }));
-            }
-
-            return Err(
-                "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error"
-                    .to_string(),
-            );
+            let result = parse_task_completed_result(py, result_obj)?;
+            return Ok(Some(SchedulerEffect::TaskCompleted { task, result }));
         }
 
         if is_instance_from(obj, "doeff.effects.spawn", "SpawnEffect") {
-                let program = obj.getattr ("program").map_err(|e| e.to_string())?.unbind();
-                let handlers = if let Ok(handlers_obj) = obj.getattr ("handlers") {
-                    extract_handlers_from_python(&handlers_obj)?
-                } else {
-                    vec![]
-                };
-                let store_mode = if let Ok(mode_obj) = obj.getattr ("store_mode") {
-                    parse_store_mode(&mode_obj)?
-                } else {
-                    StoreMode::Shared
-                };
-                Ok(Some(SchedulerEffect::Spawn {
-                    program,
-                    handlers,
-                    store_mode,
-                }))
+            let program = obj.getattr("program").map_err(|e| e.to_string())?.unbind();
+            let handlers = if let Ok(handlers_obj) = obj.getattr("handlers") {
+                extract_handlers_from_python(&handlers_obj)?
+            } else {
+                vec![]
+            };
+            let store_mode = if let Ok(mode_obj) = obj.getattr("store_mode") {
+                parse_store_mode(&mode_obj)?
+            } else {
+                StoreMode::Shared
+            };
+            Ok(Some(SchedulerEffect::Spawn {
+                program,
+                handlers,
+                store_mode,
+            }))
         } else if is_instance_from(obj, "doeff.effects.gather", "GatherEffect") {
-                let items_obj = obj.getattr ("items").map_err(|e| e.to_string())?;
-                let mut waitables = Vec::new();
-                for item in items_obj.try_iter().map_err(|e| e.to_string())? {
-                    let item = item.map_err(|e| e.to_string())?;
-                    match extract_waitable(&item) {
-                        Some(w) => waitables.push(w),
-                        None => {
-                            return Err("GatherEffect.items must be waitable handles".to_string());
-                        }
+            let items_obj = obj.getattr("items").map_err(|e| e.to_string())?;
+            let mut waitables = Vec::new();
+            for item in items_obj.try_iter().map_err(|e| e.to_string())? {
+                let item = item.map_err(|e| e.to_string())?;
+                match extract_waitable(&item) {
+                    Some(w) => waitables.push(w),
+                    None => {
+                        return Err("GatherEffect.items must be waitable handles".to_string());
                     }
                 }
-                Ok(Some(SchedulerEffect::Gather { items: waitables }))
+            }
+            Ok(Some(SchedulerEffect::Gather { items: waitables }))
         } else if is_instance_from(obj, "doeff.effects.race", "RaceEffect") {
-                let items_obj = obj.getattr ("futures").map_err(|e| e.to_string())?;
-                let mut waitables = Vec::new();
-                for item in items_obj.try_iter().map_err(|e| e.to_string())? {
-                    let item = item.map_err(|e| e.to_string())?;
-                    match extract_waitable(&item) {
-                        Some(w) => waitables.push(w),
-                        None => {
-                            return Err("RaceEffect.futures/items must be waitable handles".to_string());
-                        }
+            let items_obj = obj.getattr("futures").map_err(|e| e.to_string())?;
+            let mut waitables = Vec::new();
+            for item in items_obj.try_iter().map_err(|e| e.to_string())? {
+                let item = item.map_err(|e| e.to_string())?;
+                match extract_waitable(&item) {
+                    Some(w) => waitables.push(w),
+                    None => {
+                        return Err("RaceEffect.futures/items must be waitable handles".to_string());
                     }
                 }
-                Ok(Some(SchedulerEffect::Race { items: waitables }))
+            }
+            Ok(Some(SchedulerEffect::Race { items: waitables }))
         } else if is_instance_from(obj, "doeff.effects.promise", "CreatePromiseEffect") {
             Ok(Some(SchedulerEffect::CreatePromise))
         } else if is_instance_from(
@@ -319,56 +374,59 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
         ) {
             Ok(Some(SchedulerEffect::CreateExternalPromise))
         } else if is_instance_from(obj, "doeff.effects.promise", "CompletePromiseEffect") {
-                let promise_obj = obj.getattr ("promise").map_err(|e| e.to_string())?;
-                let Some(promise) = extract_promise_id(&promise_obj) else {
-                    return Err(
-                        "CompletePromiseEffect.promise must carry _promise_handle.promise_id"
-                            .to_string(),
-                    );
-                };
-                let value = obj.getattr ("value").map_err(|e| e.to_string())?;
-                Ok(Some(SchedulerEffect::CompletePromise {
-                    promise,
-                    value: Value::from_pyobject(&value),
-                }))
+            let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
+            let Some(promise) = extract_promise_id(&promise_obj) else {
+                return Err(
+                    "CompletePromiseEffect.promise must carry _promise_handle.promise_id"
+                        .to_string(),
+                );
+            };
+            let value = obj.getattr("value").map_err(|e| e.to_string())?;
+            Ok(Some(SchedulerEffect::CompletePromise {
+                promise,
+                value: Value::from_pyobject(&value),
+            }))
         } else if is_instance_from(obj, "doeff.effects.promise", "FailPromiseEffect") {
-                let promise_obj = obj.getattr ("promise").map_err(|e| e.to_string())?;
-                let Some(promise) = extract_promise_id(&promise_obj) else {
-                    return Err(
-                        "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
-                    );
-                };
-                let error_obj = obj.getattr ("error").map_err(|e| e.to_string())?;
-                let error = pyobject_to_exception(py, &error_obj);
-                Ok(Some(SchedulerEffect::FailPromise { promise, error }))
-        } else if is_instance_from(obj, "doeff.effects.scheduler_internal", "_SchedulerTaskCompleted") {
-                let task = if let Ok(task_obj) = obj.getattr ("task") {
-                    extract_task_id(&task_obj)
+            let promise_obj = obj.getattr("promise").map_err(|e| e.to_string())?;
+            let Some(promise) = extract_promise_id(&promise_obj) else {
+                return Err(
+                    "FailPromiseEffect.promise must carry _promise_handle.promise_id".to_string(),
+                );
+            };
+            let error_obj = obj.getattr("error").map_err(|e| e.to_string())?;
+            let error = pyobject_to_exception(py, &error_obj);
+            Ok(Some(SchedulerEffect::FailPromise { promise, error }))
+        } else if is_instance_from(
+            obj,
+            "doeff.effects.scheduler_internal",
+            "_SchedulerTaskCompleted",
+        ) {
+            let task = if let Ok(task_obj) = obj.getattr("task") {
+                extract_task_id(&task_obj)
+            } else {
+                None
+            }
+            .or_else(|| {
+                if let Ok(task_id_obj) = obj.getattr("task_id") {
+                    if task_id_obj.is_none() {
+                        None
+                    } else {
+                        task_id_obj.extract::<u64>().ok().map(TaskId::from_raw)
+                    }
                 } else {
                     None
                 }
-                .ok_or_else(|| {
-                    "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id"
-                        .to_string()
-                })?;
+            })
+            .ok_or_else(|| {
+                "TaskCompletedEffect/SchedulerTaskCompleted requires task.task_id or task_id"
+                    .to_string()
+            })?;
 
-                if let Ok(error_obj) = obj.getattr ("error") {
-                    let error = pyobject_to_exception(py, &error_obj);
-                    return Ok(Some(SchedulerEffect::TaskCompleted {
-                        task,
-                        result: Err(error),
-                    }));
-                }
-                if let Ok(result_obj) = obj.getattr ("result") {
-                    return Ok(Some(SchedulerEffect::TaskCompleted {
-                        task,
-                        result: Ok(Value::from_pyobject(&result_obj)),
-                    }));
-                }
-                Err(
-                    "TaskCompletedEffect/SchedulerTaskCompleted requires task + result or error"
-                        .to_string(),
-                )
+            let result_obj = obj.getattr("result").map_err(|_| {
+                "TaskCompletedEffect/SchedulerTaskCompleted requires task + result".to_string()
+            })?;
+            let result = parse_task_completed_result(py, &result_obj)?;
+            Ok(Some(SchedulerEffect::TaskCompleted { task, result }))
         } else {
             Ok(None)
         }
@@ -376,7 +434,7 @@ fn parse_scheduler_python_effect(effect: &PyShared) -> Result<Option<SchedulerEf
 }
 
 fn extract_waitable(obj: &Bound<'_, PyAny>) -> Option<Waitable> {
-    let handle = obj.getattr ("_handle").ok()?;
+    let handle = obj.getattr("_handle").ok()?;
     let type_val = handle.get_item("type").ok()?;
     let type_str: String = type_val.extract().ok()?;
     match type_str.as_str() {
@@ -397,13 +455,13 @@ fn extract_waitable(obj: &Bound<'_, PyAny>) -> Option<Waitable> {
 }
 
 fn extract_promise_id(obj: &Bound<'_, PyAny>) -> Option<PromiseId> {
-    let handle = obj.getattr ("_promise_handle").ok()?;
+    let handle = obj.getattr("_promise_handle").ok()?;
     let raw: u64 = handle.get_item("promise_id").ok()?.extract().ok()?;
     Some(PromiseId::from_raw(raw))
 }
 
 fn extract_task_id(obj: &Bound<'_, PyAny>) -> Option<TaskId> {
-    if let Ok(handle) = obj.getattr ("_handle") {
+    if let Ok(handle) = obj.getattr("_handle") {
         if let Ok(raw) = handle.get_item("task_id").and_then(|v| v.extract::<u64>()) {
             return Some(TaskId::from_raw(raw));
         }
@@ -533,19 +591,30 @@ impl SchedulerState {
     }
 
     pub fn wake_waiters(&mut self, waitable: Waitable) {
-        if let Some(waiters) = self.waiters.remove(&waitable) {
-            for waiter in waiters {
-                let waiter_id = waiter.cont_id;
+        let Some(waiters_for_item) = self.waiters.remove(&waitable) else {
+            return;
+        };
+
+        for waiter in waiters_for_item {
+            let waiter_id = waiter.continuation.cont_id;
+            let already_ready = self
+                .ready_waiters
+                .iter()
+                .any(|w| w.continuation.cont_id == waiter_id);
+            if already_ready {
+                continue;
+            }
+
+            let ready = match waiter.mode {
+                WaitMode::All => self.all_done(&waiter.items),
+                WaitMode::Any => self.any_done(&waiter.items),
+            };
+
+            if ready {
                 for pending in self.waiters.values_mut() {
-                    pending.retain(|k| k.cont_id != waiter_id);
+                    pending.retain(|w| w.continuation.cont_id != waiter_id);
                 }
-                let already_ready = self
-                    .ready_waiters
-                    .iter()
-                    .any(|k| k.cont_id == waiter_id);
-                if !already_ready {
-                    self.ready_waiters.push_back(waiter);
-                }
+                self.ready_waiters.push_back(waiter);
             }
         }
     }
@@ -575,11 +644,7 @@ impl SchedulerState {
                 }
             }
         }
-        if results.len() == 1 {
-            Some(results.into_iter().next().unwrap())
-        } else {
-            Some(Value::List(results))
-        }
+        Some(Value::List(results))
     }
 
     pub fn try_race(&self, items: &[Waitable]) -> Option<Value> {
@@ -600,34 +665,92 @@ impl SchedulerState {
         None
     }
 
-    pub fn wait_on_all(&mut self, items: &[Waitable], k: Continuation) {
-        // Register k as waiting on all items that aren't done yet
+    pub fn wait_on_all(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+        let waiter = WaitRequest {
+            continuation: k,
+            items: items.to_vec(),
+            mode: WaitMode::All,
+            waiting_task: self.current_task,
+            waiting_store: store.clone(),
+        };
+
         for item in items {
-            let done = match item {
-                Waitable::Task(tid) => matches!(self.tasks.get(tid), Some(TaskState::Done { .. })),
-                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
-                    matches!(self.promises.get(pid), Some(PromiseState::Done(_)))
-                }
-            };
-            if !done {
-                self.waiters.entry(*item).or_default().push(k.clone());
+            if !self.is_done(*item) {
+                self.waiters.entry(*item).or_default().push(waiter.clone());
             }
         }
     }
 
-    pub fn wait_on_any(&mut self, items: &[Waitable], k: Continuation) {
-        // Register k as waiting on any of the items
+    pub fn wait_on_any(&mut self, items: &[Waitable], k: Continuation, store: &RustStore) {
+        let waiter = WaitRequest {
+            continuation: k,
+            items: items.to_vec(),
+            mode: WaitMode::Any,
+            waiting_task: self.current_task,
+            waiting_store: store.clone(),
+        };
+
         for item in items {
-            let done = match item {
-                Waitable::Task(tid) => matches!(self.tasks.get(tid), Some(TaskState::Done { .. })),
-                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
-                    matches!(self.promises.get(pid), Some(PromiseState::Done(_)))
-                }
-            };
-            if !done {
-                self.waiters.entry(*item).or_default().push(k.clone());
+            if !self.is_done(*item) {
+                self.waiters.entry(*item).or_default().push(waiter.clone());
             }
         }
+    }
+
+    fn is_done(&self, item: Waitable) -> bool {
+        match item {
+            Waitable::Task(tid) => matches!(self.tasks.get(&tid), Some(TaskState::Done { .. })),
+            Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
+                matches!(self.promises.get(&pid), Some(PromiseState::Done(_)))
+            }
+        }
+    }
+
+    fn all_done(&self, items: &[Waitable]) -> bool {
+        items.iter().all(|item| self.is_done(*item))
+    }
+
+    fn any_done(&self, items: &[Waitable]) -> bool {
+        items.iter().any(|item| self.is_done(*item))
+    }
+
+    fn collect_all_result(&self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
+        let mut results = Vec::with_capacity(items.len());
+        for item in items {
+            match item {
+                Waitable::Task(task_id) => match self.tasks.get(task_id) {
+                    Some(TaskState::Done { result: Ok(v), .. }) => results.push(v.clone()),
+                    Some(TaskState::Done { result: Err(e), .. }) => return Some(Err(e.clone())),
+                    _ => return None,
+                },
+                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
+                    match self.promises.get(pid) {
+                        Some(PromiseState::Done(Ok(v))) => results.push(v.clone()),
+                        Some(PromiseState::Done(Err(e))) => return Some(Err(e.clone())),
+                        _ => return None,
+                    }
+                }
+            }
+        }
+        Some(Ok(Value::List(results)))
+    }
+
+    fn collect_any_result(&self, items: &[Waitable]) -> Option<Result<Value, PyException>> {
+        for item in items {
+            match item {
+                Waitable::Task(task_id) => {
+                    if let Some(TaskState::Done { result, .. }) = self.tasks.get(task_id) {
+                        return Some(result.clone());
+                    }
+                }
+                Waitable::Promise(pid) | Waitable::ExternalPromise(pid) => {
+                    if let Some(PromiseState::Done(result)) = self.promises.get(pid) {
+                        return Some(result.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     pub fn merge_task_logs(&self, task_id: TaskId, store: &mut RustStore) {
@@ -668,23 +791,62 @@ impl SchedulerState {
                 // Load new task's store
                 self.load_task_store(task_id, store);
                 self.current_task = Some(task_id);
-                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: task_k,
-                    value: Value::Unit,
-                }));
+                return jump_to_continuation(task_k, Value::Unit);
             }
         }
-        if let Some(waiter) = self.ready_waiters.pop_front() {
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                continuation: waiter,
-                value: Value::Unit,
-            }));
+
+        while let Some(waiter) = self.ready_waiters.pop_front() {
+            match waiter.mode {
+                WaitMode::All => match self.collect_all_result(&waiter.items) {
+                    Some(Ok(value)) => {
+                        if let Some(waiting_task) = waiter.waiting_task {
+                            self.load_task_store(waiting_task, store);
+                            self.current_task = Some(waiting_task);
+                        } else {
+                            *store = waiter.waiting_store.clone();
+                        }
+                        if waiter.items.len() > 1 {
+                            self.merge_gather_logs(&waiter.items, store);
+                        }
+                        return jump_to_continuation(waiter.continuation, value);
+                    }
+                    Some(Err(error)) => {
+                        if let Some(waiting_task) = waiter.waiting_task {
+                            self.load_task_store(waiting_task, store);
+                            self.current_task = Some(waiting_task);
+                        } else {
+                            *store = waiter.waiting_store.clone();
+                        }
+                        return throw_to_continuation(waiter.continuation, error);
+                    }
+                    None => continue,
+                },
+                WaitMode::Any => match self.collect_any_result(&waiter.items) {
+                    Some(Ok(value)) => {
+                        if let Some(waiting_task) = waiter.waiting_task {
+                            self.load_task_store(waiting_task, store);
+                            self.current_task = Some(waiting_task);
+                        } else {
+                            *store = waiter.waiting_store.clone();
+                        }
+                        return jump_to_continuation(waiter.continuation, value);
+                    }
+                    Some(Err(error)) => {
+                        if let Some(waiting_task) = waiter.waiting_task {
+                            self.load_task_store(waiting_task, store);
+                            self.current_task = Some(waiting_task);
+                        } else {
+                            *store = waiter.waiting_store.clone();
+                        }
+                        return throw_to_continuation(waiter.continuation, error);
+                    }
+                    None => continue,
+                },
+            }
         }
+
         // No ready tasks, resume the caller
-        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-            continuation: k,
-            value: Value::Unit,
-        }))
+        jump_to_continuation(k, Value::Unit)
     }
 }
 
@@ -695,10 +857,24 @@ impl SchedulerState {
 #[derive(Debug)]
 enum SchedulerPhase {
     Idle,
-    SpawnPending {
+    SpawnAwaitHandlers {
+        k_user: Continuation,
+        program: Py<PyAny>,
+        store_mode: StoreMode,
+        store_snapshot: Option<RustStore>,
+    },
+    SpawnAwaitContinuation {
         k_user: Continuation,
         store_mode: StoreMode,
         store_snapshot: Option<RustStore>,
+    },
+    Driving {
+        k_user: Continuation,
+        items: Vec<Waitable>,
+        mode: WaitMode,
+        running_task: Option<TaskId>,
+        waiting_task: Option<TaskId>,
+        waiting_store: RustStore,
     },
 }
 
@@ -725,6 +901,109 @@ impl SchedulerProgram {
             state,
             phase: SchedulerPhase::Idle,
         }
+    }
+
+    fn continue_driving(
+        &mut self,
+        outcome: Result<Value, PyException>,
+        k_user: Continuation,
+        items: Vec<Waitable>,
+        mode: WaitMode,
+        running_task: Option<TaskId>,
+        waiting_task: Option<TaskId>,
+        waiting_store: RustStore,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
+        let mut state = self.state.lock().expect("Scheduler lock poisoned");
+
+        let Some(task_id) = running_task else {
+            return RustProgramStep::Throw(PyException::runtime_error(
+                "scheduler resumed/thrown without current running task",
+            ));
+        };
+
+        if state.current_task == Some(task_id) {
+            state.current_task = None;
+        }
+
+        state.save_task_store(task_id, store);
+        state.mark_task_done(task_id, outcome);
+        state.wake_waiters(Waitable::Task(task_id));
+
+        match mode {
+            WaitMode::All => {
+                if let Some(aggregate) = state.collect_all_result(&items) {
+                    return match aggregate {
+                        Ok(value) => {
+                            if let Some(waiting_task) = waiting_task {
+                                state.load_task_store(waiting_task, store);
+                                state.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiting_store.clone();
+                            }
+                            if items.len() > 1 {
+                                state.merge_gather_logs(&items, store);
+                            }
+                            jump_to_continuation(k_user, value)
+                        }
+                        Err(error) => {
+                            if let Some(waiting_task) = waiting_task {
+                                state.load_task_store(waiting_task, store);
+                                state.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiting_store.clone();
+                            }
+                            throw_to_continuation(k_user, error)
+                        }
+                    };
+                }
+            }
+            WaitMode::Any => {
+                if let Some(first) = state.collect_any_result(&items) {
+                    return match first {
+                        Ok(value) => {
+                            if let Some(waiting_task) = waiting_task {
+                                state.load_task_store(waiting_task, store);
+                                state.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiting_store.clone();
+                            }
+                            jump_to_continuation(k_user, value)
+                        }
+                        Err(error) => {
+                            if let Some(waiting_task) = waiting_task {
+                                state.load_task_store(waiting_task, store);
+                                state.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiting_store.clone();
+                            }
+                            throw_to_continuation(k_user, error)
+                        }
+                    };
+                }
+            }
+        }
+
+        match mode {
+            WaitMode::All => state.wait_on_all(&items, k_user.clone(), store),
+            WaitMode::Any => state.wait_on_any(&items, k_user.clone(), store),
+        }
+
+        let step = state.transfer_next_or(k_user.clone(), store);
+        let next_running_task = state.current_task;
+        if next_running_task.is_some() {
+            self.phase = SchedulerPhase::Driving {
+                k_user,
+                items,
+                mode,
+                running_task: next_running_task,
+                waiting_task,
+                waiting_store,
+            };
+        } else {
+            self.phase = SchedulerPhase::Idle;
+        }
+        step
     }
 }
 
@@ -771,13 +1050,21 @@ impl RustHandlerProgram for SchedulerProgram {
                     StoreMode::Shared => None,
                     StoreMode::Isolated { .. } => Some(store.clone()),
                 };
-                self.phase = SchedulerPhase::SpawnPending {
+                if handlers.is_empty() {
+                    self.phase = SchedulerPhase::SpawnAwaitHandlers {
+                        k_user,
+                        program,
+                        store_mode,
+                        store_snapshot,
+                    };
+                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+                }
+
+                self.phase = SchedulerPhase::SpawnAwaitContinuation {
                     k_user,
                     store_mode,
                     store_snapshot,
                 };
-                // Yield CreateContinuation -- the VM will create an unstarted continuation
-                // and resume us with the result
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
                     expr: PyShared::new(program),
                     handlers,
@@ -795,37 +1082,70 @@ impl RustHandlerProgram for SchedulerProgram {
 
             SchedulerEffect::Gather { items } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                if let Some(results) = state.try_collect(&items) {
-                    state.merge_gather_logs(&items, store);
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                        continuation: k_user,
-                        value: results,
-                    }));
+                let waiting_task = state.current_task;
+                let waiting_store = store.clone();
+                if let Some(aggregate) = state.collect_all_result(&items) {
+                    return match aggregate {
+                        Ok(results) => {
+                            if items.len() > 1 {
+                                state.merge_gather_logs(&items, store);
+                            }
+                            jump_to_continuation(k_user, results)
+                        }
+                        Err(error) => throw_to_continuation(k_user, error),
+                    };
                 }
-                state.wait_on_all(&items, k_user.clone());
-                state.transfer_next_or(k_user, store)
+                state.wait_on_all(&items, k_user.clone(), store);
+                let step = state.transfer_next_or(k_user.clone(), store);
+                let running_task = state.current_task;
+                if running_task.is_none() {
+                    self.phase = SchedulerPhase::Idle;
+                } else {
+                    self.phase = SchedulerPhase::Driving {
+                        k_user,
+                        items,
+                        mode: WaitMode::All,
+                        running_task,
+                        waiting_task,
+                        waiting_store,
+                    };
+                }
+                step
             }
 
             SchedulerEffect::Race { items } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                if let Some(result) = state.try_race(&items) {
-                    return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                        continuation: k_user,
-                        value: result,
-                    }));
+                let waiting_task = state.current_task;
+                let waiting_store = store.clone();
+                if let Some(first) = state.collect_any_result(&items) {
+                    return match first {
+                        Ok(value) => jump_to_continuation(k_user, value),
+                        Err(error) => throw_to_continuation(k_user, error),
+                    };
                 }
-                state.wait_on_any(&items, k_user.clone());
-                state.transfer_next_or(k_user, store)
+                state.wait_on_any(&items, k_user.clone(), store);
+                let step = state.transfer_next_or(k_user.clone(), store);
+                let running_task = state.current_task;
+                if running_task.is_none() {
+                    self.phase = SchedulerPhase::Idle;
+                } else {
+                    self.phase = SchedulerPhase::Driving {
+                        k_user,
+                        items,
+                        mode: WaitMode::Any,
+                        running_task,
+                        waiting_task,
+                        waiting_store,
+                    };
+                }
+                step
             }
 
             SchedulerEffect::CreatePromise => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k_user,
-                    value: Value::Promise(PromiseHandle { id: pid }),
-                }))
+                jump_to_continuation(k_user, Value::Promise(PromiseHandle { id: pid }))
             }
 
             SchedulerEffect::CompletePromise { promise, value } => {
@@ -850,17 +1170,42 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k_user,
-                    value: Value::ExternalPromise(ExternalPromise { id: pid }),
-                }))
+                jump_to_continuation(k_user, Value::ExternalPromise(ExternalPromise { id: pid }))
             }
         }
     }
 
-    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
         match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
-            SchedulerPhase::SpawnPending {
+            SchedulerPhase::SpawnAwaitHandlers {
+                k_user,
+                program,
+                store_mode,
+                store_snapshot,
+            } => {
+                let handlers = match value {
+                    Value::Handlers(hs) => hs,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "scheduler Spawn expected GetHandlers result".to_string(),
+                        ));
+                    }
+                };
+
+                self.phase = SchedulerPhase::SpawnAwaitContinuation {
+                    k_user,
+                    store_mode,
+                    store_snapshot,
+                };
+
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::CreateContinuation {
+                    expr: PyShared::new(program),
+                    handlers,
+                    handler_identities: vec![],
+                }))
+            }
+
+            SchedulerPhase::SpawnAwaitContinuation {
                 k_user,
                 store_mode,
                 store_snapshot,
@@ -870,26 +1215,25 @@ impl RustHandlerProgram for SchedulerProgram {
                     Value::Continuation(c) => c,
                     _ => {
                         return RustProgramStep::Throw(PyException::type_error(
-                            "expected continuation from CreateContinuation, got unexpected type".to_string(),
+                            "expected continuation from CreateContinuation, got unexpected type"
+                                .to_string(),
                         ));
                     }
                 };
 
                 let task_store = match store_mode {
                     StoreMode::Shared => TaskStore::Shared,
-                    StoreMode::Isolated { merge } => {
-                        match store_snapshot {
-                            Some(snapshot) => TaskStore::Isolated {
-                                store: snapshot,
-                                merge,
-                            },
-                            None => {
-                                return RustProgramStep::Throw(PyException::runtime_error(
-                                    "isolated spawn missing store snapshot".to_string(),
-                                ))
-                            }
+                    StoreMode::Isolated { merge } => match store_snapshot {
+                        Some(snapshot) => TaskStore::Isolated {
+                            store: snapshot,
+                            merge,
+                        },
+                        None => {
+                            return RustProgramStep::Throw(PyException::runtime_error(
+                                "isolated spawn missing store snapshot".to_string(),
+                            ))
                         }
-                    }
+                    },
                 };
 
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
@@ -904,11 +1248,26 @@ impl RustHandlerProgram for SchedulerProgram {
                 state.ready.push_back(task_id);
 
                 // Transfer back to caller with the task handle
-                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Transfer {
-                    continuation: k_user,
-                    value: Value::Task(TaskHandle { id: task_id }),
-                }))
+                jump_to_continuation(k_user, Value::Task(TaskHandle { id: task_id }))
             }
+
+            SchedulerPhase::Driving {
+                k_user,
+                items,
+                mode,
+                running_task,
+                waiting_task,
+                waiting_store,
+            } => self.continue_driving(
+                Ok(value),
+                k_user,
+                items,
+                mode,
+                running_task,
+                waiting_task,
+                waiting_store,
+                store,
+            ),
 
             SchedulerPhase::Idle => {
                 // Unexpected resume
@@ -919,8 +1278,27 @@ impl RustHandlerProgram for SchedulerProgram {
         }
     }
 
-    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+    fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, SchedulerPhase::Idle) {
+            SchedulerPhase::Driving {
+                k_user,
+                items,
+                mode,
+                running_task,
+                waiting_task,
+                waiting_store,
+            } => self.continue_driving(
+                Err(exc),
+                k_user,
+                items,
+                mode,
+                running_task,
+                waiting_task,
+                waiting_store,
+                store,
+            ),
+            _ => RustProgramStep::Throw(exc),
+        }
     }
 }
 
@@ -950,7 +1328,7 @@ impl SchedulerHandler {
 impl RustProgramHandler for SchedulerHandler {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         dispatch_ref_as_python(effect)
-            .is_some_and(|obj| parse_scheduler_python_effect(obj).ok().flatten().is_some())
+            .is_some_and(|obj| matches!(parse_scheduler_python_effect(obj), Ok(Some(_)) | Err(_)))
     }
 
     fn create_program(&self) -> RustProgramRef {
@@ -963,8 +1341,6 @@ impl RustProgramHandler for SchedulerHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pyo3::types::PyDictMethods;
-    use pyo3::Python;
 
     fn make_test_continuation() -> Continuation {
         use crate::ids::{Marker, SegmentId};
@@ -1109,7 +1485,13 @@ mod tests {
 
         let result = state.try_collect(&[Waitable::ExternalPromise(pid)]);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().as_int(), Some(77));
+        match result.unwrap() {
+            Value::List(values) => {
+                assert_eq!(values.len(), 1);
+                assert_eq!(values[0].as_int(), Some(77));
+            }
+            other => panic!("Expected Value::List, got {:?}", other),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -1147,13 +1529,12 @@ mod tests {
             },
         );
 
-        let items = vec![
-            Waitable::Task(t0),
-            Waitable::Task(t1),
-            Waitable::Task(t2),
-        ];
+        let items = vec![Waitable::Task(t0), Waitable::Task(t1), Waitable::Task(t2)];
         let result = state.try_collect(&items);
-        assert!(result.is_some(), "try_collect should succeed when all tasks are done");
+        assert!(
+            result.is_some(),
+            "try_collect should succeed when all tasks are done"
+        );
         match result.unwrap() {
             Value::List(values) => {
                 assert_eq!(values.len(), 3);
@@ -1161,7 +1542,10 @@ mod tests {
                 assert_eq!(values[1].as_int(), Some(20));
                 assert_eq!(values[2].as_int(), Some(30));
             }
-            other => panic!("Expected Value::List for multi-item gather, got {:?}", other),
+            other => panic!(
+                "Expected Value::List for multi-item gather, got {:?}",
+                other
+            ),
         }
     }
 
@@ -1262,13 +1646,12 @@ mod tests {
             },
         );
 
-        let items = vec![
-            Waitable::Task(t0),
-            Waitable::Task(t1),
-            Waitable::Task(t2),
-        ];
+        let items = vec![Waitable::Task(t0), Waitable::Task(t1), Waitable::Task(t2)];
         let result = state.try_race(&items);
-        assert!(result.is_some(), "try_race should succeed when any task is done");
+        assert!(
+            result.is_some(),
+            "try_race should succeed when any task is done"
+        );
         // Returns the first done in iteration order (t1)
         assert_eq!(result.unwrap().as_int(), Some(42));
     }
@@ -1418,6 +1801,7 @@ mod tests {
         state.wait_on_all(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
+            &RustStore::new(),
         );
 
         // Only t1 should have a waiter (t0 is already done)
@@ -1436,7 +1820,7 @@ mod tests {
 
         // Waiter should now be in ready_waiters
         assert_eq!(state.ready_waiters.len(), 1);
-        assert_eq!(state.ready_waiters[0].cont_id, waiter_id);
+        assert_eq!(state.ready_waiters[0].continuation.cont_id, waiter_id);
 
         // Now try_collect should succeed
         let result = state.try_collect(&[Waitable::Task(t0), Waitable::Task(t1)]);
@@ -1480,6 +1864,7 @@ mod tests {
         state.wait_on_any(
             &[Waitable::Task(t0), Waitable::Task(t1)],
             waiter,
+            &RustStore::new(),
         );
 
         // Complete only t1
@@ -1488,7 +1873,7 @@ mod tests {
 
         // Waiter should be in ready_waiters
         assert_eq!(state.ready_waiters.len(), 1);
-        assert_eq!(state.ready_waiters[0].cont_id, waiter_id);
+        assert_eq!(state.ready_waiters[0].continuation.cont_id, waiter_id);
 
         // try_race should return t1's result
         let result = state.try_race(&[Waitable::Task(t0), Waitable::Task(t1)]);

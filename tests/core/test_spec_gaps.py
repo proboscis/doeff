@@ -6,6 +6,7 @@ After fixes, all tests must PASS.
 
 Phase 4 of the spec-gap-tdd workflow.
 """
+
 from __future__ import annotations
 
 import re
@@ -199,33 +200,45 @@ class TestG19OkErrUnification:
 
     def test_ok_isinstance(self) -> None:
         """isinstance(result.result, doeff.Ok) must be True for successful run."""
-        from doeff import Ok
+        from doeff import Ok, do
+
+        @do
+        def program():
+            if False:
+                yield
+            return 42
+
+        result = run(program(), handlers=default_handlers())
+        r = result.result
+        assert isinstance(r, Ok), (
+            f"result.result is {type(r).__module__}.{type(r).__name__}, not doeff.Ok"
+        )
+
+    def test_err_isinstance(self) -> None:
+        """isinstance(result.result, doeff.Err) must be True for failed run."""
+        from doeff import Err, do
+
+        @do
+        def program():
+            raise ValueError("boom")
+            if False:
+                yield
+
+        result = run(program(), handlers=default_handlers())
+        r = result.result
+        assert isinstance(r, Err), (
+            f"result.result is {type(r).__module__}.{type(r).__name__}, not doeff.Err"
+        )
+
+    def test_strict_run_rejects_generator_program_callable(self) -> None:
+        """Strict run() should reject callable generator program wrappers."""
 
         def gen():
             return 42
             yield  # noqa: RET504
 
-        result = run(_prog(gen), handlers=default_handlers())
-        r = result.result
-        assert isinstance(r, Ok), (
-            f"result.result is {type(r).__module__}.{type(r).__name__}, "
-            f"not doeff.Ok"
-        )
-
-    def test_err_isinstance(self) -> None:
-        """isinstance(result.result, doeff.Err) must be True for failed run."""
-        from doeff import Err
-
-        def gen():
-            raise ValueError("boom")
-            yield  # noqa: RET504
-
-        result = run(_prog(gen), handlers=default_handlers())
-        r = result.result
-        assert isinstance(r, Err), (
-            f"result.result is {type(r).__module__}.{type(r).__name__}, "
-            f"not doeff.Err"
-        )
+        with pytest.raises(TypeError, match="program must be DoExpr; got callable"):
+            run(_prog(gen), handlers=default_handlers())
 
 
 # ---------------------------------------------------------------------------
@@ -252,13 +265,13 @@ class TestG22FrozenBases:
         bases = ["EffectBase", "DoCtrlBase", "DoThunkBase"]
         for name in bases:
             # Find the #[pyclass(...)] line preceding the struct with this name
-            pattern = rf'#\[pyclass\(([^)]*)\)\]\s*pub struct Py{name.replace("Base", "")}Base'
+            pattern = rf"#\[pyclass\(([^)]*)\)\]\s*pub struct Py{name.replace('Base', '')}Base"
             m = re.search(pattern, pyvm_src)
             assert m is not None, f"Could not find #[pyclass] for Py{name}"
             attrs = m.group(1)
             assert "frozen" in attrs, (
                 f"Py{name} #[pyclass({attrs})] is missing 'frozen' attribute. "
-                f"Spec requires #[pyclass(subclass, frozen, name=\"{name}\")]"
+                f'Spec requires #[pyclass(subclass, frozen, name="{name}")]'
             )
 
 
