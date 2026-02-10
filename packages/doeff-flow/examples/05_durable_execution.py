@@ -32,9 +32,7 @@ from pathlib import Path
 
 from doeff_flow import run_workflow
 
-from doeff import do
-from doeff.effects.cache import CacheGet, CachePut
-from doeff.effects.writer import slog
+from doeff import CacheGet, CachePut, do, slog
 from doeff.storage import SQLiteStorage
 
 # =============================================================================
