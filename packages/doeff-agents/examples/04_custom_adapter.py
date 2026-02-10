@@ -9,7 +9,7 @@ command-line agent that runs in a terminal.
 Key concepts:
 - Implementing the AgentAdapter protocol
 - Using adapters with the effects-based API
-- Testing custom adapters with AsyncRuntime and mock handlers
+- Testing custom adapters with async_run and mock handlers
 """
 
 import asyncio
@@ -17,16 +17,17 @@ import shutil
 import time
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
+from doeff import do
 from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
 
+from _runtime import run_program
 from doeff_agents import (
     AgentType,
     Capture,
-    CeskMockSessionScript,
     Launch,
     LaunchConfig,
+    MockSessionScript,
     Monitor,
     SessionHandle,
     SessionStatus,
@@ -270,18 +271,16 @@ def demo_adapter_protocol() -> None:
 
 
 async def run_with_mock_handlers() -> None:
-    """Run the workflow with AsyncRuntime and mock handlers."""
+    """Run the workflow with mock handlers."""
     print("\n" + "=" * 60)
-    print("Running with AsyncRuntime + mock handlers")
+    print("Running with mock handlers")
     print("=" * 60)
 
     session_name = f"aider-demo-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Analyzing code..."),
             (SessionStatus.RUNNING, "Making changes..."),
             (SessionStatus.DONE, "Changes complete!\n\nModified: main.py"),
@@ -295,13 +294,11 @@ async def run_with_mock_handlers() -> None:
         profile="gpt-4",
     )
 
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-
-    result = await runtime.run(custom_adapter_workflow(session_name, config))
+    result = await run_program(
+        custom_adapter_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -324,13 +321,11 @@ async def run_with_real_tmux() -> None:
 
     session_name = f"aider-real-{int(time.time())}"
 
-    handlers = {
-        **preset_handlers(),
-        **agent_effectful_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers)
-
-    result = await runtime.run(custom_adapter_workflow(session_name, config))
+    result = await run_program(
+        custom_adapter_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=agent_effectful_handlers(),
+    )
     print(f"\nResult: {result}")
 
 

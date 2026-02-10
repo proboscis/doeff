@@ -3,14 +3,14 @@
 Effects API Example - Complete doeff Integration
 
 This example demonstrates the full effects-based API for agent session
-management with doeff AsyncRuntime integration. Shows:
+management with doeff async_run integration. Shows:
 
 - @do decorated functions yielding fine-grained effects
 - slog for structured logging
 - preset_handlers for log display
 - agent_effectful_handlers for real tmux
 - mock_agent_handlers for testing
-- AsyncRuntime for all execution
+- async_run for execution
 
 Key benefits:
 - Effects are pure data, handlers perform side effects
@@ -23,18 +23,19 @@ import asyncio
 import time
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
+from doeff import do
 from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
 
+from _runtime import run_program
 from doeff_agents import (
     # Types
     AgentType,
     # Effects
     Capture,
-    CeskMockSessionScript,
     Launch,
     LaunchConfig,
+    MockSessionScript,
     Monitor,
     Observation,
     Send,
@@ -42,7 +43,7 @@ from doeff_agents import (
     SessionStatus,
     Sleep,
     Stop,
-    # CESK Handlers
+    # Effect handlers
     agent_effectful_handlers,
     configure_mock_session,
     mock_agent_handlers,
@@ -220,7 +221,7 @@ def testable_workflow(session_name: str, config: LaunchConfig):
 
 
 # =============================================================================
-# Running Examples with AsyncRuntime
+# Running Examples with async_run
 # =============================================================================
 
 
@@ -231,12 +232,10 @@ async def run_direct_effects_example() -> None:
     print("=" * 60)
     
     session_name = f"demo-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.BOOTING, "Agent starting..."),
             (SessionStatus.RUNNING, "Processing request..."),
             (SessionStatus.DONE, "Task completed!"),
@@ -248,14 +247,12 @@ async def run_direct_effects_example() -> None:
         work_dir=Path.cwd(),
         prompt="Write a hello world function",
     )
-    
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(direct_effects_workflow(session_name, config))
+
+    result = await run_program(
+        direct_effects_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -266,12 +263,10 @@ async def run_high_level_programs_example() -> None:
     print("=" * 60)
     
     session_name = f"program-demo-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Working..."),
             (SessionStatus.DONE, "Complete!"),
         ]),
@@ -282,14 +277,12 @@ async def run_high_level_programs_example() -> None:
         work_dir=Path.cwd(),
         prompt="List files in current directory",
     )
-    
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(high_level_programs_workflow(session_name, config))
+
+    result = await run_program(
+        high_level_programs_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -300,12 +293,10 @@ async def run_bracket_pattern_example() -> None:
     print("=" * 60)
     
     session_name = f"bracket-demo-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Processing..."),
             (SessionStatus.BLOCKED, "Need input..."),
         ]),
@@ -316,14 +307,12 @@ async def run_bracket_pattern_example() -> None:
         work_dir=Path.cwd(),
         prompt="Help me write code",
     )
-    
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(bracket_pattern_workflow(session_name, config))
+
+    result = await run_program(
+        bracket_pattern_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -334,12 +323,10 @@ async def run_testing_example() -> None:
     print("=" * 60)
     
     session_name = f"test-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Analyzing code..."),
             (SessionStatus.RUNNING, "Found 3 issues..."),
             (SessionStatus.BLOCKED, "Review complete. Approve?"),
@@ -352,14 +339,12 @@ async def run_testing_example() -> None:
         work_dir=Path.cwd(),
         prompt="Review this code",
     )
-    
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-    
-    result = await runtime.run(testable_workflow(session_name, config))
+
+    result = await run_program(
+        testable_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     
     # Verify behavior
     print("\nTest assertions:")
@@ -393,14 +378,11 @@ async def run_with_real_tmux() -> None:
     
     session_name = f"real-tmux-{int(time.time())}"
     
-    # Combine preset + real agent handlers
-    handlers = {
-        **preset_handlers(),
-        **agent_effectful_handlers(),
-    }
-    
-    runtime = AsyncRuntime(handlers=handlers)
-    result = await runtime.run(direct_effects_workflow(session_name, config))
+    result = await run_program(
+        direct_effects_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=agent_effectful_handlers(),
+    )
     
     print(f"\nResult: {result}")
 
