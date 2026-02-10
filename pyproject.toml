@@ -28,6 +28,7 @@ dependencies = [
     "loguru>=0.7.0",
     "exceptiongroup>=1.2.0; python_version < '3.11'",
     "doeff-indexer>=0.1.2",
+    "doeff-vm>=0.1.0",
     "cloudpickle>=3.0.0",
     "phart>=1.1.4",
     "numpy>=1.26.0",
