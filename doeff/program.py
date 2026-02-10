@@ -34,6 +34,13 @@ T = TypeVar("T")
 U = TypeVar("U")
 V = TypeVar("V")
 
+try:
+    import doeff_vm as _doeff_vm
+
+    _RustDoExprBase = _doeff_vm.DoExpr
+except Exception:  # pragma: no cover - fallback for docs/type tooling without native module
+    _RustDoExprBase = object
+
 
 def _annotation_text_is_program_kind(annotation_text: str) -> bool:
     if not annotation_text:
@@ -240,7 +247,7 @@ def _build_auto_unwrap_strategy(kleisli: Any) -> Any:
     return strategy
 
 
-class DoExpr(ABC, Generic[T]):
+class DoExpr(_RustDoExprBase, ABC, Generic[T]):
     """Universal base for all doeff programs (pure data or computation)."""
 
     def __class_getitem__(cls, item):
@@ -536,7 +543,6 @@ def _kpc_and_then_k(self: Any, f: Callable[[T], ProgramProtocol[U]]) -> Program[
 
 setattr(KleisliProgramCall, "create_from_kleisli", classmethod(_kpc_create_from_kleisli))
 setattr(KleisliProgramCall, "and_then_k", _kpc_and_then_k)
-setattr(KleisliProgramCall, "__doeff_kpc__", True)
 if not hasattr(KleisliProgramCall, "__dataclass_fields__"):
     setattr(
         KleisliProgramCall,

@@ -552,11 +552,14 @@ from doeff.program import DoExpr, Program, ProgramBase
 
 E = TypeVar("E", bound="EffectBase")
 
+try:
+    from doeff_vm import EffectBase as _RustEffectBase
+except Exception:  # pragma: no cover - fallback for docs/type tooling without native module
+    _RustEffectBase = object
+
 
 def _is_rust_effect_subclass(subclass: type[Any]) -> bool:
-    try:
-        from doeff_vm import EffectBase as _RustEffectBase
-    except ImportError:
+    if _RustEffectBase is object:
         return False
 
     try:
@@ -587,7 +590,7 @@ class Effect(Protocol):
 
 
 @dataclass(frozen=True, kw_only=True)
-class EffectBase(metaclass=_EffectBaseMeta):
+class EffectBase(_RustEffectBase, metaclass=_EffectBaseMeta):
     """Base dataclass implementing :class:`Effect` semantics.
 
     SPEC-TYPES-001 Rev 11: EffectBase is effect data (EffectValue), not DoExpr.
