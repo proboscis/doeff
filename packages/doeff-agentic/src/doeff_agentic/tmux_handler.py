@@ -11,10 +11,13 @@ Limitations:
 - Use core Gather/Race effects for parallel execution
 
 Usage:
+    from doeff import default_handlers, run
     from doeff_agentic.tmux_handler import tmux_handler
+    from doeff_agentic.runtime import with_handler_map
 
     handlers = tmux_handler()
-    result = run_sync(my_workflow(), handlers=handlers)
+    program = with_handler_map(my_workflow(), handlers)
+    result = run(program, handlers=default_handlers())
 """
 
 from __future__ import annotations
@@ -25,10 +28,13 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from doeff import Resume
 
 from .effects import (
     AgenticAbortSession,
@@ -905,6 +911,16 @@ class TmuxHandler:
 # Handler Factory
 # =============================================================================
 
+def _as_protocol_handler(
+    handler_fn: Callable[[Any], Any],
+) -> Callable[[Any, Any], Any]:
+    """Adapt an effect -> value handler into (effect, k) protocol."""
+
+    def _wrapped(effect: Any, k):
+        return (yield Resume(k, handler_fn(effect)))
+
+    return _wrapped
+
 
 def tmux_handler(working_dir: str | None = None) -> dict[type, Any]:
     """Create CESK-compatible handlers for agentic effects using tmux.
@@ -913,39 +929,41 @@ def tmux_handler(working_dir: str | None = None) -> dict[type, Any]:
         working_dir: Default working directory
 
     Returns:
-        Handler dictionary suitable for use with doeff's run_sync.
+        Typed handler map for use with WithHandler composition.
 
     Usage:
-        from doeff import run_sync
+        from doeff import default_handlers, run
         from doeff_agentic import tmux_handler
+        from doeff_agentic.runtime import with_handler_map
 
         handlers = tmux_handler()
-        result = run_sync(my_workflow(), handlers=handlers)
+        program = with_handler_map(my_workflow(), handlers)
+        result = run(program, handlers=default_handlers())
     """
     handler = TmuxHandler(working_dir=working_dir)
 
     return {
         # Workflow
-        AgenticCreateWorkflow: lambda e: handler.handle_create_workflow(e),
-        AgenticGetWorkflow: lambda e: handler.handle_get_workflow(e),
+        AgenticCreateWorkflow: _as_protocol_handler(handler.handle_create_workflow),
+        AgenticGetWorkflow: _as_protocol_handler(handler.handle_get_workflow),
         # Environment
-        AgenticCreateEnvironment: lambda e: handler.handle_create_environment(e),
-        AgenticGetEnvironment: lambda e: handler.handle_get_environment(e),
-        AgenticDeleteEnvironment: lambda e: handler.handle_delete_environment(e),
+        AgenticCreateEnvironment: _as_protocol_handler(handler.handle_create_environment),
+        AgenticGetEnvironment: _as_protocol_handler(handler.handle_get_environment),
+        AgenticDeleteEnvironment: _as_protocol_handler(handler.handle_delete_environment),
         # Session
-        AgenticCreateSession: lambda e: handler.handle_create_session(e),
-        AgenticForkSession: lambda e: handler.handle_fork_session(e),
-        AgenticGetSession: lambda e: handler.handle_get_session(e),
-        AgenticAbortSession: lambda e: handler.handle_abort_session(e),
-        AgenticDeleteSession: lambda e: handler.handle_delete_session(e),
+        AgenticCreateSession: _as_protocol_handler(handler.handle_create_session),
+        AgenticForkSession: _as_protocol_handler(handler.handle_fork_session),
+        AgenticGetSession: _as_protocol_handler(handler.handle_get_session),
+        AgenticAbortSession: _as_protocol_handler(handler.handle_abort_session),
+        AgenticDeleteSession: _as_protocol_handler(handler.handle_delete_session),
         # Message
-        AgenticSendMessage: lambda e: handler.handle_send_message(e),
-        AgenticGetMessages: lambda e: handler.handle_get_messages(e),
+        AgenticSendMessage: _as_protocol_handler(handler.handle_send_message),
+        AgenticGetMessages: _as_protocol_handler(handler.handle_get_messages),
         # Event
-        AgenticNextEvent: lambda e: handler.handle_next_event(e),
+        AgenticNextEvent: _as_protocol_handler(handler.handle_next_event),
         # Status
-        AgenticGetSessionStatus: lambda e: handler.handle_get_session_status(e),
-        AgenticSupportsCapability: lambda e: handler.handle_supports_capability(e),
+        AgenticGetSessionStatus: _as_protocol_handler(handler.handle_get_session_status),
+        AgenticSupportsCapability: _as_protocol_handler(handler.handle_supports_capability),
     }
 
 

@@ -149,7 +149,8 @@ Test workflow patterns using mock handlers that don't require real agent session
 
 ```python
 from datetime import datetime, timezone
-from doeff import do, run_sync
+from doeff import default_handlers, do, run
+from doeff_agentic.runtime import with_handler_map
 
 from doeff_agentic import (
     AgenticCreateSession,
@@ -239,7 +240,8 @@ def test_workflow():
 
 # Run the test
 handlers = mock_handler()
-result = run_sync(test_workflow(), handlers=handlers)
+program = with_handler_map(test_workflow(), handlers)
+result = run(program, handlers=default_handlers())
 print(f"Result: {result}")
 ```
 

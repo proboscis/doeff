@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from doeff import Delegate, Resume, WithHandler
 from doeff_agents import (
     AgentType,
     Capture,
@@ -95,9 +96,14 @@ class AgenticHandler:
     - State file management for CLI consumers
     - Workflow observability
 
-    Usage with CESK interpreter:
-        handlers = agentic_effectful_handlers(workflow_id="my-workflow")
-        result = run_sync(my_workflow(), handlers=handlers)
+    Usage with doeff_vm public API:
+        from doeff import default_handlers, run
+
+        wrapped = with_agentic_effectful_handlers(
+            my_workflow(),
+            workflow_id="my-workflow",
+        )
+        result = run(wrapped, handlers=default_handlers())
 
     Usage standalone:
         handler = AgenticHandler(workflow_id="my-workflow")
@@ -409,17 +415,14 @@ def agentic_effectful_handlers(
     workflow_id: str | None = None,
     workflow_name: str | None = None,
     state_dir: Path | str | None = None,
-) -> dict[type, Any]:
-    """Create CESK-compatible handlers for agentic effects.
+) -> Any:
+    """Create a handler-protocol callable for legacy agentic effects.
 
-    Returns a handler dictionary suitable for use with doeff's run_sync.
+    The returned handler follows doeff_vm's public handler protocol:
+    `(effect, k) -> DoExpr`.
 
-    Usage:
-        from doeff import run_sync
-        from doeff_agentic import agentic_effectful_handlers
-
-        handlers = agentic_effectful_handlers(workflow_id="my-workflow")
-        result = run_sync(my_workflow(), handlers=handlers)
+    Use with `doeff.WithHandler` to scope handling to a specific program.
+    See `with_agentic_effectful_handlers()` for the convenience wrapper.
     """
     handler = AgenticHandler(
         workflow_id=workflow_id,
@@ -427,14 +430,39 @@ def agentic_effectful_handlers(
         state_dir=state_dir,
     )
 
-    return {
-        RunAgentEffect: lambda eff: handler.handle_run_agent(eff),
-        SendMessageEffect: lambda eff: handler.handle_send_message(eff),
-        WaitForStatusEffect: lambda eff: handler.handle_wait_for_status(eff),
-        CaptureOutputEffect: lambda eff: handler.handle_capture_output(eff),
-        WaitForUserInputEffect: lambda eff: handler.handle_wait_for_user_input(eff),
-        StopAgentEffect: lambda eff: handler.handle_stop_agent(eff),
-    }
+    def _handle(effect: Any, k):
+        if isinstance(effect, RunAgentEffect):
+            return (yield Resume(k, handler.handle_run_agent(effect)))
+        if isinstance(effect, SendMessageEffect):
+            return (yield Resume(k, handler.handle_send_message(effect)))
+        if isinstance(effect, WaitForStatusEffect):
+            return (yield Resume(k, handler.handle_wait_for_status(effect)))
+        if isinstance(effect, CaptureOutputEffect):
+            return (yield Resume(k, handler.handle_capture_output(effect)))
+        if isinstance(effect, WaitForUserInputEffect):
+            return (yield Resume(k, handler.handle_wait_for_user_input(effect)))
+        if isinstance(effect, StopAgentEffect):
+            return (yield Resume(k, handler.handle_stop_agent(effect)))
+        yield Delegate()
+
+    return _handle
+
+
+def with_agentic_effectful_handlers(
+    program: Any,
+    workflow_id: str | None = None,
+    workflow_name: str | None = None,
+    state_dir: Path | str | None = None,
+) -> Any:
+    """Wrap a program with the legacy agentic effect handler."""
+    return WithHandler(
+        handler=agentic_effectful_handlers(
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            state_dir=state_dir,
+        ),
+        expr=program,
+    )
 
 
 def agent_handler(
@@ -466,4 +494,5 @@ __all__ = [
     "WorkflowContext",
     "agent_handler",
     "agentic_effectful_handlers",
+    "with_agentic_effectful_handlers",
 ]
