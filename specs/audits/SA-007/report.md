@@ -4,9 +4,9 @@ Date: 2026-02-08
 Session: SA-007
 
 Audited specs:
-- `specs/vm-architecture/SPEC-008-rust-vm.md`
-- `specs/vm-architecture/SPEC-009-rust-vm-migration.md`
-- `specs/SPEC-TYPES-001-program-effect-separation.md`
+- `specs/vm/SPEC-008-rust-vm.md`
+- `specs/vm/SPEC-009-rust-vm-migration.md`
+- `specs/core/SPEC-TYPES-001-program-effect-separation.md`
 
 Implementation directories:
 - `doeff/`

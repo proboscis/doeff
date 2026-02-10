@@ -5,9 +5,9 @@
 - Session ID: SA-005
 - Date: 2026-02-08
 - Specs:
-  - `specs/vm-architecture/SPEC-008-rust-vm.md`
-  - `specs/vm-architecture/SPEC-009-rust-vm-migration.md`
-  - `specs/SPEC-TYPES-001-program-effect-separation.md`
+  - `specs/vm/SPEC-008-rust-vm.md`
+  - `specs/vm/SPEC-009-rust-vm-migration.md`
+  - `specs/core/SPEC-TYPES-001-program-effect-separation.md`
 - Implementation directories:
   - `doeff`
   - `packages/doeff-vm`

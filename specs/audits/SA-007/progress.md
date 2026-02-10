@@ -4,17 +4,17 @@ Date: 2026-02-08
 Session: SA-007
 
 Specs:
-- `specs/vm-architecture/SPEC-008-rust-vm.md`
-- `specs/vm-architecture/SPEC-009-rust-vm-migration.md`
-- `specs/SPEC-TYPES-001-program-effect-separation.md`
+- `specs/vm/SPEC-008-rust-vm.md`
+- `specs/vm/SPEC-009-rust-vm-migration.md`
+- `specs/core/SPEC-TYPES-001-program-effect-separation.md`
 
 ## Status Table
 
 | ID | Status | Test/Rule | Fix PR |
 |---|---|---|---|
-| SA-007-C01 | fixed-spec | `specs/vm-architecture/SPEC-008-rust-vm.md` |  |
-| SA-007-C02 | fixed-spec | `specs/SPEC-TYPES-001-program-effect-separation.md` |  |
-| SA-007-C03 | fixed-spec | `specs/vm-architecture/SPEC-008-rust-vm.md` |  |
+| SA-007-C01 | fixed-spec | `specs/vm/SPEC-008-rust-vm.md` |  |
+| SA-007-C02 | fixed-spec | `specs/core/SPEC-TYPES-001-program-effect-separation.md` |  |
+| SA-007-C03 | fixed-spec | `specs/vm/SPEC-008-rust-vm.md` |  |
 | SA-007-G01 | reviewed-correct | `tests/core/test_sa007_spec_gaps.py::test_SA_007_G01_no_top_level_normalization_wrapper` |  |
 | SA-007-G02 | reviewed-correct | `tests/core/test_sa007_spec_gaps.py::test_SA_007_G02_run_typeerror_includes_actionable_hints` |  |
 | SA-007-G03 | reviewed-correct | `tests/core/test_sa007_spec_gaps.py::test_SA_007_G03_withhandler_constructor_validates_handler_type`, `tests/core/test_sa007_spec_gaps.py::test_SA_007_G03_resume_constructor_validates_k_handle`, `specs/audits/SA-007/semgrep.yml#spec-gap-SA-007-G03-no-raw-any-constructors` |  |
@@ -24,8 +24,8 @@ Specs:
 | SA-007-G07 | reviewed-correct | `tests/core/test_sa007_spec_gaps.py::test_SA_007_G07_get_handlers_preserves_identity_not_placeholder`, `specs/audits/SA-007/semgrep.yml#spec-gap-SA-007-G07-no-placeholder-handler-identity` |  |
 | SA-007-G08 | reviewed-correct | `tests/core/test_sa007_spec_gaps.py::test_SA_007_G08_classifier_avoids_concrete_doctrl_type_checks`, `specs/audits/SA-007/semgrep.yml#spec-gap-SA-007-G08-no-concrete-classifier-branches` |  |
 | SA-007-Q01 | resolved-remove-from-code |  |  |
-| SA-007-Q02 | fixed-spec | `specs/vm-architecture/SPEC-009-rust-vm-migration.md` |  |
-| SA-007-Q03 | fixed-spec | `specs/vm-architecture/SPEC-008-rust-vm.md` |  |
+| SA-007-Q02 | fixed-spec | `specs/vm/SPEC-009-rust-vm-migration.md` |  |
+| SA-007-Q03 | fixed-spec | `specs/vm/SPEC-008-rust-vm.md` |  |
 
 ## Dependency/Status Ledger
 

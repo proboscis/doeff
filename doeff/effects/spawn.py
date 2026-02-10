@@ -12,7 +12,7 @@ Design Decisions (from spec):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Generic, Literal, TypeVar, runtime_checkable, Protocol
+from typing import Any, Generic, Literal, TypeVar, runtime_checkable, Protocol, cast
 
 import doeff_vm
 
@@ -27,6 +27,9 @@ _VALID_BACKENDS: tuple[SpawnBackend, ...] = ("thread", "process", "ray")
 T = TypeVar("T")
 T_co = TypeVar("T_co", covariant=True)
 
+_WAITABLE_TYPES: tuple[str, ...] = ("Task", "Promise", "ExternalPromise")
+_cancelled_task_ids: set[int] = set()
+
 
 @runtime_checkable
 class Waitable(Protocol[T_co]):
@@ -37,6 +40,7 @@ class Waitable(Protocol[T_co]):
 @dataclass(frozen=True)
 class Future(Generic[T]):
     _handle: Any = field(repr=False)
+    _completion_queue: Any | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -86,20 +90,20 @@ class Task(Generic[T]):
     def __hash__(self) -> int:
         return hash(self._handle)
 
-    def cancel(self) -> Effect:
+    def cancel(self):
         """Request cancellation of the task.
 
-        This is a synchronous operation that merely requests cancellation.
-        The task may take time to actually cancel. Following asyncio conventions:
-        - cancel() returns immediately
-        - The task may continue running until its next yield point
-        - join() on a cancelled task raises TaskCancelledError
-
-        Returns:
-            Effect that yields True if cancellation was requested successfully,
-            False if the task has already completed.
+        Cancellation is modeled at the Python task-handle layer for scheduler
+        interop: subsequent Wait/Gather/Race calls on the cancelled task raise
+        TaskCancelledError.
         """
-        return create_effect_with_trace(TaskCancelEffect(task=self), skip_frames=3)
+        task_id = task_id_of(self)
+        if task_id is not None:
+            _cancelled_task_ids.add(task_id)
+
+        from doeff.program import Program
+
+        return Program.pure(task_id is not None)
 
     def is_done(self) -> Effect:
         """Check if the task has completed (success, error, or cancelled).
@@ -134,12 +138,110 @@ class TaskIsDoneEffect(EffectBase):
             raise TypeError(f"task must be Task, got {type(self.task).__name__}")
 
 
+def _is_handle_dict(value: object) -> bool:
+    if not isinstance(value, dict):
+        return False
+    kind = value.get("type")
+    if kind == "Task":
+        return isinstance(value.get("task_id"), int)
+    if kind in {"Promise", "ExternalPromise"}:
+        return isinstance(value.get("promise_id"), int)
+    return False
+
+
+def task_id_of(value: Any) -> int | None:
+    handle: Any
+    if isinstance(value, Task):
+        handle = value._handle
+    elif isinstance(value, Future):
+        handle = value._handle
+    elif _is_handle_dict(value):
+        handle = value
+    else:
+        return None
+
+    if isinstance(handle, dict) and handle.get("type") == "Task":
+        raw = handle.get("task_id")
+        if isinstance(raw, int):
+            return raw
+    return None
+
+
+def promise_id_of(value: Any) -> int | None:
+    if isinstance(value, Promise):
+        handle = value._promise_handle
+    elif isinstance(value, Future):
+        handle = value._handle
+    elif _is_handle_dict(value):
+        handle = value
+    else:
+        return None
+
+    if isinstance(handle, dict):
+        kind = handle.get("type")
+        raw = handle.get("promise_id")
+        if kind in {"Promise", "ExternalPromise"} and isinstance(raw, int):
+            return raw
+    return None
+
+
+def coerce_task_handle(value: Any, preferred_backend: SpawnBackend | None = None) -> Task[Any]:
+    if isinstance(value, Task):
+        return value
+    if _is_handle_dict(value) and value.get("type") == "Task":
+        backend: SpawnBackend = cast(
+            SpawnBackend,
+            preferred_backend if preferred_backend in _VALID_BACKENDS else "thread",
+        )
+        return Task(backend=backend, _handle=value)
+    raise TypeError(f"expected Task handle, got {type(value).__name__}")
+
+
+def coerce_promise_handle(value: Any) -> Promise[Any]:
+    if isinstance(value, Promise):
+        return value
+    if _is_handle_dict(value) and value.get("type") in {"Promise", "ExternalPromise"}:
+        return Promise(_promise_handle=value)
+    raise TypeError(f"expected Promise handle, got {type(value).__name__}")
+
+
+def is_task_cancelled(value: Any) -> bool:
+    task_id = task_id_of(value)
+    return task_id is not None and task_id in _cancelled_task_ids
+
+
+def normalize_waitable(value: Any) -> Waitable[Any]:
+    if isinstance(value, Waitable):
+        return value
+    if _is_handle_dict(value):
+        if value.get("type") == "Task":
+            return coerce_task_handle(value)
+        return Future(_handle=value)
+    raise TypeError(
+        "waitable must be Waitable or scheduler handle dict with type/task_id|promise_id"
+    )
+
+
+def _spawn_program(
+    effect: SpawnEffect,
+    preferred_backend: SpawnBackend | None,
+):
+    from doeff import do
+
+    @do
+    def _program():
+        raw_task = yield effect
+        return coerce_task_handle(raw_task, preferred_backend)
+
+    return _program()
+
+
 def spawn(
     program: ProgramLike,
     *,
     preferred_backend: SpawnBackend | None = None,
     **options: Any,
-) -> SpawnEffect:
+) -> Any:
     """Spawn a program as a background task.
 
     Args:
@@ -160,13 +262,15 @@ def spawn(
             )
     ensure_dict_str_any(options, name="options")
 
-    return create_effect_with_trace(
+    effect = create_effect_with_trace(
         SpawnEffect(
             program=program,
             preferred_backend=preferred_backend,
             options=options,
+            store_mode="isolated",
         )
     )
+    return _spawn_program(effect, preferred_backend)
 
 
 def Spawn(
@@ -174,7 +278,7 @@ def Spawn(
     *,
     preferred_backend: SpawnBackend | None = None,
     **options: Any,
-) -> Effect:
+) -> Any:
     """Spawn a program as a background task (capitalized alias).
 
     Args:
@@ -195,14 +299,16 @@ def Spawn(
             )
     ensure_dict_str_any(options, name="options")
 
-    return create_effect_with_trace(
+    effect = create_effect_with_trace(
         SpawnEffect(
             program=program,
             preferred_backend=preferred_backend,
             options=options,
+            store_mode="isolated",
         ),
         skip_frames=3,
     )
+    return _spawn_program(effect, preferred_backend)
 
 
 __all__ = [
@@ -216,5 +322,10 @@ __all__ = [
     "TaskCancelledError",
     "TaskIsDoneEffect",
     "Waitable",
+    "coerce_promise_handle",
+    "coerce_task_handle",
+    "is_task_cancelled",
+    "promise_id_of",
     "spawn",
+    "task_id_of",
 ]

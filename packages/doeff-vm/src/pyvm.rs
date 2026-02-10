@@ -247,10 +247,16 @@ impl PyVM {
         for (k, v) in &self.vm.rust_store.state {
             raw_store.set_item(k, v.to_pyobject(py)?)?;
         }
+        let log_list = pyo3::types::PyList::empty(py);
+        for entry in self.vm.rust_store.logs() {
+            log_list.append(entry.to_pyobject(py)?)?;
+        }
 
         Ok(PyRunResult {
             result,
             raw_store: raw_store.unbind(),
+            log: log_list.into_any().unbind(),
+            trace: self.build_trace_list(py)?,
         })
     }
 
@@ -350,6 +356,25 @@ impl PyVM {
         }
     }
 
+    fn build_trace_list(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let trace_list = pyo3::types::PyList::empty(py);
+        for event in self.vm.trace_events() {
+            let row = pyo3::types::PyDict::new(py);
+            row.set_item("step", event.step)?;
+            row.set_item("event", event.event.as_str())?;
+            row.set_item("mode", event.mode.as_str())?;
+            row.set_item("pending", event.pending.as_str())?;
+            row.set_item("dispatch_depth", event.dispatch_depth)?;
+            if let Some(result) = &event.result {
+                row.set_item("result", result.as_str())?;
+            } else {
+                row.set_item("result", py.None())?;
+            }
+            trace_list.append(row)?;
+        }
+        Ok(trace_list.into_any().unbind())
+    }
+
     pub fn build_run_result(
         &self,
         py: Python<'_>,
@@ -359,9 +384,15 @@ impl PyVM {
         for (k, v) in &self.vm.rust_store.state {
             raw_store.set_item(k, v.to_pyobject(py)?)?;
         }
+        let log_list = pyo3::types::PyList::empty(py);
+        for entry in self.vm.rust_store.logs() {
+            log_list.append(entry.to_pyobject(py)?)?;
+        }
         Ok(PyRunResult {
             result: Ok(value.unbind()),
             raw_store: raw_store.unbind(),
+            log: log_list.into_any().unbind(),
+            trace: self.build_trace_list(py)?,
         })
     }
 
@@ -374,10 +405,16 @@ impl PyVM {
         for (k, v) in &self.vm.rust_store.state {
             raw_store.set_item(k, v.to_pyobject(py)?)?;
         }
+        let log_list = pyo3::types::PyList::empty(py);
+        for entry in self.vm.rust_store.logs() {
+            log_list.append(entry.to_pyobject(py)?)?;
+        }
         let exc = pyerr_to_exception(py, PyErr::from_value(error))?;
         Ok(PyRunResult {
             result: Err(exc),
             raw_store: raw_store.unbind(),
+            log: log_list.into_any().unbind(),
+            trace: self.build_trace_list(py)?,
         })
     }
 
@@ -1071,9 +1108,27 @@ pub struct PyResultOk {
 
 #[pymethods]
 impl PyResultOk {
+    #[new]
+    fn new(value: Py<PyAny>) -> Self {
+        PyResultOk { value }
+    }
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("value",)
+    }
+
     #[getter]
     fn value(&self, py: Python<'_>) -> Py<PyAny> {
         self.value.clone_ref(py)
+    }
+
+    fn is_ok(&self) -> bool {
+        true
+    }
+
+    fn is_err(&self) -> bool {
+        false
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
@@ -1089,13 +1144,41 @@ impl PyResultOk {
 #[pyclass(frozen, name = "Err")]
 pub struct PyResultErr {
     error: Py<PyAny>,
+    captured_traceback: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyResultErr {
+    #[new]
+    #[pyo3(signature = (error, captured_traceback=None))]
+    fn new(py: Python<'_>, error: Py<PyAny>, captured_traceback: Option<Py<PyAny>>) -> Self {
+        PyResultErr {
+            error,
+            captured_traceback: captured_traceback.unwrap_or_else(|| py.None()),
+        }
+    }
+
+    #[classattr]
+    fn __match_args__() -> (&'static str,) {
+        ("error",)
+    }
+
     #[getter]
     fn error(&self, py: Python<'_>) -> Py<PyAny> {
         self.error.clone_ref(py)
+    }
+
+    #[getter]
+    fn captured_traceback(&self, py: Python<'_>) -> Py<PyAny> {
+        self.captured_traceback.clone_ref(py)
+    }
+
+    fn is_ok(&self) -> bool {
+        false
+    }
+
+    fn is_err(&self) -> bool {
+        true
     }
 
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
@@ -1112,6 +1195,8 @@ impl PyResultErr {
 pub struct PyRunResult {
     result: Result<Py<PyAny>, PyException>,
     raw_store: Py<pyo3::types::PyDict>,
+    log: Py<PyAny>,
+    trace: Py<PyAny>,
 }
 
 #[pymethods]
@@ -1152,6 +1237,7 @@ impl PyRunResult {
                     py,
                     PyResultErr {
                         error: e.value_clone_ref(py),
+                        captured_traceback: py.None(),
                     },
                 )?;
                 Ok(err_obj.into_any().unbind())
@@ -1162,6 +1248,16 @@ impl PyRunResult {
     #[getter]
     fn raw_store(&self, py: Python<'_>) -> Py<PyAny> {
         self.raw_store.clone_ref(py).into_any()
+    }
+
+    #[getter]
+    fn log(&self, py: Python<'_>) -> Py<PyAny> {
+        self.log.clone_ref(py)
+    }
+
+    #[getter]
+    fn trace(&self, py: Python<'_>) -> Py<PyAny> {
+        self.trace.clone_ref(py)
     }
 
     fn is_ok(&self) -> bool {
@@ -2203,15 +2299,17 @@ mod tests {
 ///   - `RustHandler` sentinels: `state`, `reader`, `writer`
 ///   - Python handler callables
 #[pyfunction]
-#[pyo3(signature = (program, handlers=None, env=None, store=None))]
+#[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
 fn run(
     py: Python<'_>,
     program: Bound<'_, PyAny>,
     handlers: Option<Bound<'_, pyo3::types::PyList>>,
     env: Option<Bound<'_, pyo3::types::PyDict>>,
     store: Option<Bound<'_, pyo3::types::PyDict>>,
+    trace: bool,
 ) -> PyResult<PyRunResult> {
     let mut vm = PyVM { vm: VM::new() };
+    vm.vm.enable_trace(trace);
 
     // Seed env
     if let Some(env_dict) = env {
@@ -2261,15 +2359,17 @@ fn run(
 /// async interop. All other PythonCall variants are handled synchronously
 /// via the Rust-side `step_once()`.
 #[pyfunction]
-#[pyo3(signature = (program, handlers=None, env=None, store=None))]
+#[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
 fn async_run<'py>(
     py: Python<'py>,
     program: Bound<'py, PyAny>,
     handlers: Option<Bound<'py, pyo3::types::PyList>>,
     env: Option<Bound<'py, pyo3::types::PyDict>>,
     store: Option<Bound<'py, pyo3::types::PyDict>>,
+    trace: bool,
 ) -> PyResult<Bound<'py, PyAny>> {
     let mut vm = PyVM { vm: VM::new() };
+    vm.vm.enable_trace(trace);
 
     if let Some(env_dict) = env {
         for (key, value) in env_dict.iter() {

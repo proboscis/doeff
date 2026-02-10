@@ -526,5 +526,4 @@ return {
 ## References
 
 - Issue: [gh#177](https://github.com/CyberAgentAILab/doeff/issues/177)
-- CESK Architecture: `specs/cesk-architecture/SPEC-CESK-001-separation-of-concerns.md`
 - Program Architecture: `specs/program-architecture/architecture.md`

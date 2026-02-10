@@ -36,7 +36,7 @@ yield Get("x") ──────► yield Get("x") ─────► (state ha
 | Spec | Relationship |
 |------|-------------|
 | SPEC-008 | Rust VM spec. §Built-in Scheduler Handler defers to this spec. |
-| SPEC-CESK-007 | Continuation primitives (Transfer, TransferThrow, ResumeContinuation, CreateContinuation). |
+| SPEC-008 §Continuation | Continuation primitives (Transfer, TransferThrow, ResumeContinuation, CreateContinuation). |
 | SPEC-EFF-011 | Await effect (asyncio bridge). Orthogonal to scheduler. |
 | SPEC-EFF-012 | Safe wrapper. Uses Ok/Err from SPEC-EFF-013. |
 | SPEC-EFF-013 | Result types (Ok/Err). TaskCompleted.result is Ok or Err. |

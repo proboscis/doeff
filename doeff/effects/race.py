@@ -6,7 +6,7 @@ from typing import Any, Generic, TypeVar
 import doeff_vm
 
 from .base import Effect, create_effect_with_trace
-from .spawn import Waitable
+from .spawn import TaskCancelledError, Waitable, is_task_cancelled, normalize_waitable
 
 T = TypeVar("T")
 
@@ -21,13 +21,16 @@ class RaceResult(Generic[T]):
 RaceEffect = doeff_vm.RaceEffect
 
 
-def _validate_race_items(futures: tuple[Waitable[Any], ...]) -> tuple[Waitable[Any], ...]:
+def _validate_race_items(futures: tuple[Any, ...]) -> tuple[Waitable[Any], ...]:
     if not futures:
         raise ValueError("Race requires at least one Waitable")
+    normalized: list[Waitable[Any]] = []
     for i, f in enumerate(futures):
-        if not isinstance(f, Waitable):
-            raise TypeError(f"Race argument {i} must be Waitable, got {type(f).__name__}")
-    return futures
+        try:
+            normalized.append(normalize_waitable(f))
+        except TypeError as exc:
+            raise TypeError(f"Race argument {i} must be Waitable, got {type(f).__name__}") from exc
+    return tuple(normalized)
 
 
 def race(*futures: Waitable[Any]) -> RaceEffect:
@@ -35,9 +38,21 @@ def race(*futures: Waitable[Any]) -> RaceEffect:
     return create_effect_with_trace(RaceEffect(validated))
 
 
-def Race(*futures: Waitable[Any]) -> Effect:
+def Race(*futures: Waitable[Any]):
     validated = _validate_race_items(tuple(futures))
-    return create_effect_with_trace(RaceEffect(validated), skip_frames=3)
+
+    from doeff import do
+
+    @do
+    def _program():
+        for waitable in validated:
+            if is_task_cancelled(waitable):
+                raise TaskCancelledError("Task was cancelled")
+
+        value = yield create_effect_with_trace(RaceEffect(validated), skip_frames=3)
+        return RaceResult(first=validated[0], value=value, rest=tuple(validated[1:]))
+
+    return _program()
 
 
 __all__ = [

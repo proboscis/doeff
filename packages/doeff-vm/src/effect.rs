@@ -123,15 +123,16 @@ pub struct PyTaskCompleted {
     pub handle_id: Py<PyAny>,
     #[pyo3(get)]
     pub result: Py<PyAny>,
-    #[pyo3(get)]
-    pub error: Py<PyAny>,
 }
 
 #[pymethods]
 impl PyGet {
     #[new]
     fn new(key: String) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyGet { key })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyGet { key })
     }
 }
 
@@ -139,7 +140,10 @@ impl PyGet {
 impl PyPut {
     #[new]
     fn new(key: String, value: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyPut { key, value })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyPut { key, value })
     }
 }
 
@@ -147,7 +151,10 @@ impl PyPut {
 impl PyModify {
     #[new]
     fn new(key: String, func: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyModify { key, func })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyModify { key, func })
     }
 }
 
@@ -155,7 +162,10 @@ impl PyModify {
 impl PyAsk {
     #[new]
     fn new(key: String) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyAsk { key })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyAsk { key })
     }
 }
 
@@ -163,7 +173,10 @@ impl PyAsk {
 impl PyTell {
     #[new]
     fn new(message: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyTell { message })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyTell { message })
     }
 }
 
@@ -180,7 +193,10 @@ impl PyKPC {
         created_at: Option<Py<PyAny>>,
         py: Python<'_>,
     ) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyKPC {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyKPC {
             kleisli_source,
             args,
             kwargs,
@@ -200,7 +216,10 @@ impl PySpawn {
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PySpawn {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PySpawn {
             program,
             preferred_backend,
             options: options.unwrap_or_else(|| pyo3::types::PyDict::new(py).into_any().unbind()),
@@ -226,7 +245,14 @@ impl PySpawn {
         handlers: Option<Py<PyAny>>,
         store_mode: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        Self::create(py, program, preferred_backend, options, handlers, store_mode)
+        Self::create(
+            py,
+            program,
+            preferred_backend,
+            options,
+            handlers,
+            store_mode,
+        )
     }
 }
 
@@ -236,7 +262,10 @@ impl PyGather {
         items: Py<PyAny>,
         partial_results: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyGather {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyGather {
             items,
             _partial_results: partial_results.unwrap_or_else(|| py.None()),
         })
@@ -266,7 +295,10 @@ impl PyRace {
 
     #[new]
     fn new(futures: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyRace { futures })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyRace { futures })
     }
 }
 
@@ -277,7 +309,10 @@ impl PyCreatePromise {
 
     #[new]
     fn new() -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyCreatePromise)
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCreatePromise)
     }
 }
 
@@ -288,7 +323,10 @@ impl PyCompletePromise {
 
     #[new]
     fn new(promise: Py<PyAny>, value: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyCompletePromise { promise, value })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCompletePromise { promise, value })
     }
 }
 
@@ -299,7 +337,10 @@ impl PyFailPromise {
 
     #[new]
     fn new(promise: Py<PyAny>, error: Py<PyAny>) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyFailPromise { promise, error })
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyFailPromise { promise, error })
     }
 }
 
@@ -310,7 +351,10 @@ impl PyCreateExternalPromise {
 
     #[new]
     fn new() -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyCreateExternalPromise)
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyCreateExternalPromise)
     }
 }
 
@@ -320,21 +364,22 @@ impl PyTaskCompleted {
     const __doeff_scheduler_task_completed__: bool = true;
 
     #[new]
-    #[pyo3(signature = (*, task=None, task_id=None, handle_id=None, result=None, error=None))]
+    #[pyo3(signature = (*, task=None, task_id=None, handle_id=None, result=None))]
     fn new(
         py: Python<'_>,
         task: Option<Py<PyAny>>,
         task_id: Option<Py<PyAny>>,
         handle_id: Option<Py<PyAny>>,
         result: Option<Py<PyAny>>,
-        error: Option<Py<PyAny>>,
     ) -> PyClassInitializer<Self> {
-        PyClassInitializer::from(PyEffectBase { tag: DoExprTag::Effect as u8 }).add_subclass(PyTaskCompleted {
+        PyClassInitializer::from(PyEffectBase {
+            tag: DoExprTag::Effect as u8,
+        })
+        .add_subclass(PyTaskCompleted {
             task: task.unwrap_or_else(|| py.None()),
             task_id: task_id.unwrap_or_else(|| py.None()),
             handle_id: handle_id.unwrap_or_else(|| py.None()),
             result: result.unwrap_or_else(|| py.None()),
-            error: error.unwrap_or_else(|| py.None()),
         })
     }
 }
