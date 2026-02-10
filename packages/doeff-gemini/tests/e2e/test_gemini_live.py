@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,15 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from doeff_gemini import edit_image__gemini, structured_llm__gemini
 
-from doeff import AsyncRuntime, EffectGenerator, do
+from doeff import EffectGenerator, async_run, default_handlers, do
+
+if os.getenv("DOEFF_GEMINI_RUN_E2E") == "1":
+    pytestmark = pytest.mark.e2e
+else:
+    pytestmark = [
+        pytest.mark.e2e,
+        pytest.mark.skip(reason="Set DOEFF_GEMINI_RUN_E2E=1 to run live Gemini e2e tests"),
+    ]
 
 
 def _get_gemini_env_or_skip() -> dict[str, Any]:
@@ -67,9 +76,7 @@ async def test_edit_image__nanobanana_pro_live() -> None:
             image_size="2K",
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env=env)
+    result = await async_run(flow(), handlers=default_handlers(), env=env)
 
     if not result.is_ok():
         log_summary = "\n".join(str(entry) for entry in result.log)
@@ -107,9 +114,7 @@ async def test_edit_image__gemini_live() -> None:
             max_retries=1,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env=env)
+    result = await async_run(flow(), handlers=default_handlers(), env=env)
 
     if not result.is_ok():
         log_summary = "\n".join(str(entry) for entry in result.log)
@@ -151,9 +156,7 @@ async def test_structured_llm__gemini_live_with_pydantic() -> None:
             max_output_tokens=256,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env=env)
+    result = await async_run(flow(), handlers=default_handlers(), env=env)
 
     if not result.is_ok():
         log_summary = "\n".join(str(entry) for entry in result.log)

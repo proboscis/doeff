@@ -11,14 +11,10 @@ from typing import Any
 
 from doeff import (
     Ask,
-    AtomicUpdate,
     EffectGenerator,
-    Err,
     Get,
-    Ok,
     Put,
     Safe,
-    Step,
     Tell,
     do,
     slog,
@@ -196,6 +192,19 @@ class GeminiClient:
 
 
 DEFAULT_LOCATION = "global"
+
+
+@do
+def _result_ok(value: Any) -> EffectGenerator[Any]:
+    """Wrap a value as an Ok result via the Safe effect."""
+    return value
+
+
+@do
+def _result_err(exc: Exception) -> EffectGenerator[Any]:
+    """Wrap an exception as an Err result via the Safe effect."""
+    raise exc
+    yield  # type: ignore[misc]  # unreachable, keeps generator typing valid
 
 
 @do
@@ -425,7 +434,8 @@ def track_api_call(
 
         return estimate
 
-    def _build_cost_input() -> GeminiCallResult:
+    @do
+    def _build_cost_input() -> EffectGenerator[GeminiCallResult]:
         usage_for_cost = token_usage.to_cost_usage() if token_usage else None
         payload = {
             "operation": operation,
@@ -441,15 +451,19 @@ def track_api_call(
         }
         if token_usage:
             payload["token_usage"] = token_usage.to_dict()
+        if error is None:
+            result_for_cost = yield Safe(_result_ok(response))
+        else:
+            result_for_cost = yield Safe(_result_err(error))
         return GeminiCallResult(
             model_name=model,
             payload=payload,
-            result=Ok(response) if error is None else Err(error),
+            result=result_for_cost,
         )
 
     cost_info: CostInfo | None = None
     if token_usage:
-        call_result = _build_cost_input()
+        call_result = yield _build_cost_input()
 
         safe_calculator = yield Safe(Ask("gemini_cost_calculator"))
         calculator = safe_calculator.value if safe_calculator.is_ok() else None
@@ -517,39 +531,6 @@ def track_api_call(
         )
     )
 
-    graph_meta = metadata.to_graph_metadata()
-    yield Step(
-        {"request_payload": sanitized_payload, "timestamp": graph_meta["timestamp"]},
-        {**graph_meta, "phase": "request_payload"},
-    )
-    yield Step(
-        {"request": request_summary, "timestamp": graph_meta["timestamp"]},
-        {**graph_meta, "phase": "request"},
-    )
-
-    if error:
-        yield Step(
-            {"error": str(error)},
-            {**graph_meta, "phase": "error"},
-        )
-    else:
-        yield Step(
-            {"response": {"success": True, "model": model}},
-            {**graph_meta, "phase": "response"},
-        )
-
-    if token_usage:
-        yield Step(
-            {"usage": token_usage.to_dict()},
-            {**graph_meta, "phase": "usage"},
-        )
-
-    if cost_info:
-        yield Step(
-            {"cost": cost_info.to_dict()},
-            {**graph_meta, "phase": "cost"},
-        )
-
     call_entry = {
         "operation": operation,
         "model": model,
@@ -577,35 +558,23 @@ def track_api_call(
         "prompt_images": prompt_images,
     }
 
-    def _append_call(current: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-        entries = list(current) if current else []
-        entries.append(call_entry)
-        return entries
-
-    yield AtomicUpdate("gemini_api_calls", _append_call, default_factory=list)
+    safe_calls = yield Safe(Get("gemini_api_calls"))
+    current_calls = safe_calls.value if safe_calls.is_ok() else []
+    entries = list(current_calls) if isinstance(current_calls, list) else []
+    entries.append(call_entry)
+    yield Put("gemini_api_calls", entries)
 
     if cost_info:
-        def _increment_total(current: float | None) -> float:
-            base = current if current is not None else 0.0
-            return base + cost_info.total_cost
-
-        yield AtomicUpdate(
-            "gemini_total_cost",
-            _increment_total,
-            default_factory=lambda: 0.0,
-        )
-
         model_cost_key = f"gemini_cost_{model}"
+        safe_total = yield Safe(Get("gemini_total_cost"))
+        current_total = safe_total.value if safe_total.is_ok() else 0.0
+        total_base = current_total if isinstance(current_total, (int, float)) else 0.0
+        yield Put("gemini_total_cost", total_base + cost_info.total_cost)
 
-        def _increment_model(current: float | None) -> float:
-            base = current if current is not None else 0.0
-            return base + cost_info.total_cost
-
-        yield AtomicUpdate(
-            model_cost_key,
-            _increment_model,
-            default_factory=lambda: 0.0,
-        )
+        safe_model_total = yield Safe(Get(model_cost_key))
+        current_model_total = safe_model_total.value if safe_model_total.is_ok() else 0.0
+        model_base = current_model_total if isinstance(current_model_total, (int, float)) else 0.0
+        yield Put(model_cost_key, model_base + cost_info.total_cost)
 
     return metadata
 
