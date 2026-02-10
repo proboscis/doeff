@@ -51,13 +51,15 @@ Let's create a minimal workflow that demonstrates the core concepts.
 
 ```python
 # my_first_workflow.py
-from doeff import do, SyncRuntime
+from doeff import default_handlers, do, run
 from doeff_conductor import (
     CreateWorktree,
     Commit,
     DeleteWorktree,
     WorktreeHandler,
     GitHandler,
+    make_scheduled_handler,
+    make_typed_handlers,
 )
 from pathlib import Path
 
@@ -86,15 +88,17 @@ worktree_handler = WorktreeHandler(base_path=Path.cwd())
 git_handler = GitHandler()
 
 handlers = {
-    CreateWorktree: lambda e: worktree_handler.handle_create_worktree(e),
-    Commit: lambda e: git_handler.handle_commit(e),
-    DeleteWorktree: lambda e: worktree_handler.handle_delete_worktree(e),
+    CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
+    Commit: make_scheduled_handler(git_handler.handle_commit),
+    DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
 }
 
 # Run the workflow
 if __name__ == "__main__":
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(hello_workflow())
+    result = run(
+        hello_workflow(),
+        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    )
     print(f"Result: {result}")
 ```
 
@@ -141,8 +145,8 @@ conductor template show basic_pr
 ### Using a Template Programmatically
 
 ```python
-from doeff import SyncRuntime
-from doeff_conductor import basic_pr, Issue, IssueStatus
+from doeff import default_handlers, run
+from doeff_conductor import Issue, IssueStatus, basic_pr, make_typed_handlers
 
 # Create an issue
 issue = Issue(
@@ -156,9 +160,12 @@ issue = Issue(
 program = basic_pr(issue)
 
 # Run with handlers (see full handler setup in examples)
-runtime = SyncRuntime(handlers=handlers)
-pr = runtime.run(program)
-print(f"Created PR: {pr.url}")
+# handlers = {...}
+result = run(
+    program,
+    handlers=[*make_typed_handlers(handlers), *default_handlers()],
+)
+print(f"Created PR: {result.value.url}")
 ```
 
 ---

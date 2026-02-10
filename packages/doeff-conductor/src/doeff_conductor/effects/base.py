@@ -8,10 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeVar
 
-from doeff.types import EffectBase
+from doeff import EffectBase
 
 if TYPE_CHECKING:
-    from doeff.types import Effect, Program
+    from doeff import Effect, Program
 
 E = TypeVar("E", bound="ConductorEffectBase")
 

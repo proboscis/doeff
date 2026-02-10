@@ -126,7 +126,7 @@ class ConductorAPI:
             self._save_workflow(handle)
 
             # Execute the workflow
-            from doeff import SyncRuntime
+            from doeff import default_handlers, run
 
             # Build kwargs
             kwargs = params or {}
@@ -137,7 +137,14 @@ class ConductorAPI:
             program = workflow_func(**kwargs)
 
             # Run with conductor handlers
-            from .handlers import AgentHandler, GitHandler, IssueHandler, WorktreeHandler
+            from .handlers import (
+                AgentHandler,
+                GitHandler,
+                IssueHandler,
+                WorktreeHandler,
+                make_scheduled_handler,
+                make_typed_handlers,
+            )
 
             worktree_handler = WorktreeHandler()
             issue_handler = IssueHandler()
@@ -164,26 +171,28 @@ class ConductorAPI:
             )
 
             handlers = {
-                CreateWorktree: lambda e: worktree_handler.handle_create_worktree(e),
-                MergeBranches: lambda e: worktree_handler.handle_merge_branches(e),
-                DeleteWorktree: lambda e: worktree_handler.handle_delete_worktree(e),
-                CreateIssue: lambda e: issue_handler.handle_create_issue(e),
-                ListIssues: lambda e: issue_handler.handle_list_issues(e),
-                GetIssue: lambda e: issue_handler.handle_get_issue(e),
-                ResolveIssue: lambda e: issue_handler.handle_resolve_issue(e),
-                RunAgent: lambda e: agent_handler.handle_run_agent(e),
-                SpawnAgent: lambda e: agent_handler.handle_spawn_agent(e),
-                SendMessage: lambda e: agent_handler.handle_send_message(e),
-                WaitForStatus: lambda e: agent_handler.handle_wait_for_status(e),
-                CaptureOutput: lambda e: agent_handler.handle_capture_output(e),
-                Commit: lambda e: git_handler.handle_commit(e),
-                Push: lambda e: git_handler.handle_push(e),
-                CreatePR: lambda e: git_handler.handle_create_pr(e),
-                MergePR: lambda e: git_handler.handle_merge_pr(e),
+                CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
+                MergeBranches: make_scheduled_handler(worktree_handler.handle_merge_branches),
+                DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
+                CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
+                ListIssues: make_scheduled_handler(issue_handler.handle_list_issues),
+                GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
+                ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
+                RunAgent: make_scheduled_handler(agent_handler.handle_run_agent),
+                SpawnAgent: make_scheduled_handler(agent_handler.handle_spawn_agent),
+                SendMessage: make_scheduled_handler(agent_handler.handle_send_message),
+                WaitForStatus: make_scheduled_handler(agent_handler.handle_wait_for_status),
+                CaptureOutput: make_scheduled_handler(agent_handler.handle_capture_output),
+                Commit: make_scheduled_handler(git_handler.handle_commit),
+                Push: make_scheduled_handler(git_handler.handle_push),
+                CreatePR: make_scheduled_handler(git_handler.handle_create_pr),
+                MergePR: make_scheduled_handler(git_handler.handle_merge_pr),
             }
-
-            runtime = SyncRuntime(handlers=handlers)
-            result = runtime.run(program)
+            result = run(
+                program,
+                handlers=[*make_typed_handlers(handlers), *default_handlers()],
+            )
+            result_value = result.value if hasattr(result, "value") else result
 
             # Update workflow status
             handle = WorkflowHandle(
@@ -194,7 +203,7 @@ class ConductorAPI:
                 issue_id=issue.id if issue else None,
                 created_at=now,
                 updated_at=datetime.now(timezone.utc),
-                pr_url=getattr(result, "url", None) if hasattr(result, "url") else None,
+                pr_url=getattr(result_value, "url", None),
             )
             self._save_workflow(handle)
 
