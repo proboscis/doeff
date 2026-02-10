@@ -35,6 +35,7 @@ state = _ext.state
 reader = _ext.reader
 writer = _ext.writer
 scheduler = _ext.scheduler
+await_handler = _ext.await_handler
 kpc = _ext.kpc
 concurrent_kpc = _ext.concurrent_kpc
 KleisliProgramCall = _ext.KleisliProgramCall
@@ -145,6 +146,7 @@ __all__ = [
     "run",
     "scheduler",
     "state",
+    "await_handler",
     "writer",
     "TAG_PURE",
     "TAG_CALL",

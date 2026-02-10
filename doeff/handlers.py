@@ -2,9 +2,10 @@
 
 Provides: state, reader, writer, scheduler.
 """
+
 from __future__ import annotations
 
-_HANDLER_SENTINELS = {"state", "reader", "writer", "scheduler", "kpc"}
+_HANDLER_SENTINELS = {"state", "reader", "writer", "scheduler", "kpc", "await_handler"}
 
 
 def __getattr__(name: str):
@@ -19,4 +20,4 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["state", "reader", "writer", "scheduler", "kpc"]
+__all__ = ["state", "reader", "writer", "scheduler", "kpc", "await_handler"]

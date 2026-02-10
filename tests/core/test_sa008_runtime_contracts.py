@@ -122,6 +122,33 @@ def test_sa008_gather_uses_isolated_state_snapshots() -> None:
     assert result.raw_store["counter"] == 0
 
 
+def test_sa008_sync_await_runs_in_default_handlers() -> None:
+    @do
+    def prog():
+        _ = yield Await(asyncio.sleep(0.001))
+        return "ok"
+
+    result = run(prog(), handlers=default_handlers())
+
+    assert result.value == "ok"
+
+
+def test_sa008_sync_await_propagates_coroutine_error() -> None:
+    async def boom() -> None:
+        raise ValueError("await boom")
+
+    @do
+    def prog():
+        _ = yield Await(boom())
+        return "unreachable"
+
+    result = run(prog(), handlers=default_handlers())
+
+    assert result.is_err()
+    assert isinstance(result.error, ValueError)
+    assert str(result.error) == "await boom"
+
+
 @pytest.mark.asyncio
 async def test_sa008_gather_branch_state_changes_not_shared() -> None:
     @do
