@@ -1,5 +1,5 @@
 from doeff import do
-from doeff.effects import ask, emit, log
+from doeff.effects import ask, tell
 
 from ..core.alpha import helper_alpha
 from ..core.beta import helper_beta
@@ -34,7 +34,7 @@ def eta():
 def theta():
     _ = yield helper_beta()
     yield ask("theta")
-    yield emit("theta")
+    yield tell("theta")
     return "theta"
 
 
@@ -42,7 +42,7 @@ def theta():
 def iota():
     _ = yield helper_gamma()
     yield ask("iota")
-    yield log("iota")
+    yield tell("iota")
     return "iota"
 
 

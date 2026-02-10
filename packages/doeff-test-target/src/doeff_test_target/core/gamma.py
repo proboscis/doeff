@@ -1,5 +1,5 @@
 from doeff import do
-from doeff.effects import ask, log
+from doeff.effects import ask, tell
 
 
 def helper_gamma():
@@ -9,5 +9,5 @@ def helper_gamma():
 @do
 def gamma():
     value = yield ask("gamma")
-    yield log("gamma")
+    yield tell("gamma")
     return value
