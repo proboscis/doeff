@@ -30,8 +30,6 @@ from doeff import (
     # Effects
     Ask,
     Await,
-    async_run,
-    default_handlers,
     Effect,
     Get,
     Listen,
@@ -39,12 +37,25 @@ from doeff import (
     Modify,
     Program,
     Put,
+    RunResult,
     Safe,
     Step,
     Tell,
+    async_run,
+    default_handlers,
     do,
 )
-from doeff.types import RunResult
+
+_EFFECT_FAILURE_TYPE_NAMES = {"EffectFailure", "EffectFailureError"}
+
+
+def _unwrap_effect_failure(error: BaseException) -> BaseException:
+    """Unwrap runtime-specific EffectFailure wrappers when available."""
+    if error.__class__.__name__ in _EFFECT_FAILURE_TYPE_NAMES:
+        cause = getattr(error, "cause", None)
+        if isinstance(cause, BaseException):
+            return cause
+    return error
 
 # ======================================================
 # Test Programs
@@ -367,11 +378,7 @@ async def test_result_bridge_with_error(mock_resolver):  # noqa: PINJ040
     assert result.is_err()
     assert not result.is_ok()
     # Unwrap EffectFailure if needed
-    error = result.error
-    from doeff.types import EffectFailure
-
-    if isinstance(error, EffectFailure):
-        error = error.cause
+    error = _unwrap_effect_failure(result.error)
     assert "Test error" in str(error)
     # In the new runtime, log may not be captured if error occurs early
     # (the Tell effect may not have been processed before the error)
