@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+
 import doeff_vm
 import pytest
 
 from doeff import (
     Ask,
+    Await,
     Err,
     Gather,
     Get,
@@ -13,6 +16,7 @@ from doeff import (
     Ok,
     Safe,
     Spawn,
+    async_run,
     default_handlers,
     do,
     run,
@@ -180,6 +184,62 @@ def test_lazy_ask_local_override_is_enabled_and_cached() -> None:
     assert result.value == ("outer", ("inner", "inner"), "outer")
     assert calls["outer"] == 1
     assert calls["inner"] == 1
+
+
+def test_lazy_ask_spawned_tasks_share_single_evaluation() -> None:
+    calls = {"service": 0}
+
+    @do
+    def service_program():
+        calls["service"] += 1
+        if False:
+            yield
+        return 42
+
+    @do
+    def child():
+        return (yield Ask("service"))
+
+    @do
+    def program():
+        t1 = yield Spawn(child())
+        t2 = yield Spawn(child())
+        return (yield Gather(t1, t2))
+
+    result = run(program(), handlers=default_handlers(), env={"service": service_program()})
+    assert result.is_ok()
+    assert result.value == [42, 42]
+    assert calls["service"] == 1
+
+
+@pytest.mark.asyncio
+async def test_lazy_ask_concurrent_waiters_do_not_reexecute() -> None:
+    calls = {"service": 0}
+
+    @do
+    def service_program():
+        calls["service"] += 1
+        _ = yield Await(asyncio.sleep(0))
+        return 42
+
+    @do
+    def child():
+        return (yield Ask("service"))
+
+    @do
+    def program():
+        t1 = yield Spawn(child())
+        t2 = yield Spawn(child())
+        return (yield Gather(t1, t2))
+
+    result = await async_run(
+        program(),
+        handlers=default_handlers(),
+        env={"service": service_program()},
+    )
+    assert result.is_ok()
+    assert result.value == [42, 42]
+    assert calls["service"] == 1
 
 
 def test_lazy_ask_program_error_propagates() -> None:
