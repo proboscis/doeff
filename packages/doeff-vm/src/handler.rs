@@ -180,6 +180,38 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, Strin
     })
 }
 
+fn missing_env_key_error(key: &str) -> PyException {
+    Python::attach(|py| {
+        let maybe_exc = (|| -> PyResult<Py<PyAny>> {
+            let cls = py.import("doeff.errors")?.getattr("MissingEnvKeyError")?;
+            let value = cls.call1((key,))?;
+            Ok(value.unbind())
+        })();
+
+        match maybe_exc {
+            Ok(exc_value) => {
+                let exc_type = exc_value.bind(py).get_type().into_any().unbind();
+                PyException::new(exc_type, exc_value, None)
+            }
+            Err(_) => {
+                let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
+                let exc_value = err.value(py).clone().into_any().unbind();
+                let exc_type = exc_value.bind(py).get_type().into_any().unbind();
+                PyException::new(exc_type, exc_value, None)
+            }
+        }
+    })
+}
+
+fn missing_state_key_error(key: &str) -> PyException {
+    Python::attach(|py| {
+        let err = pyo3::exceptions::PyKeyError::new_err(key.to_string());
+        let exc_value = err.value(py).clone().into_any().unbind();
+        let exc_type = exc_value.bind(py).get_type().into_any().unbind();
+        PyException::new(exc_type, exc_value, None)
+    })
+}
+
 fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     let Value::Python(obj) = value else {
         return None;
@@ -719,7 +751,9 @@ impl RustHandlerProgram for StateHandlerProgram {
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Get { key } = effect.clone() {
-            let value = store.get(&key).cloned().unwrap_or(Value::None);
+            let Some(value) = store.get(&key).cloned() else {
+                return RustProgramStep::Throw(missing_state_key_error(&key));
+            };
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                 continuation: k,
                 value,
@@ -752,7 +786,9 @@ impl RustHandlerProgram for StateHandlerProgram {
             return match parse_state_python_effect(&obj) {
                 Ok(Some(parsed)) => match parsed {
                     ParsedStateEffect::Get { key } => {
-                        let value = store.get(&key).cloned().unwrap_or(Value::None);
+                        let Some(value) = store.get(&key).cloned() else {
+                            return RustProgramStep::Throw(missing_state_key_error(&key));
+                        };
                         RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                             continuation: k,
                             value,
@@ -867,7 +903,9 @@ impl ReaderHandlerProgram {
     }
 
     fn handle_ask(&mut self, key: String, continuation: Continuation, store: &mut RustStore) -> RustProgramStep {
-        let value = store.ask(&key).cloned().unwrap_or(Value::None);
+        let Some(value) = store.ask(&key).cloned() else {
+            return RustProgramStep::Throw(missing_env_key_error(&key));
+        };
 
         if let Some(expr) = as_lazy_eval_expr(&value) {
             self.phase = ReaderPhase::AwaitHandlers {
