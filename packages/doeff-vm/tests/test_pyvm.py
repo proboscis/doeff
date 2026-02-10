@@ -542,15 +542,15 @@ def test_py_store_basic():
     assert vm.get_store("key2") == "hello"
 
 
-class PythonAsyncSyntaxEscape:
-    """Marker yielded by generators to request an async Python call."""
+def _async_escape(action):
+    """Create the VM AsyncEscape DoCtrl node for async Python calls."""
+    import doeff_vm
 
-    def __init__(self, action):
-        self.action = action
+    return getattr(doeff_vm, "PythonAsyncSyntaxEscape")(action=action)
 
 
 async def async_run(vm, program):
-    """Async driver that can await PythonAsyncSyntaxEscape actions.
+    """Async driver that can await AsyncEscape actions.
 
     Unlike ``vm.run()``, this driver can handle ``CallAsync`` events by
     awaiting the returned coroutine inside a real asyncio event loop.
@@ -584,7 +584,7 @@ async def async_run(vm, program):
 
 @pytest.mark.asyncio
 async def test_async_run_basic():
-    """Test async_run with a PythonAsyncSyntaxEscape handler returning a value."""
+    """Test async_run with an AsyncEscape action returning a value."""
     from doeff_vm import PyVM
 
     vm = PyVM()
@@ -594,7 +594,7 @@ async def test_async_run_basic():
         return 42
 
     def body():
-        result = yield PythonAsyncSyntaxEscape(action=my_async_action)
+        result = yield _async_escape(my_async_action)
         return result
 
     result = await async_run(vm, body())
@@ -613,8 +613,8 @@ async def test_async_run_multiple_awaits():
         return a + b
 
     def body():
-        x = yield PythonAsyncSyntaxEscape(action=lambda: async_add(1, 2))
-        y = yield PythonAsyncSyntaxEscape(action=lambda: async_add(x, 10))
+        x = yield _async_escape(lambda: async_add(1, 2))
+        y = yield _async_escape(lambda: async_add(x, 10))
         return y
 
     result = await async_run(vm, body())
@@ -632,10 +632,10 @@ async def test_async_run_error_propagation():
         raise ValueError("async boom")
 
     def body():
-        result = yield PythonAsyncSyntaxEscape(action=failing_action)
+        result = yield _async_escape(failing_action)
         return result  # should not reach here
 
-    with pytest.raises(RuntimeError, match=".*"):
+    with pytest.raises(ValueError, match="async boom"):
         await async_run(vm, body())
 
 
@@ -669,7 +669,7 @@ async def test_async_run_with_state_effects():
         return 100
 
     def body():
-        fetched = yield PythonAsyncSyntaxEscape(action=fetch_value)
+        fetched = yield _async_escape(fetch_value)
         yield Put("x", fetched)
         val = yield Get("x")
         return val
@@ -1205,8 +1205,12 @@ def test_module_level_async_run_basic():
     """G11: async_run() works with asyncio event loop."""
     from doeff_vm import async_run
 
+    def pure_generator_program():
+        return 42
+        yield
+
     async def main():
-        result = await async_run(simple_program())
+        result = await async_run(pure_generator_program())
         return result
 
     result = asyncio.run(main())
@@ -1425,6 +1429,10 @@ class TestR9AsyncRunSemantics:
         from doeff_vm import async_run
         import asyncio
 
+        def pure_generator_program():
+            return 42
+            yield
+
         execution_order = []
 
         async def background_task():
@@ -1435,7 +1443,7 @@ class TestR9AsyncRunSemantics:
         async def main():
             execution_order.append("main_start")
             bg = asyncio.create_task(background_task())
-            result = await async_run(simple_program())
+            result = await async_run(pure_generator_program())
             await bg
             execution_order.append("main_end")
             return result
@@ -1493,7 +1501,14 @@ def test_tag_attribute_accessible():
 
 def test_tag_on_concrete_instances():
     """R13-I: Concrete DoCtrl instances have correct tag values."""
-    from doeff_vm import Pure, GetHandlers, GetCallStack, TAG_PURE, TAG_GET_HANDLERS, TAG_GET_CALL_STACK
+    from doeff_vm import (
+        Pure,
+        GetHandlers,
+        GetCallStack,
+        TAG_PURE,
+        TAG_GET_HANDLERS,
+        TAG_GET_CALL_STACK,
+    )
 
     pure = Pure(42)
     assert pure.tag == TAG_PURE
@@ -1685,9 +1700,7 @@ def test_scheduler_gather_recognized_by_handler():
         assert "UnhandledEffect" not in err_str, (
             f"GatherEffect not recognized by scheduler: {err_str}"
         )
-        assert "TypeError" not in err_str, (
-            f"GatherEffect misclassified: {err_str}"
-        )
+        assert "TypeError" not in err_str, f"GatherEffect misclassified: {err_str}"
 
 
 def test_scheduler_race_recognized_by_handler():
@@ -1715,9 +1728,7 @@ def test_scheduler_race_recognized_by_handler():
         assert "UnhandledEffect" not in err_str, (
             f"RaceEffect not recognized by scheduler: {err_str}"
         )
-        assert "TypeError" not in err_str, (
-            f"RaceEffect misclassified: {err_str}"
-        )
+        assert "TypeError" not in err_str, f"RaceEffect misclassified: {err_str}"
 
 
 def test_flatmap_rejects_non_doexpr_binder_return():
@@ -1784,9 +1795,7 @@ def test_kpc_resolves_doexpr_args():
 
     result = vm_run(body(), handlers=[kpc])
     assert result.is_ok(), f"KPC resolution failed: {result.result}"
-    assert result.value == 30, (
-        f"KPC should resolve DoExpr args and call kernel, got {result.value}"
-    )
+    assert result.value == 30, f"KPC should resolve DoExpr args and call kernel, got {result.value}"
 
 
 ## -- ISSUE-VM-004: Concurrent KPC (Spawn+Gather) -----------------------------
@@ -1850,9 +1859,7 @@ def test_concurrent_kpc_with_mixed_value_and_expr_args():
 
     result = vm_run(body(), handlers=[concurrent_kpc])
     assert result.is_ok(), f"Mixed concurrent KPC failed: {result.result}"
-    assert result.value == 72, (
-        f"Expected 42+10+20=72, got {result.value}"
-    )
+    assert result.value == 72, f"Expected 42+10+20=72, got {result.value}"
 
 
 def test_concurrent_kpc_with_all_value_args():
