@@ -239,6 +239,13 @@ fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     })
 }
 
+fn lazy_source_id(value: &Value) -> Option<usize> {
+    let Value::Python(obj) = value else {
+        return None;
+    };
+    Python::attach(|py| Some(obj.bind(py).as_ptr() as usize))
+}
+
 fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String> {
     Python::attach(|py| {
         let obj = effect.bind(py);
@@ -883,10 +890,12 @@ enum ReaderPhase {
         key: String,
         continuation: Continuation,
         expr: PyShared,
+        source_id: usize,
     },
     AwaitEval {
         key: String,
         continuation: Continuation,
+        source_id: usize,
     },
 }
 
@@ -908,10 +917,21 @@ impl ReaderHandlerProgram {
         };
 
         if let Some(expr) = as_lazy_eval_expr(&value) {
+            let source_id = lazy_source_id(&value).unwrap_or_default();
+
+            if let Some(cached) = store.lazy_cache_get(&key, source_id) {
+                store.env.insert(key, cached.clone());
+                return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    continuation,
+                    value: cached,
+                }));
+            }
+
             self.phase = ReaderPhase::AwaitHandlers {
                 key,
                 continuation,
                 expr,
+                source_id,
             };
             return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
         }
@@ -963,6 +983,7 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                 key,
                 continuation,
                 expr,
+                source_id,
             } => {
                 let handlers = match value {
                     Value::Handlers(handlers) => handlers,
@@ -973,11 +994,20 @@ impl RustHandlerProgram for ReaderHandlerProgram {
                     }
                 };
 
-                self.phase = ReaderPhase::AwaitEval { key, continuation };
+                self.phase = ReaderPhase::AwaitEval {
+                    key,
+                    continuation,
+                    source_id,
+                };
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }))
             }
-            ReaderPhase::AwaitEval { key, continuation } => {
-                store.env.insert(key, value.clone());
+            ReaderPhase::AwaitEval {
+                key,
+                continuation,
+                source_id,
+            } => {
+                store.env.insert(key.clone(), value.clone());
+                store.lazy_cache_put(key.clone(), source_id, value.clone());
                 RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
                     continuation,
                     value,
