@@ -101,15 +101,7 @@ fn vmerror_to_pyerr(e: VMError) -> PyErr {
 }
 
 fn is_effect_base_like(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-    if obj.is_instance_of::<PyEffectBase>() {
-        return Ok(true);
-    }
-
-    if let Ok(flag) = obj.getattr("__doeff_effect_base__") {
-        return flag.is_truthy();
-    }
-
-    Ok(false)
+    Ok(obj.is_instance_of::<PyEffectBase>())
 }
 
 fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<PyAny>> {
@@ -137,19 +129,41 @@ pub struct PyVM {
 #[pyclass(subclass, frozen, name = "DoExpr")]
 pub struct PyDoExprBase;
 
+impl PyDoExprBase {
+    fn new_base() -> Self {
+        PyDoExprBase
+    }
+}
+
+#[pymethods]
+impl PyDoExprBase {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        PyDoExprBase::new_base()
+    }
+}
+
 #[pyclass(subclass, frozen, name = "EffectBase")]
 pub struct PyEffectBase {
     #[pyo3(get)]
     pub tag: u8,
 }
 
-#[pymethods]
 impl PyEffectBase {
-    #[new]
-    fn new() -> Self {
+    fn new_base() -> Self {
         PyEffectBase {
             tag: DoExprTag::Effect as u8,
         }
+    }
+}
+
+#[pymethods]
+impl PyEffectBase {
+    #[new]
+    #[pyo3(signature = (*_args, **_kwargs))]
+    fn new(_args: &Bound<'_, PyTuple>, _kwargs: Option<&Bound<'_, PyDict>>) -> Self {
+        PyEffectBase::new_base()
     }
 }
 
@@ -787,7 +801,7 @@ impl PyVM {
         // 1. Single isinstance check: extract PyDoCtrlBase
         // 2. Read tag (u8 on frozen struct — no GIL contention)
         // 3. Match on DoExprTag → single targeted extract for the variant
-        // 4. Fallback: is_effect_base_like → wrap as DoCtrl::Perform
+        // 4. EffectBase instances are wrapped as DoCtrl::Perform
         //
         // Reduces average isinstance checks from ~8 to 2, worst case from 16 to 2.
 
@@ -1932,8 +1946,11 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, value):\n        self.task = _TaskHandle(tid)\n        self.result = value\n\nobj = TaskCompletedEffect(7, 123)\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2011,8 +2028,11 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
+                c"class _TaskHandle:\n    def __init__(self, tid):\n        self.task_id = tid\n\nclass TaskCompletedEffect(EffectBase):\n    __doeff_scheduler_task_completed__ = True\n    def __init__(self, tid, err):\n        self.task = _TaskHandle(tid)\n        self.error = err\n\nobj = TaskCompletedEffect(9, ValueError('boom'))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2032,8 +2052,9 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    __doeff_kpc__ = True\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n    def to_generator(self):\n        if False:\n            yield None\n\nobj = KleisliProgramCall()\n",
+                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2053,8 +2074,11 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass GatherEffect(EffectBase):\n    __doeff_scheduler_gather__ = True\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
+                c"class GatherEffect(EffectBase):\n    __doeff_scheduler_gather__ = True\n    def __init__(self):\n        self.items = [123]\nobj = GatherEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2074,8 +2098,11 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    __doeff_scheduler_wait__ = True\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
+                c"class _Future:\n    def __init__(self):\n        self._handle = {'type': 'Task', 'task_id': 1}\n\nclass WaitEffect(EffectBase):\n    __doeff_scheduler_wait__ = True\n    def __init__(self):\n        self.future = _Future()\n\nobj = WaitEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2106,8 +2133,11 @@ mod tests {
 
             let locals = pyo3::types::PyDict::new(py);
             locals.set_item("sentinel", sentinel.bind(py)).unwrap();
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
+                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self, p, hs, mode):\n        self.program = p\n        self.handlers = hs\n        self.store_mode = mode\nobj = SpawnEffect(None, [sentinel], 'isolated')\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2220,8 +2250,11 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass StateGetEffect(EffectBase):\n    __doeff_state_get__ = True\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
+                c"class StateGetEffect(EffectBase):\n    __doeff_state_get__ = True\n    def __init__(self):\n        self.key = 'counter'\nobj = StateGetEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2241,8 +2274,9 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals.set_item("PyKPC", py.get_type::<PyKPC>()).unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass _S:\n    def should_unwrap_positional(self, i):\n        return True\n    def should_unwrap_keyword(self, k):\n        return True\n\nclass KleisliProgramCall(EffectBase):\n    __doeff_kpc__ = True\n    function_name = 'f'\n    source_file = 'x.py'\n    source_line = 1\n    kleisli_source = None\n    def __init__(self):\n        self.args = (1,)\n        self.kwargs = {}\n        self.auto_unwrap_strategy = _S()\n        self.execution_kernel = (lambda x: x)\n    def to_generator(self):\n        if False:\n            yield None\n\nobj = KleisliProgramCall()\n",
+                c"obj = PyKPC(None, (1,), {}, 'f', (lambda x: x))\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2262,8 +2296,11 @@ mod tests {
         Python::attach(|py| {
             let pyvm = PyVM { vm: VM::new() };
             let locals = pyo3::types::PyDict::new(py);
+            locals
+                .set_item("EffectBase", py.get_type::<PyEffectBase>())
+                .unwrap();
             py.run(
-                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
+                c"class SpawnEffect(EffectBase):\n    __doeff_scheduler_spawn__ = True\n    def __init__(self):\n        self.program = None\n        self.handlers = []\n        self.store_mode = 'shared'\n\nobj = SpawnEffect()\n",
                 Some(&locals),
                 Some(&locals),
             )
@@ -2371,7 +2408,7 @@ mod tests {
     #[test]
     fn test_r13i_effect_base_tag() {
         Python::attach(|py| {
-            let effect = Bound::new(py, PyEffectBase::new()).unwrap();
+            let effect = Bound::new(py, PyEffectBase::new_base()).unwrap();
             let tag: u8 = effect.getattr("tag").unwrap().extract().unwrap();
             assert_eq!(tag, DoExprTag::Effect as u8);
         });
