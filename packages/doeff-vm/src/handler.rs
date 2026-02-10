@@ -7,16 +7,16 @@ use pyo3::prelude::*;
 use pyo3::types::PyModule;
 
 use crate::continuation::Continuation;
-use crate::effect::{
-    DispatchEffect, KpcArg, KpcCallEffect, PyKPC, dispatch_from_shared,
-    dispatch_into_python, dispatch_ref_as_python,
-};
 #[cfg(test)]
 use crate::effect::Effect;
+use crate::effect::{
+    dispatch_from_shared, dispatch_into_python, dispatch_ref_as_python, DispatchEffect, KpcArg,
+    KpcCallEffect, PyKPC,
+};
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase, PyResultErr, PyResultOk};
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -43,7 +43,13 @@ pub enum RustProgramStep {
 /// A Rust handler program instance (generator-like).
 /// start/resume/throw mirror Python generator protocol but run in Rust.
 pub trait RustHandlerProgram: std::fmt::Debug + Send {
-    fn start(&mut self, py: Python<'_>, effect: DispatchEffect, k: Continuation, store: &mut RustStore) -> RustProgramStep;
+    fn start(
+        &mut self,
+        py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep;
     fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep;
     fn throw(&mut self, exc: PyException, store: &mut RustStore) -> RustProgramStep;
 }
@@ -99,7 +105,7 @@ impl Handler {
 }
 
 fn has_true_attr(obj: &Bound<'_, PyAny>, attr: &str) -> bool {
-    obj.getattr (attr)
+    obj.getattr(attr)
         .and_then(|v| v.extract::<bool>())
         .unwrap_or(false)
 }
@@ -126,7 +132,7 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
         let obj = effect.bind(py);
         if is_instance_from(obj, "doeff.effects.state", "StateGetEffect") {
             let key: String = obj
-                .getattr ("key")
+                .getattr("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
@@ -135,11 +141,11 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
 
         if is_instance_from(obj, "doeff.effects.state", "StatePutEffect") {
             let key: String = obj
-                .getattr ("key")
+                .getattr("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
-            let value = obj.getattr ("value").map_err(|e| e.to_string())?;
+            let value = obj.getattr("value").map_err(|e| e.to_string())?;
             return Ok(Some(ParsedStateEffect::Put {
                 key,
                 value: Value::from_pyobject(&value),
@@ -148,13 +154,13 @@ fn parse_state_python_effect(effect: &PyShared) -> Result<Option<ParsedStateEffe
 
         if is_instance_from(obj, "doeff.effects.state", "StateModifyEffect") {
             let key: String = obj
-                .getattr ("key")
+                .getattr("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
             let modifier = obj
-                .getattr ("func")
-                .or_else(|_| obj.getattr ("modifier"))
+                .getattr("func")
+                .or_else(|_| obj.getattr("modifier"))
                 .map_err(|e| e.to_string())?;
             return Ok(Some(ParsedStateEffect::Modify {
                 key,
@@ -171,7 +177,7 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, Strin
         let obj = effect.bind(py);
         if is_instance_from(obj, "doeff.effects.reader", "AskEffect") {
             let key: String = obj
-                .getattr ("key")
+                .getattr("key")
                 .map_err(|e| e.to_string())?
                 .extract::<String>()
                 .map_err(|e| e.to_string())?;
@@ -225,6 +231,43 @@ fn missing_state_key_error(key: &str) -> PyException {
     })
 }
 
+fn pyerr_to_exception(py: Python<'_>, err: PyErr) -> PyException {
+    let exc_type = err.get_type(py).into_any().unbind();
+    let exc_value = err.value(py).clone().into_any().unbind();
+    let exc_tb = err.traceback(py).map(|tb| tb.into_any().unbind());
+    PyException::new(exc_type, exc_value, exc_tb)
+}
+
+fn wrap_value_as_result_ok(value: Value) -> Result<Value, PyException> {
+    Python::attach(|py| {
+        let py_value = value
+            .to_pyobject(py)
+            .map_err(|e| pyerr_to_exception(py, e))?;
+        let wrapped = Bound::new(
+            py,
+            PyResultOk {
+                value: py_value.unbind(),
+            },
+        )
+        .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(Value::Python(wrapped.into_any().unbind()))
+    })
+}
+
+fn wrap_exception_as_result_err(error: PyException) -> Result<Value, PyException> {
+    Python::attach(|py| {
+        let wrapped = Bound::new(
+            py,
+            PyResultErr {
+                error: error.value_clone_ref(py),
+                captured_traceback: py.None(),
+            },
+        )
+        .map_err(|e| pyerr_to_exception(py, e))?;
+        Ok(Value::Python(wrapped.into_any().unbind()))
+    })
+}
+
 fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
     let Value::Python(obj) = value else {
         return None;
@@ -263,7 +306,7 @@ fn parse_writer_python_effect(effect: &PyShared) -> Result<Option<Value>, String
     Python::attach(|py| {
         let obj = effect.bind(py);
         if is_instance_from(obj, "doeff.effects.writer", "WriterTellEffect") {
-            let message = obj.getattr ("message").map_err(|e| e.to_string())?;
+            let message = obj.getattr("message").map_err(|e| e.to_string())?;
             return Ok(Some(Value::from_pyobject(&message)));
         }
         Ok(None)
@@ -276,6 +319,29 @@ fn parse_await_python_effect(effect: &PyShared) -> Result<Option<Py<PyAny>>, Str
         if is_instance_from(obj, "doeff.effects.future", "PythonAsyncioAwaitEffect") {
             let awaitable = obj.getattr("awaitable").map_err(|e| e.to_string())?;
             return Ok(Some(awaitable.unbind()));
+        }
+        Ok(None)
+    })
+}
+
+fn parse_result_safe_python_effect(effect: &PyShared) -> Result<Option<PyShared>, String> {
+    Python::attach(|py| {
+        let obj = effect.bind(py);
+        let is_result_safe = {
+            #[cfg(test)]
+            {
+                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
+                    || has_true_attr(obj, "__doeff_result_safe__")
+            }
+            #[cfg(not(test))]
+            {
+                is_instance_from(obj, "doeff.effects.result", "ResultSafeEffect")
+            }
+        };
+
+        if is_result_safe {
+            let sub_program = obj.getattr("sub_program").map_err(|e| e.to_string())?;
+            return Ok(Some(PyShared::new(sub_program.unbind())));
         }
         Ok(None)
     })
@@ -404,7 +470,7 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
         let strategy = py
             .import("doeff.program")
             .ok()
-            .and_then(|mod_program| mod_program.getattr ("_build_auto_unwrap_strategy").ok())
+            .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
             .and_then(|builder| builder.call1((kpc.kleisli_source.bind(py),)).ok());
 
         let mut args = Vec::new();
@@ -428,7 +494,8 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
         let mut kwargs = Vec::new();
         for (k, v) in kwargs_dict.iter() {
             let key: String = k.extract::<String>().map_err(|e| e.to_string())?;
-            let should_unwrap = kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
+            let should_unwrap =
+                kpc_strategy_should_unwrap_keyword(strategy.as_ref(), key.as_str())?;
             kwargs.push((key, extract_kpc_arg(&v, should_unwrap)?));
         }
 
@@ -452,33 +519,29 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
 
         let metadata = extract_kpc_call_metadata(obj)?;
         let kernel_obj = obj
-            .getattr ("execution_kernel")
-            .or_else(|_| obj.getattr ("kernel"))
+            .getattr("execution_kernel")
+            .or_else(|_| obj.getattr("kernel"))
             .map_err(|e| e.to_string())?;
         let kernel = PyShared::new(kernel_obj.unbind());
 
-        let strategy = obj
-            .getattr("kleisli_source")
-            .ok()
-            .and_then(|kleisli| {
-                py.import("doeff.program")
-                    .ok()
-                    .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
-                    .and_then(|builder| builder.call1((kleisli,)).ok())
-            });
+        let strategy = obj.getattr("kleisli_source").ok().and_then(|kleisli| {
+            py.import("doeff.program")
+                .ok()
+                .and_then(|mod_program| mod_program.getattr("_build_auto_unwrap_strategy").ok())
+                .and_then(|builder| builder.call1((kleisli,)).ok())
+        });
 
         let mut args = Vec::new();
-        if let Ok(args_obj) = obj.getattr ("args") {
+        if let Ok(args_obj) = obj.getattr("args") {
             for (idx, item) in args_obj.try_iter().map_err(|e| e.to_string())?.enumerate() {
                 let item = item.map_err(|e| e.to_string())?;
-                let should_unwrap =
-                    kpc_strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
+                let should_unwrap = kpc_strategy_should_unwrap_positional(strategy.as_ref(), idx)?;
                 args.push(extract_kpc_arg(&item, should_unwrap)?);
             }
         }
 
         let mut kwargs = Vec::new();
-        if let Ok(kwargs_obj) = obj.getattr ("kwargs") {
+        if let Ok(kwargs_obj) = obj.getattr("kwargs") {
             let kwargs_dict = kwargs_obj
                 .cast::<pyo3::types::PyDict>()
                 .map_err(|e| e.to_string())?;
@@ -502,21 +565,21 @@ fn parse_kpc_python_effect(effect: &PyShared) -> Result<Option<KpcCallEffect>, S
 
 fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, String> {
     let function_name = obj
-        .getattr ("function_name")
+        .getattr("function_name")
         .ok()
         .and_then(|v| v.extract::<String>().ok())
         .unwrap_or_else(|| "<anonymous>".to_string());
 
-    if let Ok(kleisli) = obj.getattr ("kleisli_source") {
-        if let Ok(func) = kleisli.getattr ("original_func") {
-            if let Ok(code) = func.getattr ("__code__") {
+    if let Ok(kleisli) = obj.getattr("kleisli_source") {
+        if let Ok(func) = kleisli.getattr("original_func") {
+            if let Ok(code) = func.getattr("__code__") {
                 let source_file = code
-                    .getattr ("co_filename")
+                    .getattr("co_filename")
                     .ok()
                     .and_then(|v| v.extract::<String>().ok())
                     .unwrap_or_else(|| "<unknown>".to_string());
                 let source_line = code
-                    .getattr ("co_firstlineno")
+                    .getattr("co_firstlineno")
                     .ok()
                     .and_then(|v| v.extract::<u32>().ok())
                     .unwrap_or(0);
@@ -531,12 +594,12 @@ fn extract_kpc_call_metadata(obj: &Bound<'_, PyAny>) -> Result<CallMetadata, Str
     }
 
     let source_file = obj
-        .getattr ("source_file")
+        .getattr("source_file")
         .ok()
         .and_then(|v| v.extract::<String>().ok())
         .unwrap_or_else(|| "<unknown>".to_string());
     let source_line = obj
-        .getattr ("source_line")
+        .getattr("source_line")
         .ok()
         .and_then(|v| v.extract::<u32>().ok())
         .unwrap_or(0);
@@ -583,11 +646,9 @@ fn extract_kpc_arg(obj: &Bound<'_, PyAny>, should_unwrap: bool) -> Result<KpcArg
 }
 
 fn is_do_expr_candidate(obj: &Bound<'_, PyAny>) -> Result<bool, String> {
-    Ok(
-        obj.is_instance_of::<PyEffectBase>()
-            || obj.is_instance_of::<PyDoCtrlBase>()
-            || obj.is_instance_of::<PyKPC>(),
-    )
+    Ok(obj.is_instance_of::<PyEffectBase>()
+        || obj.is_instance_of::<PyDoCtrlBase>()
+        || obj.is_instance_of::<PyKPC>())
 }
 
 // ---------------------------------------------------------------------------
@@ -746,11 +807,7 @@ impl KpcHandlerProgram {
             let args = state.resolved_args.clone();
             let kwargs = state.resolved_kwargs.clone();
             self.phase = KpcPhase::Running(state);
-            return RustProgramStep::NeedsPython(PythonCall::CallFunc {
-                func,
-                args,
-                kwargs,
-            });
+            return RustProgramStep::NeedsPython(PythonCall::CallFunc { func, args, kwargs });
         }
     }
 }
@@ -847,7 +904,10 @@ pub struct StateHandlerFactory;
 impl RustProgramHandler for StateHandlerFactory {
     fn can_handle(&self, effect: &DispatchEffect) -> bool {
         #[cfg(test)]
-        if matches!(effect, Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }) {
+        if matches!(
+            effect,
+            Effect::Get { .. } | Effect::Put { .. } | Effect::Modify { .. }
+        ) {
             return true;
         }
 
@@ -1045,7 +1105,12 @@ impl ReaderHandlerProgram {
         }
     }
 
-    fn handle_ask(&mut self, key: String, continuation: Continuation, store: &mut RustStore) -> RustProgramStep {
+    fn handle_ask(
+        &mut self,
+        key: String,
+        continuation: Continuation,
+        store: &mut RustStore,
+    ) -> RustProgramStep {
         let Some(value) = store.ask(&key).cloned() else {
             return RustProgramStep::Throw(missing_env_key_error(&key));
         };
@@ -1267,6 +1332,142 @@ impl RustHandlerProgram for WriterHandlerProgram {
 
     fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
         RustProgramStep::Throw(exc)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ResultSafeHandlerFactory + ResultSafeHandlerProgram
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct ResultSafeHandlerFactory;
+
+impl RustProgramHandler for ResultSafeHandlerFactory {
+    fn can_handle(&self, effect: &DispatchEffect) -> bool {
+        dispatch_ref_as_python(effect).is_some_and(|obj| {
+            parse_result_safe_python_effect(obj)
+                .ok()
+                .flatten()
+                .is_some()
+        })
+    }
+
+    fn create_program(&self) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(ResultSafeHandlerProgram::new())))
+    }
+}
+
+#[derive(Debug)]
+enum ResultSafePhase {
+    Idle,
+    AwaitHandlers {
+        continuation: Continuation,
+        sub_program: PyShared,
+    },
+    AwaitEval {
+        continuation: Continuation,
+    },
+}
+
+#[derive(Debug)]
+struct ResultSafeHandlerProgram {
+    phase: ResultSafePhase,
+}
+
+impl ResultSafeHandlerProgram {
+    fn new() -> Self {
+        ResultSafeHandlerProgram {
+            phase: ResultSafePhase::Idle,
+        }
+    }
+
+    fn finish_ok(&self, continuation: Continuation, value: Value) -> RustProgramStep {
+        match wrap_value_as_result_ok(value) {
+            Ok(wrapped) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value: wrapped,
+            })),
+            Err(exc) => RustProgramStep::Throw(exc),
+        }
+    }
+
+    fn finish_err(&self, continuation: Continuation, error: PyException) -> RustProgramStep {
+        match wrap_exception_as_result_err(error) {
+            Ok(wrapped) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                continuation,
+                value: wrapped,
+            })),
+            Err(exc) => RustProgramStep::Throw(exc),
+        }
+    }
+}
+
+impl RustHandlerProgram for ResultSafeHandlerProgram {
+    fn start(
+        &mut self,
+        _py: Python<'_>,
+        effect: DispatchEffect,
+        k: Continuation,
+        _store: &mut RustStore,
+    ) -> RustProgramStep {
+        if let Some(obj) = dispatch_into_python(effect.clone()) {
+            return match parse_result_safe_python_effect(&obj) {
+                Ok(Some(sub_program)) => {
+                    self.phase = ResultSafePhase::AwaitHandlers {
+                        continuation: k,
+                        sub_program,
+                    };
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                }
+                Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
+                    effect: dispatch_from_shared(obj),
+                })),
+                Err(msg) => RustProgramStep::Throw(PyException::type_error(format!(
+                    "failed to parse ResultSafe effect: {msg}"
+                ))),
+            };
+        }
+
+        #[cfg(test)]
+        {
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate { effect }));
+        }
+
+        #[cfg(not(test))]
+        unreachable!("runtime Effect is always Python")
+    }
+
+    fn resume(&mut self, value: Value, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
+            ResultSafePhase::AwaitHandlers {
+                continuation,
+                sub_program,
+            } => {
+                let handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "ResultSafe handler expected GetHandlers result",
+                        ));
+                    }
+                };
+                self.phase = ResultSafePhase::AwaitEval { continuation };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval {
+                    expr: sub_program,
+                    handlers,
+                }))
+            }
+            ResultSafePhase::AwaitEval { continuation } => self.finish_ok(continuation, value),
+            ResultSafePhase::Idle => RustProgramStep::Return(value),
+        }
+    }
+
+    fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, ResultSafePhase::Idle) {
+            ResultSafePhase::AwaitHandlers { continuation, .. }
+            | ResultSafePhase::AwaitEval { continuation } => self.finish_err(continuation, exc),
+            ResultSafePhase::Idle => RustProgramStep::Throw(exc),
+        }
     }
 }
 
@@ -1544,8 +1745,7 @@ impl ConcurrentKpcHandlerProgram {
             RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }))
         } else {
             // All exprs evaluated — resolve slots and call kernel
-            let (args, kwargs) =
-                Self::resolve_slots(&positional_slots, &keyword_slots, &results);
+            let (args, kwargs) = Self::resolve_slots(&positional_slots, &keyword_slots, &results);
 
             self.phase = ConcurrentKpcPhase::KernelCall { k_user, handlers };
             RustProgramStep::NeedsPython(PythonCall::CallFunc {
@@ -1747,7 +1947,10 @@ mod tests {
                 guard.start(py, effect, k, &mut store)
             };
             assert!(
-                matches!(step, RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))),
+                matches!(
+                    step,
+                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+                ),
                 "SPEC GAP: KPC opaque effect should start via GetHandlers"
             );
         });
@@ -1774,59 +1977,59 @@ mod tests {
     #[test]
     fn test_state_factory_get() {
         Python::attach(|py| {
-        let mut store = RustStore::new();
-        store.put("key".to_string(), Value::Int(42));
-        let k = make_test_continuation();
-        let program_ref = StateHandlerFactory.create_program();
-        let step = {
-            let mut guard = program_ref.lock().unwrap();
-            guard.start(
-                py,
-                Effect::Get {
-                    key: "key".to_string(),
-                },
-                k,
-                &mut store,
-            )
-        };
-        match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
-                assert_eq!(value.as_int(), Some(42));
+            let mut store = RustStore::new();
+            store.put("key".to_string(), Value::Int(42));
+            let k = make_test_continuation();
+            let program_ref = StateHandlerFactory.create_program();
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.start(
+                    py,
+                    Effect::Get {
+                        key: "key".to_string(),
+                    },
+                    k,
+                    &mut store,
+                )
+            };
+            match step {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                    assert_eq!(value.as_int(), Some(42));
+                }
+                _ => panic!(
+                    "Expected Yield(Resume), got {:?}",
+                    std::mem::discriminant(&step)
+                ),
             }
-            _ => panic!(
-                "Expected Yield(Resume), got {:?}",
-                std::mem::discriminant(&step)
-            ),
-        }
         });
     }
 
     #[test]
     fn test_state_factory_put() {
         Python::attach(|py| {
-        let mut store = RustStore::new();
-        let k = make_test_continuation();
-        let program_ref = StateHandlerFactory.create_program();
-        let step = {
-            let mut guard = program_ref.lock().unwrap();
-            guard.start(
-                py,
-                Effect::Put {
-                    key: "key".to_string(),
-                    value: Value::Int(99),
-                },
-                k,
-                &mut store,
-            )
-        };
-        assert!(matches!(
-            step,
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                value: Value::Unit,
-                ..
-            }))
-        ));
-        assert_eq!(store.get("key").unwrap().as_int(), Some(99));
+            let mut store = RustStore::new();
+            let k = make_test_continuation();
+            let program_ref = StateHandlerFactory.create_program();
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.start(
+                    py,
+                    Effect::Put {
+                        key: "key".to_string(),
+                        value: Value::Int(99),
+                    },
+                    k,
+                    &mut store,
+                )
+            };
+            assert!(matches!(
+                step,
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    value: Value::Unit,
+                    ..
+                }))
+            ));
+            assert_eq!(store.get("key").unwrap().as_int(), Some(99));
         });
     }
 
@@ -1915,29 +2118,29 @@ mod tests {
     #[test]
     fn test_reader_factory_ask() {
         Python::attach(|py| {
-        let mut store = RustStore::new();
-        store
-            .env
-            .insert("config".to_string(), Value::String("value".to_string()));
-        let k = make_test_continuation();
-        let program_ref = ReaderHandlerFactory.create_program();
-        let step = {
-            let mut guard = program_ref.lock().unwrap();
-            guard.start(
-                py,
-                Effect::Ask {
-                    key: "config".to_string(),
-                },
-                k,
-                &mut store,
-            )
-        };
-        match step {
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
-                assert_eq!(value.as_str(), Some("value"));
+            let mut store = RustStore::new();
+            store
+                .env
+                .insert("config".to_string(), Value::String("value".to_string()));
+            let k = make_test_continuation();
+            let program_ref = ReaderHandlerFactory.create_program();
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.start(
+                    py,
+                    Effect::Ask {
+                        key: "config".to_string(),
+                    },
+                    k,
+                    &mut store,
+                )
+            };
+            match step {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume { value, .. })) => {
+                    assert_eq!(value.as_str(), Some("value"));
+                }
+                _ => panic!("Expected Yield(Resume)"),
             }
-            _ => panic!("Expected Yield(Resume)"),
-        }
         });
     }
 
@@ -1958,28 +2161,129 @@ mod tests {
     #[test]
     fn test_writer_factory_tell() {
         Python::attach(|py| {
-        let mut store = RustStore::new();
-        let k = make_test_continuation();
-        let program_ref = WriterHandlerFactory.create_program();
-        let step = {
-            let mut guard = program_ref.lock().unwrap();
-            guard.start(
-                py,
-                Effect::Tell {
-                    message: Value::String("log".to_string()),
-                },
-                k,
-                &mut store,
+            let mut store = RustStore::new();
+            let k = make_test_continuation();
+            let program_ref = WriterHandlerFactory.create_program();
+            let step = {
+                let mut guard = program_ref.lock().unwrap();
+                guard.start(
+                    py,
+                    Effect::Tell {
+                        message: Value::String("log".to_string()),
+                    },
+                    k,
+                    &mut store,
+                )
+            };
+            assert!(matches!(
+                step,
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    value: Value::Unit,
+                    ..
+                }))
+            ));
+            assert_eq!(store.logs().len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_result_safe_factory_can_handle_python_effect() {
+        Python::attach(|py| {
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                Some(&locals),
+                Some(&locals),
             )
-        };
-        assert!(matches!(
-            step,
-            RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                value: Value::Unit,
-                ..
-            }))
-        ));
-        assert_eq!(store.logs().len(), 1);
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::from_shared(PyShared::new(obj));
+            let f = ResultSafeHandlerFactory;
+            assert!(
+                f.can_handle(&effect),
+                "ResultSafe handler should claim ResultSafeEffect"
+            );
+        });
+    }
+
+    #[test]
+    fn test_result_safe_handler_wraps_return_and_exception() {
+        Python::attach(|py| {
+            let mut store = RustStore::new();
+            let k = make_test_continuation();
+
+            let locals = pyo3::types::PyDict::new(py);
+            py.run(
+                c"class EffectBase:\n    __doeff_effect_base__ = True\n\nclass ResultSafeEffect(EffectBase):\n    __doeff_result_safe__ = True\n    def __init__(self, sub_program):\n        self.sub_program = sub_program\n\nobj = ResultSafeEffect(None)\n",
+                Some(&locals),
+                Some(&locals),
+            )
+            .unwrap();
+            let obj = locals.get_item("obj").unwrap().unwrap().unbind();
+            let effect = Effect::from_shared(PyShared::new(obj));
+
+            let ok_program = ResultSafeHandlerFactory.create_program();
+            let start_step = {
+                let mut guard = ok_program.lock().unwrap();
+                guard.start(py, effect.clone(), k.clone(), &mut store)
+            };
+            assert!(matches!(
+                start_step,
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers))
+            ));
+
+            let await_eval_step = {
+                let mut guard = ok_program.lock().unwrap();
+                guard.resume(Value::Handlers(vec![]), &mut store)
+            };
+            assert!(matches!(
+                await_eval_step,
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { .. }))
+            ));
+
+            let ok_step = {
+                let mut guard = ok_program.lock().unwrap();
+                guard.resume(Value::Int(42), &mut store)
+            };
+            match ok_step {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    value: Value::Python(obj),
+                    ..
+                })) => {
+                    let bound = obj.bind(py);
+                    let is_ok: bool = bound.call_method0("is_ok").unwrap().extract().unwrap();
+                    let inner = bound.getattr("value").unwrap();
+                    assert!(is_ok);
+                    assert_eq!(inner.extract::<i64>().unwrap(), 42);
+                }
+                _ => panic!("expected Resume with Ok(value)"),
+            }
+
+            let err_program = ResultSafeHandlerFactory.create_program();
+            let _ = {
+                let mut guard = err_program.lock().unwrap();
+                guard.start(py, effect, k, &mut store)
+            };
+
+            let err_step = {
+                let mut guard = err_program.lock().unwrap();
+                guard.throw(PyException::runtime_error("boom"), &mut store)
+            };
+
+            match err_step {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    value: Value::Python(obj),
+                    ..
+                })) => {
+                    let bound = obj.bind(py);
+                    let is_err: bool = bound.call_method0("is_err").unwrap().extract().unwrap();
+                    let error = bound.getattr("error").unwrap();
+                    let msg = error.str().unwrap().to_str().unwrap().to_string();
+                    assert!(is_err);
+                    assert!(msg.contains("boom"));
+                }
+                _ => panic!("expected Resume with Err(exception)"),
+            }
         });
     }
 
