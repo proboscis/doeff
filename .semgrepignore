@@ -1,0 +1,10 @@
+# Override semgrep defaults: we WANT to scan tests/ and packages/*/tests/
+# Only skip build artifacts and vendored code
+.git/
+node_modules/
+dist/
+build/
+*.egg-info/
+__pycache__/
+.venv/
+.tox/

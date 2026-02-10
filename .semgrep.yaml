@@ -386,6 +386,73 @@ rules:
       category: docs-deprecation
 
   # ---------------------------------------------------------------------------
+  # DEPRECATED RUNTIME/INTERPRETER CLASS USAGE (packages & tests)
+  # ---------------------------------------------------------------------------
+  # The old class-based API (AsyncRuntime, SyncRuntime, ProgramInterpreter)
+  # was replaced with function-based run()/async_run()/default_handlers().
+  # These rules catch leftover usage AND compatibility shims that fake migration.
+
+  - id: doeff-no-legacy-runtime-usage
+    pattern-regex: '(AsyncRuntime|SyncRuntime|ProgramInterpreter)\s*\('
+    paths:
+      exclude:
+        - "**/docs/proposals/**"
+        - "**/docs/20-runtime-scheduler.md"
+    message: |
+      BANNED: Legacy runtime/interpreter instantiation.
+      AsyncRuntime, SyncRuntime, and ProgramInterpreter are removed.
+      Use the function-based API:
+        result = run(program, handlers=default_handlers())
+        result = await async_run(program, handlers=default_handlers())
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: deprecated-runtime
+      rationale: "Class-based runtimes are removed; use run()/async_run()"
+
+  - id: doeff-no-legacy-runtime-import
+    pattern-regex: 'from\s+doeff\s+import\s+[^#\n]*(AsyncRuntime|SyncRuntime|ProgramInterpreter)'
+    paths:
+      exclude:
+        - "**/docs/proposals/**"
+    message: |
+      BANNED: Importing removed runtime/interpreter classes.
+      AsyncRuntime, SyncRuntime, and ProgramInterpreter no longer exist.
+      Use: from doeff import run, async_run, default_handlers
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: deprecated-runtime
+      rationale: "These classes are removed from doeff public API"
+
+  - id: doeff-no-legacy-runtime-class-def
+    pattern-regex: 'class\s+(AsyncRuntime|SyncRuntime|ProgramInterpreter)\b'
+    message: |
+      BANNED: Defining compatibility shim classes for removed runtimes.
+      Do not create AsyncRuntime/SyncRuntime/ProgramInterpreter shim classes.
+      Migrate call sites to use run()/async_run()/default_handlers() directly.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: deprecated-runtime
+      rationale: "Shim classes defeat the purpose of migration"
+
+  - id: doeff-no-monkey-patch-module
+    pattern-regex: 'doeff\.\w+\s*=\s*'
+    paths:
+      exclude:
+        - "**/doeff/**"
+    message: |
+      BANNED: Monkey-patching the doeff module from outside.
+      Do not inject attributes into the doeff namespace (e.g. doeff.AsyncRuntime = ...).
+      Use the official public API as-is.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: deprecated-runtime
+      rationale: "Monkey-patching masks incomplete migrations"
+
+  # ---------------------------------------------------------------------------
   # DOEFF DOEXPR HIERARCHY ENFORCEMENT
   # ---------------------------------------------------------------------------
 
