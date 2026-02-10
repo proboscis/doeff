@@ -34,6 +34,7 @@ async_run = _ext.async_run
 state = _ext.state
 reader = _ext.reader
 writer = _ext.writer
+result_safe = _ext.result_safe
 scheduler = _ext.scheduler
 await_handler = _ext.await_handler
 kpc = _ext.kpc
@@ -146,6 +147,7 @@ __all__ = [
     "run",
     "scheduler",
     "state",
+    "result_safe",
     "await_handler",
     "writer",
     "TAG_PURE",

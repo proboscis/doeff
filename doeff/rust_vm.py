@@ -110,7 +110,7 @@ async def _call_async_run_fn(run_fn: Any, program: Any, kwargs: dict[str, Any]) 
 
 def default_handlers() -> list[Any]:
     vm = _vm()
-    required = ("state", "reader", "writer", "scheduler", "kpc", "await_handler")
+    required = ("state", "reader", "writer", "result_safe", "scheduler", "kpc", "await_handler")
     if all(hasattr(vm, name) for name in required):
         return [getattr(vm, name) for name in required]
     missing = [name for name in required if not hasattr(vm, name)]
@@ -183,6 +183,8 @@ def __getattr__(name: str) -> Any:
         "state",
         "reader",
         "writer",
+        "result_safe",
+        "await_handler",
     }:
         vm = _vm()
         if not hasattr(vm, name):
@@ -210,4 +212,6 @@ __all__ = [
     "state",
     "reader",
     "writer",
+    "result_safe",
+    "await_handler",
 ]
