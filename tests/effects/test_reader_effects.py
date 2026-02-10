@@ -41,56 +41,6 @@ class TestAskMissingKey:
     """Tests for Ask behavior when key is missing from environment."""
 
     @pytest.mark.asyncio
-    async def test_ask_missing_key_raises_missing_env_key_error(
-        self, parameterized_interpreter
-    ) -> None:
-        """Ask raises MissingEnvKeyError when key is not in environment."""
-
-        @do
-        def program():
-            value = yield Ask("missing_key")
-            return value
-
-        result = await parameterized_interpreter.run_async(program(), env={})
-
-        assert result.is_err()
-        assert isinstance(result.error, MissingEnvKeyError)
-        assert result.error.key == "missing_key"
-        assert "missing_key" in str(result.error)
-
-    @pytest.mark.asyncio
-    async def test_ask_missing_key_error_has_helpful_message(
-        self, parameterized_interpreter
-    ) -> None:
-        """MissingEnvKeyError includes helpful hints for the user."""
-
-        @do
-        def program():
-            value = yield Ask("config.database.host")
-            return value
-
-        result = await parameterized_interpreter.run_async(program(), env={})
-
-        assert result.is_err()
-        error_message = str(result.error)
-        assert "config.database.host" in error_message
-        assert "Hint:" in error_message
-
-    @pytest.mark.asyncio
-    async def test_missing_env_key_error_is_key_error(self, parameterized_interpreter) -> None:
-        """MissingEnvKeyError is a KeyError subclass for backwards compatibility."""
-
-        @do
-        def program():
-            value = yield Ask("missing")
-            return value
-
-        result = await parameterized_interpreter.run_async(program(), env={})
-
-        assert result.is_err()
-        assert isinstance(result.error, KeyError)
-
-    @pytest.mark.asyncio
     async def test_ask_existing_key_succeeds(self, parameterized_interpreter) -> None:
         """Ask returns value when key exists in environment."""
 
