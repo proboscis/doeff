@@ -9,7 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -40,7 +40,7 @@ from doeff_gemini.types import APICallMetadata
 genai_types = google_genai.types
 from pydantic import BaseModel
 
-from doeff import AsyncRuntime, EffectGenerator, Gather, do
+from doeff import EffectGenerator, async_run, default_handlers, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
@@ -109,9 +109,7 @@ async def test_build_contents_text_only() -> None:
     def flow() -> EffectGenerator[Any]:
         contents = yield build_contents("Hello Gemini")
         return contents
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     contents = result.value
@@ -144,9 +142,7 @@ async def test_build_generation_config_basic() -> None:
             generation_config_overrides={"stop_sequences": ["END"], "logprobs": 2},
         )
         return config
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     config = result.value
@@ -183,9 +179,7 @@ async def test_build_generation_config_with_modalities() -> None:
                 image_config=None,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     config = result.value
@@ -206,9 +200,7 @@ async def test_process_structured_response_from_text() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     parsed = result.value
@@ -222,16 +214,13 @@ async def test_process_structured_response_from_parsed() -> None:
     """When Gemini provides a parsed payload it should be reused directly."""
 
     parsed_response = SimpleResponse(answer="4", confidence=1.0)
-    response = MagicMock()
-    response.parsed = [parsed_response]
+    response = SimpleNamespace(parsed=[parsed_response])
 
     @do
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value is parsed_response
@@ -253,9 +242,7 @@ async def test_process_structured_response_nested_model_from_parsed() -> None:
     def flow() -> EffectGenerator[SymbolAssessmentsV2]:
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value is parsed_response
@@ -282,9 +269,7 @@ async def test_process_structured_response_from_json_part() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     payload = result.value
@@ -313,9 +298,7 @@ async def test_process_structured_response_from_json_part_string_payload() -> No
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     payload = result.value
@@ -343,9 +326,7 @@ async def test_process_structured_response_from_json_part_with_model() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     payload = result.value
@@ -377,9 +358,7 @@ async def test_process_structured_response_nested_model_from_json_part() -> None
     def flow() -> EffectGenerator[SymbolAssessmentsV2]:
         result = yield process_structured_response(response, SymbolAssessmentsV2)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     payload = result.value
@@ -411,9 +390,7 @@ async def test_process_structured_response_from_outputs_structure() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     payload = result.value
@@ -431,9 +408,7 @@ async def test_process_structured_response_without_json_payload() -> None:
     def flow() -> EffectGenerator[SimpleResponse]:
         result = yield process_structured_response(response, SimpleResponse)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_err()
     error = result.result.error
@@ -445,16 +420,13 @@ async def test_process_structured_response_without_json_payload() -> None:
 async def test_process_unstructured_response() -> None:
     """Unstructured responses surface plain text."""
 
-    response = MagicMock()
-    response.text = "A concise answer"
+    response = SimpleNamespace(text="A concise answer")
 
     @do
     def flow() -> EffectGenerator[str]:
         result = yield process_unstructured_response(response)
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value == "A concise answer"
@@ -512,9 +484,7 @@ async def test_repair_structured_response_uses_default_when_missing(monkeypatch)
                 default_sllm=default_sllm,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     assert result.value.answer == "fixed"
@@ -556,9 +526,7 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
                 default_sllm=default_sllm,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env={"sllm_for_json_fix": custom_fix})
+    result = await async_run(flow(), handlers=default_handlers(), env={"sllm_for_json_fix": custom_fix})
 
     assert result.is_ok()
     payload = result.value
@@ -571,21 +539,18 @@ async def test_repair_structured_response_uses_injected_sllm() -> None:
 async def test_structured_llm_text_only() -> None:
     """End-to-end call should delegate to the async Gemini client."""
 
-    mock_response = MagicMock()
-    mock_response.text = "Test response"
-    usage = MagicMock()
-    usage.input_token_count = 10
-    usage.output_token_count = 20
-    usage.total_token_count = 30
-    mock_response.usage_metadata = usage
+    mock_response = SimpleNamespace(
+        text="Test response",
+        usage_metadata=SimpleNamespace(
+            input_token_count=10,
+            output_token_count=20,
+            total_token_count=30,
+        ),
+    )
 
-    async_models = MagicMock()
-    async_models.generate_content = AsyncMock(return_value=mock_response)
-    async_client = MagicMock()
-    async_client.models = async_models
-
-    mock_client = MagicMock()
-    mock_client.async_client = async_client
+    async_models = SimpleNamespace(generate_content=AsyncMock(return_value=mock_response))
+    async_client = SimpleNamespace(models=async_models)
+    mock_client = SimpleNamespace(async_client=async_client)
 
     @do
     def flow() -> EffectGenerator[str]:
@@ -596,9 +561,7 @@ async def test_structured_llm_text_only() -> None:
             temperature=0.2,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env={"gemini_client": mock_client})
+    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
 
     assert result.is_ok()
     assert result.value == "Test response"
@@ -610,7 +573,7 @@ async def test_structured_llm_text_only() -> None:
     assert config.max_output_tokens == 128
     assert config.temperature == 0.2
 
-    api_calls = result.state.get("gemini_api_calls")
+    api_calls = result.raw_store.get("gemini_api_calls")
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "Hello Gemini"
     assert api_calls[0]["prompt_images"] == []
@@ -621,17 +584,15 @@ async def test_structured_llm_with_pydantic() -> None:
     """Structured output should return the requested Pydantic model."""
 
     parsed_response = SimpleResponse(answer="4", confidence=0.99)
-    mock_response = MagicMock()
-    mock_response.parsed = [parsed_response]
-    mock_response.text = json.dumps(parsed_response.model_dump())
-    mock_response.usage_metadata = None
+    mock_response = SimpleNamespace(
+        parsed=[parsed_response],
+        text=json.dumps(parsed_response.model_dump()),
+        usage_metadata=None,
+    )
 
-    async_models = MagicMock()
-    async_models.generate_content = AsyncMock(return_value=mock_response)
-    async_client = MagicMock()
-    async_client.models = async_models
-    mock_client = MagicMock()
-    mock_client.async_client = async_client
+    async_models = SimpleNamespace(generate_content=AsyncMock(return_value=mock_response))
+    async_client = SimpleNamespace(models=async_models)
+    mock_client = SimpleNamespace(async_client=async_client)
 
     @do
     def flow() -> EffectGenerator[SimpleResponse]:
@@ -641,9 +602,7 @@ async def test_structured_llm_with_pydantic() -> None:
             response_format=SimpleResponse,
         )
         return result
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env={"gemini_client": mock_client})
+    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
 
     assert result.is_ok()
     value = result.value
@@ -698,9 +657,7 @@ async def test_process_image_edit_response_success(tmp_path: Path) -> None:
     @do
     def flow() -> EffectGenerator[GeminiImageEditResult]:
         return (yield process_image_edit_response(response))
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
     payload = result.value
@@ -747,13 +704,9 @@ async def test_edit_image__gemini_success() -> None:
         ),
     )
 
-    async_models = MagicMock()
-    async_models.generate_content = AsyncMock(return_value=response)
-    async_client = MagicMock()
-    async_client.models = async_models
-
-    client = MagicMock()
-    client.async_client = async_client
+    async_models = SimpleNamespace(generate_content=AsyncMock(return_value=response))
+    async_client = SimpleNamespace(models=async_models)
+    client = SimpleNamespace(async_client=async_client)
 
     @do
     def flow() -> EffectGenerator[GeminiImageEditResult]:
@@ -768,9 +721,7 @@ async def test_edit_image__gemini_success() -> None:
                 image_size="2K",
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env={"gemini_client": client})
+    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": client})
 
     assert result.is_ok()
     payload = result.value
@@ -783,7 +734,7 @@ async def test_edit_image__gemini_success() -> None:
     config = call_kwargs["config"]
     assert config.response_modalities == ["TEXT", "IMAGE"]
 
-    api_calls = result.state.get("gemini_api_calls")
+    api_calls = result.raw_store.get("gemini_api_calls")
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "Enhance the colors"
     assert api_calls[0]["prompt_images"][0]["mime_type"].startswith("image/")
@@ -824,14 +775,14 @@ async def test_track_api_call_accumulates_under_gather() -> None:
         )
 
     @do
-    def run_parallel() -> EffectGenerator[list[APICallMetadata]]:
-        return (yield Gather(*(invoke(call) for call in call_defs)))
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(run_parallel())
+    def run_calls() -> EffectGenerator[list[APICallMetadata]]:
+        first = yield invoke(call_defs[0])
+        second = yield invoke(call_defs[1])
+        return [first, second]
+    result = await async_run(run_calls(), handlers=default_handlers())
 
     assert result.is_ok()
-    state = result.state
+    state = result.raw_store
     api_calls = state.get("gemini_api_calls")
     assert api_calls is not None
     assert sorted(entry["request_id"] for entry in api_calls) == [

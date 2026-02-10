@@ -12,7 +12,7 @@ from doeff_gemini import (
 )
 from doeff_gemini.client import track_api_call
 
-from doeff import AsyncRuntime, EffectGenerator, Local, do
+from doeff import EffectGenerator, Local, async_run, default_handlers, do
 
 
 def _fake_response(usage: dict[str, int]) -> Any:
@@ -52,12 +52,10 @@ async def test_default_cost_calculator_runs_when_no_custom() -> None:
                 api_payload=None,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
-    total_cost = result.state.get("gemini_total_cost")
+    total_cost = result.raw_store.get("gemini_total_cost")
     assert total_cost is not None and total_cost > 0
 
 
@@ -82,12 +80,10 @@ async def test_default_cost_calculator_supports_gemini3_image() -> None:
                 api_payload=None,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
-    total_cost = result.state.get("gemini_total_cost")
+    total_cost = result.raw_store.get("gemini_total_cost")
     assert total_cost is not None
     # 1M text input tokens at $2 / 1M
     assert total_cost == pytest.approx(2.0)
@@ -118,12 +114,10 @@ async def test_cost_fallback_to_image_tokens_from_total() -> None:
                 api_payload=None,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
-    total_cost = result.state.get("gemini_total_cost")
+    total_cost = result.raw_store.get("gemini_total_cost")
     assert total_cost is not None
     # Expected: 27 tokens at $2 + 1391 tokens at $120 => ~0.167 USD
     assert total_cost == pytest.approx(0.167, rel=1e-2)
@@ -166,12 +160,10 @@ async def test_custom_cost_calculator_overrides_default() -> None:
                 ),
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok()
-    assert result.state.get("gemini_total_cost") == pytest.approx(1.23)
+    assert result.raw_store.get("gemini_total_cost") == pytest.approx(1.23)
 
 
 @pytest.mark.asyncio
@@ -204,8 +196,6 @@ async def test_cost_calculation_failure_raises() -> None:
                 ),
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_err()
