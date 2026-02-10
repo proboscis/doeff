@@ -25,8 +25,7 @@ from datetime import datetime
 
 from doeff_flow import run_workflow
 
-from doeff import do
-from doeff.effects.writer import slog
+from doeff import do, slog
 
 # =============================================================================
 # Worker Workflows
