@@ -6,15 +6,33 @@ external code (threads, asyncio, processes, etc.).
 
 import threading
 import time
+from typing import Any
 
 import pytest
 
 from doeff import async_run, default_handlers, do, run
-from doeff.effects import CreateExternalPromise, Wait
+from doeff.effects import CreateExternalPromise, Wait, gather
 
-pytestmark = pytest.mark.skip(
-    reason="Legacy CESK-era external promise semantics are not in the active rust_vm matrix."
-)
+
+def _run_with_timeout(program_factory, timeout: float = 1.0) -> Any:
+    result: dict[str, Any] = {}
+    error: dict[str, BaseException] = {}
+
+    def _worker() -> None:
+        try:
+            result["value"] = run(program_factory(), handlers=default_handlers())
+        except BaseException as exc:  # pragma: no cover - test helper
+            error["value"] = exc
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout)
+    assert not thread.is_alive(), "program timed out waiting for external completion"
+
+    if "value" in error:
+        raise error["value"]
+
+    return result["value"]
 
 
 class TestExternalPromiseBasics:
@@ -166,3 +184,26 @@ class TestExternalPromiseMultiple:
         result = run(program(), handlers=default_handlers())
         assert result.is_ok
         assert result.value == ("first", "second")
+
+    def test_gather_external_promises_completed_from_thread(self) -> None:
+        """Gather over external futures completes via scheduler bridge."""
+
+        @do
+        def program():
+            promise1 = yield CreateExternalPromise()
+            promise2 = yield CreateExternalPromise()
+
+            def worker():
+                time.sleep(0.01)
+                promise1.complete("one")
+                time.sleep(0.01)
+                promise2.complete("two")
+
+            threading.Thread(target=worker).start()
+
+            results = yield gather(promise1.future, promise2.future)
+            return tuple(results)
+
+        result = _run_with_timeout(program, timeout=1.0)
+        assert result.is_ok
+        assert result.value == ("one", "two")
