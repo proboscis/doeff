@@ -53,20 +53,54 @@ def _build_local_overlay(env_update: Mapping[Any, object]) -> dict[Any, object]:
     return overlay
 
 
+def _is_lazy_program_value(value: object) -> bool:
+    do_expr = getattr(doeff_vm, "DoExpr", None)
+    if do_expr is not None and isinstance(value, do_expr):
+        return True
+
+    effect_base = getattr(doeff_vm, "EffectBase", None)
+    if effect_base is not None and isinstance(value, effect_base):
+        return True
+
+    if bool(getattr(value, "__doeff_do_expr_base__", False)):
+        return True
+
+    return bool(getattr(value, "__doeff_effect_base__", False))
+
+
+def _build_local_handler(overlay: dict[Any, object]):
+    lazy_cache: dict[Any, object] = {}
+
+    def handle_local_ask(effect, k):
+        key: Any | None = None
+        if isinstance(effect, AskEffect):
+            key = effect.key
+        elif isinstance(effect, HashableAskEffect):
+            key = effect.key
+
+        if key is not None and key in overlay:
+            if key in lazy_cache:
+                return (yield doeff_vm.Resume(k, lazy_cache[key]))
+
+            value = overlay[key]
+            if _is_lazy_program_value(value):
+                resolved = yield value
+                lazy_cache[key] = resolved
+                return (yield doeff_vm.Resume(k, resolved))
+
+            return (yield doeff_vm.Resume(k, value))
+
+        yield doeff_vm.Delegate()
+
+    return handle_local_ask
+
+
 def local(env_update: Mapping[Any, object], sub_program: ProgramLike):
     ensure_env_mapping(env_update, name="env_update")
     ensure_program_like(sub_program, name="sub_program")
 
     overlay = _build_local_overlay(env_update)
-
-    def handle_local_ask(effect, k):
-        if isinstance(effect, AskEffect) and effect.key in overlay:
-            return (yield doeff_vm.Resume(k, overlay[effect.key]))
-        if isinstance(effect, HashableAskEffect) and effect.key in overlay:
-            return (yield doeff_vm.Resume(k, overlay[effect.key]))
-        yield doeff_vm.Delegate()
-
-    return doeff_vm.WithHandler(handle_local_ask, sub_program)
+    return doeff_vm.WithHandler(_build_local_handler(overlay), sub_program)
 
 
 def Ask(key: EnvKey) -> Effect:
@@ -81,15 +115,7 @@ def Local(env_update: Mapping[Any, object], sub_program: ProgramLike) -> Effect:
     ensure_program_like(sub_program, name="sub_program")
 
     overlay = _build_local_overlay(env_update)
-
-    def handle_local_ask(effect, k):
-        if isinstance(effect, AskEffect) and effect.key in overlay:
-            return (yield doeff_vm.Resume(k, overlay[effect.key]))
-        if isinstance(effect, HashableAskEffect) and effect.key in overlay:
-            return (yield doeff_vm.Resume(k, overlay[effect.key]))
-        yield doeff_vm.Delegate()
-
-    return doeff_vm.WithHandler(handle_local_ask, sub_program)
+    return doeff_vm.WithHandler(_build_local_handler(overlay), sub_program)
 
 
 __all__ = [

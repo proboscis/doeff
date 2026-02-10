@@ -2,6 +2,11 @@
 Vendored minimal types from sge_hub.monads.state_graph_future_result
 These types are ported to avoid circular dependencies.
 Original source: sge-hub/src/sge_hub/monads/state_graph_future_result/
+
+This module is INTERNAL.
+Public Result/Ok/Err imports should come from `doeff` / `doeff.types`.
+rust_vm paths use unified `doeff.Ok` / `doeff.Err` instance checks that accept
+both Rust and Python-backed result objects.
 """
 
 from __future__ import annotations
