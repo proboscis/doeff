@@ -6,22 +6,23 @@ with doeff-agentic's effect system.
 
 Test modes:
 - Default: Uses MockOpenCodeHandler (no external deps, runs in CI)
-- Real: Set CONDUCTOR_TEST_REAL_OPENCODE=1 to test with actual OpenCode server
+- Integration marker: includes WithHandler interception path with mocked handlers
 
 Run:
-    # Mock mode (default)
+    # Run all tests
     uv run pytest packages/doeff-conductor/tests/test_agentic_integration.py -v
 
-    # Real OpenCode mode (requires running opencode server)
-    CONDUCTOR_TEST_REAL_OPENCODE=1 uv run pytest packages/doeff-conductor/tests/test_agentic_integration.py -v -m integration
+    # Run only integration-marked tests
+    uv run pytest packages/doeff-conductor/tests/test_agentic_integration.py -v -m integration
 """
 
 from __future__ import annotations
 
-import os
 import secrets
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 from doeff_agentic import (
@@ -46,7 +47,7 @@ from doeff_conductor.handlers import run_sync
 from doeff_conductor.handlers.agent_handler import AgentHandler
 from doeff_conductor.types import AgentRef, WorktreeEnv
 
-from doeff import do
+from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
 
 # =============================================================================
 # Mock OpenCode Handler
@@ -258,6 +259,24 @@ def agent_handler_with_mock(mock_handler: MockOpenCodeHandler) -> AgentHandler:
     return handler
 
 
+def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]) -> Any:
+    wrapped = program
+    for effect_type, effect_handler in reversed(list(handlers.items())):
+
+        def typed_handler(effect, k, _effect_type=effect_type, _handler=effect_handler):
+            if isinstance(effect, _effect_type):
+                return (yield Resume(k, _handler(effect)))
+            yield Delegate()
+
+        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
+    return wrapped
+
+
+def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
+    wrapped = _wrap_with_effect_handlers(program, handlers)
+    return run(wrapped, handlers=default_handlers())
+
+
 # =============================================================================
 # Integration Tests (Mock Mode)
 # =============================================================================
@@ -280,7 +299,7 @@ class TestAgentHandlerIntegration:
 
         # Verify environment was created
         assert len(mock_handler._environments) == 1
-        env = list(mock_handler._environments.values())[0]
+        env = next(iter(mock_handler._environments.values()))
         assert env.working_dir == str(worktree_env.path)
 
         # Verify session was created
@@ -355,7 +374,7 @@ class TestAgentHandlerIntegration:
         agent_handler_with_mock.handle_run_agent(run_effect)
 
         # Get session ref
-        session_id = list(mock_handler._sessions.keys())[0]
+        session_id = next(iter(mock_handler._sessions.keys()))
         ref = AgentRef(
             id=session_id,
             name="test",
@@ -385,7 +404,7 @@ class TestAgentHandlerIntegration:
         agent_handler_with_mock.handle_run_agent(run_effect)
 
         # Get session ref
-        session_id = list(mock_handler._sessions.keys())[0]
+        session_id = next(iter(mock_handler._sessions.keys()))
         ref = AgentRef(
             id=session_id,
             name="test",
@@ -498,57 +517,36 @@ class TestConductorWorkflowIntegration:
 
 
 # =============================================================================
-# Real OpenCode Integration Tests (Optional)
+# WithHandler Integration Tests
 # =============================================================================
 
 
-@pytest.mark.integration
-@pytest.mark.skipif(
-    not os.environ.get("CONDUCTOR_TEST_REAL_OPENCODE"),
-    reason="Set CONDUCTOR_TEST_REAL_OPENCODE=1 to run real integration tests",
-)
-class TestRealOpenCodeIntegration:
-    """
-    Integration tests that use a real OpenCode server.
+class TestWithHandlerIntegration:
+    """Integration tests that exercise conductor effects via WithHandler mocks."""
 
-    These tests require:
-    1. OpenCode server running (or auto-started)
-    2. CONDUCTOR_TEST_REAL_OPENCODE=1 environment variable
-
-    Run:
-        CONDUCTOR_TEST_REAL_OPENCODE=1 uv run pytest -v -m integration
-    """
-
-    @pytest.fixture
-    def real_worktree(self, tmp_path: Path) -> WorktreeEnv:
-        """Create a real test directory."""
-        test_dir = tmp_path / "test_project"
-        test_dir.mkdir()
-        (test_dir / "README.md").write_text("# Test Project\n")
-        (test_dir / "main.py").write_text("print('hello')\n")
-
-        return WorktreeEnv(
-            id="real-test-env",
-            path=test_dir,
-            branch="test",
-            base_commit="abc123",
-            created_at=datetime.now(timezone.utc),
-        )
-
-    def test_real_run_agent(self, real_worktree: WorktreeEnv):
-        """Test RunAgent with real OpenCode server."""
-        from doeff_conductor.effects.agent import RunAgent
+    def test_run_agent_with_intercepted_handler(
+        self,
+        worktree_env: WorktreeEnv,
+        mock_handler: MockOpenCodeHandler,
+    ):
+        @do
+        def workflow():
+            output = yield RunAgent(
+                env=worktree_env,
+                prompt="List the files in this directory and describe what you see.",
+            )
+            return output
 
         agent_handler = AgentHandler(workflow_id=f"test-{secrets.token_hex(4)}")
+        agent_handler._opencode_handler = mock_handler
 
-        effect = RunAgent(
-            env=real_worktree,
-            prompt="List the files in this directory and describe what you see.",
+        result = _run_with_effect_handlers(
+            workflow(),
+            {
+                RunAgent: agent_handler.handle_run_agent,
+            },
         )
 
-        # This will use real OpenCode
-        result = agent_handler.handle_run_agent(effect)
-
-        # Should get a meaningful response about the files
-        assert result  # Non-empty response
-        assert len(result) > 10  # Some substantial content
+        assert result.is_ok
+        assert result.value
+        assert len(result.value) > 10
