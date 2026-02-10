@@ -15,7 +15,6 @@ from doeff import (
     Get,
     Put,
     Safe,
-    Step,
     Tell,
     do,
 )
@@ -242,7 +241,7 @@ def track_api_call(
             latency_ms,
         )
     )
-    yield Step(value=value, meta=meta)
+    yield Tell({"seedream_api_call": value, "meta": meta})
 
 
 __all__ = ["DEFAULT_BASE_URL", "DEFAULT_TIMEOUT", "SeedreamClient", "get_seedream_client", "track_api_call"]
