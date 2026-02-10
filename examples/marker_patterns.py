@@ -9,7 +9,7 @@ import functools
 from collections.abc import Callable
 from typing import Any, TypeVar
 
-from doeff import Effect, Program, do
+from doeff import Effect, Program, async_run, default_handlers, do, run
 
 # ============================================================================
 # PATTERN 1: Generic Type Parameters with Markers
@@ -20,19 +20,18 @@ R = TypeVar("R")
 
 
 def generic_interpreter(  # doeff: interpreter
-    program: Program[T]
+    program: Program[T],
 ) -> T:
     """
     Generic interpreter that preserves type information.
     The marker works with generic type parameters.
     """
-    return program.run()
+    return run(program, handlers=default_handlers())
 
 
 @do
 def map_transform(  # doeff: transform
-    program: Program[T],
-    mapper: Callable[[T], R]
+    program: Program[T], mapper: Callable[[T], R]
 ) -> Program[R]:
     """
     Transform that maps over program results.
@@ -45,10 +44,11 @@ def map_transform(  # doeff: transform
 # PATTERN 2: Decorator Stacking with Markers
 # ============================================================================
 
+
 @functools.lru_cache(maxsize=128)
 @do
 def cached_kleisli(  # doeff: kleisli
-    key: str
+    key: str,
 ):
     """
     Kleisli function with caching decorator.
@@ -60,24 +60,26 @@ def cached_kleisli(  # doeff: kleisli
 
 def with_logging(func):
     """Decorator that adds logging to functions."""
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         print(f"Calling {func.__name__}")
         result = func(*args, **kwargs)
         print(f"Result: {result}")
         return result
+
     return wrapper
 
 
 @with_logging
 def logged_interpreter(  # doeff: interpreter
-    program: Program
+    program: Program,
 ):
     """
     Interpreter with custom logging decorator.
     The marker is preserved through decoration.
     """
-    return program.run()
+    return run(program, handlers=default_handlers())
 
 
 # ============================================================================
@@ -99,38 +101,34 @@ class CustomInterpreter:
     """Concrete interpreter implementation."""
 
     def interpret(  # doeff: interpreter
-        self,
-        program: Program
+        self, program: Program
     ) -> Any:
         """
         Implementation of interpreter protocol.
         Marker on protocol method implementation.
         """
-        return program.run_with_context({"interpreter": "custom"})
+        return run(program, handlers=default_handlers())
 
 
 class BatchInterpreter:
     """Interpreter that handles multiple programs."""
 
     def interpret_batch(  # doeff: interpreter
-        self,
-        programs: list[Program]
+        self, programs: list[Program]
     ) -> list[Any]:
         """
         Batch interpreter for multiple programs.
         Marker indicates this is an interpreter variant.
         """
-        return [p.run() for p in programs]
+        return [run(p, handlers=default_handlers()) for p in programs]
 
 
 # ============================================================================
 # PATTERN 4: Conditional and Dynamic Markers
 # ============================================================================
 
-def conditional_interpreter(
-    program: Program,
-    mode: str = "default"
-):  # doeff: interpreter
+
+def conditional_interpreter(program: Program, mode: str = "default"):  # doeff: interpreter
     """
     Interpreter with conditional behavior.
     Single marker despite multiple execution paths.
@@ -140,13 +138,12 @@ def conditional_interpreter(
         return program.run_debug()
     if mode == "async":
         import asyncio
-        return asyncio.run(program.async_run())
-    return program.run()
+
+        return asyncio.run(async_run(program, handlers=default_handlers()))
+    return run(program, handlers=default_handlers())
 
 
-def interpreter_factory(
-    strategy: str
-) -> Callable[[Program], Any]:  # doeff: interpreter
+def interpreter_factory(strategy: str) -> Callable[[Program], Any]:  # doeff: interpreter
     """
     Factory that creates interpreters based on strategy.
     The factory itself is marked as interpreter-related.
@@ -154,7 +151,7 @@ def interpreter_factory(
     strategies = {
         "fast": lambda p: p.run_fast(),
         "safe": lambda p: p.run_safe(),
-        "debug": lambda p: p.run_debug()
+        "debug": lambda p: p.run_debug(),
     }
     return strategies.get(strategy, lambda p: p.run())
 
@@ -163,31 +160,36 @@ def interpreter_factory(
 # PATTERN 5: Partial Application and Currying with Markers
 # ============================================================================
 
+
 def curried_interpreter(  # doeff: interpreter
-    config: dict
+    config: dict,
 ) -> Callable[[Program], Any]:
     """
     Curried interpreter that returns a configured interpreter.
     The outer function is marked, indicating interpreter creation.
     """
+
     def inner(program: Program) -> Any:
-        return program.run_with_config(config)
+        return run(program, handlers=default_handlers())
+
     return inner
 
 
 @do
 def partial_transform(  # doeff: transform
-    optimization_level: int = 1
+    optimization_level: int = 1,
 ) -> Callable[[Program], Program]:
     """
     Partially applied transform function.
     Returns a transformer with fixed optimization level.
     """
+
     @do
     def apply(program: Program) -> Program:
         for _ in range(optimization_level):
             program = program.optimize()
         return program
+
     return apply
 
 
@@ -195,37 +197,43 @@ def partial_transform(  # doeff: transform
 # PATTERN 6: Composition Patterns with Markers
 # ============================================================================
 
+
 def compose_interpreters(  # doeff: interpreter
-    *interpreters: Callable[[Program], Any]
+    *interpreters: Callable[[Program], Any],
 ) -> Callable[[Program], list[Any]]:
     """
     Composes multiple interpreters to run in sequence.
     The composer itself is marked as interpreter-related.
     """
+
     def composed(program: Program) -> list[Any]:
         return [interp(program) for interp in interpreters]
+
     return composed
 
 
 @do
 def pipeline_transform(  # doeff: transform
-    *transforms: Callable[[Program], Program]
+    *transforms: Callable[[Program], Program],
 ) -> Callable[[Program], Program]:
     """
     Creates a pipeline of transformations.
     The pipeline builder is marked as a transform.
     """
+
     def pipeline(program: Program) -> Program:
         result = program
         for transform in transforms:
             result = transform(result)
         return result
+
     return pipeline
 
 
 # ============================================================================
 # PATTERN 7: Context Managers with Markers
 # ============================================================================
+
 
 class InterpreterContext:
     """Context manager for interpreter execution."""
@@ -241,38 +249,39 @@ class InterpreterContext:
 
     def run(self, program: Program) -> Any:  # doeff: interpreter
         """Run program in context."""
-        return program.run()
+        return run(program, handlers=default_handlers())
 
 
 # ============================================================================
 # PATTERN 8: Async/Await Patterns with Markers
 # ============================================================================
 
+
 async def async_interpreter(  # doeff: interpreter
-    program: Program
+    program: Program,
 ) -> Any:
     """
     Async interpreter using async/await.
     Markers work with async functions.
     """
-    result = await program.async_run()
+    result = await async_run(program, handlers=default_handlers())
     return result
 
 
 @do
-async def async_kleisli():  # doeff: kleisli
+def async_kleisli():  # doeff: kleisli
     """
-    Async Kleisli function.
-    Combines @do decorator with async and marker.
+    Kleisli function demonstrating async-style effects.
+    Uses @do decorator with marker for async-like patterns.
     """
     result = yield Effect("async_operation")
-    await asyncio.sleep(0.1)
     return result
 
 
 # ============================================================================
 # PATTERN 9: Property-based Markers
 # ============================================================================
+
 
 class ProgramManager:
     """Manager class with property-based program access."""
@@ -302,9 +311,9 @@ class ProgramManager:
 # PATTERN 10: Error Handling with Markers
 # ============================================================================
 
+
 def safe_interpreter(  # doeff: interpreter
-    program: Program,
-    default: Any = None
+    program: Program, default: Any = None
 ) -> Any:
     """
     Interpreter with error handling.
@@ -319,8 +328,7 @@ def safe_interpreter(  # doeff: interpreter
 
 @do
 def resilient_transform(  # doeff: transform
-    program: Program,
-    max_retries: int = 3
+    program: Program, max_retries: int = 3
 ) -> Program:
     """
     Transform with retry logic.
