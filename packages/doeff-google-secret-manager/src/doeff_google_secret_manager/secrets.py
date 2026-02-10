@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Await, EffectGenerator, Step, Tell, do
+from doeff import Await, EffectGenerator, Tell, do
 
 from .client import SecretManagerClient, get_secret_manager_client
 
@@ -73,14 +73,6 @@ def access_secret(
     else:
         secret_value = raw_data
 
-    yield Step(
-        value={"secret_id": secret_id, "decoded": decode},
-        meta={
-            "secret_manager": True,
-            "project": resolved_project,
-            "version": version,
-        },
-    )
     return secret_value
 
 
