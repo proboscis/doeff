@@ -11,6 +11,7 @@
 | **R8-C** | §5 Handlers | Handler contract clarified: `(effect, k) -> DoExpr`. If handler returns effect data, runtime wraps it as `Perform(effect)` before continuation. |
 | **R8-D** | §6 Composition | `WithHandler(handler, expr)` remains canonical; `expr` must be DoExpr control IR. |
 | **R8-E** | §12 Type validation | Validation table updated to distinguish DoExpr control from effect values and to codify Perform-lifting behavior. |
+| **R8-F** | §3 @do | `@do` MUST NOT be applied to `async def`. There is no "async kleisli" concept. Coroutines silently bypass the generator protocol. Use `yield Await(coro)` for async I/O. |
 
 ### Revision 7 Changelog
 
@@ -409,6 +410,35 @@ generator function and its arguments. KPC is an effect — it is dispatched to t
 KPC handler, which resolves args and calls the kernel. This deferred execution is
 what makes programs composable — they can be passed to `WithHandler`, `Resume`,
 etc. without starting execution.
+
+### @do MUST NOT be used with async def [R8-F]
+
+`@do` requires a **generator function** (`def` with `yield`). Applying `@do` to
+an `async def` is **always a bug** — there is no "async kleisli" concept.
+
+```python
+# CORRECT — generator function, uses yield for effects and Await for async I/O:
+@do
+def fetch_data(url: str):
+    config = yield Ask("http_config")
+    result = yield Await(aiohttp_get(url, config))
+    return result
+
+# WRONG — async def produces a coroutine, not a generator:
+@do
+async def fetch_data(url: str):  # BUG: silently broken
+    ...
+```
+
+**Why it is broken**: `@do` calls the decorated function and expects a generator
+object. `async def` returns a coroutine object instead. The `@do` wrapper's
+`inspect.isgenerator()` check returns `False`, and the coroutine is silently
+returned as the "result" without executing the body.
+
+**Correct async pattern**: Use a regular `@do` generator function and
+`yield Await(coroutine)` for async I/O. The `Await` effect is handled by the
+scheduler or the `_await_handler`, which runs the coroutine on the event loop
+and resumes the program with the result. See SPEC-EFF-005.
 
 ---
 
