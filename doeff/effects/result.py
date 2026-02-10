@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import inspect
 from typing import Any
 
@@ -12,17 +11,6 @@ from doeff.types import Ok as _PyOk
 
 from ._program_types import ProgramLike
 from ._validators import ensure_program_like
-from .base import EffectBase
-
-
-@dataclass(frozen=True)
-class ResultSafeEffect(EffectBase):
-    """Runs the sub-program and yields a Result for success/failure."""
-
-    sub_program: ProgramLike
-
-    def __post_init__(self) -> None:
-        ensure_program_like(self.sub_program, name="sub_program")
 
 
 def _clone_kpc_with_kernel(kpc: Any, execution_kernel: Any) -> Any:
@@ -136,7 +124,6 @@ def Safe(sub_program: ProgramLike) -> ProgramLike:
 
 
 __all__ = [
-    "ResultSafeEffect",
     "Safe",
     "safe",
 ]
