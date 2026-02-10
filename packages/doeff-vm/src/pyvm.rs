@@ -72,7 +72,8 @@ use crate::error::VMError;
 use crate::frame::CallMetadata;
 use crate::handler::{
     AwaitHandlerFactory, ConcurrentKpcHandlerFactory, Handler, HandlerEntry, KpcHandlerFactory,
-    ReaderHandlerFactory, RustProgramHandlerRef, StateHandlerFactory, WriterHandlerFactory,
+    ReaderHandlerFactory, ResultSafeHandlerFactory, RustProgramHandlerRef, StateHandlerFactory,
+    WriterHandlerFactory,
 };
 use crate::ids::Marker;
 use crate::py_shared::PyShared;
@@ -118,7 +119,9 @@ fn lift_effect_to_perform_expr(py: Python<'_>, expr: Py<PyAny>) -> PyResult<Py<P
     let perform = Bound::new(
         py,
         PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase { tag: DoExprTag::Perform as u8 })
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Perform as u8,
+            })
             .add_subclass(PyPerform {
                 effect: expr.clone_ref(py),
             }),
@@ -165,7 +168,6 @@ impl PyDoCtrlBase {
         })
     }
 }
-
 
 #[pyclass]
 pub struct PyStdlib {
@@ -639,7 +641,8 @@ impl PyVM {
                                 || result.is_callable();
 
                             if !is_doexpr_like {
-                                let gen = self.wrap_return_value_as_generator(py, result.unbind())?;
+                                let gen =
+                                    self.wrap_return_value_as_generator(py, result.unbind())?;
                                 return Ok(PyCallOutcome::Value(Value::Python(gen)));
                             }
 
@@ -739,7 +742,11 @@ impl PyVM {
         Ok(gen.unbind())
     }
 
-    fn wrap_return_value_as_generator(&self, py: Python<'_>, value: Py<PyAny>) -> PyResult<Py<PyAny>> {
+    fn wrap_return_value_as_generator(
+        &self,
+        py: Python<'_>,
+        value: Py<PyAny>,
+    ) -> PyResult<Py<PyAny>> {
         use pyo3::types::PyModule;
         let code = c"def _ret(v):\n    if False:\n        yield v\n    return v\n";
         let module = PyModule::from_code(py, code, c"_value_wrap", c"_value_wrap")?;
@@ -790,14 +797,19 @@ impl PyVM {
                 DoExprTag::WithHandler => {
                     let wh: PyRef<'_, PyWithHandler> = obj.extract()?;
                     let handler_bound = wh.handler.bind(py);
-                    let (handler, py_identity) = if handler_bound.is_instance_of::<PyRustHandlerSentinel>() {
+                    let (handler, py_identity) = if handler_bound
+                        .is_instance_of::<PyRustHandlerSentinel>()
+                    {
                         let sentinel: PyRef<'_, PyRustHandlerSentinel> = handler_bound.extract()?;
                         (
                             Handler::RustProgram(sentinel.factory.clone()),
                             Some(PyShared::new(wh.handler.clone_ref(py))),
                         )
                     } else {
-                        (Handler::Python(PyShared::new(wh.handler.clone_ref(py))), None)
+                        (
+                            Handler::Python(PyShared::new(wh.handler.clone_ref(py))),
+                            None,
+                        )
                     };
                     Ok(Yielded::DoCtrl(DoCtrl::WithHandler {
                         handler,
@@ -853,12 +865,21 @@ impl PyVM {
                 DoExprTag::Resume => {
                     let r: PyRef<'_, PyResume> = obj.extract()?;
                     let k_pyobj = r.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                        PyTypeError::new_err("Resume.continuation must be K (opaque continuation handle)")
+                        PyTypeError::new_err(
+                            "Resume.continuation must be K (opaque continuation handle)",
+                        )
                     })?;
                     let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!("Resume with unknown continuation id {}", cont_id.raw()))
-                    })?;
+                    let k = self
+                        .vm
+                        .lookup_continuation(cont_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            PyRuntimeError::new_err(format!(
+                                "Resume with unknown continuation id {}",
+                                cont_id.raw()
+                            ))
+                        })?;
                     Ok(Yielded::DoCtrl(DoCtrl::Resume {
                         continuation: k,
                         value: Value::from_pyobject(r.value.bind(py)),
@@ -867,12 +888,21 @@ impl PyVM {
                 DoExprTag::Transfer => {
                     let t: PyRef<'_, PyTransfer> = obj.extract()?;
                     let k_pyobj = t.continuation.bind(py).cast::<PyK>().map_err(|_| {
-                        PyTypeError::new_err("Transfer.continuation must be K (opaque continuation handle)")
+                        PyTypeError::new_err(
+                            "Transfer.continuation must be K (opaque continuation handle)",
+                        )
                     })?;
                     let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!("Transfer with unknown continuation id {}", cont_id.raw()))
-                    })?;
+                    let k = self
+                        .vm
+                        .lookup_continuation(cont_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            PyRuntimeError::new_err(format!(
+                                "Transfer with unknown continuation id {}",
+                                cont_id.raw()
+                            ))
+                        })?;
                     Ok(Yielded::DoCtrl(DoCtrl::Transfer {
                         continuation: k,
                         value: Value::from_pyobject(t.value.bind(py)),
@@ -901,9 +931,16 @@ impl PyVM {
                         PyTypeError::new_err("ResumeContinuation.continuation must be K (opaque continuation handle)")
                     })?;
                     let cont_id = k_pyobj.borrow().cont_id;
-                    let k = self.vm.lookup_continuation(cont_id).cloned().ok_or_else(|| {
-                        PyRuntimeError::new_err(format!("ResumeContinuation with unknown continuation id {}", cont_id.raw()))
-                    })?;
+                    let k = self
+                        .vm
+                        .lookup_continuation(cont_id)
+                        .cloned()
+                        .ok_or_else(|| {
+                            PyRuntimeError::new_err(format!(
+                                "ResumeContinuation with unknown continuation id {}",
+                                cont_id.raw()
+                            ))
+                        })?;
                     Ok(Yielded::DoCtrl(DoCtrl::ResumeContinuation {
                         continuation: k,
                         value: Value::from_pyobject(rc.value.bind(py)),
@@ -980,7 +1017,6 @@ impl PyVM {
             "yielded value must be EffectBase or DoExpr",
         ))
     }
-
 
     fn values_to_tuple<'py>(
         &self,
@@ -1103,7 +1139,7 @@ fn extract_stop_iteration_value(py: Python<'_>, e: &PyErr) -> PyResult<Value> {
 // D9: Ok/Err wrapper types for RunResult.result (spec says Ok(val)/Err(exc) objects)
 #[pyclass(frozen, name = "Ok")]
 pub struct PyResultOk {
-    value: Py<PyAny>,
+    pub(crate) value: Py<PyAny>,
 }
 
 #[pymethods]
@@ -1143,8 +1179,8 @@ impl PyResultOk {
 
 #[pyclass(frozen, name = "Err")]
 pub struct PyResultErr {
-    error: Py<PyAny>,
-    captured_traceback: Py<PyAny>,
+    pub(crate) error: Py<PyAny>,
+    pub(crate) captured_traceback: Py<PyAny>,
 }
 
 #[pymethods]
@@ -1299,7 +1335,11 @@ pub struct PyWithHandler {
 impl PyWithHandler {
     #[new]
     #[pyo3(signature = (handler, expr))]
-    fn new(py: Python<'_>, handler: Py<PyAny>, expr: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        handler: Py<PyAny>,
+        expr: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         let handler_obj = handler.bind(py);
         if !(handler_obj.is_instance_of::<PyRustHandlerSentinel>() || handler_obj.is_callable()) {
             return Err(PyTypeError::new_err(
@@ -1311,16 +1351,14 @@ impl PyWithHandler {
 
         let expr_obj = expr.bind(py);
         if !expr_obj.is_instance_of::<PyDoExprBase>() {
-            return Err(PyTypeError::new_err(
-                "WithHandler.expr must be DoExpr",
-            ));
+            return Err(PyTypeError::new_err("WithHandler.expr must be DoExpr"));
         }
 
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::WithHandler as u8 })
-                .add_subclass(PyWithHandler { handler, expr }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::WithHandler as u8,
+            })
+            .add_subclass(PyWithHandler { handler, expr }))
     }
 }
 
@@ -1343,7 +1381,9 @@ impl PyPure {
     #[new]
     fn new(value: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase { tag: DoExprTag::Pure as u8 })
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Pure as u8,
+            })
             .add_subclass(PyPure { value })
     }
 }
@@ -1380,11 +1420,16 @@ impl PyCall {
         if !kwargs.bind(py).is_instance_of::<PyDict>() {
             return Err(PyTypeError::new_err("Call.kwargs must be dict"));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Call as u8 })
-                .add_subclass(PyCall { f, args, kwargs, meta }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Call as u8,
+            })
+            .add_subclass(PyCall {
+                f,
+                args,
+                kwargs,
+                meta,
+            }))
     }
 }
 
@@ -1399,13 +1444,17 @@ pub struct PyEval {
 #[pymethods]
 impl PyEval {
     #[new]
-    fn new(py: Python<'_>, expr: Py<PyAny>, handlers: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        expr: Py<PyAny>,
+        handlers: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         let expr = lift_effect_to_perform_expr(py, expr)?;
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Eval as u8 })
-                .add_subclass(PyEval { expr, handlers }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Eval as u8,
+            })
+            .add_subclass(PyEval { expr, handlers }))
     }
 }
 
@@ -1422,26 +1471,30 @@ impl PyPerform {
         if !is_effect_base_like(py, effect.bind(py))? {
             return Err(PyTypeError::new_err("Perform.effect must be EffectBase"));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Perform as u8 })
-                .add_subclass(PyPerform { effect }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Perform as u8,
+            })
+            .add_subclass(PyPerform { effect }))
     }
 }
 
 #[pymethods]
 impl PyMap {
     #[new]
-    fn new(py: Python<'_>, source: Py<PyAny>, mapper: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        source: Py<PyAny>,
+        mapper: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if !mapper.bind(py).is_callable() {
             return Err(PyTypeError::new_err("Map.mapper must be callable"));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Map as u8 })
-                .add_subclass(PyMap { source, mapper }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Map as u8,
+            })
+            .add_subclass(PyMap { source, mapper }))
     }
 }
 
@@ -1456,15 +1509,19 @@ pub struct PyFlatMap {
 #[pymethods]
 impl PyFlatMap {
     #[new]
-    fn new(py: Python<'_>, source: Py<PyAny>, binder: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        source: Py<PyAny>,
+        binder: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if !binder.bind(py).is_callable() {
             return Err(PyTypeError::new_err("FlatMap.binder must be callable"));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::FlatMap as u8 })
-                .add_subclass(PyFlatMap { source, binder }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::FlatMap as u8,
+            })
+            .add_subclass(PyFlatMap { source, binder }))
     }
 }
 
@@ -1480,20 +1537,24 @@ pub struct PyResume {
 #[pymethods]
 impl PyResume {
     #[new]
-    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        continuation: Py<PyAny>,
+        value: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if !continuation.bind(py).is_instance_of::<PyK>() {
             return Err(PyTypeError::new_err(
                 "Resume.continuation must be K (opaque continuation handle)",
             ));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Resume as u8 })
-                .add_subclass(PyResume {
-                    continuation,
-                    value,
-                }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Resume as u8,
+            })
+            .add_subclass(PyResume {
+                continuation,
+                value,
+            }))
     }
 }
 
@@ -1516,11 +1577,11 @@ impl PyDelegate {
                 ));
             }
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Delegate as u8 })
-                .add_subclass(PyDelegate { effect }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Delegate as u8,
+            })
+            .add_subclass(PyDelegate { effect }))
     }
 }
 
@@ -1545,40 +1606,48 @@ pub struct PyResumeContinuation {
 #[pymethods]
 impl PyResumeContinuation {
     #[new]
-    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        continuation: Py<PyAny>,
+        value: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if !continuation.bind(py).is_instance_of::<PyK>() {
             return Err(PyTypeError::new_err(
                 "ResumeContinuation.continuation must be K (opaque continuation handle)",
             ));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::ResumeContinuation as u8 })
-                .add_subclass(PyResumeContinuation {
-                    continuation,
-                    value,
-                }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::ResumeContinuation as u8,
+            })
+            .add_subclass(PyResumeContinuation {
+                continuation,
+                value,
+            }))
     }
 }
 
 #[pymethods]
 impl PyTransfer {
     #[new]
-    fn new(py: Python<'_>, continuation: Py<PyAny>, value: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        continuation: Py<PyAny>,
+        value: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         if !continuation.bind(py).is_instance_of::<PyK>() {
             return Err(PyTypeError::new_err(
                 "Transfer.continuation must be K (opaque continuation handle)",
             ));
         }
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::Transfer as u8 })
-                .add_subclass(PyTransfer {
-                    continuation,
-                    value,
-                }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::Transfer as u8,
+            })
+            .add_subclass(PyTransfer {
+                continuation,
+                value,
+            }))
     }
 }
 
@@ -1594,13 +1663,17 @@ pub struct PyCreateContinuation {
 #[pymethods]
 impl PyCreateContinuation {
     #[new]
-    fn new(py: Python<'_>, program: Py<PyAny>, handlers: Py<PyAny>) -> PyResult<PyClassInitializer<Self>> {
+    fn new(
+        py: Python<'_>,
+        program: Py<PyAny>,
+        handlers: Py<PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
         let program = lift_effect_to_perform_expr(py, program)?;
-        Ok(
-            PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::CreateContinuation as u8 })
-                .add_subclass(PyCreateContinuation { program, handlers }),
-        )
+        Ok(PyClassInitializer::from(PyDoExprBase)
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::CreateContinuation as u8,
+            })
+            .add_subclass(PyCreateContinuation { program, handlers }))
     }
 }
 
@@ -1613,7 +1686,9 @@ impl PyGetContinuation {
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase { tag: DoExprTag::GetContinuation as u8 })
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::GetContinuation as u8,
+            })
             .add_subclass(PyGetContinuation)
     }
 }
@@ -1627,7 +1702,9 @@ impl PyGetHandlers {
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase { tag: DoExprTag::GetHandlers as u8 })
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::GetHandlers as u8,
+            })
             .add_subclass(PyGetHandlers)
     }
 }
@@ -1641,7 +1718,9 @@ impl PyGetCallStack {
     #[new]
     fn new() -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase { tag: DoExprTag::GetCallStack as u8 })
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::GetCallStack as u8,
+            })
             .add_subclass(PyGetCallStack)
     }
 }
@@ -1658,7 +1737,9 @@ impl PyAsyncEscape {
     #[new]
     fn new(action: Py<PyAny>) -> PyClassInitializer<Self> {
         PyClassInitializer::from(PyDoExprBase)
-            .add_subclass(PyDoCtrlBase { tag: DoExprTag::AsyncEscape as u8 })
+            .add_subclass(PyDoCtrlBase {
+                tag: DoExprTag::AsyncEscape as u8,
+            })
             .add_subclass(PyAsyncEscape { action })
     }
 }
@@ -1750,7 +1831,9 @@ impl NestingGenerator {
         let bound = Bound::new(
             py,
             PyClassInitializer::from(PyDoExprBase)
-                .add_subclass(PyDoCtrlBase { tag: DoExprTag::WithHandler as u8 })
+                .add_subclass(PyDoCtrlBase {
+                    tag: DoExprTag::WithHandler as u8,
+                })
                 .add_subclass(wh),
         )?;
         Ok(Some(bound.into_any().unbind()))
@@ -1804,11 +1887,13 @@ mod tests {
             let with_handler = Bound::new(
                 py,
                 PyClassInitializer::from(PyDoExprBase)
-                    .add_subclass(PyDoCtrlBase { tag: DoExprTag::WithHandler as u8 })
+                    .add_subclass(PyDoCtrlBase {
+                        tag: DoExprTag::WithHandler as u8,
+                    })
                     .add_subclass(PyWithHandler {
-                    handler: sentinel.clone_ref(py),
-                    expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
-                }),
+                        handler: sentinel.clone_ref(py),
+                        expr: py.None().into_pyobject(py).unwrap().unbind().into_any(),
+                    }),
             )
             .unwrap()
             .into_any();
@@ -1900,7 +1985,8 @@ mod tests {
             let handlers_list = pyo3::types::PyList::new(py, [sentinel.bind(py)]).unwrap();
             let obj = Bound::new(
                 py,
-                PyCreateContinuation::new(py, py.None().into(), handlers_list.unbind().into()).unwrap(),
+                PyCreateContinuation::new(py, py.None().into(), handlers_list.unbind().into())
+                    .unwrap(),
             )
             .unwrap()
             .into_any();
@@ -1908,7 +1994,10 @@ mod tests {
             match yielded {
                 Yielded::DoCtrl(DoCtrl::CreateContinuation { handlers, .. }) => {
                     assert!(
-                        matches!(handlers.first(), Some(crate::handler::Handler::RustProgram(_))),
+                        matches!(
+                            handlers.first(),
+                            Some(crate::handler::Handler::RustProgram(_))
+                        ),
                         "G3 FAIL: CreateContinuation converted rust sentinel into Python handler"
                     );
                 }
@@ -2049,7 +2138,9 @@ mod tests {
             let resume = Bound::new(
                 py,
                 PyClassInitializer::from(PyDoExprBase)
-                    .add_subclass(PyDoCtrlBase { tag: DoExprTag::Resume as u8 })
+                    .add_subclass(PyDoCtrlBase {
+                        tag: DoExprTag::Resume as u8,
+                    })
                     .add_subclass(PyResume {
                         continuation: k,
                         value: py.None().into_pyobject(py).unwrap().unbind().into_any(),
@@ -2195,7 +2286,9 @@ mod tests {
     fn test_r13i_tag_matches_variant() {
         Python::attach(|py| {
             // Pure
-            let obj = Bound::new(py, PyPure::new(py.None().into())).unwrap().into_any();
+            let obj = Bound::new(py, PyPure::new(py.None().into()))
+                .unwrap()
+                .into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::Pure as u8);
 
@@ -2203,7 +2296,9 @@ mod tests {
             let f = py.eval(c"lambda: None", None, None).unwrap().unbind();
             let args = pyo3::types::PyTuple::empty(py).into_any().unbind();
             let kwargs = PyDict::new(py).into_any().unbind();
-            let obj = Bound::new(py, PyCall::new(py, f, args, kwargs, None).unwrap()).unwrap().into_any();
+            let obj = Bound::new(py, PyCall::new(py, f, args, kwargs, None).unwrap())
+                .unwrap()
+                .into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::Call as u8);
 
@@ -2224,7 +2319,9 @@ mod tests {
 
             // AsyncEscape
             let action = py.None().into();
-            let obj = Bound::new(py, PyAsyncEscape::new(action)).unwrap().into_any();
+            let obj = Bound::new(py, PyAsyncEscape::new(action))
+                .unwrap()
+                .into_any();
             let base: PyRef<'_, PyDoCtrlBase> = obj.extract().unwrap();
             assert_eq!(base.tag, DoExprTag::AsyncEscape as u8);
         });
@@ -2238,11 +2335,17 @@ mod tests {
             let pyvm = PyVM { vm: VM::new() };
 
             // Pure → DoCtrl::Pure
-            let pure_obj = Bound::new(py, PyPure::new(42i64.into_pyobject(py).unwrap().into_any().unbind())).unwrap().into_any();
+            let pure_obj = Bound::new(
+                py,
+                PyPure::new(42i64.into_pyobject(py).unwrap().into_any().unbind()),
+            )
+            .unwrap()
+            .into_any();
             let yielded = pyvm.classify_yielded(py, &pure_obj).unwrap();
             assert!(
                 matches!(yielded, Yielded::DoCtrl(DoCtrl::Pure { .. })),
-                "Pure tag dispatch failed, got {:?}", yielded
+                "Pure tag dispatch failed, got {:?}",
+                yielded
             );
 
             // GetHandlers → DoCtrl::GetHandlers
@@ -2250,7 +2353,8 @@ mod tests {
             let yielded = pyvm.classify_yielded(py, &gh_obj).unwrap();
             assert!(
                 matches!(yielded, Yielded::DoCtrl(DoCtrl::GetHandlers)),
-                "GetHandlers tag dispatch failed, got {:?}", yielded
+                "GetHandlers tag dispatch failed, got {:?}",
+                yielded
             );
 
             // GetCallStack → DoCtrl::GetCallStack
@@ -2258,7 +2362,8 @@ mod tests {
             let yielded = pyvm.classify_yielded(py, &gcs_obj).unwrap();
             assert!(
                 matches!(yielded, Yielded::DoCtrl(DoCtrl::GetCallStack)),
-                "GetCallStack tag dispatch failed, got {:?}", yielded
+                "GetCallStack tag dispatch failed, got {:?}",
+                yielded
             );
         });
     }
@@ -2296,7 +2401,7 @@ mod tests {
 /// equivalent to `WithHandler(h0, WithHandler(h1, WithHandler(h2, prog)))`.
 ///
 /// `handlers` accepts a list of:
-///   - `RustHandler` sentinels: `state`, `reader`, `writer`
+///   - `RustHandler` sentinels: `state`, `reader`, `writer`, `result_safe`, `scheduler`, `kpc`
 ///   - Python handler callables
 #[pyfunction]
 #[pyo3(signature = (program, handlers=None, env=None, store=None, trace=false))]
@@ -2342,7 +2447,9 @@ fn run(
             let bound = Bound::new(
                 py,
                 PyClassInitializer::from(PyDoExprBase)
-                    .add_subclass(PyDoCtrlBase { tag: DoExprTag::WithHandler as u8 })
+                    .add_subclass(PyDoCtrlBase {
+                        tag: DoExprTag::WithHandler as u8,
+                    })
                     .add_subclass(wh),
             )?;
             wrapped = bound.into_any().unbind();
@@ -2398,7 +2505,9 @@ fn async_run<'py>(
             let bound = Bound::new(
                 py,
                 PyClassInitializer::from(PyDoExprBase)
-                    .add_subclass(PyDoCtrlBase { tag: DoExprTag::WithHandler as u8 })
+                    .add_subclass(PyDoCtrlBase {
+                        tag: DoExprTag::WithHandler as u8,
+                    })
                     .add_subclass(wh),
             )?;
             wrapped = bound.into_any().unbind();
@@ -2501,6 +2610,12 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
             factory: Arc::new(WriterHandlerFactory),
         },
     )?;
+    m.add(
+        "result_safe",
+        PyRustHandlerSentinel {
+            factory: Arc::new(ResultSafeHandlerFactory),
+        },
+    )?;
     // R11-A: #[pyclass] effect structs for isinstance checks
     m.add_class::<PyGet>()?;
     m.add_class::<PyPut>()?;
@@ -2559,8 +2674,14 @@ pub fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("TAG_GET_HANDLERS", DoExprTag::GetHandlers as u8)?;
     m.add("TAG_GET_CALL_STACK", DoExprTag::GetCallStack as u8)?;
     m.add("TAG_EVAL", DoExprTag::Eval as u8)?;
-    m.add("TAG_CREATE_CONTINUATION", DoExprTag::CreateContinuation as u8)?;
-    m.add("TAG_RESUME_CONTINUATION", DoExprTag::ResumeContinuation as u8)?;
+    m.add(
+        "TAG_CREATE_CONTINUATION",
+        DoExprTag::CreateContinuation as u8,
+    )?;
+    m.add(
+        "TAG_RESUME_CONTINUATION",
+        DoExprTag::ResumeContinuation as u8,
+    )?;
     m.add("TAG_ASYNC_ESCAPE", DoExprTag::AsyncEscape as u8)?;
     m.add("TAG_EFFECT", DoExprTag::Effect as u8)?;
     m.add("TAG_UNKNOWN", DoExprTag::Unknown as u8)?;
