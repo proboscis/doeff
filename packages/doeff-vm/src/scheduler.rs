@@ -1496,7 +1496,8 @@ impl RustHandlerProgram for SchedulerProgram {
 
 #[derive(Clone)]
 pub struct SchedulerHandler {
-    state: Arc<Mutex<SchedulerState>>,
+    default_state: Arc<Mutex<SchedulerState>>,
+    run_states: Arc<Mutex<HashMap<u64, Arc<Mutex<SchedulerState>>>>>,
 }
 
 impl std::fmt::Debug for SchedulerHandler {
@@ -1508,7 +1509,21 @@ impl std::fmt::Debug for SchedulerHandler {
 impl SchedulerHandler {
     pub fn new() -> Self {
         SchedulerHandler {
-            state: Arc::new(Mutex::new(SchedulerState::new())),
+            default_state: Arc::new(Mutex::new(SchedulerState::new())),
+            run_states: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn state_for_run(&self, run_token: Option<u64>) -> Arc<Mutex<SchedulerState>> {
+        match run_token {
+            Some(token) => {
+                let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
+                states
+                    .entry(token)
+                    .or_insert_with(|| Arc::new(Mutex::new(SchedulerState::new())))
+                    .clone()
+            }
+            None => self.default_state.clone(),
         }
     }
 }
@@ -1521,8 +1536,19 @@ impl RustProgramHandler for SchedulerHandler {
 
     fn create_program(&self) -> RustProgramRef {
         Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
-            self.state.clone(),
+            self.state_for_run(None),
         ))))
+    }
+
+    fn create_program_for_run(&self, run_token: Option<u64>) -> RustProgramRef {
+        Arc::new(Mutex::new(Box::new(SchedulerProgram::new(
+            self.state_for_run(run_token),
+        ))))
+    }
+
+    fn on_run_end(&self, run_token: u64) {
+        let mut states = self.run_states.lock().expect("Scheduler lock poisoned");
+        states.remove(&run_token);
     }
 }
 
