@@ -1,5 +1,5 @@
 from doeff import do
-from doeff.effects import ask, emit
+from doeff.effects import ask, tell
 
 
 def helper_beta():
@@ -9,5 +9,5 @@ def helper_beta():
 @do
 def beta():
     yield ask("beta")
-    yield emit("beta")
+    yield tell("beta")
     return "beta"
