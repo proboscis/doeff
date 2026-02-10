@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import time
@@ -10,7 +11,7 @@ from typing import Any
 
 from PIL import Image
 
-from doeff import Ask, AtomicGet, AtomicUpdate, Await, Delay, EffectGenerator, Safe, Step, Tell, do
+from doeff import Ask, Await, EffectGenerator, Get, Put, Safe, Tell, do
 
 from .client import get_seedream_client, track_api_call
 from .costs import CostEstimate, calculate_cost
@@ -268,12 +269,6 @@ def edit_image__seedream4(
 
     client = yield get_seedream_client()
 
-    request_summary = {
-        "model": model,
-        "has_images": bool(payload.get("image")),
-        "response_format": response_format,
-    }
-
     @do
     def make_api_call() -> EffectGenerator[dict[str, Any]]:
         attempt_start = time.time()
@@ -321,7 +316,7 @@ def edit_image__seedream4(
             break
         last_error = safe_attempt.error
         if attempt < max_retries - 1:
-            yield Delay(seconds=1.0)
+            yield Await(asyncio.sleep(1.0))
 
     if response is None:
         raise last_error if last_error else RuntimeError("All retry attempts failed")
@@ -362,53 +357,35 @@ def edit_image__seedream4(
         except ValueError:
             cost_estimate = None
 
-    step_value = {
-        "result_type": type(result).__name__,
-        "image_count": len(result.images),
-    }
-    if generated_images is not None:
-        step_value["generated_images"] = generated_images
     if cost_estimate:
-        step_value["estimated_cost_usd"] = cost_estimate.total_cost
-
-    if cost_estimate:
-        previous_total = yield AtomicGet("seedream_total_cost_usd")
-        if previous_total is None:
+        previous_total_result = yield Safe(Get("seedream_total_cost_usd"))
+        previous_total = previous_total_result.value if previous_total_result.is_ok() else None
+        if not isinstance(previous_total, (int, float)):
             previous_total = 0.0
         new_total = float(previous_total) + cost_estimate.total_cost
-
-        yield AtomicUpdate(
-            "seedream_total_cost_usd",
-            lambda current: (current or 0.0) + cost_estimate.total_cost,
-            default_factory=lambda: 0.0,
-        )
+        yield Put("seedream_total_cost_usd", new_total)
 
         model_cost_key = f"seedream_cost_{model}"
-        yield AtomicUpdate(
-            model_cost_key,
-            lambda current: (current or 0.0) + cost_estimate.total_cost,
-            default_factory=lambda: 0.0,
-        )
+        model_cost_result = yield Safe(Get(model_cost_key))
+        model_cost_total = model_cost_result.value if model_cost_result.is_ok() else None
+        if not isinstance(model_cost_total, (int, float)):
+            model_cost_total = 0.0
+        yield Put(model_cost_key, float(model_cost_total) + cost_estimate.total_cost)
 
-        def _append_call(current: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
-            entries = list(current) if current else []
-            entries.append(
-                {
-                    "model": model,
-                    "size": cost_estimate.size,
-                    "generated_images": cost_estimate.generated_images,
-                    "per_image_cost": cost_estimate.per_image_cost,
-                    "total_cost": cost_estimate.total_cost,
-                    "source": cost_estimate.source,
-                }
-            )
-            return entries
-
-        yield AtomicUpdate(
-            "seedream_api_calls",
-            _append_call,
-            default_factory=list,
+        existing_calls_result = yield Safe(Get("seedream_api_calls"))
+        existing_calls = existing_calls_result.value if existing_calls_result.is_ok() else None
+        entries = list(existing_calls) if isinstance(existing_calls, list) else []
+        entries.append(
+            {
+                "model": model,
+                "size": cost_estimate.size,
+                "generated_images": cost_estimate.generated_images,
+                "per_image_cost": cost_estimate.per_image_cost,
+                "total_cost": cost_estimate.total_cost,
+                "source": cost_estimate.source,
+            }
         )
+        yield Put("seedream_api_calls", entries)
 
         yield Tell(
             "Seedream estimated cost $%.4f for %d image(s) (%s); cumulative total $%.4f"
@@ -419,19 +396,6 @@ def edit_image__seedream4(
                 new_total,
             )
         )
-
-    step_meta = {
-        "model": model,
-        "has_reference_images": request_summary["has_images"],
-    }
-    if cost_estimate:
-        step_meta["cost_source"] = cost_estimate.source
-        step_meta["per_image_cost_usd"] = cost_estimate.per_image_cost
-
-    yield Step(
-        value=step_value,
-        meta=step_meta,
-    )
 
     return result
 
