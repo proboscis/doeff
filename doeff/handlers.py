@@ -1,11 +1,19 @@
 """doeff.handlers - Handler sentinels re-exported from doeff_vm.
 
-Provides: state, reader, writer, scheduler, kpc, await_handler.
+Provides: state, reader, writer, result_safe, scheduler, kpc, await_handler.
 """
 
 from __future__ import annotations
 
-_HANDLER_SENTINELS = {"state", "reader", "writer", "scheduler", "kpc", "await_handler"}
+_HANDLER_SENTINELS = {
+    "state",
+    "reader",
+    "writer",
+    "result_safe",
+    "scheduler",
+    "kpc",
+    "await_handler",
+}
 
 
 def __getattr__(name: str):
@@ -20,4 +28,4 @@ def __getattr__(name: str):
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
-__all__ = ["state", "reader", "writer", "scheduler", "kpc", "await_handler"]
+__all__ = ["state", "reader", "writer", "result_safe", "scheduler", "kpc", "await_handler"]
