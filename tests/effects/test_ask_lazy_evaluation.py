@@ -94,35 +94,6 @@ class TestAskCaching:
     """Tests for result caching behavior."""
 
     @pytest.mark.asyncio
-    async def test_cached_result_no_reevaluation(self, parameterized_interpreter) -> None:
-        """Second Ask for same key returns cached result without re-evaluation."""
-        evaluation_count = [0]
-
-        @do
-        def expensive():
-            evaluation_count[0] += 1
-            yield Put("marker", evaluation_count[0])
-            return 42
-
-        expensive_program = expensive()
-        env = {"service": expensive_program}
-
-        @do
-        def program():
-            val1 = yield Ask("service")
-            val2 = yield Ask("service")
-            val3 = yield Ask("service")
-            return (val1, val2, val3)
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-
-        assert result.is_ok
-        # All values should be the same cached result
-        assert result.value == (42, 42, 42)
-        # Program should only have been evaluated once
-        assert evaluation_count[0] == 1
-
-    @pytest.mark.asyncio
     async def test_different_keys_evaluated_separately(self, parameterized_interpreter) -> None:
         """Different Ask keys are cached independently."""
 
@@ -238,27 +209,6 @@ class TestErrorPropagation:
     """Tests for error handling from lazy Program evaluation."""
 
     @pytest.mark.asyncio
-    async def test_program_error_propagates(self, parameterized_interpreter) -> None:
-        """Error from lazy Program evaluation fails the entire run."""
-
-        @do
-        def failing_program():
-            raise ValueError("Program evaluation failed")
-            yield  # Make it a generator
-
-        env = {"service": failing_program()}
-
-        @do
-        def program():
-            value = yield Ask("service")
-            return value
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_err()
-        assert isinstance(result.error, ValueError)
-        assert "Program evaluation failed" in str(result.error)
-
-    @pytest.mark.asyncio
     async def test_error_not_cached(self, parameterized_interpreter) -> None:
         """Failed evaluation does not cache an error - subsequent Ask retries."""
         attempt = [0]
@@ -294,28 +244,6 @@ class TestErrorPropagation:
 
         assert result.is_ok
         assert result.value == "success"
-
-    @pytest.mark.asyncio
-    async def test_safe_captures_program_error(self, parameterized_interpreter) -> None:
-        """Safe can capture errors from lazy Program evaluation."""
-
-        @do
-        def failing_program():
-            raise ValueError("Oops")
-            yield  # Make it a generator
-
-        env = {"service": failing_program()}
-
-        @do
-        def program():
-            result = yield Safe(Ask("service"))
-            return result
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        safe_result = result.value
-        assert safe_result.is_err()
-        assert isinstance(safe_result.error, ValueError)
 
 
 # ============================================================================

@@ -184,6 +184,23 @@ def test_lazy_ask_program_error_propagates() -> None:
     assert str(result.error) == "lazy boom"
 
 
+def test_lazy_ask_safe_captures_program_error() -> None:
+    @do
+    def failing_service():
+        raise ValueError("lazy boom")
+
+    @do
+    def program():
+        return (yield Safe(Ask("service")))
+
+    result = run(program(), handlers=default_handlers(), env={"service": failing_service()})
+    assert result.is_ok()
+    safe_result = result.value
+    assert safe_result.is_err()
+    assert isinstance(safe_result.error, ValueError)
+    assert str(safe_result.error) == "lazy boom"
+
+
 def test_scheduler_task_completed_uses_single_result_payload() -> None:
     rust_ok, _ = _rust_ok_err_classes()
     task_id = 9999
