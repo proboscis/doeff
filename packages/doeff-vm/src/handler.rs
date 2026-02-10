@@ -15,7 +15,7 @@ use crate::effect::Effect;
 use crate::frame::CallMetadata;
 use crate::ids::SegmentId;
 use crate::py_shared::PyShared;
-use crate::pyvm::{PyDoCtrlBase, PyEffectBase};
+use crate::pyvm::{PyDoCtrlBase, PyDoExprBase, PyEffectBase};
 use crate::step::{DoCtrl, PyException, PythonCall, Yielded};
 use crate::value::Value;
 use crate::vm::RustStore;
@@ -177,6 +177,33 @@ fn parse_reader_python_effect(effect: &PyShared) -> Result<Option<String>, Strin
             return Ok(Some(key));
         }
         Ok(None)
+    })
+}
+
+fn as_lazy_eval_expr(value: &Value) -> Option<PyShared> {
+    let Value::Python(obj) = value else {
+        return None;
+    };
+
+    Python::attach(|py| {
+        let bound = obj.bind(py);
+
+        let is_doexpr = bound.is_instance_of::<PyDoExprBase>()
+            || bound
+                .getattr("__doeff_do_expr_base__")
+                .and_then(|flag| flag.is_truthy())
+                .unwrap_or(false);
+        let is_effect = bound.is_instance_of::<PyEffectBase>()
+            || bound
+                .getattr("__doeff_effect_base__")
+                .and_then(|flag| flag.is_truthy())
+                .unwrap_or(false);
+
+        if is_doexpr || is_effect {
+            Some(PyShared::new(obj.clone_ref(py)))
+        } else {
+            None
+        }
     })
 }
 
@@ -619,7 +646,21 @@ impl RustHandlerProgram for KpcHandlerProgram {
     }
 
     fn throw(&mut self, exc: PyException, _store: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+        match std::mem::replace(&mut self.phase, KpcPhase::Idle) {
+            KpcPhase::AwaitHandlers { k_user, .. } => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+                    continuation: k_user,
+                    exception: exc,
+                }))
+            }
+            KpcPhase::Running(state) => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+                    continuation: state.k_user,
+                    exception: exc,
+                }))
+            }
+            KpcPhase::Idle => RustProgramStep::Throw(exc),
+        }
     }
 }
 
@@ -795,12 +836,54 @@ impl RustProgramHandler for ReaderHandlerFactory {
     }
 
     fn create_program(&self) -> RustProgramRef {
-        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram)))
+        Arc::new(Mutex::new(Box::new(ReaderHandlerProgram::new())))
     }
 }
 
 #[derive(Debug)]
-struct ReaderHandlerProgram;
+enum ReaderPhase {
+    Idle,
+    AwaitHandlers {
+        key: String,
+        continuation: Continuation,
+        expr: PyShared,
+    },
+    AwaitEval {
+        key: String,
+        continuation: Continuation,
+    },
+}
+
+#[derive(Debug)]
+struct ReaderHandlerProgram {
+    phase: ReaderPhase,
+}
+
+impl ReaderHandlerProgram {
+    fn new() -> Self {
+        ReaderHandlerProgram {
+            phase: ReaderPhase::Idle,
+        }
+    }
+
+    fn handle_ask(&mut self, key: String, continuation: Continuation, store: &mut RustStore) -> RustProgramStep {
+        let value = store.ask(&key).cloned().unwrap_or(Value::None);
+
+        if let Some(expr) = as_lazy_eval_expr(&value) {
+            self.phase = ReaderPhase::AwaitHandlers {
+                key,
+                continuation,
+                expr,
+            };
+            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::GetHandlers));
+        }
+
+        RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+            continuation,
+            value,
+        }))
+    }
+}
 
 impl RustHandlerProgram for ReaderHandlerProgram {
     fn start(
@@ -812,22 +895,12 @@ impl RustHandlerProgram for ReaderHandlerProgram {
     ) -> RustProgramStep {
         #[cfg(test)]
         if let Effect::Ask { key } = effect.clone() {
-            let value = store.ask(&key).cloned().unwrap_or(Value::None);
-            return RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                continuation: k,
-                value,
-            }));
+            return self.handle_ask(key, k, store);
         }
 
         if let Some(obj) = dispatch_into_python(effect.clone()) {
             return match parse_reader_python_effect(&obj) {
-                Ok(Some(key)) => {
-                    let value = store.ask(&key).cloned().unwrap_or(Value::None);
-                    RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
-                        continuation: k,
-                        value,
-                    }))
-                }
+                Ok(Some(key)) => self.handle_ask(key, k, store),
                 Ok(None) => RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Delegate {
                     effect: dispatch_from_shared(obj),
                 })),
@@ -846,12 +919,47 @@ impl RustHandlerProgram for ReaderHandlerProgram {
         unreachable!("runtime Effect is always Python")
     }
 
-    fn resume(&mut self, _value: Value, _: &mut RustStore) -> RustProgramStep {
-        unreachable!("ReaderHandler never yields mid-handling")
+    fn resume(&mut self, value: Value, store: &mut RustStore) -> RustProgramStep {
+        match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
+            ReaderPhase::AwaitHandlers {
+                key,
+                continuation,
+                expr,
+            } => {
+                let handlers = match value {
+                    Value::Handlers(handlers) => handlers,
+                    _ => {
+                        return RustProgramStep::Throw(PyException::type_error(
+                            "reader lazy Ask expected handlers from GetHandlers".to_string(),
+                        ));
+                    }
+                };
+
+                self.phase = ReaderPhase::AwaitEval { key, continuation };
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Eval { expr, handlers }))
+            }
+            ReaderPhase::AwaitEval { key, continuation } => {
+                store.env.insert(key, value.clone());
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::Resume {
+                    continuation,
+                    value,
+                }))
+            }
+            ReaderPhase::Idle => RustProgramStep::Return(value),
+        }
     }
 
     fn throw(&mut self, exc: PyException, _: &mut RustStore) -> RustProgramStep {
-        RustProgramStep::Throw(exc)
+        match std::mem::replace(&mut self.phase, ReaderPhase::Idle) {
+            ReaderPhase::AwaitHandlers { continuation, .. }
+            | ReaderPhase::AwaitEval { continuation, .. } => {
+                RustProgramStep::Yield(Yielded::DoCtrl(DoCtrl::TransferThrow {
+                    continuation,
+                    exception: exc,
+                }))
+            }
+            ReaderPhase::Idle => RustProgramStep::Throw(exc),
+        }
     }
 }
 

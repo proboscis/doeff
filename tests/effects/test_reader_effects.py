@@ -26,7 +26,10 @@ from doeff.effects import (
 )
 
 pytestmark = pytest.mark.skip(
-    reason="Legacy CESK-era reader/local semantics are not in the active rust_vm matrix."
+    reason=(
+        "Legacy CESK-era reader/local semantics are not in the active rust_vm matrix; "
+        "tracked by ISSUE-SPEC-009 migration/drop plan."
+    )
 )
 
 # ============================================================================

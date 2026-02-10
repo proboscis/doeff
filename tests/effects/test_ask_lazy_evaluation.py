@@ -16,7 +16,10 @@ from doeff import Program, do
 from doeff.effects import Ask, Gather, Get, Local, Put, Safe, Spawn
 
 pytestmark = pytest.mark.skip(
-    reason="Legacy CESK-era lazy Ask semantics are not in the active rust_vm matrix."
+    reason=(
+        "Legacy CESK-era lazy Ask semantics are not in the active rust_vm matrix; "
+        "tracked by ISSUE-SPEC-009 migration/drop plan."
+    )
 )
 
 # ============================================================================
