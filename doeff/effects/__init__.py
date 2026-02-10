@@ -50,7 +50,7 @@ from .graph import (
     graph,
 )
 from .graph import capture as capture_graph
-from .intercept import Intercept, InterceptEffect, intercept_program_effect
+from .intercept import Intercept
 from .promise import (
     CompletePromise,
     CompletePromiseEffect,
@@ -67,7 +67,6 @@ from .external_promise import (
 from .pure import Pure, PureEffect
 from .reader import Ask, AskEffect, Local, LocalEffect, ask, local
 from .result import (
-    ResultSafeEffect,
     Safe,
     safe,
 )
@@ -152,7 +151,6 @@ __all__ = [
     "GraphSnapshotEffect",
     "GraphStepEffect",
     "Intercept",
-    "InterceptEffect",
     "Listen",
     "Log",
     "Local",
@@ -169,7 +167,6 @@ __all__ = [
     "Race",
     "RaceEffect",
     "RaceResult",
-    "ResultSafeEffect",
     "Safe",
     "Snapshot",
     "Spawn",
@@ -204,7 +201,6 @@ __all__ = [
     "gather",
     "get",
     "graph",
-    "intercept_program_effect",
     "listen",
     "local",
     "put",
