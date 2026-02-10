@@ -23,7 +23,7 @@ These examples use the new spec-compliant API:
 | `AgenticGetMessages` | Get messages from a session |
 | `AgenticNextEvent` | Wait for next event from session |
 | `AgenticGetSessionStatus` | Get current status of a session |
-| `opencode_handler()` | Create handlers for use with `AsyncRuntime` |
+| `opencode_handler()` | Create typed handlers for `WithHandler` composition |
 
 For parallel execution, use core doeff effects: `Spawn` + `Gather` (see example 06).
 
@@ -31,13 +31,14 @@ For parallel execution, use core doeff effects: `Spawn` + `Gather` (see example 
 
 ```python
 import asyncio
-from doeff import do, AsyncRuntime
+from doeff import async_run, default_handlers, do
 from doeff_agentic import (
     AgenticCreateSession,
     AgenticSendMessage,
     AgenticGetMessages,
 )
 from doeff_agentic.opencode_handler import opencode_handler
+from doeff_agentic.runtime import with_handler_map
 
 @do
 def my_workflow():
@@ -58,8 +59,8 @@ def my_workflow():
 # Run the workflow
 async def main():
     handlers = opencode_handler()
-    runtime = AsyncRuntime(handlers=handlers)
-    result = await runtime.run(my_workflow())
+    program = with_handler_map(my_workflow(), handlers)
+    result = await async_run(program, handlers=default_handlers())
     print(result.value)  # Access the result value
 
 asyncio.run(main())
@@ -72,8 +73,8 @@ When workflows fail, use `result.format()` to get rich debugging information:
 ```python
 async def main():
     handlers = opencode_handler()
-    runtime = AsyncRuntime(handlers=handlers)
-    result = await runtime.run(my_workflow())
+    program = with_handler_map(my_workflow(), handlers)
+    result = await async_run(program, handlers=default_handlers())
 
     if result.is_err():
         print("=== Workflow Failed ===")

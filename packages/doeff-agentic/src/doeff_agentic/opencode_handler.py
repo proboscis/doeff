@@ -5,13 +5,14 @@ This module provides the handler that uses OpenCode's HTTP API for agent session
 
 Usage:
     import asyncio
-    from doeff import AsyncRuntime
+    from doeff import async_run, default_handlers
     from doeff_agentic.opencode_handler import opencode_handler
+    from doeff_agentic.runtime import with_handler_map
 
     async def main():
         handlers = opencode_handler()
-        runtime = AsyncRuntime(handlers=handlers)
-        result = await runtime.run(my_workflow())
+        program = with_handler_map(my_workflow(), handlers)
+        result = await async_run(program, handlers=default_handlers())
 
     asyncio.run(main())
 """
@@ -19,17 +20,18 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Coroutine, Protocol
+from typing import Any
 
-from doeff import Await, do
-from doeff.effects.writer import slog
+from doeff import Await, Resume, do, slog
 
 from .effects import (
     AgenticAbortSession,
@@ -181,7 +183,7 @@ class OpenCodeHandler:
     Architecture:
     - Handlers return @do programs directly when async I/O is required
     - The @do program yields Await(coroutine) for async HTTP calls
-    - AsyncRuntime intercepts Await and handles the actual async execution
+    - doeff's async runtime handles Await execution
 
     This handler:
     1. Auto-starts OpenCode server if not running
@@ -1009,6 +1011,32 @@ class OpenCodeHandler:
 # Handler Factory
 # =============================================================================
 
+def _is_lazy_program_value(value: object) -> bool:
+    return bool(getattr(value, "__doeff_do_expr_base__", False) or getattr(
+        value, "__doeff_effect_base__", False
+    ))
+
+
+def _as_protocol_handler(
+    handler_fn: Callable[[Any], Any],
+) -> Callable[[Any, Any], Any]:
+    """Adapt an effect -> value/do-program handler into (effect, k) protocol."""
+
+    def _wrapped(effect: Any, k):
+        result = handler_fn(effect)
+
+        if inspect.isgenerator(result):
+            resolved = yield from result
+            return (yield Resume(k, resolved))
+
+        if _is_lazy_program_value(result):
+            resolved = yield result
+            return (yield Resume(k, resolved))
+
+        return (yield Resume(k, result))
+
+    return _wrapped
+
 
 def opencode_handler(
     server_url: str | None = None,
@@ -1027,17 +1055,18 @@ def opencode_handler(
         working_dir: Default working directory
 
     Returns:
-        Handler dictionary suitable for use with AsyncRuntime.
+        Typed handler map for use with WithHandler composition.
 
     Usage:
         import asyncio
-        from doeff import AsyncRuntime
+        from doeff import async_run, default_handlers
         from doeff_agentic import opencode_handler
+        from doeff_agentic.runtime import with_handler_map
 
         async def main():
             handlers = opencode_handler()
-            runtime = AsyncRuntime(handlers=handlers)
-            result = await runtime.run(my_workflow())
+            program = with_handler_map(my_workflow(), handlers)
+            result = await async_run(program, handlers=default_handlers())
 
         asyncio.run(main())
     """
@@ -1051,26 +1080,26 @@ def opencode_handler(
 
     return {
         # Workflow
-        AgenticCreateWorkflow: handler.handle_create_workflow,
-        AgenticGetWorkflow: handler.handle_get_workflow,
+        AgenticCreateWorkflow: _as_protocol_handler(handler.handle_create_workflow),
+        AgenticGetWorkflow: _as_protocol_handler(handler.handle_get_workflow),
         # Environment
-        AgenticCreateEnvironment: handler.handle_create_environment,
-        AgenticGetEnvironment: handler.handle_get_environment,
-        AgenticDeleteEnvironment: handler.handle_delete_environment,
+        AgenticCreateEnvironment: _as_protocol_handler(handler.handle_create_environment),
+        AgenticGetEnvironment: _as_protocol_handler(handler.handle_get_environment),
+        AgenticDeleteEnvironment: _as_protocol_handler(handler.handle_delete_environment),
         # Session
-        AgenticCreateSession: handler.handle_create_session,
-        AgenticForkSession: handler.handle_fork_session,
-        AgenticGetSession: handler.handle_get_session,
-        AgenticAbortSession: handler.handle_abort_session,
-        AgenticDeleteSession: handler.handle_delete_session,
+        AgenticCreateSession: _as_protocol_handler(handler.handle_create_session),
+        AgenticForkSession: _as_protocol_handler(handler.handle_fork_session),
+        AgenticGetSession: _as_protocol_handler(handler.handle_get_session),
+        AgenticAbortSession: _as_protocol_handler(handler.handle_abort_session),
+        AgenticDeleteSession: _as_protocol_handler(handler.handle_delete_session),
         # Message
-        AgenticSendMessage: handler.handle_send_message,
-        AgenticGetMessages: handler.handle_get_messages,
+        AgenticSendMessage: _as_protocol_handler(handler.handle_send_message),
+        AgenticGetMessages: _as_protocol_handler(handler.handle_get_messages),
         # Event
-        AgenticNextEvent: handler.handle_next_event,
+        AgenticNextEvent: _as_protocol_handler(handler.handle_next_event),
         # Status
-        AgenticGetSessionStatus: handler.handle_get_session_status,
-        AgenticSupportsCapability: handler.handle_supports_capability,
+        AgenticGetSessionStatus: _as_protocol_handler(handler.handle_get_session_status),
+        AgenticSupportsCapability: _as_protocol_handler(handler.handle_supports_capability),
     }
 
 
