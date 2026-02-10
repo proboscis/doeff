@@ -16,42 +16,8 @@ pytestmark = pytest.mark.skip(
 )
 
 
-class TestGetSemantics:
-    """Tests for Get effect behavior."""
-
-    @pytest.mark.asyncio
-    async def test_get_returns_stored_value(self, parameterized_interpreter) -> None:
-        """Get returns the value stored for a key."""
-
-        @do
-        def program() -> Program[int]:
-            yield Put("key", 42)
-            value = yield Get("key")
-            return value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        assert result.value == 42
-
-
 class TestPutSemantics:
     """Tests for Put effect behavior."""
-
-    @pytest.mark.asyncio
-    async def test_put_stores_value(self, parameterized_interpreter) -> None:
-        """Put stores a value that can be retrieved with Get."""
-
-        @do
-        def program() -> Program[str]:
-            yield Put("greeting", "hello")
-            value = yield Get("greeting")
-            return value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        assert result.value == "hello"
 
     @pytest.mark.asyncio
     async def test_put_overwrites_existing(self, parameterized_interpreter) -> None:
@@ -88,53 +54,6 @@ class TestModifySemantics:
     """Tests for Modify effect behavior."""
 
     @pytest.mark.asyncio
-    async def test_modify_transforms_value(self, parameterized_interpreter) -> None:
-        """Modify applies a function to transform the value."""
-
-        @do
-        def program() -> Program[int]:
-            yield Put("counter", 10)
-            new_value = yield Modify("counter", lambda x: x + 5)
-            return new_value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        assert result.value == 15
-
-    @pytest.mark.asyncio
-    async def test_modify_returns_new_value(self, parameterized_interpreter) -> None:
-        """Modify returns the transformed value."""
-
-        @do
-        def program() -> Program[int]:
-            yield Put("x", 5)
-            returned = yield Modify("x", lambda x: x * 2)
-            stored = yield Get("x")
-            return (returned, stored)
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        returned, stored = result.value
-        assert returned == 10
-        assert stored == 10
-
-    @pytest.mark.asyncio
-    async def test_modify_missing_key_receives_none(self, parameterized_interpreter) -> None:
-        """Modify receives None for missing keys."""
-
-        @do
-        def program() -> Program[int]:
-            new_value = yield Modify("missing", lambda x: 42 if x is None else x)
-            return new_value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        assert result.value == 42
-
-    @pytest.mark.asyncio
     async def test_modify_atomic_on_error(self, parameterized_interpreter) -> None:
         """Modify is atomic: if func raises, store is unchanged.
 
@@ -160,32 +79,6 @@ class TestModifySemantics:
         assert result.is_ok
         # Value should be unchanged because the transform raised
         assert result.value == 100
-
-
-class TestPutGetComposition:
-    """Tests for Put + Get composition rules."""
-
-    @pytest.mark.asyncio
-    async def test_put_get_immediate_visibility(self, parameterized_interpreter) -> None:
-        """Put changes are immediately visible to subsequent Get.
-
-        See SPEC-EFF-002-state.md Composition Rules: Put + Get.
-        """
-
-        @do
-        def program() -> Program[tuple[int, int, int]]:
-            yield Put("x", 1)
-            first = yield Get("x")
-            yield Put("x", 2)
-            second = yield Get("x")
-            yield Put("x", 3)
-            third = yield Get("x")
-            return (first, second, third)
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        assert result.value == (1, 2, 3)
 
 
 class TestGatherStateComposition:

@@ -34,3 +34,16 @@ def test_sa008_modify_returns_old_value_and_updates_store() -> None:
 
     assert result.value == (3, 4)
     assert result.raw_store["x"] == 4
+
+
+def test_sa008_modify_missing_key_uses_none_and_initializes_store() -> None:
+    @do
+    def prog():
+        old = yield Modify("x", lambda v: 42 if v is None else v + 1)
+        new = yield Get("x")
+        return (old, new)
+
+    result = run(prog(), handlers=default_handlers())
+
+    assert result.value == (None, 42)
+    assert result.raw_store["x"] == 42
