@@ -10,9 +10,9 @@ Run:
     uv run python examples/02_configuration.py
 """
 
-from doeff import Ask, SyncRuntime, do
-from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
+
+from doeff import Ask, do, run_with_handler_map, slog
 
 
 @do
@@ -22,7 +22,7 @@ def configurable_workflow():
     show_logs = yield Ask("preset.show_logs")
     log_level = yield Ask("preset.log_level")
     log_format = yield Ask("preset.log_format")
-    
+
     yield slog(
         step="config",
         msg="Configuration loaded",
@@ -30,11 +30,11 @@ def configurable_workflow():
         log_level=log_level,
         log_format=log_format,
     )
-    
+
     # Conditional behavior based on config
     if show_logs:
         yield slog(step="info", msg="Logs are enabled")
-    
+
     return {
         "show_logs": show_logs,
         "log_level": log_level,
@@ -46,10 +46,9 @@ def main():
     """Run configuration examples."""
     # Example 1: Default configuration
     print("=== Default Configuration ===\n")
-    runtime = SyncRuntime(handlers=preset_handlers())
-    result = runtime.run(configurable_workflow())
+    result = run_with_handler_map(configurable_workflow(), preset_handlers())
     print(f"\nConfig: {result.value}")
-    
+
     # Example 2: Custom configuration
     print("\n=== Custom Configuration ===\n")
     custom_handlers = preset_handlers(config_defaults={
@@ -57,8 +56,7 @@ def main():
         "preset.log_level": "debug",
         "preset.log_format": "json",
     })
-    runtime2 = SyncRuntime(handlers=custom_handlers)
-    result2 = runtime2.run(configurable_workflow())
+    result2 = run_with_handler_map(configurable_workflow(), custom_handlers)
     print(f"\nConfig: {result2.value}")
 
 

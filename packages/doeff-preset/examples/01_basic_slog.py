@@ -10,9 +10,9 @@ Run:
     uv run python examples/01_basic_slog.py
 """
 
-from doeff import SyncRuntime, do
-from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
+
+from doeff import do, run_with_handler_map, slog
 
 
 @do
@@ -20,9 +20,9 @@ def basic_workflow():
     """A simple workflow demonstrating slog display."""
     # slog messages are displayed to console AND accumulated in log
     yield slog(step="start", msg="Starting the workflow")
-    
+
     yield slog(step="processing", status="running", item_count=42)
-    
+
     # You can include any key-value pairs
     yield slog(
         step="validation",
@@ -30,26 +30,22 @@ def basic_workflow():
         checks_passed=True,
         duration_ms=150,
     )
-    
+
     yield slog(level="warning", msg="This is a warning message")
     yield slog(level="error", msg="This is an error message")
-    
+
     yield slog(step="done", msg="Workflow completed successfully")
-    
+
     return "success"
 
 
 def main():
     """Run the basic slog example."""
     print("=== Basic slog Display Example ===\n")
-    
-    # Create runtime with preset handlers
-    runtime = SyncRuntime(handlers=preset_handlers())
-    
-    # Run the workflow - slog messages will be displayed automatically
-    result = runtime.run(basic_workflow())
-    
-    print(f"\n=== Results ===")
+
+    result = run_with_handler_map(basic_workflow(), preset_handlers())
+
+    print("\n=== Results ===")
     print(f"Return value: {result.value}")
     print(f"Log entries captured: {len(result.log)}")
     print("\nAccumulated log entries:")
