@@ -67,7 +67,8 @@ def research_and_summarize(topic: str):
 
 if __name__ == "__main__":
     import asyncio
-    from doeff import AsyncRuntime
+    from doeff import async_run, default_handlers
+    from doeff_agentic.runtime import with_handler_maps
 
     async def main():
         topic = "functional programming"
@@ -78,10 +79,12 @@ if __name__ == "__main__":
         # Merge preset handlers with opencode handlers
         # Preset provides: slog display (WriterTellEffect) + config (Ask preset.*)
         # OpenCode provides: agent session management effects
-        handlers = {**preset_handlers(), **opencode_handler()}
-        runtime = AsyncRuntime(handlers=handlers)
-
-        result = await runtime.run(research_and_summarize(topic))
+        program = with_handler_maps(
+            research_and_summarize(topic),
+            preset_handlers(),
+            opencode_handler(),
+        )
+        result = await async_run(program, handlers=default_handlers())
 
         if result.is_err():
             print("\n=== Workflow Failed ===")

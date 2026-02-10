@@ -24,8 +24,7 @@ uv add doeff-agentic
 ### Define a Workflow
 
 ```python
-from doeff import do
-from doeff.effects.writer import slog
+from doeff import do, slog
 from doeff_agentic import RunAgent, AgentConfig
 
 @do
@@ -57,14 +56,14 @@ def pr_review_workflow(pr_url: str):
 ### Run the Workflow
 
 ```python
-from doeff import run_sync
+from doeff import WithHandler, default_handlers, run
 from doeff_agentic import agentic_effectful_handlers
 
-handlers = agentic_effectful_handlers(
-    workflow_name="pr-review",
+program = WithHandler(
+    handler=agentic_effectful_handlers(workflow_name="pr-review"),
+    expr=pr_review_workflow("https://github.com/..."),
 )
-
-result = run_sync(pr_review_workflow("https://github.com/..."), handlers=handlers)
+result = run(program, handlers=default_handlers())
 ```
 
 ### Monitor via CLI

@@ -9,10 +9,7 @@ from typing import Any
 
 from rich.console import Console
 
-from doeff import do
-from doeff.effects import Intercept
-from doeff.effects.writer import WriterTellEffect
-from doeff.program import Program
+from doeff import Intercept, Program, do, slog
 
 from .effects import (
     AgenticAbortSession,
@@ -49,6 +46,8 @@ EFFECT_CONFIG: dict[type, dict[str, Any]] = {
     AgenticGetSessionStatus: {"icon": "S@", "color": "dim cyan", "name": "GetSessionStatus"},
     AgenticSupportsCapability: {"icon": "??", "color": "dim", "name": "SupportsCapability"},
 }
+
+_WRITER_TELL_EFFECT = type(slog())
 
 
 @dataclass
@@ -163,7 +162,7 @@ def create_visual_interceptor(
     def transform(effect: Any) -> Any:
         effect_type = type(effect)
 
-        if isinstance(effect, WriterTellEffect):
+        if isinstance(effect, _WRITER_TELL_EFFECT):
             if cfg.show_slog and isinstance(effect.message, dict):
                 timestamp = f"[dim][{_get_timestamp()}][/dim] " if cfg.show_timestamps else ""
                 slog_text = _format_slog(effect.message, cfg)
