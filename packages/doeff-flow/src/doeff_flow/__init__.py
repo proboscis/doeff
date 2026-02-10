@@ -101,6 +101,7 @@ def run_workflow(
         )
         print(result.value)  # 30
     """
+    from doeff import default_handlers
     from doeff import run as run_sync
     from doeff_flow.trace import write_terminal_trace
 
@@ -111,7 +112,12 @@ def run_workflow(
 
     with trace_observer(workflow_id, trace_dir) as on_step:
         _ = on_step
-        result = run_sync(program, env=env, store=store)
+        result = run_sync(
+            program,
+            handlers=default_handlers(),
+            env=env,
+            store=store,
+        )
         write_terminal_trace(workflow_id, trace_dir, result)
         return result
 
