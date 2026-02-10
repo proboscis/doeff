@@ -29,8 +29,9 @@ from doeff import (
     EffectGenerator,
     Safe,
     do,
+    run,
+    slog,
 )
-from doeff.effects.writer import slog
 
 
 # Define structured output models
@@ -290,10 +291,8 @@ async def a_run_all_examples(
             --openai-api-key "sk-..." \
             --gpt5-available false
     """
-    from doeff import run_with_env
-
     # Run with environment
-    result = await run_with_env(
+    result = run(
         _run_all_examples_impl(),
         env={
             "openai_api_key": openai_api_key,
@@ -301,13 +300,13 @@ async def a_run_all_examples(
         }
     )
 
-    if result.is_err:
-        print(f"Error: {result.result.error}")
+    if result.is_err():
+        print(f"Error: {result.error}")
         import traceback
         traceback.print_exception(
-            type(result.result.error),
-            result.result.error,
-            result.result.error.__traceback__
+            type(result.error),
+            result.error,
+            result.error.__traceback__
         )
 
     # Print execution logs

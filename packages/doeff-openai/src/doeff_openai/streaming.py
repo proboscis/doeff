@@ -7,11 +7,11 @@ from typing import Any
 from openai.types.chat import ChatCompletionChunk
 
 from doeff import (
-    AtomicUpdate,
     Await,
     EffectGenerator,
     Get,
-    Step,
+    Put,
+    Safe,
     Tell,
     do,
 )
@@ -95,9 +95,12 @@ def process_stream(
     output_tokens = count_tokens(full_content, model) if full_content else 0
 
     # Get input tokens from state (should be set by chat_completion)
-    input_tokens = yield Get(f"stream_input_tokens_{model}")
-    if input_tokens is None:
-        input_tokens = 0
+    @do
+    def _read_input_tokens():
+        return (yield Get(f"stream_input_tokens_{model}"))
+
+    safe_input_tokens = yield Safe(_read_input_tokens())
+    input_tokens = safe_input_tokens.value if safe_input_tokens.is_ok() else 0
 
     token_usage = TokenUsage(
         prompt_tokens=input_tokens,
@@ -108,35 +111,19 @@ def process_stream(
     # Calculate cost
     cost_info = calculate_cost(model, token_usage)
 
-    # Add completion graph step
-    yield Step(
-        {
-            "stream_complete": True,
-            "content_length": len(full_content),
-            "chunks": total_chunks,
-            "finish_reason": finish_reason,
-        },
-        {
-            "type": "openai_stream_complete",
-            "model": model,
-            "chunks": total_chunks,
-            "output_tokens": output_tokens,
-            "total_tokens": token_usage.total_tokens,
-            "cost_usd": cost_info.total_cost,
-            "latency_ms": latency_ms,
-            "finish_reason": finish_reason,
-        }
+    yield Tell(
+        f"Stream metadata: model={model}, chunks={total_chunks}, total_tokens={token_usage.total_tokens}, "
+        f"cost=${cost_info.total_cost:.6f}, latency_ms={latency_ms:.2f}, finish_reason={finish_reason}"
     )
 
-    # Update cumulative costs using AtomicUpdate for thread-safe parallel execution
-    def _increment_total(current: float | None) -> float:
-        return (current or 0.0) + cost_info.total_cost
+    # Update cumulative costs
+    @do
+    def _read_total_cost():
+        return (yield Get("total_openai_cost"))
 
-    yield AtomicUpdate(
-        "total_openai_cost",
-        _increment_total,
-        default_factory=lambda: 0.0,
-    )
+    safe_total_cost = yield Safe(_read_total_cost())
+    current_total = safe_total_cost.value if safe_total_cost.is_ok() else 0.0
+    yield Put("total_openai_cost", (current_total or 0.0) + cost_info.total_cost)
 
     yield Tell(
         f"Stream complete: chunks={total_chunks}, tokens={token_usage.total_tokens}, "
@@ -227,9 +214,12 @@ def stream_with_metadata(
     yield Tell(f"Creating metadata stream for model={model}")
 
     # Get input tokens from state
-    input_tokens = yield Get(f"stream_input_tokens_{model}")
-    if input_tokens is None:
-        input_tokens = 0
+    @do
+    def _read_input_tokens():
+        return (yield Get(f"stream_input_tokens_{model}"))
+
+    safe_input_tokens = yield Safe(_read_input_tokens())
+    input_tokens = safe_input_tokens.value if safe_input_tokens.is_ok() else 0
 
     async def with_metadata():
         accumulated = ""
