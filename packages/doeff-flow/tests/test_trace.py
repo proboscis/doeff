@@ -16,9 +16,8 @@ from doeff_flow.trace import (
     validate_workflow_id,
 )
 
-from doeff import do
+from doeff import Pure, do
 from doeff import run as run_sync
-from doeff.effects import Pure
 
 pytestmark = pytest.mark.skip(reason="doeff-flow step-level tracing requires removed CESK hooks")
 
@@ -363,7 +362,7 @@ class TestSlogDetection:
 
     def test_slog_captured_in_trace(self):
         """slog effects should be captured as last_slog in trace."""
-        from doeff.effects.writer import slog
+        from doeff import slog
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)
@@ -432,7 +431,7 @@ class TestSlogDetection:
 
     def test_non_dict_slog_not_captured(self):
         """Non-dict slog messages should not be captured as last_slog."""
-        from doeff.effects.writer import tell
+        from doeff import tell
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)
@@ -465,7 +464,7 @@ class TestSlogDetection:
 
     def test_slog_written_to_jsonl(self):
         """last_slog should be written to JSONL output."""
-        from doeff.effects.writer import slog
+        from doeff import slog
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             trace_dir = Path(tmp_dir)

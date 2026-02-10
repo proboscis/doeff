@@ -21,8 +21,7 @@ from time import sleep
 # Import from doeff_flow
 from doeff_flow import run_workflow, trace_observer
 
-from doeff import do
-from doeff.effects.writer import slog
+from doeff import do, slog
 
 # =============================================================================
 # Example 1: Using run_workflow convenience wrapper
@@ -92,8 +91,9 @@ def example_run_workflow():
 
 def example_trace_observer():
     """Run workflow with trace_observer context manager."""
-    from doeff import run as run_sync
     from doeff_flow.trace import write_terminal_trace
+
+    from doeff import run as run_sync
 
     print("=== Example 2: Using trace_observer ===")
     print("Run 'doeff-flow watch example-wf-002' in another terminal\n")
