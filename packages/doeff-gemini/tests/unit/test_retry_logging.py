@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -37,7 +37,7 @@ if "pydantic" not in sys.modules:
 
 from doeff_gemini.structured_llm import edit_image__gemini, structured_llm__gemini
 
-from doeff import AsyncRuntime, EffectGenerator, do
+from doeff import EffectGenerator, async_run, default_handlers, do
 
 structured_llm_module = importlib.import_module("doeff_gemini.structured_llm")
 
@@ -76,17 +76,16 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(builtins, "slog", structured_llm_module.slog, raising=False)
     monkeypatch.setattr(builtins, "slog", structured_llm_module.slog, raising=False)
 
-    async_models = MagicMock()
-    async_models.generate_content = AsyncMock(
-        side_effect=[
-            RuntimeError("Attempt 1 failed"),
-            RuntimeError("Resource exhausted"),
-        ]
+    async_models = SimpleNamespace(
+        generate_content=AsyncMock(
+            side_effect=[
+                RuntimeError("Attempt 1 failed"),
+                RuntimeError("Resource exhausted"),
+            ]
+        )
     )
-    async_client = MagicMock()
-    async_client.models = async_models
-    mock_client = MagicMock()
-    mock_client.async_client = async_client
+    async_client = SimpleNamespace(models=async_models)
+    mock_client = SimpleNamespace(async_client=async_client)
 
     # Avoid accidentally awaiting the real asyncio sleep if the strategy changes.
     async def fake_sleep(_duration: float) -> None:
@@ -104,9 +103,7 @@ async def test_structured_llm_retry_failure_logs(monkeypatch: pytest.MonkeyPatch
                 max_retries=2,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env={"gemini_client": mock_client})
+    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
 
     assert result.is_err()
     error = result.error
@@ -146,17 +143,16 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
     assert hasattr(structured_llm_module, "slog")
     monkeypatch.setattr(builtins, "slog", structured_llm_module.slog, raising=False)
 
-    async_models = MagicMock()
-    async_models.generate_content = AsyncMock(
-        side_effect=[
-            RuntimeError("Attempt 1 failed"),
-            RuntimeError("Resource exhausted"),
-        ]
+    async_models = SimpleNamespace(
+        generate_content=AsyncMock(
+            side_effect=[
+                RuntimeError("Attempt 1 failed"),
+                RuntimeError("Resource exhausted"),
+            ]
+        )
     )
-    async_client = MagicMock()
-    async_client.models = async_models
-    mock_client = MagicMock()
-    mock_client.async_client = async_client
+    async_client = SimpleNamespace(models=async_models)
+    mock_client = SimpleNamespace(async_client=async_client)
 
     async def fake_sleep(_duration: float) -> None:
         return None
@@ -172,9 +168,7 @@ async def test_edit_image_retry_failure_logs(monkeypatch: pytest.MonkeyPatch) ->
                 max_retries=2,
             )
         )
-
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow(), env={"gemini_client": mock_client})
+    result = await async_run(flow(), handlers=default_handlers(), env={"gemini_client": mock_client})
 
     assert result.is_err()
     error = result.error

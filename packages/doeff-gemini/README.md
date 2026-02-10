@@ -18,7 +18,7 @@ gcloud auth application-default login
 import asyncio
 from pydantic import BaseModel
 
-from doeff import AsyncRuntime, do
+from doeff import async_run, default_handlers, do
 from doeff_gemini import structured_llm__gemini
 
 
@@ -40,8 +40,11 @@ def fetch_weather() -> WeatherResponse:
 
 
 async def main():
-    runtime = AsyncRuntime()
-    result = await runtime.run(fetch_weather(), env={"gemini_api_key": "your-api-key"})
+    result = await async_run(
+        fetch_weather(),
+        handlers=default_handlers(),
+        env={"gemini_api_key": "your-api-key"},
+    )
     print(result.value)
 
 
@@ -58,13 +61,13 @@ local development.
 Use the official model ID `gemini-3-pro-image-preview` for Nano Banana Pro. Example:
 
 ```python
-runtime = AsyncRuntime()
-result = await runtime.run(
+result = await async_run(
     edit_image__gemini(
         prompt="Add a small yellow banana icon in the center",
         model="gemini-3-pro-image-preview",
         images=[...],
     ),
+    handlers=default_handlers(),
     env={"gemini_api_key": "your-api-key"},
 )
 ```
