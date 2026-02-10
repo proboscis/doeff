@@ -24,16 +24,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from doeff import AsyncRuntime, do
+from doeff import do
 from doeff.effects.writer import slog
 from doeff_preset import preset_handlers
 
+from _runtime import run_program
 from doeff_agents import (
     AgentType,
     Capture,
-    CeskMockSessionScript,
     Launch,
     LaunchConfig,
+    MockSessionScript,
     Monitor,
     Observation,
     SessionHandle,
@@ -291,12 +292,10 @@ async def run_monitored_session() -> None:
     print("=" * 60)
 
     session_name = f"callbacks-{int(time.time())}"
-    
-    initial_store = {}
+
     configure_mock_session(
-        initial_store,
         session_name,
-        CeskMockSessionScript([
+        MockSessionScript([
             (SessionStatus.RUNNING, "Starting task..."),
             (SessionStatus.BLOCKED, "Need input..."),
             (SessionStatus.RUNNING, "Continuing..."),
@@ -310,13 +309,11 @@ async def run_monitored_session() -> None:
         prompt="List the current directory contents.",
     )
 
-    handlers = {
-        **preset_handlers(),
-        **mock_agent_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers, initial_store=initial_store)
-
-    result = await runtime.run(monitored_session_workflow(session_name, config))
+    result = await run_program(
+        monitored_session_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=mock_agent_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
@@ -346,7 +343,7 @@ def simulate_events_demo() -> None:
 
 
 async def run_with_real_tmux() -> None:
-    """Run with AsyncRuntime and real tmux."""
+    """Run with real tmux."""
     import shutil
 
     if not shutil.which("claude"):
@@ -354,7 +351,7 @@ async def run_with_real_tmux() -> None:
         return
 
     print("\n" + "=" * 60)
-    print("Running with AsyncRuntime + real tmux")
+    print("Running with real tmux")
     print("=" * 60)
 
     config = LaunchConfig(
@@ -365,13 +362,11 @@ async def run_with_real_tmux() -> None:
 
     session_name = f"notifier-{int(time.time())}"
 
-    handlers = {
-        **preset_handlers(),
-        **agent_effectful_handlers(),
-    }
-    runtime = AsyncRuntime(handlers=handlers)
-
-    result = await runtime.run(notification_workflow(session_name, config))
+    result = await run_program(
+        notification_workflow(session_name, config),
+        handler_maps=(preset_handlers(),),
+        custom_handlers=agent_effectful_handlers(),
+    )
     print(f"\nResult: {result}")
 
 
