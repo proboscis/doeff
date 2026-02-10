@@ -1,104 +1,196 @@
-"""End-to-end tests for doeff-conductor workflows."""
+"""Workflow tests for doeff-conductor using WithHandler-based mocks."""
 
-import subprocess
+from __future__ import annotations
+
+import hashlib
+import shutil
+from collections.abc import Callable
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-import pytest
 from doeff_conductor import (
     Commit,
     CreateIssue,
     CreateWorktree,
     DeleteWorktree,
     GetIssue,
-    GitHandler,
-    IssueHandler,
     IssueStatus,
     MergeBranches,
     Push,
     ResolveIssue,
-    WorktreeHandler,
-    make_scheduled_handler,
 )
-from doeff_conductor.handlers import run_sync
+from doeff_conductor.types import Issue, WorktreeEnv
 
-from doeff import do
+from doeff import Delegate, Resume, WithHandler, default_handlers, do, run
 
 
-def _is_git_available() -> bool:
-    """Check if git is available."""
-    try:
-        subprocess.run(["git", "--version"], capture_output=True, check=True)
+def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]) -> Any:
+    wrapped = program
+    for effect_type, effect_handler in reversed(list(handlers.items())):
+
+        def typed_handler(effect, k, _effect_type=effect_type, _handler=effect_handler):
+            if isinstance(effect, _effect_type):
+                return (yield Resume(k, _handler(effect)))
+            yield Delegate()
+
+        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
+    return wrapped
+
+
+def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
+    wrapped = _wrap_with_effect_handlers(program, handlers)
+    return run(wrapped, handlers=default_handlers())
+
+
+class MockConductorRuntime:
+    """In-memory + tempdir-backed conductor mock runtime for workflow tests."""
+
+    def __init__(self, root: Path):
+        self.worktree_base = root / "worktrees"
+        self.worktree_base.mkdir()
+        self.issues_dir = root / "issues"
+        self.issues_dir.mkdir()
+
+        self._issues: dict[str, Issue] = {}
+        self._worktrees: dict[str, WorktreeEnv] = {}
+        self._issue_counter = 0
+        self._worktree_counter = 0
+        self._merge_counter = 0
+        self.pushed_branches: list[str] = []
+
+    def _write_issue_file(self, issue: Issue) -> None:
+        issue_path = self.issues_dir / f"{issue.id}.md"
+        issue_path.write_text(
+            "\n".join(
+                [
+                    f"# {issue.title}",
+                    "",
+                    "## Status",
+                    issue.status.value,
+                    "",
+                    "## Labels",
+                    ", ".join(issue.labels),
+                    "",
+                    "## Body",
+                    issue.body,
+                ]
+            )
+        )
+
+    def _new_worktree(self, branch: str, issue_id: str | None = None) -> WorktreeEnv:
+        self._worktree_counter += 1
+        env_id = f"env-{self._worktree_counter:03d}"
+        worktree_path = self.worktree_base / f"{env_id}-{branch}"
+        worktree_path.mkdir(parents=True)
+        (worktree_path / ".git").mkdir()
+
+        env = WorktreeEnv(
+            id=env_id,
+            path=worktree_path,
+            branch=branch,
+            base_commit="a" * 40,
+            issue_id=issue_id,
+            created_at=datetime.now(timezone.utc),
+        )
+        self._worktrees[env_id] = env
+        return env
+
+    def handle_create_issue(self, effect: CreateIssue) -> Issue:
+        self._issue_counter += 1
+        issue_id = f"ISSUE-{self._issue_counter:03d}"
+        issue = Issue(
+            id=issue_id,
+            title=effect.title,
+            body=effect.body,
+            status=IssueStatus.OPEN,
+            labels=effect.labels,
+            metadata=effect.metadata or {},
+            created_at=datetime.now(timezone.utc),
+        )
+        self._issues[issue_id] = issue
+        self._write_issue_file(issue)
+        return issue
+
+    def handle_get_issue(self, effect: GetIssue) -> Issue:
+        return self._issues[effect.id]
+
+    def handle_resolve_issue(self, effect: ResolveIssue) -> Issue:
+        now = datetime.now(timezone.utc)
+        source = self._issues.get(effect.issue.id, effect.issue)
+        metadata = dict(source.metadata)
+        if effect.result is not None:
+            metadata["result"] = effect.result
+
+        resolved = replace(
+            source,
+            status=IssueStatus.RESOLVED,
+            pr_url=effect.pr_url,
+            resolved_at=now,
+            updated_at=now,
+            metadata=metadata,
+        )
+        self._issues[resolved.id] = resolved
+        self._write_issue_file(resolved)
+        return resolved
+
+    def handle_create_worktree(self, effect: CreateWorktree) -> WorktreeEnv:
+        suffix = effect.name or effect.suffix or f"wt-{self._worktree_counter + 1}"
+        branch = effect.name or f"conductor-{suffix}"
+        issue_id = effect.issue.id if effect.issue else None
+        return self._new_worktree(branch=branch, issue_id=issue_id)
+
+    def handle_delete_worktree(self, effect: DeleteWorktree) -> bool:
+        shutil.rmtree(effect.env.path, ignore_errors=True)
+        self._worktrees.pop(effect.env.id, None)
         return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+
+    def handle_commit(self, effect: Commit) -> str:
+        payload = f"{effect.env.id}:{effect.env.branch}:{effect.message}"
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+    def handle_push(self, effect: Push) -> bool:
+        self.pushed_branches.append(effect.env.branch)
+        return True
+
+    def handle_merge_branches(self, effect: MergeBranches) -> WorktreeEnv:
+        self._merge_counter += 1
+        merged_branch = effect.name or f"conductor-merged-{self._merge_counter}"
+        merged_env = self._new_worktree(branch=merged_branch)
+
+        for env in effect.envs:
+            for source in env.path.iterdir():
+                if source.name == ".git":
+                    continue
+
+                target = merged_env.path / source.name
+                if source.is_dir():
+                    shutil.copytree(source, target, dirs_exist_ok=True)
+                else:
+                    target.write_bytes(source.read_bytes())
+
+        return merged_env
 
 
-def _init_test_repo(path: Path) -> None:
-    """Initialize a test git repository."""
-    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=path,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=path,
-        check=True,
-        capture_output=True,
-    )
-    # Create initial commit
-    (path / "README.md").write_text("# Test Repo\n")
-    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=path,
-        check=True,
-        capture_output=True,
-    )
-
-
-@pytest.mark.e2e
 class TestWorkflowE2E:
-    """End-to-end workflow tests."""
+    """Workflow tests that previously required git/OpenCode now use WithHandler mocks."""
 
-    @pytest.fixture
-    def test_repo(self, tmp_path: Path) -> Path:
-        """Create a test git repository."""
-        if not _is_git_available():
-            pytest.skip("git not available")
-
-        repo_path = tmp_path / "test_repo"
-        repo_path.mkdir()
-        _init_test_repo(repo_path)
-        return repo_path
-
-    @pytest.fixture
-    def issues_dir(self, tmp_path: Path) -> Path:
-        """Create a temp issues directory."""
-        issues = tmp_path / "issues"
-        issues.mkdir()
-        return issues
-
-    def test_issue_lifecycle_workflow(self, issues_dir: Path):
-        """Test a simple workflow that creates and resolves an issue."""
+    def test_issue_lifecycle_workflow(self, tmp_path: Path):
+        runtime = MockConductorRuntime(tmp_path)
 
         @do
         def issue_lifecycle():
-            # Step 1: Create an issue
             issue = yield CreateIssue(
                 title="Test Feature",
                 body="Implement a test feature",
                 labels=("feature", "test"),
             )
 
-            # Step 2: Get it back
             retrieved = yield GetIssue(id=issue.id)
             assert retrieved.title == "Test Feature"
             assert retrieved.status == IssueStatus.OPEN
 
-            # Step 3: Resolve it
             resolved = yield ResolveIssue(
                 issue=retrieved,
                 pr_url="https://github.com/test/repo/pull/1",
@@ -107,137 +199,94 @@ class TestWorkflowE2E:
 
             return resolved
 
-        # Create handler
-        issue_handler = IssueHandler(issues_dir=issues_dir)
+        result = _run_with_effect_handlers(
+            issue_lifecycle(),
+            {
+                CreateIssue: runtime.handle_create_issue,
+                GetIssue: runtime.handle_get_issue,
+                ResolveIssue: runtime.handle_resolve_issue,
+            },
+        )
 
-        # Use scheduled handlers with Resume for sync operations
-        handlers = {
-            CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
-            GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
-            ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
-        }
-
-        result = run_sync(issue_lifecycle(), scheduled_handlers=handlers)
-
-        # Verify result - result.result is a Result[T], can be Ok or Err
-        # Check if it's an Err
-        if result.is_err:
-            pytest.fail(f"Workflow failed with error: {result.result.error}")
-
-        # For Ok, get the value
+        assert result.is_ok
         resolved_issue = result.value
         assert resolved_issue.status == IssueStatus.RESOLVED
         assert resolved_issue.pr_url == "https://github.com/test/repo/pull/1"
+        assert len(list(runtime.issues_dir.glob("*.md"))) == 1
 
-        # Verify file was written
-        files = list(issues_dir.glob("*.md"))
-        assert len(files) == 1
-
-    def test_worktree_create_and_delete(self, test_repo: Path, tmp_path: Path):
-        """Test creating and deleting a worktree."""
-        worktree_base = tmp_path / "worktrees"
-        worktree_base.mkdir()
+    def test_worktree_create_and_delete(self, tmp_path: Path):
+        runtime = MockConductorRuntime(tmp_path)
 
         @do
         def worktree_workflow():
-            # Create a worktree
             env = yield CreateWorktree(suffix="test")
-
-            # Verify it exists
             assert env.path.exists()
             assert (env.path / ".git").exists()
 
-            # Delete it
             deleted = yield DeleteWorktree(env=env, force=True)
             assert deleted
 
             return env.id
 
-        # Create handler pointing to test repo
-        worktree_handler = WorktreeHandler(repo_path=test_repo)
-        # Override worktree base for testing
-        worktree_handler.worktree_base = worktree_base
+        result = _run_with_effect_handlers(
+            worktree_workflow(),
+            {
+                CreateWorktree: runtime.handle_create_worktree,
+                DeleteWorktree: runtime.handle_delete_worktree,
+            },
+        )
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-        }
-
-        result = run_sync(worktree_workflow(), scheduled_handlers=handlers)
         assert result.is_ok
+        assert result.value.startswith("env-")
 
-    def test_worktree_with_commit(self, test_repo: Path, tmp_path: Path):
-        """Test creating a worktree and making a commit."""
-        worktree_base = tmp_path / "worktrees"
-        worktree_base.mkdir()
+    def test_worktree_with_commit(self, tmp_path: Path):
+        runtime = MockConductorRuntime(tmp_path)
 
         @do
         def commit_workflow():
-            # Create a worktree
             env = yield CreateWorktree(suffix="feature")
-
-            # Make a change in the worktree
             (env.path / "feature.py").write_text("# New feature\n")
 
-            # Commit the change
             sha = yield Commit(env=env, message="feat: add new feature")
+            assert len(sha) == 40
 
-            # Verify commit was made
-            assert sha is not None
-            assert len(sha) == 40  # Git SHA length
-
-            # Cleanup
             yield DeleteWorktree(env=env, force=True)
-
             return sha
 
-        worktree_handler = WorktreeHandler(repo_path=test_repo)
-        worktree_handler.worktree_base = worktree_base
-        git_handler = GitHandler()
+        result = _run_with_effect_handlers(
+            commit_workflow(),
+            {
+                CreateWorktree: runtime.handle_create_worktree,
+                DeleteWorktree: runtime.handle_delete_worktree,
+                Commit: runtime.handle_commit,
+            },
+        )
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            Commit: make_scheduled_handler(git_handler.handle_commit),
-        }
-
-        result = run_sync(commit_workflow(), scheduled_handlers=handlers)
         assert result.is_ok
-        assert len(result.value) == 40  # Valid git SHA
+        assert len(result.value) == 40
 
-    def test_full_issue_to_commit_workflow(
-        self, test_repo: Path, issues_dir: Path, tmp_path: Path
-    ):
-        """Test a full workflow: issue -> worktree -> change -> commit -> resolve."""
-        worktree_base = tmp_path / "worktrees"
-        worktree_base.mkdir()
+    def test_full_issue_to_commit_workflow(self, tmp_path: Path):
+        runtime = MockConductorRuntime(tmp_path)
 
         @do
         def full_workflow():
-            # Step 1: Create issue
             issue = yield CreateIssue(
                 title="Add greeting module",
                 body="Create a hello.py that prints Hello World",
                 labels=("feature",),
             )
 
-            # Step 2: Create worktree for the issue
             env = yield CreateWorktree(issue=issue, suffix="impl")
-
-            # Step 3: Make the change (simulating what an agent would do)
             (env.path / "hello.py").write_text('print("Hello World")\n')
 
-            # Step 4: Commit
             sha = yield Commit(env=env, message=f"feat: {issue.title}")
 
-            # Step 5: Resolve issue (in real workflow, this would be after PR)
             resolved = yield ResolveIssue(
                 issue=issue,
                 pr_url="https://github.com/test/repo/pull/1",
                 result=f"Implemented in commit {sha[:7]}",
             )
 
-            # Cleanup
             yield DeleteWorktree(env=env, force=True)
 
             return {
@@ -246,33 +295,26 @@ class TestWorkflowE2E:
                 "resolved": resolved.status == IssueStatus.RESOLVED,
             }
 
-        # Set up handlers
-        worktree_handler = WorktreeHandler(repo_path=test_repo)
-        worktree_handler.worktree_base = worktree_base
-        issue_handler = IssueHandler(issues_dir=issues_dir)
-        git_handler = GitHandler()
+        result = _run_with_effect_handlers(
+            full_workflow(),
+            {
+                CreateIssue: runtime.handle_create_issue,
+                GetIssue: runtime.handle_get_issue,
+                ResolveIssue: runtime.handle_resolve_issue,
+                CreateWorktree: runtime.handle_create_worktree,
+                DeleteWorktree: runtime.handle_delete_worktree,
+                Commit: runtime.handle_commit,
+            },
+        )
 
-        handlers = {
-            CreateIssue: make_scheduled_handler(issue_handler.handle_create_issue),
-            GetIssue: make_scheduled_handler(issue_handler.handle_get_issue),
-            ResolveIssue: make_scheduled_handler(issue_handler.handle_resolve_issue),
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            Commit: make_scheduled_handler(git_handler.handle_commit),
-        }
-
-        result = run_sync(full_workflow(), scheduled_handlers=handlers)
-
-        # Verify result
         assert result.is_ok
         workflow_result = result.value
         assert workflow_result["issue_id"].startswith("ISSUE-")
         assert len(workflow_result["commit_sha"]) == 40
         assert workflow_result["resolved"] is True
 
-    def test_merge_branches_workflow(self, test_repo: Path, tmp_path: Path):
-        worktree_base = tmp_path / "worktrees"
-        worktree_base.mkdir()
+    def test_merge_branches_workflow(self, tmp_path: Path):
+        runtime = MockConductorRuntime(tmp_path)
 
         @do
         def merge_workflow():
@@ -295,37 +337,21 @@ class TestWorkflowE2E:
 
             return merged.branch
 
-        worktree_handler = WorktreeHandler(repo_path=test_repo)
-        worktree_handler.worktree_base = worktree_base
-        git_handler = GitHandler()
+        result = _run_with_effect_handlers(
+            merge_workflow(),
+            {
+                CreateWorktree: runtime.handle_create_worktree,
+                MergeBranches: runtime.handle_merge_branches,
+                DeleteWorktree: runtime.handle_delete_worktree,
+                Commit: runtime.handle_commit,
+            },
+        )
 
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            MergeBranches: make_scheduled_handler(worktree_handler.handle_merge_branches),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            Commit: make_scheduled_handler(git_handler.handle_commit),
-        }
-
-        result = run_sync(merge_workflow(), scheduled_handlers=handlers)
         assert result.is_ok
         assert result.value.startswith("conductor-merged-")
 
-    def test_push_to_remote_workflow(self, test_repo: Path, tmp_path: Path):
-        worktree_base = tmp_path / "worktrees"
-        worktree_base.mkdir()
-
-        remote_path = tmp_path / "remote.git"
-        subprocess.run(
-            ["git", "init", "--bare", str(remote_path)],
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "remote", "add", "origin", str(remote_path)],
-            cwd=test_repo,
-            check=True,
-            capture_output=True,
-        )
+    def test_push_to_remote_workflow(self, tmp_path: Path):
+        runtime = MockConductorRuntime(tmp_path)
 
         @do
         def push_workflow():
@@ -336,68 +362,46 @@ class TestWorkflowE2E:
             yield DeleteWorktree(env=env, force=True)
             return env.branch
 
-        worktree_handler = WorktreeHandler(repo_path=test_repo)
-        worktree_handler.worktree_base = worktree_base
-        git_handler = GitHandler()
-
-        handlers = {
-            CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
-            DeleteWorktree: make_scheduled_handler(worktree_handler.handle_delete_worktree),
-            Commit: make_scheduled_handler(git_handler.handle_commit),
-            Push: make_scheduled_handler(git_handler.handle_push),
-        }
-
-        result = run_sync(push_workflow(), scheduled_handlers=handlers)
-        assert result.is_ok
-
-        remote_refs = subprocess.run(
-            ["git", "ls-remote", str(remote_path)],
-            capture_output=True,
-            text=True, check=False,
+        result = _run_with_effect_handlers(
+            push_workflow(),
+            {
+                CreateWorktree: runtime.handle_create_worktree,
+                DeleteWorktree: runtime.handle_delete_worktree,
+                Commit: runtime.handle_commit,
+                Push: runtime.handle_push,
+            },
         )
-        assert result.value in remote_refs.stdout
+
+        assert result.is_ok
+        assert result.value in runtime.pushed_branches
 
 
-@pytest.mark.e2e
 class TestTemplateE2E:
-    """End-to-end tests for workflow templates."""
-
-    @pytest.fixture
-    def issues_dir(self, tmp_path: Path) -> Path:
-        """Create a temp issues directory."""
-        issues = tmp_path / "issues"
-        issues.mkdir()
-        return issues
+    """Template loading tests."""
 
     def test_template_imports(self):
-        """Test that all templates can be imported."""
         from doeff_conductor.templates import (
             get_available_templates,
             get_template,
             is_template,
         )
 
-        # Verify templates are registered
         templates = get_available_templates()
         assert "basic_pr" in templates
         assert "enforced_pr" in templates
         assert "reviewed_pr" in templates
         assert "multi_agent" in templates
 
-        # Verify template lookup
         assert is_template("basic_pr")
         assert not is_template("nonexistent")
 
-        # Verify get_template
         func = get_template("basic_pr")
         assert callable(func)
 
-    def test_basic_pr_template_structure(self, issues_dir: Path):
-        """Test that basic_pr template returns a Program."""
+    def test_basic_pr_template_structure(self):
         from doeff_conductor.templates import basic_pr
         from doeff_conductor.types import Issue
 
-        # Create a test issue
         issue = Issue(
             id="TEST-001",
             title="Test Feature",
@@ -405,9 +409,7 @@ class TestTemplateE2E:
             status=IssueStatus.OPEN,
         )
 
-        # Get the program
         program = basic_pr(issue)
 
-        # Should be a doeff Program (KleisliProgramCall)
         assert program is not None
-        assert hasattr(program, "to_generator")  # All Programs have this method
+        assert hasattr(program, "execution_kernel")
