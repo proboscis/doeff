@@ -9,13 +9,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-pytestmark = pytest.mark.skip(
-    reason="Legacy CLI interpreter fixtures rely on pre-rust_vm program semantics."
-)
-
 
 def run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    command = ["uv", "run", "doeff", "run", *args]
+    command = ["uv", "run", "python", "-m", "doeff", "run", *args]
     env = {
         "PYTHONPATH": str(PROJECT_ROOT),
         "PATH": os.environ.get("PATH", ""),
@@ -69,7 +65,7 @@ class TestCFlagBasic:
         assert payload["status"] == "ok"
         assert payload["result"] == 6
 
-    @pytest.mark.skip(reason="Auto-discovery relies on old interpreter infrastructure")
+    @pytest.mark.skip(reason="Auto-discovery requires fixtures_discovery default interpreter markers")
     def test_auto_discovers_interpreter(self) -> None:
         result = run_cli(
             "-c",
