@@ -348,7 +348,7 @@ def _render_run_output(context: ResolvedRunContext, execution: RunExecutionResul
             "result_type": type(final_value).__name__,
         }
         if context.report and run_result is not None:
-            payload["report"] = run_result.display(verbose=context.report_verbose)
+            payload["report"] = _run_result_report(run_result, verbose=context.report_verbose)
             if execution.call_tree_ascii is not None:
                 payload["call_tree"] = execution.call_tree_ascii
         print(json.dumps(payload))
@@ -358,12 +358,43 @@ def _render_run_output(context: ResolvedRunContext, execution: RunExecutionResul
     if context.report:
         if run_result is not None:
             print()
-            print(run_result.display(verbose=context.report_verbose))
+            print(_run_result_report(run_result, verbose=context.report_verbose))
         else:
             print(
                 "\n(No run report available: interpreter did not return a RunResult)",
                 file=sys.stderr,
             )
+
+
+def _run_result_report(run_result: RunResult[Any], *, verbose: bool) -> str:
+    display = getattr(run_result, "display", None)
+    if callable(display):
+        return display(verbose=verbose)
+
+    status = "ok" if run_result.is_ok() else "error"
+    lines = [f"RunResult status: {status}"]
+
+    if run_result.is_ok():
+        lines.append(f"Value: {run_result.value!r}")
+    else:
+        error_value = getattr(run_result, "error", None)
+        if isinstance(error_value, BaseException):
+            lines.append(f"Error: {error_value!r}")
+        else:
+            lines.append("Error: unavailable")
+
+    if verbose:
+        log_entries = getattr(run_result, "log", None)
+        trace_entries = getattr(run_result, "trace", None)
+        store = getattr(run_result, "raw_store", None)
+        if isinstance(log_entries, list):
+            lines.append(f"Log entries: {len(log_entries)}")
+        if isinstance(trace_entries, list):
+            lines.append(f"Trace entries: {len(trace_entries)}")
+        if isinstance(store, dict):
+            lines.append(f"Store entries: {len(store)}")
+
+    return "\n".join(lines)
 
 
 def _import_symbol(path: str) -> Any:
@@ -476,7 +507,10 @@ def _json_safe(value: Any) -> Any:
 
 
 def _call_tree_ascii(run_result: RunResult[Any]) -> str | None:
-    observations = getattr(run_result.context, "effect_observations", None)
+    observations = getattr(run_result, "effect_observations", None)
+    if observations is None:
+        context = getattr(run_result, "context", None)
+        observations = getattr(context, "effect_observations", None)
     if not observations:
         return None
 
