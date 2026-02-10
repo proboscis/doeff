@@ -13,7 +13,7 @@ Helpers for invoking ByteDance's Seedream 4.0 image generation API from the [doe
 ```python
 import asyncio
 
-from doeff import AsyncRuntime, do
+from doeff import async_run, default_handlers, do
 from doeff_seedream import edit_image__seedream4
 
 @do
@@ -25,8 +25,11 @@ def main():
     image.save("seedream.png")
 
 async def run():
-    runtime = AsyncRuntime()
-    run_result = await runtime.run(main(), env={"seedream_api_key": "YOUR_ARK_KEY"})
+    run_result = await async_run(
+        main(),
+        handlers=default_handlers(),
+        env={"seedream_api_key": "YOUR_ARK_KEY"},
+    )
     return run_result.value  # SeedreamImageEditResult
 
 asyncio.run(run())
