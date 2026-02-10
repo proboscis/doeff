@@ -19,7 +19,6 @@ from doeff import (
     Await,
     EffectGenerator,
     Safe,
-    Step,
     Tell,
     do,
     slog,
@@ -873,9 +872,12 @@ def structured_llm__gemini(
     else:
         result = yield process_unstructured_response(response)
 
-    yield Step(
-        value={"result_type": type(result).__name__ if response_format else "str"},
-        meta={"model": model},
+    yield Tell(
+        {
+            "event": "gemini.structured_llm.result",
+            "result_type": type(result).__name__ if response_format else "str",
+            "model": model,
+        }
     )
 
     return result
@@ -1045,15 +1047,14 @@ def edit_image__gemini(
 
     result = yield process_image_edit_response(response)
 
-    yield Step(
-        value={
+    yield Tell(
+        {
+            "event": "gemini.image_edit.result",
             "result_type": type(result).__name__,
             "has_text": bool(result.text),
-        },
-        meta={
             "model": model,
             "input_image_count": len(images) if images else 0,
-        },
+        }
     )
 
     return result
