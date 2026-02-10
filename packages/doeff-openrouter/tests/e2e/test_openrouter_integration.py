@@ -15,7 +15,7 @@ from doeff_openrouter.structured_llm import (
 )
 from pydantic import BaseModel
 
-from doeff import EffectGenerator, SyncRuntime, do
+from doeff import EffectGenerator, default_handlers, do, run
 
 STRUCTURED_MODELS = [
     pytest.param("openai/gpt-4o-mini", True, id="openai-gpt-4o-mini"),
@@ -41,8 +41,8 @@ def api_key() -> str:
 
 
 @pytest.fixture(scope="module")
-def runtime() -> SyncRuntime:
-    return SyncRuntime()
+def handlers() -> tuple[Any, ...]:
+    return tuple(default_handlers())
 
 
 def _make_env(api_key: str) -> dict[str, str]:
@@ -50,7 +50,12 @@ def _make_env(api_key: str) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("model, expects_success", STRUCTURED_MODELS)
-def test_chat_completion_and_structured_response_live(model: str, expects_success: bool, api_key: str, runtime: SyncRuntime):
+def test_chat_completion_and_structured_response_live(
+    model: str,
+    expects_success: bool,
+    api_key: str,
+    handlers: tuple[Any, ...],
+):
     """Ensure the real OpenRouter API returns the documented structure for supported providers."""
     env = _make_env(api_key)
 
@@ -69,7 +74,7 @@ def test_chat_completion_and_structured_response_live(model: str, expects_succes
         )
         return raw_response
 
-    raw_result = runtime.run(flow(), env=env)
+    raw_result = run(flow(), handlers=handlers, env=env)
 
     assert raw_result.is_ok(), f"OpenRouter call failed: {raw_result.error}"
     raw = raw_result.value
@@ -87,7 +92,7 @@ def test_chat_completion_and_structured_response_live(model: str, expects_succes
     def parse_flow() -> EffectGenerator[Any]:
         return (yield process_structured_response(raw, EchoPayload))
 
-    parse_result = runtime.run(parse_flow(), env=env, store=raw_result.state)
+    parse_result = run(parse_flow(), handlers=handlers, env=env, store=raw_result.raw_store)
 
     if expects_success:
         assert parse_result.is_ok(), f"Structured parsing failed: {parse_result.error}"
