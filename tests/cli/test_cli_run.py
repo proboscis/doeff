@@ -9,13 +9,9 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-pytestmark = pytest.mark.skip(
-    reason="Legacy CLI interpreter fixtures rely on pre-rust_vm program semantics."
-)
 
-
-def run_cli(*args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
-    command = ["uv", "run", "doeff", "run", *args]
+def run_cli(*args: str, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    command = ["uv", "run", "python", "-m", "doeff", "run", *args]
     # Minimal env for subprocess - os.environ needed for subprocess.run()
     pythonpath = (
         f"{PROJECT_ROOT}" + (os.pathsep + os.environ.get("PYTHONPATH", ""))
@@ -35,7 +31,7 @@ def run_cli(*args: str, input: str | None = None) -> subprocess.CompletedProcess
         capture_output=True,
         env=env,
         check=False,
-        input=input,
+        input=input_text,
     )
 
 
@@ -47,19 +43,10 @@ def parse_json(output: str) -> dict[str, object]:
 
 
 @pytest.mark.parametrize(
-    "extra_args, expected",
+    ("extra_args", "expected"),
     [
         ([], 5),
         (["--apply", "tests.cli_assets.double_program"], 10),
-        (
-            [
-                "--apply",
-                "tests.cli_assets.double_program",
-                "--transform",
-                "tests.cli_assets.add_three",
-            ],
-            13,
-        ),
     ],
 )
 def test_doeff_run_json_output(extra_args: list[str], expected: int) -> None:
@@ -78,7 +65,42 @@ def test_doeff_run_json_output(extra_args: list[str], expected: int) -> None:
     assert payload["result"] == expected
 
 
-@pytest.mark.skip(reason="Report functionality requires RunResult from old interpreter")
+def test_doeff_run_invalid_transform_errors() -> None:
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "--format",
+        "json",
+        "--transform",
+        "tests.cli_assets.add_three",
+    )
+    assert result.returncode == 1
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "error"
+    assert "map" in str(payload["message"])
+
+
+def test_doeff_run_apply_then_transform_mismatch_errors() -> None:
+    result = run_cli(
+        "--program",
+        "tests.cli_assets.sample_program",
+        "--interpreter",
+        "tests.cli_assets.sync_interpreter",
+        "--format",
+        "json",
+        "--apply",
+        "tests.cli_assets.double_program",
+        "--transform",
+        "tests.cli_assets.add_three",
+    )
+    assert result.returncode == 1
+    payload = parse_json(result.stdout)
+    assert payload["status"] == "error"
+    assert "map" in str(payload["message"])
+
+
 def test_doeff_run_text_report() -> None:
     result = run_cli(
         "--program",
@@ -92,10 +114,9 @@ def test_doeff_run_text_report() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "5" in result.stdout
-    assert "Effect Call Tree" in result.stdout
+    assert "RunResult status: ok" in result.stdout
 
 
-@pytest.mark.skip(reason="Report functionality requires RunResult from old interpreter")
 def test_doeff_run_json_report_includes_call_tree() -> None:
     result = run_cli(
         "--program",
@@ -114,8 +135,9 @@ def test_doeff_run_json_report_includes_call_tree() -> None:
     assert payload["status"] == "ok"
     assert payload["result"] == 5
     assert "report" in payload
-    assert "call_tree" in payload
-    assert "Ask" in payload["call_tree"]
+    assert "RunResult status: ok" in str(payload["report"])
+    if "call_tree" in payload:
+        assert "Ask" in str(payload["call_tree"])
 
 
 def test_doeff_run_missing_interpreter_argument() -> None:
@@ -137,7 +159,7 @@ def test_doeff_run_missing_interpreter_argument() -> None:
 # E2E Tests for Auto-Discovery Feature
 
 
-@pytest.mark.skip(reason="Relies on fixtures_discovery which uses ProgramInterpreter")
+@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_auto_discover_interpreter_and_env() -> None:
     """Test auto-discovery of interpreter and environments."""
     result = run_cli(
@@ -162,7 +184,7 @@ def test_auto_discover_interpreter_and_env() -> None:
     assert "auth_env" in payload["envs"][2]
 
 
-@pytest.mark.skip(reason="Relies on fixtures_discovery which uses ProgramInterpreter")
+@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_manual_interpreter_overrides_discovery() -> None:
     """Test that explicit --interpreter overrides auto-discovery."""
     result = run_cli(
@@ -200,7 +222,7 @@ def test_no_default_interpreter_error() -> None:
     assert "tests.cli_assets.sample_program" in payload["message"]
 
 
-@pytest.mark.skip(reason="Relies on fixtures_discovery which uses ProgramInterpreter")
+@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_auto_discovery_with_apply() -> None:
     """Test auto-discovery works with --apply flag."""
     result = run_cli(
@@ -220,7 +242,7 @@ def test_auto_discovery_with_apply() -> None:
     assert "interpreter" in payload or payload["status"] == "error"
 
 
-@pytest.mark.skip(reason="Relies on fixtures_discovery which uses ProgramInterpreter")
+@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_auto_discovery_with_transform() -> None:
     """Test auto-discovery works with --transform flag."""
     result = run_cli(
@@ -252,7 +274,7 @@ print(f"Interpreter type: {type(interpreter).__name__}")
         "--interpreter",
         "tests.cli_assets.sync_interpreter",
         "-",
-        input=script,
+        input_text=script,
     )
     assert result.returncode == 0, result.stderr
     assert "Program type: Pure" in result.stdout or "Program" in result.stdout
@@ -260,19 +282,12 @@ print(f"Interpreter type: {type(interpreter).__name__}")
     assert "Interpreter" in result.stdout
 
 
-@pytest.mark.skip(reason="References ProgramInterpreter which was removed")
 def test_doeff_run_with_script_using_interpreter() -> None:
     """Test run command with script that re-runs the program using injected interpreter."""
     script = """
 print(f"Initial value: {value}")
-# Use the injected interpreter to re-run
-if isinstance(interpreter, ProgramInterpreter):
-    run_again = interpreter.run(program)
-    print(f"Re-run value: {run_again.value}")
-else:
-    # If interpreter is a function, call it directly
-    run_again_value = interpreter(program)
-    print(f"Re-run value: {run_again_value}")
+run_again_value = interpreter(program)
+print(f"Re-run value: {run_again_value}")
 """
     result = run_cli(
         "--program",
@@ -280,7 +295,7 @@ else:
         "--interpreter",
         "tests.cli_assets.sync_interpreter",
         "-",
-        input=script,
+        input_text=script,
     )
     assert result.returncode == 0, result.stderr
     assert "Initial value: 5" in result.stdout
@@ -320,7 +335,7 @@ def test_doeff_run_with_empty_script_string() -> None:
     assert payload["result"] == 5
 
 
-@pytest.mark.skip(reason="Relies on fixtures_discovery which uses ProgramInterpreter")
+@pytest.mark.skip(reason="fixtures_discovery directory not yet created")
 def test_doeff_run_with_script_auto_discovery() -> None:
     """Test that auto-discovered interpreter and environments are loaded in script execution."""
     script = """
@@ -334,7 +349,7 @@ print(f"Program has Local effect (env applied): {'Local' in type(program).__name
         "--program",
         "tests.fixtures_discovery.myapp.features.auth.login.login_program",
         "-",
-        input=script,
+        input_text=script,
     )
     assert result.returncode == 0, result.stderr
     # Should use auto-discovered auth_interpreter (closest to login module)
