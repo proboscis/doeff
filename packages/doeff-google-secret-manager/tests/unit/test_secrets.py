@@ -15,7 +15,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from doeff_google_secret_manager import access_secret  # noqa: E402
 
-from doeff import AsyncRuntime, EffectGenerator, do  # noqa: E402
+from doeff import EffectGenerator, async_run, default_handlers, do  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -75,9 +75,9 @@ async def test_access_secret_text(monkeypatch: pytest.MonkeyPatch, stub_google_s
     def flow() -> EffectGenerator[str]:
         return (yield access_secret("db-password"))
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(
+    result = await async_run(
         flow(),
+        handlers=default_handlers(),
         env={
             "secret_manager_project": "my-project",
             "secret_manager_credentials": object(),
@@ -99,9 +99,9 @@ async def test_access_secret_bytes(stub_google_secret_manager: list[dict[str, An
     def flow() -> EffectGenerator[bytes]:
         return (yield access_secret("binary-secret", decode=False, project="other-project"))
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(
+    result = await async_run(
         flow(),
+        handlers=default_handlers(),
         env={"secret_manager_credentials": object(), "secret_manager_project": "ignored"}
     )
 
@@ -121,8 +121,7 @@ async def test_access_secret_uses_adc_when_project_missing(stub_google_secret_ma
     def flow() -> EffectGenerator[str]:
         return (yield access_secret("needs-project"))
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(flow())
+    result = await async_run(flow(), handlers=default_handlers())
 
     assert result.is_ok
     assert stub_google_secret_manager[-1] == {
