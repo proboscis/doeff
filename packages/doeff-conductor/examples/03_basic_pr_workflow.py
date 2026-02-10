@@ -34,11 +34,11 @@ from doeff_conductor import (
     WorktreeEnv,
     # Handler utility
     make_scheduled_handler,
+    make_typed_handlers,
 )
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import EffectGenerator, default_handlers, do, run, slog
 
 
 # Mock handlers for demonstration (no real git/agent operations)
@@ -192,8 +192,10 @@ Implement user authentication with JWT tokens.
     handlers = {**preset_handlers(), **domain_handlers}
 
     # Run the workflow
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(basic_pr_workflow(issue))
+    result = run(
+        basic_pr_workflow(issue),
+        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    )
 
     print(f"\n{'='*50}")
     print(f"Workflow completed! PR: {result.value.url}")
