@@ -367,21 +367,24 @@ class AgenticAPI:
         Returns:
             Workflow ID
         """
-        from doeff import run_sync
+        from doeff import default_handlers, run
 
-        from .handler import agentic_effectful_handlers
+        from .handler import with_agentic_effectful_handlers
 
         wf_name = name or "unnamed"
         wf_id = workflow_id or generate_workflow_id(wf_name)
 
-        handlers = agentic_effectful_handlers(
+        wrapped = with_agentic_effectful_handlers(
+            program=workflow,
             workflow_id=wf_id,
             workflow_name=wf_name,
             state_dir=self.state_dir,
         )
 
         try:
-            run_sync(workflow, handlers=handlers)
+            # Access .value so failures are raised and handled by the failure path below.
+            run_result = run(wrapped, handlers=default_handlers())
+            _ = run_result.value
         except Exception as e:
             # Update workflow as failed
             workflow_info = self.get_workflow(wf_id)
