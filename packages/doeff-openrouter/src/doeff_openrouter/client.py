@@ -17,7 +17,6 @@ from doeff import (
     Get,
     Put,
     Safe,
-    Step,
     Tell,
     do,
 )
@@ -293,13 +292,13 @@ def track_api_call(
         "max_tokens": sanitized_payload.get("max_tokens")
         or sanitized_payload.get("max_completion_tokens"),
     }
-    yield Step(
-        {"request_payload": sanitized_payload, "timestamp": graph_metadata["timestamp"]},
-        {**graph_metadata, "phase": "request_payload"},
+    yield Tell(
+        "OpenRouter request payload tracked: "
+        f"timestamp={graph_metadata['timestamp']}, request={request_summary}"
     )
-    yield Step(
-        {"request": request_summary, "timestamp": graph_metadata["timestamp"]},
-        {**graph_metadata, "phase": "request"},
+    yield Tell(
+        "OpenRouter request payload details captured: "
+        f"timestamp={graph_metadata['timestamp']}, payload_keys={sorted(sanitized_payload.keys())}"
     )
 
     if not error and response_data is not None:
@@ -313,14 +312,14 @@ def track_api_call(
             choice0 = choices[0]
             if isinstance(choice0, Mapping):
                 response_summary["finish_reason"] = choice0.get("finish_reason")
-        yield Step(
-            {"response": response_summary, "timestamp": graph_metadata["timestamp"]},
-            {**graph_metadata, "phase": "response"},
+        yield Tell(
+            "OpenRouter response tracked: "
+            f"timestamp={graph_metadata['timestamp']}, response={response_summary}"
         )
     elif error:
-        yield Step(
-            {"error": str(error), "timestamp": graph_metadata["timestamp"]},
-            {**graph_metadata, "phase": "error"},
+        yield Tell(
+            "OpenRouter response error tracked: "
+            f"timestamp={graph_metadata['timestamp']}, error={error}"
         )
 
     api_calls = yield Get("openrouter_api_calls")

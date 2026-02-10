@@ -10,7 +10,7 @@ import pytest
 from doeff_openrouter.chat import chat_completion
 from pydantic import BaseModel
 
-from doeff import AsyncRuntime, EffectGenerator, SyncRuntime, do
+from doeff import EffectGenerator, default_handlers, do, run
 
 structured_llm_module = importlib.import_module("doeff_openrouter.structured_llm")
 from doeff_openrouter.structured_llm import (
@@ -28,9 +28,11 @@ class DemoModel(BaseModel):
     value: int
 
 
-def run_program(program):
-    runtime = SyncRuntime()
-    return runtime.run(program)
+_HANDLERS = tuple(default_handlers())
+
+
+def run_program(program, *, env: dict[str, Any] | None = None, store: dict[str, Any] | None = None):
+    return run(program, handlers=_HANDLERS, env=env, store=store)
 
 
 def test_build_messages_text_only():
@@ -332,9 +334,9 @@ async def test_chat_completion_tracks_prompt_state():
             assert request_data["messages"] == messages
             return response_data, {}
 
-    runtime = AsyncRuntime()
-    result = await runtime.run(
+    result = run(
         chat_completion(messages=messages, model="demo-model"),
+        handlers=_HANDLERS,
         env={"openrouter_client": FakeClient()},
         store={"openrouter_api_calls": []},
     )
@@ -342,7 +344,7 @@ async def test_chat_completion_tracks_prompt_state():
     assert result.is_ok()
     assert result.value == response_data
 
-    api_calls = result.state.get("openrouter_api_calls")
+    api_calls = result.raw_store.get("openrouter_api_calls")
     assert api_calls is not None
     assert api_calls[0]["prompt_text"] == "hello router"
     assert api_calls[0]["prompt_images"] == []

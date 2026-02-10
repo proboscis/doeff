@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Mapping
 from typing import Any
 
 from doeff import (
     Await,
-    Delay,
     EffectGenerator,
     Safe,
     Tell,
@@ -157,7 +157,7 @@ def chat_completion(
 
         if attempt < max_attempts - 1:
             yield Tell(f"Retrying in {delay_seconds}s (attempt {attempt + 2}/{max_attempts})")
-            yield Delay(delay_seconds)
+            yield Await(asyncio.sleep(delay_seconds))
 
     # All retries exhausted
     if last_exception is not None:
