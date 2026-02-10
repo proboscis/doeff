@@ -22,11 +22,11 @@ from doeff_conductor import (
     ListIssues,
     ResolveIssue,
     make_scheduled_handler,
+    make_typed_handlers,
 )
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import EffectGenerator, default_handlers, do, run, slog
 
 
 @do
@@ -91,8 +91,10 @@ def main():
     handlers = {**preset_handlers(), **domain_handlers}
 
     # Run the demo
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(issue_lifecycle_demo())
+    result = run(
+        issue_lifecycle_demo(),
+        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    )
 
     print(f"\nFinal issue state: {result.value.to_dict()}")
 
