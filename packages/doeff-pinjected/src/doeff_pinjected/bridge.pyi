@@ -2,8 +2,7 @@ from typing import TypeVar
 
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff.program import Program
-from doeff.types import RunResult
+from doeff import Program, RunResult
 
 T = TypeVar("T")
 
