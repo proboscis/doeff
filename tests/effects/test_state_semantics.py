@@ -34,39 +34,6 @@ class TestGetSemantics:
         assert result.is_ok
         assert result.value == 42
 
-    @pytest.mark.asyncio
-    async def test_get_missing_key_raises_keyerror(self, parameterized_interpreter) -> None:
-        """Get raises KeyError for missing keys (consistent with Ask).
-
-        See SPEC-EFF-002-state.md D1.
-        """
-
-        @do
-        def program() -> Program[None]:
-            value = yield Get("nonexistent")
-            return value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_err()
-        assert isinstance(result.error, KeyError)
-
-    @pytest.mark.asyncio
-    async def test_get_missing_key_with_safe(self, parameterized_interpreter) -> None:
-        """Use Safe to handle potentially missing keys."""
-
-        @do
-        def program() -> Program[int]:
-            result = yield Safe(Get("missing"))
-            if result.is_err():
-                return 0
-            return result.value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        assert result.value == 0
-
 
 class TestPutSemantics:
     """Tests for Put effect behavior."""

@@ -3,7 +3,20 @@ from __future__ import annotations
 import doeff_vm
 import pytest
 
-from doeff import Ask, Err, Gather, Local, Ok, Safe, Spawn, default_handlers, do, run
+from doeff import (
+    Ask,
+    Err,
+    Gather,
+    Get,
+    Local,
+    MissingEnvKeyError,
+    Ok,
+    Safe,
+    Spawn,
+    default_handlers,
+    do,
+    run,
+)
 from doeff.effects import TaskCompleted
 
 
@@ -199,6 +212,42 @@ def test_lazy_ask_safe_captures_program_error() -> None:
     assert safe_result.is_err()
     assert isinstance(safe_result.error, ValueError)
     assert str(safe_result.error) == "lazy boom"
+
+
+def test_ask_missing_key_raises_missing_env_key_error() -> None:
+    @do
+    def program():
+        return (yield Ask("missing"))
+
+    result = run(program(), handlers=default_handlers(), env={})
+    assert result.is_err()
+    assert isinstance(result.error, MissingEnvKeyError)
+    assert isinstance(result.error, KeyError)
+
+
+def test_ask_missing_key_error_includes_helpful_hint() -> None:
+    @do
+    def program():
+        return (yield Ask("service"))
+
+    result = run(program(), handlers=default_handlers(), env={})
+    assert result.is_err()
+    assert isinstance(result.error, MissingEnvKeyError)
+
+    message = str(result.error)
+    assert "Environment key not found: 'service'" in message
+    assert "Provide this key via `env={'service': value}`" in message
+    assert "Local({'service': value}, ...)" in message
+
+
+def test_get_missing_key_raises_key_error() -> None:
+    @do
+    def program():
+        return (yield Get("missing"))
+
+    result = run(program(), handlers=default_handlers())
+    assert result.is_err()
+    assert isinstance(result.error, KeyError)
 
 
 def test_scheduler_task_completed_uses_single_result_payload() -> None:
