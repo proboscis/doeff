@@ -14,7 +14,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from doeff_google_secret_manager import access_secret
 
-from doeff import SyncRuntime, do
+from doeff import default_handlers, do, run
 
 ENV_ENABLE = "SECRET_MANAGER_RUN_E2E"
 ENV_PROJECT = "SECRET_MANAGER_TEST_PROJECT"
@@ -47,8 +47,7 @@ def test_access_secret_real_secret():
             )
         )
 
-    runtime = SyncRuntime()
-    result = runtime.run(flow())
+    result = run(flow(), handlers=default_handlers())
 
     assert result.is_ok, result.result
     assert isinstance(result.value, str)
