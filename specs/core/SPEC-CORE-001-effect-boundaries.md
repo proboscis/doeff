@@ -413,20 +413,12 @@ VM doesn't know tasks are switching!
 
 ## Terminology
 
-### Rename Decision
+### Naming Rationale
 
-We considered:
-- `Suspended` -> `FreeBind` or `EscapedEffect`
+The escape type is named `PythonAsyncSyntaxEscape` rather than the theoretically accurate `FreeBind` because:
 
-**Decision: Rename to `PythonAsyncSyntaxEscape`.**
-
-`FreeBind` would be theoretically accurate (it IS the Bind case of Free monad), but misleading. It suggests a general escape mechanism when really it's **specifically for Python's async/await syntax**.
-
-`PythonAsyncSyntaxEscape` makes it impossible to misunderstand:
-- `Python` - this is a Python-specific issue
-- `Async` - related to async/await
-- `Syntax` - it's a syntax-level limitation
-- `Escape` - escapes doeff's control
+- `FreeBind` suggests a general escape mechanism, but this escape is **specifically for Python's async/await syntax**
+- The name encodes its constraints: **Python**-specific, **Async**/await, **Syntax**-level limitation, **Escape**s doeff's control
 
 ### Types
 
