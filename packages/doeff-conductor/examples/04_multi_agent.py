@@ -38,10 +38,10 @@ from doeff_conductor import (
     WorktreeEnv,
     # Handler utility
     make_scheduled_handler,
+    make_typed_handlers,
 )
 
-from doeff import EffectGenerator, Gather, SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import EffectGenerator, Gather, default_handlers, do, run, slog
 from doeff_preset import preset_handlers
 
 
@@ -254,8 +254,10 @@ Implement a caching layer for database queries.
     handlers = {**preset_handlers(), **mock_handlers}
 
     # Run the workflow - slog messages will be displayed via rich
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(multi_agent_workflow(issue))
+    result = run(
+        multi_agent_workflow(issue),
+        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    )
 
     print(f"\n{'='*50}")
     print(f"Workflow completed! PR: {result.value.url}")

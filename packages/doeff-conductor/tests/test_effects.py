@@ -39,9 +39,10 @@ class TestEffectBase:
         intercepted = effect.intercept(lambda x: x)
         assert intercepted is effect  # No nested programs to intercept
 
-        # Should have to_generator method
-        gen = effect.to_generator()
-        assert hasattr(gen, "__next__")
+        # Effect should be a first-class doeff effect value
+        from doeff import EffectBase
+
+        assert isinstance(effect, EffectBase)
 
 
 class TestWorktreeEffects:
