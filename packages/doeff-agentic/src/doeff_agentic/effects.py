@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from doeff.types import EffectBase
+from doeff import EffectBase
 
 from .types import AgenticEnvironmentType
 
