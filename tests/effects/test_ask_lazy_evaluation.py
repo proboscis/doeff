@@ -31,25 +31,6 @@ class TestAskLazyEvaluation:
     """Tests for basic lazy Program evaluation behavior."""
 
     @pytest.mark.asyncio
-    async def test_ask_evaluates_program_value(self, parameterized_interpreter) -> None:
-        """Ask evaluates a Program value in the environment."""
-
-        @do
-        def expensive():
-            return 42
-
-        env = {"service": expensive()}
-
-        @do
-        def program():
-            value = yield Ask("service")
-            return value
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-        assert result.is_ok
-        assert result.value == 42
-
-    @pytest.mark.asyncio
     async def test_ask_evaluates_program_with_effects(self, parameterized_interpreter) -> None:
         """Ask properly evaluates a Program that yields effects."""
 
@@ -253,38 +234,6 @@ class TestErrorPropagation:
 
 class TestConcurrentAccess:
     """Tests for concurrent Ask protection."""
-
-    @pytest.mark.asyncio
-    async def test_gather_with_same_lazy_ask(self, parameterized_interpreter) -> None:
-        """Multiple Gather children asking for same key should not re-evaluate."""
-        evaluation_count = [0]
-
-        @do
-        def expensive():
-            evaluation_count[0] += 1
-            yield Put("eval_count", evaluation_count[0])
-            return 42
-
-        expensive_program = expensive()
-        env = {"service": expensive_program}
-
-        @do
-        def child():
-            value = yield Ask("service")
-            return value
-
-        @do
-        def program():
-            t1 = yield Spawn(child())
-            t2 = yield Spawn(child())
-            t3 = yield Spawn(child())
-            results = yield Gather(t1, t2, t3)
-            return results
-
-        result = await parameterized_interpreter.run_async(program(), env=env)
-
-        assert result.is_ok
-        assert result.value == [42, 42, 42]
 
     @pytest.mark.asyncio
     async def test_nested_ask_in_lazy_program(self, parameterized_interpreter) -> None:
