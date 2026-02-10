@@ -1,9 +1,8 @@
-"""Tests for doeff_flow.trace module."""
+"""Tests for doeff_flow.trace with VM-native tracing patterns."""
 
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -12,486 +11,234 @@ from doeff_flow.trace import (
     LiveTrace,
     TraceFrame,
     _safe_repr,
-    trace_observer,
+    get_default_trace_dir,
     validate_workflow_id,
+    write_terminal_trace,
 )
 
-from doeff import Pure, do
+from doeff import Ask, Delegate, Get, Pure, Put, Resume, WithHandler, default_handlers, do
 from doeff import run as run_sync
 
-pytestmark = pytest.mark.skip(reason="doeff-flow step-level tracing requires removed CESK hooks")
+
+def _read_trace_entries(trace_dir: Path, workflow_id: str) -> list[dict]:
+    trace_file = trace_dir / workflow_id / "trace.jsonl"
+    assert trace_file.exists()
+    return [json.loads(line) for line in trace_file.read_text().splitlines() if line.strip()]
 
 
 class TestValidateWorkflowId:
-    """Tests for validate_workflow_id function."""
+    """Tests for workflow ID validation."""
 
-    def test_valid_alphanumeric(self):
-        """Valid alphanumeric workflow IDs should pass."""
-        assert validate_workflow_id("workflow001") == "workflow001"
-        assert validate_workflow_id("MyWorkflow") == "MyWorkflow"
-        assert validate_workflow_id("test123") == "test123"
+    @pytest.mark.parametrize(
+        "workflow_id",
+        [
+            "workflow001",
+            "MyWorkflow",
+            "test-123-abc",
+            "test_123_abc",
+            "a" * 255,
+        ],
+    )
+    def test_accepts_safe_ids(self, workflow_id: str):
+        assert validate_workflow_id(workflow_id) == workflow_id
 
-    def test_valid_with_hyphen(self):
-        """Valid workflow IDs with hyphens should pass."""
-        assert validate_workflow_id("my-workflow") == "my-workflow"
-        assert validate_workflow_id("test-123-abc") == "test-123-abc"
+    @pytest.mark.parametrize(
+        "workflow_id",
+        [
+            "",
+            "my workflow",
+            "workflow@123",
+            "workflow/test",
+            "workflow..test",
+            "a" * 256,
+        ],
+    )
+    def test_rejects_unsafe_ids(self, workflow_id: str):
+        with pytest.raises(ValueError, match=r"workflow_id|Invalid workflow_id"):
+            validate_workflow_id(workflow_id)
 
-    def test_valid_with_underscore(self):
-        """Valid workflow IDs with underscores should pass."""
-        assert validate_workflow_id("my_workflow") == "my_workflow"
-        assert validate_workflow_id("test_123_abc") == "test_123_abc"
 
-    def test_invalid_with_spaces(self):
-        """Workflow IDs with spaces should be rejected."""
-        with pytest.raises(ValueError, match="Invalid workflow_id"):
-            validate_workflow_id("my workflow")
-
-    def test_invalid_with_special_chars(self):
-        """Workflow IDs with special characters should be rejected."""
-        with pytest.raises(ValueError, match="Invalid workflow_id"):
-            validate_workflow_id("workflow@123")
-        with pytest.raises(ValueError, match="Invalid workflow_id"):
-            validate_workflow_id("workflow/test")
-        with pytest.raises(ValueError, match="Invalid workflow_id"):
-            validate_workflow_id("workflow..test")
-
-    def test_empty_string(self):
-        """Empty workflow ID should be rejected."""
-        with pytest.raises(ValueError, match="cannot be empty"):
-            validate_workflow_id("")
-
-    def test_too_long(self):
-        """Workflow IDs longer than 255 characters should be rejected."""
-        long_id = "a" * 256
-        with pytest.raises(ValueError, match="too long"):
-            validate_workflow_id(long_id)
-
-    def test_max_length_valid(self):
-        """Workflow IDs at exactly 255 characters should pass."""
-        max_id = "a" * 255
-        assert validate_workflow_id(max_id) == max_id
+def test_get_default_trace_dir_uses_override_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("DOEFF_FLOW_TRACE_DIR", str(tmp_path / "override"))
+    monkeypatch.delenv("XDG_STATE_HOME", raising=False)
+    assert get_default_trace_dir() == tmp_path / "override"
 
 
 class TestSafeRepr:
-    """Tests for _safe_repr function."""
+    """Tests for _safe_repr helper."""
 
-    def test_short_repr(self):
-        """Short representations should not be truncated."""
+    def test_short_repr_is_unchanged(self):
         assert _safe_repr("hello") == "'hello'"
         assert _safe_repr(123) == "123"
-        assert _safe_repr([1, 2, 3]) == "[1, 2, 3]"
 
-    def test_long_repr_truncation(self):
-        """Long representations should be truncated."""
+    def test_long_repr_is_truncated(self):
         long_string = "a" * 300
         result = _safe_repr(long_string, max_len=50)
         assert len(result) == 50
         assert result.endswith("...")
 
-    def test_custom_max_len(self):
-        """Custom max_len should be respected."""
-        obj = list(range(100))
-        result = _safe_repr(obj, max_len=30)
-        assert len(result) == 30
-        assert result.endswith("...")
+
+def test_trace_dataclasses_keep_fields():
+    frame = TraceFrame(
+        function="my_function",
+        file="/path/to/file.py",
+        line=42,
+        code="result = yield Pure(10)",
+    )
+    trace = LiveTrace(
+        workflow_id="wf-001",
+        step=1,
+        status="running",
+        current_effect="Pure(10)",
+        trace=[frame],
+        started_at="2025-01-01T00:00:00",
+        updated_at="2025-01-01T00:00:01",
+    )
+    assert trace.trace[0].function == "my_function"
+    assert trace.error is None
+    assert trace.last_slog is None
 
 
-class TestTraceFrame:
-    """Tests for TraceFrame dataclass."""
+class TestWriteTerminalTrace:
+    """Tests for terminal trace writing."""
 
-    def test_creation(self):
-        """TraceFrame should be creatable with all fields."""
-        frame = TraceFrame(
-            function="my_function",
-            file="/path/to/file.py",
-            line=42,
-            code="result = yield Pure(10)",
-        )
-        assert frame.function == "my_function"
-        assert frame.file == "/path/to/file.py"
-        assert frame.line == 42
-        assert frame.code == "result = yield Pure(10)"
+    def test_writes_completed_snapshot(self, tmp_path):
+        @do
+        def simple_workflow():
+            a = yield Pure(10)
+            b = yield Pure(20)
+            return a + b
 
-    def test_optional_code(self):
-        """TraceFrame code can be None."""
-        frame = TraceFrame(
-            function="my_function",
-            file="/path/to/file.py",
-            line=42,
-            code=None,
-        )
-        assert frame.code is None
+        result = run_sync(simple_workflow(), handlers=default_handlers())
+        assert result.is_ok()
+        write_terminal_trace("terminal-ok", tmp_path, result)
 
+        entries = _read_trace_entries(tmp_path, "terminal-ok")
+        assert len(entries) == 1
+        assert entries[0]["status"] == "completed"
+        assert entries[0]["result"] == "30"
+        assert entries[0]["error"] is None
 
-class TestLiveTrace:
-    """Tests for LiveTrace dataclass."""
+    def test_writes_failed_snapshot(self, tmp_path):
+        @do
+        def failing_workflow():
+            yield Pure(10)
+            raise ValueError("intentional failure")
 
-    def test_creation_minimal(self):
-        """LiveTrace should be creatable with required fields."""
-        trace = LiveTrace(
-            workflow_id="wf-001",
-            step=1,
-            status="running",
-            current_effect="Pure(10)",
-            trace=[],
-            started_at="2025-01-01T00:00:00",
-            updated_at="2025-01-01T00:00:01",
-        )
-        assert trace.workflow_id == "wf-001"
-        assert trace.step == 1
-        assert trace.status == "running"
-        assert trace.error is None
+        result = run_sync(failing_workflow(), handlers=default_handlers())
+        assert result.is_err()
+        write_terminal_trace("terminal-fail", tmp_path, result)
 
-    def test_creation_with_error(self):
-        """LiveTrace should support error field."""
-        trace = LiveTrace(
-            workflow_id="wf-001",
-            step=5,
-            status="failed",
-            current_effect=None,
-            trace=[],
-            started_at="2025-01-01T00:00:00",
-            updated_at="2025-01-01T00:00:05",
-            error="KeyError: 'missing_key'",
-        )
-        assert trace.status == "failed"
-        assert trace.error == "KeyError: 'missing_key'"
-
-
-class TestTraceObserver:
-    """Tests for trace_observer context manager."""
-
-    def test_creates_trace_file(self):
-        """trace_observer should create the trace file directory."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def simple_workflow():
-                return (yield Pure(42))
-
-            with trace_observer("test-wf", trace_dir) as on_step:
-                run_sync(simple_workflow(), on_step=on_step)
-
-            trace_file = trace_dir / "test-wf" / "trace.jsonl"
-            assert trace_file.exists()
-
-    def test_writes_jsonl_entries(self):
-        """trace_observer should write JSONL entries for each step."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def multi_step_workflow():
-                a = yield Pure(10)
-                b = yield Pure(20)
-                c = yield Pure(30)
-                return a + b + c
-
-            with trace_observer("test-wf", trace_dir) as on_step:
-                result = run_sync(multi_step_workflow(), on_step=on_step)
-
-            assert result.value == 60
-
-            trace_file = trace_dir / "test-wf" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
-
-            # Should have multiple entries (one per step)
-            assert len(lines) > 1
-
-            # Each line should be valid JSON
-            for line in lines:
-                data = json.loads(line)
-                assert "workflow_id" in data
-                assert "step" in data
-                assert "status" in data
-                assert data["workflow_id"] == "test-wf"
-
-    def test_final_status_completed(self):
-        """Final trace entry should have 'completed' status on success."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def simple_workflow():
-                return (yield Pure(42))
-
-            with trace_observer("test-wf", trace_dir) as on_step:
-                run_sync(simple_workflow(), on_step=on_step)
-
-            trace_file = trace_dir / "test-wf" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
-            last_entry = json.loads(lines[-1])
-
-            assert last_entry["status"] == "completed"
-
-    def test_captures_current_effect(self):
-        """trace_observer should capture the current effect being processed."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def simple_workflow():
-                return (yield Pure(42))
-
-            with trace_observer("test-wf", trace_dir) as on_step:
-                run_sync(simple_workflow(), on_step=on_step)
-
-            trace_file = trace_dir / "test-wf" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
-
-            # At least one entry should have a current_effect
-            effects = [json.loads(line).get("current_effect") for line in lines]
-            non_null_effects = [e for e in effects if e is not None]
-            assert len(non_null_effects) > 0
-
-    def test_invalid_workflow_id_rejected(self):
-        """trace_observer should reject invalid workflow IDs."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            with pytest.raises(ValueError, match="Invalid workflow_id"):
-                with trace_observer("invalid/id", trace_dir):
-                    pass
-
-    def test_accepts_string_trace_dir(self):
-        """trace_observer should accept string path for trace_dir."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-
-            @do
-            def simple_workflow():
-                return (yield Pure(42))
-
-            with trace_observer("test-wf", tmp_dir) as on_step:  # String instead of Path
-                result = run_sync(simple_workflow(), on_step=on_step)
-
-            assert result.value == 42
-            trace_file = Path(tmp_dir) / "test-wf" / "trace.jsonl"
-            assert trace_file.exists()
+        entries = _read_trace_entries(tmp_path, "terminal-fail")
+        assert len(entries) == 1
+        assert entries[0]["status"] == "failed"
+        assert "ValueError" in entries[0]["error"]
 
 
 class TestRunWorkflow:
-    """Tests for run_workflow convenience wrapper."""
+    """Tests for the run_workflow wrapper."""
 
-    def test_basic_execution(self):
-        """run_workflow should execute the workflow and return result."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
+    def test_runs_program_and_writes_trace(self, tmp_path):
+        @do
+        def simple_workflow():
+            a = yield Pure(10)
+            b = yield Pure(20)
+            return a + b
 
-            @do
-            def simple_workflow():
-                a = yield Pure(10)
-                b = yield Pure(20)
-                return a + b
-
-            result = run_workflow(
-                simple_workflow(),
-                workflow_id="test-001",
-                trace_dir=trace_dir,
-            )
-
-            assert result.is_ok
-            assert result.value == 30
-
-    def test_creates_trace_file(self):
-        """run_workflow should create trace file."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def simple_workflow():
-                return (yield Pure(42))
-
-            run_workflow(
-                simple_workflow(),
-                workflow_id="test-001",
-                trace_dir=trace_dir,
-            )
-
-            trace_file = trace_dir / "test-001" / "trace.jsonl"
-            assert trace_file.exists()
-
-    def test_accepts_string_trace_dir(self):
-        """run_workflow should accept string path for trace_dir."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-
-            @do
-            def simple_workflow():
-                return (yield Pure(42))
-
-            result = run_workflow(
-                simple_workflow(),
-                workflow_id="test-001",
-                trace_dir=tmp_dir,  # String instead of Path
-            )
-
-            assert result.is_ok
-            assert result.value == 42
-
-    def test_nested_workflow_trace(self):
-        """run_workflow should capture nested @do function calls."""
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def inner_function():
-                return (yield Pure(10))
-
-            @do
-            def outer_function():
-                x = yield inner_function()
-                return x * 2
-
-            result = run_workflow(
-                outer_function(),
-                workflow_id="nested-test",
-                trace_dir=trace_dir,
-            )
-
-            assert result.is_ok
-            assert result.value == 20
-
-            # Check trace has entries
-            trace_file = trace_dir / "nested-test" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
-            assert len(lines) > 0
-
-
-class TestSlogDetection:
-    """Tests for slog (structured log) detection in traces."""
-
-    def test_slog_captured_in_trace(self):
-        """slog effects should be captured as last_slog in trace."""
-        from doeff import slog
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
-
-            @do
-            def workflow_with_slog():
-                yield slog(status="starting", msg="Beginning workflow")
-                result = yield Pure(42)
-                yield slog(status="completed", msg=f"Result: {result}")
-                return result
-
-            result = run_workflow(
-                workflow_with_slog(),
-                workflow_id="slog-test",
-                trace_dir=trace_dir,
-            )
-
-            assert result.is_ok
-            assert result.value == 42
-
-            # Check trace file for slog entries
-            trace_file = trace_dir / "slog-test" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
-
-            # Find entries with last_slog
-            slog_entries = []
-            for line in lines:
-                data = json.loads(line)
-                if data.get("last_slog"):
-                    slog_entries.append(data["last_slog"])
-
-            assert len(slog_entries) >= 2
-            # Check first slog
-            assert slog_entries[0]["status"] == "starting"
-            assert slog_entries[0]["msg"] == "Beginning workflow"
-            # Check second slog
-            assert slog_entries[1]["status"] == "completed"
-            assert "Result: 42" in slog_entries[1]["msg"]
-
-    def test_last_slog_field_in_livetrace(self):
-        """LiveTrace should have last_slog field."""
-        trace = LiveTrace(
-            workflow_id="test-wf",
-            step=1,
-            status="running",
-            current_effect="WriterTellEffect(...)",
-            trace=[],
-            started_at="2025-01-01T00:00:00",
-            updated_at="2025-01-01T00:00:01",
-            last_slog={"status": "reviewing", "msg": "Checking PR"},
+        result = run_workflow(
+            simple_workflow(),
+            workflow_id="run-workflow-ok",
+            trace_dir=tmp_path,
         )
-        assert trace.last_slog == {"status": "reviewing", "msg": "Checking PR"}
+        assert result.is_ok()
+        assert result.value == 30
 
-    def test_last_slog_defaults_to_none(self):
-        """LiveTrace.last_slog should default to None."""
-        trace = LiveTrace(
-            workflow_id="test-wf",
-            step=1,
-            status="running",
-            current_effect=None,
-            trace=[],
-            started_at="2025-01-01T00:00:00",
-            updated_at="2025-01-01T00:00:01",
+        entries = _read_trace_entries(tmp_path, "run-workflow-ok")
+        assert len(entries) == 1
+        assert entries[0]["status"] == "completed"
+
+    def test_failed_run_writes_failed_trace(self, tmp_path):
+        @do
+        def failing_workflow():
+            yield Pure(1)
+            raise RuntimeError("boom")
+
+        result = run_workflow(
+            failing_workflow(),
+            workflow_id="run-workflow-fail",
+            trace_dir=tmp_path,
         )
-        assert trace.last_slog is None
+        assert result.is_err()
 
-    def test_non_dict_slog_not_captured(self):
-        """Non-dict slog messages should not be captured as last_slog."""
-        from doeff import tell
+        entries = _read_trace_entries(tmp_path, "run-workflow-fail")
+        assert len(entries) == 1
+        assert entries[0]["status"] == "failed"
+        assert "RuntimeError" in entries[0]["error"]
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
+    def test_multiple_runs_append_terminal_snapshots(self, tmp_path):
+        @do
+        def simple_workflow():
+            return (yield Pure(42))
 
-            @do
-            def workflow_with_string_log():
-                yield tell("This is a string message")
-                result = yield Pure(42)
-                return result
+        run_workflow(simple_workflow(), workflow_id="append-test", trace_dir=tmp_path)
+        run_workflow(simple_workflow(), workflow_id="append-test", trace_dir=tmp_path)
 
-            result = run_workflow(
-                workflow_with_string_log(),
-                workflow_id="string-log-test",
-                trace_dir=trace_dir,
-            )
+        entries = _read_trace_entries(tmp_path, "append-test")
+        assert len(entries) == 2
+        assert all(entry["status"] == "completed" for entry in entries)
 
-            assert result.is_ok
 
-            # Check trace file - string logs should not appear in last_slog
-            trace_file = trace_dir / "string-log-test" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
+class TestWithHandlerObservability:
+    """Tests that replace removed CESK hook tracing with WithHandler."""
 
-            slog_entries = [
-                json.loads(line).get("last_slog")
-                for line in lines
-                if json.loads(line).get("last_slog") is not None
-            ]
-            # String messages should not be captured
-            assert len(slog_entries) == 0
+    def test_can_capture_effects_with_delegate(self):
+        captured_effects: list[object] = []
 
-    def test_slog_written_to_jsonl(self):
-        """last_slog should be written to JSONL output."""
-        from doeff import slog
+        def capturing_handler(effect, k):
+            _ = k
+            captured_effects.append(effect)
+            yield Delegate()
 
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            trace_dir = Path(tmp_dir)
+        @do
+        def workflow():
+            yield Put("counter", 0)
+            current = yield Get("counter")
+            yield Put("counter", current + 1)
+            return current
 
-            @do
-            def workflow_with_slog():
-                yield slog(status="testing", msg="Test message", extra_data=123)
-                return (yield Pure("done"))
+        result = run_sync(
+            WithHandler(capturing_handler, workflow()),
+            handlers=default_handlers(),
+            store={},
+        )
 
-            run_workflow(
-                workflow_with_slog(),
-                workflow_id="jsonl-slog-test",
-                trace_dir=trace_dir,
-            )
+        assert result.is_ok()
+        assert result.value == 0
+        effect_names = [type(effect).__name__ for effect in captured_effects]
+        assert "PyPut" in effect_names
+        assert "PyGet" in effect_names
 
-            trace_file = trace_dir / "jsonl-slog-test" / "trace.jsonl"
-            lines = trace_file.read_text().strip().split("\n")
+    def test_can_modify_effect_result_with_resume(self):
+        seen_ask = 0
 
-            # Find entry with slog
-            slog_entry = None
-            for line in lines:
-                data = json.loads(line)
-                if data.get("last_slog"):
-                    slog_entry = data["last_slog"]
-                    break
+        def override_ask_handler(effect, k):
+            nonlocal seen_ask
+            if type(effect).__name__ == "PyAsk" and seen_ask < 2:
+                seen_ask += 1
+                return (yield Resume(k, 5))
+            yield Delegate()
 
-            assert slog_entry is not None
-            assert slog_entry["status"] == "testing"
-            assert slog_entry["msg"] == "Test message"
-            assert slog_entry["extra_data"] == 123
+        @do
+        def workflow():
+            a = yield Ask("a")
+            b = yield Ask("b")
+            return a + b
+
+        result = run_sync(
+            WithHandler(override_ask_handler, workflow()),
+            handlers=default_handlers(),
+            env={"a": 1, "b": 2},
+        )
+
+        assert result.is_ok()
+        assert result.value == 10
