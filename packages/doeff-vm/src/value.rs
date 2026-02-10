@@ -70,6 +70,9 @@ impl Value {
                 let dict = pyo3::types::PyDict::new(py);
                 dict.set_item("type", "ExternalPromise")?;
                 dict.set_item("promise_id", handle.id.raw())?;
+                if let Some(queue) = &handle.completion_queue {
+                    dict.set_item("completion_queue", queue.bind(py))?;
+                }
                 Ok(dict.into_any())
             }
             Value::List(items) => {
@@ -181,7 +184,7 @@ impl Value {
             Value::Handlers(handlers) => Value::Handlers(handlers.clone()),
             Value::Task(h) => Value::Task(*h),
             Value::Promise(h) => Value::Promise(*h),
-            Value::ExternalPromise(h) => Value::ExternalPromise(*h),
+            Value::ExternalPromise(h) => Value::ExternalPromise(h.clone()),
             Value::CallStack(stack) => Value::CallStack(stack.clone()),
             Value::List(items) => Value::List(items.iter().map(|v| v.clone_ref(py)).collect()),
         }
