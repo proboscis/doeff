@@ -48,7 +48,7 @@ def demo_list_templates():
     print("To use a template:")
     print("  from doeff_conductor import basic_pr, Issue")
     print("  program = basic_pr(issue)")
-    print("  result = runtime.run(program)")
+    print("  result = run(program, handlers=[...])")
 
 
 def demo_api_workflow_management():

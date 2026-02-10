@@ -95,19 +95,28 @@ Shows the high-level API for:
 ### Handler Setup
 
 ```python
-from doeff import SyncRuntime
-from doeff_conductor import WorktreeHandler, GitHandler
+from doeff import default_handlers, run
+from doeff_conductor import (
+    Commit,
+    CreateWorktree,
+    GitHandler,
+    WorktreeHandler,
+    make_scheduled_handler,
+    make_typed_handlers,
+)
 
 worktree_handler = WorktreeHandler(base_path=Path.cwd())
 git_handler = GitHandler()
 
 handlers = {
-    CreateWorktree: lambda e: worktree_handler.handle_create_worktree(e),
-    Commit: lambda e: git_handler.handle_commit(e),
+    CreateWorktree: make_scheduled_handler(worktree_handler.handle_create_worktree),
+    Commit: make_scheduled_handler(git_handler.handle_commit),
 }
 
-runtime = SyncRuntime(handlers=handlers)
-result = runtime.run(my_workflow())
+result = run(
+    my_workflow(),
+    handlers=[*make_typed_handlers(handlers), *default_handlers()],
+)
 ```
 
 ### Using Templates
@@ -117,7 +126,10 @@ from doeff_conductor import basic_pr, Issue
 
 issue = Issue(id="ISSUE-001", title="Add feature", body="...")
 program = basic_pr(issue)
-result = runtime.run(program)
+result = run(
+    program,
+    handlers=[*make_typed_handlers(handlers), *default_handlers()],
+)
 ```
 
 ### Parallel Execution

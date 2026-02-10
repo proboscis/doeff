@@ -13,9 +13,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from doeff import Delegate, Resume, WithHandler, default_handlers, run
-from doeff.effects import GatherEffect, SpawnEffect
-from doeff.program import ProgramBase
+from doeff import (
+    Delegate,
+    Resume,
+    WithHandler,
+    default_handlers,
+    run,
+)
 from doeff_conductor import (
     Commit,
     CreatePR,
@@ -52,31 +56,7 @@ def _wrap_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any]
 
 
 def _run_with_effect_handlers(program: Any, handlers: dict[type, Callable[[Any], Any]]):
-    runtime_handlers = dict(handlers)
-
-    def _resolve_item(item: Any) -> Any:
-        if isinstance(item, ProgramBase):
-            sub = _run_with_effect_handlers(item, runtime_handlers)
-            if sub.is_err():
-                raise sub.error
-            return sub.value
-
-        handle = getattr(item, "_handle", None)
-        if isinstance(handle, ProgramBase):
-            return _resolve_item(handle)
-
-        return item
-
-    def _handle_spawn(effect: SpawnEffect) -> Any:
-        return effect.program
-
-    def _handle_gather(effect: GatherEffect) -> tuple[Any, ...]:
-        return tuple(_resolve_item(item) for item in effect.items)
-
-    runtime_handlers.setdefault(SpawnEffect, _handle_spawn)
-    runtime_handlers.setdefault(GatherEffect, _handle_gather)
-
-    wrapped = _wrap_with_effect_handlers(program, runtime_handlers)
+    wrapped = _wrap_with_effect_handlers(program, handlers)
     return run(wrapped, handlers=default_handlers())
 
 

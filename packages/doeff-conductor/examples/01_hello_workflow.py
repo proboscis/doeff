@@ -22,11 +22,11 @@ from doeff_conductor import (
     WorktreeEnv,
     WorktreeHandler,
     make_scheduled_handler,
+    make_typed_handlers,
 )
 from doeff_preset import preset_handlers
 
-from doeff import EffectGenerator, SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import EffectGenerator, default_handlers, do, run, slog
 
 
 @do
@@ -72,8 +72,10 @@ def main():
     handlers = {**preset_handlers(), **domain_handlers}
 
     # Run the workflow
-    runtime = SyncRuntime(handlers=handlers)
-    result = runtime.run(hello_workflow())
+    result = run(
+        hello_workflow(),
+        handlers=[*make_typed_handlers(handlers), *default_handlers()],
+    )
 
     print(f"\nResult: {result.value}")
 
