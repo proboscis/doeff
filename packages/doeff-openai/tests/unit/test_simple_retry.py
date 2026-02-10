@@ -9,11 +9,25 @@ from doeff_openai.client import OpenAIClient
 
 from doeff import (
     Ask,
-    AsyncRuntime,
+    AskEffect,
+    Delegate,
     EffectGenerator,
+    Resume,
     Tell,
+    WithHandler,
+    async_run,
+    default_handlers,
     do,
 )
+
+
+def _ask_override_handler(overrides: dict[str, object]):
+    def handler(effect, k):
+        if isinstance(effect, AskEffect) and effect.key in overrides:
+            return (yield Resume(k, overrides[effect.key]))
+        yield Delegate()
+
+    return handler
 
 
 @pytest.mark.asyncio
@@ -57,10 +71,12 @@ async def test_simple_success():
         api_calls = yield get_api_calls()
         return {"text": text_result, "api_calls": api_calls}
 
-    runtime = AsyncRuntime()
-
     # Run the test
-    result = await runtime.run(test_flow(), env={"openai_client": mock_client})
+    handler = _ask_override_handler({"openai_client": mock_client})
+    result = await async_run(
+        WithHandler(handler, test_flow()),
+        handlers=default_handlers(),
+    )
 
     # Print all logs to debug
     print("\n=== LOGS ===")
