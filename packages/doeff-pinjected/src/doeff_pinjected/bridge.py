@@ -12,15 +12,29 @@ from typing import TypeVar
 from loguru import logger
 from pinjected import AsyncResolver, Injected, IProxy
 
-from doeff import Program, async_run, default_handlers
-from doeff.effects import AskEffect, Await
-from doeff.program import KleisliProgramCall
-from doeff.types import Effect, RunResult
+from doeff import Effect, KleisliProgramCall, Program, RunResult, async_run, default_handlers
+from doeff.effects import AskEffect, Await, GraphAnnotateEffect, GraphStepEffect, Intercept, Pure
 
 T = TypeVar("T")
+_EFFECT_FAILURE_TYPE_NAMES = {"EffectFailure", "EffectFailureError"}
 
 
-def _program_with_dependency_interception(prog: Program[T], resolver: AsyncResolver) -> Program[T]:
+def _unwrap_effect_failure(error: BaseException) -> BaseException:
+    """Unwrap runtime-specific EffectFailure wrappers when available."""
+    if error.__class__.__name__ in _EFFECT_FAILURE_TYPE_NAMES:
+        cause = getattr(error, "cause", None)
+        if isinstance(cause, BaseException):
+            return cause
+    return error
+
+
+def _supports_program_intercept(prog: Program[T]) -> bool:
+    return callable(getattr(prog, "intercept", None))
+
+
+def _program_with_dependency_interception(
+    prog: Program[T], resolver: AsyncResolver
+) -> Program[T] | Effect:
     """Attach dependency-resolution interception using ``Program.intercept``."""
 
     if not isinstance(
@@ -35,7 +49,21 @@ def _program_with_dependency_interception(prog: Program[T], resolver: AsyncResol
             return Await(resolver.provide(key))
         return effect
 
-    return prog.intercept(_transform)
+    if _supports_program_intercept(prog):
+        return prog.intercept(_transform)
+
+    # Compatibility fallback for runtimes where KleisliProgramCall lacks `.intercept()`.
+    # Intercept(...) expects None for the "delegate unchanged" case.
+    def _compat_transform(effect: Effect) -> Effect | Program | None:
+        if isinstance(effect, AskEffect):
+            key = effect.key
+            logger.debug(f"Resolving dependency for key: {key}")
+            return Await(resolver.provide(key))
+        if isinstance(effect, (GraphStepEffect, GraphAnnotateEffect)):
+            return Pure(None)
+        return None
+
+    return Intercept(prog, _compat_transform)
 
 
 def program_to_injected(prog: Program[T]) -> Injected[T]:
@@ -53,25 +81,43 @@ def program_to_injected(prog: Program[T]) -> Injected[T]:
     """
 
     async def _runner(__resolver__: AsyncResolver) -> T:
+        use_local_passthrough = not _supports_program_intercept(prog)
+        original_build_local_handler = None
+
+        if use_local_passthrough:
+            import doeff_vm
+
+            from doeff.effects import reader as reader_effects
+
+            original_build_local_handler = reader_effects._build_local_handler
+
+            def _bridge_build_local_handler(_overlay: dict):
+                def handle_local_ask(_effect, _k):
+                    yield doeff_vm.Delegate()
+
+                return handle_local_ask
+
+            reader_effects._build_local_handler = _bridge_build_local_handler
+
         # Create wrapped program that handles dependency resolution
         wrapped_program = _program_with_dependency_interception(prog, __resolver__)
 
-        # Run with env containing the resolver for use by ask effects
-        result = await async_run(
-            wrapped_program,
-            handlers=default_handlers(),
-            env={"__resolver__": __resolver__},
-        )
+        try:
+            # Run with env containing the resolver for use by ask effects
+            result = await async_run(
+                wrapped_program,
+                handlers=default_handlers(),
+                env={"__resolver__": __resolver__},
+            )
+        finally:
+            if use_local_passthrough and original_build_local_handler is not None:
+                from doeff.effects import reader as reader_effects
+
+                reader_effects._build_local_handler = original_build_local_handler
 
         # Handle the result
         if result.is_err():
-            error = result.error
-            # Unwrap EffectFailure to get the original cause
-            from doeff.types import EffectFailure
-
-            if isinstance(error, EffectFailure):
-                error = error.cause
-            raise error
+            raise _unwrap_effect_failure(result.error)
 
         return result.value
 
@@ -110,15 +156,39 @@ def program_to_injected_result(prog: Program[T]) -> Injected[RunResult[T]]:
     """
 
     async def _runner(__resolver__: AsyncResolver) -> RunResult[T]:
+        use_local_passthrough = not _supports_program_intercept(prog)
+        original_build_local_handler = None
+
+        if use_local_passthrough:
+            import doeff_vm
+
+            from doeff.effects import reader as reader_effects
+
+            original_build_local_handler = reader_effects._build_local_handler
+
+            def _bridge_build_local_handler(_overlay: dict):
+                def handle_local_ask(_effect, _k):
+                    yield doeff_vm.Delegate()
+
+                return handle_local_ask
+
+            reader_effects._build_local_handler = _bridge_build_local_handler
+
         # Create wrapped program that handles dependency resolution
         wrapped_program = _program_with_dependency_interception(prog, __resolver__)
 
-        # Run with env containing the resolver for use by ask effects
-        result = await async_run(
-            wrapped_program,
-            handlers=default_handlers(),
-            env={"__resolver__": __resolver__},
-        )
+        try:
+            # Run with env containing the resolver for use by ask effects
+            result = await async_run(
+                wrapped_program,
+                handlers=default_handlers(),
+                env={"__resolver__": __resolver__},
+            )
+        finally:
+            if use_local_passthrough and original_build_local_handler is not None:
+                from doeff.effects import reader as reader_effects
+
+                reader_effects._build_local_handler = original_build_local_handler
 
         # Return the full RunResult with both context and result
         return result
