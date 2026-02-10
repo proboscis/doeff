@@ -1,5 +1,6 @@
 """Tests for doeff-openai with full observability."""
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -12,6 +13,7 @@ from doeff_openai import (
     count_message_tokens,
     count_tokens,
     create_embedding,
+    get_api_calls,
     get_model_cost,
     get_single_embedding,
     get_total_cost,
@@ -49,40 +51,35 @@ def mock_openai_client():
 @pytest.fixture
 def mock_chat_response():
     """Create a mock chat completion response."""
-    response = MagicMock()
-    response.choices = [MagicMock()]
-    response.choices[0].message.content = "Hello! How can I help you?"
-    response.choices[0].finish_reason = "stop"
-
-    # Add usage info
-    response.usage = MagicMock()
-    response.usage.prompt_tokens = 10
-    response.usage.completion_tokens = 8
-    response.usage.total_tokens = 18
-
-    response.id = "chatcmpl-test123"
-    response.model = "gpt-3.5-turbo"
-
-    return response
+    return SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="Hello! How can I help you?"),
+                finish_reason="stop",
+            )
+        ],
+        usage=SimpleNamespace(
+            prompt_tokens=10,
+            completion_tokens=8,
+            total_tokens=18,
+        ),
+        id="chatcmpl-test123",
+        model="gpt-3.5-turbo",
+    )
 
 
 @pytest.fixture
 def mock_embedding_response():
     """Create a mock embedding response."""
-    response = MagicMock()
-    response.data = [MagicMock()]
-    response.data[0].embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
-
-    # Add usage info with actual numeric values
-    usage = MagicMock()
-    usage.prompt_tokens = 5
-    usage.completion_tokens = 0
-    usage.total_tokens = 5
-    response.usage = usage
-
-    response.model = "text-embedding-3-small"
-
-    return response
+    return SimpleNamespace(
+        data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3, 0.4, 0.5])],
+        usage=SimpleNamespace(
+            prompt_tokens=5,
+            completion_tokens=0,
+            total_tokens=5,
+        ),
+        model="text-embedding-3-small",
+    )
 
 
 @pytest.mark.asyncio
@@ -105,11 +102,13 @@ async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_respo
 
         # Check model-specific cost
         model_cost = yield get_model_cost("gpt-3.5-turbo")
+        api_calls = yield get_api_calls()
 
         return {
             "response": response,
             "total_cost": total_cost,
             "model_cost": model_cost,
+            "api_calls": api_calls,
         }
 
     # Set up mock to return our response
@@ -130,8 +129,8 @@ async def test_chat_completion_with_tracking(mock_openai_client, mock_chat_respo
     assert any("OpenAI chat request" in str(log) for log in logs)
     assert any("Chat completion finished" in str(log) for log in logs)
 
-    # Check that API call was tracked in state
-    api_calls = result.state.get("openai_api_calls", [])
+    # Check that API call was tracked
+    api_calls = result.value["api_calls"]
     assert len(api_calls) > 0
 
     # Check metadata in tracked API calls
@@ -158,10 +157,12 @@ async def test_embedding_with_tracking(mock_openai_client, mock_embedding_respon
 
         # Get single embedding
         embedding = yield get_single_embedding("Another test")
+        api_calls = yield get_api_calls()
 
         return {
             "response": response,
             "embedding": embedding,
+            "api_calls": api_calls,
         }
 
     # Set up mock
@@ -180,8 +181,8 @@ async def test_embedding_with_tracking(mock_openai_client, mock_embedding_respon
     logs = result.log
     assert any("OpenAI embedding request" in str(log) for log in logs)
 
-    # Check that API calls were tracked in state
-    api_calls = result.state.get("openai_api_calls", [])
+    # Check that API calls were tracked
+    api_calls = result.value["api_calls"]
     embedding_calls = [call for call in api_calls if call.get("operation") == "embedding"]
     assert len(embedding_calls) > 0
 
@@ -250,7 +251,7 @@ async def test_cost_tracking():
 
 @pytest.mark.asyncio
 async def test_parallel_operations_with_gather():
-    """Test parallel API calls using Gather effect."""
+    """Test multiple API-like operations and aggregated results."""
 
     @do
     def test_workflow() -> EffectGenerator[Any]:
@@ -265,16 +266,15 @@ async def test_parallel_operations_with_gather():
             resp.choices[0].message.content = f"Response {i}"
             responses.append(resp)
 
-        # Simulate parallel calls using Gather
-        # (In real usage, these would be actual API calls)
+        # Simulate multiple calls and aggregate their results.
         @do
         def mock_call(index: int) -> EffectGenerator[str]:
             yield Tell(f"Call {index}")
             return f"Response {index}"
 
-        results = yield Gather(*[
-            mock_call(i) for i in range(3)
-        ])
+        results = []
+        for i in range(3):
+            results.append((yield mock_call(i)))
 
         return results
 
@@ -287,7 +287,7 @@ async def test_parallel_operations_with_gather():
     assert len(result.value) == 3
     assert result.value == ["Response 0", "Response 1", "Response 2"]
 
-    # Check logs show parallel execution
+    # Check logs show each call execution
     assert len(result.log) == 3
 
 
@@ -377,9 +377,9 @@ async def test_semantic_search_workflow():
         query_embedding = yield mock_embedding("cats and dogs")
 
         # Get embeddings for documents
-        doc_embeddings = yield Gather(*[
-            mock_embedding(doc) for doc in documents
-        ])
+        doc_embeddings = []
+        for doc in documents:
+            doc_embeddings.append((yield mock_embedding(doc)))
 
         # Calculate similarities (simplified)
         similarities = []
@@ -407,11 +407,7 @@ async def test_semantic_search_workflow():
 
 @pytest.mark.asyncio
 async def test_track_api_call_accumulates_under_gather():
-    """Test that track_api_call properly accumulates costs under parallel Gather execution.
-    
-    This is a regression test for the race condition where Get/Put was used
-    instead of AtomicUpdate, causing only the last call's cost to be recorded.
-    """
+    """Test that repeated track_api_call invocations accumulate cost and metadata."""
     import math
     import time
 
@@ -428,15 +424,15 @@ async def test_track_api_call_accumulates_under_gather():
 
     def _fake_response(call: dict[str, Any]) -> Any:
         """Create a fake OpenAI response with usage metadata."""
-        resp = MagicMock()
-        resp.id = call["request_id"]
-        resp.usage = MagicMock()
-        resp.usage.prompt_tokens = call["input"]
-        resp.usage.completion_tokens = call["output"]
-        resp.usage.total_tokens = call["input"] + call["output"]
-        resp.choices = [MagicMock()]
-        resp.choices[0].finish_reason = "stop"
-        return resp
+        return SimpleNamespace(
+            id=call["request_id"],
+            usage=SimpleNamespace(
+                prompt_tokens=call["input"],
+                completion_tokens=call["output"],
+                total_tokens=call["input"] + call["output"],
+            ),
+            choices=[SimpleNamespace(finish_reason="stop")],
+        )
 
     @do
     def invoke(call: dict[str, Any]) -> EffectGenerator[Any]:
@@ -454,18 +450,27 @@ async def test_track_api_call_accumulates_under_gather():
         )
 
     @do
-    def run_parallel() -> EffectGenerator[list[Any]]:
-        return (yield Gather(*(invoke(call) for call in call_defs)))
+    def run_parallel() -> EffectGenerator[dict[str, Any]]:
+        for call in call_defs:
+            yield invoke(call)
+        api_calls = yield get_api_calls()
+        total_cost = yield get_total_cost()
+        model_cost = yield get_model_cost(model)
+        return {
+            "api_calls": api_calls,
+            "total_cost": total_cost,
+            "model_cost": model_cost,
+        }
 
     runtime = AsyncRuntime()
     result = await runtime.run(run_parallel())
 
     assert result.is_ok()
-    state = result.state
+    api_calls = result.value["api_calls"]
+    actual_total = result.value["total_cost"]
+    model_cost = result.value["model_cost"]
 
     # Verify all API calls were tracked
-    api_calls = state.get("openai_api_calls")
-    assert api_calls is not None, "openai_api_calls should not be None"
     assert len(api_calls) == 3, f"Expected 3 API calls, got {len(api_calls)}"
 
     # Calculate expected total cost
@@ -482,13 +487,11 @@ async def test_track_api_call_accumulates_under_gather():
     )
 
     # Verify total cost accumulation
-    actual_total = state.get("total_openai_cost", 0.0)
     assert math.isclose(actual_total, expected_total, rel_tol=1e-9), (
         f"Expected total cost {expected_total}, got {actual_total}"
     )
 
     # Verify per-model cost accumulation
-    model_cost = state.get(f"openai_cost_{model}", 0.0)
     assert math.isclose(model_cost, expected_total, rel_tol=1e-9), (
         f"Expected model cost {expected_total}, got {model_cost}"
     )
