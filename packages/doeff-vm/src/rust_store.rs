@@ -1,14 +1,30 @@
 //! Store model shared by handlers and VM.
 
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
+use crate::ids::PromiseId;
 use crate::value::Value;
+
+#[derive(Debug, Clone)]
+struct LazyCacheEntry {
+    source_id: usize,
+    value: Value,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LazyInflightEntry {
+    source_id: usize,
+    promise_id: PromiseId,
+}
 
 #[derive(Debug, Clone)]
 pub struct RustStore {
     pub state: HashMap<String, Value>,
     pub env: HashMap<String, Value>,
     pub log: Vec<Value>,
+    lazy_cache: Arc<Mutex<HashMap<String, LazyCacheEntry>>>,
+    lazy_inflight: Arc<Mutex<HashMap<String, LazyInflightEntry>>>,
 }
 
 impl RustStore {
@@ -17,6 +33,8 @@ impl RustStore {
             state: HashMap::new(),
             env: HashMap::new(),
             log: Vec::new(),
+            lazy_cache: Arc::new(Mutex::new(HashMap::new())),
+            lazy_inflight: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -80,6 +98,59 @@ impl RustStore {
 
     pub fn clear_logs(&mut self) -> Vec<Value> {
         std::mem::take(&mut self.log)
+    }
+
+    pub fn lazy_cache_get(&self, key: &str, source_id: usize) -> Option<Value> {
+        let cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
+        let entry = cache.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.value.clone());
+        }
+        None
+    }
+
+    pub fn lazy_cache_put(&self, key: String, source_id: usize, value: Value) {
+        let mut cache = self.lazy_cache.lock().expect("lazy_cache lock poisoned");
+        cache.insert(key, LazyCacheEntry { source_id, value });
+    }
+
+    pub fn lazy_inflight_get(&self, key: &str, source_id: usize) -> Option<PromiseId> {
+        let inflight = self
+            .lazy_inflight
+            .lock()
+            .expect("lazy_inflight lock poisoned");
+        let entry = inflight.get(key)?;
+        if entry.source_id == source_id {
+            return Some(entry.promise_id);
+        }
+        None
+    }
+
+    pub fn lazy_inflight_put(&self, key: String, source_id: usize, promise_id: PromiseId) {
+        let mut inflight = self
+            .lazy_inflight
+            .lock()
+            .expect("lazy_inflight lock poisoned");
+        inflight.insert(
+            key,
+            LazyInflightEntry {
+                source_id,
+                promise_id,
+            },
+        );
+    }
+
+    pub fn lazy_inflight_remove(&self, key: &str, source_id: usize, promise_id: PromiseId) {
+        let mut inflight = self
+            .lazy_inflight
+            .lock()
+            .expect("lazy_inflight lock poisoned");
+        let should_remove = inflight
+            .get(key)
+            .is_some_and(|entry| entry.source_id == source_id && entry.promise_id == promise_id);
+        if should_remove {
+            inflight.remove(key);
+        }
     }
 }
 
