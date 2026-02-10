@@ -231,6 +231,12 @@ result = run(my_program(), handlers=[scheduler, state, reader, writer])
 
 **Decision**: Rust VM is synchronous. Async is handled by Python wrapper.
 
+**Invariant: Execution-model agnostic VM core.**
+The Rust VM step loop is synchronous and must not depend on, import, or integrate with any
+external execution runtime (asyncio, threading, Ray, etc.). External execution models are
+bridged only through effects (for example, `Await` and `ExternalPromise`) and handled at the
+Python runtime layer.
+
 **Rationale**:
 - Simpler FFI boundary (no async trait objects across FFI)
 - Python's asyncio can call `vm.step()` in a loop

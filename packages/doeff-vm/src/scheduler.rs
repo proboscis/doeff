@@ -7,6 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use pyo3::prelude::*;
+use pyo3::types::PyTuple;
 
 use crate::continuation::Continuation;
 #[cfg(test)]
@@ -123,9 +124,10 @@ pub struct PromiseHandle {
 }
 
 /// External promise that can be completed from outside the scheduler.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ExternalPromise {
     pub id: PromiseId,
+    pub completion_queue: Option<PyShared>,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +175,7 @@ pub struct SchedulerState {
     pub tasks: HashMap<TaskId, TaskState>,
     pub promises: HashMap<PromiseId, PromiseState>,
     waiters: HashMap<Waitable, Vec<WaitRequest>>,
+    external_completion_queue: Option<PyShared>,
     pub next_task: u64,
     pub next_promise: u64,
     pub current_task: Option<TaskId>,
@@ -523,10 +526,155 @@ impl SchedulerState {
             tasks: HashMap::new(),
             promises: HashMap::new(),
             waiters: HashMap::new(),
+            external_completion_queue: None,
             next_task: 0,
             next_promise: 0,
             current_task: None,
         }
+    }
+
+    pub fn ensure_external_completion_queue(&mut self) -> Result<PyShared, PyException> {
+        if let Some(queue) = &self.external_completion_queue {
+            return Ok(queue.clone());
+        }
+
+        Python::attach(|py| {
+            let queue_mod = py.import("queue").map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to import Python queue module for ExternalPromise bridge: {e}"
+                ))
+            })?;
+            let queue_type = queue_mod.getattr("Queue").map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to resolve queue.Queue for ExternalPromise bridge: {e}"
+                ))
+            })?;
+            let queue_obj = queue_type.call0().map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to create completion queue for ExternalPromise bridge: {e}"
+                ))
+            })?;
+
+            let shared = PyShared::new(queue_obj.unbind());
+            self.external_completion_queue = Some(shared.clone());
+            Ok(shared)
+        })
+    }
+
+    pub fn mark_promise_done(&mut self, promise_id: PromiseId, result: Result<Value, PyException>) {
+        self.promises.insert(promise_id, PromiseState::Done(result));
+        self.wake_waiters(Waitable::Promise(promise_id));
+        self.wake_waiters(Waitable::ExternalPromise(promise_id));
+    }
+
+    fn has_external_waiters(&self) -> bool {
+        self.waiters
+            .keys()
+            .any(|item| matches!(item, Waitable::ExternalPromise(_)))
+    }
+
+    fn parse_external_completion_item(
+        py: Python<'_>,
+        item: &Bound<'_, PyAny>,
+    ) -> Result<(PromiseId, Result<Value, PyException>), PyException> {
+        let tuple = item.cast::<PyTuple>().map_err(|_| {
+            PyException::type_error(
+                "ExternalPromise completion queue item must be a tuple (promise_id, value, error)",
+            )
+        })?;
+        if tuple.len() != 3 {
+            return Err(PyException::type_error(
+                "ExternalPromise completion queue item must have exactly 3 elements",
+            ));
+        }
+
+        let pid_raw = tuple
+            .get_item(0)
+            .map_err(|e| {
+                PyException::type_error(format!(
+                    "failed to read promise_id from ExternalPromise completion tuple: {e}"
+                ))
+            })?
+            .extract::<u64>()
+            .map_err(|_| {
+                PyException::type_error(
+                    "ExternalPromise completion tuple promise_id must be an integer",
+                )
+            })?;
+        let value_obj = tuple.get_item(1).map_err(|e| {
+            PyException::type_error(format!(
+                "failed to read value from ExternalPromise completion tuple: {e}"
+            ))
+        })?;
+        let error_obj = tuple.get_item(2).map_err(|e| {
+            PyException::type_error(format!(
+                "failed to read error from ExternalPromise completion tuple: {e}"
+            ))
+        })?;
+
+        let result = if error_obj.is_none() {
+            Ok(Value::from_pyobject(&value_obj))
+        } else {
+            Err(pyobject_to_exception(py, &error_obj))
+        };
+
+        Ok((PromiseId::from_raw(pid_raw), result))
+    }
+
+    fn drain_external_completions_nonblocking(&mut self) -> Result<(), PyException> {
+        let Some(queue) = self.external_completion_queue.clone() else {
+            return Ok(());
+        };
+
+        Python::attach(|py| {
+            let queue_obj = queue.bind(py);
+            let queue_mod = py.import("queue").map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to import Python queue module while draining ExternalPromise completions: {e}"
+                ))
+            })?;
+            let empty_type = queue_mod.getattr("Empty").map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to resolve queue.Empty while draining ExternalPromise completions: {e}"
+                ))
+            })?;
+
+            loop {
+                let item = match queue_obj.call_method0("get_nowait") {
+                    Ok(v) => v,
+                    Err(err) => {
+                        if err.matches(py, &empty_type).unwrap_or(false) {
+                            break;
+                        }
+                        return Err(PyException::runtime_error(format!(
+                            "failed while draining ExternalPromise completion queue: {err}"
+                        )));
+                    }
+                };
+                let (promise_id, result) = Self::parse_external_completion_item(py, &item)?;
+                self.mark_promise_done(promise_id, result);
+            }
+
+            Ok(())
+        })
+    }
+
+    fn block_until_external_completion(&mut self) -> Result<(), PyException> {
+        let Some(queue) = self.external_completion_queue.clone() else {
+            return Ok(());
+        };
+
+        Python::attach(|py| {
+            let queue_obj = queue.bind(py);
+            let item = queue_obj.call_method1("get", (true,)).map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed while waiting on ExternalPromise completion queue: {e}"
+                ))
+            })?;
+            let (promise_id, result) = Self::parse_external_completion_item(py, &item)?;
+            self.mark_promise_done(promise_id, result);
+            Ok(())
+        })
     }
 
     pub fn alloc_task_id(&mut self) -> TaskId {
@@ -782,71 +930,84 @@ impl SchedulerState {
     /// Per spec (SPEC-008 L1434-1447): saves the current task's store before
     /// switching and loads the new task's store after switching.
     pub fn transfer_next_or(&mut self, k: Continuation, store: &mut RustStore) -> RustProgramStep {
-        if let Some(task_id) = self.ready.pop_front() {
-            if let Some(task_k) = self.task_cont(task_id) {
-                // Save current task's store before switching away
-                if let Some(old_id) = self.current_task {
-                    self.save_task_store(old_id, store);
+        loop {
+            if let Err(error) = self.drain_external_completions_nonblocking() {
+                return RustProgramStep::Throw(error);
+            }
+
+            if let Some(task_id) = self.ready.pop_front() {
+                if let Some(task_k) = self.task_cont(task_id) {
+                    // Save current task's store before switching away
+                    if let Some(old_id) = self.current_task {
+                        self.save_task_store(old_id, store);
+                    }
+                    // Load new task's store
+                    self.load_task_store(task_id, store);
+                    self.current_task = Some(task_id);
+                    return jump_to_continuation(task_k, Value::Unit);
                 }
-                // Load new task's store
-                self.load_task_store(task_id, store);
-                self.current_task = Some(task_id);
-                return jump_to_continuation(task_k, Value::Unit);
             }
-        }
 
-        while let Some(waiter) = self.ready_waiters.pop_front() {
-            match waiter.mode {
-                WaitMode::All => match self.collect_all_result(&waiter.items) {
-                    Some(Ok(value)) => {
-                        if let Some(waiting_task) = waiter.waiting_task {
-                            self.load_task_store(waiting_task, store);
-                            self.current_task = Some(waiting_task);
-                        } else {
-                            *store = waiter.waiting_store.clone();
+            while let Some(waiter) = self.ready_waiters.pop_front() {
+                match waiter.mode {
+                    WaitMode::All => match self.collect_all_result(&waiter.items) {
+                        Some(Ok(value)) => {
+                            if let Some(waiting_task) = waiter.waiting_task {
+                                self.load_task_store(waiting_task, store);
+                                self.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiter.waiting_store.clone();
+                            }
+                            if waiter.items.len() > 1 {
+                                self.merge_gather_logs(&waiter.items, store);
+                            }
+                            return jump_to_continuation(waiter.continuation, value);
                         }
-                        if waiter.items.len() > 1 {
-                            self.merge_gather_logs(&waiter.items, store);
+                        Some(Err(error)) => {
+                            if let Some(waiting_task) = waiter.waiting_task {
+                                self.load_task_store(waiting_task, store);
+                                self.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiter.waiting_store.clone();
+                            }
+                            return throw_to_continuation(waiter.continuation, error);
                         }
-                        return jump_to_continuation(waiter.continuation, value);
-                    }
-                    Some(Err(error)) => {
-                        if let Some(waiting_task) = waiter.waiting_task {
-                            self.load_task_store(waiting_task, store);
-                            self.current_task = Some(waiting_task);
-                        } else {
-                            *store = waiter.waiting_store.clone();
+                        None => continue,
+                    },
+                    WaitMode::Any => match self.collect_any_result(&waiter.items) {
+                        Some(Ok(value)) => {
+                            if let Some(waiting_task) = waiter.waiting_task {
+                                self.load_task_store(waiting_task, store);
+                                self.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiter.waiting_store.clone();
+                            }
+                            return jump_to_continuation(waiter.continuation, value);
                         }
-                        return throw_to_continuation(waiter.continuation, error);
-                    }
-                    None => continue,
-                },
-                WaitMode::Any => match self.collect_any_result(&waiter.items) {
-                    Some(Ok(value)) => {
-                        if let Some(waiting_task) = waiter.waiting_task {
-                            self.load_task_store(waiting_task, store);
-                            self.current_task = Some(waiting_task);
-                        } else {
-                            *store = waiter.waiting_store.clone();
+                        Some(Err(error)) => {
+                            if let Some(waiting_task) = waiter.waiting_task {
+                                self.load_task_store(waiting_task, store);
+                                self.current_task = Some(waiting_task);
+                            } else {
+                                *store = waiter.waiting_store.clone();
+                            }
+                            return throw_to_continuation(waiter.continuation, error);
                         }
-                        return jump_to_continuation(waiter.continuation, value);
-                    }
-                    Some(Err(error)) => {
-                        if let Some(waiting_task) = waiter.waiting_task {
-                            self.load_task_store(waiting_task, store);
-                            self.current_task = Some(waiting_task);
-                        } else {
-                            *store = waiter.waiting_store.clone();
-                        }
-                        return throw_to_continuation(waiter.continuation, error);
-                    }
-                    None => continue,
-                },
+                        None => continue,
+                    },
+                }
             }
-        }
 
-        // No ready tasks, resume the caller
-        jump_to_continuation(k, Value::Unit)
+            if self.has_external_waiters() {
+                if let Err(error) = self.block_until_external_completion() {
+                    return RustProgramStep::Throw(error);
+                }
+                continue;
+            }
+
+            // No ready tasks, resume the caller
+            return jump_to_continuation(k, Value::Unit);
+        }
     }
 }
 
@@ -1150,19 +1311,13 @@ impl RustHandlerProgram for SchedulerProgram {
 
             SchedulerEffect::CompletePromise { promise, value } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state
-                    .promises
-                    .insert(promise, PromiseState::Done(Ok(value)));
-                state.wake_waiters(Waitable::Promise(promise));
+                state.mark_promise_done(promise, Ok(value));
                 state.transfer_next_or(k_user, store)
             }
 
             SchedulerEffect::FailPromise { promise, error } => {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
-                state
-                    .promises
-                    .insert(promise, PromiseState::Done(Err(error)));
-                state.wake_waiters(Waitable::Promise(promise));
+                state.mark_promise_done(promise, Err(error));
                 state.transfer_next_or(k_user, store)
             }
 
@@ -1170,7 +1325,17 @@ impl RustHandlerProgram for SchedulerProgram {
                 let mut state = self.state.lock().expect("Scheduler lock poisoned");
                 let pid = state.alloc_promise_id();
                 state.promises.insert(pid, PromiseState::Pending);
-                jump_to_continuation(k_user, Value::ExternalPromise(ExternalPromise { id: pid }))
+                let completion_queue = match state.ensure_external_completion_queue() {
+                    Ok(queue) => queue,
+                    Err(error) => return RustProgramStep::Throw(error),
+                };
+                jump_to_continuation(
+                    k_user,
+                    Value::ExternalPromise(ExternalPromise {
+                        id: pid,
+                        completion_queue: Some(completion_queue),
+                    }),
+                )
             }
         }
     }
