@@ -7,10 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from doeff import Delegate, Resume
-from doeff.errors import MissingEnvKeyError
-from doeff.effects.reader import AskEffect
-
+from doeff import AskEffect, Delegate, MissingEnvKeyError, Resume
 
 # Default preset configuration
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -43,12 +40,16 @@ def make_config_handler(
     if defaults:
         config.update(defaults)
 
-    def handle_ask_with_config(effect: AskEffect, k):
+    def handle_ask_with_config(effect: Any, k):
         """Handle Ask effect with preset.* config support.
 
         - `preset.*` keys are resolved from this handler's config.
         - non-`preset.*` keys are delegated to the outer Reader handler.
         """
+        if not isinstance(effect, AskEffect):
+            yield Delegate()
+            return
+
         key = effect.key
 
         if isinstance(key, str) and key.startswith("preset."):
@@ -71,7 +72,7 @@ def config_handlers(defaults: dict[str, Any] | None = None) -> dict[type, Any]:
         Handler dict with AskEffect handler that supports preset.* keys.
 
     Example:
-        >>> from doeff import SyncRuntime, do, Ask
+        >>> from doeff import Ask, do, run_with_handler_map
         >>> from doeff_preset import config_handlers
         >>>
         >>> @do
@@ -79,14 +80,12 @@ def config_handlers(defaults: dict[str, Any] | None = None) -> dict[type, Any]:
         ...     show_logs = yield Ask("preset.show_logs")
         ...     return show_logs
         >>>
-        >>> runtime = SyncRuntime(handlers=config_handlers())
-        >>> result = runtime.run(workflow())
+        >>> result = run_with_handler_map(workflow(), config_handlers())
         >>> # result.value == True (default)
 
         >>> # With custom defaults:
         >>> custom = config_handlers(defaults={"preset.show_logs": False})
-        >>> runtime = SyncRuntime(handlers=custom)
-        >>> result = runtime.run(workflow())
+        >>> result = run_with_handler_map(workflow(), custom)
         >>> # result.value == False
     """
     effect_type, handler = make_config_handler(defaults)

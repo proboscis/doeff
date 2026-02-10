@@ -17,8 +17,7 @@ uv add doeff-preset
 ## Quick Start
 
 ```python
-from doeff import SyncRuntime, do
-from doeff.effects.writer import slog
+from doeff import do, run_with_handler_map, slog
 from doeff_preset import preset_handlers
 
 @do
@@ -28,9 +27,7 @@ def my_workflow():
     yield slog(step="done", msg="Workflow complete")
     return "success"
 
-# Preset provides HANDLERS, not a new runtime class
-runtime = SyncRuntime(handlers=preset_handlers())
-result = runtime.run(my_workflow())
+result = run_with_handler_map(my_workflow(), preset_handlers())
 # slog messages are displayed to console AND accumulated in log
 ```
 
@@ -71,7 +68,7 @@ custom = preset_handlers(config_defaults={
     "preset.show_logs": False,
     "preset.log_level": "debug",
 })
-runtime = SyncRuntime(handlers=custom)
+result = run_with_handler_map(configurable_workflow(), custom)
 ```
 
 ## API
@@ -149,7 +146,7 @@ handlers = {
 }
 
 # Everything from preset, but override specific handler
-from doeff.effects.writer import WriterTellEffect
+from doeff import WriterTellEffect
 
 handlers = {
     **preset_handlers(),
@@ -166,19 +163,19 @@ handlers = {
 | `preset.log_level` | str | `"info"` | Default log level |
 | `preset.log_format` | str | `"rich"` | Output format: "simple", "rich", "json" |
 
-## Works with Both Runtimes
+## Works with Both Entrypoints
 
 ```python
-from doeff import AsyncRuntime, SyncRuntime
+from doeff import async_run_with_handler_map, run_with_handler_map
 from doeff_preset import preset_handlers
 
+handlers = preset_handlers()
+
 # Synchronous
-sync_runtime = SyncRuntime(handlers=preset_handlers())
-result = sync_runtime.run(my_workflow())
+result = run_with_handler_map(my_workflow(), handlers)
 
 # Asynchronous
-async_runtime = AsyncRuntime(handlers=preset_handlers())
-result = await async_runtime.run(my_workflow())
+result = await async_run_with_handler_map(my_workflow(), handlers)
 ```
 
 ## License

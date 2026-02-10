@@ -1,6 +1,5 @@
 """Tests for doeff-preset handlers."""
 
-import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -10,8 +9,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from doeff import Ask, Delegate, WithHandler, async_run, default_handlers, do, run
-from doeff.effects.writer import slog, tell
 from doeff_preset import (
     DEFAULT_CONFIG,
     config_handlers,
@@ -19,36 +16,29 @@ from doeff_preset import (
     preset_handlers,
 )
 
+from doeff import (
+    Ask,
+    Delegate,
+    EffectBase,
+    MissingEnvKeyError,
+    async_run_with_handler_map,
+    do,
+    run_with_handler_map,
+    slog,
+    tell,
+)
 
 HandlerFn = Callable[[Any, Any], Any]
 
 
-def _wrap_with_handler_map(program, handler_map: dict[type, HandlerFn]):
-    wrapped = program
-    for effect_type, handler in reversed(list(handler_map.items())):
-
-        def typed_handler(effect, k, _effect_type=effect_type, _handler=handler):
-            if isinstance(effect, _effect_type):
-                result = _handler(effect, k)
-                if inspect.isgenerator(result):
-                    return (yield from result)
-                return result
-            yield Delegate()
-
-        wrapped = WithHandler(handler=typed_handler, expr=wrapped)
-    return wrapped
-
-
 def _run_with_handler_map(program, handler_map: dict[type, HandlerFn], *, env=None, store=None):
-    wrapped = _wrap_with_handler_map(program, handler_map)
-    return run(wrapped, handlers=default_handlers(), env=env, store=store)
+    return run_with_handler_map(program, handler_map, env=env, store=store)
 
 
 async def _async_run_with_handler_map(
     program, handler_map: dict[type, HandlerFn], *, env=None, store=None
 ):
-    wrapped = _wrap_with_handler_map(program, handler_map)
-    return await async_run(wrapped, handlers=default_handlers(), env=env, store=store)
+    return await async_run_with_handler_map(program, handler_map, env=env, store=store)
 
 
 class TestLogDisplayHandlers:
@@ -143,8 +133,8 @@ class TestConfigHandlers:
 
         assert result.is_err()
 
-    def test_missing_env_key_returns_none(self):
-        """Asking for missing env key follows current reader behavior (None)."""
+    def test_missing_env_key_raises(self):
+        """Asking for missing env key follows current reader behavior (error)."""
 
         @do
         def workflow():
@@ -153,8 +143,8 @@ class TestConfigHandlers:
 
         result = _run_with_handler_map(workflow(), config_handlers())
 
-        assert result.is_ok()
-        assert result.value is None
+        assert result.is_err()
+        assert isinstance(result.error, MissingEnvKeyError)
 
 
 class TestPresetHandlers:
@@ -203,11 +193,10 @@ class TestPresetHandlers:
 
     def test_handlers_can_be_merged(self, capsys):
         """Preset handlers should merge with other handlers."""
-        from doeff import Delegate, Resume
-
         # Custom effect type for testing
         from dataclasses import dataclass
-        from doeff.effects.base import EffectBase
+
+        from doeff import Resume
 
         @dataclass(frozen=True)
         class CustomEffect(EffectBase):
