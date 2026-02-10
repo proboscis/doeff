@@ -664,13 +664,36 @@ impl SchedulerState {
             return Ok(());
         };
 
+        // Use a 5-second timeout to allow periodic re-checking and avoid indefinite
+        // blocking if external code never completes. The caller loops and retries.
+        const TIMEOUT_SECONDS: f64 = 5.0;
+
         Python::attach(|py| {
             let queue_obj = queue.bind(py);
-            let item = queue_obj.call_method1("get", (true,)).map_err(|e| {
+            let queue_mod = py.import("queue").map_err(|e| {
                 PyException::runtime_error(format!(
-                    "failed while waiting on ExternalPromise completion queue: {e}"
+                    "failed to import Python queue module while blocking on ExternalPromise: {e}"
                 ))
             })?;
+            let empty_type = queue_mod.getattr("Empty").map_err(|e| {
+                PyException::runtime_error(format!(
+                    "failed to resolve queue.Empty while blocking on ExternalPromise: {e}"
+                ))
+            })?;
+
+            let item = match queue_obj.call_method1("get", (true, TIMEOUT_SECONDS)) {
+                Ok(v) => v,
+                Err(err) => {
+                    // Timeout: queue.Empty raised. Return Ok so caller can re-check state.
+                    if err.matches(py, &empty_type).unwrap_or(false) {
+                        return Ok(());
+                    }
+                    return Err(PyException::runtime_error(format!(
+                        "failed while waiting on ExternalPromise completion queue: {err}"
+                    )));
+                }
+            };
+
             let (promise_id, result) = Self::parse_external_completion_item(py, &item)?;
             self.mark_promise_done(promise_id, result);
             Ok(())
