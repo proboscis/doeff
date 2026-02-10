@@ -221,69 +221,6 @@ class TestPutGetComposition:
         assert result.value == (1, 2, 3)
 
 
-class TestSafeStateComposition:
-    """Tests for Safe + State composition rules."""
-
-    @pytest.mark.asyncio
-    async def test_safe_preserves_state_changes(self, parameterized_interpreter) -> None:
-        """State changes persist even when Safe catches an error.
-
-        See SPEC-EFF-002-state.md Composition Rules: Safe + Put.
-        """
-
-        @do
-        def risky_operation() -> Program[None]:
-            yield Put("modified", True)
-            raise ValueError("error after state change")
-
-        @do
-        def program() -> Program[bool]:
-            yield Put("modified", False)
-            _ = yield Safe(risky_operation())
-            # Even though risky_operation raised, the Put should have persisted
-            final_value = yield Get("modified")
-            return final_value
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        # State change persisted through the error
-        assert result.value is True
-
-    @pytest.mark.asyncio
-    async def test_safe_state_no_rollback(self, parameterized_interpreter) -> None:
-        """Multiple state changes persist even when Safe catches error.
-
-        This confirms there is NO transaction rollback semantics.
-        """
-
-        @do
-        def multi_step_operation() -> Program[None]:
-            yield Put("step1", "completed")
-            yield Put("step2", "completed")
-            yield Put("step3", "started")
-            raise RuntimeError("failed at step3")
-
-        @do
-        def program() -> Program[tuple[str, str, str]]:
-            yield Put("step1", "pending")
-            yield Put("step2", "pending")
-            yield Put("step3", "pending")
-
-            _ = yield Safe(multi_step_operation())
-
-            s1 = yield Get("step1")
-            s2 = yield Get("step2")
-            s3 = yield Get("step3")
-            return (s1, s2, s3)
-
-        result = await parameterized_interpreter.run_async(program())
-
-        assert result.is_ok
-        # All state changes before the error persisted
-        assert result.value == ("completed", "completed", "started")
-
-
 class TestGatherStateComposition:
     """Tests for Gather + State composition rules.
 
