@@ -199,9 +199,12 @@ impl PyVM {
 
             match event {
                 StepEvent::Done(value) => {
-                    return value.to_pyobject(py).map(|v| v.unbind());
+                    let py_value = value.to_pyobject(py).map(|v| v.unbind());
+                    self.vm.end_active_run_session();
+                    return py_value;
                 }
                 StepEvent::Error(e) => {
+                    self.vm.end_active_run_session();
                     return Err(vmerror_to_pyerr(e));
                 }
                 StepEvent::NeedsPython(call) => {
@@ -244,6 +247,7 @@ impl PyVM {
                 StepEvent::Continue => unreachable!("handled in run_rust_steps"),
             }
         };
+        self.vm.end_active_run_session();
 
         let raw_store = pyo3::types::PyDict::new(py);
         for (k, v) in &self.vm.rust_store.state {
@@ -432,13 +436,17 @@ impl PyVM {
 
         match event {
             StepEvent::Done(value) => {
+                self.vm.end_active_run_session();
                 let py_val = value.to_pyobject(py)?;
                 let elems: Vec<Bound<'_, pyo3::PyAny>> =
                     vec!["done".into_pyobject(py)?.into_any(), py_val];
                 let tuple = PyTuple::new(py, elems)?;
                 Ok(tuple.into())
             }
-            StepEvent::Error(e) => Err(vmerror_to_pyerr(e)),
+            StepEvent::Error(e) => {
+                self.vm.end_active_run_session();
+                Err(vmerror_to_pyerr(e))
+            }
             StepEvent::NeedsPython(call) => {
                 if let PythonCall::CallAsync { func, args } = call {
                     let py_func = func.bind(py).clone().into_any();
@@ -551,6 +559,9 @@ impl PyVM {
 
 impl PyVM {
     fn start_with_generator(&mut self, gen: Bound<'_, PyAny>) -> PyResult<()> {
+        self.vm.end_active_run_session();
+        self.vm.begin_run_session();
+
         let marker = Marker::fresh();
         let installed_markers = self.vm.installed_handler_markers();
         let mut scope_chain = vec![marker];

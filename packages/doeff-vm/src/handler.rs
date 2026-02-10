@@ -58,6 +58,20 @@ pub trait RustHandlerProgram: std::fmt::Debug + Send {
 pub trait RustProgramHandler: std::fmt::Debug + Send + Sync {
     fn can_handle(&self, effect: &DispatchEffect) -> bool;
     fn create_program(&self) -> RustProgramRef;
+
+    /// Create a handler program for a specific VM run token.
+    ///
+    /// Handlers that keep per-run state (for example, scheduler internals)
+    /// can override this to isolate state between distinct top-level runs.
+    fn create_program_for_run(&self, _run_token: Option<u64>) -> RustProgramRef {
+        self.create_program()
+    }
+
+    /// Notification that a top-level VM run has completed.
+    ///
+    /// Default is no-op. Stateful handlers can override this to release
+    /// run-scoped resources.
+    fn on_run_end(&self, _run_token: u64) {}
 }
 
 /// Shared reference to a Rust program handler factory.
