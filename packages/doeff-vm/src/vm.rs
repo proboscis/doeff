@@ -1,6 +1,7 @@
 //! Core VM struct and step execution.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -27,6 +28,7 @@ pub use crate::dispatch::DispatchContext;
 pub use crate::rust_store::RustStore;
 
 pub type Callback = Box<dyn FnOnce(Value, &mut VM) -> Mode + Send + Sync>;
+static NEXT_RUN_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 /// Optional Python dict for user-defined handler state (Layer 3).
 /// VM doesn't read it; users can store arbitrary data.
@@ -116,6 +118,7 @@ pub struct VM {
     pub trace_enabled: bool,
     pub trace_events: Vec<TraceEvent>,
     pub continuation_registry: HashMap<ContId, Continuation>,
+    pub active_run_token: Option<u64>,
 }
 
 impl VM {
@@ -136,6 +139,7 @@ impl VM {
             trace_enabled: false,
             trace_events: Vec::new(),
             continuation_registry: HashMap::new(),
+            active_run_token: None,
         }
     }
 
@@ -148,6 +152,28 @@ impl VM {
 
     pub fn set_debug(&mut self, config: DebugConfig) {
         self.debug = config;
+    }
+
+    pub fn begin_run_session(&mut self) -> u64 {
+        let token = NEXT_RUN_TOKEN.fetch_add(1, Ordering::Relaxed);
+        self.active_run_token = Some(token);
+        token
+    }
+
+    pub fn current_run_token(&self) -> Option<u64> {
+        self.active_run_token
+    }
+
+    pub fn end_active_run_session(&mut self) {
+        let Some(run_token) = self.active_run_token.take() else {
+            return;
+        };
+
+        for entry in self.handlers.values() {
+            if let Handler::RustProgram(factory) = &entry.handler {
+                factory.on_run_end(run_token);
+            }
+        }
     }
 
     pub fn enable_trace(&mut self, enabled: bool) {
@@ -983,7 +1009,7 @@ impl VM {
 
         match handler {
             Handler::RustProgram(rust_handler) => {
-                let program = rust_handler.create_program();
+                let program = rust_handler.create_program_for_run(self.current_run_token());
                 let step = {
                     let mut guard = program.lock().expect("Rust program lock poisoned");
                     Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))
@@ -1219,7 +1245,8 @@ impl VM {
 
                     match handler {
                         Handler::RustProgram(rust_handler) => {
-                            let program = rust_handler.create_program();
+                            let program =
+                                rust_handler.create_program_for_run(self.current_run_token());
                             let step = {
                                 let mut guard = program.lock().expect("Rust program lock poisoned");
                                 Python::attach(|py| guard.start(py, effect, k_user, &mut self.rust_store))

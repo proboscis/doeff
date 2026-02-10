@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from doeff import async_run, default_handlers, do, run
+from doeff import Gather, Spawn, async_run, default_handlers, do, run
 from doeff.effects import CreateExternalPromise, Wait, gather
 
 
@@ -207,3 +207,43 @@ class TestExternalPromiseMultiple:
         result = _run_with_timeout(program, timeout=1.0)
         assert result.is_ok
         assert result.value == ("one", "two")
+
+
+class TestExternalPromiseRunIsolation:
+    """Regression coverage for scheduler state isolation across runs."""
+
+    def test_external_promises_are_isolated_after_scheduler_run(self) -> None:
+        @do
+        def child(value: str):
+            return value
+
+        @do
+        def scheduler_heavy_program():
+            t1 = yield Spawn(child("left"))
+            t2 = yield Spawn(child("right"))
+            values = yield Gather(t1, t2)
+            return tuple(values)
+
+        scheduler_result = run(scheduler_heavy_program(), handlers=default_handlers())
+        assert scheduler_result.is_ok
+        assert scheduler_result.value == ("left", "right")
+
+        @do
+        def external_program(expected: str):
+            promise = yield CreateExternalPromise()
+
+            def worker():
+                time.sleep(0.01)
+                promise.complete(expected)
+
+            threading.Thread(target=worker).start()
+            value = yield Wait(promise.future)
+            return value
+
+        first = _run_with_timeout(lambda: external_program("first"), timeout=1.0)
+        assert first.is_ok
+        assert first.value == "first"
+
+        second = _run_with_timeout(lambda: external_program("second"), timeout=1.0)
+        assert second.is_ok
+        assert second.value == "second"
